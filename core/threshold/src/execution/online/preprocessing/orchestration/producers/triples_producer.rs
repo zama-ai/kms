@@ -7,7 +7,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         config::BatchParams,
-        large_execution::offline::{LargePreprocessing, TrueDoubleSharing, TrueSingleSharing},
+        large_execution::offline::SecureLargePreprocessing,
         online::{
             preprocessing::{
                 orchestration::progress_tracker::ProgressTracker, TriplePreprocessing,
@@ -142,14 +142,9 @@ impl<Z: ErrorCorrect + Invert + Derive> LargeSessionTripleProducer<Z> {
             };
 
             for _ in 0..num_loops {
-                let triples = LargePreprocessing::<Z, _, _>::init(
-                    &mut session,
-                    base_batch_size,
-                    TrueSingleSharing::default(),
-                    TrueDoubleSharing::default(),
-                )
-                .await?
-                .next_triple_vec(batch_size)?;
+                let triples = SecureLargePreprocessing::<Z>::new(&mut session, base_batch_size)
+                    .await?
+                    .next_triple_vec(batch_size)?;
 
                 //Drop the error on purpose as the receiver end might be closed already if we produced too much
                 let _ = sender_channel.send(triples).await;

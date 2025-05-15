@@ -16,6 +16,12 @@ use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use tracing::instrument;
 
+/// Alias for RealShareDispute to follow the convetion
+/// of the other protocols, except ShareDispute doesn't
+/// rely on any subprotocol, so its Real and Secure version
+/// are the same
+pub type SecureShareDispute = RealShareDispute;
+
 #[derive(Clone, Default)]
 pub struct ShareDisputeOutput<Z> {
     pub all_shares: HashMap<Role, Vec<Z>>,

@@ -1,16 +1,19 @@
 use super::{
-    coinflip::Coinflip,
+    coinflip::{Coinflip, SecureCoinflip},
     constants::DISPUTE_STAT_SEC,
     local_single_share::{
         compute_check_values, look_for_disputes, verify_sender_challenge, MapsSharesChallenges,
     },
-    share_dispute::{ShareDispute, ShareDisputeOutputDouble},
+    share_dispute::{SecureShareDispute, ShareDispute, ShareDisputeOutputDouble},
 };
-use crate::execution::runtime::session::LargeSessionHandles;
+use crate::execution::{
+    communication::broadcast::{Broadcast, SyncReliableBroadcast},
+    runtime::session::LargeSessionHandles,
+};
 use crate::{
     algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed},
     error::error_handler::anyhow_error_and_log,
-    execution::{communication::broadcast::broadcast_from_all_w_corruption, runtime::party::Role},
+    execution::runtime::party::Role,
     networking::value::BroadcastValue,
 };
 use async_trait::async_trait;
@@ -21,6 +24,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use tracing::instrument;
 
 const LOCAL_DOUBLE_MAX_ITER: usize = 30;
+
+pub type SecureLocalDoubleShare =
+    RealLocalDoubleShare<SecureCoinflip, SecureShareDispute, SyncReliableBroadcast>;
 
 pub struct DoubleShares<Z> {
     pub(crate) share_t: Vec<Z>,
@@ -48,13 +54,16 @@ pub(crate) type MapsDoubleSharesChallenges<Z> = (
 );
 
 #[derive(Default, Clone)]
-pub struct RealLocalDoubleShare<C: Coinflip, S: ShareDispute> {
+pub struct RealLocalDoubleShare<C: Coinflip, S: ShareDispute, BCast: Broadcast> {
     coinflip: C,
     share_dispute: S,
+    broadcast: BCast,
 }
 
 #[async_trait]
-impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for RealLocalDoubleShare<C, S> {
+impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
+    for RealLocalDoubleShare<C, S, BCast>
+{
     #[instrument(name="LocalDoubleShare",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?secrets.len()))]
     async fn execute<
         Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
@@ -98,6 +107,7 @@ impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for RealLocalDoubleShare<C, 
                 &shared_pads_double,
                 &x,
                 secrets.len(),
+                &self.broadcast,
             )
             .await?
             {
@@ -160,12 +170,14 @@ async fn verify_sharing<
     Z: Ring + Derive + ErrorCorrect,
     R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
+    BCast: Broadcast,
 >(
     session: &mut L,
     secrets_double: &mut ShareDisputeOutputDouble<Z>,
     pads_double: &ShareDisputeOutputDouble<Z>,
     x: &Z,
     l: usize,
+    broadcast: &BCast,
 ) -> anyhow::Result<bool> {
     //Unpacking shares
     let (secrets_shares_all_t, my_shared_secrets_t) = (
@@ -236,16 +248,17 @@ async fn verify_sharing<
         //Broadcast:
         // - my share of check values on all sharing of degree t and 2t
         // - the shares of all the parties on sharing of degree t and 2t wher I am sender
-        let bcast_data = broadcast_from_all_w_corruption(
-            session,
-            BroadcastValue::LocalDoubleShare((
-                map_share_check_values_t,
-                map_share_check_values_2t,
-                map_share_my_check_values_t,
-                map_share_my_check_values_2t,
-            )),
-        )
-        .await?;
+        let bcast_data = broadcast
+            .broadcast_from_all_w_corrupt_set_update(
+                session,
+                BroadcastValue::LocalDoubleShare((
+                    map_share_check_values_t,
+                    map_share_check_values_2t,
+                    map_share_my_check_values_t,
+                    map_share_my_check_values_2t,
+                )),
+            )
+            .await?;
 
         // If the corrupt roles have not changed, we can continue, otherwise start from beginning
         if *session.corrupt_roles() != corrupt_before_bc {
@@ -372,11 +385,14 @@ pub(crate) mod tests {
     };
     use crate::{
         execution::{
+            communication::broadcast::{Broadcast, SyncReliableBroadcast},
             large_execution::{
-                coinflip::{Coinflip, RealCoinflip},
-                local_double_share::{LocalDoubleShare, RealLocalDoubleShare},
+                coinflip::{Coinflip, RealCoinflip, SecureCoinflip},
+                local_double_share::{
+                    LocalDoubleShare, RealLocalDoubleShare, SecureLocalDoubleShare,
+                },
                 share_dispute::{RealShareDispute, ShareDispute},
-                vss::RealVss,
+                vss::{RealVss, SecureVss},
             },
             runtime::party::Role,
             runtime::session::{
@@ -396,33 +412,43 @@ pub(crate) mod tests {
     use rstest::rstest;
     use std::collections::HashMap;
 
-    impl<C: Coinflip, S: ShareDispute> RealLocalDoubleShare<C, S> {
+    impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> RealLocalDoubleShare<C, S, BCast> {
         pub(crate) fn init(
             coinflip_strategy: C,
             share_dispute_strategy: S,
-        ) -> RealLocalDoubleShare<C, S> {
+            broadcast_strategy: BCast,
+        ) -> Self {
             RealLocalDoubleShare {
                 coinflip: coinflip_strategy,
                 share_dispute: share_dispute_strategy,
+                broadcast: broadcast_strategy,
             }
         }
     }
     /// Lie in broadcast as sender
     #[derive(Clone, Default)]
-    pub(crate) struct MaliciousSenderLocalDoubleShare<C: Coinflip, S: ShareDispute> {
+    pub(crate) struct MaliciousSenderLocalDoubleShare<
+        C: Coinflip,
+        S: ShareDispute,
+        BCast: Broadcast,
+    > {
         coinflip: C,
         share_dispute: S,
+        broadcast: BCast,
         roles_to_lie_to: Vec<Role>,
     }
-    impl<C: Coinflip, S: ShareDispute> MaliciousSenderLocalDoubleShare<C, S> {
+
+    impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> MaliciousSenderLocalDoubleShare<C, S, BCast> {
         pub fn init(
             coinflip_strategy: C,
             share_dispute_strategy: S,
+            broadcast_strategy: BCast,
             roles_to_lie_to: &[usize],
         ) -> Self {
             Self {
                 coinflip: coinflip_strategy,
                 share_dispute: share_dispute_strategy,
+                broadcast: broadcast_strategy,
                 roles_to_lie_to: roles_from_idxs(roles_to_lie_to),
             }
         }
@@ -430,28 +456,39 @@ pub(crate) mod tests {
 
     /// Lie in broadcast as receiver
     #[derive(Clone, Default)]
-    pub(crate) struct MaliciousReceiverLocalDoubleShare<C: Coinflip, S: ShareDispute> {
+    pub(crate) struct MaliciousReceiverLocalDoubleShare<
+        C: Coinflip,
+        S: ShareDispute,
+        BCast: Broadcast,
+    > {
         coinflip: C,
         share_dispute: S,
+        broadcast: BCast,
         roles_to_lie_to: Vec<Role>,
     }
 
-    impl<C: Coinflip, S: ShareDispute> MaliciousReceiverLocalDoubleShare<C, S> {
+    impl<C: Coinflip, S: ShareDispute, BCast: Broadcast>
+        MaliciousReceiverLocalDoubleShare<C, S, BCast>
+    {
         pub fn init(
             coinflip_strategy: C,
             share_dispute_strategy: S,
+            broadcast_strategy: BCast,
             roles_to_lie_to: &[usize],
         ) -> Self {
             Self {
                 coinflip: coinflip_strategy,
                 share_dispute: share_dispute_strategy,
+                broadcast: broadcast_strategy,
                 roles_to_lie_to: roles_from_idxs(roles_to_lie_to),
             }
         }
     }
 
     #[async_trait]
-    impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for MaliciousSenderLocalDoubleShare<C, S> {
+    impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
+        for MaliciousSenderLocalDoubleShare<C, S, BCast>
+    {
         async fn execute<
             Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
             R: Rng + CryptoRng,
@@ -518,6 +555,7 @@ pub(crate) mod tests {
                     &shared_pads,
                     &x,
                     secrets.len(),
+                    &self.broadcast,
                 )
                 .await?
                 {
@@ -531,7 +569,9 @@ pub(crate) mod tests {
     }
 
     #[async_trait]
-    impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for MaliciousReceiverLocalDoubleShare<C, S> {
+    impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
+        for MaliciousReceiverLocalDoubleShare<C, S, BCast>
+    {
         async fn execute<
             Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
             R: Rng + CryptoRng,
@@ -594,6 +634,7 @@ pub(crate) mod tests {
                     &shared_pads,
                     &x,
                     secrets.len(),
+                    &self.broadcast,
                 )
                 .await?
                 {
@@ -619,7 +660,7 @@ pub(crate) mod tests {
         let (_, malicious_due_to_dispute) = params.get_dispute_map();
 
         let mut task_honest = |mut session: LargeSession| async move {
-            let real_ldl = RealLocalDoubleShare::<TrueCoinFlip, RealShareDispute>::default();
+            let real_ldl = SecureLocalDoubleShare::default();
             let secrets = (0..num_secrets)
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
@@ -718,8 +759,6 @@ pub(crate) mod tests {
         }
     }
 
-    type TrueCoinFlip = RealCoinflip<RealVss>;
-
     // Rounds (happy path)
     //      share dispute = 1 round
     //      pads =  1 round
@@ -730,7 +769,7 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_honest(4, 1, Some(88)))]
     #[case(TestingParameters::init_honest(7, 2, Some(109)))]
     fn test_ldl_z128(#[case] params: TestingParameters) {
-        let malicious_ldl = RealLocalDoubleShare::<TrueCoinFlip, RealShareDispute>::default();
+        let malicious_ldl = SecureLocalDoubleShare::default();
 
         test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
@@ -748,16 +787,18 @@ pub(crate) mod tests {
         V: Vss,
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
+        BCast: Broadcast + 'static,
     >(
         #[values(
             TestingParameters::init(4,1,&[2],&[0,3],&[],true,None),
             TestingParameters::init(7,2,&[1,4],&[0,2,5,6],&[(1,5),(4,0)],true,None)
         )]
         params: TestingParameters,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
             DroppingVssFromStart::default(),
             DroppingVssAfterR1::default(),
-            MaliciousVssR1::init(&params.roles_to_lie_to)
+            MaliciousVssR1::init(&broadcast_strategy,&params.roles_to_lie_to)
         )]
         _vss_strategy: V,
         #[values(
@@ -776,6 +817,7 @@ pub(crate) mod tests {
         let malicious_ldl = RealLocalDoubleShare {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
+            broadcast: broadcast_strategy,
         };
         test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
@@ -793,16 +835,18 @@ pub(crate) mod tests {
         V: Vss,
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
+        BCast: Broadcast + 'static,
     >(
         #[values(
             TestingParameters::init(4,1,&[2],&[0],&[],false,None),
             TestingParameters::init(7,2,&[1,4],&[0,2],&[],false,None)
         )]
         params: TestingParameters,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
-            RealVss::default(),
-            DroppingVssAfterR2::default(),
-            MaliciousVssR1::init(&params.roles_to_lie_to)
+            RealVss::init(&broadcast_strategy),
+            DroppingVssAfterR2::init(&broadcast_strategy),
+            MaliciousVssR1::init(&broadcast_strategy, &params.roles_to_lie_to)
         )]
         _vss_strategy: V,
         #[values(
@@ -815,6 +859,7 @@ pub(crate) mod tests {
         let malicious_ldl = RealLocalDoubleShare {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
+            broadcast: broadcast_strategy,
         };
         test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
@@ -827,20 +872,23 @@ pub(crate) mod tests {
     }
 
     #[rstest]
-    #[case(TestingParameters::init(4,1,&[2],&[0],&[],true,None), TrueCoinFlip::default(), MaliciousShareDisputeRecons::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[(3,0)],false,None), MaliciousCoinflipRecons::<RealVss>::default(), RealShareDispute::default())]
+    #[case(TestingParameters::init(4,1,&[2],&[0],&[],true,None), SecureCoinflip::default(), MaliciousShareDisputeRecons::init(&params.roles_to_lie_to),SyncReliableBroadcast::default())]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[(3,0)],false,None), MaliciousCoinflipRecons::<SecureVss>::default(), RealShareDispute::default(),SyncReliableBroadcast::default())]
     #[cfg(feature = "slow_tests")]
     fn test_ldl_malicious_subprotocols_fine_grain<
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
+        BCast: Broadcast + 'static,
     >(
         #[case] params: TestingParameters,
         #[case] coinflip_strategy: C,
         #[case] share_dispute_strategy: S,
+        #[case] broadcast_strategy: BCast,
     ) {
         let malicious_ldl = RealLocalDoubleShare {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
+            broadcast: broadcast_strategy,
         };
         test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
@@ -861,6 +909,7 @@ pub(crate) mod tests {
         V: Vss,
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
+        BCast: Broadcast + 'static,
     >(
         #[values(
             TestingParameters::init(4,1,&[2],&[0],&[],false,None),
@@ -869,10 +918,11 @@ pub(crate) mod tests {
             TestingParameters::init(7,2,&[1,4],&[0,2,6],&[(1,2),(4,6)],true,None)
         )]
         params: TestingParameters,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
-            RealVss::default(),
-            DroppingVssAfterR2::default(),
-            MaliciousVssR1::init(&params.roles_to_lie_to)
+            RealVss::init(&broadcast_strategy),
+            DroppingVssAfterR2::init(&broadcast_strategy),
+            MaliciousVssR1::init(&broadcast_strategy,&params.roles_to_lie_to)
         )]
         _vss_strategy: V,
         #[values(
@@ -885,6 +935,7 @@ pub(crate) mod tests {
         let malicious_ldl = MaliciousReceiverLocalDoubleShare {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
+            broadcast: broadcast_strategy,
             roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
         };
         test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
@@ -905,6 +956,7 @@ pub(crate) mod tests {
         V: Vss,
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
+        BCast: Broadcast + 'static,
     >(
         #[values(
             TestingParameters::init(4,1,&[2],&[0],&[],true,None),
@@ -913,10 +965,11 @@ pub(crate) mod tests {
             TestingParameters::init(7,2,&[1,4],&[0,2,3,6],&[(1,0),(4,0)],true,None)
         )]
         params: TestingParameters,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
-            RealVss::default(),
-            DroppingVssAfterR2::default(),
-            MaliciousVssR1::init(&params.roles_to_lie_to)
+            RealVss::init(&broadcast_strategy),
+            DroppingVssAfterR2::init(&broadcast_strategy),
+            MaliciousVssR1::init(&broadcast_strategy,&params.roles_to_lie_to)
         )]
         _vss_strategy: V,
         #[values(
@@ -929,6 +982,7 @@ pub(crate) mod tests {
         let malicious_ldl = MaliciousSenderLocalDoubleShare {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
+            broadcast: broadcast_strategy,
             roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
         };
         test_ldl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(

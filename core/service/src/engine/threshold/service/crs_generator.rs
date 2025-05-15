@@ -17,7 +17,7 @@ use threshold_fhe::{
     execution::{
         runtime::session::{BaseSessionStruct, SessionParameters, ToBaseSession},
         tfhe_internals::parameters::DKGParams,
-        zk::ceremony::{compute_witness_dim, Ceremony, RealCeremony},
+        zk::ceremony::{compute_witness_dim, Ceremony, SecureCeremony},
     },
 };
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
@@ -288,8 +288,8 @@ impl<
                 }
             }
         } else {
-            // real, secure ceremony (insecure = false)
-            let real_ceremony = RealCeremony::default();
+            // secure ceremony (insecure = false)
+            let real_ceremony = SecureCeremony::default();
             let internal_pp = real_ceremony
                 .execute::<Z64, _, _>(&mut base_session, witness_dim, max_num_bits)
                 .await;

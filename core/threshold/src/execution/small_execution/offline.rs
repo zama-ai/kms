@@ -6,6 +6,7 @@ use tracing::{info_span, instrument};
 
 use super::{agree_random::AgreeRandom, prf::PRSSConversions};
 use crate::error::error_handler::log_error_wrapper;
+use crate::execution::communication::broadcast::SyncReliableBroadcast;
 use crate::execution::config::BatchParams;
 use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{
@@ -16,7 +17,7 @@ use crate::execution::sharing::shamir::RevealOp;
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
     execution::{
-        communication::broadcast::broadcast_from_all_w_corruption,
+        communication::broadcast::Broadcast,
         online::triple::Triple,
         runtime::party::Role,
         runtime::session::SmallSessionHandles,
@@ -133,8 +134,12 @@ where
             let d_double = x_single * y_single + v_double;
             vec_d_double.push(d_double)
         }
-        let broadcast_res =
-            broadcast_from_all_w_corruption(session, vec_d_double.clone().into()).await?;
+
+        //TODO(2408): When modifying Preprocessing to follow simulation paradigm,
+        // also make it generic wrt broadcast
+        let broadcast_res = SyncReliableBroadcast::default()
+            .broadcast_from_all_w_corrupt_set_update(session, vec_d_double.clone().into())
+            .await?;
 
         //Try reconstructing 2t sharings of d, a None means reconstruction failed.
         let recons_vec_d = Self::reconstruct_d_values(session, amount, broadcast_res.clone())?;

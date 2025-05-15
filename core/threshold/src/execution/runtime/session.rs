@@ -1,10 +1,12 @@
 use super::party::{Identity, Role};
 use crate::{
-    algebra::base_ring::{Z128, Z64},
-    algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
+    algebra::{
+        base_ring::{Z128, Z64},
+        structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
+    },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        large_execution::vss::RealVss,
+        large_execution::vss::SecureVss,
         small_execution::prss::{PRSSSetup, PRSSState},
     },
     networking::Networking,
@@ -289,7 +291,7 @@ where
     where
         Z: ErrorCorrect + RingEmbed + Invert,
     {
-        let prss_setup = PRSSSetup::robust_init(&mut base_session, &RealVss::default()).await?;
+        let prss_setup = PRSSSetup::robust_init(&mut base_session, &SecureVss::default()).await?;
         let session_id = base_session.session_id();
         Self::new_from_prss_state(base_session, prss_setup.new_prss_session_state(session_id))
     }

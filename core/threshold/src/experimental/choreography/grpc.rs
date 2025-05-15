@@ -16,7 +16,7 @@ use crate::choreography::grpc::{
     fill_network_memory_info_single_session, gen_random_sid,
 };
 use crate::choreography::requests::Status;
-use crate::execution::large_execution::vss::RealVss;
+use crate::execution::large_execution::vss::SecureVss;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::PreprocessorFactory;
 use crate::execution::runtime::party::{Identity, Role};
@@ -280,10 +280,12 @@ impl Choreography for ExperimentalGrpcChoreography {
         match ring {
             SupportedRing::LevelOne => {
                 let my_future = || async move {
-                    let prss_setup =
-                        PRSSSetup::<LevelOne>::robust_init(&mut base_session, &RealVss::default())
-                            .await
-                            .unwrap();
+                    let prss_setup = PRSSSetup::<LevelOne>::robust_init(
+                        &mut base_session,
+                        &SecureVss::default(),
+                    )
+                    .await
+                    .unwrap();
                     store.insert(
                         SupportedRing::LevelOne,
                         SupportedPRSSSetup::LevelOne(prss_setup),
@@ -298,10 +300,12 @@ impl Choreography for ExperimentalGrpcChoreography {
             }
             SupportedRing::LevelKsw => {
                 let my_future = || async move {
-                    let prss_setup =
-                        PRSSSetup::<LevelKsw>::robust_init(&mut base_session, &RealVss::default())
-                            .await
-                            .unwrap();
+                    let prss_setup = PRSSSetup::<LevelKsw>::robust_init(
+                        &mut base_session,
+                        &SecureVss::default(),
+                    )
+                    .await
+                    .unwrap();
                     store.insert(
                         SupportedRing::LevelKsw,
                         SupportedPRSSSetup::LevelKsw(prss_setup),

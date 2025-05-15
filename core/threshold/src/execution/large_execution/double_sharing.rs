@@ -1,5 +1,5 @@
 use super::{
-    local_double_share::{DoubleShares, LocalDoubleShare},
+    local_double_share::{DoubleShares, LocalDoubleShare, SecureLocalDoubleShare},
     single_sharing::init_vdm,
 };
 use crate::{
@@ -16,6 +16,8 @@ use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use tracing::instrument;
+
+pub type SecureDoubleSharing<Z> = RealDoubleSharing<Z, SecureLocalDoubleShare>;
 
 type DoubleArrayShares<Z> = (ArrayD<Z>, ArrayD<Z>);
 
@@ -187,18 +189,15 @@ pub(crate) mod tests {
     use crate::algebra::structure_traits::Invert;
     use crate::algebra::structure_traits::RingEmbed;
     use crate::execution::large_execution::constants::DISPUTE_STAT_SEC;
+    use crate::execution::large_execution::double_sharing::SecureDoubleSharing;
     use crate::execution::runtime::session::BaseSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::networking::NetworkMode;
     use crate::{
         algebra::structure_traits::{Ring, Sample},
         execution::{
-            large_execution::{
-                coinflip::RealCoinflip,
-                double_sharing::{DoubleShare, DoubleSharing, LocalDoubleShare, RealDoubleSharing},
-                local_double_share::RealLocalDoubleShare,
-                share_dispute::RealShareDispute,
-                vss::RealVss,
+            large_execution::double_sharing::{
+                DoubleShare, DoubleSharing, LocalDoubleShare, RealDoubleSharing,
             },
             runtime::{
                 party::Role,
@@ -209,8 +208,6 @@ pub(crate) mod tests {
         tests::helper::tests_and_benches::execute_protocol_large,
     };
 
-    type TrueLocalDoubleShare = RealLocalDoubleShare<RealCoinflip<RealVss>, RealShareDispute>;
-
     pub(crate) fn create_real_double_sharing<Z: Ring, L: LocalDoubleShare>(
         ldl_strategy: L,
     ) -> RealDoubleSharing<Z, L> {
@@ -219,7 +216,7 @@ pub(crate) mod tests {
             ..Default::default()
         }
     }
-    //#[test]
+
     fn test_doublesharing<
         Z: Ring + RingEmbed + ErrorCorrect + Derive + Invert,
         const EXTENSION_DEGREE: usize,
@@ -232,7 +229,7 @@ pub(crate) mod tests {
             let extracted_size = session.num_parties() - session.threshold() as usize;
             let num_output = ldl_batch_size * extracted_size + 1;
             let mut res = Vec::new();
-            let mut double_sharing = RealDoubleSharing::<Z, TrueLocalDoubleShare>::default();
+            let mut double_sharing = SecureDoubleSharing::<Z>::default();
             double_sharing
                 .init(&mut session, ldl_batch_size)
                 .await
@@ -318,8 +315,7 @@ pub(crate) mod tests {
             let num_output = ldl_batch_size * extracted_size + 1;
             let mut res = Vec::new();
             if session.my_role().unwrap().zero_based() != 1 {
-                let mut double_sharing =
-                    RealDoubleSharing::<ResiduePolyF4Z128, TrueLocalDoubleShare>::default();
+                let mut double_sharing = SecureDoubleSharing::<ResiduePolyF4Z128>::default();
                 double_sharing
                     .init(&mut session, ldl_batch_size)
                     .await

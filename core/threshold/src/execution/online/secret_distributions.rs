@@ -263,15 +263,6 @@ mod tests {
         let batch = 100_usize;
 
         let mut task = |session: LargeSession| async move {
-            //let mut large_preproc = RealLargePreprocessing::<ResiduePolyF4Z64>::init(
-            //    &mut session,
-            //    batch_sizes,
-            //    TrueSingleSharing::default(),
-            //    TrueDoubleSharing::default(),
-            //)
-            //.await
-            //.unwrap();
-
             let mut large_preproc =
                 DummyPreprocessing::<ResiduePolyF4Z64, _, _>::new(0, session.clone());
 

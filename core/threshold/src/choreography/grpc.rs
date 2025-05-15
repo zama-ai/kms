@@ -27,7 +27,7 @@ use crate::choreography::requests::{
     SessionType, Status, ThresholdDecryptParams, ThresholdKeyGenParams,
     ThresholdKeyGenResultParams,
 };
-use crate::execution::communication::broadcast::broadcast_from_all;
+use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
 use crate::execution::endpoints::decryption::{
     combine_plaintext_blocks, init_prep_bitdec_large, init_prep_bitdec_small,
     run_decryption_noiseflood_64, task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode,
@@ -39,10 +39,8 @@ use crate::execution::endpoints::keygen::{
     distributed_keygen_z128, distributed_keygen_z64, PrivateKeySet,
 };
 use crate::execution::keyset_config::KeySetConfig;
-use crate::execution::large_execution::offline::{
-    LargePreprocessing, TrueDoubleSharing, TrueSingleSharing,
-};
-use crate::execution::large_execution::vss::RealVss;
+use crate::execution::large_execution::offline::SecureLargePreprocessing;
+use crate::execution::large_execution::vss::SecureVss;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
 use crate::execution::online::preprocessing::{
@@ -58,7 +56,7 @@ use crate::execution::runtime::session::{SmallSession, ToBaseSession};
 use crate::execution::small_execution::agree_random::RealAgreeRandom;
 use crate::execution::small_execution::offline::SmallPreprocessing;
 use crate::execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
-use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, RealCeremony};
+use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use crate::networking::value::BroadcastValue;
 use crate::networking::{NetworkMode, NetworkingStrategy};
@@ -332,7 +330,7 @@ where
                 let my_future = || async move {
                     let prss_setup = PRSSSetup::<ResiduePoly<Z128, EXTENSION_DEGREE>>::robust_init(
                         &mut base_session,
-                        &RealVss::default(),
+                        &SecureVss::default(),
                     )
                     .await
                     .unwrap();
@@ -352,7 +350,7 @@ where
                 let my_future = || async move {
                     let prss_setup = PRSSSetup::<ResiduePoly<Z64, EXTENSION_DEGREE>>::robust_init(
                         &mut base_session,
-                        &RealVss::default(),
+                        &SecureVss::default(),
                     )
                     .await
                     .unwrap();
@@ -1292,11 +1290,12 @@ where
                         ),
                     };
                     //Do bcast after the Sns to sync parties
-                    let _ = broadcast_from_all(
-                        &bcast_session,
-                        Some(BroadcastValue::from(Z128::from_u128(42))),
-                    )
-                    .await;
+                    let _ = SyncReliableBroadcast::default()
+                        .broadcast_from_all(
+                            &bcast_session,
+                            BroadcastValue::from(Z128::from_u128(42)),
+                        )
+                        .await;
                     let my_future = || async move {
                         let num_blocks = ct_large.len();
 
@@ -1409,11 +1408,12 @@ where
                             )
                         })?;
                     //Do bcast to sync parties
-                    let _ = broadcast_from_all(
-                        &bcast_session,
-                        Some(BroadcastValue::from(Z128::from_u128(42))),
-                    )
-                    .await;
+                    let _ = SyncReliableBroadcast::default()
+                        .broadcast_from_all(
+                            &bcast_session,
+                            BroadcastValue::from(Z128::from_u128(42)),
+                        )
+                        .await;
                     let my_future = || async move {
                         // Copy the ctxt
                         let ctxt_chunked = vec![vec![ctxt.clone(); chunk_size]; num_sessions];
@@ -1944,7 +1944,7 @@ where
 
         let crs_store = self.data.crs_store.clone();
         let my_future = || async move {
-            let real_ceremony = RealCeremony::default();
+            let real_ceremony = SecureCeremony::default();
             let pp = real_ceremony
                 .execute::<Z64, _, _>(
                     &mut base_session,
@@ -2201,20 +2201,16 @@ where
                     let mut large_session_z128 = create_large_session(preproc_z128_base_session);
 
                     let preproc_z64 =
-                        LargePreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>, _, _>::init(
+                        SecureLargePreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
                             &mut large_session_z64,
                             num_needed_preproc.batch_params_64,
-                            TrueSingleSharing::default(),
-                            TrueDoubleSharing::default(),
                         )
                         .await
                         .unwrap();
                     let preproc_z128 =
-                        LargePreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>, _, _>::init(
+                        SecureLargePreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
                             &mut large_session_z128,
                             num_needed_preproc.batch_params_128,
-                            TrueSingleSharing::default(),
-                            TrueDoubleSharing::default(),
                         )
                         .await
                         .unwrap();

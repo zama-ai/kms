@@ -9,7 +9,7 @@ use threshold_fhe::{
             session::ParameterHandles,
             test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         },
-        zk::ceremony::{Ceremony, RealCeremony},
+        zk::ceremony::{Ceremony, SecureCeremony},
     },
     networking::NetworkMode,
     session_id::SessionId,
@@ -55,7 +55,7 @@ fn bench_ceremony(c: &mut Criterion) {
                         let mut session =
                             runtime.small_session_for_party(session_id, index_id, None);
                         set.spawn(async move {
-                            let real_ceremony = RealCeremony::default();
+                            let real_ceremony = SecureCeremony::default();
                             let out = real_ceremony
                                 .execute::<ResiduePolyF8Z64, _, _>(&mut session, dim, None)
                                 .await

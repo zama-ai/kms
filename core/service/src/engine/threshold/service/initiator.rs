@@ -11,7 +11,7 @@ use kms_grpc::{
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
-        large_execution::vss::RealVss, runtime::session::ParameterHandles,
+        large_execution::vss::SecureVss, runtime::session::ParameterHandles,
         small_execution::prss::PRSSSetup,
     },
     networking::NetworkMode,
@@ -133,10 +133,10 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 
         tracing::info!("Starting PRSS for identity {}.", own_identity);
         let prss_setup_obj_z128: PRSSSetup<ResiduePolyF4Z128> =
-            PRSSSetup::robust_init(&mut base_session, &RealVss::default()).await?;
+            PRSSSetup::robust_init(&mut base_session, &SecureVss::default()).await?;
 
         let prss_setup_obj_z64: PRSSSetup<ResiduePolyF4Z64> =
-            PRSSSetup::robust_init(&mut base_session, &RealVss::default()).await?;
+            PRSSSetup::robust_init(&mut base_session, &SecureVss::default()).await?;
 
         let mut guarded_prss_setup = self.prss_setup_z128.write().await;
         *guarded_prss_setup = Some(prss_setup_obj_z128.clone());

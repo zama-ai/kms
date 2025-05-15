@@ -10,7 +10,7 @@ use crate::{
     },
     error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
-        communication::broadcast::broadcast_from_all_w_corruption,
+        communication::broadcast::{Broadcast, SyncReliableBroadcast},
         constants::{PRSS_SIZE_MAX, STATSEC},
         large_execution::{single_sharing::init_vdm, vss::Vss},
         runtime::{
@@ -284,11 +284,14 @@ where
         }
 
         //Broadcast (as sender and receiver) all the psi values
-        let broadcast_result = broadcast_from_all_w_corruption::<Z, R, S>(
-            session,
-            BroadcastValue::PRSSVotes(psi_values),
-        )
-        .await?;
+        //TODO(2402) When modifying small_execution to follow simulation paradigm,
+        // also make it generic wrt broadcast
+        let broadcast_result = SyncReliableBroadcast::default()
+            .broadcast_from_all_w_corrupt_set_update::<Z, R, S>(
+                session,
+                BroadcastValue::PRSSVotes(psi_values),
+            )
+            .await?;
 
         // Sort the votes received from the broadcast
         let count = Self::sort_votes(&broadcast_result, session)?;
@@ -324,11 +327,14 @@ where
             }
         }
 
-        let broadcast_result = broadcast_from_all_w_corruption::<Z, R, S>(
-            session,
-            BroadcastValue::PRSSVotes(chi_values),
-        )
-        .await?;
+        //TODO(2402) When modifying small_execution to follow simulation paradigm,
+        // also make it generic wrt broadcast
+        let broadcast_result = SyncReliableBroadcast::default()
+            .broadcast_from_all_w_corrupt_set_update::<Z, R, S>(
+                session,
+                BroadcastValue::PRSSVotes(chi_values),
+            )
+            .await?;
 
         // Sort the votes received from the broadcast
         let count = Self::sort_votes(&broadcast_result, session)?;
@@ -723,6 +729,7 @@ fn transpose_vdm<Z: Ring + RingEmbed>(rows: usize, columns: usize) -> anyhow::Re
 mod tests {
     use super::*;
     use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
+    use crate::execution::large_execution::vss::SecureVss;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::small_execution::agree_random::DSEP_AR;
     use crate::execution::tfhe_internals::test_feature::KeySet;
@@ -739,7 +746,6 @@ mod tests {
         execution::{
             constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, SMALL_TEST_KEY_PATH, STATSEC},
             endpoints::decryption::{threshold_decrypt64, DecryptionMode},
-            large_execution::vss::RealVss,
             runtime::party::{Identity, Role},
             runtime::{
                 session::{
@@ -1664,7 +1670,7 @@ mod tests {
             mut session: SmallSession<ResiduePolyF4Z128>,
             _bot: Option<String>,
         ) -> Share<ResiduePolyF4Z128> {
-            let prss_setup = PRSSSetup::robust_init(&mut session, &RealVss::default())
+            let prss_setup = PRSSSetup::robust_init(&mut session, &SecureVss::default())
                 .await
                 .unwrap();
             let mut state = prss_setup.new_prss_session_state(session.session_id());
@@ -1716,7 +1722,7 @@ mod tests {
 
         let mut task = |mut session: SmallSession<ResiduePolyF4Z128>, _bot: Option<String>| async move {
             if session.my_role().unwrap().one_based() != bad_party {
-                let prss_setup = PRSSSetup::robust_init(&mut session, &RealVss::default())
+                let prss_setup = PRSSSetup::robust_init(&mut session, &SecureVss::default())
                     .await
                     .unwrap();
                 let mut state = prss_setup.new_prss_session_state(session.session_id());

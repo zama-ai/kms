@@ -9,7 +9,7 @@ use crate::{
     algebra::structure_traits::{ErrorCorrect, Ring},
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::broadcast::{generic_receive_from_all, send_to_all},
+        communication::p2p::{generic_receive_from_all, send_to_all},
         online::preprocessing::constants::BATCH_SIZE_BITS,
         runtime::{party::Role, session::BaseSessionHandles},
     },

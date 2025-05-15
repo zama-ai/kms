@@ -1,7 +1,6 @@
+use super::p2p::{generic_receive_from_all, generic_receive_from_all_senders, send_to_all};
 use crate::algebra::structure_traits::Ring;
-use crate::algebra::structure_traits::Zero;
 use crate::error::error_handler::anyhow_error_and_log;
-use crate::execution::runtime::party::Identity;
 use crate::execution::runtime::party::Role;
 use crate::execution::runtime::session::BaseSessionHandles;
 use crate::networking::value::BcastHash;
@@ -11,123 +10,148 @@ use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::Arc;
 use tokio::task::JoinSet;
 use tokio::time::error::Elapsed;
-use tokio::time::timeout_at;
+use tonic::async_trait;
 use tracing::instrument;
-use tracing::Instrument;
 
 type RoleValueMap<Z> = HashMap<Role, BroadcastValue<Z>>;
 type SendEchoJobType<Z> = (Role, anyhow::Result<RoleValueMap<Z>>);
 type VoteJobType = (Role, anyhow::Result<HashMap<Role, BcastHash>>);
 type GenericEchoVoteJob<T> = JoinSet<Result<(Role, anyhow::Result<HashMap<Role, T>>), Elapsed>>;
 
-/// Send to all parties and automatically increase round counter
-pub async fn send_to_all<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
-    session: &B,
-    sender: &Role,
-    msg: NetworkValue<Z>,
-) -> anyhow::Result<()> {
-    let serialized_message = msg.to_network();
+#[async_trait]
+pub trait Broadcast: Send + Sync + Default + Clone {
+    /// Execution of the _regular_ protocol, must be defined for all structs implementing this trait.
+    ///
+    /// Takes an `sender_list`, an explicit list of all the senders
+    /// and `my_message` the message to broadcat if the current party is a sender.
+    ///
+    /// __NOTE__: This function will try to interact with parties that are already considered malicious
+    /// and does __NOT__ mutate the corrupt set even it finds a malicious sender.
+    /// Use [`Broadcast::broadcast_w_corrupt_set_update`] to ignore known corrupt parties and update
+    /// the malicious set with malicious senders.
+    async fn execute<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+        &self,
+        session: &B,
+        sender_list: &[Role],
+        my_message: Option<BroadcastValue<Z>>,
+    ) -> anyhow::Result<RoleValueMap<Z>>;
 
-    session.network().increase_round_counter()?;
-    for (other_role, other_identity) in session.role_assignments().iter() {
-        let networking = Arc::clone(session.network());
-        let serialized_message = serialized_message.clone();
-        let other_id = other_identity.clone();
-        if sender != other_role {
-            networking.send(serialized_message, &other_id).await?;
-        }
+    /// Blanket implementation that relies on [`Self::execute`].
+    /// **All** parties Pi want to **reliably** broadcast a message to all the other parties
+    ///
+    /// Function returns a map bcast_data: Role => Value such that
+    /// all players have the broadcasted values inside the map: bcast_data\[Pj] = message_j for all j in [n].
+    /// This function does not handle corrupt parties.
+    ///
+    /// __NOTE__: This function will try to interact with parties that are already considered malicious
+    /// and does __NOT__ mutate the corrupt set even it finds a malicious sender.
+    /// Use [`Broadcast::broadcast_from_all_w_corrupt_set_update`] to ignore known corrupt parties and update
+    /// the malicious set with malicious senders.
+    async fn broadcast_from_all<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+        &self,
+        session: &B,
+        my_message: BroadcastValue<Z>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
+        let sender_list = session.role_assignments().keys().cloned().collect_vec();
+        self.execute(session, &sender_list, Some(my_message)).await
     }
-    Ok(())
-}
 
-/// Spawns receive tasks and matches the incoming messages according to the match_network_value_fn.
-///
-/// The function makes sure that it process the correct type of message, i.e.
-/// On the receiving end, a party processes a message of a single variant of the [NetworkValue] enum
-/// and errors out if message is of a different form. This is helpful so that we can peel the message
-/// from the inside enum.
-///
-/// **NOTE: We do not try to receive any value from the non_answering_parties set.**
-pub fn generic_receive_from_all_senders<V, Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
-    jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
-    session: &B,
-    receiver: &Role,
-    sender_list: &[Role],
-    non_answering_parties: Option<&HashSet<Role>>,
-    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Identity) -> anyhow::Result<V>,
-) -> anyhow::Result<()>
-where
-    V: std::marker::Send + 'static,
-{
-    let binding = HashSet::new();
-    let non_answering_parties = non_answering_parties.unwrap_or(&binding);
-    for sender in sender_list {
-        let sender = *sender;
-        if !non_answering_parties.contains(&sender) && receiver != &sender {
-            //If role and IDs can't be tied, propagate error
-            let sender_id = session
-                .role_assignments()
-                .get(&sender)
-                .ok_or_else(|| {
-                    anyhow_error_and_log(format!(
-                        "Can't find sender's id {sender} in session {}",
-                        session.session_id()
-                    ))
-                })?
-                .clone();
+    /// Blanket implementation that relies on Self implementation of [`Broadcast::execute`].
+    /// Executes a [`Broadcast::broadcast_from_all`] with parties in `corrupt_roles`
+    /// ignored during the execution and any new corruption detected is added to `corrupt_roles` of the session.
+    /// The current party sends `my_message`.
+    ///
+    /// This corresponds to the "modified" version of the protocol in the NIST document.
+    ///
+    /// WARNING: It is CRUCIAL that the corrupt roles are ignored, as otherwise they could cause a DoS attack with the current logic of the functions using this method.
+    async fn broadcast_from_all_w_corrupt_set_update<
+        Z: Ring,
+        R: Rng + CryptoRng,
+        Ses: BaseSessionHandles<R>,
+    >(
+        &self,
+        session: &mut Ses,
+        my_message: BroadcastValue<Z>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
+        let sender_list = session.role_assignments().keys().cloned().collect_vec();
+        self.broadcast_w_corrupt_set_update(session, sender_list, Some(my_message))
+            .await
+    }
 
-            let networking = Arc::clone(session.network());
-            let identity = session.own_identity();
-            let my_role = session.my_role()?;
-            let timeout = session.network().get_timeout_current_round()?;
-            let task = async move {
-                let stripped_message = timeout_at(timeout, networking.receive(&sender_id)).await;
-                match stripped_message {
-                    Ok(stripped_message) => {
-                        let stripped_message =
-                            match NetworkValue::<Z>::from_network(stripped_message) {
-                                Ok(x) => match_network_value_fn(x, &identity),
-                                Err(e) => Err(e),
-                            };
-                        Ok((sender, stripped_message))
-                    }
-                    Err(e) => {
-                        tracing::warn!("Sender {sender} timed out when sending to {my_role}");
-                        Err(e)
-                    }
-                }
+    /// Blanket implementation that relies on Self implementation of [`Broadcast::execute`].
+    /// Executes a broadcast with all parties in `sender_list` acting as senders
+    /// and parties in `corrupt_roles`
+    /// ignored during the execution and any new corruption detected is added to `corrupt_roles` of the session.
+    /// If the current party is in the `sender_list`, it broadcasts `my_message`.
+    ///
+    /// This corresponds to the "modified" version of the protocol in the NIST document.
+    ///
+    /// WARNING: It is CRUCIAL that the corrupt roles are ignored, as otherwise they could cause a DoS attack with the current logic of the functions using this method.
+    #[instrument(name= "Syn-Bcast-Corrupt",skip(self,session,sender_list,my_message),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()))]
+    async fn broadcast_w_corrupt_set_update<
+        Z: Ring,
+        R: Rng + CryptoRng,
+        Ses: BaseSessionHandles<R>,
+    >(
+        &self,
+        session: &mut Ses,
+        sender_list: Vec<Role>,
+        my_message: Option<BroadcastValue<Z>>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
+        // Remove corrupt parties from the current session and from the sender list
+        let known_corrupt = session.corrupt_roles();
+
+        let old_role_assignments = session.role_assignments().clone();
+        let mut new_role_assignments = session.role_assignments().clone();
+        known_corrupt.iter().for_each(|r| {
+            tracing::warn!("I'm {:?}, removing corrupt player {r}", session.my_role());
+            new_role_assignments.remove(r);
+        });
+
+        let sender_list_without_corrupt = sender_list
+            .into_iter()
+            .filter(|role| !known_corrupt.contains(role))
+            .collect_vec();
+
+        session.set_role_assignments(new_role_assignments);
+
+        let mut broadcast_res = self
+            .execute(session, &sender_list_without_corrupt, my_message)
+            .await?;
+
+        session.set_role_assignments(old_role_assignments);
+
+        // Add bot for the parties which were already corrupt before the bcast
+        for role in session.corrupt_roles() {
+            broadcast_res.insert(*role, BroadcastValue::Bot);
+        }
+
+        // Note that the sender list is computed at the start
+        // which differs depending on the broadcast type
+        for role in sender_list_without_corrupt {
+            // Small optimization: the corrupt senders can be skipped
+            // But we already removed the known corrupt parties, so can't happen.
+            if session.corrupt_roles().contains(&role) {
+                continue;
             }
-            .instrument(tracing::Span::current());
-            jobs.spawn(task);
+
+            // Each party that was supposed to broadcast but where the parties did not consistently agree on the result
+            // is added to the set of corrupt parties
+            if let BroadcastValue::Bot = broadcast_res.get(&role).ok_or_else(|| {
+                anyhow_error_and_log(format!("Cannot find {role} in broadcast's result."))
+            })? {
+                session.add_corrupt(role)?;
+            }
         }
+        Ok(broadcast_res)
     }
-    Ok(())
 }
 
-/// Wrapper around [generic_receive_from_all_senders] where the sender list is all the parties.
-pub fn generic_receive_from_all<V, Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
-    jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
-    session: &B,
-    receiver: &Role,
-    non_answering_parties: Option<&HashSet<Role>>,
-    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Identity) -> anyhow::Result<V>,
-) -> anyhow::Result<()>
-where
-    V: std::marker::Send + 'static,
-{
-    let sender_list: Vec<Role> = session.role_assignments().keys().cloned().collect();
-    generic_receive_from_all_senders(
-        jobs,
-        session,
-        receiver,
-        &sender_list,
-        non_answering_parties,
-        match_network_value_fn,
-    )
-}
+#[derive(Default, Clone)]
+/// Implements the synchronous broadcast protocol defined in the NIST document
+pub struct SyncReliableBroadcast {}
 
 /// Receives the contribution from all the senders in parallel
 ///
@@ -446,251 +470,152 @@ async fn gather_votes<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     Ok(())
 }
 
-/// The parties in the set \[Pi] want to **reliably** broadcast a value Vi to all the other parties
-///
-/// Here sender_list = \[Pi] and  vi = Vi
-/// Function returns a map bcast_data: Role => Value such that
-/// all parties have the broadcasted values inside the map: bcast_data\[Pj] = Vj for all j in \[n].
-/// This function does *not* handle corrupt parties.
-#[instrument(name= "Syn-Bcast",skip(session,sender_list,vi),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()))]
-pub async fn reliable_broadcast<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
-    session: &B,
-    sender_list: &[Role],
-    vi: Option<BroadcastValue<Z>>,
-) -> anyhow::Result<RoleValueMap<Z>> {
-    let num_parties = session.num_parties();
-    if sender_list.is_empty() {
-        return Err(anyhow_error_and_log(
-            "We expect at least one party as sender in reliable broadcast".to_string(),
-        ));
-    }
-
-    let threshold = session.threshold() as usize;
-    if num_parties <= threshold {
-        return Err(anyhow_error_and_log(format!(
-            "The number of parties {num_parties} is less or equal to the threshold {threshold}"
-        )));
-    }
-    let min_honest_nodes = num_parties as u32 - threshold as u32;
-
-    let my_role = session.my_role()?;
-    let is_sender = sender_list.contains(&my_role);
-    let mut bcast_data: RoleValueMap<Z> = sender_list
-        .iter()
-        .map(|role| (*role, BroadcastValue::Bot))
-        .collect();
-
-    let mut non_answering_parties = HashSet::<Role>::new();
-
-    // Communication round 1
-    // Sender parties send the message they intend to broadcast to others
-    // The send calls are followed by receive to get the incoming messages from the others
-    let mut round1_contributions = HashMap::<Role, BroadcastValue<Z>>::new();
-    match (vi, is_sender) {
-        (Some(vi), true) => {
-            bcast_data.insert(my_role, vi);
-            round1_contributions.insert(my_role, bcast_data[&my_role].clone());
-            let msg = NetworkValue::Send(round1_contributions[&my_role].clone());
-            send_to_all(session, &my_role, msg).await?;
-        }
-        (None, false) => {
-            session.network().increase_round_counter()?; // We're not sending, but we must increase the round counter to stay in sync
-        }
-        (_, _) => {
+#[async_trait]
+impl Broadcast for SyncReliableBroadcast {
+    #[instrument(name= "Syn-Bcast",skip(self,session,sender_list,my_message),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()))]
+    async fn execute<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+        &self,
+        session: &B,
+        sender_list: &[Role],
+        my_message: Option<BroadcastValue<Z>>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
+        let num_parties = session.num_parties();
+        if sender_list.is_empty() {
             return Err(anyhow_error_and_log(
-                "A sender must have a value in reliable broadcast".to_string(),
+                "We expect at least one party as sender in reliable broadcast".to_string(),
             ));
         }
-    }
 
-    // The error we propagate here is if sender IDs and roles cannot be tied together.
-    receive_contribution_from_all_senders(
-        &mut round1_contributions,
-        session,
-        &my_role,
-        sender_list,
-        &mut non_answering_parties,
-    )
-    .await?;
-
-    // Communication round 2
-    // Parties send Echo to the other parties
-    send_to_all(
-        session,
-        &my_role,
-        NetworkValue::EchoBatch(round1_contributions.clone()),
-    )
-    .await?;
-
-    // Parties receive Echo from others and process them,
-    // if there are enough Echo messages then they will cast a vote in subsequent rounds
-    // adding own echo to the map
-    let mut echos_count: HashMap<(Role, BroadcastValue<Z>), u32> = round1_contributions
-        .iter()
-        .map(|(k, v)| ((*k, v.clone()), 1))
-        .collect();
-    // receive echos from all parties,
-    // updates the echos_count and outputs the values I should vote for
-    let mut registered_votes = receive_echos_from_all_batched(
-        session,
-        &my_role,
-        &mut non_answering_parties,
-        &mut echos_count,
-    )
-    .await?;
-
-    let mut map_hash_to_value: HashMap<(Role, BcastHash), BroadcastValue<Z>> = echos_count
-        .into_iter()
-        .map(|((role, value), _)| ((role, value.to_bcast_hash()), value))
-        .collect();
-    // Communication round 3 onward
-    // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
-    // Here propagate error if my own casted hashmap does not contain the expected party's id
-    let mut casted_vote: HashMap<Role, bool> =
-        sender_list.iter().map(|role| (*role, false)).collect();
-
-    cast_threshold_vote::<Z, R, B>(session, &my_role, &registered_votes, 1).await?;
-
-    //Keep track of which instances of bcast we already voted for so we don't vote twice
-    for ((role, _), _) in registered_votes.iter() {
-        let casted_vote_role = casted_vote.get_mut(role).ok_or_else(|| {
-            anyhow_error_and_log(format!("Can't retrieve whether I ({role}) casted a vote"))
-        })?;
-        if *casted_vote_role {
-            return Err(anyhow_error_and_log(
-                "Trying to cast two votes for the same sender!".to_string(),
-            ));
+        let threshold = session.threshold() as usize;
+        if num_parties <= threshold {
+            return Err(anyhow_error_and_log(format!(
+                "The number of parties {num_parties} is less or equal to the threshold {threshold}"
+            )));
         }
-        *casted_vote_role = true;
-    }
+        let min_honest_nodes = num_parties as u32 - threshold as u32;
 
-    // receive votes from the other parties, if we have at least T for a message m associated to a party Pi
-    // then we know for sure that Pi has broadcasted message m
-    gather_votes::<Z, R, B>(
-        session,
-        &my_role,
-        &mut registered_votes,
-        &mut casted_vote,
-        &mut non_answering_parties,
-    )
-    .await?;
-    for ((role, value), hits) in registered_votes.into_iter() {
-        if hits >= min_honest_nodes {
-            //Retrieve the actual data from the hash
-            let value = map_hash_to_value.remove(&(role, value)).ok_or_else(|| {
-                anyhow_error_and_log(format!(
-                    "Can't retrieve the value from the hash in broadcast. Role {role}.",
-                ))
+        let my_role = session.my_role()?;
+        let is_sender = sender_list.contains(&my_role);
+        let mut bcast_data: RoleValueMap<Z> = sender_list
+            .iter()
+            .map(|role| (*role, BroadcastValue::Bot))
+            .collect();
+
+        let mut non_answering_parties = HashSet::<Role>::new();
+
+        // Communication round 1
+        // Sender parties send the message they intend to broadcast to others
+        // The send calls are followed by receive to get the incoming messages from the others
+        let mut round1_contributions = HashMap::<Role, BroadcastValue<Z>>::new();
+        match (my_message, is_sender) {
+            (Some(my_message), true) => {
+                bcast_data.insert(my_role, my_message);
+                round1_contributions.insert(my_role, bcast_data[&my_role].clone());
+                let msg = NetworkValue::Send(round1_contributions[&my_role].clone());
+                send_to_all(session, &my_role, msg).await?;
+            }
+            (None, false) => {
+                session.network().increase_round_counter()?; // We're not sending, but we must increase the round counter to stay in sync
+            }
+            (_, _) => {
+                return Err(anyhow_error_and_log(
+                    "A sender must have a value in reliable broadcast".to_string(),
+                ));
+            }
+        }
+
+        // The error we propagate here is if sender IDs and roles cannot be tied together.
+        receive_contribution_from_all_senders(
+            &mut round1_contributions,
+            session,
+            &my_role,
+            sender_list,
+            &mut non_answering_parties,
+        )
+        .await?;
+
+        // Communication round 2
+        // Parties send Echo to the other parties
+        send_to_all(
+            session,
+            &my_role,
+            NetworkValue::EchoBatch(round1_contributions.clone()),
+        )
+        .await?;
+
+        // Parties receive Echo from others and process them,
+        // if there are enough Echo messages then they will cast a vote in subsequent rounds
+        // adding own echo to the map
+        let mut echos_count: HashMap<(Role, BroadcastValue<Z>), u32> = round1_contributions
+            .iter()
+            .map(|(k, v)| ((*k, v.clone()), 1))
+            .collect();
+        // receive echos from all parties,
+        // updates the echos_count and outputs the values I should vote for
+        let mut registered_votes = receive_echos_from_all_batched(
+            session,
+            &my_role,
+            &mut non_answering_parties,
+            &mut echos_count,
+        )
+        .await?;
+
+        let mut map_hash_to_value: HashMap<(Role, BcastHash), BroadcastValue<Z>> = echos_count
+            .into_iter()
+            .map(|((role, value), _)| ((role, value.to_bcast_hash()), value))
+            .collect();
+        // Communication round 3 onward
+        // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
+        // Here propagate error if my own casted hashmap does not contain the expected party's id
+        let mut casted_vote: HashMap<Role, bool> =
+            sender_list.iter().map(|role| (*role, false)).collect();
+
+        cast_threshold_vote::<Z, R, B>(session, &my_role, &registered_votes, 1).await?;
+
+        //Keep track of which instances of bcast we already voted for so we don't vote twice
+        for ((role, _), _) in registered_votes.iter() {
+            let casted_vote_role = casted_vote.get_mut(role).ok_or_else(|| {
+                anyhow_error_and_log(format!("Can't retrieve whether I ({role}) casted a vote"))
             })?;
-
-            bcast_data.insert(role, value);
-        }
-    }
-    Ok(bcast_data)
-}
-
-/// **All** parties Pi want to **reliably** broadcast a value Vi to all the other parties
-///
-/// Function returns a map bcast_data: Role => Value such that
-/// all players have the broadcasted values inside the map: bcast_data\[Pj] = Vj for all j in [n].
-/// This function does not handle corrupt parties.
-pub async fn broadcast_from_all<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
-    session: &B,
-    vi: Option<BroadcastValue<Z>>,
-) -> anyhow::Result<RoleValueMap<Z>> {
-    let sender_list = session.role_assignments().clone().into_keys().collect_vec();
-    reliable_broadcast(session, &sender_list, vi).await
-}
-
-/// Execute a [broadcast_from_all] in the presence of corrupt parties.
-///
-/// Parties in `corrupt_roles` are ignored during the execution and if any new corruptions are detected then they are added to `corrupt_roles`
-/// WARNING: It is CRUCIAL that the corrupt roles are ignored, as otherwise they could cause a DoS attack with the current logic of the functions using this method.
-pub async fn broadcast_from_all_w_corruption<
-    Z: Ring,
-    R: Rng + CryptoRng,
-    Ses: BaseSessionHandles<R>,
->(
-    session: &mut Ses,
-    vi: BroadcastValue<Z>,
-) -> anyhow::Result<RoleValueMap<Z>> {
-    let bcast_type = BroadcastType::All(vi);
-    broadcast_w_corruption_helper(session, bcast_type).await
-}
-
-/// Execute a [broadcast] from a (sub-)set of parties in the presence of corrupt parties.
-///
-/// Parties in `corrupt_roles` are ignored during the execution and if any new corruptions are detected then they are added to `corrupt_roles`
-/// WARNING: It is CRUCIAL that the corrupt roles are ignored, as otherwise they could cause a DoS attack with the current logic of the functions using this method.
-pub async fn broadcast_w_corruption<Z: Ring, R: Rng + CryptoRng, Ses: BaseSessionHandles<R>>(
-    session: &mut Ses,
-    sender_list: &[Role],
-    vi: Option<BroadcastValue<Z>>,
-) -> anyhow::Result<RoleValueMap<Z>> {
-    let bcast_type = BroadcastType::Standard(sender_list, vi);
-    broadcast_w_corruption_helper(session, bcast_type).await
-}
-
-enum BroadcastType<'a, Z: Zero + Eq> {
-    All(BroadcastValue<Z>),
-    Standard(&'a [Role], Option<BroadcastValue<Z>>),
-}
-
-/// Executes a reliable broadcast either from all parties or from a single party,
-/// depending on the `bcast_type`, handling corrupt parties
-#[instrument(name= "Syn-Bcast-Corrupt",skip(session,bcast_type),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()))]
-async fn broadcast_w_corruption_helper<Z: Ring, R: Rng + CryptoRng, Ses: BaseSessionHandles<R>>(
-    session: &mut Ses,
-    bcast_type: BroadcastType<'_, Z>,
-) -> anyhow::Result<RoleValueMap<Z>> {
-    let sender_list = match &bcast_type {
-        BroadcastType::All(_) => session.role_assignments().keys().cloned().collect_vec(),
-        BroadcastType::Standard(roles, _) => roles.to_vec(),
-    };
-
-    // Remove corrupt parties from the current session
-    let old_role_assignments = session.role_assignments().clone();
-    let mut new_role_assignments = session.role_assignments().clone();
-    session.corrupt_roles().iter().for_each(|r| {
-        tracing::warn!("I'm {:?}, removing corrupt player {r}", session.my_role());
-        new_role_assignments.remove(r);
-    });
-
-    session.set_role_assignments(new_role_assignments);
-    let mut broadcast_res = match bcast_type {
-        BroadcastType::All(vi) => broadcast_from_all(session, Some(vi)).await?,
-        BroadcastType::Standard(roles, vi) => reliable_broadcast(session, roles, vi).await?,
-    };
-    session.set_role_assignments(old_role_assignments);
-
-    // Add bot for the parties which were already corrupt before the bcast
-    for role in session.corrupt_roles() {
-        broadcast_res.insert(*role, BroadcastValue::Bot);
-    }
-
-    // Note that the sender list is computed at the start
-    // which differs depending on the broadcast type
-    for role in sender_list {
-        // Small optimization: the corrupt senders can be skipped
-        if session.corrupt_roles().contains(&role) {
-            continue;
+            if *casted_vote_role {
+                return Err(anyhow_error_and_log(
+                    "Trying to cast two votes for the same sender!".to_string(),
+                ));
+            }
+            *casted_vote_role = true;
         }
 
-        // Each party that was supposed to broadcast but where the parties did not consistently agree on the result
-        // is added to the set of corrupt parties
-        if let BroadcastValue::Bot = broadcast_res.get(&role).ok_or_else(|| {
-            anyhow_error_and_log(format!("Cannot find {role} in broadcast's result."))
-        })? {
-            session.add_corrupt(role)?;
+        // receive votes from the other parties, if we have at least T for a message m associated to a party Pi
+        // then we know for sure that Pi has broadcasted message m
+        gather_votes::<Z, R, B>(
+            session,
+            &my_role,
+            &mut registered_votes,
+            &mut casted_vote,
+            &mut non_answering_parties,
+        )
+        .await?;
+        for ((role, value), hits) in registered_votes.into_iter() {
+            if hits >= min_honest_nodes {
+                //Retrieve the actual data from the hash
+                let value = map_hash_to_value.remove(&(role, value)).ok_or_else(|| {
+                    anyhow_error_and_log(format!(
+                        "Can't retrieve the value from the hash in broadcast. Role {role}.",
+                    ))
+                })?;
+
+                bcast_data.insert(role, value);
+            }
         }
+        Ok(bcast_data)
     }
-    Ok(broadcast_res)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
+    use crate::execution::runtime::party::Identity;
     use crate::execution::runtime::session::ParameterHandles;
     use crate::execution::runtime::test_runtime::{
         generate_fixed_identities, DistributedTestRuntime,
@@ -701,6 +626,7 @@ mod tests {
     use itertools::Itertools;
     use rand::SeedableRng;
     use std::num::Wrapping;
+    use std::sync::Arc;
 
     fn legitimate_broadcast<Z: Ring, const EXTENSION_DEGREE: usize>(
         sender_parties: &[Role],
@@ -733,9 +659,12 @@ mod tests {
         if identities.len() == sender_parties.len() {
             for (party_no, my_data) in input_values.iter().cloned().enumerate() {
                 let session = test_runtime.base_session_for_party(session_id, party_no, None);
-                set.spawn(
-                    async move { broadcast_from_all(&session, Some(my_data)).await.unwrap() },
-                );
+                set.spawn(async move {
+                    SyncReliableBroadcast::default()
+                        .broadcast_from_all(&session, my_data)
+                        .await
+                        .unwrap()
+                });
             }
         } else {
             for (party_no, my_data) in input_values.iter().cloned().enumerate() {
@@ -743,13 +672,15 @@ mod tests {
                 let sender_list = sender_parties.to_vec();
                 if sender_parties.contains(&Role::indexed_by_zero(party_no)) {
                     set.spawn(async move {
-                        reliable_broadcast(&session, &sender_list, Some(my_data))
+                        SyncReliableBroadcast::default()
+                            .execute(&session, &sender_list, Some(my_data))
                             .await
                             .unwrap()
                     });
                 } else {
                     set.spawn(async move {
-                        reliable_broadcast(&session, &sender_list, None)
+                        SyncReliableBroadcast::default()
+                            .execute(&session, &sender_list, None)
                             .await
                             .unwrap()
                     });
@@ -873,9 +804,12 @@ mod tests {
                 Some(AesRng::seed_from_u64(0)),
             );
             if party_no != 0 {
-                set.spawn(
-                    async move { broadcast_from_all(&session, Some(my_data)).await.unwrap() },
-                );
+                set.spawn(async move {
+                    SyncReliableBroadcast::default()
+                        .broadcast_from_all(&session, my_data)
+                        .await
+                        .unwrap()
+                });
             }
         }
 
@@ -904,7 +838,7 @@ mod tests {
 
     /// Test that the broadcast with disputes ensures that corrupt parties get excluded from the broadcast execution
     #[test]
-    fn test_broadcast_w_corruption() {
+    fn test_broadcast_w_corrupt_set_update() {
         let num_parties = 4;
         let msg = BroadcastValue::from(ResiduePolyF4Z128::from_scalar(Wrapping(42)));
         let identities = generate_fixed_identities(num_parties);
@@ -930,7 +864,9 @@ mod tests {
                 let cur_msg = msg.clone();
 
                 set.spawn(async move {
-                    let res = broadcast_from_all_w_corruption(&mut session, cur_msg).await;
+                    let res = SyncReliableBroadcast::default()
+                        .broadcast_from_all_w_corrupt_set_update(&mut session, cur_msg)
+                        .await;
                     // Check no new corruptions are added to the honest parties view
                     if party_id != corrupt_role.zero_based() {
                         assert_eq!(1, session.corrupt_roles().len());
@@ -978,7 +914,7 @@ mod tests {
     async fn cheater_broadcast_strategy_1<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
         session: &B,
         sender_list: &[Role],
-        vec_vi: Option<Vec<BroadcastValue<Z>>>,
+        vec_messages: Option<Vec<BroadcastValue<Z>>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
         let num_parties = session.num_parties();
         if sender_list.is_empty() {
@@ -1002,16 +938,16 @@ mod tests {
         // The send calls are followed by receive to get the incoming messages from the others
         let mut round1_data = HashMap::<Role, BroadcastValue<Z>>::new();
         session.network().increase_round_counter()?;
-        match (vec_vi.clone(), is_sender) {
-            (Some(vec_vi), true) => {
-                bcast_data.insert(my_role, vec_vi[1].clone());
+        match (vec_messages.clone(), is_sender) {
+            (Some(vec_messages), true) => {
+                bcast_data.insert(my_role, vec_messages[1].clone());
                 round1_data.insert(my_role, bcast_data[&my_role].clone());
                 for (other_role, other_identity) in session.role_assignments().iter() {
                     let networking = Arc::clone(session.network());
-                    let msg = NetworkValue::Send(vec_vi[other_role.zero_based()].clone());
+                    let msg = NetworkValue::Send(vec_messages[other_role.zero_based()].clone());
                     tracing::debug!(
                         "As malicious sender {my_role}, sending {:?} to {other_role}",
-                        vec_vi[other_role.zero_based()]
+                        vec_messages[other_role.zero_based()]
                     );
                     let other_id = other_identity.clone();
                     if &my_role != other_role {
@@ -1063,7 +999,10 @@ mod tests {
         // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
         // As cheater, voting for something even though I should not
         registered_votes.insert(
-            (Role::indexed_by_one(2), vec_vi.unwrap()[1].to_bcast_hash()),
+            (
+                Role::indexed_by_one(2),
+                vec_messages.unwrap()[1].to_bcast_hash(),
+            ),
             1,
         );
         let mut casted_vote: HashMap<Role, bool> = session
@@ -1147,7 +1086,9 @@ mod tests {
                 });
             } else {
                 set.spawn(async move {
-                    let res = broadcast_from_all_w_corruption(&mut session, cur_msg).await;
+                    let res = SyncReliableBroadcast::default()
+                        .broadcast_from_all_w_corrupt_set_update(&mut session, cur_msg)
+                        .await;
                     // Check cheater is added to corrupt roles
                     assert_eq!(1, session.corrupt_roles().len());
                     (party_id, res)
@@ -1193,7 +1134,7 @@ mod tests {
     async fn cheater_broadcast_strategy_2<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
         session: &B,
         sender_list: &[Role],
-        vec_vi: Option<Vec<BroadcastValue<Z>>>,
+        vec_messages: Option<Vec<BroadcastValue<Z>>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
         if sender_list.is_empty() {
             return Err(anyhow_error_and_log(
@@ -1213,18 +1154,18 @@ mod tests {
         // The send calls are followed by receive to get the incoming messages from the others
         let mut round1_data = HashMap::<Role, BroadcastValue<Z>>::new();
         session.network().increase_round_counter()?;
-        match (vec_vi.clone(), is_sender) {
-            (Some(vec_vi), true) => {
-                bcast_data.insert(my_role, vec_vi[1].clone());
+        match (vec_messages.clone(), is_sender) {
+            (Some(vec_messages), true) => {
+                bcast_data.insert(my_role, vec_messages[1].clone());
                 round1_data.insert(my_role, bcast_data[&my_role].clone());
                 for (other_role, other_identity) in session.role_assignments().iter() {
                     let networking = Arc::clone(session.network());
                     let other_id = other_identity.clone();
                     if &my_role != other_role && other_role.one_based() > 2 {
-                        let msg = NetworkValue::Send(vec_vi[1].clone());
+                        let msg = NetworkValue::Send(vec_messages[1].clone());
                         networking.send(msg.to_network(), &other_id).await?;
                     } else if other_role.one_based() == 2 {
-                        let msg = NetworkValue::Send(vec_vi[0].clone());
+                        let msg = NetworkValue::Send(vec_messages[0].clone());
                         networking.send(msg.to_network(), &other_id).await?;
                     }
                 }
@@ -1252,7 +1193,7 @@ mod tests {
         // Parties receive Echo from others and process them, if there are enough Echo messages then they can cast a vote
         session.network().increase_round_counter()?;
         let mut msg_to_p2 = round1_data.clone();
-        msg_to_p2.insert(my_role, vec_vi.clone().unwrap()[0].clone());
+        msg_to_p2.insert(my_role, vec_messages.clone().unwrap()[0].clone());
         let msg_to_others = round1_data;
         for (other_role, other_identity) in session.role_assignments().iter() {
             let networking = Arc::clone(session.network());
@@ -1324,7 +1265,9 @@ mod tests {
                 });
             } else {
                 set.spawn(async move {
-                    let res = broadcast_from_all_w_corruption(&mut session, cur_msg).await;
+                    let res = SyncReliableBroadcast::default()
+                        .broadcast_from_all_w_corrupt_set_update(&mut session, cur_msg)
+                        .await;
                     // Check cheater is not added to corrupt roles
                     assert_eq!(0, session.corrupt_roles().len());
                     (party_id, res)

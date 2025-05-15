@@ -4,12 +4,18 @@ use rand::SeedableRng;
 use rand::{CryptoRng, Rng};
 use tracing::instrument;
 
-use super::vss::Vss;
+use super::vss::{SecureVss, Vss};
 use crate::algebra::structure_traits::{ErrorCorrect, Ring, RingEmbed};
 use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{runtime::session::LargeSessionHandles, sharing::open::robust_open_to_all},
 };
+
+/// Secure implementation of Coinflip as defined in NIST document
+///
+/// In particular, relies on the secure version of
+/// the VSS protocol defined in [`SecureVss`]
+pub type SecureCoinflip = RealCoinflip<SecureVss>;
 
 #[async_trait]
 pub trait Coinflip: Send + Sync + Clone + Default {
@@ -85,7 +91,7 @@ impl<V: Vss> Coinflip for RealCoinflip<V> {
 #[cfg(test)]
 pub(crate) mod tests {
 
-    use super::{Coinflip, DummyCoinflip, RealCoinflip};
+    use super::{Coinflip, DummyCoinflip, RealCoinflip, SecureCoinflip};
     #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::vss::tests::{
         DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
@@ -93,7 +99,8 @@ pub(crate) mod tests {
     use crate::{
         algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         execution::{
-            large_execution::vss::{RealVss, Vss},
+            communication::broadcast::SyncReliableBroadcast,
+            large_execution::vss::{SecureVss, Vss},
             runtime::{
                 party::{Identity, Role},
                 session::{
@@ -253,7 +260,7 @@ pub(crate) mod tests {
         malicious_coinflip: C,
     ) {
         let mut task_honest = |mut session: LargeSession| async move {
-            let real_coinflip = RealCoinflip::<RealVss>::default();
+            let real_coinflip = SecureCoinflip::default();
             (
                 session.my_role().unwrap().zero_based(),
                 real_coinflip
@@ -334,7 +341,7 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_honest(7, 2, Some(7)))]
     #[case(TestingParameters::init_honest(10, 3, Some(8)))]
     fn test_coinflip_honest_z128(#[case] params: TestingParameters) {
-        let malicious_coinflip = RealCoinflip::<RealVss>::default();
+        let malicious_coinflip = SecureCoinflip::default();
         test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip.clone(),
@@ -349,13 +356,13 @@ pub(crate) mod tests {
     //No matter the strategy we expect all honest parties to output the same thing
     //We also specify whether we expect the cheating strategy to be detected, if so we check we do detect the cheaters
     #[rstest]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), RealVss::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), SecureVss::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::init(&SyncReliableBroadcast::default()))]
+    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
     #[cfg(feature = "slow_tests")]
     fn test_coinflip_dropout<V: Vss + 'static>(
         #[case] params: TestingParameters,
@@ -380,11 +387,11 @@ pub(crate) mod tests {
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssFromStart::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::init(&SyncReliableBroadcast::default()))]
+    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
     #[cfg(feature = "slow_tests")]
     fn test_coinflip_malicious_vss<V: Vss + 'static>(
         #[case] params: TestingParameters,
@@ -407,13 +414,13 @@ pub(crate) mod tests {
     //Test malicious coinflip with all kinds of strategies for VSS (honest and malicious)
     //Again, we always expect the honest parties to agree on the output
     #[rstest]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), RealVss::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), SecureVss::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::init(&SyncReliableBroadcast::default()))]
+    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
     #[cfg(feature = "slow_tests")]
     fn test_malicious_coinflip_malicious_vss<V: Vss + 'static>(
         #[case] params: TestingParameters,

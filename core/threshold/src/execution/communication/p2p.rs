@@ -1,12 +1,19 @@
 use rand::{CryptoRng, Rng};
-use std::{collections::HashMap, sync::Arc};
-use tokio::{task::JoinSet, time::timeout_at};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+use tokio::{
+    task::JoinSet,
+    time::{error::Elapsed, timeout_at},
+};
+use tracing::Instrument;
 
 use crate::{
     algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{
-        party::Role,
+        party::{Identity, Role},
         session::{BaseSessionHandles, LargeSessionHandles},
     },
     networking::value::NetworkValue,
@@ -214,4 +221,110 @@ fn internal_receive_from_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHand
         }
     }
     Ok(())
+}
+
+/// Send to all parties and automatically increase round counter
+pub async fn send_to_all<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    session: &B,
+    sender: &Role,
+    msg: NetworkValue<Z>,
+) -> anyhow::Result<()> {
+    let serialized_message = msg.to_network();
+
+    session.network().increase_round_counter()?;
+    for (other_role, other_identity) in session.role_assignments().iter() {
+        let networking = Arc::clone(session.network());
+        let serialized_message = serialized_message.clone();
+        let other_id = other_identity.clone();
+        if sender != other_role {
+            networking.send(serialized_message, &other_id).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Spawns receive tasks and matches the incoming messages according to the match_network_value_fn.
+///
+/// The function makes sure that it process the correct type of message, i.e.
+/// On the receiving end, a party processes a message of a single variant of the [NetworkValue] enum
+/// and errors out if message is of a different form. This is helpful so that we can peel the message
+/// from the inside enum.
+///
+/// **NOTE: We do not try to receive any value from the non_answering_parties set.**
+pub fn generic_receive_from_all_senders<V, Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
+    session: &B,
+    receiver: &Role,
+    sender_list: &[Role],
+    non_answering_parties: Option<&HashSet<Role>>,
+    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Identity) -> anyhow::Result<V>,
+) -> anyhow::Result<()>
+where
+    V: std::marker::Send + 'static,
+{
+    let binding = HashSet::new();
+    let non_answering_parties = non_answering_parties.unwrap_or(&binding);
+    for sender in sender_list {
+        let sender = *sender;
+        if !non_answering_parties.contains(&sender) && receiver != &sender {
+            //If role and IDs can't be tied, propagate error
+            let sender_id = session
+                .role_assignments()
+                .get(&sender)
+                .ok_or_else(|| {
+                    anyhow_error_and_log(format!(
+                        "Can't find sender's id {sender} in session {}",
+                        session.session_id()
+                    ))
+                })?
+                .clone();
+
+            let networking = Arc::clone(session.network());
+            let identity = session.own_identity();
+            let my_role = session.my_role()?;
+            let timeout = session.network().get_timeout_current_round()?;
+            let task = async move {
+                let stripped_message = timeout_at(timeout, networking.receive(&sender_id)).await;
+                match stripped_message {
+                    Ok(stripped_message) => {
+                        let stripped_message =
+                            match NetworkValue::<Z>::from_network(stripped_message) {
+                                Ok(x) => match_network_value_fn(x, &identity),
+                                Err(e) => Err(e),
+                            };
+                        Ok((sender, stripped_message))
+                    }
+                    Err(e) => {
+                        tracing::warn!("Sender {sender} timed out when sending to {my_role}");
+                        Err(e)
+                    }
+                }
+            }
+            .instrument(tracing::Span::current());
+            jobs.spawn(task);
+        }
+    }
+    Ok(())
+}
+
+/// Wrapper around [generic_receive_from_all_senders] where the sender list is all the parties.
+pub fn generic_receive_from_all<V, Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
+    session: &B,
+    receiver: &Role,
+    non_answering_parties: Option<&HashSet<Role>>,
+    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Identity) -> anyhow::Result<V>,
+) -> anyhow::Result<()>
+where
+    V: std::marker::Send + 'static,
+{
+    let sender_list: Vec<Role> = session.role_assignments().keys().cloned().collect();
+    generic_receive_from_all_senders(
+        jobs,
+        session,
+        receiver,
+        &sender_list,
+        non_answering_parties,
+        match_network_value_fn,
+    )
 }

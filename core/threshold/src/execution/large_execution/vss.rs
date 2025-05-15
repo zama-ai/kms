@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use tokio::{task::JoinSet, time::error::Elapsed};
 use tracing::instrument;
 
-use crate::execution::communication::broadcast::broadcast_from_all_w_corruption;
+use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
 use crate::{
     algebra::{
         bivariate::{BivariateEval, BivariatePoly},
@@ -15,11 +15,17 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::{broadcast::generic_receive_from_all, p2p::send_to_parties},
+        communication::p2p::{generic_receive_from_all, send_to_parties},
         runtime::{party::Role, session::BaseSessionHandles},
     },
     networking::value::{BroadcastValue, NetworkValue},
 };
+
+/// Secure implementation of VSS as defined in NIST document
+///
+/// In particular, relies on the secure version of
+/// the broadcast protocol defined in [`SyncReliableBroadcast`]
+pub type SecureVss = RealVss<SyncReliableBroadcast>;
 
 #[async_trait]
 pub trait Vss: Send + Sync + Default + Clone {
@@ -193,10 +199,12 @@ impl Vss for DummyVss {
 
 //TODO: Once ready, add SyncBroadcast via generic and trait bounds
 #[derive(Default, Clone)]
-pub struct RealVss {}
+pub struct RealVss<BCast: Broadcast> {
+    broadcast: BCast,
+}
 
 #[async_trait]
-impl Vss for RealVss {
+impl<BCast: Broadcast> Vss for RealVss<BCast> {
     #[instrument(name="VSS", skip(self,session, secrets),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()), batch_size= ?secrets.len())]
     async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         &self,
@@ -206,9 +214,16 @@ impl Vss for RealVss {
         let num_secrets = secrets.len();
         let (bivariate_poly, map_double_shares) = sample_secret_polys(session, secrets)?;
         let vss = round_1(session, num_secrets, bivariate_poly, map_double_shares).await?;
-        let verification_map = round_2(session, num_secrets, &vss).await?;
-        let unhappy_vec = round_3(session, num_secrets, &vss, &verification_map).await?;
-        Ok(round_4(session, num_secrets, &vss, unhappy_vec).await?)
+        let verification_map = round_2(session, num_secrets, &vss, &self.broadcast).await?;
+        let unhappy_vec = round_3(
+            session,
+            num_secrets,
+            &vss,
+            &verification_map,
+            &self.broadcast,
+        )
+        .await?;
+        Ok(round_4(session, num_secrets, &vss, unhappy_vec, &self.broadcast).await?)
     }
 }
 
@@ -344,10 +359,16 @@ async fn round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     })
 }
 
-async fn round_2<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+async fn round_2<
+    Z: Ring + RingEmbed,
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+    BCast: Broadcast,
+>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
+    broadcast: &BCast,
 ) -> anyhow::Result<HashMap<Role, Option<Vec<VerificationValues<Z>>>>> {
     let my_role = session.my_role()?;
     let num_parties = session.num_parties();
@@ -377,9 +398,13 @@ async fn round_2<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<
         "Corrupt set before round2 broadcast is {:?}",
         session.corrupt_roles()
     );
-    let bcast_data =
-        broadcast_from_all_w_corruption(session, BroadcastValue::Round2VSS(verification_vector))
-            .await?;
+
+    let bcast_data = broadcast
+        .broadcast_from_all_w_corrupt_set_update(
+            session,
+            BroadcastValue::Round2VSS(verification_vector),
+        )
+        .await?;
 
     //Do we want to use a filter map instead of a map to Option?
     let mut casted_bcast_data: HashMap<Role, Option<Vec<VerificationValues<Z>>>> = bcast_data
@@ -405,11 +430,17 @@ async fn round_2<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<
 // Role0 -> Some(v) with v indexed as v[dealer_idx][Pj index][secret_idx]
 // Role1 -> None means somethings wrong happened, consider all values to be 0
 //...
-async fn round_3<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+async fn round_3<
+    Z: Ring + RingEmbed,
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+    BCast: Broadcast,
+>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
     verification_map: &HashMap<Role, Option<Vec<VerificationValues<Z>>>>,
+    broadcast: &BCast,
 ) -> anyhow::Result<Vec<HashSet<Role>>> {
     let num_parties = session.num_parties();
     let own_role = session.my_role()?;
@@ -436,7 +467,9 @@ async fn round_3<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<
     //wont cause sync issue on round number since all honest parties agree on this set
     //(as it is the result of bcast in round 2)
     let bcast_settlements: HashMap<Role, BroadcastValue<Z>> = if !potentially_unhappy.is_empty() {
-        broadcast_from_all_w_corruption(session, BroadcastValue::Round3VSS(msg)).await?
+        broadcast
+            .broadcast_from_all_w_corrupt_set_update(session, BroadcastValue::Round3VSS(msg))
+            .await?
     } else {
         HashMap::<Role, BroadcastValue<Z>>::new()
     };
@@ -461,11 +494,17 @@ async fn round_3<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<
     Ok(unhappy_vec)
 }
 
-async fn round_4<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+async fn round_4<
+    Z: Ring + RingEmbed,
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+    BCast: Broadcast,
+>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
     unhappy_vec: Vec<HashSet<Role>>,
+    broadcast: &BCast,
 ) -> anyhow::Result<Vec<Vec<Z>>> {
     let mut msg = BTreeMap::<(u64, Role), ValueOrPoly<Z>>::new();
     let own_role = session.my_role()?;
@@ -502,7 +541,9 @@ async fn round_4<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<
         .fold(true, |acc, v| acc & v);
 
     let bcast_data = if !unhappy_vec_is_empty {
-        broadcast_from_all_w_corruption(session, BroadcastValue::Round4VSS(msg)).await?
+        broadcast
+            .broadcast_from_all_w_corrupt_set_update(session, BroadcastValue::Round4VSS(msg))
+            .await?
     } else {
         HashMap::<Role, BroadcastValue<Z>>::new()
     };
@@ -972,6 +1013,16 @@ pub(crate) mod tests {
         (identities, secrets)
     }
 
+    //TODO: When we actually have malicious strategies implemented for broadcast,
+    //test them in VSS
+    impl<BCast: Broadcast> RealVss<BCast> {
+        pub fn init(broadcast_strategy: &BCast) -> Self {
+            Self {
+                broadcast: broadcast_strategy.clone(),
+            }
+        }
+    }
+
     #[test]
     fn test_dummy() {
         let num_secrets = 2;
@@ -1187,19 +1238,28 @@ pub(crate) mod tests {
     ///Does nothing, and output an empty Vec
     #[derive(Default, Clone)]
     pub(crate) struct DroppingVssFromStart {}
+
     ///Does round 1 and then drops
     #[derive(Default, Clone)]
     pub(crate) struct DroppingVssAfterR1 {}
+
     ///Does round 1 and 2 and then drops
     #[derive(Default, Clone)]
-    pub(crate) struct DroppingVssAfterR2 {}
+    pub(crate) struct DroppingVssAfterR2<BCast: Broadcast> {
+        broadcast: BCast,
+    }
+
     ///Participate in the protocol, but lies to some parties in the first round
     #[derive(Default, Clone)]
-    pub(crate) struct MaliciousVssR1 {
+    pub(crate) struct MaliciousVssR1<BCast: Broadcast> {
+        broadcast: BCast,
         roles_to_lie_to: Vec<Role>,
     }
+
     #[derive(Default, Clone)]
-    pub(crate) struct WrongSecretLenVss {}
+    pub(crate) struct WrongSecretLenVss<BCast: Broadcast> {
+        broadcast: BCast,
+    }
 
     #[async_trait]
     impl Vss for DroppingVssFromStart {
@@ -1244,8 +1304,16 @@ pub(crate) mod tests {
         }
     }
 
+    impl<BCast: Broadcast> DroppingVssAfterR2<BCast> {
+        pub fn init(broadcast_strategy: &BCast) -> Self {
+            Self {
+                broadcast: broadcast_strategy.clone(),
+            }
+        }
+    }
+
     #[async_trait]
-    impl Vss for DroppingVssAfterR2 {
+    impl<BCast: Broadcast> Vss for DroppingVssAfterR2<BCast> {
         //Do round1 and round2, and output an empty Vec
         async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             &self,
@@ -1255,7 +1323,7 @@ pub(crate) mod tests {
             let (bivariate_poly, map_double_shares) = sample_secret_polys(session, secrets)?;
             let num_secrets = secrets.len();
             let vss = round_1(session, num_secrets, bivariate_poly, map_double_shares).await?;
-            let _ = round_2(session, num_secrets, &vss).await?;
+            let _ = round_2(session, num_secrets, &vss, &self.broadcast).await?;
             Ok(Vec::new())
         }
 
@@ -1269,9 +1337,10 @@ pub(crate) mod tests {
         }
     }
 
-    impl MaliciousVssR1 {
-        pub fn init(roles_from_zero: &[usize]) -> Self {
+    impl<BCast: Broadcast> MaliciousVssR1<BCast> {
+        pub fn init(broadcast_strategy: &BCast, roles_from_zero: &[usize]) -> Self {
             Self {
+                broadcast: broadcast_strategy.clone(),
                 roles_to_lie_to: roles_from_zero
                     .iter()
                     .map(|id_role| Role::indexed_by_zero(*id_role))
@@ -1281,7 +1350,7 @@ pub(crate) mod tests {
     }
 
     #[async_trait]
-    impl Vss for MaliciousVssR1 {
+    impl<BCast: Broadcast> Vss for MaliciousVssR1<BCast> {
         async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             &self,
             session: &mut S,
@@ -1290,9 +1359,16 @@ pub(crate) mod tests {
             //Execute a malicious round 1
             let num_secrets = secrets.len();
             let vss = malicious_round_1(session, secrets, &self.roles_to_lie_to).await?;
-            let verification_map = round_2(session, num_secrets, &vss).await?;
-            let unhappy_vec = round_3(session, num_secrets, &vss, &verification_map).await?;
-            Ok(round_4(session, num_secrets, &vss, unhappy_vec).await?)
+            let verification_map = round_2(session, num_secrets, &vss, &self.broadcast).await?;
+            let unhappy_vec = round_3(
+                session,
+                num_secrets,
+                &vss,
+                &verification_map,
+                &self.broadcast,
+            )
+            .await?;
+            Ok(round_4(session, num_secrets, &vss, unhappy_vec, &self.broadcast).await?)
         }
     }
 
@@ -1361,7 +1437,7 @@ pub(crate) mod tests {
         num_secrets: usize,
     ) {
         let mut task_honest = |mut session: SmallSession<Z>, _bot: Option<String>| async move {
-            let real_vss = RealVss::default();
+            let real_vss = SecureVss::default();
             let secrets = (0..num_secrets)
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
@@ -1405,7 +1481,7 @@ pub(crate) mod tests {
     }
 
     #[async_trait]
-    impl Vss for WrongSecretLenVss {
+    impl<BCast: Broadcast> Vss for WrongSecretLenVss<BCast> {
         // The adversary will halve the number of secrets
         async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             &self,
@@ -1417,9 +1493,16 @@ pub(crate) mod tests {
             let (bivariate_poly, map_double_shares) =
                 sample_secret_polys(session, &secrets[..num_secrets])?;
             let vss = round_1(session, num_secrets, bivariate_poly, map_double_shares).await?;
-            let verification_map = round_2(session, num_secrets, &vss).await?;
-            let unhappy_vec = round_3(session, num_secrets, &vss, &verification_map).await?;
-            Ok(round_4(session, num_secrets, &vss, unhappy_vec).await?)
+            let verification_map = round_2(session, num_secrets, &vss, &self.broadcast).await?;
+            let unhappy_vec = round_3(
+                session,
+                num_secrets,
+                &vss,
+                &verification_map,
+                &self.broadcast,
+            )
+            .await?;
+            Ok(round_4(session, num_secrets, &vss, unhappy_vec, &self.broadcast).await?)
         }
     }
 
@@ -1445,7 +1528,7 @@ pub(crate) mod tests {
         malicious_vss: V,
     ) {
         let mut task_honest = |mut session: LargeSession| async move {
-            let real_vss = RealVss::default();
+            let real_vss = SecureVss::default();
             let secrets = (0..num_secrets)
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
@@ -1526,7 +1609,7 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_honest(7, 2, Some(6)), 5)]
     #[case(TestingParameters::init_honest(10, 3, Some(7)), 5)]
     fn test_vss_honest_z128(#[case] params: TestingParameters, #[case] num_secrets: usize) {
-        let malicious_vss = RealVss::default();
+        let malicious_vss = SecureVss::default();
         test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
@@ -1543,8 +1626,14 @@ pub(crate) mod tests {
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 4)]
     #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true,None), 4)]
-    fn test_vss_wrong_secret_len(#[case] params: TestingParameters, #[case] num_secrets: usize) {
-        let wrong_secret_len_vss = WrongSecretLenVss::default();
+    fn test_vss_wrong_secret_len<BCast: Broadcast + 'static>(
+        #[case] params: TestingParameters,
+        #[case] num_secrets: usize,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
+    ) {
+        let wrong_secret_len_vss = WrongSecretLenVss {
+            broadcast: broadcast_strategy,
+        };
         test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
@@ -1601,9 +1690,14 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7,2,&[0,2],&[3,1],&[],false,None), 2)]
     #[case(TestingParameters::init(7,2,&[1,3],&[4,2,0],&[],true,None), 2)]
     #[case(TestingParameters::init(7,2,&[5,6],&[3,1,0,2],&[],true,None), 2)]
-    fn test_vss_malicious_r1(#[case] params: TestingParameters, #[case] num_secrets: usize) {
+    fn test_vss_malicious_r1<BCast: Broadcast + 'static>(
+        #[case] params: TestingParameters,
+        #[case] num_secrets: usize,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
+    ) {
         let malicious_vss_r1 = MaliciousVssR1 {
             roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
+            broadcast: broadcast_strategy,
         };
         test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
@@ -1655,8 +1749,14 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7,2,&[0,2],&[],&[],false,None), 2)]
     #[case(TestingParameters::init(7,2,&[1,3],&[],&[],false,None), 2)]
     #[case(TestingParameters::init(7,2,&[5,6],&[],&[],false,None), 2)]
-    fn test_dropout_r3(#[case] params: TestingParameters, #[case] num_secrets: usize) {
-        let dropping_vss_after_r2 = DroppingVssAfterR2::default();
+    fn test_dropout_r3<BCast: Broadcast + 'static>(
+        #[case] params: TestingParameters,
+        #[case] num_secrets: usize,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
+    ) {
+        let dropping_vss_after_r2 = DroppingVssAfterR2 {
+            broadcast: broadcast_strategy,
+        };
         test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,

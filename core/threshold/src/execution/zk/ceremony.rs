@@ -2,7 +2,8 @@ use crate::{
     algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::broadcast::broadcast_w_corruption, runtime::session::BaseSessionHandles,
+        communication::broadcast::{Broadcast, SyncReliableBroadcast},
+        runtime::session::BaseSessionHandles,
     },
     networking::value::BroadcastValue,
 };
@@ -29,6 +30,8 @@ use super::constants::{
     ZK_DSEP_HASH_PADDED, ZK_DSEP_LMAP_PADDED, ZK_DSEP_PHI_PADDED, ZK_DSEP_R_PADDED,
     ZK_DSEP_T_PADDED, ZK_DSEP_W_PADDED, ZK_DSEP_XI_PADDED, ZK_DSEP_Z_PADDED,
 };
+
+pub type SecureCeremony = RealCeremony<SyncReliableBroadcast>;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct PartialProof {
@@ -693,10 +696,12 @@ pub trait Ceremony: Send + Sync + Clone + Default {
 }
 
 #[derive(Default, Clone)]
-pub struct RealCeremony {}
+pub struct RealCeremony<BCast: Broadcast> {
+    broadcast: BCast,
+}
 
 #[async_trait]
-impl Ceremony for RealCeremony {
+impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
     #[instrument(name = "CRS-Ceremony", skip_all, fields(sid=?session.session_id(),own_identity=?session.own_identity()))]
     async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         &self,
@@ -745,7 +750,10 @@ impl Ceremony for RealCeremony {
                 // nobody else should be broadcasting so we do not process results
                 // since I know I'm honest, this step should never fail since
                 // we're running a robust protocol
-                let _ = broadcast_w_corruption(session, &[my_role], Some(vi)).await?;
+                let _ = self
+                    .broadcast
+                    .broadcast_w_corrupt_set_update(session, vec![my_role], Some(vi))
+                    .await?;
 
                 // update our pp
                 pp = proof.new_pp;
@@ -756,7 +764,11 @@ impl Ceremony for RealCeremony {
                 );
             } else {
                 // do the following if it is not my turn to contribute
-                match broadcast_w_corruption::<Z, _, _>(session, &[*role], None).await {
+                match self
+                    .broadcast
+                    .broadcast_w_corrupt_set_update::<Z, _, _>(session, vec![*role], None)
+                    .await
+                {
                     Ok(res) => {
                         // reliable broadcast finished, we need to check the proof
                         // check that it is from the correct sender
@@ -858,7 +870,7 @@ mod tests {
 
     #[test]
     fn test_honest_crs_ceremony_secure() {
-        test_honest_crs_ceremony(RealCeremony::default)
+        test_honest_crs_ceremony(SecureCeremony::default)
     }
 
     #[test]
@@ -978,10 +990,12 @@ mod tests {
     }
 
     #[derive(Clone, Default)]
-    struct BadProofCeremony {}
+    struct BadProofCeremony<BCast: Broadcast> {
+        broadcast: BCast,
+    }
 
     #[async_trait]
-    impl Ceremony for BadProofCeremony {
+    impl<BCast: Broadcast> Ceremony for BadProofCeremony<BCast> {
         async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             &self,
             session: &mut S,
@@ -1004,10 +1018,15 @@ mod tests {
                     proof.h_pok += curve::Zp::ONE;
                     let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
 
-                    let _ = broadcast_w_corruption(session, &[my_role], Some(vi)).await?;
+                    let _ = self
+                        .broadcast
+                        .broadcast_w_corrupt_set_update(session, vec![my_role], Some(vi))
+                        .await?;
                     pp = proof.new_pp;
                 } else {
-                    let hm = broadcast_w_corruption::<Z, _, _>(session, &[*role], None)
+                    let hm = self
+                        .broadcast
+                        .broadcast_w_corrupt_set_update::<Z, _, _>(session, vec![*role], None)
                         .await
                         .unwrap();
                     let msg = hm.get(role).unwrap();
@@ -1022,10 +1041,12 @@ mod tests {
     }
 
     #[derive(Clone, Default)]
-    struct RushingCeremony {}
+    struct RushingCeremony<BCast: Broadcast> {
+        broadcast: BCast,
+    }
 
     #[async_trait]
-    impl Ceremony for RushingCeremony {
+    impl<BCast: Broadcast> Ceremony for RushingCeremony<BCast> {
         // this implements an adversary that rushes the protocol,
         // i.e., it starts before it is his turn to do run
         async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
@@ -1053,10 +1074,16 @@ mod tests {
                 let proof: PartialProof = make_partial_proof_deterministic(&pp, tau, round + 1, r);
                 let vi = BroadcastValue::PartialProof::<Z>(proof);
                 if role == &my_role {
-                    let _ = broadcast_w_corruption(session, &[my_role], Some(vi)).await?;
+                    let _ = self
+                        .broadcast
+                        .broadcast_w_corrupt_set_update(session, vec![my_role], Some(vi))
+                        .await?;
                 } else {
                     // the message sent by `my_role`, the adversary, should be ignored
-                    let _ = broadcast_w_corruption(session, &[my_role, *role], Some(vi)).await?;
+                    let _ = self
+                        .broadcast
+                        .broadcast_w_corrupt_set_update(session, vec![my_role, *role], Some(vi))
+                        .await?;
                 }
             }
 
@@ -1074,7 +1101,7 @@ mod tests {
         malicious_party: C,
     ) {
         let mut task_honest = |mut session: LargeSession| async move {
-            let real_ceremony = RealCeremony::default();
+            let real_ceremony = SecureCeremony::default();
             (
                 session.my_role().unwrap().zero_based(),
                 real_ceremony
@@ -1131,8 +1158,14 @@ mod tests {
     #[rstest]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
-    fn test_bad_proof_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
-        let malicious_party = BadProofCeremony::default();
+    fn test_bad_proof_ceremony<BCast: Broadcast + 'static>(
+        #[case] params: TestingParameters,
+        #[case] witness_dim: usize,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
+    ) {
+        let malicious_party = BadProofCeremony {
+            broadcast: broadcast_strategy,
+        };
         test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
             params.clone(),
             witness_dim,
@@ -1143,8 +1176,14 @@ mod tests {
     #[rstest]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
-    fn test_rushing_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
-        let malicious_party = RushingCeremony::default();
+    fn test_rushing_ceremony<BCast: Broadcast + 'static>(
+        #[case] params: TestingParameters,
+        #[case] witness_dim: usize,
+        #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
+    ) {
+        let malicious_party = RushingCeremony {
+            broadcast: broadcast_strategy,
+        };
         test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
             params.clone(),
             witness_dim,

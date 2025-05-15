@@ -6,7 +6,7 @@ use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use crate::execution::config::BatchParams;
 use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
 use crate::execution::endpoints::decryption::SnsRadixOrBoolCiphertext;
-use crate::execution::large_execution::offline::LargePreprocessing;
+use crate::execution::large_execution::offline::SecureLargePreprocessing;
 use crate::execution::online::preprocessing::create_memory_factory;
 use crate::execution::online::preprocessing::BitDecPreprocessing;
 use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
@@ -40,7 +40,6 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         constants::{LOG_B_SWITCH_SQUASH, STATSEC},
-        large_execution::offline::{RealLargePreprocessing, TrueDoubleSharing, TrueSingleSharing},
         runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
     },
 };
@@ -150,13 +149,7 @@ where
             randoms: num_preproc,
         };
 
-        let mut large_preproc = RealLargePreprocessing::init(
-            session,
-            batch_size,
-            TrueSingleSharing::default(),
-            TrueDoubleSharing::default(),
-        )
-        .await?;
+        let mut large_preproc = SecureLargePreprocessing::new(session, batch_size).await?;
 
         let mut sns_preprocessing = create_memory_factory().create_noise_flood_preprocessing();
         sns_preprocessing
@@ -610,17 +603,9 @@ where
         randoms: bitdec_preprocessing.num_required_bits(num_ctxts),
     };
 
-    let mut large_preprocessing = LargePreprocessing::<
-        ResiduePoly<Z64, EXTENSION_DEGREE>,
-        TrueSingleSharing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
-        TrueDoubleSharing<ResiduePoly<Z64, EXTENSION_DEGREE>>,
-    >::init(
-        session,
-        bitdec_batch,
-        TrueSingleSharing::default(),
-        TrueDoubleSharing::default(),
-    )
-    .await?;
+    let mut large_preprocessing =
+        SecureLargePreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(session, bitdec_batch)
+            .await?;
 
     bitdec_preprocessing
         .fill_from_base_preproc(

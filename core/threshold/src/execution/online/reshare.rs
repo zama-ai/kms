@@ -8,7 +8,7 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::broadcast::broadcast_from_all,
+        communication::broadcast::{Broadcast, SyncReliableBroadcast},
         config::BatchParams,
         endpoints::keygen::{
             CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet,
@@ -327,7 +327,9 @@ where
     // We are resharing to the same set,
     // so we go straight to the sync-broadcast
     let broadcast_value = BroadcastValue::RingVector(vj);
-    let broadcast_result = broadcast_from_all(session, Some(broadcast_value)).await?;
+    let broadcast_result = SyncReliableBroadcast::default()
+        .broadcast_from_all(session, broadcast_value)
+        .await?;
 
     // compute v_{i,j} - <r_{i,j}>^{S_2}_k, k = 0,1,...,n1-1
     let mut s_share_vec = vec![vec![]; share_count];

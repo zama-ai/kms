@@ -7,7 +7,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         config::BatchParams,
-        large_execution::offline::{LargePreprocessing, TrueDoubleSharing, TrueSingleSharing},
+        large_execution::offline::SecureLargePreprocessing,
         online::{
             gen_bits::{BitGenEven, RealBitGenEven},
             preprocessing::orchestration::progress_tracker::ProgressTracker,
@@ -152,13 +152,8 @@ impl<Z: ErrorCorrect + Invert + Derive> LargeSessionBitProducer<Z> {
             };
 
             for _ in 0..num_loops {
-                let mut preproc = LargePreprocessing::<Z, _, _>::init(
-                    &mut session,
-                    base_batch_size,
-                    TrueSingleSharing::default(),
-                    TrueDoubleSharing::default(),
-                )
-                .await?;
+                let mut preproc =
+                    SecureLargePreprocessing::<Z>::new(&mut session, base_batch_size).await?;
                 let bits =
                     RealBitGenEven::gen_bits_even(batch_size, &mut preproc, &mut session).await?;
 

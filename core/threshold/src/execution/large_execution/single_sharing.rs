@@ -1,4 +1,4 @@
-use super::local_single_share::LocalSingleShare;
+use super::local_single_share::{LocalSingleShare, SecureLocalSingleShare};
 use crate::{
     algebra::{
         bivariate::{compute_powers, MatrixMul},
@@ -13,6 +13,8 @@ use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use tracing::instrument;
+
+pub type SecureSingleSharing<Z> = RealSingleSharing<Z, SecureLocalSingleShare>;
 
 #[async_trait]
 pub trait SingleSharing<Z: Ring>: Send + Sync + Default + Clone {
@@ -178,11 +180,8 @@ pub(crate) mod tests {
         algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed, Sample},
         execution::{
             large_execution::{
-                coinflip::RealCoinflip,
-                local_single_share::{LocalSingleShare, RealLocalSingleShare},
-                share_dispute::RealShareDispute,
+                local_single_share::LocalSingleShare, single_sharing::SecureSingleSharing,
                 single_sharing::SingleSharing,
-                vss::RealVss,
             },
             runtime::party::Role,
             runtime::session::{LargeSession, ParameterHandles},
@@ -196,8 +195,6 @@ pub(crate) mod tests {
     use rstest::rstest;
     #[cfg(feature = "extension_degree_8")]
     use std::num::Wrapping;
-
-    type TrueLocalSingleShare = RealLocalSingleShare<RealCoinflip<RealVss>, RealShareDispute>;
 
     pub(crate) fn create_real_single_sharing<Z: Ring, L: LocalSingleShare>(
         lsl_strategy: L,
@@ -220,7 +217,7 @@ pub(crate) mod tests {
             let extracted_size = session.num_parties() - session.threshold() as usize;
             let num_output = lsl_batch_size * extracted_size + 1;
             let mut res = Vec::<Z>::new();
-            let mut single_sharing = RealSingleSharing::<Z, TrueLocalSingleShare>::default();
+            let mut single_sharing = SecureSingleSharing::<Z>::default();
             single_sharing
                 .init(&mut session, lsl_batch_size)
                 .await
@@ -301,8 +298,7 @@ pub(crate) mod tests {
             let num_output = lsl_batch_size * extracted_size + 1;
             let mut res = Vec::<ResiduePolyF4Z128>::new();
             if session.my_role().unwrap().one_based() != 2 {
-                let mut single_sharing =
-                    RealSingleSharing::<ResiduePolyF4Z128, TrueLocalSingleShare>::default();
+                let mut single_sharing = SecureSingleSharing::<ResiduePolyF4Z128>::default();
                 single_sharing
                     .init(&mut session, lsl_batch_size)
                     .await
