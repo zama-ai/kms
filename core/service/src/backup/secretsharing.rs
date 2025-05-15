@@ -4,12 +4,13 @@ use threshold_fhe::{
     execution::sharing::shamir::{InputOp, RevealOp, ShamirSharings},
 };
 
-use crate::error::BackupError;
+use super::error::BackupError;
 
 // This is an implementation of PKCS7, taken from
 // aws_lc_rs/cipher/padded.rs
 mod pkcs7 {
-    use crate::error::BackupError;
+    use crate::backup::error::BackupError;
+
     const MAX_CIPHER_BLOCK_LEN: usize = 32;
 
     pub(crate) fn add_padding<InOut>(

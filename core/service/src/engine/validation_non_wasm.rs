@@ -426,9 +426,11 @@ mod tests {
     use threshold_fhe::hashing::serialize_hash_element;
 
     use crate::{
-        cryptography::signcryption::ephemeral_encryption_key_generation,
+        cryptography::{
+            internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
+        },
         engine::{
-            base::{derive_request_id, gen_sig_keys},
+            base::derive_request_id,
             validation_non_wasm::{
                 select_most_common_public_dec, validate_public_decrypt_responses,
             },

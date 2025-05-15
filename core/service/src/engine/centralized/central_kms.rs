@@ -896,11 +896,11 @@ pub(crate) mod tests {
     };
     use crate::consts::{DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
-    use crate::cryptography::internal_crypto_types::PrivateSigKey;
+    use crate::cryptography::internal_crypto_types::{gen_sig_keys, PrivateSigKey};
     use crate::cryptography::signcryption::{
         decrypt_signcryption_with_link, ephemeral_signcryption_key_generation,
     };
-    use crate::engine::base::{compute_handle, compute_info, derive_request_id, gen_sig_keys};
+    use crate::engine::base::{compute_handle, compute_info, derive_request_id};
     use crate::engine::traits::Kms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
     use crate::util::file_handling::{read_element, write_element};

@@ -1001,7 +1001,9 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::base::derive_request_id;
+    use crate::{
+        cryptography::internal_crypto_types::gen_sig_keys, engine::base::derive_request_id,
+    };
     use aes_prng::AesRng;
     use kms_grpc::rpc_types::WrappedPublicKey;
     use rand::SeedableRng;
@@ -1020,8 +1022,7 @@ mod tests {
     use crate::{
         consts::TEST_PARAM,
         engine::{
-            base::{gen_sig_keys, KmsFheKeyHandles},
-            centralized::central_kms::async_generate_crs,
+            base::KmsFheKeyHandles, centralized::central_kms::async_generate_crs,
             threshold::service::ThresholdFheKeys,
         },
         util::meta_store::MetaStore,

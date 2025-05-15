@@ -17,11 +17,8 @@ use backward_compatibility::{
 };
 use kms_grpc::rpc_types::{PubDataType, SignedPubDataHandleInternal};
 use kms_lib::{
-    cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey},
-    engine::{
-        base::{gen_sig_keys, KmsFheKeyHandles},
-        threshold::service::ThresholdFheKeys,
-    },
+    cryptography::internal_crypto_types::{gen_sig_keys, PrivateSigKey, PublicSigKey},
+    engine::{base::KmsFheKeyHandles, threshold::service::ThresholdFheKeys},
     util::key_setup::FhePublicKey,
     vault::keychain::AppKeyBlob,
 };

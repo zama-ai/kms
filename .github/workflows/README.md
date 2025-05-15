@@ -58,20 +58,7 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 > Performs link checking and validation using Python's linkcheckmd
 </details>
 
-### 💾 Backup Component
-<details>
-<summary><b>View Component Details</b></summary>
-
-#### 🧪 Test Job [`test-backup`](global-common-workflow.yml)
-| Trigger | Status | Condition |
-|---------|--------|-----------|
-| 🔍 PR | ✅ | On backup changes |
-| 🎯 Main | ✅ | All changes |
-
-> Tests backup functionality with all features enabled
-</details>
-
-### 💻 Core Client Component
+###  Core Client Component
 <details>
 <summary><b>View Component Details</b></summary>
 

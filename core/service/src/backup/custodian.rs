@@ -1,0 +1,183 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use kms_grpc::RequestId;
+use rand::{CryptoRng, Rng};
+use serde::{Deserialize, Serialize};
+use tfhe::Versionize;
+use tfhe_versionable::VersionsDispatch;
+use threshold_fhe::hashing::DomainSep;
+
+use crate::{
+    consts::SAFE_SER_SIZE_LIMIT,
+    cryptography::{
+        internal_crypto_types::{PublicSigKey, Signature},
+        signcryption::internal_verify_sig,
+    },
+};
+
+use super::{
+    error::BackupError,
+    nested_pke::NestedPublicKey,
+    operator::{BackupMaterial, OperatorBackupOutput, DSEP_BACKUP_OPERATOR},
+    traits::{BackupDecryptor, BackupSigner},
+};
+
+pub(crate) const HEADER: &str = "ZAMA TKMS SETUP TEST OPERATORS-CUSTODIAN";
+pub(crate) const DSEP_BACKUP_CUSTODIAN: DomainSep = *b"BKUPCUST";
+pub(crate) const DSEP_BACKUP_SETUP: DomainSep = *b"BKUPSETU";
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum InnerCustodianSetupMessageVersioned {
+    V0(InnerCustodianSetupMessage),
+}
+
+// This is the message that is signed,
+// do we want the public encryption key to be in here too?
+#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[versionize(InnerCustodianSetupMessageVersioned)]
+pub struct InnerCustodianSetupMessage {
+    pub header: String,
+    pub custodian_id: usize,
+    pub random_value: [u8; 32],
+    pub timestamp: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct CustodianRecoveryOutput {
+    pub signature: Vec<u8>,  // sigt_i_j
+    pub ciphertext: Vec<u8>, // st_i_j
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct CustodianSetupMessage {
+    pub msg: InnerCustodianSetupMessage,
+    pub signature: Vec<u8>,
+    pub public_key: NestedPublicKey,
+    pub verification_key: PublicSigKey,
+}
+
+pub struct Custodian<S: BackupSigner, D: BackupDecryptor> {
+    id: usize,
+    decryptor: D,
+    nested_pk: NestedPublicKey,
+    signer: S,
+    verification_key: PublicSigKey,
+}
+
+/// The custodian is the entity can sign and decrypt messages,
+/// which are usually secret shares that are needed for recovery.
+/// Since the secrets should be kept safe for a long time, the
+/// public key encryption scheme should be post quantum.
+///
+/// The signing key is stored on AWS KMS
+///
+/// For decryption, there are two keys, the RSA OAEP decryption
+/// is stored on AWS KMS, the ML-KEM decryption key is stored on
+/// AWS Secret Manager because post quantum algorithms are not
+/// supported on AWS KMS at the moment.
+impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
+    pub fn new(
+        id: usize,
+        signer: S,
+        verification_key: PublicSigKey,
+        decryptor: D,
+        nested_pk: NestedPublicKey,
+    ) -> Result<Self, BackupError> {
+        Ok(Self {
+            id,
+            decryptor,
+            nested_pk,
+            signer,
+            verification_key,
+        })
+    }
+
+    /// Obtain the operator public key for reencryption,
+    /// decrypt the given ciphertext encrypted under the custodian's public key
+    /// and then encrypt it under the operator's public key
+    /// finally sign the ciphertext under the custodian's signing key.
+    /// - `ciphertext`: ct_{i, j}, for i-th operator and j-th custodian
+    /// - `operator_pk`: pk^{D_i}, for i-th operator
+    pub fn verify_reencrypt<R: Rng + CryptoRng>(
+        &self,
+        rng: &mut R,
+        backup: &OperatorBackupOutput,
+        operator_verification_key: &PublicSigKey,
+        operator_pk: &NestedPublicKey,
+        backup_id: RequestId,
+        operator_id: usize,
+    ) -> Result<CustodianRecoveryOutput, BackupError> {
+        // check the signature
+        let signature = Signature {
+            sig: k256::ecdsa::Signature::from_slice(&backup.signature)?,
+        };
+        internal_verify_sig(
+            &DSEP_BACKUP_OPERATOR,
+            &backup.ciphertext,
+            &signature,
+            operator_verification_key,
+        )
+        .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
+
+        // recovered share
+        let s_i_j = self.decryptor.decrypt(&backup.ciphertext)?;
+
+        // check the decrypted result
+        let backup_material: BackupMaterial = tfhe::safe_serialization::safe_deserialize(
+            std::io::Cursor::new(&s_i_j),
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(BackupError::SafeDeserializationError)?;
+
+        if !backup_material.matches_expected_metadata(
+            backup_id,
+            &self.verification_key,
+            self.id,
+            operator_verification_key,
+            operator_id,
+        ) {
+            return Err(BackupError::CustodianRecoveryError);
+        }
+
+        // re-encrypted share and sign it
+        let st_i_j = operator_pk.encrypt(rng, &s_i_j)?;
+        let sigt_i_j = self.signer.sign(&DSEP_BACKUP_CUSTODIAN, &st_i_j)?;
+
+        Ok(CustodianRecoveryOutput {
+            signature: sigt_i_j,
+            ciphertext: st_i_j,
+        })
+    }
+
+    pub fn generate_setup_message<R: Rng + CryptoRng>(
+        &self,
+        rng: &mut R,
+    ) -> Result<CustodianSetupMessage, BackupError> {
+        let mut random_value = [0u8; 32];
+        rng.fill_bytes(&mut random_value);
+        let msg = InnerCustodianSetupMessage {
+            header: HEADER.to_string(),
+            custodian_id: self.id,
+            random_value,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+        };
+
+        let msg_buf = bincode::serialize(&msg)?;
+        let signature = self.signer.sign(&DSEP_BACKUP_SETUP, &msg_buf)?;
+
+        Ok(CustodianSetupMessage {
+            msg,
+            signature,
+            public_key: self.nested_pk.clone(),
+            verification_key: self.verification_key().clone(),
+        })
+    }
+
+    pub fn public_key(&self) -> &NestedPublicKey {
+        &self.nested_pk
+    }
+
+    pub fn verification_key(&self) -> &PublicSigKey {
+        &self.verification_key
+    }
+}

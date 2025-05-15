@@ -131,6 +131,14 @@ impl Visitor<'_> for PrivateEncKeyVisitor {
     }
 }
 
+pub fn gen_sig_keys<R: rand::CryptoRng + rand::Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
+    use k256::ecdsa::SigningKey;
+
+    let sk = SigningKey::random(rng);
+    let pk = SigningKey::verifying_key(&sk);
+    (PublicSigKey::new(*pk), PrivateSigKey::new(sk))
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
 pub enum PublicSigKeyVersioned {
     V0(PublicSigKey),

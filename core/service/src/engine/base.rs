@@ -24,7 +24,7 @@ use kms_grpc::rpc_types::{
     CRS,
 };
 use kms_grpc::RequestId;
-use rand::{CryptoRng, RngCore, SeedableRng};
+use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -180,15 +180,6 @@ where
     // Truncate and convert to hex
     digest.truncate(ID_LENGTH);
     Ok(hex::encode(digest))
-}
-
-#[cfg(feature = "non-wasm")]
-pub fn gen_sig_keys<R: CryptoRng + rand::Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
-    use k256::ecdsa::SigningKey;
-
-    let sk = SigningKey::random(rng);
-    let pk = SigningKey::verifying_key(&sk);
-    (PublicSigKey::new(*pk), PrivateSigKey::new(sk))
 }
 
 macro_rules! deserialize_to_low_level_helper {
@@ -794,9 +785,10 @@ pub(crate) fn preproc_proto_to_keyset_config(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{deserialize_to_low_level, gen_sig_keys, TypedPlaintext};
+    use super::{deserialize_to_low_level, TypedPlaintext};
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
+        cryptography::internal_crypto_types::gen_sig_keys,
         engine::centralized::central_kms::generate_fhe_keys,
     };
     use aes_prng::AesRng;

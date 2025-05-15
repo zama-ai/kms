@@ -404,8 +404,10 @@ mod tests {
 
     use crate::{
         client::{compute_link, CiphertextHandle, ParsedUserDecryptionRequest},
-        cryptography::signcryption::ephemeral_encryption_key_generation,
-        engine::base::{compute_external_user_decrypt_signature, gen_sig_keys},
+        cryptography::{
+            internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
+        },
+        engine::base::compute_external_user_decrypt_signature,
     };
 
     use super::{

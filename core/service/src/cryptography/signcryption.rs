@@ -57,7 +57,7 @@ pub(crate) fn sign<T>(
     server_sig_key: &PrivateSigKey,
 ) -> anyhow::Result<Signature>
 where
-    T: Serialize + AsRef<[u8]>,
+    T: AsRef<[u8]> + ?Sized,
 {
     let sig: k256::ecdsa::Signature = server_sig_key
         .sk()
@@ -92,7 +92,7 @@ pub(crate) fn internal_verify_sig<T>(
     server_verf_key: &PublicSigKey,
 ) -> anyhow::Result<()>
 where
-    T: Serialize + AsRef<[u8]>,
+    T: AsRef<[u8]> + ?Sized,
 {
     // Check that the signature is normalized
     check_normalized(sig)?;

@@ -5,6 +5,8 @@ use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
+use tfhe::{Unversionize, Versionize};
+use tfhe_versionable::{NotVersioned, VersionizeOwned};
 use threshold_fhe::{
     hashing::unsafe_hash_list_w_size,
     session_id::{SessionId, DSEP_SESSION_ID, SESSION_ID_BYTES},
@@ -37,6 +39,31 @@ pub struct KeyId([u8; ID_LENGTH]);
 /// with consistent conversion methods to/from various representations.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
 pub struct RequestId([u8; ID_LENGTH]);
+
+impl Versionize for RequestId {
+    type Versioned<'vers> = &'vers RequestId;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        self
+    }
+}
+
+impl VersionizeOwned for RequestId {
+    type VersionedOwned = RequestId;
+    fn versionize_owned(self) -> Self::VersionedOwned {
+        self
+    }
+}
+
+impl Unversionize for RequestId {
+    fn unversionize(
+        versioned: Self::VersionedOwned,
+    ) -> Result<Self, tfhe_versionable::UnversionizeError> {
+        Ok(versioned)
+    }
+}
+
+impl NotVersioned for RequestId {}
 
 // Common implementation for identifier types
 macro_rules! impl_identifiers {

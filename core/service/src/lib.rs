@@ -30,6 +30,8 @@ pub mod cryptography {
     pub mod signcryption;
 }
 #[cfg(feature = "non-wasm")]
+pub mod backup;
+#[cfg(feature = "non-wasm")]
 pub mod conf;
 pub mod engine;
 #[cfg(feature = "non-wasm")]

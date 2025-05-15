@@ -3,7 +3,6 @@ resolver = "2"
 
 members = [
     "conf-trace",
-    "core/backup",
     "core/grpc",
     "core/service",
     "core/threshold",

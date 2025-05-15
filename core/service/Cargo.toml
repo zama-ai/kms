@@ -71,7 +71,7 @@ rasn = "=0.20.2"
 rasn-cms = "=0.20.2"
 rayon.workspace = true
 rcgen = { workspace = true, optional = true }
-rsa = { version = "=0.9.8", features = ["sha2"] }
+rsa = { version = "=0.9.8", features = ["sha2", "serde"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 signature = "=2.2.0"
 strum.workspace = true
@@ -107,6 +107,9 @@ serde-wasm-bindgen = { version = "=0.6.5" }
 wasm-bindgen = { version = "=0.2.100", features = ["serde-serialize"] }
 tfhe-versionable.workspace = true
 async_cell = "0.2.2"
+thiserror.workspace = true
+aes-gcm = { version = "=0.10.3", features = ["std"] }
+ml-kem = "=0.2.1"
 
 [dev-dependencies]
 assert_cmd = "=2.0.17"
@@ -120,6 +123,7 @@ threshold-fhe = { workspace = true, default-features = false, features = [
     "testing",
 ] }
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
+proptest = "=1.6.0"
 test-utils = { path = "../../test-utils" }
 
 [build-dependencies]
