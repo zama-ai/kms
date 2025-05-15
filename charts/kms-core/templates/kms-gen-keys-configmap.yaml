@@ -1,4 +1,4 @@
-{{- if .Values.kmsGenKey.enabled -}}
+{{- if .Values.kmsGenKeys.enabled -}}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
 apiVersion: v1
 kind: ConfigMap
@@ -17,12 +17,12 @@ data:
         S3_ENDPOINT=$(eval echo "$S3_ENDPOINT")
     fi
 
+    if [ -n "${CORE_CLIENT__S3_ENDPOINT}" ]; then
+      S3_ENDPOINT="${CORE_CLIENT__S3_ENDPOINT}"
+    fi
+
     cat <<EOF >>config.toml
-    {{ if .Values.minio.enabled }}
     s3_endpoint="${S3_ENDPOINT}"
-    {{ else }}
-    s3_endpoint="${CORE_CLIENT__S3_ENDPOINT:=S3_ENDPOINT}"
-    {{ end }}
     object_folder=${OBJECT_FOLDER}
     core_addresses=${CORE_ADDRESSES}
     num_majority=${NUM_MAJORITY}
@@ -35,7 +35,7 @@ data:
     else
       echo "Launching new KMS key generation with config:"
       cat config.toml
-      result_key_id=$(bin/kms-core-client -f config.toml {{ .Values.kmsGenKey.keyGenArgs }})
+      result_key_id=$(bin/kms-core-client -f config.toml {{ .Values.kmsGenKeys.keyGenArgs }})
       KMS_KEY_ID=$(echo $result_key_id | grep request_id | cut -d'"' -f4)
       if [ -z "$KMS_KEY_ID" ]; then
         echo "Error: key-gen failed. Exiting."
@@ -47,7 +47,7 @@ data:
       echo "KMS_CRS_ID=${KMS_CRS_ID} already exists, skiping crs generation"
     else
       echo "Launching crs generation"
-      result_crs_id=$(bin/kms-core-client -f config.toml {{ .Values.kmsGenKey.crsGenArgs }})
+      result_crs_id=$(bin/kms-core-client -f config.toml {{ .Values.kmsGenKeys.crsGenArgs }})
       KMS_CRS_ID=$(echo $result_crs_id | grep request_id | cut -d'"' -f4)
       if [ -z "$KMS_CRS_ID" ]; then
         echo "Error: crs-gen failed. Exiting."
@@ -55,9 +55,8 @@ data:
       fi
     fi
     echo $KMS_CRS_ID > /keygen/crs_id
-    BUCKET_URL=${S3_ENDPOINT}
-    echo "${BUCKET_URL}" > /keygen/bucket_url
-    echo "Retrieving previously generated keys from the KMS bucket: ${BUCKET_URL}"
+    echo "${S3_ENDPOINT}" > /keygen/bucket_url
+    echo "Retrieving previously generated keys from the KMS bucket: ${S3_ENDPOINT}"
     bin/kms-core-client -f config.toml key-gen-result --request-id "$KMS_KEY_ID"
     verf_key_id=$(ls keys/CLIENT/VerfKey/)
     if [ -z "$verf_key_id" ]; then
@@ -83,7 +82,7 @@ data:
   write-gen-keys-to-configmap.sh: |
     #!/usr/bin/env sh
     set -ex
-    {{- if .Values.kmsGenKey.forceRecreate }}
+    {{- if .Values.kmsGenKeys.forceRecreate }}
     echo "kmsGenKey.forceRecreate is enabled, deleting existing configmap"
     kubectl delete configmap "$CONFIGMAP_NAME"
     {{- end }}
@@ -105,7 +104,7 @@ data:
       {{- else }}
       --from-literal=KMS_SIGNER_ADDRESS_0="$(cat /keygen/kms_signer_address_0)"
     {{- end }}
-    {{- range $annotationKey, $annotationValue := .Values.kmsGenKey.configmap.annotations }}
+    {{- range $annotationKey, $annotationValue := .Values.kmsGenKeys.configmap.annotations }}
     kubectl annotate configmap "$CONFIGMAP_NAME" {{ $annotationKey }}={{ $annotationValue | quote }}
     {{- end }}
 {{- end -}}

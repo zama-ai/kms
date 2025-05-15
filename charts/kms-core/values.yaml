@@ -172,7 +172,7 @@ kmsInit:
   tolerations:
 
 # Automatic Key Generation job
-kmsGenKey:
+kmsGenKeys:
   enabled: false
   nameOverride:
   # command line arguments passed to kms-core-client

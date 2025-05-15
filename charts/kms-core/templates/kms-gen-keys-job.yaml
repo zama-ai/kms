@@ -1,4 +1,4 @@
-{{- if .Values.kmsGenKey.enabled -}}
+{{- if .Values.kmsGenKeys.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $kmsGenKeyName := include "kmsGenKeyJobName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
@@ -58,17 +58,17 @@ spec:
               value: '{{ .Values.kmsCoreClient.decryption_mode | quote }}'
             - name: FHE_PARAMETER
               value: '{{ .Values.kmsCoreClient.fhe_parameter | quote }}'
-            {{- if not .Values.kmsGenKey.forceRecreate }}
+            {{- if not .Values.kmsGenKeys.forceRecreate }}
             - name: KMS_KEY_ID
               valueFrom:
                 configMapKeyRef:
-                  name: {{ .Values.kmsGenKey.configmap.name }}
+                  name: {{ .Values.kmsGenKeys.configmap.name }}
                   key: KMS_KEY_ID
                   optional: true
             - name: KMS_CRS_ID
               valueFrom:
                 configMapKeyRef:
-                  name: {{ .Values.kmsGenKey.configmap.name }}
+                  name: {{ .Values.kmsGenKeys.configmap.name }}
                   key: KMS_CRS_ID
                   optional: true
             {{- end }}
@@ -85,7 +85,7 @@ spec:
             - /app/write-gen-keys-to-configmap.sh
           env:
             - name: CONFIGMAP_NAME
-              value: {{ .Values.kmsGenKey.configmap.name }}
+              value: {{ .Values.kmsGenKeys.configmap.name }}
           volumeMounts:
             - mountPath: /app/write-gen-keys-to-configmap.sh
               subPath: write-gen-keys-to-configmap.sh
@@ -107,15 +107,15 @@ spec:
       restartPolicy: Never
       imagePullSecrets:
         - name: registry-credentials
-      {{- with .Values.kmsGenKey.nodeSelector }}
+      {{- with .Values.kmsGenKeys.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.kmsGenKey.affinity }}
+      {{- with .Values.kmsGenKeys.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.kmsGenKey.tolerations }}
+      {{- with .Values.kmsGenKeys.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -128,7 +128,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get", "list", "create", "patch"{{ if .Values.kmsGenKey.forceRecreate }}, "delete"{{ end }}]
+    verbs: [ "get", "list", "create", "patch"{{ if .Values.kmsGenKeys.forceRecreate }}, "delete"{{ end }}]
 ---
 kind: RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1

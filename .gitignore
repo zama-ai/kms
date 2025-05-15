@@ -26,3 +26,4 @@ kms-core.sublime-workspace
 *.orig
 **/tests/data
 /core-client/artifacts
+*.tgz

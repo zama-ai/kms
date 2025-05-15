@@ -91,5 +91,5 @@ minio:
 kyverno:
   enabled: false
 
-kmsGenKey:
+kmsGenKeys:
   enabled: true
