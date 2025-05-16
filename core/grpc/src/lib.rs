@@ -19,6 +19,7 @@ pub mod kms_service {
 
 pub mod identifiers;
 pub mod rpc_types;
+pub mod utils;
 
 // Re-export identifier types for easier access
 pub use identifiers::{IdentifierError, KeyId, RequestId};

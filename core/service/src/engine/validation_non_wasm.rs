@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use alloy_dyn_abi::Eip712Domain;
+use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
 use kms_grpc::{
     kms::v1::{
@@ -10,7 +11,6 @@ use kms_grpc::{
     rpc_types::protobuf_to_alloy_domain_option,
 };
 use threshold_fhe::hashing::DomainSep;
-use tonic::Status;
 
 use crate::{
     anyhow_error_and_log, anyhow_error_and_warn_log,
@@ -53,16 +53,16 @@ const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user dec
 pub(crate) const DSEP_REQ_RESP: DomainSep = *b"REQ_RESP";
 
 /// Validates a request ID and returns an appropriate tonic error if it is invalid.
-pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), Status> {
+pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), BoxedStatus> {
     if !request_id.is_valid() {
         tracing::warn!(
             "The value {} is not a valid request ID!",
             request_id.to_string()
         );
-        return Err(tonic::Status::new(
+        return Err(BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,
-            format!("The value {} is not a valid request ID!", request_id),
-        ));
+            format!("Invalid request id: {}", request_id),
+        )));
     }
     Ok(())
 }

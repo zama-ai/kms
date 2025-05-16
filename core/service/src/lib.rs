@@ -37,6 +37,12 @@ pub mod engine;
 #[cfg(feature = "non-wasm")]
 pub mod vault;
 
+#[cfg(feature = "non-wasm")]
+pub use kms_grpc::utils::tonic_result::{
+    box_tonic_err, tonic_handle_potential_err, tonic_some_or_err, tonic_some_or_err_ref,
+    tonic_some_ref_or_err, BoxedStatus, TonicResult,
+};
+
 /// Check that the hashmap has exactly one element and return it.
 #[cfg(feature = "non-wasm")]
 pub(crate) fn get_exactly_one<K, V>(mut hm: HashMap<K, V>) -> anyhow::Result<V>
@@ -90,42 +96,6 @@ pub(crate) fn anyhow_error_and_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyh
 pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
     tracing::warn!("Warning in {}: {}", Location::caller(), msg);
     anyhow!("Warning in {}: {}", Location::caller(), msg)
-}
-
-#[cfg(feature = "non-wasm")]
-pub fn tonic_some_or_err<T>(input: Option<T>, error: String) -> Result<T, tonic::Status> {
-    input.ok_or_else(|| {
-        tracing::warn!(error);
-        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
-    })
-}
-
-#[cfg(feature = "non-wasm")]
-pub fn tonic_some_or_err_ref<T>(input: &Option<T>, error: String) -> Result<&T, tonic::Status> {
-    input.as_ref().ok_or_else(|| {
-        tracing::warn!(error);
-        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
-    })
-}
-
-#[cfg(feature = "non-wasm")]
-pub fn tonic_some_ref_or_err<T>(input: Option<&T>, error: String) -> Result<&T, tonic::Status> {
-    input.ok_or_else(|| {
-        tracing::warn!(error);
-        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
-    })
-}
-
-#[cfg(feature = "non-wasm")]
-pub fn tonic_handle_potential_err<T, E: ToString>(
-    resp: Result<T, E>,
-    error: String,
-) -> Result<T, tonic::Status> {
-    resp.map_err(|e| {
-        let msg = format!("{}: {}", error, e.to_string());
-        tracing::warn!(msg);
-        tonic::Status::new(tonic::Code::Aborted, top_n_chars(msg))
-    })
 }
 
 pub fn compute_user_decrypt_message_hash(

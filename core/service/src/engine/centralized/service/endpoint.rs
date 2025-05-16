@@ -24,6 +24,7 @@ impl<
             None,
             "Requesting init on centralized kms is not suported".to_string(),
         )
+        .map_err(Status::from)
     }
 
     #[tracing::instrument(skip(self, _request))]
@@ -35,6 +36,7 @@ impl<
             None,
             "Requesting preproc on centralized kms is not suported".to_string(),
         )
+        .map_err(Status::from)
     }
 
     #[tracing::instrument(skip(self, _request))]
@@ -46,6 +48,7 @@ impl<
             None,
             "Requesting preproc status on centralized kms is not suported".to_string(),
         )
+        .map_err(Status::from)
     }
 
     #[cfg(feature = "insecure")]

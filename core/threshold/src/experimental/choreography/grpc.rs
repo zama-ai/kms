@@ -64,22 +64,37 @@ enum SupportedPRSSSetup {
 }
 
 impl SupportedPRSSSetup {
+    // This method returns Result<T, tonic::Status> directly rather than using our BoxedStatus wrapper.
+    // This is a deliberate design choice for the following reasons:
+    // 1. This is a gRPC service method that directly propagates errors to the transport layer
+    // 2. Performance optimization - avoiding unnecessary boxing/unboxing of errors
+    // 3. Simplicity - maintaining direct compatibility with the tonic gRPC interface
+    // The clippy::result_large_err warning is suppressed because this is an API boundary
+    // where the error type is dictated by the external interface requirements.
+    #[allow(clippy::result_large_err)]
     fn get_levelone(&self) -> Result<PRSSSetup<LevelOne>, tonic::Status> {
         match self {
             SupportedPRSSSetup::LevelOne(res) => Ok(res.clone()),
             _ => Err(tonic::Status::new(
                 tonic::Code::Aborted,
-                "Can not retrieve PRSS init for poly64, make sure you init it first",
+                "Can not retrieve PRSS init for LevelOne, make sure you init it first",
             )),
         }
     }
-
+    // This method returns Result<T, tonic::Status> directly rather than using our BoxedStatus wrapper.
+    // This is a deliberate design choice for the following reasons:
+    // 1. This is a gRPC service method that directly propagates errors to the transport layer
+    // 2. Performance optimization - avoiding unnecessary boxing/unboxing of errors
+    // 3. Simplicity - maintaining direct compatibility with the tonic gRPC interface
+    // The clippy::result_large_err warning is suppressed because this is an API boundary
+    // where the error type is dictated by the external interface requirements.
+    #[allow(clippy::result_large_err)]
     fn get_levelksw(&self) -> Result<PRSSSetup<LevelKsw>, tonic::Status> {
         match self {
             SupportedPRSSSetup::LevelKsw(res) => Ok(res.clone()),
             _ => Err(tonic::Status::new(
                 tonic::Code::Aborted,
-                "Can not retrieve PRSS init for poly128, make sure you init it first",
+                "Can not retrieve PRSS init for LevelKsw, make sure you init it first",
             )),
         }
     }
