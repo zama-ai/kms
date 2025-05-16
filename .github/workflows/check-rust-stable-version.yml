@@ -1,0 +1,33 @@
+name: "Check Rust stable version"
+
+on:
+  schedule:
+    - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
+
+jobs:
+  check-rust-stable-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8 # v1.10.1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy, llvm-tools-preview
+          cache: false
+
+      - name: Check Rust version
+        run: |
+          version="$(cat ${{ github.workspace }}/toolchain.txt)"
+          echo "Required version: $version"
+          stable_version="$(rustc --version)"
+          echo "Latest stable version: $stable_version"
+          if echo "$stable_version" | grep -q "rustc $version"; then
+            echo "Rust version is correct"
+          else
+            echo ":crab: **New Stable Rust version is available: $stable_version** :crab:" >> "$GITHUB_STEP_SUMMARY"
+            echo "Please update the toolchain.txt and the .env files with the new version" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi

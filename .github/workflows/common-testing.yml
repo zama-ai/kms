@@ -91,6 +91,11 @@ jobs:
           submodules: true
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
+      - name: Get Rust version
+        run: |
+          version="$(cat ${{ github.workspace }}/toolchain.txt)"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+
       - name: Setup Home
         if: "${{ !contains(inputs.runs-on, 'ubuntu') }}"
         run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
@@ -139,7 +144,7 @@ jobs:
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8 # v1.10.1
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_IMAGE_VERSION }}
           components: rustfmt, clippy, llvm-tools-preview
           cache: false
 
