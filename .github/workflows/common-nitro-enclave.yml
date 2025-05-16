@@ -54,7 +54,7 @@ on:
 
 
 env:
-  RUST_IMAGE_VERSION: '1.86.0'
+  RUST_IMAGE_VERSION: '1.87.0'
 
 jobs:
   determine-tag:
