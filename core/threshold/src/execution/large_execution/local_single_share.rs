@@ -427,16 +427,21 @@ pub(crate) mod tests {
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     use crate::algebra::structure_traits::{ErrorCorrect, Invert, RingEmbed};
-    use crate::execution::large_execution::coinflip::SecureCoinflip;
+    #[cfg(feature = "slow_tests")]
+    use crate::execution::communication::broadcast::SyncReliableBroadcast;
     #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::{
-        coinflip::tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
-        share_dispute::tests::{
-            DroppingShareDispute, MaliciousShareDisputeRecons, WrongShareDisputeRecons,
+        coinflip::{
+            tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
+            RealCoinflip, SecureCoinflip,
+        },
+        share_dispute::{
+            tests::{DroppingShareDispute, MaliciousShareDisputeRecons, WrongShareDisputeRecons},
+            RealShareDispute,
         },
         vss::{
             tests::{DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1},
-            Vss,
+            RealVss, SecureVss, Vss,
         },
     };
     #[cfg(feature = "slow_tests")]
@@ -445,12 +450,8 @@ pub(crate) mod tests {
     use crate::networking::NetworkMode;
     use crate::{
         execution::{
-            communication::broadcast::{Broadcast, SyncReliableBroadcast},
-            large_execution::{
-                coinflip::{Coinflip, RealCoinflip},
-                share_dispute::{RealShareDispute, ShareDispute},
-                vss::{RealVss, SecureVss},
-            },
+            communication::broadcast::Broadcast,
+            large_execution::{coinflip::Coinflip, share_dispute::ShareDispute},
             runtime::party::Role,
             runtime::session::{
                 BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,

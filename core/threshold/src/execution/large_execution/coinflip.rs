@@ -97,19 +97,25 @@ impl<V: Vss, RO: RobustOpen> Coinflip for RealCoinflip<V, RO> {
 #[cfg(test)]
 pub(crate) mod tests {
 
-    use super::{Coinflip, DummyCoinflip, RealCoinflip, SecureCoinflip};
+    use super::{Coinflip, DummyCoinflip, SecureCoinflip};
     #[cfg(feature = "slow_tests")]
-    use crate::execution::large_execution::vss::tests::{
-        DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
+    use crate::execution::communication::broadcast::SyncReliableBroadcast;
+    #[cfg(feature = "slow_tests")]
+    use crate::execution::large_execution::{
+        coinflip::RealCoinflip,
+        vss::{
+            tests::{DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1},
+            SecureVss,
+        },
     };
     use crate::execution::sharing::open::RobustOpen;
     #[cfg(feature = "slow_tests")]
     use crate::execution::sharing::open::SecureRobustOpen;
+
     use crate::{
         algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         execution::{
-            communication::broadcast::SyncReliableBroadcast,
-            large_execution::vss::{SecureVss, Vss},
+            large_execution::vss::Vss,
             runtime::{
                 party::{Identity, Role},
                 session::{
