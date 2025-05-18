@@ -4,9 +4,12 @@ use kms_grpc::RequestId;
 use proptest::prelude::*;
 use rand::rngs::OsRng;
 
-use crate::cryptography::internal_crypto_types::{gen_sig_keys, PublicSigKey};
+use crate::cryptography::{
+    internal_crypto_types::{gen_sig_keys, PublicSigKey},
+    nested_pke,
+};
 
-use super::{custodian, error::BackupError, nested_pke, operator::Operator};
+use super::{custodian, error::BackupError, operator::Operator};
 
 enum DropShares {
     NoDrop,

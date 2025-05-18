@@ -789,9 +789,12 @@ mod tests {
 
         // use a bad signature (signed with wrong private key)
         {
-            let signature =
-                &crate::cryptography::signcryption::sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk1)
-                    .unwrap();
+            let signature = &crate::cryptography::signcryption::internal_sign(
+                &DSEP_PUBLIC_DECRYPTION,
+                &pivot_buf,
+                &sk1,
+            )
+            .unwrap();
             let signature_buf = signature.sig.to_vec();
 
             assert!(
@@ -801,9 +804,12 @@ mod tests {
 
         // use a bad signature (malformed signature)
         {
-            let signature =
-                &crate::cryptography::signcryption::sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0)
-                    .unwrap();
+            let signature = &crate::cryptography::signcryption::internal_sign(
+                &DSEP_PUBLIC_DECRYPTION,
+                &pivot_buf,
+                &sk0,
+            )
+            .unwrap();
             // The signature is malformed because it's using bincode to serialize instead of `signature.sig.to_vec()`.
             let signature_buf = bincode::serialize(&signature).unwrap();
 
@@ -825,7 +831,7 @@ mod tests {
             };
             let bad_value_buf = bincode::serialize(&bad_value).unwrap();
 
-            let bad_signature = &crate::cryptography::signcryption::sign(
+            let bad_signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
                 &bad_value_buf,
                 &sk0,
@@ -852,7 +858,7 @@ mod tests {
             };
             let bad_value_buf = bincode::serialize(&bad_value).unwrap();
 
-            let signature = &crate::cryptography::signcryption::sign(
+            let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
                 &bad_value_buf,
                 &sk0,
@@ -880,7 +886,7 @@ mod tests {
             };
             let bad_value_buf = bincode::serialize(&bad_value).unwrap();
 
-            let signature = &crate::cryptography::signcryption::sign(
+            let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
                 &bad_value_buf,
                 &sk0,
@@ -908,7 +914,7 @@ mod tests {
             };
             let bad_value_buf = bincode::serialize(&bad_value).unwrap();
 
-            let signature = &crate::cryptography::signcryption::sign(
+            let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
                 &bad_value_buf,
                 &sk0,
@@ -924,9 +930,12 @@ mod tests {
 
         // happy path
         {
-            let signature =
-                &crate::cryptography::signcryption::sign(&DSEP_PUBLIC_DECRYPTION, &pivot_buf, &sk0)
-                    .unwrap();
+            let signature = &crate::cryptography::signcryption::internal_sign(
+                &DSEP_PUBLIC_DECRYPTION,
+                &pivot_buf,
+                &sk0,
+            )
+            .unwrap();
             let signature_buf = signature.sig.to_vec(); // NOTE: signatures are not serialized with bincode
 
             assert!(
@@ -955,7 +964,7 @@ mod tests {
                 external_signature: Some(vec![]),
             };
             let payload_buf = bincode::serialize(&payload).unwrap();
-            let signature = &crate::cryptography::signcryption::sign(
+            let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
                 &payload_buf,
                 &sk0,
@@ -979,7 +988,7 @@ mod tests {
                 external_signature: Some(vec![]),
             };
             let payload_buf = bincode::serialize(&payload).unwrap();
-            let signature = &crate::cryptography::signcryption::sign(
+            let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
                 &payload_buf,
                 &sk1,
@@ -1051,7 +1060,7 @@ mod tests {
                     external_signature: Some(vec![]),
                 };
                 let payload_buf = bincode::serialize(&payload).unwrap();
-                let signature = &crate::cryptography::signcryption::sign(
+                let signature = &crate::cryptography::signcryption::internal_sign(
                     &DSEP_PUBLIC_DECRYPTION,
                     &payload_buf,
                     &sk1,
@@ -1125,7 +1134,7 @@ mod tests {
                 external_signature: Some(vec![]),
             };
             let payload_buf = bincode::serialize(&payload).unwrap();
-            let signature = &crate::cryptography::signcryption::sign(
+            let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
                 &payload_buf,
                 &sk0,
@@ -1149,7 +1158,7 @@ mod tests {
                 external_signature: Some(vec![]),
             };
             let payload_buf = bincode::serialize(&payload).unwrap();
-            let signature = &crate::cryptography::signcryption::sign(
+            let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
                 &payload_buf,
                 &sk1,

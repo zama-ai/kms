@@ -19,7 +19,6 @@ use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
-use bincode::{deserialize, serialize};
 use itertools::Itertools;
 use kms_grpc::kms::v1::{
     TypedCiphertext, TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse,
@@ -801,7 +800,7 @@ impl Client {
         Ok((
             UserDecryptionRequest {
                 request_id: Some((*request_id).into()),
-                enc_key: serialize(&enc_pk)?,
+                enc_key: bincode::serialize(&enc_pk)?,
                 client_address: self.client_address.to_checksum(None),
                 typed_ciphertexts,
                 key_id: Some((*key_id).into()),
@@ -1079,7 +1078,7 @@ impl Client {
             }
             // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissible keys
-            let cur_verf_key: PublicSigKey = deserialize(&cur_payload.verification_key)?;
+            let cur_verf_key: PublicSigKey = bincode::deserialize(&cur_payload.verification_key)?;
             BaseKmsStruct::verify_sig(
                 &DSEP_PUBLIC_DECRYPTION,
                 &bincode::serialize(&cur_payload)?,
@@ -1209,7 +1208,7 @@ impl Client {
             return Err(anyhow_error_and_log("incorrect length for addresses"));
         }
 
-        let cur_verf_key: PublicSigKey = deserialize(&payload.verification_key)?;
+        let cur_verf_key: PublicSigKey = bincode::deserialize(&payload.verification_key)?;
 
         if stored_server_addrs[0] != alloy_signer::utils::public_key_to_address(cur_verf_key.pk()) {
             return Err(anyhow_error_and_log("verification key is not consistent"));
@@ -1501,7 +1500,8 @@ impl Client {
                     client_keys,
                 )?;
 
-                let cipher_blocks_share: Vec<ResiduePolyF4<Z>> = deserialize(&shares.bytes)?;
+                let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
+                    bincode::deserialize(&shares.bytes)?;
                 let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
                 for cur_block_share in cipher_blocks_share {
                     cur_blocks.push(cur_block_share);
@@ -1659,7 +1659,7 @@ impl Client {
                 //
                 // Also it's ok to use [cur_resp.digest] as the link since we already checked
                 // that it matches with the original request
-                let cur_verf_key: PublicSigKey = deserialize(&cur_resp.verification_key)?;
+                let cur_verf_key: PublicSigKey = bincode::deserialize(&cur_resp.verification_key)?;
                 match decrypt_signcryption_with_link(
                     &DSEP_USER_DECRYPTION,
                     &cur_resp.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
@@ -1669,7 +1669,7 @@ impl Client {
                 ) {
                     Ok(decryption_share) => {
                         let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
-                            deserialize(&decryption_share.bytes)?;
+                            bincode::deserialize(&decryption_share.bytes)?;
                         let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
                         for cur_block_share in cipher_blocks_share {
                             cur_blocks.push(cur_block_share);
@@ -3557,7 +3557,7 @@ pub(crate) mod tests {
             let mut final_responses_with_bad_sig = final_responses.clone();
             let client_sk = internal_client.client_sk.clone().unwrap();
             let bad_sig = bincode::serialize(
-                &crate::cryptography::signcryption::sign(
+                &crate::cryptography::signcryption::internal_sign(
                     &DSEP_PUBDATA_CRS,
                     &"wrong msg".to_string(),
                     &client_sk,

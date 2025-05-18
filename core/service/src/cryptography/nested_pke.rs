@@ -10,14 +10,13 @@ use tfhe::named::Named;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 
-use crate::backup::hybrid_ml_kem::ML_KEM_SK_LEN;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
+use crate::cryptography::hybrid_ml_kem::KemParam;
+use crate::cryptography::hybrid_ml_kem::ML_KEM_SK_LEN;
+use crate::cryptography::hybrid_ml_kem::{self, ML_KEM_CT_PK_LENGTH};
 
-use super::error::BackupError;
-use super::hybrid_ml_kem::KemParam;
-use super::hybrid_ml_kem::{self, ML_KEM_CT_PK_LENGTH};
+use super::error::CryptographyError;
 use super::hybrid_rsa;
-use super::traits::BackupDecryptor;
 
 struct InnerNestedPrivateKey {
     // None of these types can be versioned,
@@ -38,16 +37,23 @@ pub struct NestedPrivateKey {
     rsa_private_key_der: Vec<u8>, // PKCS1 DER encoding
 }
 
+impl NestedPrivateKey {
+    pub fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, CryptographyError> {
+        let sk: InnerNestedPrivateKey = self.try_into()?;
+        sk.decrypt(ciphertext)
+    }
+}
+
 impl Named for NestedPrivateKey {
     const NAME: &'static str = "backup::NestedPrivateKey";
 }
 
 impl TryFrom<&NestedPrivateKey> for InnerNestedPrivateKey {
-    type Error = BackupError;
+    type Error = CryptographyError;
 
     fn try_from(value: &NestedPrivateKey) -> Result<Self, Self::Error> {
         if value.decapsulation_key.len() != ML_KEM_SK_LEN {
-            return Err(BackupError::LengthError(
+            return Err(CryptographyError::LengthError(
                 "decapsulation key has the wrong length".to_string(),
             ));
         }
@@ -80,18 +86,18 @@ impl InnerNestedPrivateKey {
     /// inner layer is the PQ scheme (hybrid with AEAD and ML-KEM).
     ///
     /// Note that we use tfhe::safe_serialize.
-    pub fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, BackupError> {
+    pub fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, CryptographyError> {
         let ct = tfhe::safe_serialization::safe_deserialize::<hybrid_rsa::HybridRsaCt>(
             std::io::Cursor::new(ciphertext),
             SAFE_SER_SIZE_LIMIT,
         )
-        .map_err(BackupError::SafeDeserializationError)?;
+        .map_err(CryptographyError::SafeDeserializationError)?;
         let outer_buf = hybrid_rsa::dec(ct, &self.rsa_private_key)?;
         let outer = tfhe::safe_serialization::safe_deserialize::<hybrid_ml_kem::HybridKemCt>(
             std::io::Cursor::new(outer_buf),
             SAFE_SER_SIZE_LIMIT,
         )
-        .map_err(BackupError::SafeDeserializationError)?;
+        .map_err(CryptographyError::SafeDeserializationError)?;
         hybrid_ml_kem::dec(outer, &self.decapsulation_key)
     }
 }
@@ -121,11 +127,11 @@ struct InnerNestedPublicKey {
 }
 
 impl TryFrom<&NestedPublicKey> for InnerNestedPublicKey {
-    type Error = BackupError;
+    type Error = CryptographyError;
 
     fn try_from(value: &NestedPublicKey) -> Result<Self, Self::Error> {
         if value.encapsulation_key.len() != ML_KEM_CT_PK_LENGTH {
-            return Err(BackupError::LengthError(
+            return Err(CryptographyError::LengthError(
                 "encapsulation key has the wrong length".to_string(),
             ));
         }
@@ -162,7 +168,11 @@ impl InnerNestedPublicKey {
     ///
     /// Note that we use safe_serialize to serialize first layer of ciphertext to be used in the second layer.
     /// The result is also safe_serialized.
-    fn encrypt<R: Rng + CryptoRng>(&self, rng: &mut R, msg: &[u8]) -> Result<Vec<u8>, BackupError> {
+    fn encrypt<R: Rng + CryptoRng>(
+        &self,
+        rng: &mut R,
+        msg: &[u8],
+    ) -> Result<Vec<u8>, CryptographyError> {
         let inner = hybrid_ml_kem::enc(rng, msg, &self.encapsulation_key).unwrap();
         let mut inner_buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(&inner, &mut inner_buf, SAFE_SER_SIZE_LIMIT)?;
@@ -184,22 +194,15 @@ impl NestedPublicKey {
         &self,
         rng: &mut R,
         msg: &[u8],
-    ) -> Result<Vec<u8>, BackupError> {
+    ) -> Result<Vec<u8>, CryptographyError> {
         let pk: InnerNestedPublicKey = self.try_into()?;
         pk.encrypt(rng, msg)
     }
 }
 
-impl BackupDecryptor for NestedPrivateKey {
-    fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, BackupError> {
-        let sk: InnerNestedPrivateKey = self.try_into()?;
-        sk.decrypt(ciphertext)
-    }
-}
-
 pub fn keygen<R: Rng + CryptoRng>(
     rng: &mut R,
-) -> Result<(NestedPrivateKey, NestedPublicKey), BackupError> {
+) -> Result<(NestedPrivateKey, NestedPublicKey), CryptographyError> {
     let (decapsulation_key, encapsulation_key) = hybrid_ml_kem::keygen(rng);
     let (rsa_private_key, rsa_public_key) = hybrid_rsa::keygen(rng)?;
 
@@ -217,6 +220,8 @@ pub fn keygen<R: Rng + CryptoRng>(
 #[cfg(test)]
 mod tests {
     use rand::rngs::OsRng;
+
+    use crate::cryptography::error::CryptographyError;
 
     use super::*;
 
@@ -262,7 +267,7 @@ mod tests {
 
         let ct = pk.encrypt(&mut rng, &msg).unwrap();
         let err = sk.decrypt(&ct).unwrap_err();
-        assert!(matches!(err, BackupError::RsaError(..)));
+        assert!(matches!(err, CryptographyError::RsaError(..)));
     }
 
     #[test]
@@ -278,7 +283,7 @@ mod tests {
         let ct = pk.encrypt(&mut rng, &msg).unwrap();
         let err = sk.decrypt(&ct).unwrap_err();
         // We get an AesGcm error due to implicit rejection
-        assert!(matches!(err, BackupError::AesGcmError(..)));
+        assert!(matches!(err, CryptographyError::AesGcmError(..)));
     }
 
     #[test]
@@ -289,6 +294,9 @@ mod tests {
         let mut ct = pk.encrypt(&mut rng, &msg).unwrap();
         ct[0] ^= 1;
         let err = sk.decrypt(&ct).unwrap_err();
-        assert!(matches!(err, BackupError::SafeDeserializationError(..)));
+        assert!(matches!(
+            err,
+            CryptographyError::SafeDeserializationError(..)
+        ));
     }
 }

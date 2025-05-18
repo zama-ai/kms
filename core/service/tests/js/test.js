@@ -2,16 +2,18 @@ const fs = require('node:fs');
 const test = require('node:test');
 const assert = require('node:assert').strict
 const {
-    cryptobox_keygen,
-    cryptobox_get_pk,
-    cryptobox_encrypt,
-    cryptobox_decrypt,
-    cryptobox_pk_to_u8vec,
-    cryptobox_sk_to_u8vec,
+    ml_kem_pke_keygen,
+    ml_kem_pke_get_pk,
+    ml_kem_pke_encrypt,
+    ml_kem_pke_decrypt,
+    ml_kem_pke_pk_to_u8vec,
+    ml_kem_pke_sk_to_u8vec,
+    ml_kem_pke_ct_pk_len,
+    ml_kem_pke_sk_len,
     process_user_decryption_resp,
     process_user_decryption_resp_from_js,
-    u8vec_to_cryptobox_pk,
-    u8vec_to_cryptobox_sk,
+    u8vec_to_ml_kem_pke_pk,
+    u8vec_to_ml_kem_pke_sk,
     new_client,
     buf_to_transcript,
     transcript_to_client,
@@ -25,39 +27,26 @@ const {
     transcript_to_response_js,
 } = require("../../pkg");
 
-test('crypto_box', (_t) => {
-    let alice_sk = cryptobox_keygen();
-    let bob_sk = cryptobox_keygen();
-    let alice_pk = cryptobox_get_pk(alice_sk);
-    let bob_pk = cryptobox_get_pk(bob_sk);
+test('pke', (_t) => {
+    let sk = ml_kem_pke_keygen();
+    let pk = ml_kem_pke_get_pk(sk);
 
-    let pk_buf = cryptobox_pk_to_u8vec(bob_pk);
-    let pk_buf_2 = cryptobox_pk_to_u8vec(alice_pk);
-    assert.deepEqual(40, pk_buf.length);
-    assert.notDeepEqual(pk_buf, pk_buf_2);
+    // try to serialize
+    let pk_buf = ml_kem_pke_pk_to_u8vec(pk);
+    let sk_buf = ml_kem_pke_sk_to_u8vec(sk);
 
-    const x = new Uint8Array([21, 31, 1, 2, 3]);
-    let ct = cryptobox_encrypt(x, bob_pk, alice_sk);
-    let pt = cryptobox_decrypt(ct, bob_sk, alice_pk);
-    assert.deepEqual(x, pt);
-});
+    // there is extra 8 bytes in the bincode encoding to encode the vector length
+    // see https://github.com/bincode-org/bincode/blob/trunk/docs/spec.md#linear-collections-vec-arrays-etc
+    assert.deepEqual(ml_kem_pke_ct_pk_len() + 8, pk_buf.length);
+    assert.deepEqual(ml_kem_pke_sk_len() + 8, sk_buf.length);
 
-
-test('crypto_box ser', (_t) => {
-    let alice_sk = cryptobox_keygen();
-    let bob_sk = cryptobox_keygen();
-    let alice_pk = cryptobox_get_pk(alice_sk);
-    let bob_pk = cryptobox_get_pk(bob_sk);
-
-    // we serialize and then deserialize Bob's keys
-    let bob_sk_buf = cryptobox_sk_to_u8vec(bob_sk);
-    let bob_pk_buf = cryptobox_pk_to_u8vec(bob_pk);
-    let bob_sk_2 = u8vec_to_cryptobox_sk(bob_sk_buf);
-    let bob_pk_2 = u8vec_to_cryptobox_pk(bob_pk_buf);
+    // try to deserialize
+    let sk_2 = u8vec_to_ml_kem_pke_sk(sk_buf);
+    let pk_2 = u8vec_to_ml_kem_pke_pk(pk_buf);
 
     const x = new Uint8Array([21, 31, 1, 2, 3]);
-    let ct = cryptobox_encrypt(x, bob_pk_2, alice_sk);
-    let pt = cryptobox_decrypt(ct, bob_sk_2, alice_pk);
+    let ct = ml_kem_pke_encrypt(x, pk_2);
+    let pt = ml_kem_pke_decrypt(ct, sk_2);
     assert.deepEqual(x, pt);
 });
 

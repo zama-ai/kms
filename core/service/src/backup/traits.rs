@@ -1,6 +1,8 @@
 use threshold_fhe::hashing::DomainSep;
 
-use crate::cryptography::{internal_crypto_types::PrivateSigKey, signcryption};
+use crate::cryptography::{
+    internal_crypto_types::PrivateSigKey, nested_pke::NestedPrivateKey, signcryption,
+};
 
 use super::error::BackupError;
 
@@ -10,12 +12,18 @@ pub trait BackupSigner {
 
 impl BackupSigner for PrivateSigKey {
     fn sign(&self, dsep: &DomainSep, msg: &[u8]) -> Result<Vec<u8>, BackupError> {
-        signcryption::sign(dsep, msg, self)
+        signcryption::internal_sign(dsep, msg, self)
             .map(|sig| sig.sig.to_vec())
-            .map_err(|_e| BackupError::SigningError)
+            .map_err(|e| BackupError::SigningError(e.to_string()))
     }
 }
 
 pub trait BackupDecryptor {
     fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, BackupError>;
+}
+
+impl BackupDecryptor for NestedPrivateKey {
+    fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, BackupError> {
+        NestedPrivateKey::decrypt(self, ciphertext).map_err(|e| e.into())
+    }
 }

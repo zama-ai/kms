@@ -1,7 +1,9 @@
 use crate::consts::{DEFAULT_PARAM, SIG_SIZE, TEST_PARAM};
-use crypto_box::SecretKey;
+use crate::cryptography::hybrid_ml_kem::{self, KemParam};
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use kms_grpc::kms::v1::FheParameter;
+use ml_kem::kem::{DecapsulationKey, EncapsulationKey};
+use ml_kem::EncodedSizeUser;
 use nom::AsBytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -42,16 +44,17 @@ macro_rules! impl_generic_versionize {
 // Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server
 // uses to encrypt its payload
 #[wasm_bindgen]
-#[derive(Clone, Hash, PartialEq, Eq, Debug)]
-pub struct PublicEncKey(pub(crate) crypto_box::PublicKey);
+#[derive(Clone, PartialEq, Debug)]
+pub struct PublicEncKey(pub(crate) EncapsulationKey<KemParam>);
 impl Serialize for PublicEncKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(&self.0.to_bytes()[..])
+        serializer.serialize_bytes(&self.0.as_bytes())
     }
 }
+
 impl<'de> Deserialize<'de> for PublicEncKey {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -60,13 +63,13 @@ impl<'de> Deserialize<'de> for PublicEncKey {
         deserializer.deserialize_bytes(PublicEncKeyVisitor)
     }
 }
+
 struct PublicEncKeyVisitor;
-/// Serialize a point encryption key for libsodium's ECIES. Concretely as a Montgomery point
 impl Visitor<'_> for PublicEncKeyVisitor {
     type Value = PublicEncKey;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        formatter.write_str("A public key for libsodium crypto box using salsa and curve 25519")
+        formatter.write_str("A ML-KEM Encapsulation key")
     }
 
     fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
@@ -81,22 +84,23 @@ impl Visitor<'_> for PublicEncKeyVisitor {
                 return Err(serde::de::Error::custom(msg));
             }
         };
-        Ok(PublicEncKey(crypto_box::PublicKey::from_bytes(array)))
+        let ek = EncapsulationKey::<KemParam>::from_bytes(array);
+        Ok(PublicEncKey(ek))
     }
 }
 
 // Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the
 // server's encrypted payload
 #[wasm_bindgen]
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct PrivateEncKey(pub(crate) crypto_box::SecretKey);
+#[derive(Clone, Debug)]
+pub struct PrivateEncKey(pub(crate) DecapsulationKey<KemParam>);
 
 impl Serialize for PrivateEncKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(&self.0.to_bytes())
+        serializer.serialize_bytes(&self.0.as_bytes())
     }
 }
 
@@ -114,20 +118,23 @@ impl Visitor<'_> for PrivateEncKeyVisitor {
     type Value = PrivateEncKey;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        formatter.write_str("An ephemeral private decryption key")
+        formatter.write_str("A ML-KEM decapsulation key")
     }
 
     fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
     where
         E: serde::de::Error,
     {
-        match SecretKey::from_slice(v) {
-            Ok(sk) => Ok(PrivateEncKey(sk)),
-            Err(e) => Err(E::custom(format!(
-                "Could not decode decryption key: {:?}",
-                e
-            ))),
-        }
+        let array = match v.try_into() {
+            Ok(array) => array,
+            Err(_) => {
+                let msg = "Byte array of incorrect length";
+                tracing::error!(msg);
+                return Err(serde::de::Error::custom(msg));
+            }
+        };
+        let dk = DecapsulationKey::<KemParam>::from_bytes(array);
+        Ok(PrivateEncKey(dk))
     }
 }
 
@@ -298,14 +305,10 @@ impl Visitor<'_> for PrivateSigKeyVisitor {
 }
 
 // Type used for the signcrypted payload returned by a server
-#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug)]
-pub struct Cipher {
-    pub(crate) bytes: Vec<u8>,
-    pub(crate) nonce: Vec<u8>,
-    pub(crate) server_enc_key: PublicEncKey,
-}
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct Cipher(pub hybrid_ml_kem::HybridKemCt);
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, Debug)]
 pub struct SigncryptionPrivKey {
     pub signing_key: Option<PrivateSigKey>,
     pub decryption_key: PrivateEncKey,
@@ -314,14 +317,14 @@ pub struct SigncryptionPrivKey {
 /// Structure for public keys for signcryption that can get encoded as follows:
 ///     client_address, a 20-byte blockchain address, created from a public key
 ///     enc_key, (Montgomery point following libsodium serialization)
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct SigncryptionPubKey {
     pub client_address: alloy_primitives::Address,
     pub enc_key: PublicEncKey,
 }
 
 /// Structure for private keys for signcryption
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, Debug)]
 pub struct SigncryptionPair {
     pub sk: SigncryptionPrivKey,
     pub pk: SigncryptionPubKey,
@@ -388,5 +391,37 @@ impl std::ops::Deref for WrappedDKGParams {
     type Target = DKGParams;
     fn deref(&self) -> &DKGParams {
         &self.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::rngs::OsRng;
+
+    use crate::cryptography::{
+        hybrid_ml_kem,
+        internal_crypto_types::{PrivateEncKey, PublicEncKey},
+        signcryption::ephemeral_encryption_key_generation,
+    };
+
+    #[test]
+    fn test_pke_serialize_size() {
+        let mut rng = OsRng;
+        let (pk, sk) = ephemeral_encryption_key_generation(&mut rng);
+        let pk_buf = bincode::serialize(&pk).unwrap();
+        let sk_buf = bincode::serialize(&sk).unwrap();
+        // there is extra 8 bytes in the serialization to encode the length
+        // see https://github.com/bincode-org/bincode/blob/trunk/docs/spec.md#linear-collections-vec-arrays-etc
+        assert_eq!(pk_buf.len(), hybrid_ml_kem::ML_KEM_CT_PK_LENGTH + 8);
+        assert_eq!(sk_buf.len(), hybrid_ml_kem::ML_KEM_SK_LEN + 8);
+
+        // deserialize and test if encryption still works.
+        let pk2: PublicEncKey = bincode::deserialize(&pk_buf).unwrap();
+        let sk2: PrivateEncKey = bincode::deserialize(&sk_buf).unwrap();
+
+        let msg = b"four legs good, two legs better";
+        let ct = hybrid_ml_kem::enc(&mut rng, msg, &pk2.0).unwrap();
+        let pt = hybrid_ml_kem::dec(ct, &sk2.0).unwrap();
+        assert_eq!(msg.to_vec(), pt);
     }
 }

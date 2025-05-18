@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use tfhe::Versionize;
+use tfhe::{named::Named, Versionize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::hashing::DomainSep;
 
@@ -11,13 +11,13 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         internal_crypto_types::{PublicSigKey, Signature},
+        nested_pke::NestedPublicKey,
         signcryption::internal_verify_sig,
     },
 };
 
 use super::{
     error::BackupError,
-    nested_pke::NestedPublicKey,
     operator::{BackupMaterial, OperatorBackupOutput, DSEP_BACKUP_OPERATOR},
     traits::{BackupDecryptor, BackupSigner},
 };
@@ -31,8 +31,7 @@ pub enum InnerCustodianSetupMessageVersioned {
     V0(InnerCustodianSetupMessage),
 }
 
-// This is the message that is signed,
-// do we want the public encryption key to be in here too?
+/// This is the message that is signed by the custodian during setup.
 #[derive(Clone, Serialize, Deserialize, Versionize)]
 #[versionize(InnerCustodianSetupMessageVersioned)]
 pub struct InnerCustodianSetupMessage {
@@ -40,20 +39,38 @@ pub struct InnerCustodianSetupMessage {
     pub custodian_id: usize,
     pub random_value: [u8; 32],
     pub timestamp: u64,
+    pub public_key: NestedPublicKey,
 }
 
-#[derive(Clone, Debug)]
+/// This is the message that custodian sends to the operators
+/// near the end of the recovery step. It does not need to be persisted
+/// so we do not implement versioning.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CustodianRecoveryOutput {
     pub signature: Vec<u8>,  // sigt_i_j
     pub ciphertext: Vec<u8>, // st_i_j
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum CustodianSetupMessageVersioned {
+    V0(CustodianSetupMessage),
+}
+
+/// This is the setup message sent from the custodian to the operator.
+///
+/// The operators need to persist these messages in their storage
+/// so that they can run the backup procedure when needed.
+#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[versionize(CustodianSetupMessageVersioned)]
 pub struct CustodianSetupMessage {
     pub msg: InnerCustodianSetupMessage,
+    /// The signature is on the bincode serialized [msg].
     pub signature: Vec<u8>,
-    pub public_key: NestedPublicKey,
     pub verification_key: PublicSigKey,
+}
+
+impl Named for CustodianSetupMessage {
+    const NAME: &'static str = "backup::CustodianSetupMessage";
 }
 
 pub struct Custodian<S: BackupSigner, D: BackupDecryptor> {
@@ -160,6 +177,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
             custodian_id: self.id,
             random_value,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            public_key: self.nested_pk.clone(),
         };
 
         let msg_buf = bincode::serialize(&msg)?;
@@ -168,7 +186,6 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         Ok(CustodianSetupMessage {
             msg,
             signature,
-            public_key: self.nested_pk.clone(),
             verification_key: self.verification_key().clone(),
         })
     }

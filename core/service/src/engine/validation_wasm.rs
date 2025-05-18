@@ -696,9 +696,12 @@ mod tests {
         // happy path for empty external_signature
         {
             let pivot_buf = bincode::serialize(&pivot_resp).unwrap();
-            let signature =
-                &crate::cryptography::signcryption::sign(&DSEP_USER_DECRYPTION, &pivot_buf, &sk0)
-                    .unwrap();
+            let signature = &crate::cryptography::signcryption::internal_sign(
+                &DSEP_USER_DECRYPTION,
+                &pivot_buf,
+                &sk0,
+            )
+            .unwrap();
             let signature_buf = signature.sig.to_vec();
             validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,

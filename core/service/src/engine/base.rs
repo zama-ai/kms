@@ -152,7 +152,7 @@ pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
     domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<SignedPubDataHandleInternal> {
     let handle = compute_handle(element)?;
-    let signature = crate::cryptography::signcryption::sign(dsep, &handle, sk)?;
+    let signature = crate::cryptography::signcryption::internal_sign(dsep, &handle, sk)?;
 
     // if we get an EIP-712 domain, compute the external signature
     let external_signature = match domain {
@@ -537,7 +537,7 @@ impl BaseKms for BaseKmsStruct {
     where
         T: Serialize + AsRef<[u8]>,
     {
-        crate::cryptography::signcryption::sign(dsep, msg, &self.sig_key)
+        crate::cryptography::signcryption::internal_sign(dsep, msg, &self.sig_key)
     }
 
     fn get_serialized_verf_key(&self) -> Vec<u8> {

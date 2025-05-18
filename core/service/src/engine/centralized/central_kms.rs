@@ -1415,7 +1415,7 @@ pub(crate) mod tests {
             assert!(decrypted
                 .unwrap_err()
                 .to_string()
-                .contains("Could not decrypt message"));
+                .contains("signcryption decryption failed"));
             return;
         }
         if sim_type == SimulationType::BadSigKey {

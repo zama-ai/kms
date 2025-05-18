@@ -26,7 +26,11 @@ pub mod cryptography {
     #[cfg(feature = "non-wasm")]
     pub mod attestation;
     pub mod decompression;
+    pub mod error;
+    pub mod hybrid_ml_kem;
+    pub mod hybrid_rsa;
     pub mod internal_crypto_types;
+    pub mod nested_pke;
     pub mod signcryption;
 }
 #[cfg(feature = "non-wasm")]
@@ -89,9 +93,15 @@ pub fn some_or_err<T>(input: Option<T>, error: String) -> anyhow::Result<T> {
 #[track_caller]
 pub(crate) fn anyhow_error_and_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
     tracing::error!("Error in {}: {}", Location::caller(), msg);
+    anyhow_tracked(msg)
+}
+
+#[track_caller]
+pub(crate) fn anyhow_tracked<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
     anyhow!("Error in {}: {}", Location::caller(), msg)
 }
 
+#[cfg(feature = "non-wasm")]
 #[track_caller]
 pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
     tracing::warn!("Warning in {}: {}", Location::caller(), msg);

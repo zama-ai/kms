@@ -67,14 +67,25 @@
 //! ```
 //! node --test tests/js
 //! ```
-use crypto_box::aead::{Aead, AeadCore};
-use crypto_box::{Nonce, SalsaBox};
+use crate::cryptography::hybrid_ml_kem;
+use bincode::{deserialize, serialize};
 use kms_grpc::kms::v1::Eip712DomainMsg;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 use threshold_fhe::execution::tfhe_internals::parameters::BC_PARAMS_SNS;
 
 use super::*;
+
+// We can't wasm-bindgen consts, so we put it in a function instead.
+#[wasm_bindgen]
+pub fn ml_kem_pke_ct_pk_len() -> usize {
+    hybrid_ml_kem::ML_KEM_CT_PK_LENGTH
+}
+
+#[wasm_bindgen]
+pub fn ml_kem_pke_sk_len() -> usize {
+    hybrid_ml_kem::ML_KEM_SK_LEN
+}
 
 #[wasm_bindgen]
 pub fn public_sig_key_to_u8vec(pk: &PublicSigKey) -> Vec<u8> {
@@ -246,66 +257,53 @@ pub fn transcript_to_client(transcript: &TestingUserDecryptionTranscript) -> Cli
 #[wasm_bindgen]
 pub struct CryptoBoxCt {
     ct: Vec<u8>,
-    nonce: Nonce,
 }
 
 #[wasm_bindgen]
-pub fn cryptobox_keygen() -> PrivateEncKey {
+pub fn ml_kem_pke_keygen() -> PrivateEncKey {
     let mut rng = AesRng::from_entropy();
-    let sk = crypto_box::SecretKey::generate(&mut rng);
-    PrivateEncKey(sk)
+    let (dk, _ek) = hybrid_ml_kem::keygen(&mut rng);
+    PrivateEncKey(dk)
 }
 
 #[wasm_bindgen]
-pub fn cryptobox_get_pk(sk: &PrivateEncKey) -> PublicEncKey {
-    PublicEncKey(sk.0.public_key())
+pub fn ml_kem_pke_get_pk(sk: &PrivateEncKey) -> PublicEncKey {
+    PublicEncKey(sk.0.encapsulation_key().clone())
 }
 
 #[wasm_bindgen]
-pub fn cryptobox_pk_to_u8vec(pk: &PublicEncKey) -> Result<Vec<u8>, JsError> {
+pub fn ml_kem_pke_pk_to_u8vec(pk: &PublicEncKey) -> Result<Vec<u8>, JsError> {
     serialize(pk).map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
-pub fn cryptobox_sk_to_u8vec(sk: &PrivateEncKey) -> Result<Vec<u8>, JsError> {
+pub fn ml_kem_pke_sk_to_u8vec(sk: &PrivateEncKey) -> Result<Vec<u8>, JsError> {
     serialize(sk).map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
-pub fn u8vec_to_cryptobox_pk(v: &[u8]) -> Result<PublicEncKey, JsError> {
+pub fn u8vec_to_ml_kem_pke_pk(v: &[u8]) -> Result<PublicEncKey, JsError> {
     deserialize(v).map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
-pub fn u8vec_to_cryptobox_sk(v: &[u8]) -> Result<PrivateEncKey, JsError> {
+pub fn u8vec_to_ml_kem_pke_sk(v: &[u8]) -> Result<PrivateEncKey, JsError> {
     deserialize(v).map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]
-pub fn cryptobox_encrypt(
-    msg: &[u8],
-    their_pk: &PublicEncKey,
-    my_sk: &PrivateEncKey,
-) -> CryptoBoxCt {
-    let salsa_box = SalsaBox::new(&their_pk.0, &my_sk.0);
+pub fn ml_kem_pke_encrypt(msg: &[u8], their_pk: &PublicEncKey) -> CryptoBoxCt {
     let mut rng = AesRng::from_entropy();
-    let nonce = SalsaBox::generate_nonce(&mut rng);
 
     CryptoBoxCt {
-        ct: salsa_box.encrypt(&nonce, msg).unwrap(),
-        nonce,
+        ct: serialize(&hybrid_ml_kem::enc(&mut rng, msg, &their_pk.0).unwrap()).unwrap(),
     }
 }
 
 #[wasm_bindgen]
-pub fn cryptobox_decrypt(
-    ct: &CryptoBoxCt,
-    my_sk: &PrivateEncKey,
-    their_pk: &PublicEncKey,
-) -> Vec<u8> {
-    let salsa_box = SalsaBox::new(&their_pk.0, &my_sk.0);
-
-    salsa_box.decrypt(&ct.nonce, &ct.ct[..]).unwrap()
+pub fn ml_kem_pke_decrypt(ct: &CryptoBoxCt, my_sk: &PrivateEncKey) -> Vec<u8> {
+    let ct: hybrid_ml_kem::HybridKemCt = deserialize(&ct.ct).unwrap();
+    hybrid_ml_kem::dec(ct, &my_sk.0).unwrap()
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]

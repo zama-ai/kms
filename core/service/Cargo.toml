@@ -54,7 +54,6 @@ cbc = { version = "=0.1.2", features = ["alloc"] }
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive"] }
 conf-trace = { workspace = true, optional = true }
-crypto_box = { version = "=0.9.1", features = ["salsa20"] }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "extension_degree_4",
 ] }

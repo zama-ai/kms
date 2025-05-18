@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tfhe::{named::Named, Versionize};
 use tfhe_versionable::VersionsDispatch;
 
-use super::error::BackupError;
+use super::error::CryptographyError;
 
 const NONCE_LEN: usize = 12;
 const RSA_OUTPUT_LEN: usize = 512;
@@ -13,7 +13,7 @@ const RSA_KEY_BIT_SIZE: usize = 4096;
 
 pub(crate) fn keygen<R: Rng + CryptoRng>(
     rng: &mut R,
-) -> Result<(rsa::RsaPrivateKey, rsa::RsaPublicKey), BackupError> {
+) -> Result<(rsa::RsaPrivateKey, rsa::RsaPublicKey), CryptographyError> {
     let rsa_private_key = rsa::RsaPrivateKey::new(rng, RSA_KEY_BIT_SIZE)?;
     let rsa_public_key = rsa_private_key.to_public_key();
     Ok((rsa_private_key, rsa_public_key))
@@ -43,11 +43,11 @@ impl Named for HybridRsaCt {
 }
 
 impl TryFrom<HybridRsaCt> for InnerHybridRsaCt {
-    type Error = BackupError;
+    type Error = CryptographyError;
 
     fn try_from(value: HybridRsaCt) -> Result<Self, Self::Error> {
         if value.key_ct.len() != RSA_OUTPUT_LEN {
-            return Err(BackupError::LengthError(
+            return Err(CryptographyError::LengthError(
                 "rsa ciphertext has the wrong length".to_string(),
             ));
         }
@@ -75,7 +75,7 @@ pub(crate) fn enc<R: Rng + CryptoRng>(
     rng: &mut R,
     msg: &[u8],
     rsa_pk: &rsa::RsaPublicKey,
-) -> Result<HybridRsaCt, BackupError> {
+) -> Result<HybridRsaCt, CryptographyError> {
     // we need to do hybrid encryption, so generate a new symmetric keypair
     // note that we need to write `&mut *rng` so that it's not considered to be moved
     let aead_key = Aes256Gcm::generate_key(&mut *rng);
@@ -100,7 +100,10 @@ pub(crate) fn enc<R: Rng + CryptoRng>(
     .into())
 }
 
-pub(crate) fn dec(ct: HybridRsaCt, rsa_sk: &rsa::RsaPrivateKey) -> Result<Vec<u8>, BackupError> {
+pub(crate) fn dec(
+    ct: HybridRsaCt,
+    rsa_sk: &rsa::RsaPrivateKey,
+) -> Result<Vec<u8>, CryptographyError> {
     // first decrypt RSA OAED ciphertext to obtain the AES key
     let ct: InnerHybridRsaCt = ct.try_into()?;
     let InnerHybridRsaCt {
@@ -114,7 +117,7 @@ pub(crate) fn dec(ct: HybridRsaCt, rsa_sk: &rsa::RsaPrivateKey) -> Result<Vec<u8
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
 
     if key_size > aead_key.len() {
-        return Err(BackupError::LengthError(
+        return Err(CryptographyError::LengthError(
             "aead key has the wrong length".to_string(),
         ));
     }
@@ -170,7 +173,7 @@ mod tests {
             let (sk, _pk) = keygen(&mut rng).unwrap();
             let ct = enc(&mut rng, &msg, &pk).unwrap();
             let err = dec(ct, &sk).unwrap_err();
-            assert!(matches!(err, BackupError::RsaError(..)));
+            assert!(matches!(err, CryptographyError::RsaError(..)));
         }
 
         #[test]
@@ -180,7 +183,7 @@ mod tests {
             let mut ct = enc(&mut rng, &msg, &pk).unwrap();
             ct.payload_ct[0] ^= 1;
             let err = dec(ct, &sk).unwrap_err();
-            assert!(matches!(err, BackupError::AesGcmError(..)));
+            assert!(matches!(err, CryptographyError::AesGcmError(..)));
         }
     }
 }

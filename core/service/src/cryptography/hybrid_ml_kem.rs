@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tfhe::{named::Named, Versionize};
 use tfhe_versionable::VersionsDispatch;
 
-use super::error::BackupError;
+use super::error::CryptographyError;
 
 pub(crate) type KemParam = MlKem1024Params;
 
@@ -37,7 +37,7 @@ pub enum HybridKemCtVersioned {
 // but serde cannot derive Serialize/Deserialize for arrays
 // larger than 32. So we have this [HybridKemCt] type where
 // [kem_ct] is a Vec.
-#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(HybridKemCtVersioned)]
 pub struct HybridKemCt {
     pub nonce: [u8; NONCE_LEN],
@@ -52,11 +52,11 @@ impl Named for HybridKemCt {
 }
 
 impl TryFrom<HybridKemCt> for InnerHybridKemCt {
-    type Error = BackupError;
+    type Error = CryptographyError;
 
     fn try_from(value: HybridKemCt) -> Result<Self, Self::Error> {
         if value.kem_ct.len() != ML_KEM_CT_PK_LENGTH {
-            return Err(BackupError::LengthError(
+            return Err(CryptographyError::LengthError(
                 "kem ciphertext has the wrong length".to_string(),
             ));
         }
@@ -84,10 +84,10 @@ pub(crate) fn enc<R: Rng + CryptoRng>(
     rng: &mut R,
     msg: &[u8],
     enc_k: &EncapsulationKey<KemParam>,
-) -> Result<HybridKemCt, BackupError> {
+) -> Result<HybridKemCt, CryptographyError> {
     let (kem_ct, kem_shared_secret) = enc_k
         .encapsulate(rng)
-        .map_err(|_| BackupError::MlKemError)?;
+        .map_err(|_| CryptographyError::MlKemError)?;
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
     let aead_key = Key::<Aes256Gcm>::from_slice(&kem_shared_secret[0..key_size]);
@@ -106,7 +106,7 @@ pub(crate) fn enc<R: Rng + CryptoRng>(
 pub(crate) fn dec(
     ct: HybridKemCt,
     dec_k: &DecapsulationKey<KemParam>,
-) -> Result<Vec<u8>, BackupError> {
+) -> Result<Vec<u8>, CryptographyError> {
     let ct: InnerHybridKemCt = ct.try_into()?;
     let InnerHybridKemCt {
         nonce,
@@ -119,7 +119,7 @@ pub(crate) fn dec(
     // More information on implicit rejection here: https://eprint.iacr.org/2018/526.pdf
     let kem_shared_secret = dec_k
         .decapsulate(&kem_ct.into())
-        .map_err(|_| BackupError::MlKemError)?;
+        .map_err(|_| CryptographyError::MlKemError)?;
 
     let key_size = <Aes256Gcm as KeySizeUser>::key_size();
     let aead_key = Key::<aes_gcm::Aes256Gcm>::clone_from_slice(&kem_shared_secret[0..key_size]);
@@ -172,7 +172,7 @@ mod tests {
             let ct = enc(&mut rng, &msg, &pk).unwrap();
             assert_eq!(ct.kem_ct.len(), ML_KEM_CT_PK_LENGTH);
             let err = dec(ct, &sk).unwrap_err();
-            assert!(matches!(err, BackupError::AesGcmError(..)));
+            assert!(matches!(err, CryptographyError::AesGcmError(..)));
         }
 
         #[test]
@@ -183,7 +183,7 @@ mod tests {
             assert_eq!(ct.kem_ct.len(), ML_KEM_CT_PK_LENGTH);
             ct.payload_ct[0] ^= 1;
             let err = dec(ct, &sk).unwrap_err();
-            assert!(matches!(err, BackupError::AesGcmError(..)));
+            assert!(matches!(err, CryptographyError::AesGcmError(..)));
         }
     }
 }

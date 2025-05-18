@@ -19,6 +19,7 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         internal_crypto_types::{PublicSigKey, Signature},
+        nested_pke::NestedPublicKey,
         signcryption::internal_verify_sig,
     },
     engine::base::safe_serialize_hash_element_versioned,
@@ -30,7 +31,6 @@ use super::{
         DSEP_BACKUP_CUSTODIAN, HEADER,
     },
     error::BackupError,
-    nested_pke::NestedPublicKey,
     secretsharing,
     traits::{BackupDecryptor, BackupSigner},
 };
@@ -63,9 +63,18 @@ impl<S: BackupSigner, D: BackupDecryptor> std::fmt::Debug for Operator<S, D> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum OperatorBackupOutputVersioned {
+    V0(OperatorBackupOutput),
+}
+
+/// The output from the operator after it has completed a backup.
+/// This data needs to be persisted on some public storage so that
+/// new operators can download and recover.
+#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[versionize(OperatorBackupOutputVersioned)]
 pub struct OperatorBackupOutput {
-    /// Ciphertext under the custodian's public key, using nexted encryption.
+    /// Ciphertext under the custodian's public key, using nested encryption.
     pub ciphertext: Vec<u8>,
     /// Signature by the operator.
     pub signature: Vec<u8>,
@@ -76,6 +85,10 @@ pub struct OperatorBackupOutput {
     /// As such, we need to ensure the material that is being committed
     /// has enough entorpy.
     pub commitment: Vec<u8>,
+}
+
+impl Named for OperatorBackupOutput {
+    const NAME: &'static str = "backup::OperatorBackupOutput";
 }
 
 fn verify_n_t(n: usize, t: usize) -> Result<(), BackupError> {
@@ -206,6 +219,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
                 custodian_id,
                 random_value: _,
                 timestamp,
+                public_key,
             } = msg.msg.clone();
 
             if header != HEADER {
@@ -234,7 +248,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
             )
             .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
 
-            custodian_keys.push((msg.public_key, msg.verification_key));
+            custodian_keys.push((public_key, msg.verification_key));
         }
 
         Ok(Self {
@@ -307,8 +321,8 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
             let minimum_expected_length = shares.len() * (32 + 8) + 8;
             let actual_length = bincode::serialize(&shares)?.len();
             if actual_length < minimum_expected_length {
-                return Err(BackupError::LengthError(format!(
-                    "share is not long enough: actual={actual_length} >= minimum={minimum_expected_length}"
+                return Err(BackupError::OperatorError(format!(
+                    "share is not long enough: actual={actual_length} < minimum={minimum_expected_length}"
                 )));
             }
 
@@ -369,7 +383,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
                 let key = &self
                     .custodian_keys
                     .get(*j)
-                    .ok_or(BackupError::LengthError(format!(
+                    .ok_or(BackupError::OperatorError(format!(
                         "missing custodian key at index {j}"
                     )))?;
                 // sigt_ij

@@ -51,7 +51,7 @@ use zeroize::Zeroize;
 #[derive(Clone, Copy, PartialEq, Hash, Eq, Debug, Zeroize, Versionize)]
 #[versionize(ResiduePolyVersioned)]
 pub struct ResiduePoly<Z, const EXTENSION_DEGREE: usize> {
-    pub coefs: [Z; EXTENSION_DEGREE], // TODO(Daniel) can this be a slice instead of an array?
+    pub coefs: [Z; EXTENSION_DEGREE],
 }
 
 impl<Z: Default + Copy, const EXTENSION_DEGREE: usize> Default
