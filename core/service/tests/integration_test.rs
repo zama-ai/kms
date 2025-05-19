@@ -97,8 +97,8 @@ mod kms_init_binary_test {
 
 #[cfg(test)]
 mod kms_gen_keys_binary_test {
-    use std::fs::read_dir;
     use tempfile::tempdir;
+    use tokio::fs::read_dir;
 
     use super::*;
 
@@ -160,7 +160,7 @@ mod kms_gen_keys_binary_test {
         gen_key("threshold")
     }
 
-    fn gen_key_tempdir(arg: &str) {
+    async fn gen_key_tempdir(arg: &str) {
         let temp_dir_priv = tempdir().unwrap();
         let temp_dir_pub = tempdir().unwrap();
         Command::cargo_bin(KMS_GEN_KEYS)
@@ -178,26 +178,26 @@ mod kms_gen_keys_binary_test {
 
         // NOTE, it's important to take the reference here otherwise
         // the tempdir value will be dropped and the destructor would be called
-        let mut dir_priv = read_dir(&temp_dir_priv).unwrap();
-        let mut dir_pub = read_dir(&temp_dir_pub).unwrap();
+        let mut dir_priv = read_dir(&temp_dir_priv).await.unwrap();
+        let mut dir_pub = read_dir(&temp_dir_pub).await.unwrap();
 
         // unwrap should succeed because the directory should not be empty
-        _ = dir_priv.next().unwrap();
-        _ = dir_pub.next().unwrap();
+        _ = dir_priv.next_entry().await.unwrap();
+        _ = dir_pub.next_entry().await.unwrap();
     }
 
-    #[test]
+    #[tokio::test]
     #[integration_test]
     #[persistent_traces]
-    fn gen_key_tempdir_centralized() {
-        gen_key_tempdir("centralized")
+    async fn gen_key_tempdir_centralized() {
+        gen_key_tempdir("centralized").await
     }
 
-    #[test]
+    #[tokio::test]
     #[integration_test]
     #[persistent_traces]
-    fn gen_key_tempdir_threshold() {
-        gen_key_tempdir("threshold")
+    async fn gen_key_tempdir_threshold() {
+        gen_key_tempdir("threshold").await
     }
 
     #[test]

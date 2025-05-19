@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let telemetry = TelemetryConfig::builder()
         .tracing_service_name("kms_core".to_string())
         .build();
-    init_tracing(&telemetry)?;
+    init_tracing(&telemetry).await?;
 
     let args = Args::parse();
 

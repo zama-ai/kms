@@ -60,7 +60,7 @@ struct KmsArgs {
 async fn main() -> anyhow::Result<()> {
     let args = KmsArgs::parse();
     let (core_config, tracer_provider, meter_provider) =
-        init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file)?;
+        init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file).await?;
 
     tracing::info!("Starting KMS Server with core config: {:?}", &core_config);
 

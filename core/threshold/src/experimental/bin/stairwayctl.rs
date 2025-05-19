@@ -361,7 +361,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .build()
     });
 
-    let tracer_provider = init_tracing(&telemetry)?;
+    let tracer_provider = init_tracing(&telemetry).await?;
 
     let runtime = ChoreoRuntime::new_from_conf(&conf)?;
     match args.command {

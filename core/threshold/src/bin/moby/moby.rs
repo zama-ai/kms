@@ -88,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .build()
     });
 
-    let tracer_provider = init_tracing(&telemetry_config)?;
+    let tracer_provider = init_tracing(&telemetry_config).await?;
 
     // Run the server and get the result
     let result = grpc::server::run::<EXTENSION_DEGREE>(&settings).await;

@@ -176,7 +176,7 @@ pub fn init_metrics(settings: &TelemetryConfig) -> Result<SdkMeterProvider, anyh
     Ok(provider)
 }
 
-pub fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvider, anyhow::Error> {
+pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvider, anyhow::Error> {
     // For tests annotated with `#[persistent_traces]`
     // we set up a file-based persistent logger
     if std::env::var("TRACE_PERSISTENCE").unwrap_or_default() == "enabled" {
@@ -212,7 +212,7 @@ pub fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvider, any
         // Create directory if it doesn't exist
         if let Some(parent) = std::path::Path::new(&log_path).parent() {
             if !parent.exists() {
-                std::fs::create_dir_all(parent)?;
+                tokio::fs::create_dir_all(parent).await?;
             }
         }
 
@@ -378,14 +378,14 @@ pub fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvider, any
     Ok(provider)
 }
 
-pub fn init_telemetry(
+pub async fn init_telemetry(
     settings: &TelemetryConfig,
 ) -> anyhow::Result<(SdkTracerProvider, SdkMeterProvider)> {
     println!("Starting telemetry initialization...");
 
     // First initialize tracing as it's more critical
     println!("Initializing tracing subsystem...");
-    let tracer_provider = init_tracing(settings)?;
+    let tracer_provider = init_tracing(settings).await?;
 
     // Now that tracing is initialized, we can use info! tracing macros
     info!("Tracing initialization completed successfully");

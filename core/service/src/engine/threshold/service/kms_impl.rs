@@ -25,7 +25,9 @@ use threshold_fhe::{
     },
     networking::{
         grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager, GrpcServer},
-        tls::{build_ca_certs_map, AttestedClientVerifier, BasicTLSConfig},
+        tls::{
+            build_ca_certs_map, AttestedClientVerifier, BasicTLSConfig, SendingServiceTLSConfig,
+        },
         Networking, NetworkingStrategy,
     },
 };
@@ -316,21 +318,7 @@ where
     // We put the party CA certificates into a hashmap keyed by party addresses
     // to be able to limit trust anchors to only one CA certificate both on
     // client and server.
-    let tls_certs = tls_identity
-        .map(|(cert, key, trusted_releases)| {
-            build_ca_certs_map(peer_configs.iter().flat_map(|peer| {
-                peer.tls_cert.as_ref().map(|tls_cert| match tls_cert {
-                    TlsCert::Path(path) => std::fs::read_to_string(path)
-                        .map_err(|e| anyhow::anyhow!("Could not read CA certificates: {e}")),
-                    TlsCert::Pem(bytes) => Ok(bytes.to_string()),
-                })
-            }))
-            .map(|ca_certs| {
-                tracing::info!("Using TLS trust anchors: {:?}", ca_certs.keys());
-                (cert, key, ca_certs, trusted_releases)
-            })
-        })
-        .transpose()?;
+    let tls_certs = extract_tls_certs(tls_identity, &peer_configs).await?;
 
     // We have to construct a rustls config ourselves instead of using the
     // wrapper from tonic::transport because we need to provide our own
@@ -597,4 +585,31 @@ where
     );
 
     Ok(kms)
+}
+
+/// Helper function to extract the TLS certificates from the peer configurations and TLS configuration.
+/// It returns a `SendingServiceTLSConfig` which consists of a tuple of the server certificate, private key, and a map of CA certificates
+async fn extract_tls_certs(
+    tls_identity: Option<BasicTLSConfig>,
+    peer_configs: &[PeerConf],
+) -> anyhow::Result<Option<SendingServiceTLSConfig>> {
+    if let Some((cert, key, trusted_releases)) = tls_identity {
+        let mut cert_strings = Vec::new();
+        for peer in peer_configs {
+            match peer.tls_cert.as_ref() {
+                Some(TlsCert::Path(path)) => cert_strings.push(
+                    tokio::fs::read_to_string(path)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Could not read CA certificates: {e}")),
+                ),
+                Some(TlsCert::Pem(bytes)) => cert_strings.push(Ok(bytes.to_string())),
+                None => {}
+            };
+        }
+        let ca_certs = build_ca_certs_map(cert_strings.into_iter())?;
+        tracing::info!("Using TLS trust anchors: {:?}", ca_certs.keys());
+        Ok(Some((cert, key, ca_certs, trusted_releases)))
+    } else {
+        Ok(None)
+    }
 }

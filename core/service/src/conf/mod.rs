@@ -79,7 +79,10 @@ pub fn init_conf<'a, T: Deserialize<'a> + std::fmt::Debug>(config_file: &str) ->
 }
 
 /// Initialize the configuration from the given file and initialize tracing.
-pub fn init_conf_kms_core_telemetry<'a, T: Deserialize<'a> + std::fmt::Debug + ConfigTracing>(
+pub async fn init_conf_kms_core_telemetry<
+    'a,
+    T: Deserialize<'a> + std::fmt::Debug + ConfigTracing,
+>(
     config_file: &str,
 ) -> anyhow::Result<(T, SdkTracerProvider, SdkMeterProvider)> {
     let full_config: T = init_conf(config_file)?;
@@ -88,16 +91,16 @@ pub fn init_conf_kms_core_telemetry<'a, T: Deserialize<'a> + std::fmt::Debug + C
             .tracing_service_name("kms_core".to_string())
             .build()
     });
-    let (tracer_provider, meter_provider) = init_telemetry(&telemetry)?;
+    let (tracer_provider, meter_provider) = init_telemetry(&telemetry).await?;
     Ok((full_config, tracer_provider, meter_provider))
 }
 
 /// Initialize the tracing configuration with default values
-pub fn init_kms_core_telemetry() -> anyhow::Result<(SdkTracerProvider, SdkMeterProvider)> {
+pub async fn init_kms_core_telemetry() -> anyhow::Result<(SdkTracerProvider, SdkMeterProvider)> {
     let telemetry = TelemetryConfig::builder()
         .tracing_service_name("kms_core".to_string())
         .build();
-    let (tracer_provider, meter_provider) = init_telemetry(&telemetry)?;
+    let (tracer_provider, meter_provider) = init_telemetry(&telemetry).await?;
     Ok((tracer_provider, meter_provider))
 }
 
