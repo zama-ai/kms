@@ -5,9 +5,9 @@ use crate::{
         structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
     },
     error::error_handler::anyhow_error_and_log,
-    execution::{
-        large_execution::vss::SecureVss,
-        small_execution::prss::{PRSSSetup, PRSSState},
+    execution::small_execution::{
+        prf::PRSSConversions,
+        prss::{PRSSPrimitives, PrssInit, RobustSecurePrssInit, SecurePRSSState},
     },
     networking::Networking,
     session_id::SessionId,
@@ -270,16 +270,18 @@ pub type SmallSession64<const EXTENSION_DEGREE: usize> =
 pub type SmallSession128<const EXTENSION_DEGREE: usize> =
     SmallSession<crate::algebra::galois_rings::common::ResiduePoly<Z128, EXTENSION_DEGREE>>;
 
-pub trait SmallSessionHandles<Z: Ring, R: Rng + CryptoRng>: BaseSessionHandles<R> {
-    fn prss_as_mut(&mut self) -> &mut PRSSState<Z>;
+pub trait SmallSessionHandles<Z: Ring, R: Rng + CryptoRng, P: PRSSPrimitives<Z>>:
+    BaseSessionHandles<R>
+{
+    fn prss_as_mut(&mut self) -> &mut P;
     /// Returns the non-mutable prss state if it exists or return an error
-    fn prss(&self) -> PRSSState<Z>;
+    fn prss(&self) -> P;
 }
 
 #[derive(Clone)]
 pub struct SmallSessionStruct<Z: Ring, R: Rng + CryptoRng + SeedableRng, P: ParameterHandles> {
     pub base_session: BaseSessionStruct<R, P>,
-    pub prss_state: PRSSState<Z>,
+    pub prss_state: SecurePRSSState<Z>,
 }
 impl<Z> SmallSession<Z>
 where
@@ -289,16 +291,18 @@ where
         mut base_session: BaseSessionStruct<AesRng, SessionParameters>,
     ) -> anyhow::Result<Self>
     where
-        Z: ErrorCorrect + RingEmbed + Invert,
+        Z: ErrorCorrect + Invert,
     {
-        let prss_setup = PRSSSetup::robust_init(&mut base_session, &SecureVss::default()).await?;
+        let prss_setup = RobustSecurePrssInit::default()
+            .init(&mut base_session)
+            .await?;
         let session_id = base_session.session_id();
         Self::new_from_prss_state(base_session, prss_setup.new_prss_session_state(session_id))
     }
 
     pub fn new_from_prss_state(
         base_session: BaseSessionStruct<AesRng, SessionParameters>,
-        prss_state: PRSSState<Z>,
+        prss_state: SecurePRSSState<Z>,
     ) -> anyhow::Result<Self> {
         Ok(SmallSessionStruct {
             base_session,
@@ -366,14 +370,17 @@ impl<Z: Ring, R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone, P: Paramet
     }
 }
 
-impl<Z: Ring, R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone, P: ParameterHandles>
-    SmallSessionHandles<Z, R> for SmallSessionStruct<Z, R, P>
+impl<
+        Z: Ring + RingEmbed + Invert + PRSSConversions,
+        R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone,
+        P: ParameterHandles,
+    > SmallSessionHandles<Z, R, SecurePRSSState<Z>> for SmallSessionStruct<Z, R, P>
 {
-    fn prss_as_mut(&mut self) -> &mut PRSSState<Z> {
+    fn prss_as_mut(&mut self) -> &mut SecurePRSSState<Z> {
         &mut self.prss_state
     }
 
-    fn prss(&self) -> PRSSState<Z> {
+    fn prss(&self) -> SecurePRSSState<Z> {
         self.prss_state.to_owned()
     }
 }

@@ -16,6 +16,7 @@ use crate::{
             secret_distributions::{RealSecretDistributions, SecretDistributions},
         },
         runtime::session::{ParameterHandles, SmallSession},
+        small_execution::prss::PRSSPrimitives,
         tfhe_internals::parameters::TUniformBound,
     },
 };

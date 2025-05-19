@@ -15,9 +15,7 @@ use crate::{
             triple::Triple,
         },
         runtime::session::{LargeSession, ParameterHandles, SmallSession},
-        small_execution::{
-            agree_random::RealAgreeRandom, offline::SmallPreprocessing, prf::PRSSConversions,
-        },
+        small_execution::{offline::SmallPreprocessing, prf::PRSSConversions},
     },
 };
 
@@ -75,10 +73,9 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionTripleProducer<Z> {
             };
 
             for _ in 0..num_loops {
-                let triples =
-                    SmallPreprocessing::<Z, RealAgreeRandom>::init(&mut session, base_batch_size)
-                        .await?
-                        .next_triple_vec(batch_size)?;
+                let triples = SmallPreprocessing::<Z>::init(&mut session, base_batch_size)
+                    .await?
+                    .next_triple_vec(batch_size)?;
 
                 //Drop the error on purpose as the receiver end might be closed already if we produced too much
                 let _ = sender_channel.send(triples).await;

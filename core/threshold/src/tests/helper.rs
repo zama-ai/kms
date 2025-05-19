@@ -173,13 +173,16 @@ pub mod tests_and_benches {
 #[cfg(any(test, feature = "testing"))]
 pub mod testing {
     use crate::{
-        algebra::structure_traits::{Invert, Ring, RingEmbed},
+        algebra::structure_traits::{ErrorCorrect, Invert},
         execution::{
             runtime::{
                 party::{Identity, Role},
                 session::{BaseSessionStruct, SessionParameters},
             },
-            small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
+            small_execution::{
+                agree_random::DummyAgreeRandom,
+                prss::{AbortRealPrssInit, PRSSSetup, PrssInit},
+            },
         },
         networking::{local::LocalNetworkingProducer, NetworkMode},
         session_id::SessionId,
@@ -232,13 +235,14 @@ pub mod testing {
         }
     }
 
-    pub fn get_dummy_prss_setup<Z: Default + Clone + Serialize + Ring + RingEmbed + Invert>(
+    pub fn get_dummy_prss_setup<Z: Default + Clone + Serialize + ErrorCorrect + Invert>(
         mut session: BaseSessionStruct<AesRng, SessionParameters>,
     ) -> PRSSSetup<Z> {
         let rt = Runtime::new().unwrap();
 
         rt.block_on(async {
-            PRSSSetup::init_with_abort::<DummyAgreeRandom, AesRng, _>(&mut session)
+            AbortRealPrssInit::<DummyAgreeRandom>::default()
+                .init(&mut session)
                 .await
                 .unwrap()
         })

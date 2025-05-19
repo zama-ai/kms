@@ -4,7 +4,7 @@ use tonic::async_trait;
 use tracing::{info_span, instrument};
 
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, ZConsts},
+    algebra::structure_traits::{ErrorCorrect, Invert, ZConsts},
     execution::{
         constants::STATSEC,
         online::{
@@ -13,7 +13,7 @@ use crate::{
         },
         runtime::session::SmallSessionHandles,
         sharing::share::Share,
-        small_execution::prf::PRSSConversions,
+        small_execution::{prf::PRSSConversions, prss::PRSSPrimitives},
     },
 };
 
@@ -30,9 +30,10 @@ pub trait BitGenOdd {
     //To generate bits with an odd modulus q = q_1*...*q_L we need to compute
     //a sqrt mod q_L cf ['SqrtLargestPrimeFactor']
     async fn gen_bits_odd<
-        Z: Ring + RingEmbed + Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
+        Z: Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
         Rnd: Rng + CryptoRng,
-        Ses: SmallSessionHandles<Z, Rnd>,
+        Prss: PRSSPrimitives<Z>,
+        Ses: SmallSessionHandles<Z, Rnd, Prss>,
         P: BasePreprocessing<Z> + Send + ?Sized,
     >(
         amount: usize,
@@ -49,9 +50,10 @@ impl BitGenOdd for RealBitGenOdd {
     /// The code only works when the modulo of the ring used is odd.
     #[instrument(name="MPC.GenBits",skip(amount, preproc, session), fields(sid = ?session.session_id(), own_identity= ?session.own_identity(), batch_size=?amount))]
     async fn gen_bits_odd<
-        Z: Ring + RingEmbed + Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
+        Z: Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
         Rnd: Rng + CryptoRng,
-        Ses: SmallSessionHandles<Z, Rnd>,
+        Prss: PRSSPrimitives<Z>,
+        Ses: SmallSessionHandles<Z, Rnd, Prss>,
         P: BasePreprocessing<Z> + Send + ?Sized,
     >(
         amount: usize,
@@ -136,7 +138,7 @@ mod tests {
     use aes_prng::AesRng;
 
     use crate::{
-        algebra::structure_traits::{One, Zero},
+        algebra::structure_traits::{One, Ring, Zero},
         execution::{
             online::preprocessing::dummy::DummyPreprocessing,
             runtime::session::SmallSession,

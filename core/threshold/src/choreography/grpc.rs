@@ -40,7 +40,6 @@ use crate::execution::endpoints::keygen::{
 };
 use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::large_execution::offline::SecureLargePreprocessing;
-use crate::execution::large_execution::vss::SecureVss;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
 use crate::execution::online::preprocessing::{
@@ -53,14 +52,16 @@ use crate::execution::runtime::session::{BaseSession, BaseSessionHandles};
 use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
 use crate::execution::runtime::session::{LargeSession, SessionParameters};
 use crate::execution::runtime::session::{SmallSession, ToBaseSession};
-use crate::execution::small_execution::agree_random::RealAgreeRandom;
 use crate::execution::small_execution::offline::SmallPreprocessing;
 use crate::execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
 use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use crate::networking::value::BroadcastValue;
 use crate::networking::{NetworkMode, NetworkingStrategy};
-use crate::{execution::small_execution::prss::PRSSSetup, session_id::SessionId};
+use crate::{
+    execution::small_execution::prss::{PRSSSetup, PrssInit, RobustSecurePrssInit},
+    session_id::SessionId,
+};
 use aes_prng::AesRng;
 use async_trait::async_trait;
 use clap::ValueEnum;
@@ -344,12 +345,10 @@ where
         match ring {
             SupportedRing::ResiduePolyZ128 => {
                 let my_future = || async move {
-                    let prss_setup = PRSSSetup::<ResiduePoly<Z128, EXTENSION_DEGREE>>::robust_init(
-                        &mut base_session,
-                        &SecureVss::default(),
-                    )
-                    .await
-                    .unwrap();
+                    let prss_setup = RobustSecurePrssInit::default()
+                        .init(&mut base_session)
+                        .await
+                        .unwrap();
                     store.insert(
                         SupportedRing::ResiduePolyZ128,
                         SupportedPRSSSetup::ResiduePolyZ128(prss_setup),
@@ -364,12 +363,10 @@ where
             }
             SupportedRing::ResiduePolyZ64 => {
                 let my_future = || async move {
-                    let prss_setup = PRSSSetup::<ResiduePoly<Z64, EXTENSION_DEGREE>>::robust_init(
-                        &mut base_session,
-                        &SecureVss::default(),
-                    )
-                    .await
-                    .unwrap();
+                    let prss_setup = RobustSecurePrssInit::default()
+                        .init(&mut base_session)
+                        .await
+                        .unwrap();
                     store.insert(
                         SupportedRing::ResiduePolyZ64,
                         SupportedPRSSSetup::ResiduePolyZ64(prss_setup),
@@ -2187,14 +2184,14 @@ where
                     let mut small_session_z128 =
                         create_small_session(preproc_z128_base_session, &prss_setup_z128);
 
-                    let preproc_z64 = SmallPreprocessing::<_, RealAgreeRandom>::init(
+                    let preproc_z64 = SmallPreprocessing::init(
                         &mut small_session_z64,
                         num_needed_preproc.batch_params_64,
                     )
                     .await
                     .unwrap();
 
-                    let preproc_z128 = SmallPreprocessing::<_, RealAgreeRandom>::init(
+                    let preproc_z128 = SmallPreprocessing::init(
                         &mut small_session_z128,
                         num_needed_preproc.batch_params_128,
                     )

@@ -8,6 +8,7 @@ use crate::algebra::poly::Poly;
 use crate::algebra::structure_traits::ZConsts;
 use crate::algebra::structure_traits::{One, Zero};
 use crate::execution::runtime::party::Role;
+use crate::execution::small_execution::prss::PRSSPrimitives;
 use crate::experimental::algebra::cyclotomic::TernaryEntry;
 use crate::experimental::algebra::integers::ZeroCenteredRem;
 use crate::experimental::bgv::basics::SecretKey;
@@ -61,7 +62,8 @@ fn partial_decrypt<N: Const + NTTConstants<LevelOne>>(
 pub(crate) async fn noise_flood_decryption<
     N: Clone + Const + NTTConstants<LevelOne>,
     R: Rng + CryptoRng,
-    S: SmallSessionHandles<LevelOne, R>,
+    Prss: PRSSPrimitives<LevelOne>,
+    S: SmallSessionHandles<LevelOne, R, Prss>,
 >(
     session: &mut S,
     keyshares: &PrivateBgvKeySet,

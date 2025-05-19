@@ -20,7 +20,7 @@ use tfhe_versionable::Unversionize;
 use threshold_fhe::{
     algebra::{
         galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        structure_traits::{Invert, Ring, RingEmbed},
+        structure_traits::{ErrorCorrect, Invert},
     },
     execution::{
         runtime::party::Role,
@@ -36,7 +36,7 @@ fn compare_prss_setup<Z>(
     poly_size: u16,
 ) -> Result<TestSuccess, TestFailure>
 where
-    Z: Default + Clone + Serialize + Ring + RingEmbed + Invert,
+    Z: Default + Clone + Serialize + ErrorCorrect + Invert,
     PRSSSetup<Z>: Unversionize,
 {
     let role = Role::indexed_by_one(test.role_i);

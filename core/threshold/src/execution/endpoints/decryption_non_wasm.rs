@@ -1,7 +1,5 @@
 use crate::algebra::structure_traits::Derive;
 use crate::algebra::structure_traits::Ring;
-#[cfg(any(test, feature = "testing"))]
-use crate::algebra::structure_traits::RingEmbed;
 use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use crate::execution::config::BatchParams;
 use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
@@ -19,13 +17,12 @@ use crate::execution::runtime::session::SmallSession64;
 use crate::execution::runtime::session::ToBaseSession;
 use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
 use crate::execution::sharing::share::Share;
-use crate::execution::small_execution::agree_random::RealAgreeRandom;
 use crate::execution::small_execution::offline::SmallPreprocessing;
 use crate::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::{
     runtime::{session::SessionParameters, test_runtime::DistributedTestRuntime},
-    small_execution::prss::PRSSSetup,
+    small_execution::prf::PRSSConversions,
 };
 #[cfg(any(test, feature = "testing"))]
 use crate::session_id::SessionId;
@@ -524,17 +521,20 @@ async fn setup_small_session<Z>(
     mut base_session: BaseSessionStruct<AesRng, SessionParameters>,
 ) -> SmallSession<Z>
 where
-    Z: Ring,
-    Z: RingEmbed,
+    Z: ErrorCorrect,
     Z: Invert,
+    Z: PRSSConversions,
 {
-    use crate::execution::runtime::session::{ParameterHandles, SmallSessionStruct};
+    use crate::execution::{
+        runtime::session::{ParameterHandles, SmallSessionStruct},
+        small_execution::prss::{AbortSecurePrssInit, PrssInit},
+    };
     let session_id = base_session.session_id();
 
-    let prss_setup =
-        PRSSSetup::<Z>::init_with_abort::<RealAgreeRandom, AesRng, _>(&mut base_session)
-            .await
-            .unwrap();
+    let prss_setup = AbortSecurePrssInit::default()
+        .init::<Z, _, _>(&mut base_session)
+        .await
+        .unwrap();
     SmallSessionStruct::new_from_prss_state(
         base_session,
         prss_setup.new_prss_session_state(session_id),
@@ -563,11 +563,9 @@ where
         randoms: bitdec_preprocessing.num_required_bits(num_ctxts),
     };
 
-    let mut small_preprocessing = SmallPreprocessing::<
-        ResiduePoly<Z64, EXTENSION_DEGREE>,
-        RealAgreeRandom,
-    >::init(session, bitdec_batch)
-    .await?;
+    let mut small_preprocessing =
+        SmallPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::init(session, bitdec_batch)
+            .await?;
 
     bitdec_preprocessing
         .fill_from_base_preproc(

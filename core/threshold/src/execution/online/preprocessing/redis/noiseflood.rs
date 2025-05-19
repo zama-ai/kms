@@ -1,9 +1,11 @@
 use itertools::Itertools;
 
 use crate::{
-    algebra::base_ring::Z128,
-    algebra::galois_rings::common::ResiduePoly,
-    algebra::structure_traits::{ErrorCorrect, Invert, Solve},
+    algebra::{
+        base_ring::Z128,
+        galois_rings::common::ResiduePoly,
+        structure_traits::{ErrorCorrect, Invert, Solve},
+    },
     error::error_handler::anyhow_error_and_log,
     execution::{
         constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC},
@@ -13,6 +15,7 @@ use crate::{
             secret_distributions::{RealSecretDistributions, SecretDistributions},
         },
         runtime::session::{ParameterHandles, SmallSession},
+        small_execution::prss::PRSSPrimitives,
         tfhe_internals::parameters::TUniformBound,
     },
 };

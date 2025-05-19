@@ -37,7 +37,7 @@ use crate::{
         },
         runtime::session::{ParameterHandles, SmallSession},
         sharing::share::Share,
-        small_execution::{agree_random::RealAgreeRandom, offline::SmallPreprocessing},
+        small_execution::offline::SmallPreprocessing,
     },
     experimental::{
         algebra::levels::LevelKsw,
@@ -339,11 +339,8 @@ impl SmallSessionBitProducer<LevelKsw> {
             };
 
             for _ in 0..num_loops {
-                let mut preproc = SmallPreprocessing::<LevelKsw, RealAgreeRandom>::init(
-                    &mut session,
-                    base_batch_size,
-                )
-                .await?;
+                let mut preproc =
+                    SmallPreprocessing::<LevelKsw>::init(&mut session, base_batch_size).await?;
                 let bits =
                     RealBitGenOdd::gen_bits_odd(batch_size, &mut preproc, &mut session).await?;
 

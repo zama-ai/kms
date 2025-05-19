@@ -13,9 +13,7 @@ use crate::{
         },
         runtime::session::{LargeSession, ParameterHandles, SmallSession},
         sharing::share::Share,
-        small_execution::{
-            agree_random::RealAgreeRandom, offline::SmallPreprocessing, prf::PRSSConversions,
-        },
+        small_execution::{offline::SmallPreprocessing, prf::PRSSConversions},
     },
 };
 
@@ -73,10 +71,9 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionRandomProducer<Z> {
             };
 
             for _ in 0..num_loops {
-                let randoms =
-                    SmallPreprocessing::<Z, RealAgreeRandom>::init(&mut session, base_batch_size)
-                        .await?
-                        .next_random_vec(batch_size)?;
+                let randoms = SmallPreprocessing::<Z>::init(&mut session, base_batch_size)
+                    .await?
+                    .next_random_vec(batch_size)?;
 
                 //Drop the error on purpose as the receiver end might be closed already if we produced too much
                 let _ = sender_channel.send(randoms).await;

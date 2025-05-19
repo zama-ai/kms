@@ -6,11 +6,15 @@ use rand::SeedableRng;
 use threshold_fhe::{
     algebra::galois_rings::degree_8::ResiduePolyF8Z128,
     execution::{
+        large_execution::vss::DummyVss,
         runtime::{
             party::{Identity, Role},
             session::{BaseSessionStruct, SessionParameters},
         },
-        small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
+        small_execution::{
+            agree_random::DummyAgreeRandomFromShare,
+            prss::{PRSSPrimitives, PrssInit, RobustRealPrssInit},
+        },
     },
     networking::{local::LocalNetworkingProducer, NetworkMode},
     session_id::SessionId,
@@ -37,10 +41,9 @@ fn bench_prss(c: &mut Criterion) {
     let _guard = rt.enter();
     let prss = rt
         .block_on(async {
-            PRSSSetup::<ResiduePolyF8Z128>::init_with_abort::<DummyAgreeRandom, AesRng, _>(
-                &mut sess,
-            )
-            .await
+            RobustRealPrssInit::<DummyAgreeRandomFromShare, DummyVss>::default()
+                .init::<ResiduePolyF8Z128, _, _>(&mut sess)
+                .await
         })
         .unwrap();
 

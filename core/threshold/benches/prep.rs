@@ -12,7 +12,6 @@ use threshold_fhe::execution::large_execution::offline::SecureLargePreprocessing
 use threshold_fhe::execution::online::gen_bits::{BitGenEven, RealBitGenEven};
 use threshold_fhe::execution::runtime::session::{LargeSession, SmallSession128};
 use threshold_fhe::execution::sharing::shamir::{InputOp, RevealOp};
-use threshold_fhe::execution::small_execution::agree_random::RealAgreeRandom;
 use threshold_fhe::execution::small_execution::offline::SmallPreprocessing;
 use threshold_fhe::networking::NetworkMode;
 use threshold_fhe::tests::helper::tests_and_benches::execute_protocol_large;
@@ -68,12 +67,9 @@ fn triple_nsmall128(c: &mut Criterion) {
                                 randoms: 0,
                             };
 
-                            let _prep = SmallPreprocessing::<_, RealAgreeRandom>::init(
-                                &mut session,
-                                default_batch_size,
-                            )
-                            .await
-                            .unwrap();
+                            let _prep = SmallPreprocessing::init(&mut session, default_batch_size)
+                                .await
+                                .unwrap();
                         };
                     //Executing offline, so require Sync network
                     let _result = execute_protocol_small::<

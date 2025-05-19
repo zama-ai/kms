@@ -4,7 +4,8 @@ use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use tracing::{info_span, instrument};
 
-use super::{agree_random::AgreeRandom, prf::PRSSConversions};
+use super::prf::PRSSConversions;
+use super::prss::PRSSPrimitives;
 use crate::error::error_handler::log_error_wrapper;
 use crate::execution::communication::broadcast::SyncReliableBroadcast;
 use crate::execution::config::BatchParams;
@@ -27,13 +28,12 @@ use crate::{
 };
 
 /// Preprocessing for a single small session using a specific functionality for [A] for the [AgreeRandom] trait.
-pub struct SmallPreprocessing<Z: Ring, A> {
+pub struct SmallPreprocessing<Z: Ring> {
     batch_sizes: BatchParams,
     elements: Box<dyn BasePreprocessing<Z>>,
-    _marker: std::marker::PhantomData<A>,
 }
 
-impl<Z, A: AgreeRandom + Send + Sync> SmallPreprocessing<Z, A>
+impl<Z> SmallPreprocessing<Z>
 where
     Z: PRSSConversions,
     Z: RingEmbed,
@@ -43,7 +43,11 @@ where
     /// Initializes the preprocessing for a new epoch, by preprocessing a batch
     /// We require a [`SmallSessionHandles`] which implicitly require an initialized PRSS
     /// Init also executes automatically GenTriples and NextRandom based on the provided [`BatchParams`]
-    pub async fn init<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
+    pub async fn init<
+        Rnd: Rng + CryptoRng,
+        Prss: PRSSPrimitives<Z>,
+        Ses: SmallSessionHandles<Z, Rnd, Prss>,
+    >(
         session: &mut Ses,
         batch_sizes: BatchParams,
     ) -> anyhow::Result<Self> {
@@ -52,10 +56,9 @@ where
         //to maybe decide to store data somewhere else
         let base_preprocessing = Box::<InMemoryBasePreprocessing<Z>>::default();
 
-        let mut res = SmallPreprocessing::<Z, A> {
+        let mut res = SmallPreprocessing::<Z> {
             batch_sizes: batch,
             elements: base_preprocessing,
-            _marker: std::marker::PhantomData,
         };
         // In case of malicious behavior not all triples might have been constructed, so we have to continue making triples until the batch is done
         while res.triples_len() < res.batch_sizes.triples {
@@ -73,7 +76,11 @@ where
 
     /// Computes a new batch of random values and appends the new batch to the the existing stash of preprocessing random values.
     #[instrument(name="MPC_Small.GenRandom",skip(self,session), fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?self.batch_sizes.randoms))]
-    async fn next_random_batch<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
+    async fn next_random_batch<
+        Rnd: Rng + CryptoRng,
+        Prss: PRSSPrimitives<Z>,
+        Ses: SmallSessionHandles<Z, Rnd, Prss>,
+    >(
         &mut self,
         session: &mut Ses,
     ) -> anyhow::Result<()> {
@@ -99,13 +106,18 @@ where
     /// If corruption occurs during the process then the corrupt parties are added to the corrupt set in `session` and the method
     /// Caller then needs to retry to construct any missing triples, to ensure a full batch has been constructed before returning.
     #[instrument(name="MPC_Small.GenTriples",skip(self,session), fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = amount))]
-    async fn next_triple_batch<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
+    async fn next_triple_batch<
+        Rnd: Rng + CryptoRng,
+        Prss: PRSSPrimitives<Z>,
+        Ses: SmallSessionHandles<Z, Rnd, Prss>,
+    >(
         &mut self,
         session: &mut Ses,
         amount: usize,
     ) -> anyhow::Result<()> {
-        let prss_base_ctr = session.prss().prss_ctr;
-        let przs_base_ctr = session.prss().przs_ctr;
+        let counters = session.prss().get_counters();
+        let prss_base_ctr = counters.prss_ctr;
+        let przs_base_ctr = counters.przs_ctr;
 
         let vec_x_single = Self::prss_list(session, amount)?;
         let vec_y_single = Self::prss_list(session, amount)?;
@@ -280,7 +292,7 @@ where
     /// and parses it into a vector that stores at index i a map from the sending [Role] to their ith d share.
     ///
     /// Note: In case we can not find a correct share for a Party, we set [None] as its share.
-    fn parse_d_shares<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
+    fn parse_d_shares<Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
         session: &mut Ses,
         amount: usize,
         d_recons: HashMap<Role, BroadcastValue<Z>>,
@@ -318,7 +330,11 @@ where
 
     /// Output amount of PRSS.Next() calls
     #[instrument(name="PRSS.Next",skip(session,amount),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?amount))]
-    fn prss_list<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
+    fn prss_list<
+        Rnd: Rng + CryptoRng,
+        Prss: PRSSPrimitives<Z>,
+        Ses: SmallSessionHandles<Z, Rnd, Prss>,
+    >(
         session: &mut Ses,
         amount: usize,
     ) -> anyhow::Result<Vec<Z>> {
@@ -332,7 +348,11 @@ where
 
     /// Output amount of PRZS.Next() calls
     #[instrument(name="PRZS.Next",skip(session,amount),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?amount))]
-    fn przs_list<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
+    fn przs_list<
+        Rnd: Rng + CryptoRng,
+        Prss: PRSSPrimitives<Z>,
+        Ses: SmallSessionHandles<Z, Rnd, Prss>,
+    >(
         session: &mut Ses,
         amount: usize,
     ) -> anyhow::Result<Vec<Z>> {
@@ -347,7 +367,11 @@ where
 
     /// Helper method for validating results when corruption has happened (by the reconstruction not being successful).
     /// The method finds the corrupt parties (based on what they broadcast) and adds them to the list of corrupt parties in the session.
-    async fn check_d<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
+    async fn check_d<
+        Rnd: Rng + CryptoRng,
+        Prss: PRSSPrimitives<Z>,
+        Ses: SmallSessionHandles<Z, Rnd, Prss>,
+    >(
         session: &mut Ses,
         prss_ctr: u128,
         przs_ctr: u128,
@@ -400,7 +424,7 @@ where
     }
 }
 
-impl<Z: Ring, A: AgreeRandom> TriplePreprocessing<Z> for SmallPreprocessing<Z, A> {
+impl<Z: Ring> TriplePreprocessing<Z> for SmallPreprocessing<Z> {
     fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
         self.elements.next_triple()
     }
@@ -418,7 +442,7 @@ impl<Z: Ring, A: AgreeRandom> TriplePreprocessing<Z> for SmallPreprocessing<Z, A
     }
 }
 
-impl<Z: Ring, A: AgreeRandom> RandomPreprocessing<Z> for SmallPreprocessing<Z, A> {
+impl<Z: Ring> RandomPreprocessing<Z> for SmallPreprocessing<Z> {
     fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
         self.elements.next_random_vec(amount)
     }
@@ -432,7 +456,7 @@ impl<Z: Ring, A: AgreeRandom> RandomPreprocessing<Z> for SmallPreprocessing<Z, A
     }
 }
 
-impl<Z: Ring, A: AgreeRandom + Send + Sync> BasePreprocessing<Z> for SmallPreprocessing<Z, A> {}
+impl<Z: Ring> BasePreprocessing<Z> for SmallPreprocessing<Z> {}
 
 #[cfg(test)]
 mod test {
@@ -440,6 +464,7 @@ mod test {
 
     use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed};
     use crate::execution::online::preprocessing::dummy::reconstruct;
+    use crate::execution::small_execution::prss::PRSSPrimitives;
     use crate::networking::NetworkMode;
     use crate::{
         algebra::{
@@ -459,7 +484,6 @@ mod test {
             },
             sharing::share::Share,
             small_execution::{
-                agree_random::DummyAgreeRandom,
                 offline::{BatchParams, SmallPreprocessing},
                 prf::PRSSConversions,
             },
@@ -487,10 +511,9 @@ mod test {
                 randoms: RANDOM_BATCH_SIZE,
             };
 
-            let mut preproc =
-                SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, default_batch_size)
-                    .await
-                    .unwrap();
+            let mut preproc = SmallPreprocessing::init(&mut session, default_batch_size)
+                .await
+                .unwrap();
             let mut res = Vec::new();
             for _ in 0..RANDOM_BATCH_SIZE {
                 res.push(preproc.next_random().unwrap());
@@ -554,10 +577,9 @@ mod test {
                 randoms: 0,
             };
 
-            let mut preproc =
-                SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, default_batch_size)
-                    .await
-                    .unwrap();
+            let mut preproc = SmallPreprocessing::init(&mut session, default_batch_size)
+                .await
+                .unwrap();
             let mut res = Vec::new();
             for _ in 0..TRIPLE_BATCH_SIZE {
                 res.push(preproc.next_triple().unwrap());
@@ -619,10 +641,9 @@ mod test {
                 randoms: 2,
             };
 
-            let mut preproc =
-                SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, batch_size)
-                    .await
-                    .unwrap();
+            let mut preproc = SmallPreprocessing::init(&mut session, batch_size)
+                .await
+                .unwrap();
             assert_eq!(batch_size.triples, preproc.elements.triples_len());
             assert_eq!(batch_size.randoms, preproc.elements.randoms_len());
             let _ = preproc.next_random_vec(batch_size.randoms);
@@ -670,7 +691,7 @@ mod test {
             ),
         ]);
         assert!(session.corrupt_roles().is_empty());
-        let res = SmallPreprocessing::<ResiduePolyF4Z128, DummyAgreeRandom>::reconstruct_d_values(
+        let res = SmallPreprocessing::<ResiduePolyF4Z128>::reconstruct_d_values(
             &mut session,
             1,
             d_recons,
@@ -707,12 +728,9 @@ mod test {
                     randoms: RANDOM_BATCH_SIZE,
                 };
 
-                let mut preproc = SmallPreprocessing::<_, DummyAgreeRandom>::init(
-                    &mut session,
-                    default_batch_size,
-                )
-                .await
-                .unwrap();
+                let mut preproc = SmallPreprocessing::init(&mut session, default_batch_size)
+                    .await
+                    .unwrap();
                 for _ in 0..TRIPLE_BATCH_SIZE {
                     triple_res.push(preproc.next_triple().unwrap());
                 }
@@ -799,12 +817,9 @@ mod test {
             };
 
             if session.my_role().unwrap() != Role::indexed_by_one(BAD_ID) {
-                let mut preproc = SmallPreprocessing::<_, DummyAgreeRandom>::init(
-                    &mut session,
-                    default_batch_size,
-                )
-                .await
-                .unwrap();
+                let mut preproc = SmallPreprocessing::init(&mut session, default_batch_size)
+                    .await
+                    .unwrap();
                 for _ in 0..TRIPLE_BATCH_SIZE {
                     triple_res.push(preproc.next_triple().unwrap());
                 }
@@ -812,9 +827,7 @@ mod test {
                     rand_res.push(preproc.next_random().unwrap());
                 }
             } else {
-                let _ =
-                    SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, bad_batch_sizes)
-                        .await;
+                let _ = SmallPreprocessing::init(&mut session, bad_batch_sizes).await;
             }
             (session, triple_res, rand_res)
         }
@@ -888,11 +901,15 @@ mod test {
             mut session: SmallSession<ResiduePolyF4Z128>,
             _bot: Option<String>,
         ) -> SmallSession<ResiduePolyF4Z128> {
+            let own_role = session.my_role().unwrap();
+            let threshold = session.threshold();
             if session.my_role().unwrap() == Role::indexed_by_one(BAD_ID) {
-                // Change the counter offset to make the party use wrong values
                 let prss_state = session.prss_as_mut();
-                prss_state.prss_ctr = 12;
-                prss_state.przs_ctr = 234;
+                // Use the PRSS and PRZS so counters are out of sync
+                let _: Vec<_> = (0..12).map(|_| prss_state.prss_next(own_role)).collect();
+                let _: Vec<_> = (0..23)
+                    .map(|_| prss_state.przs_next(own_role, threshold))
+                    .collect();
             };
 
             let base_preprocessing =
@@ -902,10 +919,9 @@ mod test {
                 triples: 10,
                 randoms: 10,
             };
-            let mut res = SmallPreprocessing::<_, DummyAgreeRandom> {
+            let mut res = SmallPreprocessing::<_> {
                 batch_sizes: default_batch,
                 elements: base_preprocessing,
-                _marker: std::marker::PhantomData,
             };
             let _ = res.next_triple_batch(&mut session, 1).await;
             // Check that no triples get constructed due to the corrupt party

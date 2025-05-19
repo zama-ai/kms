@@ -3,10 +3,13 @@ use super::{
     session::{BaseSessionStruct, LargeSession, ParameterHandles, SessionParameters, SmallSession},
 };
 use crate::{
-    algebra::structure_traits::{Invert, Ring, RingEmbed},
+    algebra::structure_traits::{ErrorCorrect, Invert, Ring},
     execution::{
         endpoints::keygen::PrivateKeySet,
-        small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
+        small_execution::{
+            agree_random::DummyAgreeRandom,
+            prss::{AbortRealPrssInit, PRSSSetup, PrssInit},
+        },
     },
     networking::{
         local::{LocalNetworking, LocalNetworkingProducer},
@@ -140,8 +143,7 @@ impl<Z: Ring, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION
 
 impl<Z, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION_DEGREE>
 where
-    Z: Ring,
-    Z: RingEmbed,
+    Z: ErrorCorrect,
     Z: Invert,
 {
     pub fn small_session_for_party(
@@ -165,7 +167,11 @@ where
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         let prss_setup = rt
-            .block_on(async { PRSSSetup::init_with_abort::<DummyAgreeRandom, _, _>(session).await })
+            .block_on(async {
+                AbortRealPrssInit::<DummyAgreeRandom>::default()
+                    .init::<Z, _, _>(session)
+                    .await
+            })
             .unwrap();
         let sid = session.session_id();
         SmallSession::new_from_prss_state(session.clone(), prss_setup.new_prss_session_state(sid))

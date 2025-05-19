@@ -14,9 +14,7 @@ use crate::{
         },
         runtime::session::{LargeSession, ParameterHandles, SmallSession},
         sharing::share::Share,
-        small_execution::{
-            agree_random::RealAgreeRandom, offline::SmallPreprocessing, prf::PRSSConversions,
-        },
+        small_execution::{offline::SmallPreprocessing, prf::PRSSConversions},
     },
 };
 
@@ -80,8 +78,7 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionBitProducer<Z> {
 
             for _ in 0..num_loops {
                 let mut preproc =
-                    SmallPreprocessing::<Z, RealAgreeRandom>::init(&mut session, base_batch_size)
-                        .await?;
+                    SmallPreprocessing::<Z>::init(&mut session, base_batch_size).await?;
                 let bits =
                     RealBitGenEven::gen_bits_even(batch_size, &mut preproc, &mut session).await?;
 

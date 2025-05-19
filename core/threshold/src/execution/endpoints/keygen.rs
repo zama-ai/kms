@@ -1326,7 +1326,7 @@ pub mod tests {
             keyset_config::KeySetConfig,
             online::preprocessing::create_memory_factory,
             runtime::session::{BaseSessionHandles, SmallSession, ToBaseSession},
-            small_execution::{agree_random::DummyAgreeRandom, offline::SmallPreprocessing},
+            small_execution::offline::SmallPreprocessing,
             tfhe_internals::test_feature::run_decompression_test,
         },
         tests::helper::tests_and_benches::execute_protocol_small,
@@ -1977,10 +1977,9 @@ pub mod tests {
                     .total_randomness_required(keyset_config),
             };
 
-            let mut small_preproc =
-                SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, batch_size)
-                    .await
-                    .unwrap();
+            let mut small_preproc = SmallPreprocessing::init(&mut session, batch_size)
+                .await
+                .unwrap();
 
             let mut dkg_preproc = create_memory_factory().create_dkg_preprocessing_with_sns();
 
@@ -2136,10 +2135,9 @@ pub mod tests {
                     .total_randomness_required(keyset_config),
             };
 
-            let mut small_preproc =
-                SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, batch_size)
-                    .await
-                    .unwrap();
+            let mut small_preproc = SmallPreprocessing::init(&mut session, batch_size)
+                .await
+                .unwrap();
 
             let mut dkg_preproc = create_memory_factory().create_dkg_preprocessing_with_sns();
 

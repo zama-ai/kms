@@ -1056,7 +1056,6 @@ mod tests {
     use crate::execution::runtime::session::SmallSession;
     use crate::execution::sharing::shamir::{InputOp, RevealOp};
     use crate::execution::sharing::shamir::{ShamirFieldPoly, ShamirSharings};
-    use crate::execution::small_execution::agree_random::RealAgreeRandom;
     use crate::execution::small_execution::offline::SmallPreprocessing;
     use crate::networking::NetworkMode;
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
@@ -1214,10 +1213,9 @@ mod tests {
                 randoms: 100,
             };
 
-            let mut prep =
-                SmallPreprocessing::<LevelKsw, RealAgreeRandom>::init(&mut session, batch_size)
-                    .await
-                    .unwrap();
+            let mut prep = SmallPreprocessing::<LevelKsw>::init(&mut session, batch_size)
+                .await
+                .unwrap();
             (
                 prep.next_triple_vec(100).unwrap(),
                 prep.next_random_vec(100).unwrap(),
