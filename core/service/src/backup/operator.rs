@@ -71,7 +71,7 @@ pub enum OperatorBackupOutputVersioned {
 /// The output from the operator after it has completed a backup.
 /// This data needs to be persisted on some public storage so that
 /// new operators can download and recover.
-#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(OperatorBackupOutputVersioned)]
 pub struct OperatorBackupOutput {
     /// Ciphertext under the custodian's public key, using nested encryption.

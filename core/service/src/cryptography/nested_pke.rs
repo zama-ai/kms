@@ -30,7 +30,7 @@ pub enum NestedPrivateKeyVersioned {
     V0(NestedPrivateKey),
 }
 
-#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(NestedPrivateKeyVersioned)]
 pub struct NestedPrivateKey {
     decapsulation_key: Vec<u8>,
@@ -107,7 +107,7 @@ pub enum NestedPublicKeyVersioned {
     V0(NestedPublicKey),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(NestedPublicKeyVersioned)]
 pub struct NestedPublicKey {
     encapsulation_key: Vec<u8>,

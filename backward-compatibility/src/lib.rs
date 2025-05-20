@@ -310,6 +310,74 @@ impl TestType for ThresholdFheKeysTest {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CustodianSetupMessageTest {
+    pub test_filename: Cow<'static, str>,
+    pub seed: u64,
+}
+
+impl TestType for CustodianSetupMessageTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "CustodianSetupMessage".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct OperatorBackupOutputTest {
+    pub test_filename: Cow<'static, str>,
+    pub custodian_count: usize,
+    pub custodian_threshold: usize,
+    pub plaintext: [u8; 32],
+    pub backup_id: [u8; 32],
+    pub seed: u64,
+}
+
+impl TestType for OperatorBackupOutputTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "OperatorBackupOutput".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct NestedPkeTest {
+    pub test_filename: Cow<'static, str>,
+    pub pk_filename: Cow<'static, str>,
+    pub sk_filename: Cow<'static, str>,
+    pub ct_filename: Cow<'static, str>,
+    pub plaintext: [u8; 32],
+    pub seed: u64,
+}
+
+impl TestType for NestedPkeTest {
+    fn module(&self) -> String {
+        KMS_MODULE_NAME.to_string()
+    }
+
+    fn target_type(&self) -> String {
+        "NestedPke".to_string()
+    }
+
+    fn test_filename(&self) -> String {
+        self.test_filename.to_string()
+    }
+}
+
 /// KMS metadata
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataKMS {
@@ -318,6 +386,9 @@ pub enum TestMetadataKMS {
     KmsFheKeyHandles(KmsFheKeyHandlesTest),
     ThresholdFheKeys(ThresholdFheKeysTest),
     AppKeyBlob(AppKeyBlobTest),
+    CustodianSetupMessage(CustodianSetupMessageTest),
+    OperatorBackupOutput(OperatorBackupOutputTest),
+    NestedPke(NestedPkeTest),
 }
 
 /// KMS-grpc metadata

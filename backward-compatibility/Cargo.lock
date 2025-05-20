@@ -933,6 +933,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-stream"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b5a71a6f37880a80d1d7f19efd781e4b5de42c88f0722cc13bcb6cc2cfe8476"
+dependencies = [
+ "async-stream-impl",
+ "futures-core",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "async-stream-impl"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1773,7 +1795,6 @@ checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
 dependencies = [
  "crypto-common",
  "inout",
- "zeroize",
 ]
 
 [[package]]
@@ -1834,8 +1855,8 @@ dependencies = [
 
 [[package]]
 name = "conf-trace"
-version = "0.11.0-rc8"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=25a05e3fad99b2594ced3b87f21656d4ab60ac93#25a05e3fad99b2594ced3b87f21656d4ab60ac93"
+version = "0.11.0-rc14"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=e5bcb56f13c808a9e967023e6998cf3f6a8fff43#e5bcb56f13c808a9e967023e6998cf3f6a8fff43"
 dependencies = [
  "anyhow",
  "axum",
@@ -2102,67 +2123,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "crypto_box"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16182b4f39a82ec8a6851155cc4c0cda3065bb1db33651726a29e1951de0f009"
-dependencies = [
- "aead",
- "crypto_secretbox",
- "curve25519-dalek",
- "salsa20",
- "subtle",
- "zeroize",
-]
-
-[[package]]
-name = "crypto_secretbox"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9d6cf87adf719ddf43a805e92c6870a531aedda35ff640442cbaf8674e141e1"
-dependencies = [
- "aead",
- "cipher",
- "generic-array",
- "poly1305",
- "salsa20",
- "subtle",
- "zeroize",
-]
-
-[[package]]
 name = "ctr"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0369ee1ad671834580515889b80f2ea915f23b8be8d0daa4bbaf2ac5c7590835"
 dependencies = [
  "cipher",
-]
-
-[[package]]
-name = "curve25519-dalek"
-version = "4.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
-dependencies = [
- "cfg-if",
- "cpufeatures",
- "curve25519-dalek-derive",
- "fiat-crypto",
- "rustc_version 0.4.1",
- "subtle",
- "zeroize",
-]
-
-[[package]]
-name = "curve25519-dalek-derive"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.100",
 ]
 
 [[package]]
@@ -2600,12 +2566,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fiat-crypto"
-version = "0.2.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
-
-[[package]]
 name = "fixed-hash"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2634,6 +2594,21 @@ name = "foldhash"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0d2fde1f7b3d48b8395d5f2de76c18a528bd6a9cdde438df747bfcba3e05d6f"
+
+[[package]]
+name = "foreign-types"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6f339eb8adc052cd2ca78910fda869aefa38d22d5cb648e6485e4d3fc06f3b1"
+dependencies = [
+ "foreign-types-shared",
+]
+
+[[package]]
+name = "foreign-types-shared"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "form_urlencoded"
@@ -3045,6 +3020,15 @@ name = "httpdate"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
+
+[[package]]
+name = "hybrid-array"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2d35805454dc9f8662a98d6d61886ffe26bd465f5960e0e55345c70d5c0d2a9"
+dependencies = [
+ "typenum",
+]
 
 [[package]]
 name = "hyper"
@@ -3487,11 +3471,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "kem"
+version = "0.3.0-pre.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b8645470337db67b01a7f966decf7d0bafedbae74147d33e641c67a91df239f"
+dependencies = [
+ "rand_core 0.6.4",
+ "zeroize",
+]
+
+[[package]]
 name = "kms"
-version = "0.11.0-rc8"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=25a05e3fad99b2594ced3b87f21656d4ab60ac93#25a05e3fad99b2594ced3b87f21656d4ab60ac93"
+version = "0.11.0-rc14"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=e5bcb56f13c808a9e967023e6998cf3f6a8fff43#e5bcb56f13c808a9e967023e6998cf3f6a8fff43"
 dependencies = [
  "aes",
+ "aes-gcm",
  "aes-gcm-siv",
  "aes-prng",
  "alloy-dyn-abi",
@@ -3515,7 +3510,6 @@ dependencies = [
  "clap",
  "conf-trace",
  "console_error_panic_hook",
- "crypto_box",
  "futures-util",
  "hex",
  "http 0.2.12",
@@ -3524,6 +3518,7 @@ dependencies = [
  "k256",
  "kms-grpc",
  "lazy_static",
+ "ml-kem",
  "nom 8.0.0",
  "ordermap",
  "rand 0.8.5",
@@ -3534,19 +3529,19 @@ dependencies = [
  "rsa",
  "serde",
  "serde-wasm-bindgen",
- "serde_json",
  "signature 2.2.0",
  "strum",
  "tfhe",
  "tfhe-versionable",
+ "thiserror 2.0.12",
  "threshold-fhe",
  "tokio",
  "tokio-rustls 0.26.2",
- "tokio-stream",
  "tokio-util",
  "tonic 0.13.0",
  "tonic-build",
  "tonic-health",
+ "tonic-tls",
  "tower 0.5.2",
  "tower-http",
  "tracing",
@@ -3557,8 +3552,8 @@ dependencies = [
 
 [[package]]
 name = "kms-grpc"
-version = "0.11.0-rc8"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=25a05e3fad99b2594ced3b87f21656d4ab60ac93#25a05e3fad99b2594ced3b87f21656d4ab60ac93"
+version = "0.11.0-rc14"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=e5bcb56f13c808a9e967023e6998cf3f6a8fff43#e5bcb56f13c808a9e967023e6998cf3f6a8fff43"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -3574,6 +3569,8 @@ dependencies = [
  "strum_macros",
  "tfhe",
  "tfhe-versionable",
+ "thiserror 2.0.12",
+ "threshold-fhe",
  "tonic 0.13.0",
  "tonic-build",
  "tracing",
@@ -3758,6 +3755,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ml-kem"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97befee0c869cb56f3118f49d0f9bb68c9e3f380dec23c1100aedc4ec3ba239a"
+dependencies = [
+ "hybrid-array",
+ "kem",
+ "rand_core 0.6.4",
+ "sha3",
+]
+
+[[package]]
 name = "mockall"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3788,6 +3797,23 @@ name = "multimap"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "defc4c55412d89136f966bbb339008b474350e5e6e78d2714439c386b3137a03"
+
+[[package]]
+name = "native-tls"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87de3442987e9dbec73158d5c715e7ad9072fda936bb03d19d7fa10e00520f0e"
+dependencies = [
+ "libc",
+ "log",
+ "openssl",
+ "openssl-probe",
+ "openssl-sys",
+ "schannel",
+ "security-framework",
+ "security-framework-sys",
+ "tempfile",
+]
 
 [[package]]
 name = "ndarray"
@@ -3870,6 +3896,7 @@ dependencies = [
  "num-iter",
  "num-traits",
  "rand 0.8.5",
+ "serde",
  "smallvec",
  "zeroize",
 ]
@@ -3984,10 +4011,48 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
+name = "openssl"
+version = "0.10.72"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fedfea7d58a1f73118430a55da6a286e7b044961736ce96a16a17068ea25e5da"
+dependencies = [
+ "bitflags 2.9.0",
+ "cfg-if",
+ "foreign-types",
+ "libc",
+ "once_cell",
+ "openssl-macros",
+ "openssl-sys",
+]
+
+[[package]]
+name = "openssl-macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a948666b637a0f465e8564c73e89d4dde00d72d4d473cc972f390fc3dcee7d9c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "openssl-probe"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
+
+[[package]]
+name = "openssl-sys"
+version = "0.9.108"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e145e1651e858e820e4860f7b9c5e169bc1d8ce1c86043be79fa7b7634821847"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+ "vcpkg",
+]
 
 [[package]]
 name = "opentelemetry"
@@ -4373,15 +4438,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "poly1305"
-version = "0.8.0"
+name = "pkg-config"
+version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8159bd90725d2df49889a078b54f4f79e87f1f8a8444194cdca81d38f5393abf"
-dependencies = [
- "cpufeatures",
- "opaque-debug",
- "universal-hash",
-]
+checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
 name = "polyval"
@@ -5058,6 +5118,7 @@ dependencies = [
  "pkcs1",
  "pkcs8 0.10.2",
  "rand_core 0.6.4",
+ "serde",
  "sha2",
  "signature 2.2.0",
  "spki 0.7.3",
@@ -5278,15 +5339,6 @@ name = "ryu"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
-
-[[package]]
-name = "salsa20"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97a22f5af31f73a954c10289c93e8a50cc23d971e80ee446f1f6f7137a088213"
-dependencies = [
- "cipher",
-]
 
 [[package]]
 name = "schannel"
@@ -6031,8 +6083,8 @@ dependencies = [
 
 [[package]]
 name = "threshold-fhe"
-version = "0.11.0-rc8"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=25a05e3fad99b2594ced3b87f21656d4ab60ac93#25a05e3fad99b2594ced3b87f21656d4ab60ac93"
+version = "0.11.0-rc14"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=e5bcb56f13c808a9e967023e6998cf3f6a8fff43#e5bcb56f13c808a9e967023e6998cf3f6a8fff43"
 dependencies = [
  "aes",
  "aes-prng",
@@ -6067,7 +6119,6 @@ dependencies = [
  "rcgen",
  "redis",
  "serde",
- "serde_json",
  "sha2",
  "sha3",
  "strum",
@@ -6078,10 +6129,10 @@ dependencies = [
  "tfhe-zk-pok",
  "tokio",
  "tokio-rustls 0.26.2",
- "tokio-stream",
  "tonic 0.13.0",
  "tonic-build",
  "tonic-health",
+ "tonic-tls",
  "tower 0.5.2",
  "tower-http",
  "tower-service",
@@ -6171,6 +6222,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-native-tls"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
+dependencies = [
+ "native-tls",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-openssl"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59df6849caa43bb7567f9a36f863c447d95a11d5903c9cc334ba32576a27eadd"
+dependencies = [
+ "openssl",
+ "openssl-sys",
+ "tokio",
+]
+
+[[package]]
 name = "tokio-rustls"
 version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6187,6 +6259,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8e727b36a1a0e8b74c376ac2211e40c2c8af09fb4013c60d910495810f008e9b"
 dependencies = [
  "rustls 0.23.23",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-schannel"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe31a8dc1d20c8a4346e16904eecd6b293e2f9a65819d29aaad8a8156b256d25"
+dependencies = [
+ "schannel",
  "tokio",
 ]
 
@@ -6331,6 +6413,28 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tonic 0.13.0",
+]
+
+[[package]]
+name = "tonic-tls"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e96bedfe5ae00cd370db4029612380c267bc224b2d45f1d35402b6b588e68d7b"
+dependencies = [
+ "async-stream",
+ "futures",
+ "hyper 1.6.0",
+ "hyper-util",
+ "openssl",
+ "schannel",
+ "tokio",
+ "tokio-native-tls",
+ "tokio-openssl",
+ "tokio-rustls 0.26.2",
+ "tokio-schannel",
+ "tonic 0.13.0",
+ "tower 0.5.2",
+ "tracing",
 ]
 
 [[package]]
@@ -6688,6 +6792,12 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version_check"

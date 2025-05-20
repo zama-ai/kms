@@ -32,7 +32,7 @@ pub enum InnerCustodianSetupMessageVersioned {
 }
 
 /// This is the message that is signed by the custodian during setup.
-#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(InnerCustodianSetupMessageVersioned)]
 pub struct InnerCustodianSetupMessage {
     pub header: String,
@@ -60,7 +60,7 @@ pub enum CustodianSetupMessageVersioned {
 ///
 /// The operators need to persist these messages in their storage
 /// so that they can run the backup procedure when needed.
-#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
 #[versionize(CustodianSetupMessageVersioned)]
 pub struct CustodianSetupMessage {
     pub msg: InnerCustodianSetupMessage,

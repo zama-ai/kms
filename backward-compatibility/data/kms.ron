@@ -121,4 +121,36 @@
             auth_tag: "auth_tag",
         )),
     ),
+    (
+        kms_core_version_min: "0.11",
+        kms_core_module: "kms",
+        metadata: CustodianSetupMessage((
+            test_filename: "custodian_setup_message",
+            seed: 42,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11",
+        kms_core_module: "kms",
+        metadata: OperatorBackupOutput((
+            test_filename: "operator_backup_output",
+            custodian_count: 4,
+            custodian_threshold: 1,
+            plaintext: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            backup_id: (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
+            seed: 42,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.11",
+        kms_core_module: "kms",
+        metadata: NestedPke((
+            test_filename: "nested_pke",
+            pk_filename: "nested_pke_pk",
+            sk_filename: "nested_pke_sk",
+            ct_filename: "nested_pke_ct",
+            plaintext: (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
+            seed: 42,
+        )),
+    ),
 ]

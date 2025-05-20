@@ -3,10 +3,15 @@
 //! for kms-core v0.11.
 
 use aes_prng::AesRng;
-use kms_0_11::engine::base::{gen_sig_keys, KmsFheKeyHandles};
+use kms_0_11::backup::custodian::Custodian;
+use kms_0_11::backup::operator::Operator;
+use kms_0_11::cryptography::internal_crypto_types::gen_sig_keys;
+use kms_0_11::cryptography::nested_pke;
+use kms_0_11::engine::base::KmsFheKeyHandles;
 use kms_0_11::engine::centralized::central_kms::generate_client_fhe_key;
-use kms_0_11::engine::threshold::service_real::{compute_all_info, ThresholdFheKeys};
+use kms_0_11::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
 use kms_0_11::util::key_setup::FhePublicKey;
+use kms_grpc_0_11::RequestId;
 use std::{borrow::Cow, fs::create_dir_all, path::PathBuf};
 use tfhe_1_1::shortint::parameters::NoiseSquashingParameters;
 use threshold_fhe_0_11::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
@@ -57,8 +62,8 @@ use crate::{
     DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_MODULE_NAME,
 };
 use crate::{
-    AppKeyBlobTest, PrfKeyTest, PubDataTypeTest, PublicKeyTypeTest, TestMetadataKmsGrpc,
-    KMS_GRPC_MODULE_NAME,
+    AppKeyBlobTest, CustodianSetupMessageTest, NestedPkeTest, OperatorBackupOutputTest, PrfKeyTest,
+    PubDataTypeTest, PublicKeyTypeTest, TestMetadataKmsGrpc, KMS_GRPC_MODULE_NAME,
 };
 
 // Macro to store a versioned test
@@ -241,6 +246,32 @@ const APP_KEY_BLOB_TEST: AppKeyBlobTest = AppKeyBlobTest {
     ciphertext: Cow::Borrowed("ciphertext"),
     iv: Cow::Borrowed("iv"),
     auth_tag: Cow::Borrowed("auth_tag"),
+};
+
+// KMS test
+const CUSTODIAN_SETUP_MESSAGE_TEST: CustodianSetupMessageTest = CustodianSetupMessageTest {
+    test_filename: Cow::Borrowed("custodian_setup_message"),
+    seed: 42,
+};
+
+// KMS test
+const OPERATOR_BACKUP_OUTPUT_TEST: OperatorBackupOutputTest = OperatorBackupOutputTest {
+    test_filename: Cow::Borrowed("operator_backup_output"),
+    custodian_count: 4,
+    custodian_threshold: 1,
+    plaintext: [0u8; 32],
+    backup_id: [1u8; 32],
+    seed: 42,
+};
+
+// KMS test
+const NESTED_PKE_TEST: NestedPkeTest = NestedPkeTest {
+    test_filename: Cow::Borrowed("nested_pke"),
+    pk_filename: Cow::Borrowed("nested_pke_pk"),
+    sk_filename: Cow::Borrowed("nested_pke_sk"),
+    ct_filename: Cow::Borrowed("nested_pke_ct"),
+    plaintext: [1u8; 32],
+    seed: 42,
 };
 
 fn dummy_domain() -> alloy_sol_types_1_0_0::Eip712Domain {
@@ -448,6 +479,93 @@ impl KmsV0_11 {
 
         TestMetadataKMS::ThresholdFheKeys(THRESHOLD_FHE_KEYS_TEST)
     }
+
+    fn gen_custodian_setup_message(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(CUSTODIAN_SETUP_MESSAGE_TEST.seed);
+        let (verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+        let custodian =
+            Custodian::new(0, signing_key, verification_key, private_key, public_key).unwrap();
+        let custodian_setup_message = custodian.generate_setup_message(&mut rng).unwrap();
+        store_versioned_test!(
+            &custodian_setup_message,
+            dir,
+            &CUSTODIAN_SETUP_MESSAGE_TEST.test_filename
+        );
+        TestMetadataKMS::CustodianSetupMessage(CUSTODIAN_SETUP_MESSAGE_TEST)
+    }
+
+    fn gen_operator_backup_output(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(OPERATOR_BACKUP_OUTPUT_TEST.seed);
+
+        let custodians: Vec<_> = (0..OPERATOR_BACKUP_OUTPUT_TEST.custodian_count)
+            .map(|i| {
+                let (verification_key, signing_key) = gen_sig_keys(&mut rng);
+                let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+                Custodian::new(i, signing_key, verification_key, private_key, public_key).unwrap()
+            })
+            .collect();
+        let custodian_messages: Vec<_> = custodians
+            .iter()
+            .map(|c| c.generate_setup_message(&mut rng).unwrap())
+            .collect();
+
+        let operator = {
+            let (verification_key, signing_key) = gen_sig_keys(&mut rng);
+            let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+            Operator::new(
+                0,
+                custodian_messages,
+                signing_key,
+                verification_key,
+                private_key,
+                public_key,
+                OPERATOR_BACKUP_OUTPUT_TEST.custodian_threshold,
+            )
+            .unwrap()
+        };
+        let operator_backup_output = &operator
+            .secret_share_and_encrypt(
+                &mut rng,
+                &OPERATOR_BACKUP_OUTPUT_TEST.plaintext,
+                RequestId::from_bytes(OPERATOR_BACKUP_OUTPUT_TEST.backup_id),
+            )
+            .unwrap()[&0];
+
+        store_versioned_test!(
+            operator_backup_output,
+            dir,
+            &OPERATOR_BACKUP_OUTPUT_TEST.test_filename
+        );
+        TestMetadataKMS::OperatorBackupOutput(OPERATOR_BACKUP_OUTPUT_TEST)
+    }
+
+    fn gen_nested_pke(dir: &PathBuf) -> TestMetadataKMS {
+        let mut rng = AesRng::seed_from_u64(NESTED_PKE_TEST.seed);
+        let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+        let ct = public_key
+            .encrypt(&mut rng, &NESTED_PKE_TEST.plaintext)
+            .unwrap();
+        store_versioned_auxiliary!(
+            &ct,
+            dir,
+            &NESTED_PKE_TEST.test_filename,
+            &NESTED_PKE_TEST.ct_filename
+        );
+        store_versioned_auxiliary!(
+            &private_key,
+            dir,
+            &NESTED_PKE_TEST.test_filename,
+            &NESTED_PKE_TEST.sk_filename
+        );
+        store_versioned_auxiliary!(
+            &public_key,
+            dir,
+            &NESTED_PKE_TEST.test_filename,
+            &NESTED_PKE_TEST.pk_filename
+        );
+        TestMetadataKMS::NestedPke(NESTED_PKE_TEST)
+    }
 }
 
 struct DistributedDecryptionV0_11;
@@ -552,6 +670,9 @@ impl KMSCoreVersion for V0_11 {
             KmsV0_11::gen_kms_fhe_key_handles(&dir),
             KmsV0_11::gen_threshold_fhe_keys(&dir),
             KmsV0_11::gen_app_key_blob(&dir),
+            KmsV0_11::gen_custodian_setup_message(&dir),
+            KmsV0_11::gen_operator_backup_output(&dir),
+            KmsV0_11::gen_nested_pke(&dir),
         ]
     }
 
