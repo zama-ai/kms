@@ -17,7 +17,7 @@ use tracing::instrument;
 pub type SecureSingleSharing<Z> = RealSingleSharing<Z, SecureLocalSingleShare>;
 
 #[async_trait]
-pub trait SingleSharing<Z: Ring>: Send + Sync + Default + Clone {
+pub trait SingleSharing<Z: Ring>: Send + Sync + Clone {
     async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -31,13 +31,39 @@ pub trait SingleSharing<Z: Ring>: Send + Sync + Default + Clone {
 
 //Might want to store the dispute set at the output of the lsl call
 //as that'll influence how to reconstruct stuff later on
-#[derive(Clone, Default)]
 pub struct RealSingleSharing<Z, S: LocalSingleShare> {
     local_single_share: S,
     available_lsl: Vec<ArrayD<Z>>,
     available_shares: Vec<Z>,
     max_num_iterations: usize,
     vdm_matrix: ArrayD<Z>,
+}
+
+//Custom implementaiton of Clone to make sure we do not clone
+//the internal state as that would be insecure.
+//What we may want is to clone the underlying strategy
+impl<Z: Default, S: LocalSingleShare> Clone for RealSingleSharing<Z, S> {
+    fn clone(&self) -> Self {
+        Self::new(self.local_single_share.clone())
+    }
+}
+
+impl<Z: Default, S: LocalSingleShare> RealSingleSharing<Z, S> {
+    pub fn new(local_single_share: S) -> Self {
+        Self {
+            local_single_share,
+            available_lsl: Vec::default(),
+            available_shares: Vec::default(),
+            max_num_iterations: usize::default(),
+            vdm_matrix: ArrayD::<Z>::default(IxDyn::default()),
+        }
+    }
+}
+
+impl<Z: Default, S: LocalSingleShare + Default> Default for RealSingleSharing<Z, S> {
+    fn default() -> Self {
+        Self::new(S::default())
+    }
 }
 
 #[async_trait]
@@ -168,7 +194,6 @@ fn compute_next_batch<Z: Ring>(
 pub(crate) mod tests {
     #[cfg(feature = "extension_degree_8")]
     use super::init_vdm;
-    use super::RealSingleSharing;
     use crate::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
     #[cfg(feature = "extension_degree_8")]
     use crate::algebra::galois_rings::degree_8::ResiduePolyF8;
@@ -179,10 +204,7 @@ pub(crate) mod tests {
     use crate::{
         algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed, Sample},
         execution::{
-            large_execution::{
-                local_single_share::LocalSingleShare, single_sharing::SecureSingleSharing,
-                single_sharing::SingleSharing,
-            },
+            large_execution::{single_sharing::SecureSingleSharing, single_sharing::SingleSharing},
             runtime::party::Role,
             runtime::session::{LargeSession, ParameterHandles},
             sharing::{shamir::ShamirSharings, share::Share},
@@ -195,15 +217,6 @@ pub(crate) mod tests {
     use rstest::rstest;
     #[cfg(feature = "extension_degree_8")]
     use std::num::Wrapping;
-
-    pub(crate) fn create_real_single_sharing<Z: Ring, L: LocalSingleShare>(
-        lsl_strategy: L,
-    ) -> RealSingleSharing<Z, L> {
-        RealSingleSharing {
-            local_single_share: lsl_strategy,
-            ..Default::default()
-        }
-    }
 
     fn test_singlesharing<
         Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,

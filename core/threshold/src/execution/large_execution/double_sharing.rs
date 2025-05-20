@@ -27,7 +27,7 @@ pub struct DoubleShare<Z> {
 }
 
 #[async_trait]
-pub trait DoubleSharing<Z: Ring>: Send + Sync + Default + Clone {
+pub trait DoubleSharing<Z: Ring>: Send + Sync + Clone {
     async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -42,13 +42,39 @@ pub trait DoubleSharing<Z: Ring>: Send + Sync + Default + Clone {
 
 //Might want to store the dispute set at the output of the ldl call
 //as that'll influence how to reconstruct stuff later on
-#[derive(Clone, Default)]
 pub struct RealDoubleSharing<Z, S: LocalDoubleShare> {
     local_double_share: S,
     available_ldl: Vec<DoubleArrayShares<Z>>,
     available_shares: Vec<(Z, Z)>,
     max_num_iterations: usize,
     vdm_matrix: ArrayD<Z>,
+}
+
+//Custom implementaiton of Clone to make sure we do not clone
+//the internal state as that would be insecure
+//What we may want is to clone the underlying strategy
+impl<Z: Default, S: LocalDoubleShare> Clone for RealDoubleSharing<Z, S> {
+    fn clone(&self) -> Self {
+        Self::new(self.local_double_share.clone())
+    }
+}
+
+impl<Z: Default, S: LocalDoubleShare> RealDoubleSharing<Z, S> {
+    pub fn new(local_double_share: S) -> Self {
+        Self {
+            local_double_share,
+            available_ldl: Vec::default(),
+            available_shares: Vec::default(),
+            max_num_iterations: usize::default(),
+            vdm_matrix: ArrayD::<Z>::default(IxDyn::default()),
+        }
+    }
+}
+
+impl<Z: Default, S: LocalDoubleShare + Default> Default for RealDoubleSharing<Z, S> {
+    fn default() -> Self {
+        Self::new(S::default())
+    }
 }
 
 #[async_trait]
@@ -196,9 +222,7 @@ pub(crate) mod tests {
     use crate::{
         algebra::structure_traits::{Ring, Sample},
         execution::{
-            large_execution::double_sharing::{
-                DoubleShare, DoubleSharing, LocalDoubleShare, RealDoubleSharing,
-            },
+            large_execution::double_sharing::{DoubleShare, DoubleSharing},
             runtime::{
                 party::Role,
                 session::{LargeSession, ParameterHandles},
@@ -207,15 +231,6 @@ pub(crate) mod tests {
         },
         tests::helper::tests_and_benches::execute_protocol_large,
     };
-
-    pub(crate) fn create_real_double_sharing<Z: Ring, L: LocalDoubleShare>(
-        ldl_strategy: L,
-    ) -> RealDoubleSharing<Z, L> {
-        RealDoubleSharing {
-            local_double_share: ldl_strategy,
-            ..Default::default()
-        }
-    }
 
     fn test_doublesharing<
         Z: Ring + RingEmbed + ErrorCorrect + Derive + Invert,

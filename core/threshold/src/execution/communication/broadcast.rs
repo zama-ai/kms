@@ -21,7 +21,7 @@ type VoteJobType = (Role, anyhow::Result<HashMap<Role, BcastHash>>);
 type GenericEchoVoteJob<T> = JoinSet<Result<(Role, anyhow::Result<HashMap<Role, T>>), Elapsed>>;
 
 #[async_trait]
-pub trait Broadcast: Send + Sync + Default + Clone {
+pub trait Broadcast: Send + Sync + Clone {
     /// Execution of the _regular_ protocol, must be defined for all structs implementing this trait.
     ///
     /// Takes an `sender_list`, an explicit list of all the senders

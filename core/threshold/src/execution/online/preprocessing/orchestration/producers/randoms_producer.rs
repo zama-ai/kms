@@ -13,7 +13,10 @@ use crate::{
         },
         runtime::session::{LargeSession, ParameterHandles, SmallSession},
         sharing::share::Share,
-        small_execution::{offline::SmallPreprocessing, prf::PRSSConversions},
+        small_execution::{
+            offline::{Preprocessing, SecureSmallPreprocessing},
+            prf::PRSSConversions,
+        },
     },
 };
 
@@ -70,8 +73,10 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionRandomProducer<Z> {
                 randoms: batch_size,
             };
 
+            let mut preprocessing = SecureSmallPreprocessing::default();
             for _ in 0..num_loops {
-                let randoms = SmallPreprocessing::<Z>::init(&mut session, base_batch_size)
+                let randoms = preprocessing
+                    .execute(&mut session, base_batch_size)
                     .await?
                     .next_random_vec(batch_size)?;
 
@@ -136,8 +141,10 @@ impl<Z: ErrorCorrect + Invert + Derive> LargeSessionRandomProducer<Z> {
                 randoms: batch_size,
             };
 
+            let mut preprocessing = SecureLargePreprocessing::default();
             for _ in 0..num_loops {
-                let randoms = SecureLargePreprocessing::<Z>::new(&mut session, base_batch_size)
+                let randoms = preprocessing
+                    .execute(&mut session, base_batch_size)
                     .await?
                     .next_random_vec(batch_size)?;
 

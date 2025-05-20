@@ -21,7 +21,7 @@ use crate::{
 pub type SecureCoinflip = RealCoinflip<SecureVss, SecureRobustOpen>;
 
 #[async_trait]
-pub trait Coinflip: Send + Sync + Clone + Default {
+pub trait Coinflip: Send + Sync + Clone {
     async fn execute<Z, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,

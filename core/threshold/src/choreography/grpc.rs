@@ -43,8 +43,7 @@ use crate::execution::large_execution::offline::SecureLargePreprocessing;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
 use crate::execution::online::preprocessing::{
-    BasePreprocessing, BitDecPreprocessing, DKGPreprocessing, NoiseFloodPreprocessing,
-    PreprocessorFactory,
+    BitDecPreprocessing, DKGPreprocessing, NoiseFloodPreprocessing, PreprocessorFactory,
 };
 use crate::execution::online::reshare::{reshare_sk_same_sets, ResharePreprocRequired};
 use crate::execution::runtime::party::{Identity, Role};
@@ -52,7 +51,7 @@ use crate::execution::runtime::session::{BaseSession, BaseSessionHandles};
 use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
 use crate::execution::runtime::session::{LargeSession, SessionParameters};
 use crate::execution::runtime::session::{SmallSession, ToBaseSession};
-use crate::execution::small_execution::offline::SmallPreprocessing;
+use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
 use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
@@ -2184,25 +2183,19 @@ where
                     let mut small_session_z128 =
                         create_small_session(preproc_z128_base_session, &prss_setup_z128);
 
-                    let preproc_z64 = SmallPreprocessing::init(
-                        &mut small_session_z64,
-                        num_needed_preproc.batch_params_64,
-                    )
-                    .await
-                    .unwrap();
+                    let correlated_randomness_z64 = SecureSmallPreprocessing::default()
+                        .execute(&mut small_session_z64, num_needed_preproc.batch_params_64)
+                        .await
+                        .unwrap();
 
-                    let preproc_z128 = SmallPreprocessing::init(
-                        &mut small_session_z128,
-                        num_needed_preproc.batch_params_128,
-                    )
-                    .await
-                    .unwrap();
+                    let correlated_randomness_z128 = SecureSmallPreprocessing::default()
+                        .execute(&mut small_session_z128, num_needed_preproc.batch_params_128)
+                        .await
+                        .unwrap();
 
                     (
-                        Box::new(preproc_z64)
-                            as Box<dyn BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
-                        Box::new(preproc_z128)
-                            as Box<dyn BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+                        correlated_randomness_z64,
+                        correlated_randomness_z128,
                         [
                             small_session_z64.to_base_session().unwrap(),
                             small_session_z128.to_base_session().unwrap(),
@@ -2213,26 +2206,18 @@ where
                     let mut large_session_z64 = create_large_session(preproc_z64_base_session);
                     let mut large_session_z128 = create_large_session(preproc_z128_base_session);
 
-                    let preproc_z64 =
-                        SecureLargePreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(
-                            &mut large_session_z64,
-                            num_needed_preproc.batch_params_64,
-                        )
+                    let correlated_randomness_z64 = SecureLargePreprocessing::default()
+                        .execute(&mut large_session_z64, num_needed_preproc.batch_params_64)
                         .await
                         .unwrap();
-                    let preproc_z128 =
-                        SecureLargePreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
-                            &mut large_session_z128,
-                            num_needed_preproc.batch_params_128,
-                        )
+                    let correlated_randomness_z128 = SecureLargePreprocessing::default()
+                        .execute(&mut large_session_z128, num_needed_preproc.batch_params_128)
                         .await
                         .unwrap();
 
                     (
-                        Box::new(preproc_z64)
-                            as Box<dyn BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
-                        Box::new(preproc_z128)
-                            as Box<dyn BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+                        correlated_randomness_z64,
+                        correlated_randomness_z128,
                         [
                             large_session_z64.to_base_session().unwrap(),
                             large_session_z128.to_base_session().unwrap(),

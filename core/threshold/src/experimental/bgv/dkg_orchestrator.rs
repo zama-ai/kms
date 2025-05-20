@@ -37,7 +37,7 @@ use crate::{
         },
         runtime::session::{ParameterHandles, SmallSession},
         sharing::share::Share,
-        small_execution::offline::SmallPreprocessing,
+        small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
     },
     experimental::{
         algebra::levels::LevelKsw,
@@ -339,10 +339,15 @@ impl SmallSessionBitProducer<LevelKsw> {
             };
 
             for _ in 0..num_loops {
-                let mut preproc =
-                    SmallPreprocessing::<LevelKsw>::init(&mut session, base_batch_size).await?;
-                let bits =
-                    RealBitGenOdd::gen_bits_odd(batch_size, &mut preproc, &mut session).await?;
+                let mut correlated_randomness = SecureSmallPreprocessing::default()
+                    .execute(&mut session, base_batch_size)
+                    .await?;
+                let bits = RealBitGenOdd::gen_bits_odd(
+                    batch_size,
+                    &mut correlated_randomness,
+                    &mut session,
+                )
+                .await?;
 
                 //Drop the error on purpose as the receiver end might be closed already if we produced too much
                 let _ = sender_channel.send(bits).await;

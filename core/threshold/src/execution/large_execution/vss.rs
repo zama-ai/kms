@@ -28,7 +28,7 @@ use crate::{
 pub type SecureVss = RealVss<SyncReliableBroadcast>;
 
 #[async_trait]
-pub trait Vss: Send + Sync + Default + Clone {
+pub trait Vss: Send + Sync + Clone {
     /// Executes a Verifiable Secret Sharing
     /// where every party inputs one secret.
     /// The trait provides a default implementation for [execute]

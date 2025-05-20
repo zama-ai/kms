@@ -30,7 +30,7 @@ pub type SecureLocalSingleShare =
     RealLocalSingleShare<SecureCoinflip, SecureShareDispute, SyncReliableBroadcast>;
 
 #[async_trait]
-pub trait LocalSingleShare: Send + Sync + Default + Clone {
+pub trait LocalSingleShare: Send + Sync + Clone {
     ///Executes a batch LocalSingleShare where every party is sharing a vector of secrets
     ///
     ///NOTE: This does not always guarantee privacy of the inputs towards honest parties (but this is intended behaviour!)

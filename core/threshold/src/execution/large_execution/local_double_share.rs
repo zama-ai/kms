@@ -34,7 +34,7 @@ pub struct DoubleShares<Z> {
 }
 
 #[async_trait]
-pub trait LocalDoubleShare: Send + Sync + Default + Clone {
+pub trait LocalDoubleShare: Send + Sync + Clone {
     async fn execute<
         Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
         R: Rng + CryptoRng,

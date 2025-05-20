@@ -85,10 +85,7 @@ where
 }
 
 #[derive(Default, Clone)]
-pub struct InMemoryBitPreprocessing<Z>
-where
-    Z: Ring,
-{
+pub struct InMemoryBitPreprocessing<Z: Clone> {
     pub available_bits: Vec<Share<Z>>,
 }
 
@@ -120,10 +117,7 @@ impl<Z: Ring> BitPreprocessing<Z> for InMemoryBitPreprocessing<Z> {
 }
 
 #[derive(Default, Clone)]
-pub struct InMemoryBasePreprocessing<R>
-where
-    R: Ring,
-{
+pub struct InMemoryBasePreprocessing<R: Clone> {
     pub available_triples: Vec<Triple<R>>,
     pub available_randoms: Vec<Share<R>>,
 }

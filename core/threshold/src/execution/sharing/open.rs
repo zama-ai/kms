@@ -33,7 +33,7 @@ pub enum OpeningKind<Z> {
 }
 
 #[async_trait]
-pub trait RobustOpen: Send + Sync + Default + Clone {
+pub trait RobustOpen: Send + Sync + Clone {
     /// Inputs:
     /// - session
     /// - shares (wrapped inside [`OpeningKind`] to know who to open to) of the secrets to open

@@ -1056,7 +1056,7 @@ mod tests {
     use crate::execution::runtime::session::SmallSession;
     use crate::execution::sharing::shamir::{InputOp, RevealOp};
     use crate::execution::sharing::shamir::{ShamirFieldPoly, ShamirSharings};
-    use crate::execution::small_execution::offline::SmallPreprocessing;
+    use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
     use crate::networking::NetworkMode;
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
     use aes_prng::AesRng;
@@ -1213,7 +1213,8 @@ mod tests {
                 randoms: 100,
             };
 
-            let mut prep = SmallPreprocessing::<LevelKsw>::init(&mut session, batch_size)
+            let mut prep = SecureSmallPreprocessing::default()
+                .execute(&mut session, batch_size)
                 .await
                 .unwrap();
             (

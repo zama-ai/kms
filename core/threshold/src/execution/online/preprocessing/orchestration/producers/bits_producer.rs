@@ -14,7 +14,10 @@ use crate::{
         },
         runtime::session::{LargeSession, ParameterHandles, SmallSession},
         sharing::share::Share,
-        small_execution::{offline::SmallPreprocessing, prf::PRSSConversions},
+        small_execution::{
+            offline::{Preprocessing, SecureSmallPreprocessing},
+            prf::PRSSConversions,
+        },
     },
 };
 
@@ -76,11 +79,16 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionBitProducer<Z> {
                 randoms: batch_size,
             };
 
+            let mut preprocessing = SecureSmallPreprocessing::default();
             for _ in 0..num_loops {
-                let mut preproc =
-                    SmallPreprocessing::<Z>::init(&mut session, base_batch_size).await?;
-                let bits =
-                    RealBitGenEven::gen_bits_even(batch_size, &mut preproc, &mut session).await?;
+                let mut correlated_randomness =
+                    preprocessing.execute(&mut session, base_batch_size).await?;
+                let bits = RealBitGenEven::gen_bits_even(
+                    batch_size,
+                    &mut correlated_randomness,
+                    &mut session,
+                )
+                .await?;
 
                 //Drop the error on purpose as the receiver end might be closed already if we produced too much
                 let _ = sender_channel.send(bits).await;
@@ -148,11 +156,16 @@ impl<Z: ErrorCorrect + Invert + Derive> LargeSessionBitProducer<Z> {
                 randoms: batch_size,
             };
 
+            let mut preprocessing = SecureLargePreprocessing::default();
             for _ in 0..num_loops {
-                let mut preproc =
-                    SecureLargePreprocessing::<Z>::new(&mut session, base_batch_size).await?;
-                let bits =
-                    RealBitGenEven::gen_bits_even(batch_size, &mut preproc, &mut session).await?;
+                let mut correlated_randomness =
+                    preprocessing.execute(&mut session, base_batch_size).await?;
+                let bits = RealBitGenEven::gen_bits_even(
+                    batch_size,
+                    &mut correlated_randomness,
+                    &mut session,
+                )
+                .await?;
 
                 //Drop the error on purpose as the receiver end might be closed already if we produced too much
                 let _ = sender_channel.send(bits).await;

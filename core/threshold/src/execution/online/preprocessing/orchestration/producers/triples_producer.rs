@@ -15,7 +15,10 @@ use crate::{
             triple::Triple,
         },
         runtime::session::{LargeSession, ParameterHandles, SmallSession},
-        small_execution::{offline::SmallPreprocessing, prf::PRSSConversions},
+        small_execution::{
+            offline::{Preprocessing, SecureSmallPreprocessing},
+            prf::PRSSConversions,
+        },
     },
 };
 
@@ -72,8 +75,10 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionTripleProducer<Z> {
                 randoms: 0,
             };
 
+            let mut preprocessing = SecureSmallPreprocessing::default();
             for _ in 0..num_loops {
-                let triples = SmallPreprocessing::<Z>::init(&mut session, base_batch_size)
+                let triples = preprocessing
+                    .execute(&mut session, base_batch_size)
                     .await?
                     .next_triple_vec(batch_size)?;
 
@@ -138,8 +143,10 @@ impl<Z: ErrorCorrect + Invert + Derive> LargeSessionTripleProducer<Z> {
                 randoms: 0,
             };
 
+            let mut preprocessing = SecureLargePreprocessing::default();
             for _ in 0..num_loops {
-                let triples = SecureLargePreprocessing::<Z>::new(&mut session, base_batch_size)
+                let triples = preprocessing
+                    .execute(&mut session, base_batch_size)
                     .await?
                     .next_triple_vec(batch_size)?;
 

@@ -41,7 +41,7 @@ use tracing::instrument;
 
 /// Trait to capture the primitives of the PRSS/PRZS after init.
 #[async_trait]
-pub trait PRSSPrimitives<Z: Ring> {
+pub trait PRSSPrimitives<Z: Ring>: Send + Sync {
     fn prss_next(&mut self, party_id: Role) -> anyhow::Result<Z>;
     fn przs_next(&mut self, party_id: Role, threshold: u8) -> anyhow::Result<Z>;
     fn mask_next(&mut self, party_id: Role, bd: u128) -> anyhow::Result<Z>;

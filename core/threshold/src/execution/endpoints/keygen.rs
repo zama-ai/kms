@@ -1326,7 +1326,7 @@ pub mod tests {
             keyset_config::KeySetConfig,
             online::preprocessing::create_memory_factory,
             runtime::session::{BaseSessionHandles, SmallSession, ToBaseSession},
-            small_execution::offline::SmallPreprocessing,
+            small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
             tfhe_internals::test_feature::run_decompression_test,
         },
         tests::helper::tests_and_benches::execute_protocol_small,
@@ -1977,7 +1977,8 @@ pub mod tests {
                     .total_randomness_required(keyset_config),
             };
 
-            let mut small_preproc = SmallPreprocessing::init(&mut session, batch_size)
+            let mut small_preproc = SecureSmallPreprocessing::default()
+                .execute(&mut session, batch_size)
                 .await
                 .unwrap();
 
@@ -2135,7 +2136,8 @@ pub mod tests {
                     .total_randomness_required(keyset_config),
             };
 
-            let mut small_preproc = SmallPreprocessing::init(&mut session, batch_size)
+            let mut small_preproc = SecureSmallPreprocessing::default()
+                .execute(&mut session, batch_size)
                 .await
                 .unwrap();
 

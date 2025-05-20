@@ -686,7 +686,7 @@ fn verify_wellformedness(new_pp: &InternalPublicParameter) -> anyhow::Result<()>
 }
 
 #[async_trait]
-pub trait Ceremony: Send + Sync + Clone + Default {
+pub trait Ceremony: Send + Sync + Clone {
     async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,

@@ -17,7 +17,7 @@ use crate::execution::runtime::session::SmallSession64;
 use crate::execution::runtime::session::ToBaseSession;
 use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
 use crate::execution::sharing::share::Share;
-use crate::execution::small_execution::offline::SmallPreprocessing;
+use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::{
@@ -144,12 +144,14 @@ where
             randoms: num_preproc,
         };
 
-        let mut large_preproc = SecureLargePreprocessing::new(session, batch_size).await?;
+        let mut correlated_randomness = SecureLargePreprocessing::default()
+            .execute(session, batch_size)
+            .await?;
 
         let mut sns_preprocessing = create_memory_factory().create_noise_flood_preprocessing();
         sns_preprocessing
             .fill_from_base_preproc(
-                &mut large_preproc,
+                &mut correlated_randomness,
                 &mut session.to_base_session()?,
                 num_ctxt,
             )
@@ -563,13 +565,13 @@ where
         randoms: bitdec_preprocessing.num_required_bits(num_ctxts),
     };
 
-    let mut small_preprocessing =
-        SmallPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::init(session, bitdec_batch)
-            .await?;
+    let mut correlated_randomness = SecureSmallPreprocessing::default()
+        .execute(session, bitdec_batch)
+        .await?;
 
     bitdec_preprocessing
         .fill_from_base_preproc(
-            &mut small_preprocessing,
+            &mut correlated_randomness,
             &mut session.to_base_session()?,
             num_ctxts,
         )
@@ -599,13 +601,13 @@ where
         randoms: bitdec_preprocessing.num_required_bits(num_ctxts),
     };
 
-    let mut large_preprocessing =
-        SecureLargePreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(session, bitdec_batch)
-            .await?;
+    let mut correlated_randomness = SecureLargePreprocessing::default()
+        .execute(session, bitdec_batch)
+        .await?;
 
     bitdec_preprocessing
         .fill_from_base_preproc(
-            &mut large_preprocessing,
+            &mut correlated_randomness,
             &mut session.to_base_session()?,
             num_ctxts,
         )
