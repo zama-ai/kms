@@ -342,9 +342,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::galois_rings::{
-        common::{pack_residue_poly, TryFromWrapper},
-        degree_4::ResiduePolyF4,
+    use crate::{
+        algebra::galois_rings::{
+            common::{pack_residue_poly, TryFromWrapper},
+            degree_4::ResiduePolyF4,
+        },
+        tests::randomness_check::execute_all_randomness_tests,
     };
     use aes_prng::AesRng;
     use num_traits::FromPrimitive;
@@ -593,5 +596,43 @@ mod tests {
                 .unwrap();
         assert_eq!(opened.at(0), secret1.at(0));
         assert_eq!(opened.at(1), secret2.at(0));
+    }
+
+    #[test]
+    fn test_share_randomness() {
+        let mut rng = AesRng::seed_from_u64(0);
+        const SHARE_COUNT: usize = 500usize;
+        const BUF_LEN: usize = 16 * 4;
+        const TRIES: usize = 10;
+
+        for _ in 0..TRIES {
+            for (num_parties, threshold) in [(4, 1), (10, 4)] {
+                let mut all_shares: Vec<Vec<ResiduePolyF4<Z128>>> = vec![vec![]; num_parties];
+                for _ in 0..SHARE_COUNT {
+                    let secret = ResiduePolyF4::<Z128>::from_scalar(Wrapping(32));
+                    let sharings = ShamirSharings::<ResiduePolyF4<Z128>>::share(
+                        &mut rng,
+                        secret,
+                        num_parties,
+                        threshold,
+                    )
+                    .unwrap();
+
+                    for (share, all_share) in sharings.shares.into_iter().zip(all_shares.iter_mut())
+                    {
+                        let share_buf_bincode = bincode::serialize(&share.value()).unwrap();
+                        let share_buf = share.value().to_byte_vec();
+                        assert_eq!(share_buf_bincode, share_buf);
+                        assert_eq!(share_buf.len(), BUF_LEN);
+                        all_share.push(share.value());
+                    }
+                }
+
+                for share in all_shares {
+                    assert_eq!(share.len(), SHARE_COUNT);
+                    execute_all_randomness_tests(&share).unwrap();
+                }
+            }
+        }
     }
 }

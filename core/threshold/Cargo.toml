@@ -50,6 +50,7 @@ rcgen = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 sha2 = "=0.10.8"
 sha3 = "=0.10.8"
+statrs = "=0.18.0"
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
 tokio = { workspace = true, features = [

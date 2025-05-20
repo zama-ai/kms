@@ -838,6 +838,7 @@ mod tests {
     use crate::execution::tfhe_internals::utils::expanded_encrypt;
     use crate::hashing::hash_element_w_size;
     use crate::networking::NetworkMode;
+    use crate::tests::randomness_check::execute_all_randomness_tests;
     use crate::{
         algebra::{
             galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
@@ -1714,11 +1715,13 @@ mod tests {
                 .unwrap();
             let mut state = prss_setup.new_prss_session_state(session.session_id());
             let role = session.my_role().unwrap();
-            Share::new(role, state.prss_next(role).unwrap())
+            (0..500)
+                .map(|_| Share::new(role, state.prss_next(role).unwrap()))
+                .collect::<Vec<_>>()
         };
 
         // init with Dummy AR does not send anything = 0 expected rounds
-        //Could probably be run Async, but NIST doc says all offline is Sync
+        // Could probably be run Async, but NIST doc says all offline is Sync
         let result = execute_protocol_small::<_, _, Z, EXTENSION_DEGREE>(
             parties,
             threshold,
@@ -1729,14 +1732,23 @@ mod tests {
             None,
         );
 
-        validate_prss_init(ShamirSharings::create(result), parties, threshold as usize);
+        validate_prss_init(result, parties, threshold as usize);
     }
 
     fn validate_prss_init<Z: ErrorCorrect>(
-        result: ShamirSharings<Z>,
+        result: Vec<Vec<Share<Z>>>,
         parties: usize,
         threshold: usize,
     ) {
+        // Validate randomness
+        for shares in &result {
+            let raw_shares = shares.iter().map(|share| share.value()).collect::<Vec<_>>();
+            execute_all_randomness_tests(&raw_shares).unwrap();
+        }
+
+        // take the first value of result
+        let result = ShamirSharings::create(result.iter().map(|res| res[0]).collect());
+
         let base = result.err_reconstruct(threshold, threshold).unwrap();
         // Reconstruct the shared value
         // Check that we can still
@@ -1768,14 +1780,16 @@ mod tests {
         async fn task(
             mut session: SmallSession<ResiduePolyF4Z128>,
             _bot: Option<String>,
-        ) -> Share<ResiduePolyF4Z128> {
+        ) -> Vec<Share<ResiduePolyF4Z128>> {
             let prss_setup = RobustSecurePrssInit::default()
                 .init(&mut session)
                 .await
                 .unwrap();
             let mut state = prss_setup.new_prss_session_state(session.session_id());
             let role = session.my_role().unwrap();
-            Share::new(role, state.prss_next(role).unwrap())
+            (0..500)
+                .map(|_| Share::new(role, state.prss_next(role).unwrap()))
+                .collect::<Vec<_>>()
         }
 
         // BEFORE:
@@ -1810,8 +1824,8 @@ mod tests {
             &mut task,
             None,
         );
-        let sharing = ShamirSharings::create(result);
-        validate_prss_init(sharing, parties, threshold.into());
+
+        validate_prss_init(result, parties, threshold.into());
     }
 
     #[test]

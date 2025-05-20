@@ -149,7 +149,10 @@ mod tests {
     use aes_prng::AesRng;
     use proptest::prelude::*;
     use rand::SeedableRng;
-    use threshold_fhe::{algebra::structure_traits::One, execution::sharing::share::Share};
+    use threshold_fhe::{
+        algebra::structure_traits::One, execution::sharing::share::Share,
+        tests::randomness_check::execute_all_randomness_tests,
+    };
 
     use super::*;
 
@@ -172,6 +175,34 @@ mod tests {
                 let shares = share(&mut rng, &secret, n, t).unwrap();
                 let result = reconstruct(shares, t).unwrap();
 
+                assert_eq!(result, secret);
+            }
+        }
+
+        #[test]
+        fn sharing_randomness_test(seed in 0u64..8u64) {
+            let mut rng = AesRng::seed_from_u64(seed);
+
+            // we need enough samples for the randomness test
+            // each share is 256 bits (`share` function uses `ResiduePolyF4Z64`), we need 100 samples
+            // so secret needs to be at least: 256 * 100 / 8 = 3200 bytes
+            let secret = vec![0u8; 2 * 3200];
+
+            for (n, t) in NTS {
+                let shares = share(&mut rng, &secret, n, t).unwrap();
+
+                let mut shares_by_party = vec![vec![]; n];
+                for share_block in &shares {
+                    for (i, share) in share_block.shares.iter().enumerate() {
+                        shares_by_party[i].push(share.value());
+                    }
+                }
+                for party_share in shares_by_party {
+                    execute_all_randomness_tests(&party_share).unwrap();
+                }
+
+                // finally try to reconstruct
+                let result = reconstruct(shares, t).unwrap();
                 assert_eq!(result, secret);
             }
         }
