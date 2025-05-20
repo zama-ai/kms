@@ -109,6 +109,8 @@ opt-level = 3
 [profile.dev]
 # Turn on a small amount of optimization in Development mode.
 opt-level = 1
+# Ensure all possible speed ups on dev compilation on Macos is enabled
+split-debuginfo = "unpacked"
 
 [profile.test]
 opt-level = 3

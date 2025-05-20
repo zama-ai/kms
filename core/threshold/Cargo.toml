@@ -64,7 +64,6 @@ tonic-health = { workspace = true, optional = true }
 tonic-tls = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
-tower-service = "=0.3.3"
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
@@ -97,6 +96,9 @@ tracing-test = "=0.2.5"
 webpki = { version = "=0.22.4", features = ["std"] }
 # "self-import" needed for integration test
 threshold-fhe = { workspace = true, features = ["testing"] }
+
+[package.metadata.cargo-machete]
+ignored = ["getrandom", "opentelemetry", "prost"]
 
 [lib]
 crate-type = ["lib", "cdylib"]
