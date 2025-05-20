@@ -75,8 +75,6 @@ jobs:
             - 'docs/**'
           helm-chart:
             - 'charts/**'
-            - '.github/workflows/helm-test.yml'
-            - '.github/workflows/helm-lint.yml'
 
 
   ############################################################################
