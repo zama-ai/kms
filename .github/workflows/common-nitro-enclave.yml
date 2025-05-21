@@ -178,3 +178,14 @@ jobs:
       - name: Export image name
         id: export-image
         run: echo "image=ghcr.io/zama-ai/${{inputs.image-name}}:${{ needs.determine-tag.outputs.docker_tag }}" >> "${GITHUB_OUTPUT}"
+
+      ###########################################################
+      # Release Part for EIF
+      # EIF is only released on release events and added to the assets
+      ###########################################################
+      - name: Add eif-info.txt to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631  # v2.2.2
+        with:
+          files: |
+            ${{ env.EIF_OUTPUT_DIR }}/eif-info.txt
