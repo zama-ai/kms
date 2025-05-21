@@ -26,7 +26,9 @@ fail() {
 
 get_configured_port() {
     local SERVICE_NAME="$1"
-    get_value "$SERVICE_NAME" | cut -d ":" -f 3
+    local SERVICE_URL
+    SERVICE_URL=$(get_value "$SERVICE_NAME")
+    echo "${SERVICE_URL##*:}"
 }
 
 get_value() {
