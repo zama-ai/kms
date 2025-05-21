@@ -3,10 +3,7 @@ use super::{
     prss::create_sets,
 };
 use crate::{
-    algebra::{
-        base_ring::Z64,
-        structure_traits::{ErrorCorrect, Ring},
-    },
+    algebra::{base_ring::Z64, structure_traits::ErrorCorrect},
     commitment::{commit, verify, Commitment, Opening, KEY_BYTE_LEN},
     error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
@@ -48,7 +45,7 @@ pub trait AgreeRandomFromShare: Clone + Send + Sync {
     /// where parties agree on the hash of the reconstructed value.
     ///
     /// This follows the AgreeRandom-Robust protocol of the NIST document.
-    async fn execute<Z: Ring + ErrorCorrect, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,
         shares: Vec<Z>,
@@ -105,7 +102,7 @@ impl<RO: RobustOpen> AgreeRandomFromShare for RobustRealAgreeRandom<RO> {
     /// The parties in party_set[set_id] agree on shares[set_id]
     /// Returns the list of agreed randomness only for the subsets I am part of
     #[instrument(name="AgreeRandom-Robust",skip(self,session,shares,all_party_sets),fields(sid = ?session.session_id(),own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
-    async fn execute<Z: Ring + ErrorCorrect, Rnd: Rng + CryptoRng, L: BaseSessionHandles<Rnd>>(
+    async fn execute<Z: ErrorCorrect, Rnd: Rng + CryptoRng, L: BaseSessionHandles<Rnd>>(
         &self,
         session: &mut L,
         shares: Vec<Z>,
@@ -316,7 +313,7 @@ impl AgreeRandom for DummyAgreeRandom {
 #[async_trait]
 impl AgreeRandomFromShare for DummyAgreeRandomFromShare {
     // Just runs dummy agree random, ignoring shares and all_party_sets
-    async fn execute<Z: Ring + ErrorCorrect, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,
         _shares: Vec<Z>,
@@ -607,11 +604,14 @@ fn compute_party_sets(my_role: Role, parties: usize, threshold: usize) -> Vec<Ve
 mod tests {
     use super::{
         check_and_unpack_coms, check_rcv_len, verify_and_xor_keys, AbortSecureAgreeRandom,
-        AgreeRandom, DummyAgreeRandom, PassiveSecureAgreeRandom,
+        AgreeRandom, AgreeRandomFromShare, DummyAgreeRandom, PassiveSecureAgreeRandom,
+        RobustRealAgreeRandom, RobustSecureAgreeRandom,
     };
     use crate::{
         algebra::{
-            base_ring::Z64, galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring,
+            base_ring::Z64,
+            galois_rings::degree_4::ResiduePolyF4Z128,
+            structure_traits::{ErrorCorrect, Invert, Ring},
         },
         commitment::{
             commitment_inner_hash, Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN,
@@ -620,8 +620,8 @@ mod tests {
             runtime::{
                 party::Role,
                 session::{ParameterHandles, SmallSession},
-                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
+            sharing::open::test::deterministically_compute_my_shares,
             small_execution::{
                 agree_random::{
                     check_and_unpack_keys, check_and_unpack_keys_openings, compute_party_sets,
@@ -631,20 +631,22 @@ mod tests {
                 prss::create_sets,
             },
         },
+        malicious_execution::{
+            open::malicious_open::MaliciousRobustOpenLie,
+            small_execution::malicious_agree_random::MaliciousAgreeRandomDrop,
+        },
         networking::{
             value::{AgreeRandomValue, NetworkValue},
             NetworkMode,
         },
-        session_id::SessionId,
         tests::helper::{
             testing::get_networkless_base_session_for_parties,
-            tests_and_benches::execute_protocol_small,
+            tests::{execute_protocol_small_w_malicious, TestingParameters},
         },
     };
-    use aes_prng::AesRng;
-    use rand::SeedableRng;
+    use itertools::Itertools;
     use std::collections::{HashMap, VecDeque};
-    use tokio::task::JoinSet;
+    use tokio::task::JoinError;
 
     #[test]
     fn test_u8_xor() {
@@ -723,118 +725,278 @@ mod tests {
     }
 
     #[test]
-    fn test_real_agree_random() {
-        generic_real_agree_random_test::<PassiveSecureAgreeRandom>(2);
+    fn test_agree_random_passive() {
+        let testing_parameters = TestingParameters::init(7, 2, &[], &[], &[], false, Some(2));
+        test_agree_random_strategies::<PassiveSecureAgreeRandom, _>(
+            testing_parameters,
+            PassiveSecureAgreeRandom::default(),
+        );
     }
 
     #[test]
-    fn test_real_agree_random_with_abort() {
-        generic_real_agree_random_test::<AbortSecureAgreeRandom>(3);
+    fn test_agree_random_with_abort() {
+        let testing_parameters = TestingParameters::init(7, 2, &[], &[], &[], false, Some(3));
+        test_agree_random_strategies::<AbortSecureAgreeRandom, _>(
+            testing_parameters,
+            AbortSecureAgreeRandom::default(),
+        );
     }
 
-    fn generic_real_agree_random_test<A: AgreeRandom + Default + 'static>(expected_rounds: usize) {
-        let num_parties = 7;
-        let threshold = 2;
+    #[test]
+    fn test_dropout_real_agree_random_with_abort() {
+        let testing_parameters = TestingParameters::init(7, 2, &[0], &[], &[], true, None);
+        test_agree_random_strategies::<AbortSecureAgreeRandom, _>(
+            testing_parameters,
+            MaliciousAgreeRandomDrop::default(),
+        );
+    }
 
-        async fn task<A: AgreeRandom + Default>(
-            mut session: SmallSession<ResiduePolyF4Z128>,
-            _bot: Option<String>,
-        ) -> (Role, VecDeque<PrfKey>) {
-            let keys = A::default().execute(&mut session).await;
-            let vd = VecDeque::from(keys.unwrap());
-            (session.my_role().unwrap(), vd)
-        }
+    #[test]
+    fn test_agree_random_robust() {
+        let testing_parameters = TestingParameters::init(7, 2, &[], &[], &[], false, Some(1));
+        test_agree_random_from_share_strategies::<
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            _,
+        >(testing_parameters, RobustSecureAgreeRandom::default());
+    }
 
-        // Sync because it is part of the offline phase
-        let res = execute_protocol_small::<
+    #[test]
+    fn test_lie_robust_open_agree_random_robust() {
+        let testing_parameters = TestingParameters::init(7, 2, &[0, 3], &[], &[], false, None);
+        test_agree_random_from_share_strategies::<
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            _,
+        >(
+            testing_parameters,
+            RobustRealAgreeRandom::new(MaliciousRobustOpenLie::default()),
+        );
+    }
+
+    #[test]
+    fn test_dropout_agree_random_robust() {
+        let testing_parameters = TestingParameters::init(7, 2, &[1, 4], &[], &[], false, None);
+        test_agree_random_from_share_strategies::<
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            _,
+        >(testing_parameters, MaliciousAgreeRandomDrop::default());
+    }
+
+    /// Generic function to test the different strategies for agree random.
+    /// We use [`TestingParameters::should_be_detected`] field to
+    /// tell the test whether the honest parties are expected to abort
+    /// due to some malicious bahviour
+    fn test_agree_random_strategies<
+        AHonest: AgreeRandom + Default + 'static,
+        AMalicious: AgreeRandom + 'static,
+    >(
+        params: TestingParameters,
+        malicious_agree_random: AMalicious,
+    ) {
+        //We hardcode ResiduePolyF4Z128 as AgreeRandom doesn't care about the underlying ring
+        let mut task_honest = |mut session: SmallSession<ResiduePolyF4Z128>| async move {
+            let secure_agree_random_w_abort = AHonest::default();
+
+            (
+                session.my_role().unwrap(),
+                secure_agree_random_w_abort.execute(&mut session).await,
+            )
+        };
+
+        //We use ResiduePolyF4Z128 as AgreeRandom doesn't care about the underlying ring
+        let mut task_malicious =
+            |mut session: SmallSession<ResiduePolyF4Z128>, malicious_agree_random: AMalicious| async move {
+                (
+                    session.my_role().unwrap(),
+                    malicious_agree_random.execute(&mut session).await,
+                )
+            };
+
+        let (results_honest, results_malicious) = execute_protocol_small_w_malicious::<
+            _,
+            _,
+            _,
             _,
             _,
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(
-            num_parties,
-            threshold,
-            Some(expected_rounds),
+            &params,
+            &params.malicious_roles,
+            malicious_agree_random,
             NetworkMode::Sync,
             None,
-            &mut task::<A>,
-            None,
+            &mut task_honest,
+            &mut task_malicious,
+        );
+
+        // Since the protocol is secure with abort, we make sure that in case of a
+        // malicious party it does abort
+        if params.should_be_detected {
+            for (_, result) in results_honest.iter() {
+                assert!(result.is_err());
+            }
+        } else {
+            validate_result(
+                results_honest,
+                results_malicious,
+                params.num_parties,
+                params.threshold,
+                None,
+            )
+        }
+
+        // Else, we can extract and test the results
+    }
+
+    /// Generic function to test the different strategies for agree random from share.
+    /// Ignores [`TestinParameters::should_be_detected`] because the protocol
+    /// does not mutate the corrupt set
+    fn test_agree_random_from_share_strategies<
+        Z: ErrorCorrect + Invert,
+        const EXTENSION_DEGREE: usize,
+        A: AgreeRandomFromShare + 'static,
+    >(
+        params: TestingParameters,
+        malicious_agree_random: A,
+    ) {
+        let mut task_honest = |mut session: SmallSession<Z>| async move {
+            let secure_agree_random_w_abort = RobustSecureAgreeRandom::default();
+
+            let num_parties = session.num_parties();
+            let threshold = session.threshold() as usize;
+            let my_role = session.my_role().unwrap();
+
+            let all_party_sets: Vec<Vec<usize>> =
+                create_sets(num_parties, threshold).into_iter().collect();
+
+            //The protocol's input is a valid secret sharing amongst all the parties
+            let (_secret, shares) = deterministically_compute_my_shares::<Z>(
+                all_party_sets.len(),
+                my_role,
+                num_parties,
+                threshold,
+                43,
+            );
+
+            (
+                my_role,
+                secure_agree_random_w_abort
+                    .execute(&mut session, shares, &all_party_sets)
+                    .await,
+            )
+        };
+
+        let mut task_malicious = |mut session: SmallSession<Z>, malicious_agree_random: A| async move {
+            let num_parties = session.num_parties();
+            let threshold = session.threshold() as usize;
+            let my_role = session.my_role().unwrap();
+
+            let all_party_sets: Vec<Vec<usize>> =
+                create_sets(num_parties, threshold).into_iter().collect();
+
+            //The protocol's input is a valid secret sharing amongst all the parties
+            let (_secret, shares) = deterministically_compute_my_shares::<Z>(
+                all_party_sets.len(),
+                my_role,
+                num_parties,
+                threshold,
+                43,
+            );
+            (
+                session.my_role().unwrap(),
+                malicious_agree_random
+                    .execute(&mut session, shares, &all_party_sets)
+                    .await,
+            )
+        };
+
+        let (results_honest, _results_malicious) =
+            execute_protocol_small_w_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
+                &params,
+                &params.malicious_roles,
+                malicious_agree_random,
+                NetworkMode::Sync,
+                None,
+                &mut task_honest,
+                &mut task_malicious,
+            );
+
+        // Since the protocol is robust, we make sure in all cases
+        // honest parties have a valid result
+        validate_result(
+            results_honest,
+            Vec::new(),
+            params.num_parties,
+            params.threshold,
+            Some(params.malicious_roles),
+        )
+    }
+
+    #[allow(clippy::type_complexity)]
+    /// Validates the result of agree random,
+    /// except for the roles in `ignore_roles`
+    fn validate_result(
+        honest_results: Vec<(Role, anyhow::Result<Vec<PrfKey>>)>,
+        malicious_results: Vec<Result<(Role, anyhow::Result<Vec<PrfKey>>), JoinError>>,
+        num_parties: usize,
+        threshold: usize,
+        ignore_roles: Option<Vec<Role>>,
+    ) {
+        let mut concatenated_results = honest_results
+            .into_iter()
+            .map(|(role, result)| (role, VecDeque::from(result.unwrap())))
+            .collect_vec();
+        concatenated_results.extend(
+            malicious_results
+                .into_iter()
+                .map(|result_malicious| {
+                    let (role, result) = result_malicious.unwrap();
+                    (role, VecDeque::from(result.unwrap()))
+                })
+                .collect_vec(),
         );
 
         // unpack results into hashmap
         let mut key_hm: HashMap<usize, VecDeque<PrfKey>> = HashMap::new();
-        for (role, data) in res {
+        for (role, data) in concatenated_results {
             key_hm.insert(role.zero_based(), data);
         }
 
-        let all_party_sets: Vec<Vec<usize>> = create_sets(num_parties, threshold as usize)
-            .into_iter()
-            .collect();
+        let all_party_sets: Vec<Vec<usize>> =
+            create_sets(num_parties, threshold).into_iter().collect();
 
-        let mut allkeys: Vec<VecDeque<PrfKey>> =
-            (0..num_parties).map(|p| key_hm[&p].clone()).collect();
+        let ignore_roles = ignore_roles.unwrap_or_default();
+        let mut allkeys: Vec<VecDeque<PrfKey>> = (0..num_parties)
+            .map(|p| {
+                if !ignore_roles.contains(&Role::indexed_by_zero(p)) {
+                    key_hm[&p].clone()
+                } else {
+                    VecDeque::new()
+                }
+            })
+            .collect();
 
         for set in all_party_sets {
             let partykeys: Vec<PrfKey> = set
                 .iter()
-                .map(|sp| allkeys[*sp - 1].pop_front().unwrap())
+                .filter_map(|sp| {
+                    if !ignore_roles.contains(&Role::indexed_by_one(*sp)) {
+                        Some(allkeys[*sp - 1].pop_front().unwrap())
+                    } else {
+                        None
+                    }
+                })
                 .collect();
+
+            // All the sets have at least n-2t honest parties in it
+            assert!(partykeys.len() >= num_parties - 2 * threshold);
 
             // check that all keys for this set are equal
             assert!(itertools::all(&partykeys, |k| k == &partykeys[0]));
         }
-    }
-
-    #[test]
-    #[should_panic(expected = "Have not received an AgreeRandomValue from role 1!")]
-    fn test_real_agree_random_no_reply() {
-        let num_parties = 7;
-        let threshold = 2;
-
-        let identities = generate_fixed_identities(num_parties);
-
-        assert_eq!(identities.len(), num_parties);
-
-        // Sync because it is part of the offline phase
-        let runtime: DistributedTestRuntime<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        > = DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
-
-        // create sessions for each prss party, except party 0, which does not respond in this case
-        let sessions: Vec<SmallSession<ResiduePolyF4Z128>> = (1..num_parties)
-            .map(|p| {
-                let num = p as u8;
-                runtime.small_session_for_party(
-                    SessionId::from(u128::MAX),
-                    p,
-                    Some(AesRng::seed_from_u64(num.into())),
-                )
-            })
-            .collect();
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
-        let mut jobs = JoinSet::new();
-
-        for sess in sessions.iter() {
-            let mut ss = sess.clone();
-
-            jobs.spawn(async move {
-                PassiveSecureAgreeRandom::default()
-                    .execute::<_, _>(&mut ss)
-                    .await
-            });
-        }
-
-        rt.block_on(async {
-            for _ in &sessions {
-                while let Some(v) = jobs.join_next().await {
-                    let _ = v.unwrap().unwrap();
-                }
-            }
-        });
     }
 
     #[test]

@@ -265,8 +265,16 @@ async fn next_random_batch<
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 mod tests {
+    #[cfg(feature = "slow_tests")]
+    use super::next_random_batch;
+    use super::SecureLargePreprocessing;
     use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert};
     use crate::execution::config::BatchParams;
+    #[cfg(feature = "slow_tests")]
+    use crate::execution::large_execution::{
+        double_sharing::DoubleSharing, single_sharing::SingleSharing,
+    };
+    #[cfg(feature = "slow_tests")]
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
     use crate::execution::sharing::shamir::RevealOp;
@@ -283,7 +291,7 @@ mod tests {
                     tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
                     Coinflip, RealCoinflip,
                 },
-                double_sharing::{DoubleSharing, RealDoubleSharing},
+                double_sharing::RealDoubleSharing,
                 local_double_share::{
                     tests::{MaliciousReceiverLocalDoubleShare, MaliciousSenderLocalDoubleShare},
                     LocalDoubleShare, RealLocalDoubleShare,
@@ -299,7 +307,7 @@ mod tests {
                     },
                     RealShareDispute, ShareDispute,
                 },
-                single_sharing::{RealSingleSharing, SingleSharing},
+                single_sharing::RealSingleSharing,
                 vss::{
                     tests::{
                         DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart,
@@ -325,12 +333,13 @@ mod tests {
         },
     };
     use aes_prng::AesRng;
+    #[cfg(feature = "slow_tests")]
     use async_trait::async_trait;
+    #[cfg(feature = "slow_tests")]
     use itertools::Itertools;
+    #[cfg(feature = "slow_tests")]
     use rand::{CryptoRng, Rng};
     use rstest::rstest;
-
-    use super::{next_random_batch, SecureLargePreprocessing};
 
     fn test_offline_strategies<
         Z: Derive + Invert + ErrorCorrect,
@@ -454,6 +463,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "slow_tests")]
     ///Malicious strategy that introduces an error in the reconstruction of beaver
     #[derive(Clone)]
     pub(crate) struct CheatingLargePreprocessing<
@@ -472,6 +482,7 @@ mod tests {
         session_marker: std::marker::PhantomData<Ses>,
     }
 
+    #[cfg(feature = "slow_tests")]
     impl<
             Z: Ring,
             Rnd: Rng + CryptoRng,
@@ -493,6 +504,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "slow_tests")]
     #[async_trait]
     impl<
             Z: Derive + ErrorCorrect,
@@ -539,6 +551,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "slow_tests")]
     impl<
             Z: Derive + ErrorCorrect,
             Rnd: Rng + CryptoRng,

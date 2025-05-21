@@ -253,13 +253,14 @@ pub mod testing {
 pub mod tests {
     use super::testing::get_networkless_base_session_for_parties;
     use crate::{
-        algebra::structure_traits::Ring,
+        algebra::structure_traits::{ErrorCorrect, Invert, Ring},
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             runtime::{
                 party::{Identity, Role},
                 session::{
-                    BaseSessionStruct, LargeSession, LargeSessionHandles, SessionParameters,
+                    BaseSessionStruct, LargeSession, LargeSessionHandles, ParameterHandles,
+                    SessionParameters, SmallSession,
                 },
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
@@ -469,6 +470,103 @@ pub mod tests {
     ///
     ///**NOTE: FOR ALL TESTS THE RNG SEED OF A PARTY IS ITS PARTY_ID, THIS IS ACTUALLY USED IN SOME TESTS TO CHECK CORRECTNESS.**
     #[allow(clippy::too_many_arguments)]
+    pub fn execute_protocol_small_w_malicious<
+        TaskOutputT,
+        OutputT,
+        TaskOutputM,
+        OutputM,
+        P: Clone,
+        Z: ErrorCorrect + Invert,
+        const EXTENSION_DEGREE: usize,
+    >(
+        params: &TestingParameters,
+        malicious_roles: &[Role],
+        malicious_strategy: P,
+        network_mode: NetworkMode,
+        delay_vec: Option<Vec<tokio::time::Duration>>,
+        task_honest: &mut dyn FnMut(SmallSession<Z>) -> TaskOutputT,
+        task_malicious: &mut dyn FnMut(SmallSession<Z>, P) -> TaskOutputM,
+    ) -> (Vec<OutputT>, Vec<Result<OutputM, JoinError>>)
+    where
+        TaskOutputT: Future<Output = OutputT>,
+        TaskOutputT: Send + 'static,
+        OutputT: Send + 'static,
+        TaskOutputM: Future<Output = OutputM>,
+        TaskOutputM: Send + 'static,
+        OutputM: Send + 'static,
+    {
+        let parties = params.num_parties;
+        let threshold = params.threshold as u8;
+
+        let identities = generate_fixed_identities(parties);
+        let delay_map = delay_vec.map(|delay_vec| {
+            identities
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, identity)| {
+                    delay_vec.get(idx).map(|delay| (identity.clone(), *delay))
+                })
+                .collect()
+        });
+        let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
+            identities.clone(),
+            threshold,
+            network_mode,
+            delay_map,
+        );
+        let session_id = SessionId::from(1);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let mut honest_tasks = JoinSet::new();
+        let mut malicious_tasks = JoinSet::new();
+        let mut malicious_identities = Vec::new();
+        for party_id in 0..parties {
+            let session = test_runtime.small_session_for_party(session_id, party_id, None);
+
+            if malicious_roles.contains(&Role::indexed_by_zero(party_id)) {
+                malicious_identities.push(session.own_identity());
+                let malicious_strategy_cloned = malicious_strategy.clone();
+                malicious_tasks.spawn(task_malicious(session, malicious_strategy_cloned));
+            } else {
+                honest_tasks.spawn(task_honest(session));
+            }
+        }
+        let res = rt.block_on(async {
+            let mut results_honest = Vec::with_capacity(honest_tasks.len());
+            let mut results_malicious = Vec::with_capacity(honest_tasks.len());
+            while let Some(v) = honest_tasks.join_next().await {
+                results_honest.push(v.unwrap());
+            }
+            while let Some(v) = malicious_tasks.join_next().await {
+                results_malicious.push(v);
+            }
+            (results_honest, results_malicious)
+        });
+
+        // test that the number of rounds is as expected
+        if let Some(e_r) = params.expected_rounds {
+            for n in test_runtime.user_nets {
+                if !malicious_identities.contains(&n.owner) {
+                    let rounds = std::sync::Arc::clone(&n).get_current_round().unwrap();
+                    assert_eq!(rounds, e_r);
+                }
+            }
+        }
+
+        res
+    }
+
+    /// Helper method for executing networked tests with multiple parties some honest some dishonest.
+    /// The `task_honest` argument contains the code to be execute by honest parties which returns a value of type [OutputT].
+    /// The `task_malicious` argument contains the code to be execute by malicious parties which returns a value of type [OutputT].
+    /// The `malicious_roles` argument contains the list of roles which should execute the `task_malicious`
+    /// The result of the computation is a vector of [OutputT] which contains the result of each of the honest parties
+    /// interactive computation.
+    ///
+    ///**NOTE: FOR ALL TESTS THE RNG SEED OF A PARTY IS ITS PARTY_ID, THIS IS ACTUALLY USED IN SOME TESTS TO CHECK CORRECTNESS.**
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_protocol_large_w_disputes_and_malicious<
         TaskOutputT,
         OutputT,
@@ -521,10 +619,12 @@ pub mod tests {
 
         let mut honest_tasks = JoinSet::new();
         let mut malicious_tasks = JoinSet::new();
+        let mut malicious_identities = Vec::new();
         for party_id in 0..parties {
             let mut session = test_runtime.large_session_for_party(session_id, party_id);
 
             if malicious_roles.contains(&Role::indexed_by_zero(party_id)) {
+                malicious_identities.push(session.own_identity());
                 let malicious_strategy_cloned = malicious_strategy.clone();
                 malicious_tasks.spawn(task_malicious(session, malicious_strategy_cloned));
             } else {
@@ -549,8 +649,10 @@ pub mod tests {
         // test that the number of rounds is as expected
         if let Some(e_r) = params.expected_rounds {
             for n in test_runtime.user_nets {
-                let rounds = std::sync::Arc::clone(&n).get_current_round().unwrap();
-                assert_eq!(rounds, e_r);
+                if !malicious_identities.contains(&n.owner) {
+                    let rounds = std::sync::Arc::clone(&n).get_current_round().unwrap();
+                    assert_eq!(rounds, e_r);
+                }
             }
         }
 

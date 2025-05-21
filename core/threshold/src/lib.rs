@@ -22,6 +22,8 @@ pub mod error;
 pub mod experimental;
 #[cfg(feature = "non-wasm")]
 pub mod grpc;
+#[cfg(any(test, feature = "malicious_strategies"))]
+pub mod malicious_execution;
 #[cfg(feature = "non-wasm")]
 pub mod thread_handles;
 #[cfg(feature = "non-wasm")]

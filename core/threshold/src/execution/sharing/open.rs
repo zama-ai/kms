@@ -7,7 +7,7 @@ use tonic::async_trait;
 use tracing::instrument;
 
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Ring},
+    algebra::structure_traits::ErrorCorrect,
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::p2p::{generic_receive_from_all, send_to_all},
@@ -41,7 +41,7 @@ pub trait RobustOpen: Send + Sync + Clone {
     ///
     /// Output:
     /// - The reconstructed secrets if reconstruction for all was possible
-    async fn execute<Z: Ring + ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
         &self,
         session: &B,
         shares: OpeningKind<Z>,
@@ -53,7 +53,7 @@ pub trait RobustOpen: Send + Sync + Clone {
     /// Opens a batch of secrets to designated parties
     #[instrument(name="RobustOpenTo",skip(self,session,shares),fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),num_receivers = ?shares.len()))]
     async fn multi_robust_open_list_to<
-        Z: Ring + ErrorCorrect,
+        Z: ErrorCorrect,
         R: Rng + CryptoRng,
         B: BaseSessionHandles<R>,
     >(
@@ -69,11 +69,7 @@ pub trait RobustOpen: Send + Sync + Clone {
     /// Blanket implementation that relies on [`Self::execute`]
     ///
     /// Opens a batch of secrets to a designated party
-    async fn robust_open_list_to<
-        Z: Ring + ErrorCorrect,
-        R: Rng + CryptoRng,
-        B: BaseSessionHandles<R>,
-    >(
+    async fn robust_open_list_to<Z: ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
         &self,
         session: &B,
         shares: Vec<Z>,
@@ -88,11 +84,7 @@ pub trait RobustOpen: Send + Sync + Clone {
     /// Blanket implementation that relies on [`Self::execute`]
     ///
     /// Opens a single secret to a designated party
-    async fn robust_open_to<
-        Z: Ring + ErrorCorrect,
-        R: Rng + CryptoRng,
-        B: BaseSessionHandles<R>,
-    >(
+    async fn robust_open_to<Z: ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
         &self,
         session: &B,
         share: Z,
@@ -122,7 +114,7 @@ pub trait RobustOpen: Send + Sync + Clone {
     /// - The reconstructed secrets if reconstruction for all was possible
     #[instrument(name="RobustOpen",skip(self,session,shares),fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
     async fn robust_open_list_to_all<
-        Z: Ring + ErrorCorrect,
+        Z: ErrorCorrect,
         R: Rng + CryptoRng,
         B: BaseSessionHandles<R>,
     >(
@@ -155,11 +147,7 @@ pub trait RobustOpen: Send + Sync + Clone {
     /// Blanket implementation that relies on [`Self::execute`]
     ///
     /// Opens a single secret to all the parties
-    async fn robust_open_to_all<
-        Z: Ring + ErrorCorrect,
-        R: Rng + CryptoRng,
-        B: BaseSessionHandles<R>,
-    >(
+    async fn robust_open_to_all<Z: ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
         &self,
         session: &B,
         share: Z,
@@ -180,7 +168,7 @@ pub struct SecureRobustOpen {}
 
 #[async_trait]
 impl RobustOpen for SecureRobustOpen {
-    async fn execute<Z: Ring + ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
         &self,
         session: &B,
         shares: OpeningKind<Z>,
@@ -281,7 +269,7 @@ type ReconsFunc<Z> = fn(
 /// - max_num_errors as the max. number of errors we allow (this is session.threshold)
 /// - a set of jobs to receive the shares from the other parties
 async fn try_reconstruct_from_shares<
-    Z: Ring + ErrorCorrect,
+    Z: ErrorCorrect,
     R: Rng + CryptoRng,
     B: BaseSessionHandles<R>,
 >(
@@ -351,99 +339,236 @@ async fn try_reconstruct_from_shares<
 }
 
 #[cfg(test)]
-mod test {
-    use std::num::Wrapping;
+pub(crate) mod test {
 
     use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::SeedableRng;
 
-    use crate::algebra::structure_traits::Ring;
+    use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed};
+    use crate::execution::runtime::party::Role;
+    use crate::execution::runtime::session::SmallSession;
     use crate::execution::sharing::shamir::InputOp;
+    use crate::malicious_execution::open::malicious_open::{
+        MaliciousRobustOpenDrop, MaliciousRobustOpenLie,
+    };
     use crate::networking::NetworkMode;
+    use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
     use crate::{
-        algebra::galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128},
-        execution::{
-            runtime::session::{LargeSession, ParameterHandles},
-            sharing::shamir::ShamirSharings,
-        },
-        tests::helper::tests_and_benches::execute_protocol_large,
+        algebra::galois_rings::degree_4::ResiduePolyF4Z128,
+        execution::{runtime::session::ParameterHandles, sharing::shamir::ShamirSharings},
     };
 
     use super::{RobustOpen, SecureRobustOpen};
 
-    async fn open_task(session: LargeSession) -> Vec<ResiduePolyF4Z128> {
-        let parties = 4;
-        let threshold = 1;
-        let num_secrets = 10;
-        let mut rng = AesRng::seed_from_u64(0);
-        let shares = (0..num_secrets)
-            .map(|idx| {
-                ShamirSharings::share(
-                    &mut rng,
-                    ResiduePolyF4::from_scalar(Wrapping(idx)),
-                    parties,
-                    threshold,
-                )
-                .unwrap()
-                .shares
-                .get(session.my_role().unwrap().zero_based())
-                .unwrap()
-                .value()
+    /// Samples a list of secrets using the provided seed
+    /// and computes the shares the correspond to `my_role`.
+    /// If all parties call this function with the same seed,
+    /// they end up with a well-formed sharing of the same secrets
+    ///
+    /// Returns both the secrets and the shares
+    pub(crate) fn deterministically_compute_my_shares<Z: Ring + RingEmbed>(
+        num_secrets: usize,
+        my_role: Role,
+        num_parties: usize,
+        threshold: usize,
+        seed: u64,
+    ) -> (Vec<Z>, Vec<Z>) {
+        let mut rng = AesRng::seed_from_u64(seed);
+        let secrets: Vec<_> = (0..num_secrets).map(|_| Z::sample(&mut rng)).collect();
+        let shares = secrets
+            .iter()
+            .map(|secret| {
+                ShamirSharings::share(&mut rng, *secret, num_parties, threshold)
+                    .unwrap()
+                    .shares
+                    .get(my_role.zero_based())
+                    .unwrap()
+                    .value()
             })
             .collect_vec();
-        let res = SecureRobustOpen::default()
-            .robust_open_list_to_all(&session, shares, threshold)
-            .await
-            .unwrap()
-            .unwrap();
-        for (idx, r) in res.clone().into_iter().enumerate() {
-            assert_eq!(r.to_scalar().unwrap(), Wrapping::<u128>(idx as u128));
+        (secrets, shares)
+    }
+
+    /// Generic function to test the different strategies for robust open.
+    /// We use [`TestingParameters::should_be_detected`] field to
+    /// tell the test whether we expect the malicious parties
+    /// to output the correct result.
+    /// (RobustOpen does not mutate the corruption set)
+    fn test_robust_open_strategies<
+        Z: ErrorCorrect + Invert,
+        const EXTENSION_DEGREE: usize,
+        RO: RobustOpen + 'static,
+    >(
+        params: TestingParameters,
+        malicious_robust_open: RO,
+        num_secrets: usize,
+        network_mode: NetworkMode,
+    ) {
+        let mut task_honest = |session: SmallSession<Z>| async move {
+            let secure_robust_open = SecureRobustOpen::default();
+            let (secrets, shares) = deterministically_compute_my_shares::<Z>(
+                num_secrets,
+                session.my_role().unwrap(),
+                session.num_parties(),
+                session.threshold() as usize,
+                42,
+            );
+            let result = secure_robust_open
+                .robust_open_list_to_all(&session, shares, session.threshold() as usize)
+                .await
+                .unwrap();
+            (session.my_role().unwrap(), secrets, result)
+        };
+
+        let mut task_malicious = |session: SmallSession<Z>, malicious_robust_open: RO| async move {
+            let (secrets, shares) = deterministically_compute_my_shares::<Z>(
+                num_secrets,
+                session.my_role().unwrap(),
+                session.num_parties(),
+                session.threshold() as usize,
+                42,
+            );
+            let result = malicious_robust_open
+                .robust_open_list_to_all(&session, shares, session.threshold() as usize)
+                .await
+                .unwrap();
+            (session.my_role().unwrap(), secrets, result)
+        };
+
+        let (results_honest, results_malicious) =
+            execute_protocol_small_w_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
+                &params,
+                &params.malicious_roles,
+                malicious_robust_open,
+                network_mode,
+                None,
+                &mut task_honest,
+                &mut task_malicious,
+            );
+
+        let num_honest = params.num_parties - params.malicious_roles.len();
+        assert_eq!(results_honest.len(), num_honest);
+
+        let pivot = results_honest.first().cloned().unwrap();
+
+        for (role, secrets, openings) in results_honest.into_iter() {
+            assert!(
+                openings.is_some(),
+                "Honest Party {} failed to open correctly, expected Some got None ",
+                role
+            );
+            let openings = openings.unwrap();
+            assert_eq!(secrets, pivot.1);
+            assert_eq!(secrets, openings);
         }
-        res
+
+        if !params.should_be_detected {
+            for result_malicious in results_malicious.into_iter() {
+                let (role, secrets, openings) = result_malicious.unwrap();
+                assert!(
+                    openings.is_some(),
+                    "Malicious Party {} failed to open correctly, expected Some got None ",
+                    role
+                );
+                let openings = openings.unwrap();
+                assert_eq!(secrets, pivot.1);
+                assert_eq!(secrets, openings);
+            }
+        }
     }
 
     #[test]
     fn test_robust_open_all_sync() {
-        let parties = 4;
-        let threshold = 1;
         // expect a single round for opening
+        let testing_parameters = TestingParameters::init(4, 1, &[], &[], &[], false, Some(1));
 
-        let _ = execute_protocol_large::<
-            _,
-            _,
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(
-            parties,
-            threshold,
-            Some(1),
+        let malicious_strategy = SecureRobustOpen::default();
+
+        test_robust_open_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            testing_parameters,
+            malicious_strategy,
+            10,
             NetworkMode::Sync,
-            None,
-            &mut open_task,
         );
     }
 
     #[test]
     fn test_robust_open_all_async() {
-        let parties = 4;
-        let threshold = 1;
         // expect a single round for opening
+        let testing_parameters = TestingParameters::init(4, 1, &[], &[], &[], false, Some(1));
 
-        //Delay P1 by 1s every round
-        let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-        let _ = execute_protocol_large::<
-            _,
-            _,
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(
-            parties,
-            threshold,
-            Some(1),
+        let malicious_strategy = SecureRobustOpen::default();
+
+        test_robust_open_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            testing_parameters,
+            malicious_strategy,
+            10,
             NetworkMode::Async,
-            Some(delay_vec),
-            &mut open_task,
+        );
+    }
+
+    #[test]
+    fn test_dropout_robust_open_all_sync() {
+        // Expect a single round for opening
+        // Party that drops can not reconstruct
+        let testing_parameters = TestingParameters::init(4, 1, &[2], &[], &[], true, Some(1));
+
+        let malicious_strategy = MaliciousRobustOpenDrop::default();
+
+        test_robust_open_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            testing_parameters,
+            malicious_strategy,
+            10,
+            NetworkMode::Sync,
+        );
+    }
+
+    #[test]
+    fn test_dropout_robust_open_all_async() {
+        // Expect a single round for opening
+        // Party that drops can not reconstruct
+        let testing_parameters = TestingParameters::init(4, 1, &[2], &[], &[], true, Some(1));
+
+        let malicious_strategy = MaliciousRobustOpenDrop::default();
+
+        test_robust_open_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            testing_parameters,
+            malicious_strategy,
+            10,
+            NetworkMode::Async,
+        );
+    }
+
+    #[test]
+    fn test_malicious_robust_open_all_sync() {
+        // Expect a single round for opening
+        // Even the malicious party that sends random shares is able to reconstruct
+        let testing_parameters = TestingParameters::init(4, 1, &[2], &[], &[], false, Some(1));
+
+        let malicious_strategy = MaliciousRobustOpenLie::default();
+
+        test_robust_open_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            testing_parameters,
+            malicious_strategy,
+            10,
+            NetworkMode::Sync,
+        );
+    }
+
+    #[test]
+    fn test_malicious_robust_open_all_async() {
+        // Expect a single round for opening
+        // Even the malicious party that sends random shares is able to reconstruct
+        let testing_parameters = TestingParameters::init(4, 1, &[2], &[], &[], false, Some(1));
+
+        let malicious_strategy = MaliciousRobustOpenLie::default();
+
+        test_robust_open_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
+            testing_parameters,
+            malicious_strategy,
+            10,
+            NetworkMode::Async,
         );
     }
 }
