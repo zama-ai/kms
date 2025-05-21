@@ -5,21 +5,22 @@ use crate::cryptography::internal_crypto_types::{gen_sig_keys, PrivateSigKey};
 use crate::engine::base::{compute_handle, compute_info, DSEP_PUBDATA_CRS};
 use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
 use crate::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
+use crate::vault::storage::crypto_material::{
+    calculate_max_num_bits, check_data_exists, get_rng, get_signing_key, log_data_exists,
+    log_storage_success,
+};
 use crate::vault::storage::{
     file::FileStorage, read_all_data_versioned, store_pk_at_request_id, store_text_at_request_id,
     store_versioned_at_request_id, Storage, StorageForText, StorageReader, StorageType,
 };
-use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType, WrappedPublicKey};
 use kms_grpc::RequestId;
-use rand::SeedableRng;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::Seed;
 use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::execution::zk::ceremony::max_num_messages;
 use threshold_fhe::execution::{
     tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
     zk::ceremony::make_centralized_public_parameters,
@@ -27,29 +28,6 @@ use threshold_fhe::execution::{
 
 pub type FhePublicKey = tfhe::CompactPublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
-
-fn get_rng(deterministic: bool, seed: Option<u64>) -> AesRng {
-    if deterministic {
-        AesRng::seed_from_u64(seed.map_or(42, |seed| seed))
-    } else {
-        AesRng::from_entropy()
-    }
-}
-
-async fn get_signing_key<S: Storage>(priv_storage: &S) -> PrivateSigKey {
-    let mut sk_map: HashMap<RequestId, PrivateSigKey> =
-        read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string())
-            .await
-            .unwrap();
-    if sk_map.values().len() != 1 {
-        panic!(
-            "Server signing key map should contain exactly one entry, but contains {} entries for storage \"{}\"",
-            sk_map.values().len(), priv_storage.info()
-        );
-    }
-    let req_id = *sk_map.keys().last().unwrap();
-    sk_map.remove(&req_id).unwrap()
-}
 
 /// Generates a new client signing and verification keys and stores them in the given storage if they do not already exist.
 ///
@@ -65,16 +43,20 @@ pub async fn ensure_client_keys_exist(
         read_all_data_versioned(&client_storage, &ClientDataType::SigningKey.to_string())
             .await
             .unwrap();
+
     if !temp.is_empty() {
-        // If signing keys already exit, then do nothing
+        // If signing keys already exist, then do nothing
         tracing::info!(
             "Client signing keys already exist at {}, skipping generation",
             client_storage.root_dir().to_str().unwrap()
         );
         return false;
     }
+
     let mut rng = get_rng(deterministic, None);
     let (client_pk, client_sk) = gen_sig_keys(&mut rng);
+
+    // Store private client key
     store_versioned_at_request_id(
         &mut client_storage,
         req_id,
@@ -83,11 +65,9 @@ pub async fn ensure_client_keys_exist(
     )
     .await
     .unwrap();
-    tracing::info!(
-        "Successfully stored private client key under the handle {} in storage {}",
-        req_id,
-        client_storage.info()
-    );
+    log_storage_success(req_id, client_storage.info(), "client key", false, false);
+
+    // Store public client key
     store_versioned_at_request_id(
         &mut client_storage,
         req_id,
@@ -96,11 +76,14 @@ pub async fn ensure_client_keys_exist(
     )
     .await
     .unwrap();
-    tracing::info!(
-        "Successfully stored public client key under the handle {} in storage {}",
+    log_storage_success(
         compute_handle(&client_pk).unwrap(),
-        client_storage.info()
+        client_storage.info(),
+        "client key",
+        true,
+        false,
     );
+
     true
 }
 
@@ -122,29 +105,34 @@ where
             .await
             .unwrap();
     if !temp.is_empty() {
-        // If signing keys already exit, then do nothing
-        tracing::info!(
-            "Server signing keys already exist for private storage \"{}\", skipping generation",
-            priv_storage.info()
+        // If signing keys already exist, then do nothing
+        log_data_exists(
+            priv_storage.info(),
+            None::<String>,
+            "",
+            "Server signing keys",
         );
         return false;
     }
+
     let mut rng = get_rng(deterministic, Some(0));
     let (pk, sk) = gen_sig_keys(&mut rng);
 
-    // store public verification key
+    // Store public verification key
     store_versioned_at_request_id(pub_storage, req_id, &pk, &PubDataType::VerfKey.to_string())
         .await
         .unwrap();
-    tracing::info!(
-        "Successfully stored public server signing key under the handle {} in storage \"{}\"",
+    log_storage_success(
         req_id,
-        pub_storage.info()
+        pub_storage.info(),
+        "server signing key",
+        true,
+        false,
     );
 
     let ethereum_address = alloy_signer::utils::public_key_to_address(pk.pk());
 
-    // store ethereum address (derived from public key), needed for KMS signature verification
+    // Store ethereum address (derived from public key), needed for KMS signature verification
     store_text_at_request_id(
         pub_storage,
         req_id,
@@ -160,7 +148,7 @@ where
         pub_storage.info()
     );
 
-    // store private signing key
+    // Store private signing key
     store_versioned_at_request_id(
         priv_storage,
         req_id,
@@ -169,11 +157,14 @@ where
     )
     .await
     .unwrap();
-    tracing::info!(
-        "Successfully stored private central server signing key under the handle {} in storage \"{}\"",
+    log_storage_success(
         req_id,
-        priv_storage.info()
+        priv_storage.info(),
+        "central server signing key",
+        false,
+        false,
     );
+
     true
 }
 
@@ -193,77 +184,82 @@ where
     PubS: Storage,
     PrivS: Storage,
 {
-    if pub_storage
-        .data_exists(
-            &pub_storage
-                .compute_url(&crs_handle.to_string(), &PubDataType::CRS.to_string())
-                .unwrap(),
-        )
-        .await
-        .unwrap()
-        && priv_storage
-            .data_exists(
-                &priv_storage
-                    .compute_url(&crs_handle.to_string(), &PrivDataType::CrsInfo.to_string())
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
+    // Check if data already exists in both storages
+    match check_data_exists(
+        pub_storage,
+        priv_storage,
+        crs_handle,
+        &PubDataType::CRS.to_string(),
+        &PrivDataType::CrsInfo.to_string(),
+    )
+    .await
     {
-        tracing::info!(
-            "CRS already exist for private storage \"{}\" and public storage \"{}\" for ID {}, skipping generation",
-            priv_storage.info(), pub_storage.info(), crs_handle
-        );
-        return false;
+        Ok(true) => {
+            log_data_exists(
+                priv_storage.info(),
+                Some(pub_storage.info()),
+                crs_handle,
+                "CRS",
+            );
+            return false;
+        }
+        Ok(false) => {} // Continue with generation
+        Err(e) => {
+            tracing::warn!("Error checking if CRS exists: {}", e);
+            // Continue with generation, assuming data doesn't exist
+        }
     }
-    let sk = get_signing_key(priv_storage).await;
+
+    // Get signing key with proper error handling
+    let sk = match get_signing_key(priv_storage).await {
+        Ok(key) => key,
+        Err(e) => {
+            tracing::error!("Failed to get signing key: {}", e);
+            return false; // Cannot proceed without signing key
+        }
+    };
     let mut rng = get_rng(deterministic, Some(0));
 
-    // workaround for testing parameters
-    let max_num_bits = if dkg_params.get_params_basics_handle().lwe_dimension().0
-        < max_num_messages(
-            &dkg_params
-                .get_params_basics_handle()
-                .get_compact_pk_enc_params(),
-            threshold_fhe::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS,
-        )
-        .unwrap()
-        .0
-    {
-        let max_num_bits = 16;
-        tracing::warn!(
-            "lwe dimension is too small, using max num bits: {}",
-            max_num_bits
-        );
-        Some(max_num_bits)
-    } else {
-        Some(threshold_fhe::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS as u32)
-    };
+    // Calculate max_num_bits based on DKG parameters - now handles errors internally
+    let max_num_bits = calculate_max_num_bits(&dkg_params);
 
+    // Convert usize to Option<u32> for gen_centralized_crs
+    let max_num_bits_u32 = Some(max_num_bits as u32);
+
+    // Use proper error handling instead of unwrap
     let (pp, crs_info) =
-        gen_centralized_crs(&sk, &dkg_params, max_num_bits, &mut rng, None).unwrap();
+        match gen_centralized_crs(&sk, &dkg_params, max_num_bits_u32, &mut rng, None) {
+            Ok(result) => result,
+            Err(e) => {
+                tracing::error!("Failed to generate centralized CRS: {}", e);
+                return false; // Cannot proceed without CRS
+            }
+        };
 
-    store_versioned_at_request_id(
+    // Store private CRS info with proper error handling
+    if let Err(e) = store_versioned_at_request_id(
         priv_storage,
         crs_handle,
         &crs_info,
         &PrivDataType::CrsInfo.to_string(),
     )
     .await
-    .unwrap();
-    tracing::info!(
-        "Successfully stored private CRS data under the handle {} in storage {}",
-        crs_handle,
-        priv_storage.info()
-    );
-    store_versioned_at_request_id(pub_storage, crs_handle, &pp, &PubDataType::CRS.to_string())
-        .await
-        .unwrap();
-    tracing::info!(
-        "Successfully stored public CRS data under the handle {} in storage {}",
-        crs_handle,
-        pub_storage.info()
-    );
+    {
+        tracing::error!("Failed to store private CRS info: {}", e);
+        return false; // Storage operation failed
+    }
+    log_storage_success(crs_handle, priv_storage.info(), "CRS data", false, false);
+
+    // Store public CRS with proper error handling
+    if let Err(e) =
+        store_versioned_at_request_id(pub_storage, crs_handle, &pp, &PubDataType::CRS.to_string())
+            .await
+    {
+        tracing::error!("Failed to store public CRS: {}", e);
+        return false; // Storage operation failed
+    }
+    log_storage_success(crs_handle, pub_storage.info(), "CRS data", true, false);
+
     true
 }
 
@@ -286,57 +282,83 @@ where
     PubS: Storage,
     PrivS: Storage,
 {
-    if pub_storage
-        .data_exists(
-            &pub_storage
-                .compute_url(&key_id.to_string(), &PubDataType::PublicKey.to_string())
-                .unwrap(),
-        )
-        .await
-        .unwrap()
-        && priv_storage
-            .data_exists(
-                &priv_storage
-                    .compute_url(&key_id.to_string(), &PrivDataType::FheKeyInfo.to_string())
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
+    // Check if data already exists in both storages
+    match check_data_exists(
+        pub_storage,
+        priv_storage,
+        key_id,
+        &PubDataType::PublicKey.to_string(),
+        &PrivDataType::FheKeyInfo.to_string(),
+    )
+    .await
     {
-        tracing::info!(
-            "FHE keys already exist for private storage \"{}\" and public storage \"{}\" with ID {}, skipping generation",
-            priv_storage.info(), pub_storage.info(), key_id
-        );
-        return false;
+        Ok(true) => {
+            log_data_exists(
+                priv_storage.info(),
+                Some(pub_storage.info()),
+                key_id,
+                "FHE keys",
+            );
+            return false;
+        }
+        Ok(false) => {} // Continue with generation
+        Err(e) => {
+            tracing::warn!("Error checking if FHE keys exist: {}", e);
+            // Continue with generation, assuming data doesn't exist
+        }
     }
 
-    let sk = get_signing_key(priv_storage).await;
+    // Get signing key with proper error handling
+    let sk = match get_signing_key(priv_storage).await {
+        Ok(key) => key,
+        Err(e) => {
+            tracing::error!("Failed to get signing key: {}", e);
+            return false; // Cannot proceed without signing key
+        }
+    };
+
     let seed = match deterministic {
         true => Some(Seed(42)),
         false => None,
     };
 
-    let (fhe_pub_keys_1, key_info_1) = generate_fhe_keys(
+    // Generate two sets of FHE keys with proper error handling
+    let (fhe_pub_keys_1, key_info_1) = match generate_fhe_keys(
         &sk,
         dkg_params,
         StandardKeySetConfig::default(),
         None,
         seed,
         None,
-    )
-    .unwrap();
-    let (fhe_pub_keys_2, key_info_2) = generate_fhe_keys(
+    ) {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("Failed to generate first set of FHE keys: {}", e);
+            return false; // Cannot proceed without keys
+        }
+    };
+
+    let (fhe_pub_keys_2, key_info_2) = match generate_fhe_keys(
         &sk,
         dkg_params,
         StandardKeySetConfig::default(),
         None,
         seed,
         None,
-    )
-    .unwrap();
+    ) {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("Failed to generate second set of FHE keys: {}", e);
+            return false; // Cannot proceed without keys
+        }
+    };
+
     let priv_fhe_map = HashMap::from([(*key_id, key_info_1), (*other_key_id, key_info_2)]);
     let pub_fhe_map = HashMap::from([(*key_id, fhe_pub_keys_1), (*other_key_id, fhe_pub_keys_2)]);
+
+    // Store private key data
     for (req_id, key_info) in &priv_fhe_map {
+        // Store key info
         store_versioned_at_request_id(
             priv_storage,
             req_id,
@@ -345,12 +367,9 @@ where
         )
         .await
         .unwrap();
-        tracing::info!(
-            "Successfully stored private key data under the handle {} in storage {}",
-            req_id,
-            priv_storage.info()
-        );
-        // when the flag [write_privkey] is set, store the private key separately
+        log_storage_success(req_id, priv_storage.info(), "key data", false, false);
+
+        // When the flag [write_privkey] is set, store the private key separately
         if write_privkey {
             store_versioned_at_request_id(
                 priv_storage,
@@ -360,14 +379,19 @@ where
             )
             .await
             .unwrap();
-            tracing::info!(
-                "Successfully stored individual private key under the handle {} in storage {}",
+            log_storage_success(
                 req_id,
-                priv_storage.info()
+                priv_storage.info(),
+                "individual private key",
+                false,
+                false,
             );
         }
     }
+
+    // Store public key data
     for (req_id, cur_keys) in pub_fhe_map {
+        // Store public key
         store_pk_at_request_id(
             pub_storage,
             &req_id,
@@ -375,11 +399,9 @@ where
         )
         .await
         .unwrap();
-        tracing::info!(
-            "Successfully stored public key under the handle {} in storage {}",
-            &req_id,
-            pub_storage.info()
-        );
+        log_storage_success(req_id, pub_storage.info(), "key", true, false);
+
+        // Store server key
         store_versioned_at_request_id(
             pub_storage,
             &req_id,
@@ -388,10 +410,12 @@ where
         )
         .await
         .unwrap();
-        tracing::info!(
-            "Successfully stored public server key under the handle {} in storage {}",
-            &req_id,
-            pub_storage.info()
+        log_storage_success(
+            req_id,
+            pub_storage.info(),
+            "server signing key",
+            true,
+            false,
         );
     }
     true
@@ -421,23 +445,28 @@ where
         ThresholdSigningKeyConfig::AllParties(amount) => (1..=amount).collect_vec(),
         ThresholdSigningKeyConfig::OneParty(i) => std::iter::once(i).collect_vec(),
     };
+
     for i in parties {
         let mut rng = get_rng(deterministic, Some(i as u64));
         let temp: HashMap<RequestId, PrivateSigKey> =
             read_all_data_versioned(&priv_storages[i - 1], &PrivDataType::SigningKey.to_string())
                 .await
                 .unwrap();
+
         if !temp.is_empty() {
-            // If signing keys already exit, then do nothing
-            tracing::info!(
-                "Threshold server signing keys already exist for private storage \"{}\", skipping generation",
-                priv_storages[i-1].info()
+            // If signing keys already exist, then do nothing
+            log_data_exists(
+                priv_storages[i - 1].info(),
+                None::<String>,
+                "",
+                "Threshold server signing keys",
             );
             continue;
         }
+
         let (pk, sk) = gen_sig_keys(&mut rng);
 
-        // store public verification key
+        // Store public verification key
         store_versioned_at_request_id(
             &mut pub_storages[i - 1],
             request_id,
@@ -446,15 +475,17 @@ where
         )
         .await
         .unwrap();
-        tracing::info!(
-            "Successfully stored public threshold server signing key under the handle {} in storage {}",
+        log_storage_success(
             request_id,
-            pub_storages[i - 1].info()
+            pub_storages[i - 1].info(),
+            "server signing key",
+            true,
+            true,
         );
 
         let ethereum_address = alloy_signer::utils::public_key_to_address(pk.pk());
 
-        // store ethereum address (derived from public key), needed for KMS signature verification
+        // Store ethereum address (derived from public key), needed for KMS signature verification
         store_text_at_request_id(
             &mut pub_storages[i - 1],
             request_id,
@@ -470,7 +501,7 @@ where
             pub_storages[i - 1].info()
         );
 
-        // store private signing key
+        // Store private signing key
         store_versioned_at_request_id(
             &mut priv_storages[i - 1],
             request_id,
@@ -479,10 +510,12 @@ where
         )
         .await
         .unwrap();
-        tracing::info!(
-            "Successfully stored private threshold server signing key under the handle {} in storage {}",
+        log_storage_success(
             request_id,
-            priv_storages[i - 1].info()
+            priv_storages[i - 1].info(),
+            "server signing key",
+            false,
+            true,
         );
     }
     true
@@ -508,49 +541,52 @@ where
         priv_storages.len(),
         "Number of public storages and private storages must be equal"
     );
+
     let amount_parties = pub_storages.len();
     // Compute threshold < amount_parties/3
     let threshold = max_threshold(amount_parties);
+
     // For simplicity just test if the last party has the keys
-    if pub_storages
-        .last()
-        .unwrap()
-        .data_exists(
-            &pub_storages
-                .last()
-                .unwrap()
-                .compute_url(&key_id.to_string(), &PubDataType::PublicKey.to_string())
-                .unwrap(),
-        )
-        .await
-        .unwrap()
-        && priv_storages
-            .last()
-            .unwrap()
-            .data_exists(
-                &priv_storages
-                    .last()
-                    .unwrap()
-                    .compute_url(&key_id.to_string(), &PrivDataType::FheKeyInfo.to_string())
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
+    match check_data_exists(
+        pub_storages.last().unwrap(),
+        priv_storages.last().unwrap(),
+        key_id,
+        &PubDataType::PublicKey.to_string(),
+        &PrivDataType::FheKeyInfo.to_string(),
+    )
+    .await
     {
-        tracing::info!(
-            "Threshold FHE keys already exist for private storage \"{}\" and public storage \"{}\" with ID {}, skipping generation",
-            priv_storages.last().unwrap().info(), pub_storages.last().unwrap().info(), key_id
-        );
-        return false;
+        Ok(true) => {
+            log_data_exists(
+                priv_storages.last().unwrap().info(),
+                Some(pub_storages.last().unwrap().info()),
+                key_id,
+                "Threshold FHE keys",
+            );
+            return false;
+        }
+        Ok(false) => {} // Continue with generation
+        Err(e) => {
+            tracing::warn!("Error checking if threshold FHE keys exist: {}", e);
+            // Continue with generation, assuming data doesn't exist
+        }
     }
 
     let mut rng = get_rng(deterministic, Some(amount_parties as u64));
 
+    // Collect signing keys from all private storages with proper error handling
     let mut signing_keys = Vec::new();
     for cur_storage in priv_storages.iter() {
-        signing_keys.push(get_signing_key(cur_storage).await);
+        match get_signing_key(cur_storage).await {
+            Ok(key) => signing_keys.push(key),
+            Err(e) => {
+                tracing::error!("Failed to get signing key: {}", e);
+                return false; // Cannot proceed without signing keys
+            }
+        }
     }
 
+    // Generate key set and shares
     let key_set = gen_key_set(dkg_params, &mut rng);
     let key_shares = keygen_all_party_shares(
         key_set.get_raw_lwe_client_key(),
@@ -568,10 +604,18 @@ where
     let (integer_server_key, _, _, decompression_key, sns_key, _) =
         key_set.public_keys.server_key.clone().into_raw_parts();
 
+    // Store keys for each party
     for i in 1..=amount_parties {
-        // Get first signing key
+        // Get signing key for this party
         let sk = &signing_keys[i - 1];
-        let info = compute_all_info(sk, &key_set.public_keys, None).unwrap();
+        // Compute info with proper error handling
+        let info = match compute_all_info(sk, &key_set.public_keys, None) {
+            Ok(result) => result,
+            Err(e) => {
+                tracing::error!("Failed to compute key info: {}", e);
+                continue; // Skip this party but try others
+            }
+        };
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: key_shares[i - 1].to_owned(),
             integer_server_key: integer_server_key.clone(),
@@ -579,6 +623,8 @@ where
             decompression_key: decompression_key.clone(),
             pk_meta_data: info,
         };
+
+        // Store public key
         store_pk_at_request_id(
             &mut pub_storages[i - 1],
             key_id,
@@ -586,12 +632,9 @@ where
         )
         .await
         .unwrap();
-        tracing::info!(
-            "Successfully stored public threshold key data under the handle {} in storage {}",
-            key_id,
-            pub_storages[i - 1].info()
-        );
+        log_storage_success(key_id, pub_storages[i - 1].info(), "key data", true, true);
 
+        // Store public server key
         store_versioned_at_request_id(
             &mut pub_storages[i - 1],
             key_id,
@@ -600,12 +643,15 @@ where
         )
         .await
         .unwrap();
-        tracing::info!(
-            "Successfully stored public threshold server key data under the handle {} in storage {}",
+        log_storage_success(
             key_id,
-            pub_storages[i-1].info()
+            pub_storages[i - 1].info(),
+            "server key data",
+            true,
+            true,
         );
 
+        // Store private key data
         store_versioned_at_request_id(
             &mut priv_storages[i - 1],
             key_id,
@@ -614,11 +660,7 @@ where
         )
         .await
         .unwrap();
-        tracing::info!(
-            "Successfully stored private threshold key data under the handle {} in storage {}",
-            key_id,
-            priv_storages[i - 1].info()
-        );
+        log_storage_success(key_id, priv_storages[i - 1].info(), "key data", false, true);
     }
     true
 }
@@ -642,106 +684,116 @@ where
     if pub_storages.len() != priv_storages.len() {
         panic!("Number of public storages and private storages must be equal");
     }
+
     let amount_parties = pub_storages.len();
-    // Check if the last party has the CRS. If  so, we can stop, otherwise we need to generate it.
-    if pub_storages
-        .last()
-        .unwrap()
-        .data_exists(
-            &pub_storages
-                .last()
-                .unwrap()
-                .compute_url(&crs_handle.to_string(), &PubDataType::CRS.to_string())
-                .unwrap(),
-        )
-        .await
-        .unwrap()
-        && priv_storages
-            .last()
-            .unwrap()
-            .data_exists(
-                &priv_storages
-                    .last()
-                    .unwrap()
-                    .compute_url(&crs_handle.to_string(), &PrivDataType::CrsInfo.to_string())
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
+
+    // Check if the last party has the CRS. If so, we can stop, otherwise we need to generate it.
+    match check_data_exists(
+        pub_storages.last().unwrap(),
+        priv_storages.last().unwrap(),
+        crs_handle,
+        &PubDataType::CRS.to_string(),
+        &PrivDataType::CrsInfo.to_string(),
+    )
+    .await
     {
-        tracing::info!(
-            "Threshold CRS already exist for private storage \"{}\" and public storage \"{}\" for ID {}, skipping generation",
-            priv_storages.last().unwrap().info(), pub_storages.last().unwrap().info(), crs_handle
-        );
-        return false;
-    }
-    let mut signing_keys = Vec::new();
-    for cur_storage in priv_storages.iter() {
-        signing_keys.push(get_signing_key(cur_storage).await);
+        Ok(true) => {
+            log_data_exists(
+                priv_storages.last().unwrap().info(),
+                Some(pub_storages.last().unwrap().info()),
+                crs_handle,
+                "Threshold CRS",
+            );
+            return false;
+        }
+        Ok(false) => {} // Continue with generation
+        Err(e) => {
+            tracing::warn!("Error checking if threshold CRS exists: {}", e);
+            // Continue with generation, assuming data doesn't exist
+        }
     }
 
-    let max_num_bits = if dkg_params.get_params_basics_handle().lwe_dimension().0
-        < max_num_messages(
-            &dkg_params
-                .get_params_basics_handle()
-                .get_compact_pk_enc_params(),
-            threshold_fhe::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS,
-        )
-        .unwrap()
-        .0
-    {
-        let max_num_bits = 16;
-        tracing::warn!(
-            "lwe dimension is too small, using max num bits: {}",
-            max_num_bits
-        );
-        Some(max_num_bits)
-    } else {
-        Some(threshold_fhe::execution::zk::constants::ZK_DEFAULT_MAX_NUM_BITS)
-    };
+    // Collect signing keys from all private storages with proper error handling
+    let mut signing_keys = Vec::new();
+    for cur_storage in priv_storages.iter() {
+        match get_signing_key(cur_storage).await {
+            Ok(key) => signing_keys.push(key),
+            Err(e) => {
+                tracing::error!("Failed to get signing key: {}", e);
+                return false; // Cannot proceed without signing keys
+            }
+        }
+    }
+
+    // Calculate max_num_bits based on DKG parameters - now handles errors internally
+    let max_num_bits = calculate_max_num_bits(&dkg_params);
 
     let mut rng = get_rng(deterministic, Some(amount_parties as u64));
 
-    let internal_pp = make_centralized_public_parameters(
+    // Generate the public parameters with proper error handling
+    let internal_pp = match make_centralized_public_parameters(
         &dkg_params
             .get_params_basics_handle()
             .get_compact_pk_enc_params(),
-        max_num_bits,
+        Some(max_num_bits), // Wrap in Some() as the function expects Option<usize>
         &mut rng,
-    )
-    .unwrap();
+    ) {
+        Ok(pp) => pp,
+        Err(e) => {
+            tracing::error!("Failed to make centralized public parameters: {}", e);
+            return false; // Cannot proceed without public parameters
+        }
+    };
     let pke_params = dkg_params
         .get_params_basics_handle()
         .get_compact_pk_enc_params();
-    let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params).unwrap();
 
+    // Convert internal_pp to tfhe_zk_pok_pp with proper error handling
+    let pp = match internal_pp.try_into_tfhe_zk_pok_pp(&pke_params) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("Failed to convert internal_pp to tfhe_zk_pok_pp: {}", e);
+            return false; // Cannot proceed without proper conversion
+        }
+    };
+
+    // Store the CRS for each party
     for (cur_pub, (cur_priv, cur_sk)) in pub_storages
         .iter_mut()
         .zip(priv_storages.iter_mut().zip(signing_keys.iter()))
     {
-        let crs_info = compute_info(cur_sk, &DSEP_PUBDATA_CRS, &pp, None).unwrap();
+        // Compute info with proper error handling
+        let crs_info = match compute_info(cur_sk, &DSEP_PUBDATA_CRS, &pp, None) {
+            Ok(info) => info,
+            Err(e) => {
+                tracing::error!("Failed to compute CRS info: {}", e);
+                continue; // Skip this party but try others
+            }
+        };
 
-        store_versioned_at_request_id(
+        // Store private CRS info with proper error handling
+        if let Err(e) = store_versioned_at_request_id(
             cur_priv,
             crs_handle,
             &crs_info,
             &PrivDataType::CrsInfo.to_string(),
         )
         .await
-        .unwrap();
-        println!(
-            "Successfully stored private threshold CRS data under the handle {} in storage {}",
-            crs_handle,
-            cur_priv.info()
-        );
-        store_versioned_at_request_id(cur_pub, crs_handle, &pp, &PubDataType::CRS.to_string())
-            .await
-            .unwrap();
-        println!(
-            "Successfully stored public threshold CRS data under the handle {} in storage {}",
-            crs_handle,
-            cur_pub.info()
-        );
+        {
+            tracing::error!("Failed to store private CRS info: {}", e);
+            continue; // Skip this party but try others
+        }
+        log_storage_success(crs_handle, cur_priv.info(), "CRS data", false, true);
+
+        // Store public CRS with proper error handling
+        if let Err(e) =
+            store_versioned_at_request_id(cur_pub, crs_handle, &pp, &PubDataType::CRS.to_string())
+                .await
+        {
+            tracing::error!("Failed to store public CRS: {}", e);
+            continue; // Skip this party but try others
+        }
+        log_storage_success(crs_handle, cur_pub.info(), "CRS data", true, true);
     }
     true
 }
