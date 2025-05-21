@@ -245,16 +245,12 @@ pub mod tests {
         let path1 = tempfile::tempdir().unwrap();
         let path2 = tempfile::tempdir().unwrap();
         let path1_str = path1.path().to_str().unwrap().to_string();
-        let mut storage1 = FileStorage {
-            path: path1.into_path(),
-        };
+        let mut storage1 = FileStorage { path: path1.keep() };
         assert_eq!(
             Url::parse(&format!("file://{}/type/id", path1_str)).unwrap(),
             storage1.compute_url("id", "type").unwrap()
         );
-        let storage2 = FileStorage {
-            path: path2.into_path(),
-        };
+        let storage2 = FileStorage { path: path2.keep() };
 
         // clear out storage
         let _ = fs::remove_dir_all(storage1.root_dir());

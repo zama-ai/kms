@@ -7,9 +7,10 @@
 mod utilities;
 
 use criterion::measurement::Measurement;
-use criterion::{black_box, BenchmarkGroup, Criterion};
+use criterion::{BenchmarkGroup, Criterion};
 use rand::prelude::*;
 use std::fmt::Write;
+use std::hint::black_box;
 use std::ops::*;
 use tfhe::prelude::*;
 use tfhe::{

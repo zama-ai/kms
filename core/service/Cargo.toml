@@ -88,7 +88,7 @@ tokio = { workspace = true, features = [
     "rt-multi-thread",
 ], optional = true }
 tokio-rustls = { workspace = true, optional = true }
-tokio-util = { version = "=0.7.14", features = ["rt"] }
+tokio-util = { version = "=0.7.15", features = ["rt"] }
 tonic = { workspace = true, optional = true }
 tonic-health = { workspace = true, optional = true }
 tonic-tls = { workspace = true, optional = true }
@@ -113,7 +113,7 @@ ml-kem = "=0.2.1"
 [dev-dependencies]
 assert_cmd = "=2.0.17"
 serial_test.workspace = true
-sysinfo = "=0.34.2"
+sysinfo = "=0.35.1"
 tempfile.workspace = true
 tracing-test = "=0.2.5"
 rstest = "=0.25.0"

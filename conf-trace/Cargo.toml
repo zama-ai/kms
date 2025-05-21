@@ -7,7 +7,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-axum = { version = "=0.8.3", features = ["tokio"] }
+axum = { version = "=0.8.4", features = ["tokio"] }
 anyhow.workspace = true
 config = "=0.15.11"
 http.workspace = true
