@@ -280,7 +280,7 @@ message UserDecryptionRequest {
 message UserDecryptionResponse {
   bytes signature = 1;
   // This is the external signature created from the Eip712 domain
-  // on the structure, where userDecryptedShare is bincode::serialize(&payload)
+  // on the structure, where userDecryptedShare is bc2wrap::serialize(&payload)
   // struct UserDecryptResponseVerification {
   //     bytes publicKey;
   //     uint256[] ctHandles;

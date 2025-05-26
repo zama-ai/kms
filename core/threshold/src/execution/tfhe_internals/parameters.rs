@@ -351,7 +351,7 @@ impl DKGParamsBasics for DKGParamsRegular {
     /// - a hash of the whole parameter set to make it unique
     fn get_prefix_path(&self) -> PathBuf {
         let mut h = std::hash::DefaultHasher::new();
-        let serialized = bincode::serialize(self).unwrap();
+        let serialized = bc2wrap::serialize(self).unwrap();
         serialized.hash(&mut h);
         let hash = h.finish();
         PathBuf::from(format!(
@@ -875,7 +875,7 @@ impl DKGParamsBasics for DKGParamsSnS {
 
     fn get_prefix_path(&self) -> PathBuf {
         let mut h = std::hash::DefaultHasher::new();
-        let serialized = bincode::serialize(self).unwrap();
+        let serialized = bc2wrap::serialize(self).unwrap();
         serialized.hash(&mut h);
         let hash = h.finish();
         PathBuf::from(format!(

@@ -338,7 +338,7 @@ async fn crs_gen_result_command(
         .initiate_crs_gen_result(SessionId::from(params.session_id_crs))
         .await?;
 
-    let serialized_crs = bincode::serialize(&crs)?;
+    let serialized_crs = bc2wrap::serialize(&crs)?;
     std::fs::write(format!("{}/crs.bin", params.storage_path), serialized_crs)?;
     println!("CRS stored in {}/crs.bin", params.storage_path);
     Ok(())
@@ -425,7 +425,7 @@ async fn threshold_keygen_result_command(
         )
         .await?;
 
-    let serialized_pk = bincode::serialize(&(params.session_id, keys))?;
+    let serialized_pk = bc2wrap::serialize(&(params.session_id, keys))?;
     std::fs::write(format!("{}/pk.bin", params.storage_path), serialized_pk)?;
     println!("Key stored in {}/pk.bin", params.storage_path);
     Ok(())
@@ -437,7 +437,7 @@ async fn preproc_decrypt_command(
     params: PreprocDecryptArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (key_sid, _): (SessionId, FhePubKeySet) = bincode::deserialize(&pk_serialized)?;
+    let (key_sid, _): (SessionId, FhePubKeySet) = bc2wrap::deserialize(&pk_serialized)?;
     let session_id = params.session_id.unwrap_or(random());
     let num_ctxts = params.num_ctxts;
     let ctxt_type = params.tfhe_type;
@@ -464,7 +464,7 @@ async fn threshold_decrypt_command(
     let tfhe_type = params.tfhe_type;
     let num_messages = params.num_ctxts;
     let pk_serialized = std::fs::read(params.pub_key_file)?;
-    let (key_sid, pk): (SessionId, FhePubKeySet) = bincode::deserialize(&pk_serialized)?;
+    let (key_sid, pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize(&pk_serialized)?;
     let compact_key = pk.public_key;
 
     //Required to be able to expand the CompactCiphertextList if the encryption and compute keys

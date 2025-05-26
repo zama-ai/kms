@@ -165,7 +165,7 @@ pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
 
     Ok(SignedPubDataHandleInternal {
         key_handle: handle,
-        signature: bincode::serialize(&signature)?,
+        signature: bc2wrap::serialize(&signature)?,
         external_signature,
     })
 }
@@ -485,7 +485,7 @@ pub struct BaseKmsStruct {
 
 impl BaseKmsStruct {
     pub fn new(sig_key: PrivateSigKey) -> anyhow::Result<Self> {
-        let serialized_verf_key = Arc::new(bincode::serialize(&PublicSigKey::new(
+        let serialized_verf_key = Arc::new(bc2wrap::serialize(&PublicSigKey::new(
             SigningKey::verifying_key(sig_key.sk()).to_owned(),
         ))?);
         Ok(BaseKmsStruct {

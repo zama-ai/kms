@@ -503,7 +503,7 @@ impl<
         };
 
         let sig_payload_vec = tonic_handle_potential_err(
-            bincode::serialize(&sig_payload),
+            bc2wrap::serialize(&sig_payload),
             format!("Could not convert payload to bytes {:?}", sig_payload),
         )?;
 

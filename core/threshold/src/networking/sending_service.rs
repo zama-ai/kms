@@ -387,7 +387,7 @@ impl Networking for NetworkSession {
             round_counter,
         };
 
-        let tag = bincode::serialize(&tagged_value)
+        let tag = bc2wrap::serialize(&tagged_value)
             .map_err(|e| anyhow_error_and_log(format!("networking error: {:?}", e)))?;
 
         #[cfg(feature = "choreographer")]

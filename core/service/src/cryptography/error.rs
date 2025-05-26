@@ -15,6 +15,8 @@ pub enum CryptographyError {
     RsaError(#[from] rsa::Error),
     #[error(transparent)]
     Pkcs1Error(#[from] pkcs1::Error),
+    #[error("bincode encode error: {0}")]
+    BincodeEncodeError(#[from] bincode::error::EncodeError),
     #[error("bincode error: {0}")]
-    BincodeError(#[from] bincode::Error),
+    BincodeError(String),
 }

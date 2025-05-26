@@ -17,7 +17,6 @@ use super::internal_crypto_types::{
 use crate::cryptography::hybrid_ml_kem;
 use crate::{anyhow_tracked, consts::SIG_SIZE};
 use ::signature::{Signer, Verifier};
-use bincode::deserialize;
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::TypedPlaintext;
 use nom::AsBytes;
@@ -243,10 +242,10 @@ pub fn decrypt_signcryption_with_link(
     client_keys: &SigncryptionPair,
     server_verf_key: &PublicSigKey,
 ) -> anyhow::Result<TypedPlaintext> {
-    let cipher: Cipher = deserialize(cipher)?;
+    let cipher: Cipher = bc2wrap::deserialize(cipher)?;
     let decrypted_signcryption = validate_and_decrypt(dsep, &cipher, client_keys, server_verf_key)?;
 
-    let signcrypted_msg: SigncryptionPayload = deserialize(&decrypted_signcryption)?;
+    let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize(&decrypted_signcryption)?;
     if link != signcrypted_msg.link {
         return Err(anyhow_tracked(
             "signcryption link does not match!".to_string(),
@@ -264,7 +263,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     cipher: &[u8],
     client_keys: &SigncryptionPair,
 ) -> anyhow::Result<TypedPlaintext> {
-    let cipher: Cipher = deserialize(cipher)?;
+    let cipher: Cipher = bc2wrap::deserialize(cipher)?;
     let decrypted_plaintext =
         hybrid_ml_kem::dec(cipher.0.clone(), &client_keys.sk.decryption_key.0)?;
 
@@ -272,7 +271,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     let msg_len = decrypted_plaintext.len() - DIGEST_BYTES - SIG_SIZE;
     let msg = &decrypted_plaintext[..msg_len];
 
-    let signcrypted_msg: SigncryptionPayload = deserialize(msg)?;
+    let signcrypted_msg: SigncryptionPayload = bc2wrap::deserialize(msg)?;
 
     Ok(signcrypted_msg.plaintext)
 }
@@ -376,13 +375,13 @@ mod tests {
         )
         .unwrap();
 
-        let serialized_cipher = bincode::serialize(&cipher).unwrap();
+        let serialized_cipher = bc2wrap::serialize(&cipher).unwrap();
         let deserialized_cipher: crate::cryptography::internal_crypto_types::Cipher =
-            bincode::deserialize(&serialized_cipher).unwrap();
+            bc2wrap::deserialize(&serialized_cipher).unwrap();
 
-        let serialized_server_verf_key = bincode::serialize(&server_verf_key).unwrap();
+        let serialized_server_verf_key = bc2wrap::serialize(&server_verf_key).unwrap();
         let deserialized_server_verf_key: PublicSigKey =
-            bincode::deserialize(&serialized_server_verf_key).unwrap();
+            bc2wrap::deserialize(&serialized_server_verf_key).unwrap();
 
         let decrypted_msg = validate_and_decrypt(
             b"TESTTEST",
@@ -633,7 +632,7 @@ mod tests {
             bytes: b"A relatively long message that we wish to be able to later validate".to_vec(),
             fhe_type: 1,
         };
-        let payload = bincode::serialize(&SigncryptionPayload {
+        let payload = bc2wrap::serialize(&SigncryptionPayload {
             plaintext: msg.clone(),
             link: link.into(),
         })
@@ -648,7 +647,7 @@ mod tests {
         )
         .unwrap();
 
-        let cipher = bincode::serialize(&cipher).unwrap();
+        let cipher = bc2wrap::serialize(&cipher).unwrap();
 
         let bad_link = [1, 2, 3, 4u8];
         let _ = decrypt_signcryption_with_link(

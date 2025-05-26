@@ -110,11 +110,11 @@ impl<Z: Eq + Zero> AsRef<NetworkValue<Z>> for NetworkValue<Z> {
 
 impl<Z: Ring> NetworkValue<Z> {
     pub fn to_network(&self) -> Vec<u8> {
-        bincode::serialize(self).unwrap()
+        bc2wrap::serialize(self).unwrap()
     }
 
     pub fn from_network(serialized: anyhow::Result<Vec<u8>>) -> anyhow::Result<Self> {
-        bincode::deserialize::<Self>(&serialized?)
+        bc2wrap::deserialize::<Self>(&serialized?)
             .map_err(|_e| anyhow_error_and_log("failed to parse value"))
     }
 }

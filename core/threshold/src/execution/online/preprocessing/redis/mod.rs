@@ -137,7 +137,7 @@ fn store_correlated_randomness<S: Serialize>(
 
     let serialized: Vec<Vec<u8>> =
         data.iter()
-            .map(bincode::serialize)
+            .map(bc2wrap::serialize)
             .try_collect()
             .map_err(|_| {
                 redis::RedisError::from((redis::ErrorKind::TypeError, "Could not serialize "))
@@ -165,7 +165,7 @@ fn fetch_correlated_randomness<T: for<'de> Deserialize<'de>>(
     let correlated_randomness = serialized_correlated_randomness
         .iter()
         .map(|serialized| {
-            bincode::deserialize(serialized).map_err(|_| {
+            bc2wrap::deserialize(serialized).map_err(|_| {
                 redis::RedisError::from((redis::ErrorKind::TypeError, "Could not deserialize"))
             })
         })
@@ -530,8 +530,8 @@ pub mod tests {
                         ResiduePolyF4::<$z>::from_scalar(Wrapping(42)),
                     );
 
-                    let serialized = bincode::serialize(&share).unwrap();
-                    let deserialized = bincode::deserialize(&serialized).unwrap();
+                    let serialized = bc2wrap::serialize(&share).unwrap();
+                    let deserialized = bc2wrap::deserialize(&serialized).unwrap();
                     assert_eq!(share, deserialized);
                 }
 
@@ -553,8 +553,8 @@ pub mod tests {
                     );
 
                     let triple = Triple::<ResiduePolyF4<$z>>::new(share_one, share_two, share_three);
-                    let serialized = bincode::serialize(&triple).unwrap();
-                    let deserialized: Triple<ResiduePolyF4<$z>> = bincode::deserialize(&serialized).unwrap();
+                    let serialized = bc2wrap::serialize(&triple).unwrap();
+                    let deserialized: Triple<ResiduePolyF4<$z>> = bc2wrap::deserialize(&serialized).unwrap();
 
                     assert_eq!(triple, deserialized);
                 }
@@ -569,8 +569,8 @@ pub mod tests {
     fn test_share_serialization_deserialization_gf256() {
         let share = Share::new(Role::indexed_by_one(1), GF16::from(12));
 
-        let serialized = bincode::serialize(&share).unwrap();
-        let deserialized: Share<GF16> = bincode::deserialize(&serialized).unwrap();
+        let serialized = bc2wrap::serialize(&share).unwrap();
+        let deserialized: Share<GF16> = bc2wrap::deserialize(&serialized).unwrap();
         assert_eq!(share, deserialized);
     }
 

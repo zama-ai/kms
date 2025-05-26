@@ -307,14 +307,14 @@ where
         })?;
 
         let role_assignments: HashMap<Role, Identity> =
-            bincode::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {:?}", e),
                 )
             })?;
 
-        let prss_params: PrssInitParams = bincode::deserialize(&request.params).map_err(|e| {
+        let prss_params: PrssInitParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Failed to parse prss params: {:?}", e),
@@ -402,7 +402,7 @@ where
         })?;
 
         let role_assignments: HashMap<Role, Identity> =
-            bincode::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {:?}", e),
@@ -410,7 +410,7 @@ where
             })?;
 
         let preproc_params: PreprocKeyGenParams =
-            bincode::deserialize(&request.params).map_err(|e| {
+            bc2wrap::deserialize(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Preproc KeyGen params: {:?}", e),
@@ -588,7 +588,7 @@ where
                 );
             }
         }
-        let sid_serialized = bincode::serialize(&start_sid).map_err(|e| {
+        let sid_serialized = bc2wrap::serialize(&start_sid).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error serializing session ID {e}"),
@@ -621,7 +621,7 @@ where
         })?;
 
         let role_assignments: HashMap<Role, Identity> =
-            bincode::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {:?}", e),
@@ -629,7 +629,7 @@ where
             })?;
 
         let kg_params: ThresholdKeyGenParams =
-            bincode::deserialize(&request.params).map_err(|e| {
+            bc2wrap::deserialize(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Threshold KeyGen params: {:?}", e),
@@ -745,7 +745,7 @@ where
                 );
             }
         }
-        let sid_serialized = bincode::serialize(&session_id).map_err(|e| {
+        let sid_serialized = bc2wrap::serialize(&session_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error serializing session ID {e}"),
@@ -763,7 +763,7 @@ where
     ) -> Result<tonic::Response<ThresholdKeyGenResultResponse>, tonic::Status> {
         let request = request.into_inner();
 
-        let kg_result_params: ThresholdKeyGenResultParams = bincode::deserialize(&request.params)
+        let kg_result_params: ThresholdKeyGenResultParams = bc2wrap::deserialize(&request.params)
             .map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
@@ -776,7 +776,7 @@ where
 
         if let Some(dkg_params) = dkg_params {
             let role_assignments: HashMap<Role, Identity> =
-                bincode::deserialize(&request.role_assignment).map_err(|e| {
+                bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
                         format!("Failed to parse role assignment: {:?}", e),
@@ -811,7 +811,7 @@ where
                 .key_store
                 .insert(session_id, Arc::new(keys.clone()));
             return Ok(tonic::Response::new(ThresholdKeyGenResultResponse {
-                pub_keyset: bincode::serialize(&keys.0).map_err(|e| {
+                pub_keyset: bc2wrap::serialize(&keys.0).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
                         format!("Failed to serialize pubkey: {:?}", e),
@@ -822,7 +822,7 @@ where
             let keys = self.data.key_store.get(&session_id);
             if let Some(keys) = keys {
                 return Ok(tonic::Response::new(ThresholdKeyGenResultResponse {
-                    pub_keyset: bincode::serialize(&keys.0).map_err(|e| {
+                    pub_keyset: bc2wrap::serialize(&keys.0).map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
                             format!("Failed to serialize pubkey: {:?}", e),
@@ -860,7 +860,7 @@ where
         })?;
 
         let role_assignments: HashMap<Role, Identity> =
-            bincode::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {:?}", e),
@@ -868,7 +868,7 @@ where
             })?;
 
         let preproc_params: PreprocDecryptParams =
-            bincode::deserialize(&request.params).map_err(|e| {
+            bc2wrap::deserialize(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse Preproc Decrypt params: {:?}", e),
@@ -1155,7 +1155,7 @@ where
             }
         }
 
-        let sid_serialized = bincode::serialize(&session_id).map_err(|e| {
+        let sid_serialized = bc2wrap::serialize(&session_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error serializing session ID {e}"),
@@ -1188,14 +1188,14 @@ where
         })?;
 
         let role_assignments: HashMap<Role, Identity> =
-            bincode::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {:?}", e),
                 )
             })?;
 
-        let decrypt_params: ThresholdDecryptParams = bincode::deserialize(&request.params)
+        let decrypt_params: ThresholdDecryptParams = bc2wrap::deserialize(&request.params)
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
@@ -1851,7 +1851,7 @@ where
             }
         }
 
-        let sid_serialized = bincode::serialize(&session_id).map_err(|e| {
+        let sid_serialized = bc2wrap::serialize(&session_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error serializing session ID {e}"),
@@ -1868,7 +1868,7 @@ where
         request: tonic::Request<ThresholdDecryptResultRequest>,
     ) -> Result<tonic::Response<ThresholdDecryptResultResponse>, tonic::Status> {
         let request = request.into_inner();
-        let session_id = bincode::deserialize(&request.request_id).map_err(|e| {
+        let session_id = bc2wrap::deserialize(&request.request_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error deserializing session_id: {e}"),
@@ -1887,7 +1887,7 @@ where
             })?
             .clone();
 
-        let res_serialized = bincode::serialize(&res).map_err(|e| {
+        let res_serialized = bc2wrap::serialize(&res).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error serializing answer {e}"),
@@ -1921,14 +1921,14 @@ where
         })?;
 
         let role_assignments: HashMap<Role, Identity> =
-            bincode::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {:?}", e),
                 )
             })?;
 
-        let crs_params: CrsGenParams = bincode::deserialize(&request.params).map_err(|e| {
+        let crs_params: CrsGenParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Failed to parse Crs Gen params: {:?}", e),
@@ -1974,7 +1974,7 @@ where
             tokio::spawn(my_future().instrument(tracing::Span::current())),
         );
 
-        let sid_serialized = bincode::serialize(&session_id).map_err(|e| {
+        let sid_serialized = bc2wrap::serialize(&session_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error serializing session ID {e}"),
@@ -1992,7 +1992,7 @@ where
     ) -> Result<tonic::Response<CrsGenResultResponse>, tonic::Status> {
         let request = request.into_inner();
 
-        let session_id: SessionId = bincode::deserialize(&request.request_id).map_err(|e| {
+        let session_id: SessionId = bc2wrap::deserialize(&request.request_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error deserializing session_id: {e}"),
@@ -2011,7 +2011,7 @@ where
             })?
             .clone();
 
-        let res_serialized = bincode::serialize(&res).map_err(|e| {
+        let res_serialized = bc2wrap::serialize(&res).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error serializing answer {e}"),
@@ -2028,7 +2028,7 @@ where
         request: tonic::Request<StatusCheckRequest>,
     ) -> Result<tonic::Response<StatusCheckResponse>, tonic::Status> {
         let request = request.into_inner();
-        let sid: SessionId = bincode::deserialize(&request.request_id).map_err(|e| {
+        let sid: SessionId = bc2wrap::deserialize(&request.request_id).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error deserializing session_id: {e}"),
@@ -2045,7 +2045,7 @@ where
             Status::Missing
         };
 
-        let status_serialized = bincode::serialize(&status).map_err(|e| {
+        let status_serialized = bc2wrap::serialize(&status).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error serializing answer {e}"),
@@ -2079,14 +2079,14 @@ where
         })?;
 
         let role_assignments: HashMap<Role, Identity> =
-            bincode::deserialize(&request.role_assignment).map_err(|e| {
+            bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {:?}", e),
                 )
             })?;
 
-        let reshare_params: ReshareParams = bincode::deserialize(&request.params).map_err(|e| {
+        let reshare_params: ReshareParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Failed to parse Reshare params: {:?}", e),
@@ -2252,7 +2252,7 @@ where
             tokio::spawn(my_future().instrument(tracing::Span::current())),
         );
 
-        let sid_serialized = bincode::serialize(&reshare_params.new_key_sid).map_err(|e| {
+        let sid_serialized = bc2wrap::serialize(&reshare_params.new_key_sid).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("Error serializing session ID {e}"),

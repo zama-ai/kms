@@ -123,11 +123,11 @@ pub fn compute_user_decrypt_message_hash(
         })
         .collect();
 
-    let user_decrypted_share_buf = bincode::serialize(payload)?;
+    let user_decrypted_share_buf = bc2wrap::serialize(payload)?;
 
     // the solidity structure to sign with EIP-712
     // note that the JS client must also use the same encoding to verify the result
-    let user_pk = bincode::serialize(user_pk)?;
+    let user_pk = bc2wrap::serialize(user_pk)?;
     let message = UserDecryptResponseVerification {
         publicKey: user_pk.into(),
         ctHandles: external_handles,

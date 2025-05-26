@@ -16,8 +16,10 @@ pub enum BackupError {
     SharingError(String),
     #[error("reconstruct error: {0}")]
     ReconstructError(String),
+    #[error("bincode encode error: {0}")]
+    BincodeEncodeError(#[from] bincode::error::EncodeError),
     #[error("bincode error: {0}")]
-    BincodeError(#[from] bincode::Error),
+    BincodeError(String),
     #[error("add share error: {0}")]
     AddShareError(String),
     #[error("setup error: {0}")]

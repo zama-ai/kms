@@ -56,8 +56,7 @@ pub async fn write_element<T: serde::Serialize, P: AsRef<Path>>(
     if let Some(p) = file_path.as_ref().parent() {
         tokio::fs::create_dir_all(p).await?
     };
-    let mut serialized_data = Vec::new();
-    bincode::serialize_into(&mut serialized_data, &element)?;
+    let serialized_data = bc2wrap::serialize(element)?;
     tokio::fs::write(file_path, serialized_data.as_slice()).await?;
     Ok(())
 }
@@ -69,7 +68,7 @@ pub async fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
     file_path: P,
 ) -> anyhow::Result<T> {
     let read_element = tokio::fs::read(file_path).await?;
-    Ok(bincode::deserialize_from(read_element.as_slice())?)
+    Ok(bc2wrap::deserialize(read_element.as_slice())?)
 }
 
 #[cfg(test)]

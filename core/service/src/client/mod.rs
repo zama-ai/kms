@@ -509,7 +509,7 @@ impl Client {
         data: &T,
         signature: &[u8],
     ) -> Option<PublicSigKey> {
-        let signature_struct: Signature = match bincode::deserialize(signature) {
+        let signature_struct: Signature = match bc2wrap::deserialize(signature) {
             Ok(signature_struct) => signature_struct,
             Err(_) => {
                 tracing::error!("Could not deserialize signature");
@@ -800,7 +800,7 @@ impl Client {
         Ok((
             UserDecryptionRequest {
                 request_id: Some((*request_id).into()),
-                enc_key: bincode::serialize(&enc_pk)?,
+                enc_key: bc2wrap::serialize(&enc_pk)?,
                 client_address: self.client_address.to_checksum(None),
                 typed_ciphertexts,
                 key_id: Some((*key_id).into()),
@@ -1078,10 +1078,10 @@ impl Client {
             }
             // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissible keys
-            let cur_verf_key: PublicSigKey = bincode::deserialize(&cur_payload.verification_key)?;
+            let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&cur_payload.verification_key)?;
             BaseKmsStruct::verify_sig(
                 &DSEP_PUBLIC_DECRYPTION,
-                &bincode::serialize(&cur_payload)?,
+                &bc2wrap::serialize(&cur_payload)?,
                 &sig,
                 &cur_verf_key,
             )
@@ -1208,7 +1208,7 @@ impl Client {
             return Err(anyhow_error_and_log("incorrect length for addresses"));
         }
 
-        let cur_verf_key: PublicSigKey = bincode::deserialize(&payload.verification_key)?;
+        let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&payload.verification_key)?;
 
         if stored_server_addrs[0] != alloy_signer::utils::public_key_to_address(cur_verf_key.pk()) {
             return Err(anyhow_error_and_log("verification key is not consistent"));
@@ -1240,7 +1240,7 @@ impl Client {
             };
             internal_verify_sig(
                 &DSEP_USER_DECRYPTION,
-                &bincode::serialize(&payload)?,
+                &bc2wrap::serialize(&payload)?,
                 &sig,
                 &cur_verf_key,
             )
@@ -1501,7 +1501,7 @@ impl Client {
                 )?;
 
                 let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
-                    bincode::deserialize(&shares.bytes)?;
+                    bc2wrap::deserialize(&shares.bytes)?;
                 let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
                 for cur_block_share in cipher_blocks_share {
                     cur_blocks.push(cur_block_share);
@@ -1659,7 +1659,7 @@ impl Client {
                 //
                 // Also it's ok to use [cur_resp.digest] as the link since we already checked
                 // that it matches with the original request
-                let cur_verf_key: PublicSigKey = bincode::deserialize(&cur_resp.verification_key)?;
+                let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&cur_resp.verification_key)?;
                 match decrypt_signcryption_with_link(
                     &DSEP_USER_DECRYPTION,
                     &cur_resp.signcrypted_ciphertexts[batch_i].signcrypted_ciphertext,
@@ -1669,7 +1669,7 @@ impl Client {
                 ) {
                     Ok(decryption_share) => {
                         let cipher_blocks_share: Vec<ResiduePolyF4<Z>> =
-                            bincode::deserialize(&decryption_share.bytes)?;
+                            bc2wrap::deserialize(&decryption_share.bytes)?;
                         let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
                         for cur_block_share in cipher_blocks_share {
                             cur_blocks.push(cur_block_share);
@@ -3087,7 +3087,7 @@ pub(crate) mod tests {
         assert_eq!(&client_handle, &crs_info.key_handle);
 
         // try verification with each of the server keys; at least one must pass
-        let crs_sig: Signature = bincode::deserialize(&crs_info.signature).unwrap();
+        let crs_sig: Signature = bc2wrap::deserialize(&crs_info.signature).unwrap();
         let mut verified = false;
         let server_pks = internal_client.get_server_pks().unwrap();
         for vk in server_pks {
@@ -3556,7 +3556,7 @@ pub(crate) mod tests {
             // test that having [THRESHOLD] wrong signatures still works
             let mut final_responses_with_bad_sig = final_responses.clone();
             let client_sk = internal_client.client_sk.clone().unwrap();
-            let bad_sig = bincode::serialize(
+            let bad_sig = bc2wrap::serialize(
                 &crate::cryptography::signcryption::internal_sign(
                     &DSEP_PUBDATA_CRS,
                     &"wrong msg".to_string(),
@@ -6012,11 +6012,11 @@ pub(crate) mod tests {
                 assert!(decompression_key.is_some());
                 if i == 0 {
                     serialized_ref_decompression_key =
-                        bincode::serialize(decompression_key.as_ref().unwrap()).unwrap();
+                        bc2wrap::serialize(decompression_key.as_ref().unwrap()).unwrap();
                 } else {
                     assert_eq!(
                         serialized_ref_decompression_key,
-                        bincode::serialize(decompression_key.as_ref().unwrap()).unwrap()
+                        bc2wrap::serialize(decompression_key.as_ref().unwrap()).unwrap()
                     )
                 }
                 if out.is_none() {
@@ -6042,11 +6042,11 @@ pub(crate) mod tests {
                     .unwrap();
                 assert!(pk.is_some());
                 if i == 0 {
-                    serialized_ref_pk = bincode::serialize(pk.as_ref().unwrap()).unwrap();
+                    serialized_ref_pk = bc2wrap::serialize(pk.as_ref().unwrap()).unwrap();
                 } else {
                     assert_eq!(
                         serialized_ref_pk,
-                        bincode::serialize(pk.as_ref().unwrap()).unwrap()
+                        bc2wrap::serialize(pk.as_ref().unwrap()).unwrap()
                     )
                 }
                 let server_key: Option<tfhe::ServerKey> = internal_client
@@ -6056,11 +6056,11 @@ pub(crate) mod tests {
                 assert!(server_key.is_some());
                 if i == 0 {
                     serialized_ref_server_key =
-                        bincode::serialize(server_key.as_ref().unwrap()).unwrap();
+                        bc2wrap::serialize(server_key.as_ref().unwrap()).unwrap();
                 } else {
                     assert_eq!(
                         serialized_ref_server_key,
-                        bincode::serialize(server_key.as_ref().unwrap()).unwrap()
+                        bc2wrap::serialize(server_key.as_ref().unwrap()).unwrap()
                     )
                 }
 

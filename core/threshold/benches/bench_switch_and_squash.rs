@@ -25,11 +25,11 @@ fn bench_switch_and_squash(c: &mut Criterion) {
 
     let ct8: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, msg8, 8).unwrap();
     let ct16: FheUint16 = expanded_encrypt(&keyset.public_keys.public_key, msg16, 16).unwrap();
-    let public_key = bincode::serialize(&(keyset.public_keys.public_key)).unwrap();
-    let server_key = bincode::serialize(&(keyset.public_keys.server_key)).unwrap();
+    let public_key = bc2wrap::serialize(&(keyset.public_keys.public_key)).unwrap();
+    let server_key = bc2wrap::serialize(&(keyset.public_keys.server_key)).unwrap();
     let conversion_key =
-        bincode::serialize(keyset.public_keys.server_key.noise_squashing_key().unwrap()).unwrap();
-    let client_key = bincode::serialize(&(keyset.client_key)).unwrap();
+        bc2wrap::serialize(keyset.public_keys.server_key.noise_squashing_key().unwrap()).unwrap();
+    let client_key = bc2wrap::serialize(&(keyset.client_key)).unwrap();
 
     println!(
         "key sizes (kiB, serialized): public key={}  client key={}  server key={} conversion key={}",

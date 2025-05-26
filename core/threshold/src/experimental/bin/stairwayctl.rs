@@ -253,7 +253,7 @@ async fn threshold_keygen_result_command(
         )
         .await?;
 
-    let serialized_pk = bincode::serialize(&(params.session_id, keys))?;
+    let serialized_pk = bc2wrap::serialize(&(params.session_id, keys))?;
     std::fs::write(format!("{}/pk.bin", params.storage_path), serialized_pk)?;
     println!("Key stored in {}/pk.bin", params.storage_path);
     Ok(())
@@ -273,7 +273,7 @@ async fn threshold_decrypt_command(
     let num_sessions = params.num_parallel_sessions;
     let pk_serialized = std::fs::read(params.pub_key_file)?;
     let (key_sid, pk): (SessionId, PublicKey<LevelEll, LevelKsw, N65536>) =
-        bincode::deserialize(&pk_serialized)?;
+        bc2wrap::deserialize(&pk_serialized)?;
 
     let mut rng = AesRng::from_entropy();
     let ms = (0..num_sessions)

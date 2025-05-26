@@ -56,7 +56,7 @@ pub(crate) fn check_ext_user_decryption_signature(
     let sig =
         alloy_signer::Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
 
-    let user_pk: PublicEncKey = bincode::deserialize(request.enc_key())?;
+    let user_pk: PublicEncKey = bc2wrap::deserialize(request.enc_key())?;
     let hash = crate::compute_user_decrypt_message_hash(payload, eip712_domain, &user_pk)?;
 
     let addr = sig.recover_address_from_prehash(&hash)?;
@@ -116,7 +116,7 @@ fn validate_user_decrypt_meta_data_and_signature(
                 );
     }
 
-    let resp_verf_key: PublicSigKey = bincode::deserialize(&other_resp.verification_key)?;
+    let resp_verf_key: PublicSigKey = bc2wrap::deserialize(&other_resp.verification_key)?;
     let resp_addr = alloy_signer::utils::public_key_to_address(resp_verf_key.pk());
 
     if !server_addreses.contains(&resp_addr) {
@@ -148,7 +148,7 @@ fn validate_user_decrypt_meta_data_and_signature(
         // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
         if internal_verify_sig(
             &DSEP_USER_DECRYPTION,
-            &bincode::serialize(&other_resp)?,
+            &bc2wrap::serialize(&other_resp)?,
             &sig,
             &resp_verf_key,
         )
@@ -450,13 +450,13 @@ mod tests {
         let request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed
             alloy_primitives::Address::from_public_key(client_vk.pk()),
-            bincode::serialize(&eph_client_pk).unwrap(),
+            bc2wrap::serialize(&eph_client_pk).unwrap(),
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
         );
 
         let payload = UserDecryptionResponsePayload {
-            verification_key: bincode::serialize(&pks[0]).unwrap(),
+            verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
             digest: vec![1, 2, 3, 4],
             signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                 fhe_type: 1,
@@ -557,13 +557,13 @@ mod tests {
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
             alloy_primitives::Address::from_public_key(client_vk.pk()),
-            bincode::serialize(&eph_client_pk).unwrap(),
+            bc2wrap::serialize(&eph_client_pk).unwrap(),
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
         );
 
         let pivot_resp = UserDecryptionResponsePayload {
-            verification_key: bincode::serialize(&pks[0]).unwrap(),
+            verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
             digest: vec![1, 2, 3, 4],
             signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                 fhe_type: 1,
@@ -585,7 +585,7 @@ mod tests {
         // incorrect length
         {
             let other_resp = UserDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![], // the ciphertext is just an empty vector
                 party_id: 1,
@@ -608,7 +608,7 @@ mod tests {
         // mismatch type
         {
             let other_resp = UserDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 2, // in the pivot the type is 1
@@ -636,7 +636,7 @@ mod tests {
         // digest mismatch
         {
             let other_resp = UserDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4, 5], // the digest should be [1, 2, 3, 4]
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 1,
@@ -695,7 +695,7 @@ mod tests {
 
         // happy path for empty external_signature
         {
-            let pivot_buf = bincode::serialize(&pivot_resp).unwrap();
+            let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_USER_DECRYPTION,
                 &pivot_buf,
@@ -737,14 +737,14 @@ mod tests {
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
             alloy_primitives::Address::from_public_key(client_vk.pk()),
-            bincode::serialize(&eph_client_pk).unwrap(),
+            bc2wrap::serialize(&eph_client_pk).unwrap(),
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
         );
 
         let resp0 = {
             let payload0 = UserDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 1,
@@ -771,7 +771,7 @@ mod tests {
 
         let resp1 = {
             let payload = UserDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[1]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[1]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 1,
@@ -798,7 +798,7 @@ mod tests {
 
         let resp2 = {
             let payload = UserDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[2]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[2]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 1,
@@ -879,7 +879,7 @@ mod tests {
             // the correct parameters should be party_id = 3, digest = vec![1,2,3,4], pk = &pks[2], packing_factor = 1
             let bad_resp2 = {
                 let payload = UserDecryptionResponsePayload {
-                    verification_key: bincode::serialize(pk).unwrap(),
+                    verification_key: bc2wrap::serialize(pk).unwrap(),
                     digest,
                     signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                         fhe_type: 1,
@@ -997,7 +997,7 @@ mod tests {
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
             alloy_primitives::Address::from_public_key(client_vk.pk()),
-            bincode::serialize(&eph_client_pk).unwrap(),
+            bc2wrap::serialize(&eph_client_pk).unwrap(),
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
         );
@@ -1006,7 +1006,7 @@ mod tests {
 
         let resp0 = {
             let payload0 = UserDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
                 digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 1,
@@ -1033,7 +1033,7 @@ mod tests {
 
         let resp1 = {
             let payload = UserDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[1]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[1]).unwrap(),
                 digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 1,
@@ -1069,7 +1069,7 @@ mod tests {
             let bad_client_request = ParsedUserDecryptionRequest::new(
                 None, // No signature is needed here because we're testing response validation
                 alloy_primitives::Address::from_public_key(bad_client_vk.pk()),
-                bincode::serialize(&eph_client_pk).unwrap(),
+                bc2wrap::serialize(&eph_client_pk).unwrap(),
                 vec![CiphertextHandle::new(ciphertext_handle.clone())],
                 dummy_domain.verifying_contract.unwrap(),
             );

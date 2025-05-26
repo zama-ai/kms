@@ -620,7 +620,7 @@ mod tests {
 
                     for (share, all_share) in sharings.shares.into_iter().zip(all_shares.iter_mut())
                     {
-                        let share_buf_bincode = bincode::serialize(&share.value()).unwrap();
+                        let share_buf_bincode = bc2wrap::serialize(&share.value()).unwrap();
                         let share_buf = share.value().to_byte_vec();
                         assert_eq!(share_buf_bincode, share_buf);
                         assert_eq!(share_buf.len(), BUF_LEN);

@@ -2061,9 +2061,9 @@ pub mod tests {
 
         // check that the decompression keys are the same
         let decompression_key = results.pop().unwrap().1;
-        let decompression_key_bytes = bincode::serialize(&decompression_key).unwrap();
+        let decompression_key_bytes = bc2wrap::serialize(&decompression_key).unwrap();
         for (_role, key) in results {
-            let buf = bincode::serialize(&key).unwrap();
+            let buf = bc2wrap::serialize(&key).unwrap();
             assert_eq!(buf, decompression_key_bytes);
         }
         // check that we can do the decompression

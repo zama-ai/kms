@@ -134,7 +134,7 @@ pub fn validate_user_decrypt_req(
     };
 
     let (link, _) = req.compute_link_checked()?;
-    let client_enc_key: PublicEncKey = bincode::deserialize(&req.enc_key)?;
+    let client_enc_key: PublicEncKey = bc2wrap::deserialize(&req.enc_key)?;
     Ok((
         req.typed_ciphertexts.clone(),
         link,
@@ -191,7 +191,7 @@ pub fn validate_public_decrypt_req(
     }
 
     let serialized_req = tonic_handle_potential_err(
-        bincode::serialize(&req),
+        bc2wrap::serialize(&req),
         format!("Could not serialize payload {:?}", req),
     )?;
     let req_digest = tonic_handle_potential_err(
@@ -237,7 +237,7 @@ fn validate_public_decrypt_meta_data(
                 );
         return Ok(false);
     }
-    let resp_verf_key: PublicSigKey = bincode::deserialize(&other_resp.verification_key)?;
+    let resp_verf_key: PublicSigKey = bc2wrap::deserialize(&other_resp.verification_key)?;
     if !server_pks.contains(&resp_verf_key) {
         tracing::warn!("Server key is unknown or incorrect.");
         return Ok(false);
@@ -257,7 +257,7 @@ fn validate_public_decrypt_meta_data(
     // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
     if internal_verify_sig(
         &DSEP_PUBLIC_DECRYPTION,
-        &bincode::serialize(&other_resp)?,
+        &bc2wrap::serialize(&other_resp)?,
         &sig,
         &resp_verf_key,
     )
@@ -394,7 +394,7 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
                 ));
             }
 
-            if BaseKmsStruct::digest(&DSEP_REQ_RESP, &bincode::serialize(&req)?)?
+            if BaseKmsStruct::digest(&DSEP_REQ_RESP, &bc2wrap::serialize(&req)?)?
                 != pivot_payload.digest
             {
                 return Err(anyhow_error_and_log(
@@ -558,7 +558,7 @@ mod tests {
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let mut rng = AesRng::from_random_seed();
         let (enc_pk, _enc_sk) = ephemeral_encryption_key_generation(&mut rng);
-        let enc_pk_buf = bincode::serialize(&enc_pk).unwrap();
+        let enc_pk_buf = bc2wrap::serialize(&enc_pk).unwrap();
 
         // ciphertexts are not directly verified except the length
         let ciphertexts = vec![TypedCiphertext {
@@ -666,7 +666,7 @@ mod tests {
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains("io error"));
+                .contains("UnexpectedEnd")); // the error message that is returned from trying to decode the bad encoding
         }
 
         // finally everything is ok
@@ -730,7 +730,7 @@ mod tests {
             request_id: Some(v1::RequestId {
                 request_id: "dummy request ID".to_owned(),
             }),
-            enc_key: bincode::serialize(&enc_pk).unwrap(),
+            enc_key: bc2wrap::serialize(&enc_pk).unwrap(),
             client_address: client_address.to_checksum(None),
             key_id: Some(key_id.into()),
             typed_ciphertexts: vec![typed_ciphertext],
@@ -777,7 +777,7 @@ mod tests {
 
         let pivot = PublicDecryptionResponsePayload {
             digest: vec![1, 2, 3, 4],
-            verification_key: bincode::serialize(&pks[0]).unwrap(),
+            verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
             plaintexts: vec![TypedPlaintext {
                 bytes: vec![1],
                 fhe_type: 1,
@@ -785,7 +785,7 @@ mod tests {
             external_signature: None,
         };
 
-        let pivot_buf = bincode::serialize(&pivot).unwrap();
+        let pivot_buf = bc2wrap::serialize(&pivot).unwrap();
 
         // use a bad signature (signed with wrong private key)
         {
@@ -811,7 +811,7 @@ mod tests {
             )
             .unwrap();
             // The signature is malformed because it's using bincode to serialize instead of `signature.sig.to_vec()`.
-            let signature_buf = bincode::serialize(&signature).unwrap();
+            let signature_buf = bc2wrap::serialize(&signature).unwrap();
 
             assert!(
                 validate_public_decrypt_meta_data(&pks, &pivot, &pivot, &signature_buf).is_err()
@@ -821,7 +821,7 @@ mod tests {
         // use a bad signature (signing the wrong value)
         {
             let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4, 5], // Original digest does not contain the 5
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
@@ -829,7 +829,7 @@ mod tests {
                 }],
                 external_signature: None,
             };
-            let bad_value_buf = bincode::serialize(&bad_value).unwrap();
+            let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
             let bad_signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
@@ -848,7 +848,7 @@ mod tests {
         // use a bad response (digest mismatch)
         {
             let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4, 5], // Original digest does not contain the 5
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
@@ -856,7 +856,7 @@ mod tests {
                 }],
                 external_signature: None,
             };
-            let bad_value_buf = bincode::serialize(&bad_value).unwrap();
+            let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
             let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
@@ -876,7 +876,7 @@ mod tests {
         {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
             let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bincode::serialize(&vk).unwrap(),
+                verification_key: bc2wrap::serialize(&vk).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
@@ -884,7 +884,7 @@ mod tests {
                 }],
                 external_signature: None,
             };
-            let bad_value_buf = bincode::serialize(&bad_value).unwrap();
+            let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
             let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
@@ -904,7 +904,7 @@ mod tests {
         {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
             let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bincode::serialize(&vk).unwrap(),
+                verification_key: bc2wrap::serialize(&vk).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![0], // normally this is vec![1]
@@ -912,7 +912,7 @@ mod tests {
                 }],
                 external_signature: None,
             };
-            let bad_value_buf = bincode::serialize(&bad_value).unwrap();
+            let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
             let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
@@ -955,7 +955,7 @@ mod tests {
 
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
@@ -963,7 +963,7 @@ mod tests {
                 }],
                 external_signature: Some(vec![]),
             };
-            let payload_buf = bincode::serialize(&payload).unwrap();
+            let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
                 &payload_buf,
@@ -979,7 +979,7 @@ mod tests {
         };
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[1]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[1]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
@@ -987,7 +987,7 @@ mod tests {
                 }],
                 external_signature: Some(vec![]),
             };
-            let payload_buf = bincode::serialize(&payload).unwrap();
+            let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
                 &payload_buf,
@@ -1045,7 +1045,7 @@ mod tests {
         {
             let bad_resp = {
                 let payload = PublicDecryptionResponsePayload {
-                    verification_key: bincode::serialize(&pks[1]).unwrap(),
+                    verification_key: bc2wrap::serialize(&pks[1]).unwrap(),
                     digest: vec![1, 2, 3, 4],
                     plaintexts: vec![
                         TypedPlaintext {
@@ -1059,7 +1059,7 @@ mod tests {
                     ],
                     external_signature: Some(vec![]),
                 };
-                let payload_buf = bincode::serialize(&payload).unwrap();
+                let payload_buf = bc2wrap::serialize(&payload).unwrap();
                 let signature = &crate::cryptography::signcryption::internal_sign(
                     &DSEP_PUBLIC_DECRYPTION,
                     &payload_buf,
@@ -1125,7 +1125,7 @@ mod tests {
 
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
                 digest: digest.clone(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
@@ -1133,7 +1133,7 @@ mod tests {
                 }],
                 external_signature: Some(vec![]),
             };
-            let payload_buf = bincode::serialize(&payload).unwrap();
+            let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
                 &payload_buf,
@@ -1149,7 +1149,7 @@ mod tests {
         };
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bincode::serialize(&pks[1]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[1]).unwrap(),
                 digest: digest.clone(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
@@ -1157,7 +1157,7 @@ mod tests {
                 }],
                 external_signature: Some(vec![]),
             };
-            let payload_buf = bincode::serialize(&payload).unwrap();
+            let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
                 &DSEP_PUBLIC_DECRYPTION,
                 &payload_buf,

@@ -408,16 +408,16 @@ mod tests {
     fn test_pke_serialize_size() {
         let mut rng = OsRng;
         let (pk, sk) = ephemeral_encryption_key_generation(&mut rng);
-        let pk_buf = bincode::serialize(&pk).unwrap();
-        let sk_buf = bincode::serialize(&sk).unwrap();
+        let pk_buf = bc2wrap::serialize(&pk).unwrap();
+        let sk_buf = bc2wrap::serialize(&sk).unwrap();
         // there is extra 8 bytes in the serialization to encode the length
         // see https://github.com/bincode-org/bincode/blob/trunk/docs/spec.md#linear-collections-vec-arrays-etc
         assert_eq!(pk_buf.len(), hybrid_ml_kem::ML_KEM_CT_PK_LENGTH + 8);
         assert_eq!(sk_buf.len(), hybrid_ml_kem::ML_KEM_SK_LEN + 8);
 
         // deserialize and test if encryption still works.
-        let pk2: PublicEncKey = bincode::deserialize(&pk_buf).unwrap();
-        let sk2: PrivateEncKey = bincode::deserialize(&sk_buf).unwrap();
+        let pk2: PublicEncKey = bc2wrap::deserialize(&pk_buf).unwrap();
+        let sk2: PrivateEncKey = bc2wrap::deserialize(&sk_buf).unwrap();
 
         let msg = b"four legs good, two legs better";
         let ct = hybrid_ml_kem::enc(&mut rng, msg, &pk2.0).unwrap();

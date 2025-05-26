@@ -1,4 +1,3 @@
-use bincode::serialize;
 use serde::Serialize;
 use sha3::{
     digest::{ExtendableOutput, Update, XofReader},
@@ -78,7 +77,7 @@ pub fn serialize_hash_element<T>(domain_separator: &DomainSep, msg: &T) -> anyho
 where
     T: Serialize + ?Sized,
 {
-    let to_hash = match serialize(msg) {
+    let to_hash = match bc2wrap::serialize(msg) {
         Ok(to_hash) => to_hash,
         Err(e) => {
             anyhow::bail!("Could not encode message due to error: {:?}", e);

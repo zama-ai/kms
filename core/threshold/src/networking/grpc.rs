@@ -279,7 +279,7 @@ impl Gnetworking for NetworkingImpl {
             .transpose()?;
 
         let request = request.into_inner();
-        let tag = bincode::deserialize::<Tag>(&request.tag).map_err(|_e| {
+        let tag = bc2wrap::deserialize::<Tag>(&request.tag).map_err(|_e| {
             tonic::Status::new(tonic::Code::Aborted, "failed to parse value".to_string())
         })?;
 

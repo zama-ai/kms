@@ -68,7 +68,7 @@
 //! node --test tests/js
 //! ```
 use crate::cryptography::hybrid_ml_kem;
-use bincode::{deserialize, serialize};
+use bc2wrap::{deserialize, serialize};
 use kms_grpc::kms::v1::Eip712DomainMsg;
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
@@ -182,7 +182,7 @@ pub fn get_client_address(client: &Client) -> String {
 #[cfg(feature = "wasm_tests")]
 pub fn buf_to_transcript(buf: &[u8]) -> TestingUserDecryptionTranscript {
     console_error_panic_hook::set_once();
-    bincode::deserialize(buf).unwrap()
+    bc2wrap::deserialize(buf).unwrap()
 }
 
 #[wasm_bindgen]

@@ -159,7 +159,7 @@ impl<
                             {
                                 Some(partial_dec) => {
                                     let partial_dec = pack_residue_poly(partial_dec);
-                                    bincode::serialize(&partial_dec)?
+                                    bc2wrap::serialize(&partial_dec)?
                                 }
                                 None => {
                                     return Err(anyhow!(
@@ -200,7 +200,7 @@ impl<
                             {
                                 Some(partial_dec) => {
                                     // let partial_dec = pack_residue_poly(partial_dec); // TODO use more compact packing for bitdec?
-                                    bincode::serialize(&partial_dec)?
+                                    bc2wrap::serialize(&partial_dec)?
                                 }
                                 None => {
                                     return Err(anyhow!(
@@ -235,12 +235,12 @@ impl<
                     let enc_res = signcrypt(
                         rng,
                         &DSEP_USER_DECRYPTION,
-                        &bincode::serialize(&signcryption_msg)?,
+                        &bc2wrap::serialize(&signcryption_msg)?,
                         client_enc_key,
                         client_address,
                         &sig_key,
                     )?;
-                    let res = bincode::serialize(&enc_res)?;
+                    let res = bc2wrap::serialize(&enc_res)?;
 
                     tracing::info!(
                         "User decryption completed for type {:?}. Inner thread took {:?} ms",
@@ -441,7 +441,7 @@ impl<
             handle_res_mapping(status, &request_id, "UserDecryption").await?;
 
         let sig_payload_vec = tonic_handle_potential_err(
-            bincode::serialize(&payload),
+            bc2wrap::serialize(&payload),
             format!("Could not convert payload to bytes {:?}", payload),
         )?;
 

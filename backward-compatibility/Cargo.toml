@@ -22,8 +22,8 @@ tfhe_versionable_0_5 = { package = "tfhe-versionable", version = "0.5.0", option
 tfhe_1_1 = { package = "tfhe", version = "1.1.3", optional = true, features = [
     "shortint",
 ] }
-alloy-sol-types-1_0_0 = { package = "alloy-sol-types", version = "=1.1.2", optional = true }
-alloy-primitives-1_0_0 = { package = "alloy-primitives", version = "=1.1.2", optional = true }
+alloy-sol-types-1_0_0 = { package = "alloy-sol-types", version = "=1.0.0", optional = true }
+alloy-primitives-1_0_0 = { package = "alloy-primitives", version = "=1.0.0", optional = true }
 serde = { version = "=1.0.219", features = ["derive"] }
 strum = { version = "=0.27.1", features = ["derive"] }
 semver = { version = "=1.0.26", optional = true }
@@ -31,7 +31,7 @@ ron = { version = "=0.10.1", features = ["integer128"] }
 bincode = "=1.3.3"
 aes-prng = "=0.2.1"
 rand = "=0.8.5"
-tokio = { version = "1.45.0", features = ["full"] }
+tokio = { version = "1.44.2", features = ["full"] }
 
 [[bin]]
 name = "backward-compatibility"

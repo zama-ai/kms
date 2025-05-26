@@ -197,7 +197,7 @@ pub async fn get_user_decryption_result_impl<
 
     // sign the response
     let sig_payload_vec = tonic_handle_potential_err(
-        bincode::serialize(&payload),
+        bc2wrap::serialize(&payload),
         format!("Could not convert payload to bytes {:?}", payload),
     )?;
 
@@ -426,7 +426,7 @@ pub async fn get_public_decryption_result_impl<
     };
 
     let kms_sig_payload_vec = tonic_handle_potential_err(
-        bincode::serialize(&kms_sig_payload),
+        bc2wrap::serialize(&kms_sig_payload),
         format!("Could not convert payload to bytes {:?}", kms_sig_payload),
     )?;
 

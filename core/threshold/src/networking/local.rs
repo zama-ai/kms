@@ -355,9 +355,9 @@ mod tests {
         let task1 = tokio::spawn(async move {
             let recv = net_bob.receive(&"alice".into()).await;
             assert_eq!(
-                bincode::serialize(&NetworkValue::<Wrapping::<u64>>::from_network(recv).unwrap())
+                bc2wrap::serialize(&NetworkValue::<Wrapping::<u64>>::from_network(recv).unwrap())
                     .unwrap(),
-                bincode::serialize(&NetworkValue::RingValue(Wrapping::<u64>(1234))).unwrap()
+                bc2wrap::serialize(&NetworkValue::RingValue(Wrapping::<u64>(1234))).unwrap()
             );
         });
 

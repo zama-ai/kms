@@ -105,9 +105,9 @@ impl ChoreoRuntime {
         threshold: u32,
         seed: Option<u64>,
     ) -> anyhow::Result<()> {
-        let role_assignment = bincode::serialize(&self.role_assignments)?;
+        let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
 
-        let prss_params = bincode::serialize(&PrssInitParams { session_id, ring })?;
+        let prss_params = bc2wrap::serialize(&PrssInitParams { session_id, ring })?;
 
         let mut join_set = JoinSet::new();
         self.channels.values().for_each(|channel| {
@@ -142,8 +142,8 @@ impl ChoreoRuntime {
         threshold: u32,
         seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
-        let role_assignment = bincode::serialize(&self.role_assignments)?;
-        let preproc_kg_params = bincode::serialize(&PreprocKeyGenParams {
+        let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
+        let preproc_kg_params = bc2wrap::serialize(&PreprocKeyGenParams {
             session_type,
             session_id,
             percentage_offline,
@@ -169,7 +169,7 @@ impl ChoreoRuntime {
 
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bincode::deserialize(&(response??.into_inner().request_id)).unwrap());
+            responses.push(bc2wrap::deserialize(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -189,8 +189,8 @@ impl ChoreoRuntime {
         threshold: u32,
         seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
-        let role_assignment = bincode::serialize(&self.role_assignments)?;
-        let threshold_keygen_params = bincode::serialize(&ThresholdKeyGenParams {
+        let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
+        let threshold_keygen_params = bc2wrap::serialize(&ThresholdKeyGenParams {
             session_id,
             dkg_params: dkg_params.to_param(),
             session_id_preproc,
@@ -214,7 +214,7 @@ impl ChoreoRuntime {
 
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bincode::deserialize(&(response??.into_inner().request_id)).unwrap());
+            responses.push(bc2wrap::deserialize(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -234,9 +234,9 @@ impl ChoreoRuntime {
         dkg_params: Option<DkgParamsAvailable>,
         seed: Option<u64>,
     ) -> anyhow::Result<FhePubKeySet> {
-        let role_assignment = bincode::serialize(&self.role_assignments)?;
+        let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
 
-        let threshold_keygen_result_params = bincode::serialize(&ThresholdKeyGenResultParams {
+        let threshold_keygen_result_params = bc2wrap::serialize(&ThresholdKeyGenResultParams {
             session_id,
             dkg_params: dkg_params.map_or_else(|| None, |v| Some(v.to_param())),
         })?;
@@ -267,7 +267,7 @@ impl ChoreoRuntime {
         //    assert_eq!(response, ref_response);
         //}
         let pub_key = responses.pop().unwrap();
-        let pub_key = bincode::deserialize(&pub_key)?;
+        let pub_key = bc2wrap::deserialize(&pub_key)?;
         Ok(pub_key)
     }
 
@@ -282,8 +282,8 @@ impl ChoreoRuntime {
         threshold: u32,
         seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
-        let role_assignment = bincode::serialize(&self.role_assignments)?;
-        let preproc_decrypt_params = bincode::serialize(&PreprocDecryptParams {
+        let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
+        let preproc_decrypt_params = bc2wrap::serialize(&PreprocDecryptParams {
             session_id,
             key_sid,
             decryption_mode,
@@ -309,7 +309,7 @@ impl ChoreoRuntime {
 
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bincode::deserialize(&(response??.into_inner().request_id)).unwrap());
+            responses.push(bc2wrap::deserialize(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -334,8 +334,8 @@ impl ChoreoRuntime {
         threshold: u32,
         seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
-        let role_assignment = bincode::serialize(&self.role_assignments)?;
-        let threshold_decrypt_params = bincode::serialize(&ThresholdDecryptParams {
+        let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
+        let threshold_decrypt_params = bc2wrap::serialize(&ThresholdDecryptParams {
             session_id,
             decryption_mode,
             key_sid,
@@ -363,7 +363,7 @@ impl ChoreoRuntime {
 
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bincode::deserialize(&(response??.into_inner().request_id)).unwrap());
+            responses.push(bc2wrap::deserialize(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -380,7 +380,7 @@ impl ChoreoRuntime {
         session_id: SessionId,
     ) -> anyhow::Result<Vec<Z64>> {
         let mut join_set = JoinSet::new();
-        let serialized_sid = bincode::serialize(&session_id)?;
+        let serialized_sid = bc2wrap::serialize(&session_id)?;
         self.channels.values().for_each(|channel| {
             let mut client = self.new_client(channel.clone());
             let request = ThresholdDecryptResultRequest {
@@ -395,7 +395,7 @@ impl ChoreoRuntime {
 
         let mut responses: Vec<Vec<Z64>> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bincode::deserialize(&(response??.into_inner().plaintext))?);
+            responses.push(bc2wrap::deserialize(&(response??.into_inner().plaintext))?);
         }
 
         let ref_response = responses.first().unwrap();
@@ -414,7 +414,7 @@ impl ChoreoRuntime {
         threshold: u32,
         seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
-        let role_assignment = bincode::serialize(&self.role_assignments)?;
+        let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
         let witness_dim = compute_witness_dim(
             &dkg_params
                 .to_param()
@@ -422,7 +422,7 @@ impl ChoreoRuntime {
                 .get_compact_pk_enc_params(),
             None,
         )? as u128;
-        let crs_gen_params = bincode::serialize(&CrsGenParams {
+        let crs_gen_params = bc2wrap::serialize(&CrsGenParams {
             session_id,
             witness_dim,
         })?;
@@ -446,7 +446,7 @@ impl ChoreoRuntime {
 
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bincode::deserialize(&(response??.into_inner().request_id)).unwrap());
+            responses.push(bc2wrap::deserialize(&(response??.into_inner().request_id)).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -462,7 +462,7 @@ impl ChoreoRuntime {
         &self,
         session_id: SessionId,
     ) -> anyhow::Result<InternalPublicParameter> {
-        let serialized_sid = bincode::serialize(&session_id)?;
+        let serialized_sid = bc2wrap::serialize(&session_id)?;
         let mut join_set = JoinSet::new();
         self.channels.values().for_each(|channel| {
             let mut client = self.new_client(channel.clone());
@@ -478,7 +478,7 @@ impl ChoreoRuntime {
 
         let mut responses: Vec<InternalPublicParameter> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bincode::deserialize(&(response??.into_inner()).crs).unwrap());
+            responses.push(bc2wrap::deserialize(&(response??.into_inner()).crs).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -497,8 +497,8 @@ impl ChoreoRuntime {
         session_type: SessionType,
         seed: Option<u64>,
     ) -> anyhow::Result<SessionId> {
-        let role_assignment = bincode::serialize(&self.role_assignments)?;
-        let reshare_params_serialized = bincode::serialize(&ReshareParams {
+        let role_assignment = bc2wrap::serialize(&self.role_assignments)?;
+        let reshare_params_serialized = bc2wrap::serialize(&ReshareParams {
             session_type,
             old_key_sid,
             new_key_sid,
@@ -522,7 +522,7 @@ impl ChoreoRuntime {
 
         let mut responses: Vec<SessionId> = Vec::new();
         while let Some(response) = join_set.join_next().await {
-            responses.push(bincode::deserialize(&(response??.into_inner()).request_id).unwrap());
+            responses.push(bc2wrap::deserialize(&(response??.into_inner()).request_id).unwrap());
         }
 
         let ref_response = responses.first().unwrap();
@@ -540,7 +540,7 @@ impl ChoreoRuntime {
         interval: Duration,
     ) -> anyhow::Result<Vec<(Role, Status)>> {
         let mut join_set = JoinSet::new();
-        let serialized_sid = bincode::serialize(&session_id)?;
+        let serialized_sid = bc2wrap::serialize(&session_id)?;
         let request = StatusCheckRequest {
             request_id: serialized_sid,
         };
@@ -556,7 +556,7 @@ impl ChoreoRuntime {
 
             while let Some(response) = join_set.join_next().await {
                 let (role, response) = response?;
-                let status: Status = bincode::deserialize(&response?.into_inner().status)?;
+                let status: Status = bc2wrap::deserialize(&response?.into_inner().status)?;
                 result.push((role, status));
             }
 

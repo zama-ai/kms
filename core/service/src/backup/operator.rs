@@ -236,7 +236,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
                 return Err(BackupError::CustodianSetupError);
             }
 
-            let msg_buf = bincode::serialize(&msg.msg)?;
+            let msg_buf = bc2wrap::serialize(&msg.msg)?;
             let signature = Signature {
                 sig: k256::ecdsa::Signature::from_slice(&msg.signature)?,
             };
@@ -319,7 +319,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
             // There are shares.len() shares, each has 256 bits and 64 bits for the role
             // the extra 8 bytes is used by bincode to encode the length.
             let minimum_expected_length = shares.len() * (32 + 8) + 8;
-            let actual_length = bincode::serialize(&shares)?.len();
+            let actual_length = bc2wrap::serialize(&shares)?.len();
             if actual_length < minimum_expected_length {
                 return Err(BackupError::OperatorError(format!(
                     "share is not long enough: actual={actual_length} < minimum={minimum_expected_length}"
@@ -336,7 +336,8 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
             };
 
             let mut msg = Vec::new();
-            safe_serialize(&backup_material, &mut msg, SAFE_SER_SIZE_LIMIT)?;
+            safe_serialize(&backup_material, &mut msg, SAFE_SER_SIZE_LIMIT)
+                .map_err(|e| BackupError::BincodeError(e.to_string()))?;
             let ciphertext = enc_pk.encrypt(rng, &msg)?;
             let signature = self.signer.sign(&DSEP_BACKUP_OPERATOR, &ciphertext)?;
 

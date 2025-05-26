@@ -175,11 +175,13 @@ impl InnerNestedPublicKey {
     ) -> Result<Vec<u8>, CryptographyError> {
         let inner = hybrid_ml_kem::enc(rng, msg, &self.encapsulation_key).unwrap();
         let mut inner_buf = Vec::new();
-        tfhe::safe_serialization::safe_serialize(&inner, &mut inner_buf, SAFE_SER_SIZE_LIMIT)?;
+        tfhe::safe_serialization::safe_serialize(&inner, &mut inner_buf, SAFE_SER_SIZE_LIMIT)
+            .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
 
         let ct = hybrid_rsa::enc(rng, &inner_buf, &self.rsa_public_key)?;
         let mut ct_buf = Vec::new();
-        tfhe::safe_serialization::safe_serialize(&ct, &mut ct_buf, SAFE_SER_SIZE_LIMIT)?;
+        tfhe::safe_serialization::safe_serialize(&ct, &mut ct_buf, SAFE_SER_SIZE_LIMIT)
+            .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
         Ok(ct_buf)
     }
 }

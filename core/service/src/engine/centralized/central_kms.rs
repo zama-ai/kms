@@ -20,7 +20,6 @@ use crate::vault::storage::{
 };
 use crate::{anyhow_error_and_log, get_exactly_one};
 use aes_prng::AesRng;
-use bincode::serialize;
 use k256::ecdsa::SigningKey;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::KeySetAddedInfo;
@@ -750,12 +749,12 @@ impl<
         let enc_res = signcrypt(
             rng,
             &DSEP_USER_DECRYPTION,
-            &bincode::serialize(&signcryption_msg)?,
+            &bc2wrap::serialize(&signcryption_msg)?,
             client_enc_key,
             client_address,
             sig_key,
         )?;
-        let res = serialize(&enc_res)?;
+        let res = bc2wrap::serialize(&enc_res)?;
         tracing::info!("Completed user decryption of ciphertext");
 
         Ok(res)

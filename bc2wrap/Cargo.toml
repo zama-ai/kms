@@ -1,0 +1,11 @@
+[package]
+name = "bc2wrap"
+version = "2.0.1"
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bincode.workspace = true
+serde.workspace = true

@@ -180,7 +180,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
             public_key: self.nested_pk.clone(),
         };
 
-        let msg_buf = bincode::serialize(&msg)?;
+        let msg_buf = bc2wrap::serialize(&msg)?;
         let signature = self.signer.sign(&DSEP_BACKUP_SETUP, &msg_buf)?;
 
         Ok(CustodianSetupMessage {
