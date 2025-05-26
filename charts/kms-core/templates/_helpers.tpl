@@ -1,5 +1,5 @@
 {{- define "kmsCoreName" -}}
-{{- $kmsCoreNameDefault := printf "%s-%s" .Release.Name }}
+{{- $kmsCoreNameDefault := printf "%s-%s" .Release.Name "core" }}
 {{- default $kmsCoreNameDefault .Values.kmsCore.nameOverride | trunc 52 | trimSuffix "-" -}}
 {{- end -}}
 
