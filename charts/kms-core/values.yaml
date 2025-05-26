@@ -52,23 +52,30 @@ kmsCore:
       # blocks NB: only PEM blocks are can be used to provide certificates to
       # Nitro enclaves!
       certificate:
+        # You have to define either `path` or `pem`
+        # Certificate: path to the certificate file
+        path: /my/very/secret/cert.pem
+        # Certificate: PEM block
         pem: |
           -----BEGIN CERTIFICATE-----
           -----END CERTIFICATE-----
       # Nitro enclaves will ignore this value since they generate their own
       # attested ephemeral keypairs
-      private_key:
+      privateKey:
         path: /my/very/secret/key.pem
       # If set, the enclave-enabled core will only establish TLS connections
       # with peers that have attested PCR0,1,2 values from this list
-      trusted_releases:
+      trustedReleases:
         - pcr0: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
           pcr1: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
           pcr2: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-    dec_capacity: 10000
-    min_dec_cache: 6000
-    num_sessions_preproc: 2
-    decryption_mode: "NoiseFloodSmall"
+    # Threshold value is the number of corruptions that the protocol handles.
+    # This value appears in the config file as `threshold`.
+    thresholdValue: 1
+    decCapacity: 10000
+    minDecCache: 6000
+    numSessionsPreproc: 2
+    decryptionMode: "NoiseFloodSmall"
   # Add the following to enable nitro enclave:
   # Nitro enclave needs specific instance types
   nitroEnclave:

@@ -51,11 +51,11 @@ data:
     my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
 
     # Threshold is the number of corruptions that the protocol handles.
-    threshold = 1
-    dec_capacity = {{ int .Values.kmsCore.thresholdMode.dec_capacity }}
-    min_dec_cache = {{ int .Values.kmsCore.thresholdMode.min_dec_cache }}
-    num_sessions_preproc = {{ int .Values.kmsCore.thresholdMode.num_sessions_preproc }}
-    decryption_mode = {{ .Values.kmsCore.thresholdMode.decryption_mode | quote }}
+    threshold = {{ int .Values.kmsCore.thresholdMode.thresholdValue }}
+    dec_capacity = {{ int .Values.kmsCore.thresholdMode.decCapacity }}
+    min_dec_cache = {{ int .Values.kmsCore.thresholdMode.minDecCache }}
+    num_sessions_preproc = {{ int .Values.kmsCore.thresholdMode.numSessionsPreproc }}
+    decryption_mode = {{ .Values.kmsCore.thresholdMode.decryptionMode | quote }}
 
     {{ if $.Values.kmsCore.thresholdMode.tls.enabled }}
     [threshold.tls]
@@ -65,23 +65,23 @@ data:
     cert.pem = {{ .Values.kmsCore.thresholdMode.tls.certificate.pem | toToml }}
     {{- end }}
     {{- if $.Values.kmsCore.nitroEnclave.enabled }}
-    {{- if .Values.kmsCore.thresholdMode.tls.trusted_releases }}
-    {{ range .Values.kmsCore.thresholdMode.tls.trusted_releases }}
-    [[threshold.tls.key.enclave.trusted_releases]]
+    {{- if .Values.kmsCore.thresholdMode.tls.trustedReleases }}
+    {{ range .Values.kmsCore.thresholdMode.tls.trustedReleases }}
+    [[threshold.tls.key.enclave.trustedReleases]]
     pcr0 = {{ .pcr0 | quote }}
     pcr1 = {{ .pcr1 | quote }}
     pcr2 = {{ .pcr2 | quote }}
     {{- end }}
     {{- end }}
     {{- else }}
-    {{- if .Values.kmsCore.thresholdMode.tls.private_key.path }}
-    key.path = {{ .Values.kmsCore.thresholdMode.tls.private_key.path | quote }}
+    {{- if .Values.kmsCore.thresholdMode.tls.privateKey.path }}
+    key.path = {{ .Values.kmsCore.thresholdMode.tls.privateKey.path | quote }}
     {{- else }}
-    key.pem = {{ .Values.kmsCore.thresholdMode.tls.private_key.pem | toToml }}
+    key.pem = {{ .Values.kmsCore.thresholdMode.tls.privateKey.path | toToml }}
     {{- end }}
     {{- end }}
     {{- end }}
-    
+
     {{- if .Values.kmsCore.thresholdMode.peersList }}
     {{ range .Values.kmsCore.thresholdMode.peersList }}
     [[threshold.peers]]
