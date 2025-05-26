@@ -1320,7 +1320,7 @@ impl Client {
             .to_classic_pbs_parameters();
 
         tracing::info!(
-            "User decryption response reconstruction with mode: {:?}",
+            "User decryption response reconstruction with mode: {:?}. n={num_parties}, t={degree}, #shares={amount_shares}",
             self.decryption_mode
         );
 
@@ -1333,16 +1333,24 @@ impl Client {
                     let mut decrypted_blocks = Vec::new();
                     for cur_block_shares in sharings {
                         // NOTE: this performs optimistic reconstruction
-                        if let Ok(Some(r)) = reconstruct_w_errors_sync(
+                        match reconstruct_w_errors_sync(
                             num_parties,
                             degree,
                             degree,
                             num_parties - amount_shares,
                             &cur_block_shares,
                         ) {
-                            decrypted_blocks.push(r);
-                        } else {
-                            return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
+                            Ok(Some(r)) => decrypted_blocks.push(r),
+                            Ok(None) => {
+                                return Err(anyhow_error_and_log(
+                                    format!("Not enough shares to reconstruct. n={num_parties}, t={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()),
+                                ));
+                            }
+                            Err(e) => {
+                                return Err(anyhow_error_and_log(format!(
+                                    "Error reconstructing all blocks: {e}. n={num_parties}, t={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()
+                                )));
+                            }
                         }
                     }
                     // extract plaintexts from decrypted blocks
@@ -1373,16 +1381,24 @@ impl Client {
 
                     for cur_block_shares in sharings {
                         // NOTE: this performs optimistic reconstruction
-                        if let Ok(Some(r)) = reconstruct_w_errors_sync(
+                        match reconstruct_w_errors_sync(
                             num_parties,
                             degree,
                             degree,
                             num_parties - amount_shares,
                             &cur_block_shares,
                         ) {
-                            decrypted_blocks.push(r);
-                        } else {
-                            return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
+                            Ok(Some(r)) => decrypted_blocks.push(r),
+                            Ok(None) => {
+                                return Err(anyhow_error_and_log(
+                                    format!("Not enough shares to reconstruct. n={num_parties}, t={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()),
+                                ));
+                            }
+                            Err(e) => {
+                                return Err(anyhow_error_and_log(format!(
+                                    "Error reconstructing all blocks: {e}. n={num_parties}, t={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()
+                                )));
+                            }
                         }
                     }
 
@@ -1527,16 +1543,24 @@ impl Client {
             let mut decrypted_blocks = Vec::new();
             for cur_block_shares in sharings {
                 // NOTE: this performs optimistic reconstruction
-                if let Ok(Some(r)) = reconstruct_w_errors_sync(
+                match reconstruct_w_errors_sync(
                     num_parties,
                     degree,
                     degree,
                     num_parties - amount_shares,
                     &cur_block_shares,
                 ) {
-                    decrypted_blocks.push(r);
-                } else {
-                    return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
+                    Ok(Some(r)) => decrypted_blocks.push(r),
+                    Ok(None) => {
+                        return Err(anyhow_error_and_log(
+                                    format!("Not enough shares to reconstruct. n={num_parties}, t={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()),
+                                ));
+                    }
+                    Err(e) => {
+                        return Err(anyhow_error_and_log(format!(
+                                    "Error reconstructing all blocks: {e}. n={num_parties}, t={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()
+                                )));
+                    }
                 }
             }
             out.push((fhe_type, packing_factor, decrypted_blocks))

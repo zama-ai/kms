@@ -248,7 +248,7 @@ where
     let num_heard_from = sharing.shares.len() + num_bots;
     //Make sure we have enough shares already to try and reconstrcut
     if degree + 2 * threshold < num_parties && num_heard_from > degree + 2 * threshold {
-        // TODO not this might panic
+        // TODO note this might panic
         let max_errs = threshold - num_bots;
         let opened = sharing.err_reconstruct(degree, max_errs)?;
         return Ok(Some(opened));
