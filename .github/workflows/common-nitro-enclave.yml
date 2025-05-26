@@ -168,7 +168,9 @@ jobs:
           file: ./docker/${{ inputs.working-directory}}/${{ inputs.docker-file-enclave }}
           push: ${{ inputs.push_image }}
           pull: false
-          tags: ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:${{ needs.determine-tag.outputs.docker_tag }},ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:latest
+          tags: |
+            ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:${{ needs.determine-tag.outputs.docker_tag }}
+            ghcr.io/zama-ai/${{ inputs.image-enclave-name }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: |
