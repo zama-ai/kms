@@ -36,19 +36,35 @@ pub struct ReleasePCRValues {
     pub pcr2: Vec<u8>,
 }
 
-/// Public key certificate, private key, allowed software hashes
-pub type BasicTLSConfig = (Pem, Pem, Option<Arc<Vec<ReleasePCRValues>>>);
+/// TLS identity before the peer list is known
+#[derive(Debug, Clone)]
+pub struct BasicTLSConfig {
+    // public key certificate
+    pub cert: Pem,
+    // private key
+    pub key: Pem,
+    // allowed software hashes
+    pub trusted_releases: Option<Arc<Vec<ReleasePCRValues>>>,
+    // are enclave images signed?
+    pub pcr8_expected: bool,
+}
 
-/// Public key certificate, private key, allowed software hashes, and
-/// additionally a map from party subject names to party CAs. This map needs to
-/// be built by `build_ca_certs_map` to have the keys equal to subject names by
-/// construction.
-pub type SendingServiceTLSConfig = (
-    Pem,
-    Pem,
-    HashMap<String, Pem>,
-    Option<Arc<Vec<ReleasePCRValues>>>,
-);
+/// TLS identity after the peer list is known
+#[derive(Debug, Clone)]
+pub struct SendingServiceTLSConfig {
+    // public key certificate
+    pub cert: Pem,
+    // private key
+    pub key: Pem,
+    // A map from party subject names to party CAs. This map needs to be built
+    // by `build_ca_certs_map` to have the keys equal to subject names by
+    // construction.
+    pub ca_certs: HashMap<String, Pem>,
+    // allowed software hashes
+    pub trusted_releases: Option<Arc<Vec<ReleasePCRValues>>>,
+    // are enclave images signed?
+    pub pcr8_expected: bool,
+}
 
 /// Our custom verifier for our custom mTLS certificates extended with AWS Nitro
 /// attestation documents. It doesn't reimplement normal X.509 certificate
@@ -57,16 +73,19 @@ pub type SendingServiceTLSConfig = (
 pub struct AttestedServerVerifier {
     verifier: Arc<dyn ServerCertVerifier>,
     release_pcrs: Arc<Vec<ReleasePCRValues>>,
+    pcr8_expected: bool,
 }
 
 impl AttestedServerVerifier {
     pub fn new(
         verifier: Arc<dyn ServerCertVerifier>,
         release_pcrs: Arc<Vec<ReleasePCRValues>>,
+        pcr8_expected: bool,
     ) -> Self {
         Self {
             verifier,
             release_pcrs,
+            pcr8_expected,
         }
     }
 }
@@ -97,6 +116,7 @@ impl ServerCertVerifier for AttestedServerVerifier {
         validate_wrapped_cert(
             &cert,
             &self.release_pcrs,
+            self.pcr8_expected,
             CertVerifier::Server(self.verifier.clone(), server_name, ocsp_response),
             intermediates,
             now,
@@ -135,12 +155,14 @@ pub struct AttestedClientVerifier {
     supported_algs: WebPkiSupportedAlgorithms,
     verifiers: HashMap<String, Arc<dyn ClientCertVerifier>>,
     release_pcrs: Option<Arc<Vec<ReleasePCRValues>>>,
+    pcr8_expected: bool,
 }
 
 impl AttestedClientVerifier {
     pub fn new(
         ca_certs: HashMap<String, Pem>,
         release_pcrs: Option<Arc<Vec<ReleasePCRValues>>>,
+        pcr8_expected: bool,
     ) -> anyhow::Result<Self> {
         let verifiers = ca_certs
             .iter()
@@ -172,6 +194,7 @@ impl AttestedClientVerifier {
             supported_algs,
             verifiers,
             release_pcrs,
+            pcr8_expected,
         })
     }
 
@@ -209,10 +232,12 @@ impl ClientCertVerifier for AttestedClientVerifier {
     ) -> Result<ClientCertVerified, Error> {
         let (_, cert) = parse_x509_certificate(end_entity.as_ref())
             .map_err(|e| Error::General(e.to_string()))?;
+        // if none of the trust roots has a subject name matching the client
+        // subject name, verification will fail
         let verifier = self.get_verifier_for_x509_cert(&cert)?;
 
         // check the enclave-generated certificate used for the TLS session as
-        // usual (however, we expect it to be self-signed)
+        // usual
         verifier.verify_client_cert(end_entity, intermediates, now)?;
 
         // check the bundled attestation document and EIF signing certificate
@@ -220,6 +245,7 @@ impl ClientCertVerifier for AttestedClientVerifier {
             validate_wrapped_cert(
                 &cert,
                 release_pcrs,
+                self.pcr8_expected,
                 CertVerifier::Client(verifier.clone()),
                 intermediates,
                 now,
@@ -268,19 +294,11 @@ pub enum CertVerified {
 fn validate_wrapped_cert(
     cert: &X509Certificate,
     trusted_releases: &[ReleasePCRValues],
+    pcr8_expected: bool,
     verifier: CertVerifier,
     intermediates: &[CertificateDer<'_>],
     now: UnixTime,
 ) -> anyhow::Result<()> {
-    // Self-signed certificates need to include the party certificate so the
-    // PCR8 value attestation can be verified
-    let Some(party_cert_bytes) = cert
-        .get_extension_unique(&oid_registry::OID_X509)
-        .map_err(|e| anyhow!("{e}"))?
-    else {
-        bail!("Bad certificate: original party certificate not present")
-    };
-
     // Self-signed certificates do not actually include AWS Nitro
     // attestation documents as a PKCS7 structure. We only reused
     // its OID because there is not one formally assigned to
@@ -317,9 +335,6 @@ fn validate_wrapped_cert(
     let Some(pcr2) = attestation_doc.pcrs.get(&2) else {
         bail!("Bad certificate: PCR2 value not present in attestation document")
     };
-    let Some(pcr8) = attestation_doc.pcrs.get(&8) else {
-        bail!("Bad certificate: PCR8 value not present in attestation document")
-    };
     if !trusted_releases.contains(&ReleasePCRValues {
         pcr0: pcr0.to_vec(),
         pcr1: pcr1.to_vec(),
@@ -332,31 +347,47 @@ fn validate_wrapped_cert(
             hex::encode(pcr2)
         )
     };
-    // check party certificate validity
-    match verifier {
-        CertVerifier::Client(v) => CertVerified::Client(v.verify_client_cert(
-            &CertificateDer::from_slice(party_cert_bytes.value),
-            intermediates,
-            now,
-        )?),
-        CertVerifier::Server(v, server_name, ocsp_response) => {
-            CertVerified::Server(v.verify_server_cert(
+    // If enclave images are expected to be signed, we need to check the
+    // attested PCR8 value against the bundled party certificate
+    if pcr8_expected {
+        let Some(pcr8) = attestation_doc.pcrs.get(&8) else {
+            bail!("Bad certificate: PCR8 value not present in attestation document")
+        };
+        // Self-signed certificates need to include the party certificate so the
+        // PCR8 value attestation can be verified
+        let Some(party_cert_bytes) = cert
+            .get_extension_unique(&oid_registry::OID_X509)
+            .map_err(|e| anyhow!("{e}"))?
+        else {
+            bail!("Bad certificate: original party certificate not present")
+        };
+        // check party certificate validity
+        match verifier {
+            CertVerifier::Client(v) => CertVerified::Client(v.verify_client_cert(
                 &CertificateDer::from_slice(party_cert_bytes.value),
                 intermediates,
-                server_name,
-                ocsp_response,
                 now,
-            )?)
+            )?),
+            CertVerifier::Server(v, server_name, ocsp_response) => {
+                CertVerified::Server(v.verify_server_cert(
+                    &CertificateDer::from_slice(party_cert_bytes.value),
+                    intermediates,
+                    server_name,
+                    ocsp_response,
+                    now,
+                )?)
+            }
+        };
+        // Check party certificate hash against the attested value. Note that the
+        // Nitro attestation document format uses SHA2-384 only (not SHA3).
+        let mut hasher = Sha384::new();
+        hasher.update(party_cert_bytes.value);
+        let party_cert_hash = hasher.finalize();
+        if party_cert_hash.as_slice() != pcr8.as_slice() {
+            bail!("Bad certificate: untrusted party certificate hash {} in attestation document, expected {}", hex::encode(party_cert_hash.as_slice()), hex::encode(pcr8.as_slice()))
         }
-    };
-    // Check party certificate hash against the attested value. Note that the
-    // Nitro attestation document format uses SHA2-384 only (not SHA3).
-    let mut hasher = Sha384::new();
-    hasher.update(party_cert_bytes.value);
-    let party_cert_hash = hasher.finalize();
-    if party_cert_hash.as_slice() != pcr8.as_slice() {
-        bail!("Bad certificate: untrusted party certificate hash {} in attestation document, expected {}", hex::encode(party_cert_hash.as_slice()), hex::encode(pcr8.as_slice()))
     }
+
     Ok(())
 }
 

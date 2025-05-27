@@ -68,6 +68,10 @@ impl StorageForText for FailingRamStorage {
     async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
         self.inner.store_text(text, url).await
     }
+
+    async fn read_text(&mut self, url: &Url) -> anyhow::Result<String> {
+        self.inner.read_text(url).await
+    }
 }
 
 #[cfg(test)]
@@ -172,6 +176,15 @@ impl StorageForText for RamStorage {
         self.internal_storage
             .insert(url.to_owned(), (data_id, data_type, serialized));
         Ok(())
+    }
+
+    async fn read_text(&mut self, url: &Url) -> anyhow::Result<String> {
+        let raw_data = match self.internal_storage.get(url) {
+            Some((_data_id, _data_type, raw_data)) => raw_data,
+            None => return Err(anyhow!("Could not decode data at url {}", url)),
+        };
+        String::from_utf8(raw_data.clone())
+            .map_err(|e| anyhow_error_and_log(e.utf8_error().to_string()))
     }
 }
 

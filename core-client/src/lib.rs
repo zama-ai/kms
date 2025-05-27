@@ -18,13 +18,13 @@ use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpoint
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::{KeyId, RequestId};
 use kms_lib::client::{Client, ParsedUserDecryptionRequest};
-use kms_lib::consts::{DEFAULT_PARAM, TEST_PARAM};
+use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
 use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
 use kms_lib::util::file_handling::{read_element, write_element};
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, load_crs_from_storage, load_pk_from_storage,
-    load_server_key_from_storage, EncryptionConfig, TestingPlaintext, SIGNING_KEY_ID,
+    load_server_key_from_storage, EncryptionConfig, TestingPlaintext,
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use kms_lib::DecryptionMode;

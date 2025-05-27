@@ -93,7 +93,7 @@ decryption_mode = "NoiseFloodSmall"
 # Paths to optional TLS certificate and private key in the PEM
 # encoding. Alternatively, multiline blocks with PEM-formatted content. This is
 # used to establish mutual authentication with other cores.
-[threshold.tls]
+[threshold.tls.manual]
 cert.path = "certs/cert_p1.pem"
 key.path = "certs/key_p1.pem"
 

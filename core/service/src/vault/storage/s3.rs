@@ -221,6 +221,15 @@ impl StorageForText for S3Storage {
 
         s3_put_blob(&self.s3_client, &bucket, &key, text.as_bytes().to_vec()).await
     }
+
+    async fn read_text(&mut self, url: &Url) -> anyhow::Result<String> {
+        let (bucket, key) = S3Storage::parse_url(url)?;
+
+        tracing::info!("Reading text from bucket {} under key {}", bucket, key);
+
+        String::from_utf8(s3_get_blob(&self.s3_client, &bucket, &key).await?)
+            .map_err(|e| anyhow_error_and_log(e.utf8_error().to_string()))
+    }
 }
 
 /// Accessing AWS S3 endpoints through a proxy might require rewriting the Host

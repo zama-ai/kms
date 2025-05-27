@@ -53,12 +53,11 @@ use wasm_bindgen::prelude::*;
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::engine::base::{compute_handle};
-        use crate::get_exactly_one;
         use crate::engine::base::DSEP_PUBDATA_CRS;
         use threshold_fhe::hashing::DomainSep;
         use crate::engine::traits::BaseKms;
         use crate::engine::base::BaseKmsStruct;
-        use crate::vault::storage::{read_all_data_versioned, Storage, StorageReader};
+        use crate::vault::storage::{read_all_data_versioned, Storage, StorageReader, crypto_material::{get_core_signing_key, get_client_verification_key}};
         use kms_grpc::kms::v1::{
             KeySetAddedInfo, CrsGenRequest, CrsGenResult, PublicDecryptionRequest,
             PublicDecryptionResponse, FheParameter, KeyGenPreprocRequest,
@@ -458,19 +457,10 @@ impl Client {
                 pks.push(new_pk);
             }
         }
-        let client_pk_map: HashMap<RequestId, PublicSigKey> =
-            read_all_data_versioned(&client_storage, &ClientDataType::VerfKey.to_string()).await?;
-        let client_pk = get_exactly_one(client_pk_map).inspect_err(|e| {
-            tracing::error!("client pk hashmap is not exactly 1: {}", e);
-        })?;
+        let client_pk = get_client_verification_key(&client_storage).await?;
         let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
 
-        let client_sk_map: HashMap<RequestId, PrivateSigKey> =
-            read_all_data_versioned(&client_storage, &ClientDataType::SigningKey.to_string())
-                .await?;
-        let client_sk = get_exactly_one(client_sk_map).inspect_err(|e| {
-            tracing::error!("client sk hashmap is not exactly 1: {}", e);
-        })?;
+        let client_sk = get_core_signing_key(&client_storage).await?;
 
         Ok(Client::new(
             pks,
@@ -1813,11 +1803,13 @@ pub mod test_tools {
     use super::*;
     use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
     use crate::engine::centralized::central_kms::RealCentralizedKms;
-    use crate::engine::threshold::service::threshold_server_init;
+    use crate::engine::threshold::service::new_real_threshold_kms;
     use crate::engine::{run_server, Shutdown};
     use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
     use crate::util::rate_limiter::RateLimiterConfig;
-    use crate::vault::storage::{file::FileStorage, Storage, StorageType};
+    use crate::vault::storage::{
+        crypto_material::get_core_signing_key, file::FileStorage, Storage, StorageType,
+    };
     use crate::{
         conf::{
             threshold::{PeerConf, ThresholdPartyConf},
@@ -1930,14 +1922,15 @@ pub mod test_tools {
                     core_to_core_net: None,
                     decryption_mode,
                 };
-
+                let sk = get_core_signing_key(&cur_priv_storage).await.unwrap();
                 // TODO pass in cert_paths for testing TLS
-                let server = threshold_server_init(
+                let server = new_real_threshold_kms(
                     threshold_party_config,
-                    mpc_listener,
                     cur_pub_storage,
                     cur_priv_storage,
                     None as Option<PrivS>,
+                    mpc_listener,
+                    sk,
                     None,
                     run_prss,
                     rl_conf,
@@ -2200,10 +2193,12 @@ pub mod test_tools {
             .pop()
             .unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel();
+        let sk = get_core_signing_key(&priv_storage).await.unwrap();
         let (kms, health_service) = RealCentralizedKms::new(
             pub_storage,
             priv_storage,
             None as Option<PrivS>,
+            sk,
             rate_limiter_conf,
         )
         .await

@@ -4,11 +4,10 @@ use conf_trace::telemetry::init_tracing;
 use core::fmt;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
-use kms_lib::util::key_setup::test_tools::SIGNING_KEY_ID;
 use kms_lib::{
     consts::{
         DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_CRS_ID_4P,
-        DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID, TEST_PARAM,
+        DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID, SIGNING_KEY_ID, TEST_PARAM,
     },
     cryptography::attestation::make_security_module,
     util::key_setup::{
@@ -126,6 +125,12 @@ enum Mode {
         /// is given.
         #[clap(long, default_value_t = 4)]
         num_parties: usize,
+
+        /// Set the subject in the issued TLS certificate, if
+        /// --signing-key-party-id is set, or the prefix for the subject in
+        /// certificates for all parties if not.
+        #[clap(long, default_value = "kms-party")]
+        tls_subject: String,
     },
 }
 
@@ -146,9 +151,11 @@ struct ThresholdCmdArgs<'a, PubS: Storage, PrivS: Storage> {
     show_existing: bool,
     signing_key_party_id: Option<usize>,
     num_parties: usize,
+    tls_subject: String,
 }
 
 impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         pub_storages: &'a mut [PubS],
         priv_storages: &'a mut [PrivS],
@@ -157,6 +164,7 @@ impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
         show_existing: bool,
         signing_key_party_id: Option<usize>,
         num_parties: usize,
+        tls_subject: String,
     ) -> anyhow::Result<Self> {
         if num_parties < 2 {
             anyhow::bail!("the number of parties should be larger or equal to 2");
@@ -178,6 +186,7 @@ impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
             show_existing,
             signing_key_party_id,
             num_parties,
+            tls_subject,
         })
     }
 }
@@ -256,6 +265,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Mode::Threshold {
             signing_key_party_id: _,
             num_parties: n,
+            tls_subject: _,
         } => n,
     };
     let mut pub_storages = Vec::with_capacity(amount_storages);
@@ -266,6 +276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Mode::Threshold {
                 signing_key_party_id: _,
                 num_parties: _,
+                tls_subject: _,
             } => Some(i),
         };
         pub_storages.push(
@@ -320,6 +331,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Mode::Threshold {
             signing_key_party_id,
             num_parties,
+            tls_subject,
         } => {
             let mut cmdargs = ThresholdCmdArgs::new(
                 &mut pub_storages,
@@ -333,6 +345,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     _ => None,
                 },
                 num_parties,
+                tls_subject,
             )?;
 
             if args.cmd == ConstructCommand::All {
@@ -472,11 +485,16 @@ async fn handle_threshold_cmd<PubS: StorageForText, PrivS: StorageForText>(
                 &SIGNING_KEY_ID,
                 args.deterministic,
                 match args.signing_key_party_id {
-                    Some(i) => ThresholdSigningKeyConfig::OneParty(i),
-                    None => ThresholdSigningKeyConfig::AllParties(args.num_parties),
+                    Some(i) => ThresholdSigningKeyConfig::OneParty(i, args.tls_subject.clone()),
+                    None => ThresholdSigningKeyConfig::AllParties(
+                        (1..=args.num_parties)
+                            .map(|i| format!("{}-{}", args.tls_subject, i))
+                            .collect(),
+                    ),
                 },
             )
             .await
+            .expect("Could not access storage")
             {
                 tracing::warn!(
                     "Threshold signing keys with ID {} already exist, skipping generation",
@@ -605,15 +623,11 @@ async fn process_signing_key_cmds<PubS: Storage, PrivS: Storage>(
 ) {
     process_cmd(
         pub_storage,
-        vec![&PubDataType::VerfKey],
-        req_id,
-        show_existing,
-        overwrite,
-    )
-    .await;
-    process_cmd(
-        pub_storage,
-        vec![&PubDataType::VerfAddress],
+        vec![
+            &PubDataType::VerfKey,
+            &PubDataType::VerfAddress,
+            &PubDataType::CACert,
+        ],
         req_id,
         show_existing,
         overwrite,

@@ -6,7 +6,7 @@ use crate::engine::base::{compute_handle, compute_info, DSEP_PUBDATA_CRS};
 use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
 use crate::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
 use crate::vault::storage::crypto_material::{
-    calculate_max_num_bits, check_data_exists, get_rng, get_signing_key, log_data_exists,
+    calculate_max_num_bits, check_data_exists, get_core_signing_key, get_rng, log_data_exists,
     log_storage_success,
 };
 use crate::vault::storage::{
@@ -14,8 +14,13 @@ use crate::vault::storage::{
     store_versioned_at_request_id, Storage, StorageForText, StorageReader, StorageType,
 };
 use itertools::Itertools;
+use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType, WrappedPublicKey};
 use kms_grpc::RequestId;
+use rcgen::{
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, KeyUsagePurpose,
+    PKCS_ECDSA_P256K1_SHA256,
+};
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::Seed;
@@ -25,6 +30,7 @@ use threshold_fhe::execution::{
     tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
     zk::ceremony::make_centralized_public_parameters,
 };
+use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
 
 pub type FhePublicKey = tfhe::CompactPublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
@@ -211,7 +217,7 @@ where
     }
 
     // Get signing key with proper error handling
-    let sk = match get_signing_key(priv_storage).await {
+    let sk = match get_core_signing_key(priv_storage).await {
         Ok(key) => key,
         Err(e) => {
             tracing::error!("Failed to get signing key: {}", e);
@@ -309,7 +315,7 @@ where
     }
 
     // Get signing key with proper error handling
-    let sk = match get_signing_key(priv_storage).await {
+    let sk = match get_core_signing_key(priv_storage).await {
         Ok(key) => key,
         Err(e) => {
             tracing::error!("Failed to get signing key: {}", e);
@@ -422,8 +428,10 @@ where
 }
 
 pub enum ThresholdSigningKeyConfig {
-    AllParties(usize),
-    OneParty(usize),
+    // distinguished names for all party
+    AllParties(Vec<String>),
+    // distinguished name for a specific party
+    OneParty(usize, String),
 }
 
 /// Generates signing and verification keys for _each_ of the servers
@@ -436,23 +444,25 @@ pub async fn ensure_threshold_server_signing_keys_exist<PubS, PrivS>(
     request_id: &RequestId,
     deterministic: bool,
     config: ThresholdSigningKeyConfig,
-) -> bool
+) -> anyhow::Result<bool>
 where
     PubS: StorageForText,
     PrivS: StorageForText,
 {
     let parties = match config {
-        ThresholdSigningKeyConfig::AllParties(amount) => (1..=amount).collect_vec(),
-        ThresholdSigningKeyConfig::OneParty(i) => std::iter::once(i).collect_vec(),
+        ThresholdSigningKeyConfig::AllParties(parties) => {
+            (1..=parties.len()).zip(parties.into_iter()).collect_vec()
+        }
+        ThresholdSigningKeyConfig::OneParty(i, subject) => {
+            std::iter::once((i, subject)).collect_vec()
+        }
     };
 
-    for i in parties {
+    for (i, subject) in parties {
         let mut rng = get_rng(deterministic, Some(i as u64));
         let temp: HashMap<RequestId, PrivateSigKey> =
             read_all_data_versioned(&priv_storages[i - 1], &PrivDataType::SigningKey.to_string())
-                .await
-                .unwrap();
-
+                .await?;
         if !temp.is_empty() {
             // If signing keys already exist, then do nothing
             log_data_exists(
@@ -466,15 +476,32 @@ where
 
         let (pk, sk) = gen_sig_keys(&mut rng);
 
-        // Store public verification key
+        // self-sign a CA certificate with the private signing key
+        let subject = subject.as_str();
+
+        let mut ca_cp = CertificateParams::new(vec![subject.to_string()])?;
+        ca_cp.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
+
+        let mut distinguished_name = DistinguishedName::new();
+        distinguished_name.push(DnType::CommonName, subject);
+        ca_cp.distinguished_name = distinguished_name;
+        ca_cp.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+        let sk_der = sk.sk().to_pkcs8_der()?;
+        let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
+            &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
+            &PKCS_ECDSA_P256K1_SHA256,
+        )?;
+
+        let ca_cert = ca_cp.self_signed(&ca_keypair)?;
+
+        // store public verification key
         store_versioned_at_request_id(
             &mut pub_storages[i - 1],
             request_id,
             &pk,
             &PubDataType::VerfKey.to_string(),
         )
-        .await
-        .unwrap();
+        .await?;
         log_storage_success(
             request_id,
             pub_storages[i - 1].info(),
@@ -492,8 +519,7 @@ where
             &ethereum_address.to_string(),
             &PubDataType::VerfAddress.to_string(),
         )
-        .await
-        .unwrap();
+        .await?;
         tracing::info!(
             "Successfully stored ethereum address {} under the handle {} in storage \"{}\"",
             ethereum_address,
@@ -501,15 +527,29 @@ where
             pub_storages[i - 1].info()
         );
 
-        // Store private signing key
+        // store self-signed CA certificate
+        store_text_at_request_id(
+            &mut pub_storages[i - 1],
+            request_id,
+            &ca_cert.pem(),
+            &PubDataType::CACert.to_string(),
+        )
+        .await?;
+        tracing::info!(
+            "Successfully stored CA certificate {} under the handle {} in storage \"{}\"",
+            hex::encode(ca_cp.key_identifier(&ca_keypair)),
+            request_id,
+            pub_storages[i - 1].info()
+        );
+
+        // store private signing key
         store_versioned_at_request_id(
             &mut priv_storages[i - 1],
             request_id,
             &sk,
             &PrivDataType::SigningKey.to_string(),
         )
-        .await
-        .unwrap();
+        .await?;
         log_storage_success(
             request_id,
             priv_storages[i - 1].info(),
@@ -518,7 +558,7 @@ where
             true,
         );
     }
-    true
+    Ok(true)
 }
 /// Generates threshold key shares, meta data and public keys for an FHE keyset
 /// and stores them in the storages if they don't already exist under [key_id].
@@ -577,7 +617,7 @@ where
     // Collect signing keys from all private storages with proper error handling
     let mut signing_keys = Vec::new();
     for cur_storage in priv_storages.iter() {
-        match get_signing_key(cur_storage).await {
+        match get_core_signing_key(cur_storage).await {
             Ok(key) => signing_keys.push(key),
             Err(e) => {
                 tracing::error!("Failed to get signing key: {}", e);
@@ -716,7 +756,7 @@ where
     // Collect signing keys from all private storages with proper error handling
     let mut signing_keys = Vec::new();
     for cur_storage in priv_storages.iter() {
-        match get_signing_key(cur_storage).await {
+        match get_core_signing_key(cur_storage).await {
             Ok(key) => signing_keys.push(key),
             Err(e) => {
                 tracing::error!("Failed to get signing key: {}", e);

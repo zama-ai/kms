@@ -59,7 +59,12 @@ prost-build = "=0.13.5"
 prost-types = "=0.13.5"
 rand = "=0.8.5"
 rayon = "=1.10.0"
-rcgen = { version = "=0.13.2" }
+rcgen = { version = "=0.14.0", default-features = false, features = [
+      "aws_lc_rs",
+      "crypto",
+      "pem",
+      "x509-parser",
+] }
 reqwest = { version = "=0.12.15", default-features = false, features = [
     "json",
     "rustls-tls",
@@ -131,3 +136,6 @@ lto = "fat"
 inherits = "release"
 # but set LTO to the default (off instead of fat)
 lto = "off"
+
+[patch.crates-io]
+rcgen = { git = 'https://github.com/mkmks/rcgen.git', branch = 'k256' }

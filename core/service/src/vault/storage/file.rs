@@ -186,6 +186,17 @@ impl StorageForText for FileStorage {
         })?;
         Ok(())
     }
+
+    async fn read_text(&mut self, url: &Url) -> anyhow::Result<String> {
+        let url_path = url_to_pathbuf(url);
+        tokio::fs::read_to_string(
+            url_path
+                .to_str()
+                .ok_or_else(|| anyhow!("Could not convert path to string"))?,
+        )
+        .await
+        .map_err(|e| anyhow_error_and_log(format!("Could not read from URL {}: {}", url, e)))
+    }
 }
 
 #[tonic::async_trait]

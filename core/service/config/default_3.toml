@@ -29,7 +29,7 @@ num_sessions_preproc = 2
 
 decryption_mode = "NoiseFloodSmall"
 
-[threshold.tls]
+[threshold.tls.manual]
 cert.path = "certs/cert_p3.pem"
 key.path = "certs/key_p3.pem"
 

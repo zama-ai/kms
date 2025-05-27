@@ -76,4 +76,7 @@ impl StorageForText for Vault {
     async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
         self.storage.store_text(text, url).await
     }
+    async fn read_text(&mut self, url: &Url) -> anyhow::Result<String> {
+        self.storage.read_text(url).await
+    }
 }

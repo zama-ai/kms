@@ -1,3 +1,4 @@
+use crate::anyhow_error_and_log;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::decompression;
@@ -18,9 +19,7 @@ use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_data_versioned,
     read_pk_at_request_id,
 };
-use crate::{anyhow_error_and_log, get_exactly_one};
 use aes_prng::AesRng;
-use k256::ecdsa::SigningKey;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::KeySetAddedInfo;
 #[cfg(feature = "non-wasm")]
@@ -772,22 +771,9 @@ impl<
         public_storage: PubS,
         private_storage: PrivS,
         backup_storage: Option<BackS>,
+        sk: PrivateSigKey,
         rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> anyhow::Result<(Self, HealthServer<impl Health>)> {
-        let sks: HashMap<RequestId, PrivateSigKey> =
-            read_all_data_versioned(&private_storage, &PrivDataType::SigningKey.to_string())
-                .await?;
-        let sk = get_exactly_one(sks).inspect_err(|_e| {
-            tracing::error!("signing key hashmap is not exactly 1");
-        })?;
-
-        // compute corresponding public key and derive address from private sig key
-        let pk = SigningKey::verifying_key(sk.sk());
-        tracing::info!(
-            "Public address is {}",
-            alloy_signer::utils::public_key_to_address(pk)
-        );
-
         let key_info: HashMap<RequestId, KmsFheKeyHandles> =
             read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string())
                 .await?;
@@ -1188,6 +1174,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap(),
                 None as Option<RamStorage>,
+                keys.centralized_kms_keys.sig_sk.clone(),
                 None,
             )
             .await
@@ -1353,6 +1340,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap(),
                 None as Option<RamStorage>,
+                keys.centralized_kms_keys.sig_sk.clone(),
                 None,
             )
             .await
@@ -1460,6 +1448,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap(),
                 None as Option<RamStorage>,
+                keys.centralized_kms_keys.sig_sk.clone(),
                 None,
             )
             .await
@@ -1484,6 +1473,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap(),
                 None as Option<RamStorage>,
+                keys.centralized_kms_keys.sig_sk.clone(),
                 None,
             )
             .await

@@ -4,17 +4,20 @@
 //! storage management, and common operations needed by the cryptographic material
 //! storage system.
 
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use crate::{
     anyhow_error_and_warn_log,
+    client::ClientDataType,
     vault::storage::{read_all_data_versioned, Storage},
 };
 use aes_prng::AesRng;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::RequestId;
 use rand::SeedableRng;
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::fmt::Display;
+use tfhe::{named::Named, Unversionize};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::zk::ceremony::max_num_messages;
 
@@ -213,21 +216,27 @@ pub fn calculate_max_num_bits(dkg_params: &DKGParams) -> usize {
     }
 }
 
-/// Retrieves the signing key from private storage.
+/// Generalizes `get_core_signing_key`, `get_client_verification_key` and
+/// `get_core_ca_cert`. Can be used to implement a getter for any per-entity
+/// (core or client) data.
 ///
 /// # Arguments
-/// * `priv_storage` - The private storage backend containing the signing key
+/// * `storage` - The storage backend containing the per-entity data, such as signing keys, representable as `T`
+/// * `storage_type` - The type tag for the per-entity data used in storage URLs (one of `ClientDataType`, `PrivDataType`, `PubDataType`)
 ///
 /// # Returns
-/// The `PrivateSigKey` if found and valid, or an error if:
+/// The `T` value if found and valid, or an error if:
 /// - The key data cannot be read from storage
 /// - No key or multiple keys are found when exactly one is expected
 ///
 /// # Errors
 /// Returns an error if the storage operation fails, no key is found, or multiple keys are found.
-pub async fn get_signing_key<S: Storage>(priv_storage: &S) -> anyhow::Result<PrivateSigKey> {
-    let mut sk_map: HashMap<RequestId, PrivateSigKey> =
-        read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string())
+async fn get_unique<S: Storage, T: DeserializeOwned + Unversionize + Named + Send, U: Display>(
+    storage: &S,
+    storage_type: U,
+) -> anyhow::Result<T> {
+    let mut sk_map: HashMap<RequestId, T> =
+        read_all_data_versioned(storage, &storage_type.to_string())
             .await
             .map_err(|e| {
                 anyhow_error_and_warn_log(format!("Failed to read signing key data: {}", e))
@@ -236,7 +245,7 @@ pub async fn get_signing_key<S: Storage>(priv_storage: &S) -> anyhow::Result<Pri
     if sk_map.values().len() != 1 {
         return Err(anyhow_error_and_warn_log(format!(
             "Server signing key map should contain exactly one entry, but contains {} entries for storage \"{}\"",
-            sk_map.values().len(), priv_storage.info()
+            sk_map.values().len(), storage.info()
         )));
     }
 
@@ -248,4 +257,14 @@ pub async fn get_signing_key<S: Storage>(priv_storage: &S) -> anyhow::Result<Pri
     sk_map
         .remove(&req_id)
         .ok_or_else(|| anyhow_error_and_warn_log("Failed to remove key from map".to_string()))
+}
+
+pub async fn get_core_signing_key<S: Storage>(priv_storage: &S) -> anyhow::Result<PrivateSigKey> {
+    get_unique::<S, PrivateSigKey, PrivDataType>(priv_storage, PrivDataType::SigningKey).await
+}
+
+pub async fn get_client_verification_key<S: Storage>(
+    priv_storage: &S,
+) -> anyhow::Result<PublicSigKey> {
+    get_unique::<S, PublicSigKey, ClientDataType>(priv_storage, ClientDataType::VerfKey).await
 }

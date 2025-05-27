@@ -30,7 +30,7 @@ num_sessions_preproc = 2
 
 decryption_mode = "NoiseFloodSmall"
 
-[threshold.tls]
+[threshold.tls.manual]
 cert.path = "certs/cert_dev-kms-core-1.pem"
 key.path = "certs/key_dev-kms-core-1.pem"
 

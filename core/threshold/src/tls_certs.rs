@@ -102,7 +102,10 @@ async fn write_bytes<S: AsRef<std::ffi::OsStr> + ?Sized, B: AsRef<[u8]>>(
 }
 
 /// create the keypair and self-signed certificate for the CA identified by the given name
-fn create_ca_cert(ca_name: &str, is_ca: &IsCa) -> anyhow::Result<(KeyPair, Certificate)> {
+fn create_ca_cert(
+    ca_name: &str,
+    is_ca: &IsCa,
+) -> anyhow::Result<(KeyPair, Certificate, CertificateParams)> {
     validate_ca_name(ca_name)?;
     let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
     let mut cp = CertificateParams::new(vec![
@@ -121,7 +124,7 @@ fn create_ca_cert(ca_name: &str, is_ca: &IsCa) -> anyhow::Result<(KeyPair, Certi
     cp.distinguished_name = distinguished_name;
 
     // set CA cert CA flag
-    cp.is_ca = is_ca.clone();
+    cp.is_ca = *is_ca;
 
     // set CA cert Key Usage Purposes
     cp.key_usages = vec![
@@ -139,8 +142,9 @@ fn create_ca_cert(ca_name: &str, is_ca: &IsCa) -> anyhow::Result<(KeyPair, Certi
     ];
 
     // self-sign cert with CA key
+    tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
     let cert = cp.self_signed(&keypair)?;
-    Ok((keypair, cert))
+    Ok((keypair, cert, cp))
 }
 
 /// create a keypair and certificate for each of the `num_cores`, signed by the given CA
@@ -148,7 +152,7 @@ fn create_core_certs(
     ca_name: &str,
     num_cores: usize,
     ca_keypair: &KeyPair,
-    ca_cert: &Certificate,
+    ca_cert_params: &CertificateParams,
 ) -> anyhow::Result<HashMap<usize, (KeyPair, Certificate)>> {
     let core_cert_bundle: HashMap<usize, (KeyPair, Certificate)> = (1..=num_cores)
         .map(|i: usize| {
@@ -184,7 +188,10 @@ fn create_core_certs(
                 ExtendedKeyUsagePurpose::ClientAuth,
             ];
 
-            let core_cert = cp.signed_by(&core_keypair, ca_cert, ca_keypair).unwrap();
+            tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
+            let core_cert = cp
+                .signed_by(&core_keypair, ca_cert_params, ca_keypair)
+                .unwrap();
             (i, (core_keypair, core_cert))
         })
         .collect();
@@ -200,10 +207,6 @@ async fn write_certs_and_keys(
     keypair: &KeyPair,
     file_type: CertFileType,
 ) -> anyhow::Result<()> {
-    tracing::info!(
-        "Generating keys and cert for {:?}",
-        cert.params().subject_alt_names[0]
-    );
     tracing::info!("{}", cert.pem());
     tracing::info!("{}", keypair.serialize_pem());
 
@@ -249,7 +252,7 @@ pub async fn entry_point() -> anyhow::Result<()> {
 
     let mut all_certs = vec![];
     for ca_name in ca_set {
-        let (ca_keypair, ca_cert) = create_ca_cert(&ca_name, &is_ca)?;
+        let (ca_keypair, ca_cert, ca_cert_params) = create_ca_cert(&ca_name, &is_ca)?;
 
         write_certs_and_keys(
             &args.output_dir,
@@ -262,7 +265,8 @@ pub async fn entry_point() -> anyhow::Result<()> {
 
         // only generate core certs, if specifically desired (currently not the default)
         if args.num_cores > 0 {
-            let core_certs = create_core_certs(&ca_name, args.num_cores, &ca_keypair, &ca_cert)?;
+            let core_certs =
+                create_core_certs(&ca_name, args.num_cores, &ca_keypair, &ca_cert_params)?;
 
             // write all core keypairs and certificates to disk
             for (core_id, (core_keypair, core_cert)) in core_certs.iter() {
@@ -322,9 +326,9 @@ mod tests {
     fn test_cert_chain() {
         let ca_name = "party.kms.zama.ai";
         let is_ca = IsCa::Ca(Constrained(1));
-        let (ca_keypair, ca_cert) = create_ca_cert(ca_name, &is_ca).unwrap();
+        let (ca_keypair, ca_cert, ca_cert_params) = create_ca_cert(ca_name, &is_ca).unwrap();
 
-        let core_certs = create_core_certs(ca_name, 2, &ca_keypair, &ca_cert).unwrap();
+        let core_certs = create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params).unwrap();
 
         // check that we can import the CA cert into the trust store
         let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
@@ -332,7 +336,8 @@ mod tests {
         root_store.add(cc).unwrap();
 
         // create another CA cert, that did not sign the core certs for negative testing
-        let (_ca_keypair_wrong, ca_cert_wrong) = create_ca_cert(ca_name, &is_ca).unwrap();
+        let (_ca_keypair_wrong, ca_cert_wrong, _ca_cert_params_wrong) =
+            create_ca_cert(ca_name, &is_ca).unwrap();
 
         // check all core certs
         for c in core_certs {
@@ -354,7 +359,7 @@ mod tests {
         let ca_name = "p1.kms.zama.ai";
         let is_ca = IsCa::NoCa;
 
-        let (_ca_keypair, ca_cert) = create_ca_cert(ca_name, &is_ca).unwrap();
+        let (_ca_keypair, ca_cert, _ca_cert_params) = create_ca_cert(ca_name, &is_ca).unwrap();
 
         // check that we can import the CA cert into the trust store
         let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
@@ -362,7 +367,8 @@ mod tests {
         root_store.add(cc).unwrap();
 
         // create another CA cert, that did not sign the core certs for negative testing
-        let (_ca_keypair_wrong, ca_cert_wrong) = create_ca_cert(ca_name, &is_ca).unwrap();
+        let (_ca_keypair_wrong, ca_cert_wrong, _ca_cert_params_wrong) =
+            create_ca_cert(ca_name, &is_ca).unwrap();
 
         let verif = signed_verify(&ca_cert, &ca_cert);
 

@@ -70,6 +70,8 @@ pub trait Storage: StorageReader {
 pub trait StorageForText: Storage {
     /// Store the given `text` at the given `url`
     async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()>;
+    /// Read the given `text` from the given `url`
+    async fn read_text(&mut self, url: &Url) -> anyhow::Result<String>;
 }
 
 /// Store some data at a location defined by `request_id` and `data_type`.
@@ -108,6 +110,22 @@ pub async fn store_text_at_request_id<S: StorageForText>(
     storage.store_text(data, &url).await.map_err(|e| {
         anyhow_error_and_log(format!(
             "Could not store data with ID {} and type {}: {}",
+            request_id, data_type, e
+        ))
+    })
+}
+
+// Helper method for reading text under a request ID.
+// An error will be returned if the data already exists.
+pub async fn read_text_at_request_id<S: StorageForText>(
+    storage: &mut S,
+    request_id: &RequestId,
+    data_type: &str,
+) -> anyhow::Result<String> {
+    let url = storage.compute_url(&request_id.to_string(), data_type)?;
+    storage.read_text(&url).await.map_err(|e| {
+        anyhow_error_and_log(format!(
+            "Could not read data with ID {} and type {}: {}",
             request_id, data_type, e
         ))
     })
@@ -245,10 +263,6 @@ pub async fn read_all_data_versioned<
     let url_map = storage.all_urls(data_type).await?;
     let mut res = HashMap::with_capacity(url_map.len());
     for (data_ptr, url) in url_map.iter() {
-        let data: T = storage
-            .read_data(url)
-            .await
-            .map_err(|e| anyhow!("reading failed on url {url}: {e}"))?;
         let req_id: RequestId = data_ptr.try_into()?;
         if !req_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
@@ -256,6 +270,10 @@ pub async fn read_all_data_versioned<
                 data_ptr
             )));
         }
+        let data: T = storage
+            .read_data(url)
+            .await
+            .map_err(|e| anyhow!("reading failed on url {url}: {e}"))?;
         res.insert(req_id, data);
     }
     Ok(res)
@@ -379,6 +397,14 @@ impl StorageForText for StorageProxy {
             StorageProxy::File(s) => s.store_text(text, url).await,
             StorageProxy::Ram(s) => s.store_text(text, url).await,
             StorageProxy::S3(s) => s.store_text(text, url).await,
+        }
+    }
+
+    async fn read_text(&mut self, url: &Url) -> anyhow::Result<String> {
+        match &mut self {
+            StorageProxy::File(s) => s.read_text(url).await,
+            StorageProxy::Ram(s) => s.read_text(url).await,
+            StorageProxy::S3(s) => s.read_text(url).await,
         }
     }
 }

@@ -86,7 +86,13 @@ impl CertificatePaths {
                     .map_err(|e| anyhow::anyhow!("Could not read CA certificates: {e}"))
             },
         ))?;
-        Ok((cert, key, ca_certs, None))
+        Ok(SendingServiceTLSConfig {
+            cert,
+            key,
+            ca_certs,
+            trusted_releases: None,
+            pcr8_expected: false,
+        })
     }
 
     pub fn get_flattened_ca_list(&self) -> anyhow::Result<tonic::transport::Certificate> {

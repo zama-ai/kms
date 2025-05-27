@@ -1,6 +1,7 @@
 use clap::Parser;
 use kms_core_client::*;
-use kms_lib::util::key_setup::{ensure_client_keys_exist, test_tools::SIGNING_KEY_ID};
+use kms_lib::consts::SIGNING_KEY_ID;
+use kms_lib::util::key_setup::ensure_client_keys_exist;
 use std::path::Path;
 
 // CLI

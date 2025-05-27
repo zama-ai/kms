@@ -1,4 +1,3 @@
-use crate::engine::base::derive_request_id;
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
@@ -23,13 +22,6 @@ use tfhe::{
     HlExpandable, ServerKey, Unversionize, Versionize,
 };
 use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
-
-lazy_static::lazy_static! {
-    // The static ID we will use for the signing key for each of the MPC parties.
-    // We do so, since there is ever only one conceptual signing key per party (at least for now).
-    // This is a bit hackish, but it works for now.
-    pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
-}
 
 fn enc_and_serialize_ctxt<M, T>(
     msg: M,
@@ -487,10 +479,9 @@ pub async fn purge(
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod setup {
-    use super::SIGNING_KEY_ID;
     use crate::consts::{
-        TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_13P, TEST_THRESHOLD_KEY_ID_10P,
-        TEST_THRESHOLD_KEY_ID_13P,
+        SIGNING_KEY_ID, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_13P,
+        TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_13P,
     };
     use crate::util::key_setup::{
         ensure_central_crs_exists, ensure_central_keys_exist, ensure_client_keys_exist,
@@ -647,12 +638,16 @@ pub(crate) mod setup {
                 .push(FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap());
         }
 
-        ensure_threshold_server_signing_keys_exist(
+        let _ = ensure_threshold_server_signing_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
             &SIGNING_KEY_ID,
             true,
-            ThresholdSigningKeyConfig::AllParties(amount_parties),
+            ThresholdSigningKeyConfig::AllParties(
+                (1..=amount_parties)
+                    .map(|i| format!("party-{}", i))
+                    .collect(),
+            ),
         )
         .await;
         ensure_threshold_keys_exist(
@@ -683,6 +678,7 @@ pub(crate) mod setup {
 // because we don't want it to have the "testing" feature
 #[tokio::test]
 async fn test_purge() {
+    use crate::consts::SIGNING_KEY_ID;
     use itertools::Itertools;
     use kms_grpc::rpc_types::PrivDataType;
 

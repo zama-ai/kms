@@ -2,7 +2,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 // === External Crates ===
-use k256::ecdsa::SigningKey;
 use kms_grpc::{
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
@@ -14,17 +13,12 @@ use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
     execution::{
-        endpoints::{
-            decryption::DecryptionMode,
-            keygen::{FhePubKeySet, PrivateKeySet},
-        },
-        online::preprocessing::{
-            create_memory_factory, create_redis_factory, DKGPreprocessing, PreprocessorFactory,
-        },
+        endpoints::keygen::{FhePubKeySet, PrivateKeySet},
+        online::preprocessing::{create_memory_factory, create_redis_factory, DKGPreprocessing},
         runtime::party::{Role, RoleAssignment},
     },
     networking::{
-        grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager, GrpcServer},
+        grpc::{GrpcNetworkingManager, GrpcServer},
         tls::{
             build_ca_certs_map, AttestedClientVerifier, BasicTLSConfig, SendingServiceTLSConfig,
         },
@@ -41,10 +35,7 @@ use tokio_rustls::rustls::{
 };
 use tokio_util::task::TaskTracker;
 use tonic::transport::{server::TcpIncoming, Server};
-use tonic_health::{
-    pb::health_server::{Health, HealthServer},
-    server::HealthReporter,
-};
+use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_tls::rustls::TlsIncoming;
 
 // === Internal Crate ===
@@ -58,7 +49,7 @@ use crate::{
         prepare_shutdown_signals,
         threshold::generic::GenericKms,
     },
-    get_exactly_one, tonic_some_or_err,
+    tonic_some_or_err,
     util::{
         meta_store::MetaStore,
         rate_limiter::{RateLimiter, RateLimiterConfig},
@@ -79,86 +70,6 @@ use super::{
 // === Insecure Feature-Specific Imports ===
 #[cfg(feature = "insecure")]
 use super::{crs_generator::RealInsecureCrsGenerator, key_generator::RealInsecureKeyGenerator};
-
-/// Initialize a threshold KMS server using the DDec initialization protocol.
-/// This MUST be done before the server is started.
-///
-/// # Arguments
-///
-/// * `config` - Threshold configuration.
-///
-/// * `public_storage` - Abstract public storage.
-///
-/// * `private_storage` - Abstract private storage for storing sensitive information.
-///
-/// * `run_prss` - If this is true, we execute a PRSS setup regardless of whether it already exists in the storage.
-///   Otherwise, the setup must be done out of band by calling the init
-///   GRPC endpoint, or using the kms-init binary.
-#[allow(clippy::too_many_arguments)]
-pub async fn threshold_server_init<
-    PubS: Storage + Sync + Send + 'static,
-    PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
-    F: std::future::Future<Output = ()> + Send + 'static,
->(
-    config: ThresholdPartyConf,
-    tcp_listener: TcpListener,
-    public_storage: PubS,
-    private_storage: PrivS,
-    backup_storage: Option<BackS>,
-    tls_identity: Option<BasicTLSConfig>,
-    run_prss: bool,
-    rate_limiter_conf: Option<RateLimiterConfig>,
-    shutdown_signal: F,
-) -> anyhow::Result<(
-    RealThresholdKms<PubS, PrivS, BackS>,
-    HealthServer<impl Health>,
-)> {
-    //If no RedisConf is provided, we just use in-memory storage for the preprocessing buckets.
-    //NOTE: This should probably only be allowed for testing
-    let factory = match config.preproc_redis {
-        None => create_memory_factory(),
-        Some(conf) => create_redis_factory(format!("PARTY_{}", config.my_id), &conf),
-    };
-    let num_sessions_preproc = if let Some(x) = config.num_sessions_preproc {
-        if x < MINIMUM_SESSIONS_PREPROC {
-            MINIMUM_SESSIONS_PREPROC
-        } else {
-            x
-        }
-    } else {
-        MINIMUM_SESSIONS_PREPROC
-    };
-
-    let (health_reporter, health_service) = tonic_health::server::health_reporter();
-    let kms = new_real_threshold_kms(
-        config.threshold,
-        config.dec_capacity,
-        config.min_dec_cache,
-        tcp_listener,
-        config.my_id,
-        factory,
-        num_sessions_preproc,
-        config.peers,
-        public_storage,
-        private_storage,
-        backup_storage,
-        tls_identity,
-        config.core_to_core_net,
-        config.decryption_mode,
-        run_prss,
-        rate_limiter_conf,
-        health_reporter,
-        shutdown_signal,
-    )
-    .await?;
-
-    tracing::info!(
-        "Initialization done! Starting threshold KMS server for party {} ...",
-        config.my_id
-    );
-    Ok((kms, health_service))
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum ThresholdFheKeysVersioned {
@@ -244,50 +155,27 @@ pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
 >;
 
 #[allow(clippy::too_many_arguments)]
-async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
-    threshold: u8,
-    dec_capacity: usize,
-    min_dec_cache: usize,
-    tcp_listener: TcpListener,
-    my_id: usize,
-    preproc_factory: Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
-    num_sessions_preproc: u16,
-    peer_configs: Vec<PeerConf>,
+pub async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
+    config: ThresholdPartyConf,
     public_storage: PubS,
     private_storage: PrivS,
     backup_storage: Option<BackS>,
+    mpc_listener: TcpListener,
+    sk: PrivateSigKey,
     tls_identity: Option<BasicTLSConfig>,
-    core_to_core_net_conf: Option<CoreToCoreNetworkConfig>,
-    decryption_mode: DecryptionMode,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
-    core_service_health_reporter: HealthReporter,
     shutdown_signal: F,
-) -> anyhow::Result<RealThresholdKms<PubS, PrivS, BackS>>
+) -> anyhow::Result<(
+    RealThresholdKms<PubS, PrivS, BackS>,
+    HealthServer<impl Health>,
+)>
 where
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
     BackS: Storage + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
-    let local_addr = tcp_listener.local_addr()?;
-    tracing::info!(
-        "Starting threshold KMS Server. Party ID {my_id}, listening for MPC communication on {:?}...",local_addr
-    );
-
-    let sks: HashMap<RequestId, PrivateSigKey> =
-        read_all_data_versioned(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
-    let sk = get_exactly_one(sks).inspect_err(|e| {
-        tracing::error!("signing key hashmap is not exactly 1, {}", e);
-    })?;
-
-    // compute corresponding public key and derive address from private sig key
-    let pk = SigningKey::verifying_key(sk.sk());
-    tracing::info!(
-        "Public ethereum address is {}",
-        alloy_signer::utils::public_key_to_address(pk)
-    );
-
     // load keys from storage
     let key_info_versioned: HashMap<RequestId, ThresholdFheKeys> =
         read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
@@ -304,34 +192,44 @@ where
     let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
         read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
-    let role_assignments: RoleAssignment = peer_configs
+    // set up the MPC service
+    let role_assignments: RoleAssignment = config
+        .peers
         .clone()
         .into_iter()
         .map(|peer_config| peer_config.into_role_identity())
         .collect();
 
     let own_identity = tonic_some_or_err(
-        role_assignments.get(&Role::indexed_by_one(my_id)),
+        role_assignments.get(&Role::indexed_by_one(config.my_id)),
         "Could not find my own identity".to_string(),
     )?;
+    let mpc_socket_addr = mpc_listener.local_addr()?;
 
     // We put the party CA certificates into a hashmap keyed by party addresses
     // to be able to limit trust anchors to only one CA certificate both on
     // client and server.
-    let tls_certs = extract_tls_certs(tls_identity, &peer_configs).await?;
+    let tls_certs = extract_tls_certs(tls_identity, &config.peers).await?;
 
     // We have to construct a rustls config ourselves instead of using the
     // wrapper from tonic::transport because we need to provide our own
     // certificate verifier that can also validate bundled attestation
     // documents.
     let tls_config = match tls_certs.clone() {
-        Some((cert, key, ca_certs, trusted_releases)) => {
+        Some(SendingServiceTLSConfig {
+            cert,
+            key,
+            ca_certs,
+            trusted_releases,
+            pcr8_expected,
+        }) => {
             let cert_chain =
                 vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()];
             let key_der = PrivateKeyDer::try_from(key.contents.as_slice())
                 .map_err(|e| anyhow_error_and_log(e.to_string()))?
                 .clone_key();
-            let client_verifier = AttestedClientVerifier::new(ca_certs, trusted_releases.clone())?;
+            let client_verifier =
+                AttestedClientVerifier::new(ca_certs, trusted_releases.clone(), pcr8_expected)?;
 
             match trusted_releases {
                 Some(_) => tracing::info!("Creating server with TLS and AWS Nitro attestation"),
@@ -357,7 +255,7 @@ where
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         own_identity.to_owned(),
         tls_certs,
-        core_to_core_net_conf,
+        config.core_to_core_net,
     )?));
     let manager_clone = Arc::clone(&networking_manager);
     let networking_server = networking_manager.write().await.new_server();
@@ -373,7 +271,7 @@ where
     tracing::info!(
         "Starting core-to-core server for identity {} on address {:?}.",
         own_identity,
-        local_addr
+        mpc_socket_addr
     );
 
     let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
@@ -400,7 +298,7 @@ where
             // That is, not the threshold KMS server itself which picks up requests from the blockchain.
             tracing::info!(
                 "Starting graceful shutdown of core/threshold {}",
-                local_addr
+                mpc_socket_addr
             );
             threshold_health_reporter
                 .set_not_serving::<GrpcServer>()
@@ -411,7 +309,7 @@ where
         // to use arbitrary rustls configs until tonic::transport becomes a
         // separate crate from tonic (whose maintainers don't want to make its
         // API dependent on rustls)
-        let tcp_incoming = TcpIncoming::from(tcp_listener);
+        let tcp_incoming = TcpIncoming::from(mpc_listener);
         match tls_config {
             Some(tls_config) => {
                 router
@@ -430,15 +328,33 @@ where
         .map_err(|e| {
             anyhow_error_and_log(format!(
                 "Failed to launch ddec server on {} with error: {:?}",
-                local_addr, e
+                mpc_socket_addr, e
             ))
         })?;
         tracing::info!(
             "core/threshold on {} shutdown completed successfully",
-            local_addr
+            mpc_socket_addr
         );
         Ok(())
     });
+
+    // If no RedisConf is provided, we just use in-memory storage for the
+    // preprocessing. Note: This is only allowed for testing.
+    let preproc_factory = match config.preproc_redis {
+        None => {
+            if cfg!(feature = "insecure") || cfg!(feature = "testing") {
+                create_memory_factory()
+            } else {
+                panic!("Redis configuration must be provided")
+            }
+        }
+        Some(conf) => create_redis_factory(format!("PARTY_{}", config.my_id), &conf),
+    };
+    let num_sessions_preproc = config
+        .num_sessions_preproc
+        .map_or(MINIMUM_SESSIONS_PREPROC, |x| {
+            std::cmp::max(x, MINIMUM_SESSIONS_PREPROC)
+        });
     let base_kms = BaseKmsStruct::new(sk)?;
 
     let prss_setup_z128 = Arc::new(RwLock::new(None));
@@ -447,9 +363,14 @@ where
     let preproc_factory = Arc::new(Mutex::new(preproc_factory));
     let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(crs_info)));
     let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info)));
-    let pub_dec_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
-    let user_decrypt_meta_store =
-        Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
+    let pub_dec_meta_store = Arc::new(RwLock::new(MetaStore::new(
+        config.dec_capacity,
+        config.min_dec_cache,
+    )));
+    let user_decrypt_meta_store = Arc::new(RwLock::new(MetaStore::new(
+        config.dec_capacity,
+        config.min_dec_cache,
+    )));
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         public_storage,
         private_storage,
@@ -460,14 +381,16 @@ where
 
     let session_preparer = SessionPreparer {
         base_kms: base_kms.new_instance().await,
-        threshold,
-        my_id,
+        threshold: config.threshold,
+        my_id: config.my_id,
         role_assignments: role_assignments.clone(),
         networking_strategy,
         prss_setup_z128: Arc::clone(&prss_setup_z128),
         prss_setup_z64: Arc::clone(&prss_setup_z64),
     };
 
+    let (core_service_health_reporter, core_service_health_service) =
+        tonic_health::server::health_reporter();
     let thread_core_health_reporter = Arc::new(RwLock::new(core_service_health_reporter));
     {
         // We are only serving after initialization
@@ -488,19 +411,19 @@ where
     if run_prss {
         tracing::info!(
             "Initializing threshold KMS server and generating a new PRSS Setup for {}",
-            my_id
+            config.my_id
         );
 
         initiator.init_prss(&req_id_prss).await?;
     } else {
         tracing::info!(
             "Trying to initializing threshold KMS server and reading PRSS from storage for {}",
-            my_id
+            config.my_id
         );
         if let Err(e) = initiator.init_prss_from_disk(&req_id_prss).await {
             tracing::warn!(
                 "Could not read PRSS Setup from storage for {}: {}. You will need to call the init end-point later before you can use the KMS server",
-                my_id,
+                config.my_id,
                 e
             );
         }
@@ -517,7 +440,7 @@ where
         session_preparer: Arc::new(session_preparer.new_instance().await),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
-        decryption_mode,
+        decryption_mode: config.decryption_mode,
     };
 
     let public_decryptor = RealPublicDecryptor {
@@ -527,7 +450,7 @@ where
         session_preparer: Arc::new(session_preparer.new_instance().await),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
-        decryption_mode,
+        decryption_mode: config.decryption_mode,
     };
 
     let keygenerator = RealKeyGenerator {
@@ -584,7 +507,7 @@ where
         abort_handle,
     );
 
-    Ok(kms)
+    Ok((kms, core_service_health_service))
 }
 
 /// Helper function to extract the TLS certificates from the peer configurations and TLS configuration.
@@ -593,7 +516,13 @@ async fn extract_tls_certs(
     tls_identity: Option<BasicTLSConfig>,
     peer_configs: &[PeerConf],
 ) -> anyhow::Result<Option<SendingServiceTLSConfig>> {
-    if let Some((cert, key, trusted_releases)) = tls_identity {
+    if let Some(BasicTLSConfig {
+        cert,
+        key,
+        trusted_releases,
+        pcr8_expected,
+    }) = tls_identity
+    {
         let mut cert_strings = Vec::new();
         for peer in peer_configs {
             match peer.tls_cert.as_ref() {
@@ -608,7 +537,13 @@ async fn extract_tls_certs(
         }
         let ca_certs = build_ca_certs_map(cert_strings.into_iter())?;
         tracing::info!("Using TLS trust anchors: {:?}", ca_certs.keys());
-        Ok(Some((cert, key, ca_certs, trusted_releases)))
+        Ok(Some(SendingServiceTLSConfig {
+            cert,
+            key,
+            ca_certs,
+            trusted_releases,
+            pcr8_expected,
+        }))
     } else {
         Ok(None)
     }

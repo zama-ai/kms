@@ -1,3 +1,7 @@
+#[cfg(feature = "non-wasm")]
+use crate::engine::base::derive_request_id;
+#[cfg(feature = "non-wasm")]
+use kms_grpc::RequestId;
 use threshold_fhe::execution::tfhe_internals::parameters::{
     DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS,
 };
@@ -42,9 +46,6 @@ pub const DEFAULT_PROTOCOL: &str = "http";
 #[cfg(feature = "non-wasm")]
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
-        use kms_grpc::RequestId;
-        use crate::engine::base::derive_request_id;
-
         pub const TMP_PATH_PREFIX: &str = "temp";
         pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 
@@ -98,4 +99,12 @@ cfg_if::cfg_if! {
 
         pub const TEST_SEC_PAR: u64 = 40;
     }
+}
+
+#[cfg(feature = "non-wasm")]
+lazy_static::lazy_static! {
+    // The static ID we will use for the signing key for each of the MPC parties.
+    // We do so, since there is ever only one conceptual signing key per party (at least for now).
+    // This is a bit hackish, but it works for now.
+    pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
 }

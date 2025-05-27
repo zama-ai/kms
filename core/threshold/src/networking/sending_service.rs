@@ -110,7 +110,13 @@ impl GrpcSendingService {
         })?;
 
         let channel = match &self.tls_certs {
-            Some((cert, key, ca_certs, trusted_releases)) => {
+            Some(SendingServiceTLSConfig {
+                cert,
+                key,
+                ca_certs,
+                trusted_releases,
+                pcr8_expected,
+            }) => {
                 // If the host is an IP address then we abort
                 // domain names are needed for TLS.
                 //
@@ -166,6 +172,7 @@ impl GrpcSendingService {
                             AttestedServerVerifier::new(
                                 safe_server_cert_verifier,
                                 trusted_releases.clone(),
+                                *pcr8_expected,
                             ),
                         ))
                     }

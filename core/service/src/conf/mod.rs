@@ -109,7 +109,10 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::{conf::threshold::TlsCert, util::rate_limiter::RateLimiterConfig};
+    use crate::{
+        conf::threshold::{TlsCert, TlsConf, TlsKey},
+        util::rate_limiter::RateLimiterConfig,
+    };
 
     #[test]
     fn test_threshold_config() {
@@ -155,8 +158,11 @@ mod tests {
         assert!(threshold_config.preproc_redis.is_none());
         let tls_config = threshold_config.tls.unwrap();
         assert_eq!(
-            tls_config.cert,
-            TlsCert::Path(PathBuf::from(r"certs/cert_p1.pem"))
+            tls_config,
+            TlsConf::Manual {
+                cert: TlsCert::Path(PathBuf::from(r"certs/cert_p1.pem")),
+                key: TlsKey::Path(PathBuf::from(r"certs/key_p1.pem")),
+            }
         );
 
         assert_eq!(

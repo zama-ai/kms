@@ -58,7 +58,7 @@ data:
     decryption_mode = {{ .Values.kmsCore.thresholdMode.decryptionMode | quote }}
 
     {{ if $.Values.kmsCore.thresholdMode.tls.enabled }}
-    [threshold.tls]
+    [threshold.tls.manual]
     {{- if .Values.kmsCore.thresholdMode.tls.certificate.path }}
     cert.path = {{ .Values.kmsCore.thresholdMode.tls.certificate.path | quote }}
     {{- else }}
@@ -67,7 +67,7 @@ data:
     {{- if $.Values.kmsCore.nitroEnclave.enabled }}
     {{- if .Values.kmsCore.thresholdMode.tls.trustedReleases }}
     {{ range .Values.kmsCore.thresholdMode.tls.trustedReleases }}
-    [[threshold.tls.key.enclave.trustedReleases]]
+    [[threshold.tls.full_auto.trustedReleases]]
     pcr0 = {{ .pcr0 | quote }}
     pcr1 = {{ .pcr1 | quote }}
     pcr2 = {{ .pcr2 | quote }}
