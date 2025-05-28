@@ -627,7 +627,7 @@ mod tests {
                     check_and_unpack_keys, check_and_unpack_keys_openings, compute_party_sets,
                     verify_keys_equal,
                 },
-                prf::{xor_u8_arr_in_place, PrfKey},
+                prf::{xor_u8_arr_in_place, PRSSConversions, PrfKey},
                 prss::create_sets,
             },
         },
@@ -855,7 +855,7 @@ mod tests {
     /// Ignores [`TestinParameters::should_be_detected`] because the protocol
     /// does not mutate the corrupt set
     fn test_agree_random_from_share_strategies<
-        Z: ErrorCorrect + Invert,
+        Z: ErrorCorrect + Invert + PRSSConversions,
         const EXTENSION_DEGREE: usize,
         A: AgreeRandomFromShare + 'static,
     >(

@@ -17,9 +17,7 @@ use self::gen::{
 
 use crate::algebra::base_ring::{Z128, Z64};
 use crate::algebra::galois_rings::common::ResiduePoly;
-use crate::algebra::structure_traits::{
-    Derive, ErrorCorrect, FromU128, Invert, RingEmbed, Solve, Syndrome,
-};
+use crate::algebra::structure_traits::{Derive, ErrorCorrect, FromU128, Invert, Solve, Syndrome};
 #[cfg(feature = "measure_memory")]
 use crate::allocator::MEM_ALLOCATOR;
 use crate::choreography::requests::{
@@ -52,6 +50,8 @@ use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
 use crate::execution::runtime::session::{LargeSession, SessionParameters};
 use crate::execution::runtime::session::{SmallSession, ToBaseSession};
 use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
+use crate::execution::small_execution::prf::PRSSConversions;
+use crate::execution::small_execution::prss::DerivePRSSState;
 use crate::execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
 use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
@@ -2355,7 +2355,7 @@ pub fn gen_random_sid(rng: &mut AesRng, current_sid: u128) -> SessionId {
     )
 }
 
-pub fn create_small_session<Z: ErrorCorrect + Invert + RingEmbed>(
+pub fn create_small_session<Z: ErrorCorrect + Invert + PRSSConversions>(
     base_session: BaseSessionStruct<AesRng, SessionParameters>,
     prss_setup: &PRSSSetup<Z>,
 ) -> SmallSession<Z> {
@@ -2364,7 +2364,7 @@ pub fn create_small_session<Z: ErrorCorrect + Invert + RingEmbed>(
         .unwrap()
 }
 
-pub fn create_small_sessions<Z: ErrorCorrect + Invert + RingEmbed>(
+pub fn create_small_sessions<Z: ErrorCorrect + Invert + PRSSConversions>(
     base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
     prss_setup: &PRSSSetup<Z>,
 ) -> Vec<SmallSession<Z>> {

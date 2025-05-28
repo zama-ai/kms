@@ -14,7 +14,6 @@ use backward_compatibility::{
     PRSSSetupTest, PrfKeyTest, TestMetadataDD, TestType, Testcase,
 };
 use rand::{RngCore, SeedableRng};
-use serde::Serialize;
 use std::{env, path::Path};
 use tfhe_versionable::Unversionize;
 use threshold_fhe::{
@@ -24,7 +23,10 @@ use threshold_fhe::{
     },
     execution::{
         runtime::party::Role,
-        small_execution::{prf::PrfKey, prss::PRSSSetup},
+        small_execution::{
+            prf::{PRSSConversions, PrfKey},
+            prss::PRSSSetup,
+        },
     },
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
@@ -36,7 +38,7 @@ fn compare_prss_setup<Z>(
     poly_size: u16,
 ) -> Result<TestSuccess, TestFailure>
 where
-    Z: Default + Clone + Serialize + ErrorCorrect + Invert,
+    Z: ErrorCorrect + Invert + PRSSConversions,
     PRSSSetup<Z>: Unversionize,
 {
     let role = Role::indexed_by_one(test.role_i);

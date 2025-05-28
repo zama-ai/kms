@@ -7,7 +7,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::small_execution::{
         prf::PRSSConversions,
-        prss::{PRSSPrimitives, PrssInit, RobustSecurePrssInit, SecurePRSSState},
+        prss::{DerivePRSSState, PRSSPrimitives, PrssInit, RobustSecurePrssInit, SecurePRSSState},
     },
     networking::Networking,
     session_id::SessionId,
@@ -285,7 +285,7 @@ pub struct SmallSessionStruct<Z: Ring, R: Rng + CryptoRng + SeedableRng, P: Para
 }
 impl<Z> SmallSession<Z>
 where
-    Z: Ring,
+    Z: ErrorCorrect + Invert + PRSSConversions,
 {
     pub async fn new_and_init_prss_state(
         mut base_session: BaseSessionStruct<AesRng, SessionParameters>,

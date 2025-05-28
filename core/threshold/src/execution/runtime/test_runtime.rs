@@ -8,7 +8,8 @@ use crate::{
         endpoints::keygen::PrivateKeySet,
         small_execution::{
             agree_random::DummyAgreeRandom,
-            prss::{AbortRealPrssInit, PRSSSetup, PrssInit},
+            prf::PRSSConversions,
+            prss::{AbortRealPrssInit, DerivePRSSState, PRSSSetup, PrssInit},
         },
     },
     networking::{
@@ -145,6 +146,7 @@ impl<Z, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION_DEGRE
 where
     Z: ErrorCorrect,
     Z: Invert,
+    Z: PRSSConversions,
 {
     pub fn small_session_for_party(
         &self,
@@ -169,7 +171,7 @@ where
         let prss_setup = rt
             .block_on(async {
                 AbortRealPrssInit::<DummyAgreeRandom>::default()
-                    .init::<Z, _, _>(session)
+                    .init(session)
                     .await
             })
             .unwrap();

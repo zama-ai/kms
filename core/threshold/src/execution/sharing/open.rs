@@ -349,6 +349,7 @@ pub(crate) mod test {
     use crate::execution::runtime::party::Role;
     use crate::execution::runtime::session::SmallSession;
     use crate::execution::sharing::shamir::InputOp;
+    use crate::execution::small_execution::prf::PRSSConversions;
     use crate::malicious_execution::open::malicious_open::{
         MaliciousRobustOpenDrop, MaliciousRobustOpenLie,
     };
@@ -396,7 +397,7 @@ pub(crate) mod test {
     /// to output the correct result.
     /// (RobustOpen does not mutate the corruption set)
     fn test_robust_open_strategies<
-        Z: ErrorCorrect + Invert,
+        Z: ErrorCorrect + Invert + PRSSConversions,
         const EXTENSION_DEGREE: usize,
         RO: RobustOpen + 'static,
     >(

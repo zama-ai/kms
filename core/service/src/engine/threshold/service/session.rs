@@ -10,7 +10,7 @@ use threshold_fhe::{
             party::{Identity, Role, RoleAssignment},
             session::{BaseSessionStruct, SessionParameters, SmallSession},
         },
-        small_execution::prss::PRSSSetup,
+        small_execution::prss::{DerivePRSSState, PRSSSetup},
     },
     networking::{NetworkMode, NetworkingStrategy},
     session_id::SessionId,

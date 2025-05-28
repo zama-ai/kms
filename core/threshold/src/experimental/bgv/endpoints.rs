@@ -10,7 +10,7 @@ use crate::execution::runtime::session::ParameterHandles;
 use crate::execution::runtime::session::SmallSession;
 use crate::execution::runtime::session::SmallSessionStruct;
 use crate::execution::sharing::share::Share;
-use crate::execution::small_execution::prss::{PrssInit, RobustSecurePrssInit};
+use crate::execution::small_execution::prss::{DerivePRSSState, PrssInit, RobustSecurePrssInit};
 use crate::experimental::algebra::levels::LevelEll;
 use crate::experimental::algebra::ntt::N65536;
 use crate::experimental::bgv::dkg::NttForm;
@@ -45,7 +45,7 @@ pub(crate) async fn setup_small_session(
     let session_id = base_session.session_id();
 
     let prss_setup = RobustSecurePrssInit::default()
-        .init::<LevelOne, _, _>(&mut base_session)
+        .init(&mut base_session)
         .await
         .unwrap();
 

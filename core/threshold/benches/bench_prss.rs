@@ -13,7 +13,7 @@ use threshold_fhe::{
         },
         small_execution::{
             agree_random::DummyAgreeRandomFromShare,
-            prss::{PRSSPrimitives, PrssInit, RobustRealPrssInit},
+            prss::{DerivePRSSState, PRSSPrimitives, PRSSSetup, PrssInit, RobustRealPrssInit},
         },
     },
     networking::{local::LocalNetworkingProducer, NetworkMode},
@@ -39,10 +39,10 @@ fn bench_prss(c: &mut Criterion) {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
-    let prss = rt
+    let prss: PRSSSetup<ResiduePolyF8Z128> = rt
         .block_on(async {
             RobustRealPrssInit::<DummyAgreeRandomFromShare, DummyVss>::default()
-                .init::<ResiduePolyF8Z128, _, _>(&mut sess)
+                .init(&mut sess)
                 .await
         })
         .unwrap();

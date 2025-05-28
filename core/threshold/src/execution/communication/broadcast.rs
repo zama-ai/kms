@@ -625,6 +625,7 @@ mod tests {
     use crate::execution::runtime::test_runtime::{
         generate_fixed_identities, DistributedTestRuntime,
     };
+    use crate::execution::small_execution::prf::PRSSConversions;
     #[cfg(feature = "slow_tests")]
     use crate::malicious_execution::communication::malicious_broadcast::MaliciousBroadcastSenderEcho;
     use crate::malicious_execution::communication::malicious_broadcast::{
@@ -783,7 +784,7 @@ mod tests {
     /// Executes [`Broadcast::broadcast_from_all_w_corrupt_set_update`]
     /// as that is the more genreal version of broadcast
     fn test_broadcast_from_all_w_corrupt_set_update_strategies<
-        Z: ErrorCorrect + Invert,
+        Z: ErrorCorrect + Invert + PRSSConversions,
         const EXTENSION_DEGREE: usize,
         B: Broadcast + 'static,
     >(

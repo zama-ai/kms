@@ -23,7 +23,7 @@ use threshold_fhe::{
             party::Identity,
             session::{BaseSessionStruct, ParameterHandles, SessionParameters, SmallSession},
         },
-        small_execution::prss::PRSSSetup,
+        small_execution::prss::{DerivePRSSState, PRSSSetup},
         tfhe_internals::parameters::DKGParams,
     },
     networking::NetworkMode,

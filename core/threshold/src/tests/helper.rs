@@ -7,7 +7,8 @@ pub mod tests_and_benches {
     use tokio::time::Duration;
 
     use crate::{
-        algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
+        algebra::structure_traits::{ErrorCorrect, Invert, Ring},
+        execution::small_execution::prf::PRSSConversions,
         networking::NetworkMode,
     };
     use aes_prng::AesRng;
@@ -33,7 +34,7 @@ pub mod tests_and_benches {
     pub fn execute_protocol_small<
         TaskOutputT,
         OutputT,
-        Z: ErrorCorrect + RingEmbed + Invert,
+        Z: ErrorCorrect + Invert + PRSSConversions,
         const EXTENSION_DEGREE: usize,
     >(
         parties: usize,
@@ -181,6 +182,7 @@ pub mod testing {
             },
             small_execution::{
                 agree_random::DummyAgreeRandom,
+                prf::PRSSConversions,
                 prss::{AbortRealPrssInit, PRSSSetup, PrssInit},
             },
         },
@@ -189,7 +191,6 @@ pub mod testing {
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;
-    use serde::Serialize;
     use std::{
         collections::{HashMap, HashSet},
         sync::Arc,
@@ -235,7 +236,7 @@ pub mod testing {
         }
     }
 
-    pub fn get_dummy_prss_setup<Z: Default + Clone + Serialize + ErrorCorrect + Invert>(
+    pub fn get_dummy_prss_setup<Z: ErrorCorrect + Invert + PRSSConversions>(
         mut session: BaseSessionStruct<AesRng, SessionParameters>,
     ) -> PRSSSetup<Z> {
         let rt = Runtime::new().unwrap();
@@ -264,6 +265,7 @@ pub mod tests {
                 },
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
+            small_execution::prf::PRSSConversions,
             tfhe_internals::{
                 parameters::DKGParams,
                 test_feature::{gen_key_set, KeySet},
@@ -476,7 +478,7 @@ pub mod tests {
         TaskOutputM,
         OutputM,
         P: Clone,
-        Z: ErrorCorrect + Invert,
+        Z: ErrorCorrect + Invert + PRSSConversions,
         const EXTENSION_DEGREE: usize,
     >(
         params: &TestingParameters,

@@ -529,12 +529,12 @@ where
 {
     use crate::execution::{
         runtime::session::{ParameterHandles, SmallSessionStruct},
-        small_execution::prss::{AbortSecurePrssInit, PrssInit},
+        small_execution::prss::{AbortSecurePrssInit, DerivePRSSState, PrssInit},
     };
     let session_id = base_session.session_id();
 
     let prss_setup = AbortSecurePrssInit::default()
-        .init::<Z, _, _>(&mut base_session)
+        .init(&mut base_session)
         .await
         .unwrap();
     SmallSessionStruct::new_from_prss_state(

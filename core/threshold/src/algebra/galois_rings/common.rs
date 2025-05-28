@@ -802,8 +802,11 @@ impl<const EXTENSION_DEGREE: usize> PRSSConversions for ResiduePoly<Z64, EXTENSI
         Self { coefs: poly_coefs }
     }
 
-    fn from_i128(value: i128) -> Self {
-        Self::from_scalar(Wrapping(value as u64))
+    /// Calling this means we are trying to produce
+    /// a Mask for post-SnS decryption using extesion of Z64
+    /// which is wrong
+    fn from_i128(_value: i128) -> Self {
+        panic!("Trying to call from_i128 for a Galois extension of Z64. This should only happen for extensions of Z128.")
     }
 }
 

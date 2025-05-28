@@ -968,6 +968,7 @@ pub(crate) mod tests {
     use crate::execution::runtime::session::SmallSession;
     use crate::execution::sharing::shamir::{RevealOp, ShamirSharings};
     use crate::execution::sharing::share::Share;
+    use crate::execution::small_execution::prf::PRSSConversions;
     use crate::execution::{
         runtime::party::Identity, runtime::test_runtime::DistributedTestRuntime,
     };
@@ -1429,10 +1430,7 @@ pub(crate) mod tests {
         round_1(session, num_secrets, bivariate_poly, map_double_shares).await
     }
 
-    fn test_vss_small<
-        Z: Ring + RingEmbed + ErrorCorrect + Invert,
-        const EXTENSION_DEGREE: usize,
-    >(
+    fn test_vss_small<Z: ErrorCorrect + Invert + PRSSConversions, const EXTENSION_DEGREE: usize>(
         params: TestingParameters,
         num_secrets: usize,
     ) {
