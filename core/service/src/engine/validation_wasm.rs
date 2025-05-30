@@ -1,7 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use alloy_dyn_abi::Eip712Domain;
-use alloy_primitives::{map::HashMap, Address};
+use alloy_primitives::Address;
 use itertools::Itertools;
 use kms_grpc::{
     kms::v1::{TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload},
@@ -34,6 +34,9 @@ const ERR_VALIDATE_USER_DECRYPTION_DIGEST_MISMATCH: &str =
     "Digest in user decryption response mismatch";
 const ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE: &str =
     "Missing signature in user decryption response";
+const ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND: &str = "ID claimed in payload not found";
+const ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS: &str =
+    "ID or address claimed in payload is incorrect";
 
 /// check that the external signature on the decryption result(s) is valid, i.e. was made by one of the supplied addresses
 pub(crate) fn check_ext_user_decryption_signature(
@@ -41,7 +44,7 @@ pub(crate) fn check_ext_user_decryption_signature(
     payload: &UserDecryptionResponsePayload,
     request: &ParsedUserDecryptionRequest,
     eip712_domain: &Eip712Domain,
-    kms_addrs: &[alloy_primitives::Address],
+    expected_addr: &alloy_primitives::Address,
 ) -> anyhow::Result<()> {
     // convert received data into proper format for EIP-712 verification
     if external_sig.len() != 65 {
@@ -62,18 +65,15 @@ pub(crate) fn check_ext_user_decryption_signature(
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("recovered address: {}", addr);
 
-    // check that the address is in the list of known KMS addresses
-    if kms_addrs.contains(&addr) {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!(
-            ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE
-        ))
+    if addr != *expected_addr {
+        anyhow::bail!(ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE);
     }
+
+    Ok(())
 }
 
 fn validate_user_decrypt_meta_data_and_signature(
-    server_addreses: &[Address],
+    server_addreses: &HashMap<u32, Address>,
     client_request: &ParsedUserDecryptionRequest,
     pivot_resp: &UserDecryptionResponsePayload,
     other_resp: &UserDecryptionResponsePayload,
@@ -119,9 +119,14 @@ fn validate_user_decrypt_meta_data_and_signature(
     let resp_verf_key: PublicSigKey = bc2wrap::deserialize(&other_resp.verification_key)?;
     let resp_addr = alloy_signer::utils::public_key_to_address(resp_verf_key.pk());
 
-    if !server_addreses.contains(&resp_addr) {
-        anyhow::bail!("Server address is incorrect in user decryption request");
-    }
+    let expected_addr = if let Some(expected_addr) = server_addreses.get(&other_resp.party_id) {
+        if *expected_addr != resp_addr {
+            anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
+        }
+        expected_addr
+    } else {
+        anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND)
+    };
 
     // Prefer ECDSA signature over the eip712 one
     if signature.is_empty() {
@@ -137,7 +142,7 @@ fn validate_user_decrypt_meta_data_and_signature(
             other_resp,
             client_request,
             eip712_domain,
-            server_addreses,
+            expected_addr,
         )
         .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})", e))?;
     } else {
@@ -254,7 +259,7 @@ fn select_most_common_user_dec(
 }
 
 fn validate_user_decrypt_responses(
-    server_addresses: &[Address],
+    server_addresses: &HashMap<u32, Address>,
     client_request: &ParsedUserDecryptionRequest,
     eip712_domain: &Eip712Domain,
     agg_resp: &[UserDecryptionResponse],
@@ -374,7 +379,7 @@ fn validate_user_decrypt_responses(
 /// against the given user decryption request. Returns the validated responses
 /// mapped to the server ID on success.
 pub(crate) fn validate_user_decrypt_responses_against_request(
-    server_addresses: &[Address],
+    server_addresses: &HashMap<u32, Address>,
     client_request: &ParsedUserDecryptionRequest,
     eip712_domain: &Eip712Domain,
     agg_resp: &[UserDecryptionResponse],
@@ -395,8 +400,9 @@ pub(crate) fn validate_user_decrypt_responses_against_request(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use aes_prng::AesRng;
-    use itertools::Itertools;
     use kms_grpc::kms::v1::{
         TypedSigncryptedCiphertext, UserDecryptionResponse, UserDecryptionResponsePayload,
     };
@@ -405,9 +411,17 @@ mod tests {
     use crate::{
         client::{compute_link, CiphertextHandle, ParsedUserDecryptionRequest},
         cryptography::{
-            internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
+            internal_crypto_types::{gen_sig_keys, PublicSigKey},
+            signcryption::ephemeral_encryption_key_generation,
         },
-        engine::base::compute_external_user_decrypt_signature,
+        engine::{
+            base::compute_external_user_decrypt_signature,
+            validation_wasm::{
+                ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE,
+                ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND,
+                ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS,
+            },
+        },
     };
 
     use super::{
@@ -435,11 +449,16 @@ mod tests {
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, _sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
-        let pks = [vk0, vk1, vk2];
+        let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
+            [vk0, vk1, vk2]
+                .into_iter()
+                .enumerate()
+                .map(|(i, k)| (i as u32 + 1, k)),
+        );
         let kms_addrs = pks
             .iter()
-            .map(|pk| alloy_primitives::Address::from_public_key(pk.pk()))
-            .collect_vec();
+            .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
+            .collect::<HashMap<u32, alloy_primitives::Address>>();
 
         let (eph_client_pk, _eph_client_sk) = ephemeral_encryption_key_generation(&mut rng);
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
@@ -456,7 +475,7 @@ mod tests {
         );
 
         let payload = UserDecryptionResponsePayload {
-            verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
+            verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
             digest: vec![1, 2, 3, 4],
             signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                 fhe_type: 1,
@@ -478,7 +497,7 @@ mod tests {
                 &payload,
                 &request,
                 &dummy_domain,
-                &kms_addrs,
+                &kms_addrs[&1],
             )
             .unwrap_err()
             .to_string()
@@ -500,7 +519,7 @@ mod tests {
                 &payload,
                 &request,
                 &dummy_domain,
-                &kms_addrs,
+                &kms_addrs[&1],
             )
             .is_err());
         }
@@ -518,9 +537,25 @@ mod tests {
                 &payload,
                 &request,
                 &bad_domain,
-                &kms_addrs,
+                &kms_addrs[&1],
             )
             .is_err());
+        }
+
+        // check that we detect the error if payload is modified
+        {
+            let mut bad_payload = payload.clone();
+            bad_payload.party_id = 2; // modify ID
+            assert!(check_ext_user_decryption_signature(
+                &external_sig,
+                &bad_payload,
+                &request,
+                &dummy_domain,
+                &kms_addrs[&1],
+            )
+            .unwrap_err()
+            .to_string()
+            .contains(ERR_EXT_USER_DECRYPTION_SIG_VERIFICATION_FAILURE));
         }
 
         // happy path
@@ -530,7 +565,7 @@ mod tests {
                 &payload,
                 &request,
                 &dummy_domain,
-                &kms_addrs,
+                &kms_addrs[&1],
             )
             .unwrap();
         }
@@ -542,11 +577,16 @@ mod tests {
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, _sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
-        let pks = [vk0, vk1, vk2];
+        let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
+            [vk0, vk1, vk2]
+                .into_iter()
+                .enumerate()
+                .map(|(i, k)| (i as u32 + 1, k)),
+        );
         let server_addresses = pks
             .iter()
-            .map(|pk| alloy_primitives::Address::from_public_key(pk.pk()))
-            .collect_vec();
+            .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
+            .collect::<HashMap<u32, alloy_primitives::Address>>();
 
         let (eph_client_pk, _eph_client_sk) = ephemeral_encryption_key_generation(&mut rng);
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
@@ -563,7 +603,7 @@ mod tests {
         );
 
         let pivot_resp = UserDecryptionResponsePayload {
-            verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
+            verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
             digest: vec![1, 2, 3, 4],
             signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                 fhe_type: 1,
@@ -585,7 +625,7 @@ mod tests {
         // incorrect length
         {
             let other_resp = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![], // the ciphertext is just an empty vector
                 party_id: 1,
@@ -608,7 +648,7 @@ mod tests {
         // mismatch type
         {
             let other_resp = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 2, // in the pivot the type is 1
@@ -636,7 +676,7 @@ mod tests {
         // digest mismatch
         {
             let other_resp = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: vec![1, 2, 3, 4, 5], // the digest should be [1, 2, 3, 4]
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 1,
@@ -677,9 +717,45 @@ mod tests {
             .contains(ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE));
         }
 
+        // if the ID is changed to something that does not exist, return error
+        {
+            let mut other_resp = pivot_resp.clone();
+            other_resp.party_id = 10;
+            assert!(validate_user_decrypt_meta_data_and_signature(
+                &server_addresses,
+                &client_request,
+                &pivot_resp,
+                &other_resp,
+                &[],
+                &external_signature,
+                &dummy_domain,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains(ERR_VALIDATE_USER_DECRYPTION_ID_NOT_FOUND));
+        }
+
+        // if the ID does not match with the claimed address, return error
+        {
+            let mut other_resp = pivot_resp.clone();
+            other_resp.party_id = 2; // originally the ID is 1
+            assert!(validate_user_decrypt_meta_data_and_signature(
+                &server_addresses,
+                &client_request,
+                &pivot_resp,
+                &other_resp,
+                &[],
+                &external_signature,
+                &dummy_domain,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS));
+        }
+
         // no need to explicitly test the signature issues again since they were tested in [test_check_ext_user_decryption_signature]
 
-        // happy path for empty ECDSA
+        // happy path for empty ECDSA, so we check external signature
         {
             validate_user_decrypt_meta_data_and_signature(
                 &server_addresses,
@@ -693,7 +769,7 @@ mod tests {
             .unwrap();
         }
 
-        // happy path for empty external_signature
+        // happy path for empty external_signature, so we check ECDSA
         {
             let pivot_buf = bc2wrap::serialize(&pivot_resp).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
@@ -722,11 +798,16 @@ mod tests {
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, sk2) = gen_sig_keys(&mut rng);
-        let pks = [vk0, vk1, vk2];
+        let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
+            [vk0, vk1, vk2]
+                .into_iter()
+                .enumerate()
+                .map(|(i, k)| (i as u32 + 1, k)),
+        );
         let server_addresses = pks
             .iter()
-            .map(|pk| alloy_primitives::Address::from_public_key(pk.pk()))
-            .collect_vec();
+            .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
+            .collect::<HashMap<u32, alloy_primitives::Address>>();
 
         let (eph_client_pk, _eph_client_sk) = ephemeral_encryption_key_generation(&mut rng);
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
@@ -744,7 +825,7 @@ mod tests {
 
         let resp0 = {
             let payload0 = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 1,
@@ -771,7 +852,7 @@ mod tests {
 
         let resp1 = {
             let payload = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[1]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 1,
@@ -798,7 +879,7 @@ mod tests {
 
         let resp2 = {
             let payload = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[2]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&3]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 1,
@@ -922,34 +1003,34 @@ mod tests {
         // sanity check the closure passes with the correct arguments
         {
             let result = std::panic::catch_unwind(|| {
-                run_with_customized_resp2(3, vec![1, 2, 3, 4], &pks[2], 1);
+                run_with_customized_resp2(3, vec![1, 2, 3, 4], &pks[&3], 1);
             });
             assert!(result.is_err());
         }
 
         // digest mismatch
         {
-            run_with_customized_resp2(3, vec![1, 2, 3, 4, 5], &pks[2], 1);
+            run_with_customized_resp2(3, vec![1, 2, 3, 4, 5], &pks[&3], 1);
         }
 
         // invalid party ID (too big)
         {
-            run_with_customized_resp2(10, vec![1, 2, 3, 4], &pks[2], 1);
+            run_with_customized_resp2(10, vec![1, 2, 3, 4], &pks[&3], 1);
         }
 
         // invalid party ID (cannot be 0)
         {
-            run_with_customized_resp2(0, vec![1, 2, 3, 4], &pks[2], 1);
+            run_with_customized_resp2(0, vec![1, 2, 3, 4], &pks[&3], 1);
         }
 
         // invalid party ID (same as another party)
         {
-            run_with_customized_resp2(1, vec![1, 2, 3, 4], &pks[2], 1);
+            run_with_customized_resp2(1, vec![1, 2, 3, 4], &pks[&3], 1);
         }
 
         // invalid packing factor
         {
-            run_with_customized_resp2(3, vec![1, 2, 3, 4], &pks[2], 2);
+            run_with_customized_resp2(3, vec![1, 2, 3, 4], &pks[&3], 2);
         }
 
         // invalid verification key
@@ -982,11 +1063,16 @@ mod tests {
         let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
-        let pks = [vk0, vk1, vk2];
+        let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
+            [vk0, vk1, vk2]
+                .into_iter()
+                .enumerate()
+                .map(|(i, k)| (i as u32 + 1, k)),
+        );
         let server_addresses = pks
             .iter()
-            .map(|pk| alloy_primitives::Address::from_public_key(pk.pk()))
-            .collect_vec();
+            .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
+            .collect::<HashMap<u32, alloy_primitives::Address>>();
 
         let (eph_client_pk, _eph_client_sk) = ephemeral_encryption_key_generation(&mut rng);
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
@@ -1006,7 +1092,7 @@ mod tests {
 
         let resp0 = {
             let payload0 = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 1,
@@ -1033,7 +1119,7 @@ mod tests {
 
         let resp1 = {
             let payload = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[1]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
                 digest: digest.clone(),
                 signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
                     fhe_type: 1,

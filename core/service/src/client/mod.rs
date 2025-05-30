@@ -30,6 +30,7 @@ use kms_grpc::rpc_types::{
 use kms_grpc::KeyId;
 use kms_grpc::RequestId;
 use rand::SeedableRng;
+use std::collections::HashMap;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::FheTypes;
@@ -64,7 +65,6 @@ cfg_if::cfg_if! {
             KeyGenRequest, KeyGenResult, KeySetConfig,
         };
         use kms_grpc::rpc_types::{PubDataType, PublicKeyType, WrappedPublicKeyOwned};
-        use std::collections::HashMap;
         use std::fmt;
         use tfhe::zk::CompactPkeCrs;
         use tfhe::ServerKey;
@@ -128,8 +128,8 @@ fn decrypted_blocks_to_plaintext(
 /// for everything else, we use the Pk variant.
 #[derive(Clone)]
 pub enum ServerIdentities {
-    Pks(Vec<PublicSigKey>),
-    Addrs(Vec<alloy_primitives::Address>),
+    Pks(HashMap<u32, PublicSigKey>),
+    Addrs(HashMap<u32, alloy_primitives::Address>),
 }
 
 impl ServerIdentities {
@@ -163,7 +163,7 @@ pub struct Client {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct TestingUserDecryptionTranscript {
     // client
-    server_addrs: Vec<alloy_primitives::Address>,
+    server_addrs: HashMap<u32, alloy_primitives::Address>,
     client_address: alloy_primitives::Address,
     client_sk: Option<PrivateSigKey>,
     degree: u32,
@@ -409,7 +409,7 @@ impl Client {
     /// * `decryption_mode` - the decryption mode to use. Currently available modes are: NoiseFloodSmall and BitDecSmall.
     ///   If set to none, DecryptionMode::default() is used.
     pub fn new(
-        server_pks: Vec<PublicSigKey>,
+        server_pks: HashMap<u32, PublicSigKey>,
         client_address: alloy_primitives::Address,
         client_sk: Option<PrivateSigKey>,
         params: DKGParams,
@@ -438,23 +438,23 @@ impl Client {
     #[cfg(feature = "non-wasm")]
     pub async fn new_client<ClientS: Storage, PubS: StorageReader>(
         client_storage: ClientS,
-        pub_storages: Vec<PubS>,
+        pub_storages: HashMap<u32, PubS>,
         params: &DKGParams,
         decryption_mode: Option<DecryptionMode>,
     ) -> anyhow::Result<Client> {
-        let mut pks: Vec<PublicSigKey> = Vec::new();
-        for cur_storage in pub_storages {
+        let mut pks: HashMap<u32, PublicSigKey> = HashMap::new();
+        for (party_id, cur_storage) in pub_storages {
             let cur_map =
                 read_all_data_versioned(&cur_storage, &PubDataType::VerfKey.to_string()).await?;
             for (cur_req_id, new_pk) in cur_map {
                 // ensure that the inserted pk did not exist before / is not inserted twice
-                if pks.contains(&new_pk) {
+                if pks.values().contains(&new_pk) {
                     return Err(anyhow_error_and_log(format!(
                         "Public key for request id {} is already in the map",
                         cur_req_id,
                     )));
                 }
-                pks.push(new_pk);
+                pks.insert(party_id, new_pk);
             }
         }
         let client_pk = get_client_verification_key(&client_storage).await?;
@@ -515,7 +515,7 @@ impl Client {
             }
         };
 
-        for verf_key in server_pks {
+        for verf_key in server_pks.values() {
             let ok = BaseKmsStruct::verify_sig(dsep, &data, &signature_struct, verf_key).is_ok();
             if ok {
                 return Some(verf_key.clone());
@@ -1200,9 +1200,15 @@ impl Client {
 
         let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&payload.verification_key)?;
 
-        if stored_server_addrs[0] != alloy_signer::utils::public_key_to_address(cur_verf_key.pk()) {
-            return Err(anyhow_error_and_log("verification key is not consistent"));
-        }
+        // NOTE: ID start at 1
+        let expected_server_addr = if let Some(server_addr) = stored_server_addrs.get(&1) {
+            if *server_addr != alloy_signer::utils::public_key_to_address(cur_verf_key.pk()) {
+                return Err(anyhow_error_and_log("server address is not consistent"));
+            }
+            server_addr
+        } else {
+            return Err(anyhow_error_and_log("missing server address at ID 1"));
+        };
 
         // prefer the normal ECDSA verification over the EIP712 one
         if resp.signature.is_empty() {
@@ -1219,7 +1225,7 @@ impl Client {
                 &payload,
                 request,
                 eip712_domain,
-                stored_server_addrs,
+                expected_server_addr,
             )
             .inspect_err(|e| {
                 tracing::warn!("signature on received response is not valid ({})", e)
@@ -1715,22 +1721,22 @@ impl Client {
         Ok(out)
     }
 
-    pub fn get_server_pks(&self) -> anyhow::Result<&Vec<PublicSigKey>> {
+    pub fn get_server_pks(&self) -> anyhow::Result<&HashMap<u32, PublicSigKey>> {
         match &self.server_identities {
-            ServerIdentities::Pks(vec) => Ok(vec),
+            ServerIdentities::Pks(inner) => Ok(inner),
             ServerIdentities::Addrs(_) => {
                 Err(anyhow::anyhow!("expected public keys, got addresses"))
             }
         }
     }
 
-    pub fn get_server_addrs(&self) -> Vec<alloy_primitives::Address> {
+    pub fn get_server_addrs(&self) -> HashMap<u32, alloy_primitives::Address> {
         match &self.server_identities {
             ServerIdentities::Pks(pks) => pks
                 .iter()
-                .map(|pk| alloy_signer::utils::public_key_to_address(pk.pk()))
-                .collect_vec(),
-            ServerIdentities::Addrs(vec) => vec.clone(),
+                .map(|(i, pk)| (*i, alloy_signer::utils::public_key_to_address(pk.pk())))
+                .collect(),
+            ServerIdentities::Addrs(inner) => inner.clone(),
         }
     }
 
@@ -2258,7 +2264,8 @@ pub mod test_tools {
         let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
         let (kms_server, kms_client) =
             setup_centralized(pub_storage, priv_storage, rate_limiter_conf).await;
-        let pub_storage = vec![FileStorage::new(None, StorageType::PUB, None).unwrap()];
+        let pub_storage =
+            HashMap::from_iter([(1, FileStorage::new(None, StorageType::PUB, None).unwrap())]);
         let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
         let internal_client = Client::new_client(client_storage, pub_storage, param, None)
             .await
@@ -2284,8 +2291,10 @@ pub(crate) mod tests {
     use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID_4P};
     use crate::consts::{DEFAULT_THRESHOLD, TEST_THRESHOLD_KEY_ID_10P};
     use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};
-    use crate::cryptography::internal_crypto_types::Signature;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
+    use crate::cryptography::internal_crypto_types::{
+        PrivateEncKey, PrivateSigKey, PublicEncKey, Signature,
+    };
     use crate::engine::base::{compute_handle, derive_request_id, BaseKmsStruct, DSEP_PUBDATA_CRS};
     #[cfg(feature = "slow_tests")]
     use crate::engine::centralized::central_kms::tests::get_default_keys;
@@ -2294,6 +2303,7 @@ pub(crate) mod tests {
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use crate::engine::threshold::service::ThresholdFheKeys;
     use crate::engine::traits::BaseKms;
+    use crate::engine::validation::DSEP_USER_DECRYPTION;
     use crate::util::file_handling::safe_read_element_versioned;
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
@@ -2302,6 +2312,7 @@ pub(crate) mod tests {
         compute_cipher_from_stored_key, purge, EncryptionConfig, TestingPlaintext,
     };
     use crate::util::rate_limiter::RateLimiterConfig;
+    use crate::vault::storage::crypto_material::get_core_signing_key;
     use crate::vault::storage::StorageReader;
     use crate::vault::storage::{file::FileStorage, StorageType};
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -2310,7 +2321,7 @@ pub(crate) mod tests {
     use kms_grpc::kms::v1::TypedPlaintext;
     use kms_grpc::kms::v1::{
         Empty, FheParameter, InitRequest, KeySetAddedInfo, KeySetConfig, KeySetType,
-        TypedCiphertext, UserDecryptionResponse,
+        TypedCiphertext, UserDecryptionRequest, UserDecryptionResponse,
     };
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -2391,9 +2402,12 @@ pub(crate) mod tests {
             decryption_mode,
         )
         .await;
-        let mut pub_storage = Vec::with_capacity(amount_parties);
+        let mut pub_storage = HashMap::with_capacity(amount_parties);
         for i in 1..=amount_parties {
-            pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
+            pub_storage.insert(
+                i as u32,
+                FileStorage::new(None, StorageType::PUB, Some(i)).unwrap(),
+            );
         }
         let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
         let internal_client =
@@ -3109,7 +3123,7 @@ pub(crate) mod tests {
         let crs_sig: Signature = bc2wrap::deserialize(&crs_info.signature).unwrap();
         let mut verified = false;
         let server_pks = internal_client.get_server_pks().unwrap();
-        for vk in server_pks {
+        for vk in server_pks.values() {
             let v =
                 BaseKmsStruct::verify_sig(&DSEP_PUBDATA_CRS, &client_handle, &crs_sig, vk).is_ok();
             verified = verified || v;
@@ -4310,9 +4324,9 @@ pub(crate) mod tests {
                 internal_client.server_identities =
                     // one dummy address is needed to force insecure_process_user_decryption_resp
                     // in the centralized mode
-                    ServerIdentities::Addrs(vec![alloy_primitives::address!(
+                    ServerIdentities::Addrs(HashMap::from_iter([(1, alloy_primitives::address!(
                         "d8da6bf26964af9d7eed9e03e53415d37aa96045"
-                    )]);
+                    ))]));
                 internal_client
                     .insecure_process_user_decryption_resp(&responses, enc_pk, enc_sk)
                     .unwrap()
@@ -4733,7 +4747,61 @@ pub(crate) mod tests {
             secure,
             amount_parties,
             None,
+            None,
             Some(decryption_mode),
+        )
+        .await;
+    }
+
+    #[rstest::rstest]
+    #[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P.to_string(), vec![1])]
+    #[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P.to_string(), vec![4])]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn test_user_decryption_threshold_malicious(
+        #[case] pt: TestingPlaintext,
+        #[case] key_id: &str,
+        #[case] malicious_set: Vec<u32>,
+    ) {
+        user_decryption_threshold(
+            TEST_PARAM,
+            key_id,
+            false,
+            pt,
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
+            1,    // parallelism
+            true, // secure
+            4,    // no. of parties
+            None,
+            Some(malicious_set),
+            None,
+        )
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    #[should_panic]
+    async fn test_user_decryption_threshold_malicious_failure() {
+        // should panic because the malicious set is too big
+        user_decryption_threshold(
+            TEST_PARAM,
+            &TEST_THRESHOLD_KEY_ID_4P.to_string(),
+            false,
+            TestingPlaintext::U32(u32::MAX),
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
+            1,    // parallelism
+            true, // secure
+            4,    // no. of parties
+            None,
+            Some(vec![1, 4]),
+            None,
         )
         .await;
     }
@@ -4761,6 +4829,7 @@ pub(crate) mod tests {
             4,
             secure,
             amount_parties,
+            None,
             None,
             Some(decryption_mode),
         )
@@ -4790,6 +4859,7 @@ pub(crate) mod tests {
             1,
             secure,
             amount_parties,
+            None,
             None,
             None,
         )
@@ -4822,6 +4892,7 @@ pub(crate) mod tests {
             1, // wasm tests are single-threaded
             secure,
             amount_parties,
+            None,
             None,
             None,
         )
@@ -4857,6 +4928,7 @@ pub(crate) mod tests {
             amount_parties,
             None,
             None,
+            None,
         )
         .await;
     }
@@ -4887,6 +4959,7 @@ pub(crate) mod tests {
             parallelism,
             secure,
             amount_parties,
+            None,
             None,
             None,
         )
@@ -4922,8 +4995,147 @@ pub(crate) mod tests {
             amount_parties,
             party_ids_to_crash,
             None,
+            None,
         )
         .await;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn process_batch_threshold_user_decryption(
+        internal_client: &mut Client,
+        msg: TestingPlaintext,
+        secure: bool,
+        amount_parties: usize,
+        malicious_parties: Option<Vec<u32>>,
+        party_ids_to_crash: Vec<usize>,
+        reqs: Vec<(UserDecryptionRequest, PublicEncKey, PrivateEncKey)>,
+        response_map: HashMap<RequestId, Vec<UserDecryptionResponse>>,
+        server_private_keys: HashMap<u32, PrivateSigKey>,
+    ) {
+        for req in &reqs {
+            let (req, enc_pk, enc_sk) = req;
+            let request_id = req
+                .request_id
+                .clone()
+                .expect("Retrieving request_id failed");
+            let mut responses = response_map
+                .get(&request_id.into())
+                .expect("Retrieving responses failed")
+                .clone();
+            let domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap())
+                .expect("Retrieving domain failed");
+            let client_req = ParsedUserDecryptionRequest::try_from(req)
+                .expect("Parsing UserDecryptionRequest failed");
+            let threshold = responses.first().unwrap().payload.as_ref().unwrap().degree as usize;
+            // NOTE: throw away one response and it should still work.
+            let plaintexts = if secure {
+                // test with one fewer response if we haven't crashed too many parties already
+                let result_from_dropped_response = if threshold > party_ids_to_crash.len() {
+                    Some(
+                        internal_client
+                            .process_user_decryption_resp(
+                                &client_req,
+                                &domain,
+                                &responses[1..],
+                                enc_pk,
+                                enc_sk,
+                            )
+                            .unwrap(),
+                    )
+                } else {
+                    None
+                };
+
+                // modify the responses if there are malicious parties
+                // note that we also need to sign the modified payload
+                responses.iter_mut().for_each(|resp| {
+                    if let Some(payload) = &mut resp.payload {
+                        if let Some(mal_parties) = &malicious_parties {
+                            if mal_parties.contains(&payload.party_id) {
+                                let orig_party_id = payload.party_id;
+                                // Modify the party ID maliciously
+                                if payload.party_id == 1 {
+                                    payload.party_id = amount_parties as u32;
+                                } else {
+                                    payload.party_id -= 1;
+                                }
+                                let sig_payload_vec = bc2wrap::serialize(&payload).unwrap();
+                                let sig = crate::cryptography::signcryption::internal_sign(
+                                    &DSEP_USER_DECRYPTION,
+                                    &sig_payload_vec,
+                                    &server_private_keys[&orig_party_id],
+                                )
+                                .unwrap();
+                                resp.signature = sig.sig.to_vec();
+                            }
+                        }
+                    }
+                });
+
+                // test with all responses, some may be malicious
+                let final_result = internal_client
+                    .process_user_decryption_resp(&client_req, &domain, &responses, enc_pk, enc_sk)
+                    .unwrap();
+
+                if let Some(res) = result_from_dropped_response {
+                    assert_eq!(res, final_result)
+                }
+                final_result
+            } else {
+                internal_client.server_identities = ServerIdentities::Addrs(HashMap::new());
+                // test with one fewer response if we haven't crashed too many parties already
+                let result_from_dropped_response = if threshold > party_ids_to_crash.len() {
+                    Some(
+                        internal_client
+                            .insecure_process_user_decryption_resp(&responses[1..], enc_pk, enc_sk)
+                            .unwrap(),
+                    )
+                } else {
+                    None
+                };
+
+                // test with all responses
+                let final_result = internal_client
+                    .insecure_process_user_decryption_resp(&responses, enc_pk, enc_sk)
+                    .unwrap();
+                if let Some(res) = result_from_dropped_response {
+                    assert_eq!(res, final_result)
+                }
+                final_result
+            };
+            for plaintext in plaintexts {
+                assert_eq!(msg.fhe_type(), plaintext.fhe_type().unwrap());
+                match msg {
+                    TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                    TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
+                    TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+                    TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+                    TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+                    TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+                    TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+                    TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+                    TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                    TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
+                    TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
+                    TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
+                }
+            }
+        }
+    }
+
+    async fn get_server_private_keys(amount_parties: usize) -> HashMap<u32, PrivateSigKey> {
+        let mut server_private_keys = HashMap::new();
+        for i in 1..=amount_parties {
+            let priv_storage = FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap();
+            let sk = get_core_signing_key(&priv_storage)
+                .await
+                .inspect_err(|e| {
+                    tracing::error!("signing key hashmap is not exactly 1, {}", e);
+                })
+                .unwrap();
+            server_private_keys.insert(i as u32, sk);
+        }
+        server_private_keys
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4937,6 +5149,7 @@ pub(crate) mod tests {
         secure: bool,
         amount_parties: usize,
         party_ids_to_crash: Option<Vec<usize>>,
+        malicious_parties: Option<Vec<u32>>,
         decryption_mode: Option<DecryptionMode>,
     ) {
         assert!(parallelism > 0);
@@ -5102,69 +5315,20 @@ pub(crate) mod tests {
             }
         }
 
-        for req in &reqs {
-            let (req, enc_pk, enc_sk) = req;
-            let request_id = req
-                .request_id
-                .clone()
-                .expect("Retrieving request_id failed");
-            let responses = response_map
-                .get(&request_id.into())
-                .expect("Retrieving responses failed");
-            let domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap())
-                .expect("Retrieving domain failed");
-            let client_req = ParsedUserDecryptionRequest::try_from(req)
-                .expect("Parsing UserDecryptionRequest failed");
-            let threshold = responses.first().unwrap().payload.as_ref().unwrap().degree as usize;
-            // NOTE: throw away one response and it should still work.
-            let plaintexts = if secure {
-                // test with one fewer response if we haven't crashed too many parties already
-                if threshold > party_ids_to_crash.len() {
-                    internal_client
-                        .process_user_decryption_resp(
-                            &client_req,
-                            &domain,
-                            &responses[1..],
-                            enc_pk,
-                            enc_sk,
-                        )
-                        .unwrap();
-                }
-                // test with all responses
-                internal_client
-                    .process_user_decryption_resp(&client_req, &domain, responses, enc_pk, enc_sk)
-                    .unwrap()
-            } else {
-                internal_client.server_identities = ServerIdentities::Addrs(Vec::new());
-                // test with one fewer response if we haven't crashed too many parties already
-                if threshold > party_ids_to_crash.len() {
-                    internal_client
-                        .insecure_process_user_decryption_resp(&responses[1..], enc_pk, enc_sk)
-                        .unwrap();
-                }
-                // test with all responses
-                internal_client
-                    .insecure_process_user_decryption_resp(responses, enc_pk, enc_sk)
-                    .unwrap()
-            };
-            for plaintext in plaintexts {
-                assert_eq!(msg.fhe_type(), plaintext.fhe_type().unwrap());
-                match msg {
-                    TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-                    TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
-                    TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-                    TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-                    TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-                    TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-                    TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-                    TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
-                    TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
-                    TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
-                    TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
-                    TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
-                }
-            }
-        }
+        let server_private_keys = get_server_private_keys(amount_parties).await;
+
+        process_batch_threshold_user_decryption(
+            &mut internal_client,
+            msg,
+            secure,
+            amount_parties,
+            malicious_parties,
+            party_ids_to_crash,
+            reqs,
+            response_map,
+            server_private_keys,
+        )
+        .await
     }
 
     // Validate bug-fix to ensure that the server fails gracefully when the ciphertext is too large
@@ -5204,7 +5368,12 @@ pub(crate) mod tests {
         let ct_format = kms_grpc::kms::v1::CiphertextFormat::default();
         let client_address = alloy_primitives::Address::from_public_key(keys.client_pk.pk());
         let mut internal_client = Client::new(
-            keys.server_keys.clone(),
+            HashMap::from_iter(
+                keys.server_keys
+                    .iter()
+                    .enumerate()
+                    .map(|(i, key)| (i as u32 + 1, key.clone())),
+            ),
             client_address,
             Some(keys.client_sk.clone()),
             keys.params,

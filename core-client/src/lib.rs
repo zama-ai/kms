@@ -30,6 +30,7 @@ use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use kms_lib::DecryptionMode;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};
 use strum_macros::{Display, EnumString};
@@ -1182,7 +1183,7 @@ pub async fn execute_cmd(
 
     ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
 
-    let mut pub_storage: Vec<FileStorage> = Vec::with_capacity(num_parties);
+    let mut pub_storage: HashMap<u32, FileStorage> = HashMap::with_capacity(num_parties);
     let client_storage: FileStorage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
     let mut internal_client: Option<Client> = None;
     let mut core_endpoints = Vec::with_capacity(num_parties);
@@ -1220,8 +1221,11 @@ pub async fn execute_cmd(
         )?;
         core_endpoints.push(core_endpoint);
 
-        pub_storage
-            .push(FileStorage::new(Some(destination_prefix), StorageType::PUB, None).unwrap());
+        // there's only 1 party, so use index 1
+        pub_storage.insert(
+            1,
+            FileStorage::new(Some(destination_prefix), StorageType::PUB, None).unwrap(),
+        );
         internal_client = Some(
             Client::new_client(
                 client_storage,
@@ -1256,7 +1260,8 @@ pub async fn execute_cmd(
             )?;
             core_endpoints.push(core_endpoint);
 
-            pub_storage.push(
+            pub_storage.insert(
+                i as u32 + 1,
                 FileStorage::new(Some(destination_prefix), StorageType::PUB, Some(i + 1)).unwrap(),
             );
         }

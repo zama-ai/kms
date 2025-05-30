@@ -268,6 +268,7 @@ async fn default_user_decryption_threshold(
         amount_parties,
         None,
         None,
+        None,
     )
     .await;
 }
@@ -309,6 +310,7 @@ async fn default_user_decryption_threshold_with_crash(
         secure,
         amount_parties,
         party_ids_to_crash,
+        None,
         None,
     )
     .await;

@@ -25,6 +25,7 @@ const {
     transcript_to_parsed_req_js,
     transcript_to_eip712domain_js,
     transcript_to_response_js,
+    new_server_id_addr,
 } = require("../../pkg");
 
 test('pke', (_t) => {
@@ -151,8 +152,18 @@ test('threshold user decryption response with js', (_t) => {
 test('new client', (_t) => {
     // make a generic client
     let address = "0x66f9664f97F2b50F62D13eA064982f936dE76657";
-    new_client([address], address, 'default');
+    new_client([new_server_id_addr(1, address)], address, 'default');
+    new_client([new_server_id_addr(2, address), new_server_id_addr(1, address)], address, 'default');
 
     // we only need to test the constructor, no need to test is further
     // as they are handled by the other tests
+});
+
+test('new client repeated ID', (_t) => {
+    let address = "0x66f9664f97F2b50F62D13eA064982f936dE76657";
+    // expect to throw error if there are duplicate IDs
+    assert.throws(
+        () => new_client([new_server_id_addr(1, address), new_server_id_addr(1, address)], address, 'default'),
+        Error
+    );
 });

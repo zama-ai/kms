@@ -109,10 +109,26 @@ pub fn u8vec_to_private_sig_key(v: &[u8]) -> Result<PrivateSigKey, JsError> {
     deserialize(v).map_err(|e| JsError::new(&e.to_string()))
 }
 
+// We cannot use a hashmap so use this struct as an alternative
+#[wasm_bindgen]
+pub struct ServerIdAddr {
+    id: u32,
+    addr: alloy_primitives::Address,
+}
+
+/// Create a new [ServerIdAddr] structure that holds an ID and an address
+/// which must be a valid EIP-55 address, notably prefixed with "0x".
+#[wasm_bindgen]
+pub fn new_server_id_addr(id: u32, addr: String) -> Result<ServerIdAddr, JsError> {
+    let addr = alloy_primitives::Address::parse_checksummed(addr, None)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    Ok(ServerIdAddr { id, addr })
+}
+
 /// Instantiate a new client.
 ///
-/// * `server_addrs` - a list of KMS server EIP-55 addresses,
-/// must be prefixed with "0x".
+/// * `server_addrs` - a list of KMS server ID with EIP-55 addresses,
+/// the elements in the list can be created using [new_server_id_addr].
 ///
 /// * `client_address_hex` - the client (wallet) address in hex,
 /// must be prefixed with "0x".
@@ -121,7 +137,7 @@ pub fn u8vec_to_private_sig_key(v: &[u8]) -> Result<PrivateSigKey, JsError> {
 /// The "default" parameter choice is selected if no matching string is found.
 #[wasm_bindgen]
 pub fn new_client(
-    server_addrs: Vec<String>,
+    server_addrs: Vec<ServerIdAddr>,
     client_address_hex: &str,
     fhe_parameter: &str,
 ) -> Result<Client, JsError> {
@@ -138,15 +154,18 @@ pub fn new_client(
     let client_address = alloy_primitives::Address::parse_checksummed(client_address_hex, None)
         .map_err(|e| JsError::new(&e.to_string()))?;
 
-    let server_identities = ServerIdentities::Addrs(
+    let expected_server_count = server_addrs.len();
+    let addrs_hash_map = HashMap::from_iter(
         server_addrs
             .into_iter()
-            .map(|s| {
-                alloy_primitives::Address::parse_checksummed(s, None)
-                    .map_err(|e| JsError::new(&e.to_string()))
-            })
-            .collect::<Result<Vec<_>, JsError>>()?,
+            .map(|id_addr| (id_addr.id, id_addr.addr)),
     );
+
+    if expected_server_count != addrs_hash_map.len() {
+        return Err(JsError::new("some server IDs have duplicate keys"));
+    }
+
+    let server_identities = ServerIdentities::Addrs(addrs_hash_map);
 
     Ok(Client {
         rng: Box::new(AesRng::from_entropy()),
@@ -159,11 +178,14 @@ pub fn new_client(
 }
 
 #[wasm_bindgen]
-pub fn get_server_addrs(client: &Client) -> Vec<String> {
+pub fn get_server_addrs(client: &Client) -> Vec<ServerIdAddr> {
     client
         .get_server_addrs()
         .iter()
-        .map(|addr| addr.to_string())
+        .map(|(id, addr)| ServerIdAddr {
+            id: *id,
+            addr: *addr,
+        })
         .collect()
 }
 

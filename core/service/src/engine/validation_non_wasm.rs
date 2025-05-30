@@ -1,6 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use alloy_dyn_abi::Eip712Domain;
+use itertools::Itertools;
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
 use kms_grpc::{
@@ -222,7 +223,7 @@ pub(crate) fn verify_user_decrypt_eip712(
 /// [other_resp] contains one of the valid [server_pks] and the signature
 /// is correct with respect to this key.
 fn validate_public_decrypt_meta_data(
-    server_pks: &[PublicSigKey],
+    server_pks: &HashMap<u32, PublicSigKey>,
     pivot_resp: &PublicDecryptionResponsePayload,
     other_resp: &PublicDecryptionResponsePayload,
     signature: &[u8],
@@ -238,7 +239,7 @@ fn validate_public_decrypt_meta_data(
         return Ok(false);
     }
     let resp_verf_key: PublicSigKey = bc2wrap::deserialize(&other_resp.verification_key)?;
-    if !server_pks.contains(&resp_verf_key) {
+    if !server_pks.values().contains(&resp_verf_key) {
         tracing::warn!("Server key is unknown or incorrect.");
         return Ok(false);
     }
@@ -301,7 +302,7 @@ fn select_most_common_public_dec(
 /// Pick the pivot as the first response and call [validate_dec_meta_data]
 /// on every response. Additionally, ensure that verification keys are unique.
 fn validate_public_decrypt_responses(
-    server_pks: &[PublicSigKey],
+    server_pks: &HashMap<u32, PublicSigKey>,
     agg_resp: &[PublicDecryptionResponse],
 ) -> anyhow::Result<Option<Vec<PublicDecryptionResponsePayload>>> {
     if agg_resp.is_empty() {
@@ -366,7 +367,7 @@ fn validate_public_decrypt_responses(
 /// In addition, if the original request is provided:
 /// - The response matches the original request
 pub(crate) fn validate_public_decrypt_responses_against_request(
-    server_pks: &[PublicSigKey],
+    server_pks: &HashMap<u32, PublicSigKey>,
     request: Option<PublicDecryptionRequest>,
     agg_resp: &[PublicDecryptionResponse],
     min_agree_count: u32,
@@ -412,6 +413,8 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use aes_prng::AesRng;
     use kms_grpc::{
         kms::v1::{
@@ -773,11 +776,16 @@ mod tests {
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
 
-        let pks = [vk0, vk1, vk2];
+        let pks = HashMap::from_iter(
+            [vk0, vk1, vk2]
+                .into_iter()
+                .enumerate()
+                .map(|(i, k)| (i as u32 + 1, k)),
+        );
 
         let pivot = PublicDecryptionResponsePayload {
             digest: vec![1, 2, 3, 4],
-            verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
+            verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
             plaintexts: vec![TypedPlaintext {
                 bytes: vec![1],
                 fhe_type: 1,
@@ -821,7 +829,7 @@ mod tests {
         // use a bad signature (signing the wrong value)
         {
             let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: vec![1, 2, 3, 4, 5], // Original digest does not contain the 5
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
@@ -848,7 +856,7 @@ mod tests {
         // use a bad response (digest mismatch)
         {
             let bad_value = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: vec![1, 2, 3, 4, 5], // Original digest does not contain the 5
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
@@ -951,11 +959,16 @@ mod tests {
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
 
-        let pks = [vk0, vk1, vk2];
+        let pks = HashMap::from_iter(
+            [vk0, vk1, vk2]
+                .into_iter()
+                .enumerate()
+                .map(|(i, k)| (i as u32 + 1, k)),
+        );
 
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
@@ -979,7 +992,7 @@ mod tests {
         };
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[1]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
                 digest: vec![1, 2, 3, 4],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
@@ -1045,7 +1058,7 @@ mod tests {
         {
             let bad_resp = {
                 let payload = PublicDecryptionResponsePayload {
-                    verification_key: bc2wrap::serialize(&pks[1]).unwrap(),
+                    verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
                     digest: vec![1, 2, 3, 4],
                     plaintexts: vec![
                         TypedPlaintext {
@@ -1103,7 +1116,12 @@ mod tests {
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, _sk2) = gen_sig_keys(&mut rng);
 
-        let pks = [vk0, vk1, vk2];
+        let pks = HashMap::from_iter(
+            [vk0, vk1, vk2]
+                .into_iter()
+                .enumerate()
+                .map(|(i, k)| (i as u32 + 1, k)),
+        );
 
         let request = PublicDecryptionRequest {
             request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap().into()),
@@ -1125,7 +1143,7 @@ mod tests {
 
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[0]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: digest.clone(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
@@ -1149,7 +1167,7 @@ mod tests {
         };
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[1]).unwrap(),
+                verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
                 digest: digest.clone(),
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
