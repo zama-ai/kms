@@ -59,11 +59,19 @@ spec:
               {{- if .Values.kmsCore.nitroEnclave.enabled }}
               export KMS_CORE__PRIVATE_VAULT__KEYCHAIN="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN:={{ .Values.kmsCore.privateVault.awskms.keychain }}}"
               {{- end }}
+              envsubst < /var/lib/kms-core/config/aws.toml > aws.toml
+              envsubst < /var/lib/kms-core/config/vaults.toml > vaults.toml
+              envsubst < /var/lib/kms-core/config/kms-gen-keys.toml > kms-gen-keys.toml
               envsubst < /var/lib/kms-core/config/kms-server.toml > kms-server.toml
+              cat aws.toml vaults.toml >> kms-gen-keys.toml
+              cat aws.toml vaults.toml >> kms-server.toml
               {{- if .Values.kmsCore.nitroEnclave.debug }}
               echo "### BEGIN - env ###"
               env
               echo "### END - env ###"
+              echo "### BEGIN - kms-gen-keys.toml ###"
+              cat kms-gen-keys.toml
+              echo "### END - kms-gen-keys.toml ###"
               echo "### BEGIN - kms-server.toml ###"
               cat kms-server.toml
               echo "### END - kms-server.toml ###"
@@ -91,17 +99,6 @@ spec:
             - mountPath: {{ .Values.kmsCore.workdir }}
               name: workdir
         {{- if .Values.kmsCore.nitroEnclave.enabled }}
-        {{- /* Init Enclave Config Socket, hardcoded to 4000 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
-        - {{ include "proxyFromEnclave"
-               (dict "name" "enclave-config"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" 4000
-                     "to" (printf "OPEN:kms-server.toml,rdonly")
-                ) | indent 10 | trim }}
-          workingDir: {{ .Values.kmsCore.workdir }}
-          volumeMounts:
-            - mountPath: {{ .Values.kmsCore.workdir }}
-              name: workdir
         {{- /* Init Enclave Logger Socket, hardcoded to 3000 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
         - {{ include "proxyFromEnclave"
                (dict "name" "kms-core-enclave-logger"
@@ -109,13 +106,6 @@ spec:
                      "vsockPort" 3000
                      "to" "STDOUT"
                ) | indent 10 | trim }}
-        {{- /* Init Enclave Tracing Socket */}}
-        - {{ include "proxyFromEnclave"
-               (dict "name" "kms-core-enclave-tracing"
-                     "image" .Values.kubeUtils.image
-                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.tracing
-                     "to" (printf "TCP:%s" (urlParse .Values.tracing.endpoint).host)
-                ) | indent 10 | trim }}
         {{- if .Values.kmsCore.nitroEnclave.ports.imds }}
         {{- /* Init AWS IMDS Proxy Socket */}}
         - {{ include "proxyFromEnclaveTcp"
@@ -159,19 +149,80 @@ spec:
                      "address" (printf "kms.%s.amazonaws.com" .Values.kmsCore.aws.region)
                      "port" 443
                 ) | indent 10 | trim }}
-        {{- /* Init GRPC Client Proxy Socket */}}
-        - {{ include "proxyToEnclaveTcp"
-               (dict "name" "grpc-client-proxy"
-                     "image" .Values.kubeUtils.image
-                     "cid" .Values.kmsCore.nitroEnclave.cid
-                     "port" .Values.kmsCore.ports.client
-                ) | indent 10 | trim }}
+        {{- /* Generate signing key and CA certificate */}}
+        - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
+          imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
+          name: kms-core-enclave-gen-signing-key
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              {{- if .Values.kmsCore.nitroEnclave.debug }}
+              echo "### BEGIN - enclave.json ###"
+              cat /var/lib/kms-core/config/enclave.json
+              echo "### END - enclave.json ###"
+              echo "### BEGIN - describe-eif ###"
+              nitro-cli describe-eif --eif-path {{ .Values.kmsCore.nitroEnclave.eifPath }}
+              echo "### END - describe-eif ###"
+              {{- end }}
+              # enclave config vsock is hardcoded to 4000 in init_enclave.sh
+              # it can't be a separate container
+              # because we need to serve kms-server.toml on the same port later
+              socat VSOCK-LISTEN:4000,fork,reuseaddr OPEN:kms-gen-keys.toml,rdonly &
+              nitro-cli run-enclave --config /var/lib/kms-core/config/enclave.json
+          env:
+            - name: "NO_COLOR"
+              value: "true"
+            - name: RUN_MODE
+              value: {{ .Values.runMode }}
+            - name: RUST_LOG
+              value: {{ .Values.rustLog }}
+          {{- if .Values.kmsCore.envFrom.configmap.name }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.kmsCore.envFrom.configmap.name }}
+          {{- end }}
+          workingDir: {{ .Values.kmsCore.workdir }}
+          volumeMounts:
+            - mountPath: {{ .Values.kmsCore.workdir }}
+              name: workdir
+            - mountPath: /var/lib/kms-core/config
+              name: config-files
+            - mountPath: /hugepages
+              name: hugepage
+            - name: nitro-device
+              mountPath: /dev/nitro_enclaves
+          resources:
+            requests:
+              memory: 2Gi
+              aws.ec2.nitro/nitro_enclaves: "1"
+              hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
+            limits:
+              ephemeral-storage: {{ .Values.kmsCore.resources.limits.ephemeralStorage }}
+              memory: 4Gi
+              aws.ec2.nitro/nitro_enclaves: "1"
+              hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
         {{- /* Init Metrics Endpoint Proxy Socket */}}
         - {{ include "proxyToEnclaveTcp"
                (dict "name" "metrics-endpoint-proxy"
                      "image" .Values.kubeUtils.image
                      "cid" .Values.kmsCore.nitroEnclave.cid
                      "port" .Values.kmsCore.ports.metrics
+                ) | indent 10 | trim }}
+        {{- /* Init Enclave Tracing Socket */}}
+        - {{ include "proxyFromEnclave"
+               (dict "name" "kms-core-enclave-tracing"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.tracing
+                     "to" (printf "TCP:%s" (urlParse .Values.tracing.endpoint).host)
+                ) | indent 10 | trim }}
+        {{- /* Init GRPC Client Proxy Socket */}}
+        - {{ include "proxyToEnclaveTcp"
+               (dict "name" "grpc-client-proxy"
+                     "image" .Values.kubeUtils.image
+                     "cid" .Values.kmsCore.nitroEnclave.cid
+                     "port" .Values.kmsCore.ports.client
                 ) | indent 10 | trim }}
         {{- if .Values.kmsCore.thresholdMode.enabled }}
         {{- /* Init GRPC Local Peer Proxy Socket */}}
@@ -226,7 +277,12 @@ spec:
               {{ include "kmsCoreMode" . }} \
               {{- if .Values.kmsCore.thresholdMode.enabled }}
               --signing-key-party-id ${KMS_CORE__THRESHOLD__MY_ID} \
-              --num-parties {{ .Values.kmsPeers.count }}
+              --num-parties {{ .Values.kmsPeers.count }} \
+              {{ if .Values.kmsCore.addressOverride }}
+              --tls-subject {{ .Values.kmsCore.addressOverride | quote }}
+              {{- else }}
+              --tls-subject "{{ include "kmsCoreName" . }}-${KMS_CORE__THRESHOLD__MY_ID}"
+              {{- end }}
               {{- else }}
               --write-privkey
               {{- end }}
@@ -283,9 +339,13 @@ spec:
               nitro-cli describe-eif --eif-path {{ .Values.kmsCore.nitroEnclave.eifPath }}
               echo "### END - describe-eif ###"
               {{- end }}
-              {{- if and .Values.kmsCore.thresholdMode.tls.enabled .Values.kmsCore.thresholdMode.tls.attested }}
+              {{- if .Values.kmsCore.nitroEnclave.signed }}
               nitro-cli sign-eif --eif-path {{ .Values.kmsCore.nitroEnclave.eifPath }} --signing-certificate /var/lib/kms-core/config/party_cert.pem --private-key {{ .Values.kmsCore.nitroEnclave.eifSignKey }}
               {{- end }}
+              # enclave config vsock is hardcoded to 4000 in init_enclave.sh
+              # it can't be a separate container because
+              # we had to serve kms-gen-keys.toml on the same port earlier
+              socat VSOCK-LISTEN:4000,fork,reuseaddr OPEN:kms-server.toml,rdonly &
               nitro-cli run-enclave --config /var/lib/kms-core/config/enclave.json
               while true; do
                 nitro-cli describe-enclaves > /var/log/nitro_enclaves/status

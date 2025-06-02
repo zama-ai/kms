@@ -108,69 +108,92 @@ has_value "aws.sts_endpoint" && {
     export AWS_ENDPOINT_URL_STS
 }
 
-# (optional) telemetry and AWS API proxies
-has_value "telemetry.metrics_bind_address" || log "metrics endpoint not set"
-has_value "telemetry.metrics_bind_address" && \
-    start_tcp_proxy_in "metrics" "$(get_configured_port "telemetry.metrics_bind_address")"
-has_value "telemetry.tracing_endpoint" || log "tracing endpoint not set"
-has_value "telemetry.tracing_endpoint" && \
-    start_tcp_proxy_out "tracing" "$(get_configured_port "telemetry.tracing_endpoint")"
+# AWS API proxies
 start_tcp_proxy_out "AWS IMDS" "$(get_configured_port "aws.imds_endpoint")"
 start_tcp_proxy_out "AWS STS" "$(get_configured_port "aws.sts_endpoint")"
 start_tcp_proxy_out "AWS S3" "$(get_configured_port "aws.s3_endpoint")"
 start_tcp_proxy_out "AWS KMS" "$(get_configured_port "aws.awskms_endpoint")"
 
-# ensure that all keys exist if running in centralized mode
-has_value "threshold" || \
-    {
-	log "generating keys for centralized KMS"
-	kms-gen-keys \
-	    --pub-url "$(get_value "public_vault.storage")" \
-	    --priv-url "$(get_value "private_vault.storage")" \
-	    --root-key-id "$(get_value "private_vault.keychain")" \
-	    --aws-region "$(get_value "aws.region")" \
-	    --aws-imds-endpoint "$(get_value "aws.imds_endpoint")" \
-	    --aws-sts-endpoint "$(get_value "aws.sts_endpoint")" \
-	    --aws-s3-endpoint "$(get_value "aws.s3_endpoint")" \
-	    --aws-kms-endpoint "$(get_value "aws.awskms_endpoint")" \
-	    centralized --write-privkey \
-	    |& logger || fail "cannot generate keys"
-    }
-# ensure that signing keys if running in threshold mode
-has_value "threshold" && \
-    {
-	log "generating signing keys for threshold KMS"
-	NUM_PARTIES=$(yq -p toml -op ".threshold.peers | length" $KMS_SERVER_CONFIG_FILE)
-	kms-gen-keys \
-	    --pub-url "$(get_value "public_vault.storage")" \
-	    --priv-url "$(get_value "private_vault.storage")" \
-	    --root-key-id "$(get_value "private_vault.keychain")" \
-	    --aws-region "$(get_value "aws.region")" \
-	    --aws-imds-endpoint "$(get_value "aws.imds_endpoint")" \
-	    --aws-sts-endpoint "$(get_value "aws.sts_endpoint")" \
-	    --aws-s3-endpoint "$(get_value "aws.s3_endpoint")" \
-	    --aws-kms-endpoint "$(get_value "aws.awskms_endpoint")" \
-	    --cmd signing-keys \
-	    threshold \
-			--signing-key-party-id "$(get_value "threshold.my_id")" \
-			--num-parties "$NUM_PARTIES" \
-	    |& logger || fail "cannot generate keys"
-    }
+# We need to be able to run kms-gen-keys independently of running kms-server
+# because kms-gen-keys also generates party CA certificates and those need to be
+# included in the peer list and voted on before all parties can start.
 
-# gRPC proxies
-start_tcp_proxy_in "gRPC client" "$(get_configured_port "service.listen_port")"
-has_value "threshold" && \
+# If the [keygen] section is present in the received configuration file,
+# kms-gen-keys will run. It doesn't have any fields. It's not a section
+# understood by the configuration parser in kms-server, so kms-server will not
+# start if this section is present.
+has_value "keygen" && \
     {
-	start_tcp_proxy_in "gRPC peer" "$(get_configured_port "threshold.listen_port")" &
-
-	# one outgoing proxy for each threshold peer
-	EXPR="start_tcp_proxy_out 'threshold party \(.party_id)' \(.port);"
-	START_TCP_PROXY_OUT_CMDS=$( \
-	    yq -p toml -op ".threshold.peers | map (\"$EXPR\")" $KMS_SERVER_CONFIG_FILE \
-		| sed 's/^.* = //g')
-	eval "$START_TCP_PROXY_OUT_CMDS"
+	# ensure that all keys exist if running in centralized mode
+	has_value "threshold" || \
+	    {
+		log "generating keys for centralized KMS"
+		kms-gen-keys \
+		    --pub-url "$(get_value "public_vault.storage")" \
+		    --priv-url "$(get_value "private_vault.storage")" \
+		    --root-key-id "$(get_value "private_vault.keychain")" \
+		    --aws-region "$(get_value "aws.region")" \
+		    --aws-imds-endpoint "$(get_value "aws.imds_endpoint")" \
+		    --aws-sts-endpoint "$(get_value "aws.sts_endpoint")" \
+		    --aws-s3-endpoint "$(get_value "aws.s3_endpoint")" \
+		    --aws-kms-endpoint "$(get_value "aws.awskms_endpoint")" \
+		    centralized --write-privkey \
+		    |& logger || fail "cannot generate keys"
+	    }
+	# Ensure that signing keys exist if running in threshold mode. Note that
+	# the [threshold] section used for kms-gen-keys is not the same as one
+	# used for kms-server. It has three fields only: my_id, num_parties, and
+	# tls_subject. The latter two are not accepted by kms-server.
+	has_value "threshold" && \
+	    {
+		log "generating signing keys for threshold KMS"
+		kms-gen-keys \
+		    --pub-url "$(get_value "public_vault.storage")" \
+		    --priv-url "$(get_value "private_vault.storage")" \
+		    --root-key-id "$(get_value "private_vault.keychain")" \
+		    --aws-region "$(get_value "aws.region")" \
+		    --aws-imds-endpoint "$(get_value "aws.imds_endpoint")" \
+		    --aws-sts-endpoint "$(get_value "aws.sts_endpoint")" \
+		    --aws-s3-endpoint "$(get_value "aws.s3_endpoint")" \
+		    --aws-kms-endpoint "$(get_value "aws.awskms_endpoint")" \
+		    --cmd signing-keys \
+		    threshold \
+		    --signing-key-party-id "$(get_value "threshold.my_id")" \
+		    --num-parties "$(get_value "threshold.num_parties")" \
+		    --tls-subject "$(get_value "threshold.tls_subject")" \
+		    |& logger || fail "cannot generate keys"
+	    }	
     }
+has_value "keygen" || \
+    log "[keygen] configuration section not present, skipping key generation"
 
-# showtime!
-log "starting kms-server"
-kms-server --config-file=$KMS_SERVER_CONFIG_FILE |& logger
+has_value "service" && \
+    {
+	# telemetry proxies
+	has_value "telemetry.metrics_bind_address" || log "metrics endpoint not set"
+	has_value "telemetry.metrics_bind_address" && \
+	    start_tcp_proxy_in "metrics" "$(get_configured_port "telemetry.metrics_bind_address")"
+	has_value "telemetry.tracing_endpoint" || log "tracing endpoint not set"
+	has_value "telemetry.tracing_endpoint" && \
+	    start_tcp_proxy_out "tracing" "$(get_configured_port "telemetry.tracing_endpoint")"
+
+	# gRPC proxies
+	start_tcp_proxy_in "gRPC client" "$(get_configured_port "service.listen_port")"
+	has_value "threshold" && \
+	    {
+		start_tcp_proxy_in "gRPC peer" "$(get_configured_port "threshold.listen_port")" &
+
+		# one outgoing proxy for each threshold peer
+		EXPR="start_tcp_proxy_out 'threshold party \(.party_id)' \(.port);"
+		START_TCP_PROXY_OUT_CMDS=$( \
+					    yq -p toml -op ".threshold.peers | map (\"$EXPR\")" $KMS_SERVER_CONFIG_FILE \
+						| sed 's/^.* = //g')
+		eval "$START_TCP_PROXY_OUT_CMDS"
+	    }
+
+	# showtime!
+	log "starting kms-server"
+	kms-server --config-file=$KMS_SERVER_CONFIG_FILE |& logger	
+    }
+has_value "service" || \
+    log "[service] configuration section not present, not launching kms-server"

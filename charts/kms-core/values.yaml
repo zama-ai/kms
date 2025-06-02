@@ -47,11 +47,10 @@ kmsCore:
     # If enabled, the core will communicate with other cores over TLS
     tls:
       enabled: false
-      attested: false
       # Core TLS certificates and keys can be loaded from file paths or from PEM
       # blocks NB: only PEM blocks are can be used to provide certificates to
       # Nitro enclaves!
-      certificate:
+      ca_certificate:
         # You have to define either `path` or `pem`
         # Certificate: path to the certificate file
         path: /my/very/secret/cert.pem
@@ -80,6 +79,7 @@ kmsCore:
   # Nitro enclave needs specific instance types
   nitroEnclave:
     enabled: false
+    signed: false
     debug: true
     # Enclave CPU count, must be a multiple of 2 since whole cores (not hyperthreads) are sliced off and dedicated to the enclave
     cpuCount: 6
