@@ -58,7 +58,7 @@ use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use crate::networking::value::BroadcastValue;
 use crate::networking::{NetworkMode, NetworkingStrategy};
 use crate::{
-    execution::small_execution::prss::{PRSSSetup, PrssInit, RobustSecurePrssInit},
+    execution::small_execution::prss::{PRSSInit, PRSSSetup, RobustSecurePrssInit},
     session_id::SessionId,
 };
 use aes_prng::AesRng;

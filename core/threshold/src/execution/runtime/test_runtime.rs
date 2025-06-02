@@ -9,7 +9,7 @@ use crate::{
         small_execution::{
             agree_random::DummyAgreeRandom,
             prf::PRSSConversions,
-            prss::{AbortRealPrssInit, DerivePRSSState, PRSSSetup, PrssInit},
+            prss::{AbortRealPrssInit, DerivePRSSState, PRSSInit, PRSSSetup},
         },
     },
     networking::{

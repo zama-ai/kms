@@ -10,7 +10,7 @@ use crate::execution::runtime::session::ParameterHandles;
 use crate::execution::runtime::session::SmallSession;
 use crate::execution::runtime::session::SmallSessionStruct;
 use crate::execution::sharing::share::Share;
-use crate::execution::small_execution::prss::{DerivePRSSState, PrssInit, RobustSecurePrssInit};
+use crate::execution::small_execution::prss::{DerivePRSSState, PRSSInit, RobustSecurePrssInit};
 use crate::experimental::algebra::levels::LevelEll;
 use crate::experimental::algebra::ntt::N65536;
 use crate::experimental::bgv::dkg::NttForm;

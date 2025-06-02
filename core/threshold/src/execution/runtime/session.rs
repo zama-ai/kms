@@ -7,7 +7,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::small_execution::{
         prf::PRSSConversions,
-        prss::{DerivePRSSState, PRSSPrimitives, PrssInit, RobustSecurePrssInit, SecurePRSSState},
+        prss::{DerivePRSSState, PRSSInit, PRSSPrimitives, RobustSecurePrssInit, SecurePRSSState},
     },
     networking::Networking,
     session_id::SessionId,

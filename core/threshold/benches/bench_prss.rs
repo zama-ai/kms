@@ -13,7 +13,7 @@ use threshold_fhe::{
         },
         small_execution::{
             agree_random::DummyAgreeRandomFromShare,
-            prss::{DerivePRSSState, PRSSPrimitives, PRSSSetup, PrssInit, RobustRealPrssInit},
+            prss::{DerivePRSSState, PRSSInit, PRSSPrimitives, PRSSSetup, RobustRealPrssInit},
         },
     },
     networking::{local::LocalNetworkingProducer, NetworkMode},

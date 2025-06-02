@@ -347,7 +347,7 @@ mod tests {
             common::{pack_residue_poly, TryFromWrapper},
             degree_4::ResiduePolyF4,
         },
-        tests::randomness_check::execute_all_randomness_tests,
+        tests::randomness_check::execute_all_randomness_tests_tight,
     };
     use aes_prng::AesRng;
     use num_traits::FromPrimitive;
@@ -630,7 +630,7 @@ mod tests {
 
                 for share in all_shares {
                     assert_eq!(share.len(), SHARE_COUNT);
-                    execute_all_randomness_tests(&share).unwrap();
+                    execute_all_randomness_tests_tight(&share).unwrap();
                 }
             }
         }

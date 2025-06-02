@@ -24,7 +24,7 @@ use crate::execution::runtime::session::SessionParameters;
 use crate::execution::runtime::session::SmallSession;
 use crate::execution::runtime::session::{BaseSession, BaseSessionStruct};
 use crate::execution::small_execution::prss::{
-    DerivePRSSState, PRSSSetup, PrssInit, RobustSecurePrssInit,
+    DerivePRSSState, PRSSInit, PRSSSetup, RobustSecurePrssInit,
 };
 use crate::experimental::algebra::levels::{LevelEll, LevelKsw, LevelOne};
 use crate::experimental::algebra::ntt::{Const, N65536};

@@ -183,7 +183,7 @@ pub mod testing {
             small_execution::{
                 agree_random::DummyAgreeRandom,
                 prf::PRSSConversions,
-                prss::{AbortRealPrssInit, PRSSSetup, PrssInit},
+                prss::{AbortRealPrssInit, PRSSInit, PRSSSetup},
             },
         },
         networking::{local::LocalNetworkingProducer, NetworkMode},

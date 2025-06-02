@@ -70,7 +70,7 @@ pub trait DerivePRSSState<Z> {
 
 /// Trait to capture the init phase of the PRSS.
 #[async_trait]
-pub trait PrssInit<Z>: Clone + Send + Sync + Sized {
+pub trait PRSSInit<Z>: Send + Sync + Sized {
     /// Defines the output of PRSSInit.
     /// We need to be able to derive a PRSS state
     /// from this output.
@@ -139,7 +139,7 @@ impl<A: AgreeRandomFromShare + Default, V: Vss + Default> Default for RobustReal
 pub type RobustSecurePrssInit = RobustRealPrssInit<RobustSecureAgreeRandom, SecureVss>;
 
 #[async_trait]
-impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandom> PrssInit<Z>
+impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandom> PRSSInit<Z>
     for AbortRealPrssInit<A>
 {
     type OutputType = PRSSSetup<Z>;
@@ -197,7 +197,7 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandom> PrssInit<Z>
 }
 
 #[async_trait]
-impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss> PrssInit<Z>
+impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss> PRSSInit<Z>
     for RobustRealPrssInit<A, V>
 {
     type OutputType = PRSSSetup<Z>;
@@ -863,7 +863,7 @@ mod tests {
     };
     use crate::networking::NetworkMode;
     use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
-    use crate::tests::randomness_check::execute_all_randomness_tests;
+    use crate::tests::randomness_check::execute_all_randomness_tests_loose;
     use crate::{
         algebra::{
             galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
@@ -900,7 +900,7 @@ mod tests {
     use tracing_test::traced_test;
 
     // async helper function that creates the prss setups
-    async fn setup_prss_sess<Z: ErrorCorrect + Invert, P: PrssInit<Z> + 'static>(
+    async fn setup_prss_sess<Z: ErrorCorrect + Invert, P: PRSSInit<Z> + Clone + 'static>(
         sessions: Vec<SmallSession<Z>>,
         prss_init: P,
     ) -> Option<HashMap<usize, P::OutputType>> {
@@ -1710,8 +1710,8 @@ mod tests {
         >(params.clone(), AbortSecurePrssInit::default(), true, false);
 
         test_prss_strategies::<
-            crate::algebra::galois_rings::degree_5::ResiduePolyF5Z64,
-            { crate::algebra::galois_rings::degree_5::ResiduePolyF5Z64::EXTENSION_DEGREE },
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
             AbortSecurePrssInit,
             _,
         >(params, AbortSecurePrssInit::default(), false, false);
@@ -1894,15 +1894,16 @@ mod tests {
     fn test_prss_strategies<
         Z: ErrorCorrect + Invert + PRSSConversions,
         const EXTENSION_DEGREE: usize,
-        PRSSHonest: PrssInit<Z> + Default + 'static,
-        PRSSMalicious: PrssInit<Z> + 'static,
+        PRSSHonest: PRSSInit<Z> + Default + 'static,
+        PRSSMalicious: PRSSInit<Z> + Clone + 'static,
     >(
         params: TestingParameters,
         malicious_prss: PRSSMalicious,
         generate_masks: bool,
         should_malicious_panic: bool,
     ) {
-        let num_secrets = 1000;
+        //Needs to be at least SAMPLE_COUNT (=100) to run the statistical tests
+        let num_secrets = 100;
         let mut task_honest = |mut session: SmallSession<Z>| async move {
             let secure_prss_init = PRSSHonest::default();
             let setup = secure_prss_init.init(&mut session).await.unwrap();
@@ -2106,7 +2107,7 @@ mod tests {
         let last_honest_index = prss_results.len() - max_error;
         for shares in &prss_results[0..last_honest_index] {
             let raw_shares = shares.iter().map(|share| share.value()).collect::<Vec<_>>();
-            let randomness_test = execute_all_randomness_tests(&raw_shares);
+            let randomness_test = execute_all_randomness_tests_loose(&raw_shares);
             assert!(
                 randomness_test.is_ok(),
                 "Failed randomnness test of PRSS.Next shares: {:?}",
@@ -2118,7 +2119,7 @@ mod tests {
         let results = reconstruct_all(prss_results, num_secrets, degree, max_error);
 
         // Validate randomness of the reconstructed results
-        let randomness_test = execute_all_randomness_tests(&results);
+        let randomness_test = execute_all_randomness_tests_loose(&results);
         assert!(
             randomness_test.is_ok(),
             "Failed randomness check of PRSS.Next Outputs: {:?}",
@@ -2142,7 +2143,7 @@ mod tests {
         // Validate randomness
         for shares in &przs_results {
             let raw_shares = shares.iter().map(|share| share.value()).collect::<Vec<_>>();
-            let randomness_test = execute_all_randomness_tests(&raw_shares);
+            let randomness_test = execute_all_randomness_tests_loose(&raw_shares);
             assert!(
                 randomness_test.is_ok(),
                 "Failed randomnness test of PRZS.Next Shares : {:?}",

@@ -12,6 +12,8 @@ use crate::algebra::structure_traits::Ring;
 
 const SAMPLE_COUNT: usize = 100; // inverse of significance level
 const SIGNIFICANCE_LEVEL: f64 = 1f64 / (SAMPLE_COUNT as f64);
+const NUM_STD_DEV_NIST: f64 = 3.0; // The recommended value by NIST to compute the confidence interval
+const NUM_STD_DEV_LOW_FAILURE: f64 = 4.75; // Value to compute the confidence interval s.t. we have very low failure probability
 
 /// Result of a randomness test.
 /// Each test will produce a distinct result.
@@ -120,7 +122,7 @@ struct PassingProportion {
 
 /// Proportion of Sequences Passing a Test, 4.2.1
 /// Also determine the range of accepted proportion.
-fn passing_proportion(p_values: &[f64]) -> PassingProportion {
+fn passing_proportion(p_values: &[f64], num_std_dev: f64) -> PassingProportion {
     let p_hat = 1.0 - SIGNIFICANCE_LEVEL;
     let m = p_values.len() as f64;
 
@@ -131,8 +133,8 @@ fn passing_proportion(p_values: &[f64]) -> PassingProportion {
 
     let proportion = pass_count as f64 / m;
 
-    let upper = p_hat + 3.0 * (p_hat * (1.0 - p_hat) / m).sqrt();
-    let lower = p_hat - 3.0 * (p_hat * (1.0 - p_hat) / m).sqrt();
+    let upper = p_hat + num_std_dev * (p_hat * (1.0 - p_hat) / m).sqrt();
+    let lower = p_hat - num_std_dev * (p_hat * (1.0 - p_hat) / m).sqrt();
 
     PassingProportion {
         upper,
@@ -180,7 +182,7 @@ fn uniformity_of_p_values(p_values: &[f64]) -> f64 {
     igamc(9.0 / 2.0, x_squared / 2.0)
 }
 
-fn ring_test<F, Z: Ring>(test: F, elems: &[Z]) -> RandomnessResult
+fn ring_test<F, Z: Ring>(test: F, elems: &[Z], num_std_dev: f64) -> RandomnessResult
 where
     F: Fn(&[u8]) -> f64,
 {
@@ -192,34 +194,48 @@ where
 
     RandomnessResult {
         samples: elems.len(),
-        passing: passing_proportion(&p_values),
+        passing: passing_proportion(&p_values, num_std_dev),
         p_value_t: uniformity_of_p_values(&p_values),
     }
 }
 
 /// Run the monobit test on a slice of ring elements.
-pub fn ring_monobit_test<Z: Ring>(elems: &[Z]) -> RandomnessResult {
+pub fn ring_monobit_test<Z: Ring>(elems: &[Z], num_std_dev: f64) -> RandomnessResult {
     assert!(elems.len() >= SAMPLE_COUNT);
-    ring_test(monobit_test, elems)
+    ring_test(monobit_test, elems, num_std_dev)
 }
 
 /// Run the runs test on a slice of ring elements.
-pub fn ring_runs_test<Z: Ring>(elems: &[Z]) -> RandomnessResult {
+pub fn ring_runs_test<Z: Ring>(elems: &[Z], num_std_dev: f64) -> RandomnessResult {
     assert!(elems.len() >= SAMPLE_COUNT);
-    ring_test(runs_test, elems)
+    ring_test(runs_test, elems, num_std_dev)
 }
 
 /// Execute all the randomness tests on a slice of ring elements.
-pub fn execute_all_randomness_tests<Z: Ring>(elems: &[Z]) -> anyhow::Result<()> {
+pub fn execute_all_randomness_tests<Z: Ring>(elems: &[Z], num_std_dev: f64) -> anyhow::Result<()> {
     for test_type in RandomnessTestType::iter() {
         let res = match test_type {
-            RandomnessTestType::Monobit => ring_monobit_test(elems),
-            RandomnessTestType::Runs => ring_runs_test(elems),
+            RandomnessTestType::Monobit => ring_monobit_test(elems, num_std_dev),
+            RandomnessTestType::Runs => ring_runs_test(elems, num_std_dev),
         };
 
         res.check_result()?;
     }
     Ok(())
+}
+
+/// Execute all the randomness tests on a slice of ring elements, testing
+/// we the samples are within [`NUM_STD_DEV_NIST`] std deviation
+/// away from the mean of a normal distribution
+pub fn execute_all_randomness_tests_tight<Z: Ring>(elems: &[Z]) -> anyhow::Result<()> {
+    execute_all_randomness_tests(elems, NUM_STD_DEV_NIST)
+}
+
+/// Execute all the randomness tests on a slice of ring elements, testing
+/// we the samples are within [`NUM_STD_DEV_LOW_FAILURE`] std deviation
+/// away from the mean of a normal distribution
+pub fn execute_all_randomness_tests_loose<Z: Ring>(elems: &[Z]) -> anyhow::Result<()> {
+    execute_all_randomness_tests(elems, NUM_STD_DEV_LOW_FAILURE)
 }
 
 #[cfg(test)]
@@ -233,8 +249,8 @@ mod tests {
     use crate::{
         algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Sample},
         tests::randomness_check::{
-            execute_all_randomness_tests, igamc, ring_monobit_test, ring_runs_test, runs_test,
-            SIGNIFICANCE_LEVEL,
+            execute_all_randomness_tests_tight, igamc, ring_monobit_test, ring_runs_test,
+            runs_test, NUM_STD_DEV_NIST, SIGNIFICANCE_LEVEL,
         },
     };
 
@@ -307,7 +323,7 @@ mod tests {
                 .map(|_| ResiduePolyF4Z64::sample(&mut rng))
                 .collect_vec();
 
-            ring_monobit_test(&all_residue_polys)
+            ring_monobit_test(&all_residue_polys, NUM_STD_DEV_NIST)
                 .check_result()
                 .unwrap();
         }
@@ -317,7 +333,7 @@ mod tests {
             let z = ResiduePolyF4Z64::sample(&mut rng);
             let all_residue_polys = (0..SAMPLES).map(|_| z).collect_vec();
 
-            ring_monobit_test(&all_residue_polys)
+            ring_monobit_test(&all_residue_polys, NUM_STD_DEV_NIST)
                 .check_result()
                 .unwrap_err();
         }
@@ -334,7 +350,9 @@ mod tests {
                 .map(|_| ResiduePolyF4Z64::sample(&mut rng))
                 .collect_vec();
 
-            ring_runs_test(&all_residue_polys).check_result().unwrap();
+            ring_runs_test(&all_residue_polys, NUM_STD_DEV_NIST)
+                .check_result()
+                .unwrap();
         }
 
         // negative testing
@@ -342,7 +360,7 @@ mod tests {
             let z = ResiduePolyF4Z64::sample(&mut rng);
             let all_residue_polys = (0..SAMPLES).map(|_| z).collect_vec();
 
-            ring_runs_test(&all_residue_polys)
+            ring_runs_test(&all_residue_polys, NUM_STD_DEV_NIST)
                 .check_result()
                 .unwrap_err();
         }
@@ -359,7 +377,7 @@ mod tests {
                 .map(|_| ResiduePolyF4Z64::sample(&mut rng))
                 .collect_vec();
 
-            execute_all_randomness_tests(&all_residue_polys).unwrap();
+            execute_all_randomness_tests_tight(&all_residue_polys).unwrap();
         }
 
         // negative testing
@@ -367,7 +385,7 @@ mod tests {
             let z = ResiduePolyF4Z64::sample(&mut rng);
             let all_residue_polys = (0..SAMPLES).map(|_| z).collect_vec();
 
-            execute_all_randomness_tests(&all_residue_polys).unwrap_err();
+            execute_all_randomness_tests_tight(&all_residue_polys).unwrap_err();
         }
     }
 

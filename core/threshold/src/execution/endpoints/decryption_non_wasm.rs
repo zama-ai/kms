@@ -529,7 +529,7 @@ where
 {
     use crate::execution::{
         runtime::session::{ParameterHandles, SmallSessionStruct},
-        small_execution::prss::{AbortSecurePrssInit, DerivePRSSState, PrssInit},
+        small_execution::prss::{AbortSecurePrssInit, DerivePRSSState, PRSSInit},
     };
     let session_id = base_session.session_id();
 

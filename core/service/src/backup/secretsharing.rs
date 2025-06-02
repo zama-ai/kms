@@ -151,7 +151,7 @@ mod tests {
     use rand::SeedableRng;
     use threshold_fhe::{
         algebra::structure_traits::One, execution::sharing::share::Share,
-        tests::randomness_check::execute_all_randomness_tests,
+        tests::randomness_check::execute_all_randomness_tests_tight,
     };
 
     use super::*;
@@ -198,7 +198,7 @@ mod tests {
                     }
                 }
                 for party_share in shares_by_party {
-                    execute_all_randomness_tests(&party_share).unwrap();
+                    execute_all_randomness_tests_tight(&party_share).unwrap();
                 }
 
                 // finally try to reconstruct

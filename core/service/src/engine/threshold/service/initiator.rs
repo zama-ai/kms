@@ -12,7 +12,7 @@ use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
         runtime::session::ParameterHandles,
-        small_execution::prss::{PRSSSetup, PrssInit, RobustSecurePrssInit},
+        small_execution::prss::{PRSSInit, PRSSSetup, RobustSecurePrssInit},
     },
     networking::NetworkMode,
 };

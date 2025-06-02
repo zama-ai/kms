@@ -15,7 +15,7 @@ use crate::{
             agree_random::AgreeRandomFromShare,
             prf::PRSSConversions,
             prss::{
-                DerivePRSSState, PRSSCounters, PRSSPrimitives, PRSSSetup, PRSSState, PrssInit,
+                DerivePRSSState, PRSSCounters, PRSSInit, PRSSPrimitives, PRSSSetup, PRSSState,
                 RobustRealPrssInit,
             },
         },
@@ -30,7 +30,7 @@ use crate::{
 pub struct MaliciousPrssDrop {}
 
 #[async_trait]
-impl<Z: Zero> PrssInit<Z> for MaliciousPrssDrop {
+impl<Z: Zero> PRSSInit<Z> for MaliciousPrssDrop {
     type OutputType = MaliciousPrssDrop;
     /// Does nothing and returns an empty [`PRSSSetup`]
     async fn init<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
@@ -128,7 +128,7 @@ impl<
         V: Vss,
         Bcast: Broadcast,
         Z: ErrorCorrect + Invert + PRSSConversions,
-    > PrssInit<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
+    > PRSSInit<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
     type OutputType = MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>;
 
@@ -259,7 +259,7 @@ impl<
         V: Vss,
         Bcast: Broadcast,
         Z: ErrorCorrect + Invert + PRSSConversions,
-    > PrssInit<Z> for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
+    > PRSSInit<Z> for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
 {
     type OutputType = MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>;
 

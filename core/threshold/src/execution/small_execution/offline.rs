@@ -37,6 +37,7 @@ pub trait Preprocessing<Z: Clone, Rnd: Rng + CryptoRng, S: BaseSessionHandles<Rn
     ) -> anyhow::Result<InMemoryBasePreprocessing<Z>>;
 }
 
+#[derive(Clone)]
 pub struct RealSmallPreprocessing<Z: Ring, Prss: PRSSPrimitives<Z>, BCast: Broadcast> {
     broadcast: BCast,
     // Note: We need phantom data here to specify
@@ -400,6 +401,8 @@ fn przs_list<
 
 /// Helper method for validating results when corruption has happened (by the reconstruction not being successful).
 /// The method finds the corrupt parties (based on what they broadcast) and adds them to the list of corrupt parties in the session.
+///
+/// __NOTE__: This method could be batched.
 async fn check_d<
     Z: Ring,
     Rnd: Rng + CryptoRng,
@@ -460,17 +463,31 @@ async fn check_d<
 mod test {
     use std::{collections::HashMap, num::Wrapping};
 
-    use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed};
+    use aes_prng::AesRng;
+    use rstest::rstest;
+
+    use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring};
     use crate::execution::communication::broadcast::SyncReliableBroadcast;
-    use crate::execution::online::preprocessing::dummy::reconstruct;
-    use crate::execution::small_execution::offline::{next_triple_batch, reconstruct_d_values};
-    use crate::execution::small_execution::prss::PRSSPrimitives;
+    use crate::execution::large_execution::vss::SecureVss;
+    use crate::execution::runtime::session::{SessionParameters, ToBaseSession};
+    use crate::execution::sharing::shamir::{RevealOp, ShamirSharings};
+    use crate::execution::small_execution::agree_random::RobustSecureAgreeRandom;
+    use crate::execution::small_execution::offline::reconstruct_d_values;
+    use crate::execution::small_execution::prss::{
+        DerivePRSSState, PRSSInit, PRSSPrimitives, RobustSecurePrssInit, SecurePRSSState,
+    };
+    use crate::malicious_execution::runtime::malicious_session::MaliciousSmallSessionStruct;
+    use crate::malicious_execution::small_execution::malicious_offline::{
+        MaliciousOfflineDrop, MaliciousOfflineWrongAmount,
+    };
+    use crate::malicious_execution::small_execution::malicious_prss::{
+        MaliciousPrssDrop, MaliciousPrssHonestInitLieAll, MaliciousPrssHonestInitRobustThenRandom,
+    };
     use crate::networking::NetworkMode;
+    use crate::tests::helper::tests::{execute_protocol_small_w_malicious, TestingParameters};
+    use crate::tests::randomness_check::execute_all_randomness_tests_loose;
     use crate::{
-        algebra::{
-            galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
-            structure_traits::{One, Zero},
-        },
+        algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         execution::{
             online::{
                 preprocessing::{RandomPreprocessing, TriplePreprocessing},
@@ -478,9 +495,7 @@ mod test {
             },
             runtime::{
                 party::Role,
-                session::{
-                    BaseSessionHandles, ParameterHandles, SmallSession, SmallSessionHandles,
-                },
+                session::{BaseSessionHandles, ParameterHandles, SmallSession},
             },
             sharing::share::Share,
             small_execution::{
@@ -489,193 +504,412 @@ mod test {
             },
         },
         networking::value::BroadcastValue,
-        tests::helper::{
-            testing::get_networkless_base_session_for_parties,
-            tests_and_benches::execute_protocol_small,
-        },
+        tests::helper::testing::get_networkless_base_session_for_parties,
     };
 
-    const RANDOM_BATCH_SIZE: usize = 10;
-    const TRIPLE_BATCH_SIZE: usize = 10;
+    use super::RealSmallPreprocessing;
 
-    fn test_rand_generation<
-        Z: RingEmbed + PRSSConversions + ErrorCorrect + Invert,
+    // Needs to be big enough to cope with statistical tests
+    // which require sequences of at least SAMPLE_COUNT (=100)
+    const RANDOM_BATCH_SIZE: usize = 100;
+    const TRIPLE_BATCH_SIZE: usize = 50;
+    const BATCH_PARAMS: BatchParams = BatchParams {
+        triples: TRIPLE_BATCH_SIZE,
+        randoms: RANDOM_BATCH_SIZE,
+    };
+
+    /// Executes [`Preprocessing::execute`] for _small sessions_
+    /// (i.e. generates [`RANDOM_BATCH_SIZE`] random and [`TRIPLE_BATCH_SIZE`] triples)
+    /// with honest and malicious strategies where the identity of the malicious parties
+    /// is dictated by the params.
+    ///
+    /// If [`TestingParameters::should_be_detected`] is set, we assert that the honest parties
+    /// have inserted the malicious parties' identity in their corrupt set.
+    /// We validate the results by making sure the honest parties can always reconstruct
+    /// the output correlated randomness (and check that the triple relation holds).
+    /// We include malicious parties' output in the reconstruction check if the malicious
+    /// party did not panic.
+    fn test_offline_small_strategies<
+        Z: ErrorCorrect + Invert + PRSSConversions,
         const EXTENSION_DEGREE: usize,
-    >() {
-        let parties = 4;
-        let threshold = 1;
-
-        let mut task = |mut session: SmallSession<Z>, _bot: Option<String>| async move {
-            let default_batch_size = BatchParams {
-                triples: 0,
-                randoms: RANDOM_BATCH_SIZE,
-            };
-
-            let mut preproc = SecureSmallPreprocessing::default()
-                .execute(&mut session, default_batch_size)
+        PrssInitMalicious: PRSSInit<Z> + Default,
+        PrssMalicious: PRSSPrimitives<Z> + Clone + 'static,
+        PreprocMalicious: Preprocessing<
+                Z,
+                AesRng,
+                MaliciousSmallSessionStruct<Z, AesRng, PrssMalicious, SessionParameters>,
+            > + Clone
+            + 'static,
+    >(
+        params: TestingParameters,
+        malicious_offline: PreprocMalicious,
+    ) where
+        <PrssInitMalicious::OutputType as DerivePRSSState<Z>>::OutputType: Into<PrssMalicious>,
+    {
+        let mut task_honest = |mut session: SmallSession<Z>| async move {
+            // explicitly init the session
+            // to be able to run different PRSS init strategies
+            let base_session = session.to_base_session().unwrap();
+            let mut new_session = SmallSession::new_and_init_prss_state(base_session)
                 .await
                 .unwrap();
-            let mut res = Vec::new();
-            for _ in 0..RANDOM_BATCH_SIZE {
-                res.push(preproc.next_random().unwrap());
-            }
-            (session, res)
+            let my_role = session.my_role().unwrap();
+            let mut honest_offline = SecureSmallPreprocessing::<Z>::default();
+            let preprocessing = honest_offline
+                .execute(&mut new_session, BATCH_PARAMS)
+                .await
+                .unwrap();
+            (new_session, my_role, preprocessing)
         };
 
-        // Rounds:
-        // PRSS-Setup with Dummy AR does not send anything = 0 rounds
-        // pre-processing randomness is communication free
-        let rounds = 0_usize;
+        let mut task_malicious =
+            |mut session: SmallSession<Z>, mut malicious_offline: PreprocMalicious| async move {
+                // explicitly init the session
+                // to be able to run different PRSS init strategies
+                let base_session = session.to_base_session().unwrap();
+                let mut malicious_session =
+                    MaliciousSmallSessionStruct::<_, _, PrssMalicious, _>::new_and_init_prss_state(
+                        base_session,
+                        PrssInitMalicious::default(),
+                    )
+                    .await
+                    .unwrap();
 
-        // Does not really matter Sync or Async as there's no communication here, default to Sync
-        let result = execute_protocol_small::<_, _, Z, EXTENSION_DEGREE>(
-            parties,
-            threshold,
-            Some(rounds),
-            NetworkMode::Sync,
-            None,
-            &mut task,
-            None,
-        );
-
-        let mut first_to_recon = Vec::new();
-        for (_, res) in result.iter() {
-            first_to_recon.push(res[0]);
-        }
-        let mut previous = reconstruct(&result[0].0, first_to_recon).unwrap();
-        //Check we can reconstruct and that values are not iteratively repeated
-        for idx in 1..RANDOM_BATCH_SIZE {
-            let mut to_recon = Vec::new();
-            for (_, res) in result.iter() {
-                to_recon.push(res[idx]);
-            }
-            let current = reconstruct(&result[0].0, to_recon).unwrap();
-            assert_ne!(current, previous);
-            previous = current;
-        }
-    }
-
-    #[test]
-    fn test_rand_generation_z128() {
-        test_rand_generation::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>();
-    }
-
-    #[test]
-    fn test_rand_generation_z64() {
-        test_rand_generation::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>();
-    }
-
-    fn test_triple_generation<
-        Z: Ring + RingEmbed + PRSSConversions + ErrorCorrect + Invert,
-        const EXTENSION_DEGREE: usize,
-    >() {
-        let parties = 4;
-        let threshold = 1;
-
-        let mut task = |mut session: SmallSession<Z>, _bot: Option<String>| async move {
-            let default_batch_size = BatchParams {
-                triples: TRIPLE_BATCH_SIZE,
-                randoms: 0,
+                let my_role = malicious_session.my_role().unwrap();
+                let preprocessing = malicious_offline
+                    .execute(&mut malicious_session, BATCH_PARAMS)
+                    .await;
+                (malicious_session, my_role, preprocessing)
             };
 
-            let mut preproc = SecureSmallPreprocessing::default()
-                .execute(&mut session, default_batch_size)
-                .await
-                .unwrap();
-            let mut res = Vec::new();
-            for _ in 0..TRIPLE_BATCH_SIZE {
-                res.push(preproc.next_triple().unwrap());
+        let (results_honest, results_malicious) =
+            execute_protocol_small_w_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
+                &params,
+                &params.malicious_roles,
+                malicious_offline,
+                NetworkMode::Sync,
+                None,
+                &mut task_honest,
+                &mut task_malicious,
+            );
+
+        // If malicious behaviour should be detected, make sure it actually is
+        if params.should_be_detected {
+            for (session, _, _) in results_honest.iter() {
+                for role in params.malicious_roles.iter() {
+                    assert!(
+                        session.corrupt_roles().contains(role),
+                        "Honest party's corrupt set does not contain the expected malicious party with role {:?}",
+                        role
+                    );
+                }
             }
-            (session, res)
+        }
+
+        // Make sure the honest parties can reconstruct fine
+        let mut honest_preprocessings = Vec::new();
+        for (_, _, honest_preprocessing) in results_honest {
+            honest_preprocessings.push(honest_preprocessing);
+        }
+
+        let mut malicious_preprocessings = Vec::new();
+        for (_, role, malicious_preprocessing) in results_malicious.into_iter().flatten() {
+            if let Ok(malicious_preprocessing) = malicious_preprocessing {
+                malicious_preprocessings.push((role, malicious_preprocessing))
+            }
+        }
+
+        // Works because all malicious strategies are identical and so they either all
+        // output something or none do
+        let num_malicious = if malicious_preprocessings.is_empty() {
+            0
+        } else {
+            params.malicious_roles.len()
         };
 
-        // Rounds:
-        // PRSS-Setup with Dummy AR does not send anything = 0 rounds
-        // pre-processing without corruptions with Dummy AR does only do 1 reliable broadcast = 3 + t rounds
-        let rounds = 3 + threshold as usize;
+        // Try and reconstruct the randoms and perform stat test
+        let mut reconstructed_randoms = Vec::new();
+        for _ in 0..RANDOM_BATCH_SIZE {
+            let mut shares = ShamirSharings::default();
+            for honest_preprocessing in honest_preprocessings.iter_mut() {
+                shares
+                    .add_share(honest_preprocessing.next_random().unwrap())
+                    .unwrap();
+            }
+            for (role, malicious_preprocessing) in malicious_preprocessings.iter_mut() {
+                shares
+                    .add_share(
+                        malicious_preprocessing
+                            .next_random()
+                            .unwrap_or_else(|_| Share::new(*role, Z::ZERO)),
+                    )
+                    .unwrap();
+            }
+            let random = shares.err_reconstruct(params.threshold, num_malicious);
+            assert!(random.is_ok(), "Failed to reconstruct random: {:?}", random);
+            reconstructed_randoms.push(random.unwrap());
+        }
 
-        // Sync because it is triple generation
-        let result = execute_protocol_small::<_, _, Z, EXTENSION_DEGREE>(
-            parties,
-            threshold,
-            Some(rounds),
-            NetworkMode::Sync,
-            None,
-            &mut task,
-            None,
+        let randomness_test = execute_all_randomness_tests_loose(&reconstructed_randoms);
+        assert!(
+            randomness_test.is_ok(),
+            "Failed randomness test of random generation: {:?}",
+            randomness_test
         );
 
-        //Check we can reconstruct everything and we do have multiplication triples
-        for idx in 0..TRIPLE_BATCH_SIZE {
-            let mut to_recon_a = Vec::new();
-            let mut to_recon_b = Vec::new();
-            let mut to_recon_c = Vec::new();
-            for (_, res) in result.iter() {
-                to_recon_a.push(res[idx].a);
-                to_recon_b.push(res[idx].b);
-                to_recon_c.push(res[idx].c);
+        // Try and reconstruct the triples and perform stat test
+        let mut reconstructed_x_y = Vec::new();
+        for _ in 0..TRIPLE_BATCH_SIZE {
+            let mut shares_x = ShamirSharings::default();
+            let mut shares_y = ShamirSharings::default();
+            let mut shares_z = ShamirSharings::default();
+            for honest_preprocessing in honest_preprocessings.iter_mut() {
+                let Triple { a: x, b: y, c: z } = honest_preprocessing.next_triple().unwrap();
+                shares_x.add_share(x).unwrap();
+                shares_y.add_share(y).unwrap();
+                shares_z.add_share(z).unwrap();
             }
-            let recon_a = reconstruct(&result[0].0, to_recon_a).unwrap();
-            let recon_b = reconstruct(&result[0].0, to_recon_b).unwrap();
-            let recon_c = reconstruct(&result[0].0, to_recon_c).unwrap();
-            assert_eq!(recon_a * recon_b, recon_c);
+            for (role, malicious_preprocessing) in malicious_preprocessings.iter_mut() {
+                let Triple { a: x, b: y, c: z } = malicious_preprocessing
+                    .next_triple()
+                    .unwrap_or_else(|_| Triple {
+                        a: Share::new(*role, Z::ZERO),
+                        b: Share::new(*role, Z::ZERO),
+                        c: Share::new(*role, Z::ZERO),
+                    });
+                shares_x.add_share(x).unwrap();
+                shares_y.add_share(y).unwrap();
+                shares_z.add_share(z).unwrap();
+            }
+            let (x, y, z) = (
+                shares_x.err_reconstruct(params.threshold, num_malicious),
+                shares_y.err_reconstruct(params.threshold, num_malicious),
+                shares_z.err_reconstruct(params.threshold, num_malicious),
+            );
+            assert!(
+                x.is_ok(),
+                "Failed to reconstruct x component of triple: {:?}",
+                x
+            );
+            assert!(
+                y.is_ok(),
+                "Failed to reconstruct y component of triple: {:?}",
+                y
+            );
+            assert!(
+                z.is_ok(),
+                "Failed to reconstruct z component of triple: {:?}",
+                z
+            );
+            let (x, y, z) = (x.unwrap(), y.unwrap(), z.unwrap());
+            assert!(z == (x * y), "Triple does not verifiy z = x*y");
+            reconstructed_x_y.push(x);
+            reconstructed_x_y.push(y);
         }
+
+        let randomness_test = execute_all_randomness_tests_loose(&reconstructed_x_y);
+        assert!(
+            randomness_test.is_ok(),
+            "Failed randomness test of triple generation (x and y components): {:?}",
+            randomness_test
+        );
     }
 
-    #[test]
-    fn test_triple_generation_z128() {
-        test_triple_generation::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>();
-    }
-
-    #[test]
-    fn test_triple_generation_z64() {
-        test_triple_generation::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>();
-    }
-
-    #[test]
-    fn test_triple_generation_custom_batch() {
-        let parties = 5;
-        let threshold = 1;
-
-        async fn task(mut session: SmallSession<ResiduePolyF4Z128>, _bot: Option<String>) {
-            let batch_size = BatchParams {
-                triples: 3,
-                randoms: 2,
-            };
-
-            let mut preproc = SecureSmallPreprocessing::default()
-                .execute(&mut session, batch_size)
-                .await
-                .unwrap();
-            assert_eq!(batch_size.triples, preproc.triples_len());
-            assert_eq!(batch_size.randoms, preproc.randoms_len());
-            let _ = preproc.next_random_vec(batch_size.randoms);
-            let _ = preproc.next_triple_vec(batch_size.triples);
-        }
-
-        // Rounds:
-        // PRSS-Setup with Dummy AR does not send anything = 0 rounds
-        // pre-processing without corruptions with Dummy AR does only do 1 reliable broadcast = 3 + t rounds
-        let rounds = 3 + threshold as usize;
-
-        // Sync because it is triple generation
-        let _result = execute_protocol_small::<
-            _,
-            _,
+    // Test small offline generation with no malicious parties
+    // Expected number of rounds is:
+    // - 5 + t for robust PRSS init
+    // - 3 + t for broadcast
+    // total = 8 + 2t
+    #[rstest]
+    #[case(TestingParameters::init(4, 1, &[], &[], &[], false, Some(10)))]
+    #[case(TestingParameters::init(5, 1, &[], &[], &[], false, Some(10)))]
+    #[case(TestingParameters::init(7, 2, &[], &[], &[], false, Some(12)))]
+    #[case(TestingParameters::init(10, 3, &[], &[], &[], false, Some(14)))]
+    fn test_offline_small(#[case] params: TestingParameters) {
+        test_offline_small_strategies::<
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            RobustSecurePrssInit,
+            _,
+            _,
+        >(params.clone(), SecureSmallPreprocessing::default());
+
+        test_offline_small_strategies::<
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
+            RobustSecurePrssInit,
+            _,
+            _,
+        >(params, SecureSmallPreprocessing::default());
+    }
+
+    #[rstest]
+    #[case(TestingParameters::init(4, 1, &[2], &[], &[], true, None))]
+    #[case(TestingParameters::init(5, 1, &[1], &[], &[], true, None))]
+    #[case(TestingParameters::init(7, 2, &[4,5], &[], &[], true, None))]
+    #[case(TestingParameters::init(10, 3, &[1,3,7], &[], &[], true, None))]
+    fn test_dropout_offline_small_from_start(#[case] params: TestingParameters) {
+        test_offline_small_strategies::<
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            MaliciousPrssDrop,
+            MaliciousPrssDrop,
+            _,
+        >(params.clone(), MaliciousOfflineDrop::default());
+
+        test_offline_small_strategies::<
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
+            MaliciousPrssDrop,
+            MaliciousPrssDrop,
+            _,
+        >(params, MaliciousOfflineDrop::default());
+    }
+
+    #[rstest]
+    #[case(TestingParameters::init(4, 1, &[2], &[], &[], true, None))]
+    #[case(TestingParameters::init(5, 1, &[1], &[], &[], true, None))]
+    #[case(TestingParameters::init(7, 2, &[4,5], &[], &[], true, None))]
+    #[case(TestingParameters::init(10, 3, &[1,3,7], &[], &[], true, None))]
+    fn test_dropout_offline_small_after_init(#[case] params: TestingParameters) {
+        test_offline_small_strategies::<
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            RobustSecurePrssInit,
+            SecurePRSSState<ResiduePolyF4Z128>,
+            _,
+        >(params.clone(), MaliciousOfflineDrop::default());
+
+        test_offline_small_strategies::<
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
+            RobustSecurePrssInit,
+            SecurePRSSState<ResiduePolyF4Z64>,
+            _,
+        >(params, MaliciousOfflineDrop::default());
+    }
+
+    #[rstest]
+    #[case(TestingParameters::init(4, 1, &[2], &[], &[], true, None))]
+    #[case(TestingParameters::init(5, 1, &[1], &[], &[], true, None))]
+    #[case(TestingParameters::init(7, 2, &[4,5], &[], &[], true, None))]
+    #[case(TestingParameters::init(10, 3, &[1,3,7], &[], &[], true, None))]
+    fn test_malicious_wrongamount_offline_small(#[case] params: TestingParameters) {
+        test_offline_small_strategies::<
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            RobustSecurePrssInit,
+            SecurePRSSState<ResiduePolyF4Z128>,
+            _,
         >(
-            parties,
-            threshold,
-            Some(rounds),
-            NetworkMode::Sync,
-            None,
-            &mut task,
-            None,
+            params.clone(),
+            MaliciousOfflineWrongAmount::new(SyncReliableBroadcast::default()),
+        );
+
+        test_offline_small_strategies::<
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
+            RobustSecurePrssInit,
+            SecurePRSSState<ResiduePolyF4Z64>,
+            _,
+        >(
+            params,
+            MaliciousOfflineWrongAmount::new(SyncReliableBroadcast::default()),
         );
     }
 
-    // Test what happens when a party send a wrong type of value
+    #[rstest]
+    #[case(TestingParameters::init(4, 1, &[2], &[], &[], true, None))]
+    //with (5,1) we are able to reconstruct so we don't run the unhappy path and don't catch malicious party
+    #[case(TestingParameters::init(5, 1, &[1], &[], &[], false, None))]
+    #[case(TestingParameters::init(7, 2, &[4,5], &[], &[], true, None))]
+    #[case(TestingParameters::init(10, 3, &[1,3,7], &[], &[], true, None))]
+    fn test_malicious_wrongprss_offline_small(#[case] params: TestingParameters) {
+        type MaliciousPrss<Z> = MaliciousPrssHonestInitRobustThenRandom<
+            RobustSecureAgreeRandom,
+            SecureVss,
+            SyncReliableBroadcast,
+            Z,
+        >;
+
+        test_offline_small_strategies::<
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            MaliciousPrss<ResiduePolyF4Z128>,
+            _,
+            _,
+        >(
+            params.clone(),
+            RealSmallPreprocessing::<
+                ResiduePolyF4Z128,
+                MaliciousPrss<ResiduePolyF4Z128>,
+                SyncReliableBroadcast,
+            >::default(),
+        );
+
+        test_offline_small_strategies::<
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
+            MaliciousPrss<ResiduePolyF4Z64>,
+            _,
+            _,
+        >(
+            params,
+            RealSmallPreprocessing::<
+                ResiduePolyF4Z64,
+                MaliciousPrss<ResiduePolyF4Z64>,
+                SyncReliableBroadcast,
+            >::default(),
+        );
+    }
+
+    #[rstest]
+    #[case(TestingParameters::init(4, 1, &[2], &[], &[], true, None))]
+    //with (5,1) we are able to reconstruct so we don't run the unhappy path and don't catch malicious party
+    #[case(TestingParameters::init(5, 1, &[1], &[], &[], false, None))]
+    #[case(TestingParameters::init(7, 2, &[4,5], &[], &[], true, None))]
+    #[case(TestingParameters::init(10, 3, &[1,3,7], &[], &[], true, None))]
+    fn test_malicious_wrongprss_wrongcheck_offline_small(#[case] params: TestingParameters) {
+        type MaliciousPrss<Z> = MaliciousPrssHonestInitLieAll<
+            RobustSecureAgreeRandom,
+            SecureVss,
+            SyncReliableBroadcast,
+            Z,
+        >;
+
+        test_offline_small_strategies::<
+            ResiduePolyF4Z128,
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            MaliciousPrss<ResiduePolyF4Z128>,
+            _,
+            _,
+        >(
+            params.clone(),
+            RealSmallPreprocessing::<
+                ResiduePolyF4Z128,
+                <MaliciousPrss<ResiduePolyF4Z128> as DerivePRSSState<ResiduePolyF4Z128>>::OutputType,
+                SyncReliableBroadcast,
+            >::default(),
+        );
+
+        test_offline_small_strategies::<
+            ResiduePolyF4Z64,
+            { ResiduePolyF4Z64::EXTENSION_DEGREE },
+            MaliciousPrss<ResiduePolyF4Z64>,
+            _,
+            _,
+        >(
+            params,
+            RealSmallPreprocessing::<
+                ResiduePolyF4Z64,
+                <MaliciousPrss<ResiduePolyF4Z64> as DerivePRSSState<ResiduePolyF4Z64>>::OutputType,
+                SyncReliableBroadcast,
+            >::default(),
+        );
+    }
+
+    /// Unit testing of [`reconstruct_d_values`]
+    /// Test what happens when a party send a wrong type of value
     #[tracing_test::traced_test]
     #[test]
     fn test_wrong_type() {
@@ -703,250 +937,5 @@ mod test {
         assert_eq!(1, res.len());
         let first = res.first();
         assert!(first.is_some());
-    }
-
-    #[test]
-    fn test_party_drop() {
-        let parties = 5;
-        let threshold = 1;
-        const BAD_ID: usize = 3;
-        async fn task(
-            mut session: SmallSession<ResiduePolyF4Z128>,
-            _bot: Option<String>,
-        ) -> (
-            SmallSession<ResiduePolyF4Z128>,
-            Vec<Triple<ResiduePolyF4Z128>>,
-            Vec<Share<ResiduePolyF4Z128>>,
-        ) {
-            let mut triple_res = Vec::new();
-            let mut rand_res = Vec::new();
-            if session.my_role().unwrap() != Role::indexed_by_one(BAD_ID) {
-                let default_batch_size = BatchParams {
-                    triples: TRIPLE_BATCH_SIZE,
-                    randoms: RANDOM_BATCH_SIZE,
-                };
-
-                let mut preproc = SecureSmallPreprocessing::default()
-                    .execute(&mut session, default_batch_size)
-                    .await
-                    .unwrap();
-                for _ in 0..TRIPLE_BATCH_SIZE {
-                    triple_res.push(preproc.next_triple().unwrap());
-                }
-                for _ in 0..RANDOM_BATCH_SIZE {
-                    rand_res.push(preproc.next_random().unwrap());
-                }
-            }
-            (session, triple_res, rand_res)
-        }
-
-        // Sync because it is triple generation
-        let result = execute_protocol_small::<
-            _,
-            _,
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(
-            parties,
-            threshold,
-            None,
-            NetworkMode::Sync,
-            None,
-            &mut task,
-            None,
-        );
-
-        //Check we can reconstruct everything and we do have multiplication triples
-        for idx in 0..TRIPLE_BATCH_SIZE {
-            let mut to_recon_a = Vec::new();
-            let mut to_recon_b = Vec::new();
-            let mut to_recon_c = Vec::new();
-            let mut to_recon_rand = Vec::new();
-            let mut test_session = &result[0].0;
-            for (session, res_trip, res_rand) in result.iter() {
-                // Skip bad party since the result will be empty
-                if session.my_role().unwrap() != Role::indexed_by_one(BAD_ID) {
-                    to_recon_a.push(res_trip[idx].a);
-                    to_recon_b.push(res_trip[idx].b);
-                    to_recon_c.push(res_trip[idx].c);
-                    to_recon_rand.push(res_rand[idx]);
-                    // Ensure we use the session of an honest party to check things
-                    test_session = session;
-                } else {
-                    assert_eq!(0, res_trip.len());
-                    assert_eq!(0, res_rand.len());
-                }
-            }
-            let recon_a = reconstruct(test_session, to_recon_a).unwrap();
-            let recon_b = reconstruct(test_session, to_recon_b).unwrap();
-            let recon_c = reconstruct(test_session, to_recon_c).unwrap();
-            assert_eq!(recon_a * recon_b, recon_c);
-            let recon_rand = reconstruct(test_session, to_recon_rand).unwrap();
-            // Sanity check the random reconstruction
-            assert_ne!(recon_rand, ResiduePolyF4::ZERO);
-            assert_ne!(recon_rand, ResiduePolyF4::ONE);
-        }
-    }
-
-    // Test what happens when a malicious party does not send the correct amount of elements in the broadcast
-    #[test]
-    fn test_malicious_party_wrong_amount() {
-        let parties = 5;
-        let threshold = 1;
-        const BAD_ID: usize = 3;
-
-        async fn task(
-            mut session: SmallSession<ResiduePolyF4Z128>,
-            _bot: Option<String>,
-        ) -> (
-            SmallSession<ResiduePolyF4Z128>,
-            Vec<Triple<ResiduePolyF4Z128>>,
-            Vec<Share<ResiduePolyF4Z128>>,
-        ) {
-            let mut triple_res = Vec::new();
-            let mut rand_res = Vec::new();
-            // Observe that 1 triple too little is made
-            let bad_batch_sizes = BatchParams {
-                triples: TRIPLE_BATCH_SIZE - 1,
-                randoms: RANDOM_BATCH_SIZE,
-            };
-            let default_batch_size = BatchParams {
-                triples: 10,
-                randoms: 10,
-            };
-
-            if session.my_role().unwrap() != Role::indexed_by_one(BAD_ID) {
-                let mut preproc = SecureSmallPreprocessing::default()
-                    .execute(&mut session, default_batch_size)
-                    .await
-                    .unwrap();
-                for _ in 0..TRIPLE_BATCH_SIZE {
-                    triple_res.push(preproc.next_triple().unwrap());
-                }
-                for _ in 0..RANDOM_BATCH_SIZE {
-                    rand_res.push(preproc.next_random().unwrap());
-                }
-            } else {
-                let _ = SecureSmallPreprocessing::default()
-                    .execute(&mut session, bad_batch_sizes)
-                    .await;
-            }
-            (session, triple_res, rand_res)
-        }
-
-        // Sync because it is triple generation
-        let result = execute_protocol_small::<
-            _,
-            _,
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(
-            parties,
-            threshold,
-            None,
-            NetworkMode::Sync,
-            None,
-            &mut task,
-            None,
-        );
-
-        // Check that the malicious party has been added to the list
-        for (cur_ses, _, _) in result.clone() {
-            if cur_ses.my_role().unwrap().one_based() != BAD_ID {
-                assert!(cur_ses
-                    .corrupt_roles()
-                    .contains(&Role::indexed_by_one(BAD_ID)));
-            }
-        }
-
-        //Check we can reconstruct everything and we do have multiplication triples
-        for idx in 0..TRIPLE_BATCH_SIZE {
-            let mut to_recon_a = Vec::new();
-            let mut to_recon_b = Vec::new();
-            let mut to_recon_c = Vec::new();
-            let mut to_recon_rand = Vec::new();
-            let mut test_session = &result[0].0;
-            for (session, res_trip, res_rand) in result.iter() {
-                // Skip bad party since the result will be empty
-                if session.my_role().unwrap() != Role::indexed_by_one(BAD_ID) {
-                    to_recon_a.push(res_trip[idx].a);
-                    to_recon_b.push(res_trip[idx].b);
-                    to_recon_c.push(res_trip[idx].c);
-                    to_recon_rand.push(res_rand[idx]);
-                    // Ensure we use the session of an honest party to check things
-                    test_session = session;
-                } else {
-                    assert_eq!(0, res_trip.len());
-                    assert_eq!(0, res_rand.len());
-                }
-            }
-            let recon_a = reconstruct(test_session, to_recon_a).unwrap();
-            let recon_b = reconstruct(test_session, to_recon_b).unwrap();
-            let recon_c = reconstruct(test_session, to_recon_c).unwrap();
-            assert_eq!(recon_a * recon_b, recon_c);
-            let recon_rand = reconstruct(test_session, to_recon_rand).unwrap();
-            // Sanity check the random reconstruction
-            assert_ne!(recon_rand, ResiduePolyF4::ZERO);
-            assert_ne!(recon_rand, ResiduePolyF4::ONE);
-        }
-    }
-
-    // Test what happens when a malicious party is using wrong values and check_d gets executed
-    #[test]
-    fn test_malicious_party_bad_values() {
-        // Observe that with more parties the error correction part of the flow will work and check_d will not be executed
-        let parties = 4;
-        let threshold = 1;
-        const BAD_ID: usize = 2;
-
-        async fn task(
-            mut session: SmallSession<ResiduePolyF4Z128>,
-            _bot: Option<String>,
-        ) -> SmallSession<ResiduePolyF4Z128> {
-            let own_role = session.my_role().unwrap();
-            let threshold = session.threshold();
-            if session.my_role().unwrap() == Role::indexed_by_one(BAD_ID) {
-                let prss_state = session.prss_as_mut();
-                // Use the PRSS and PRZS so counters are out of sync
-                let _: Vec<_> = (0..12).map(|_| prss_state.prss_next(own_role)).collect();
-                let _: Vec<_> = (0..23)
-                    .map(|_| prss_state.przs_next(own_role, threshold))
-                    .collect();
-            };
-
-            let triples = next_triple_batch(&mut session, 1, &SyncReliableBroadcast::default())
-                .await
-                .unwrap();
-            // Check that no triples get constructed due to the corrupt party
-            assert_eq!(triples.len(), 0);
-            session
-        }
-
-        // Sync because it is triple generation
-        let result = execute_protocol_small::<
-            _,
-            _,
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(
-            parties,
-            threshold,
-            None,
-            NetworkMode::Sync,
-            None,
-            &mut task,
-            None,
-        );
-
-        // Check that the malicious party has been added to the list
-        for cur_ses in result.clone() {
-            if cur_ses.my_role().unwrap().one_based() != BAD_ID {
-                assert!(cur_ses
-                    .corrupt_roles()
-                    .contains(&Role::indexed_by_one(BAD_ID)));
-                // Check that the list only contains one corrupt party
-                assert_eq!(1, cur_ses.corrupt_roles().len());
-            }
-        }
     }
 }
