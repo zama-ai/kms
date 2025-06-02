@@ -10,6 +10,8 @@ on:
         type: string
         required: true
 
+permissions: {}
+
 jobs:
   cargo-workspaces-release:
     runs-on: ubuntu-latest
@@ -19,6 +21,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: false
 
       - name: Force git update
         run: |
@@ -32,11 +35,15 @@ jobs:
           tool: semantic-release-cargo@2.3.57 # Should not be updated without updating the Ubuntu version to a version using a newer glibc
 
       - name: Prepare semantic-release for Rust
-        run: semantic-release-cargo prepare ${{ inputs.version }}
+        env:
+          VERSION: ${{ inputs.version }}
+        run: semantic-release-cargo prepare "${VERSION}"
 
       - uses: stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842 #v5.0.1
+        env:
+          VERSION: ${{ inputs.version }}
         with:
-          commit_message: "[ci skip] Apply new version ${{ inputs.version }} to Cargo.toml files"
+          commit_message: "chore: apply new version ${VERSION} to Cargo.toml files [ci skip]"
           commit_user_name: zama-bot
           commit_user_email: kms-infra@zama.ai
           push_options: --force

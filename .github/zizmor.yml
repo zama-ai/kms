@@ -1,0 +1,5 @@
+rules:
+  use-trusted-publishing:
+    ignore:
+      # ignore line 61 in workflow-pr-dockerfile.yml, any column
+      - workflow-pr-dockerfile.yml:61

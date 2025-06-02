@@ -7,13 +7,15 @@ concurrency:
   group: service-${{ github.ref }}
   cancel-in-progress: false
 
+permissions: {}
+
 jobs:
   docker:
     uses: ./.github/workflows/common-docker-big-instance.yml
     permissions:
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
+      contents: read
+      id-token: write
+      packages: write
     with:
       working-directory: "./core/service"
       push_image: true
@@ -32,9 +34,9 @@ jobs:
       - docker
     uses: ./.github/workflows/common-nitro-enclave.yml
     permissions:
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
+      contents: read
+      id-token: write
+      packages: write
     with:
       working-directory: "./core/service"
       push_image: true

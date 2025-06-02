@@ -35,6 +35,8 @@ on:
       ZWS_BOT_TOKEN:
         required: true
 
+permissions: {}
+
 jobs:
   update-argocd-image-tag:
     runs-on: ubuntu-latest
@@ -45,23 +47,38 @@ jobs:
           repository: 'zama-zws/zws-gitops'
           ref: ${{ inputs.branch-name }}
           token: ${{ secrets.ZWS_BOT_TOKEN }}
+          persist-credentials: false
 
       - name: Change image tag
         uses: mikefarah/yq@8bf425b4d1344db7cd469a8d10a390876e0c77fd  # v4.45.1
+        env:
+          ARGOCD_NAMESPACE: ${{ inputs.argocd-namespace }}
+          ARGOCD_APP_NAME: ${{ inputs.argocd-app-name }}
+          APPLICATION_IMAGE: ${{ inputs.application-image }}
+          DOCKER_TAG: ${{ inputs.image-tag }}
         with:
-          cmd: yq -i '.${{ inputs.application-image }}.image.tag = "${{ inputs.image-tag }}"' ./values/${{ inputs.argocd-namespace }}/${{ inputs.argocd-app-name }}/values-${{ inputs.argocd-namespace }}.yaml
+          cmd: yq -i '.${APPLICATION_IMAGE}.image.tag = "${DOCKER_TAG}"' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
 
       - name: Add enclave deployment
         if: ${{ inputs.enclave-deployment }}
         uses: mikefarah/yq@8bf425b4d1344db7cd469a8d10a390876e0c77fd  # v4.45.1
+        env:
+          ARGOCD_NAMESPACE: ${{ inputs.argocd-namespace }}
+          ARGOCD_APP_NAME: ${{ inputs.argocd-app-name }}
+          ENCLAVE_PCR0: ${{ inputs.enclave-pcr0 }}
+          ENCLAVE_PCR1: ${{ inputs.enclave-pcr1 }}
+          ENCLAVE_PCR2: ${{ inputs.enclave-pcr2 }}
         with:
           cmd: |
-            yq -i '.kmsParties.awsKms.recipientAttestationImageSHA384 = ${{ inputs.enclave-pcr0 }}' ./values/${{ inputs.argocd-namespace }}/tkms-infra/values.yaml
-            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr0 = ${{ inputs.enclave-pcr0 }}' ./values/${{ inputs.argocd-namespace }}/${{ inputs.argocd-app-name }}/values-${{ inputs.argocd-namespace }}.yaml
-            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr1 = ${{ inputs.enclave-pcr1 }}' ./values/${{ inputs.argocd-namespace }}/${{ inputs.argocd-app-name }}/values-${{ inputs.argocd-namespace }}.yaml
-            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr2 = ${{ inputs.enclave-pcr2 }}' ./values/${{ inputs.argocd-namespace }}/${{ inputs.argocd-app-name }}/values-${{ inputs.argocd-namespace }}.yaml
+            yq -i '.kmsParties.awsKms.recipientAttestationImageSHA384 = $ENCLAVE_PCR0' ./values/${ARGOCD_NAMESPACE}/tkms-infra/values.yaml
+            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr0 = $ENCLAVE_PCR0' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
+            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr1 = $ENCLAVE_PCR1' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
+            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr2 = $ENCLAVE_PCR2' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
 
       - name: Commit and push to gitops repository
+        env:
+          APPLICATION_IMAGE: ${{ inputs.application-image }}
+          DOCKER_TAG: ${{ inputs.image-tag }}
         run: |
           git config user.name "zws-bot[bot]"
           git config user.email "zws-bot[bot]@users.noreply.github.com"
@@ -70,6 +87,6 @@ jobs:
           else
             git pull
             git add .
-            git commit -m "chore: bump ${{ inputs.application-image }} image tag to ${{ inputs.image-tag }}"
+            git commit -m "chore: bump ${APPLICATION_IMAGE} image tag to ${DOCKER_TAG}"
             git push
           fi

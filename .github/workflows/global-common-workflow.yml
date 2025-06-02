@@ -20,21 +20,17 @@ concurrency:
   group: ${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
-# Required permissions for workflow execution
-permissions:
-  actions: 'write'
-  attestations: 'write'
-  contents: 'write'
-  id-token: 'write'
-  pull-requests: 'write'
-  pages: 'write'
-  packages: 'write'
-
+permissions: {}
 
 jobs:
   # Initial job that determines which components have changed
   # Used by subsequent jobs to decide whether they need to run
   check-changes:
+    permissions:
+      actions: 'read'
+      contents: 'read'
+      id-token: 'write'
+      pull-requests: 'read'
     runs-on: ubuntu-latest
     outputs:
       # Each output indicates if files in a specific component were modified
@@ -48,6 +44,8 @@ jobs:
       changes-helm-chart: ${{ steps.filter.outputs.helm-chart }}
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        persist-credentials: false
     - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36  # v3.0.2
       id: filter
       with:
@@ -83,16 +81,28 @@ jobs:
   # - Changes to charts/**'
   ############################################################################
   test-helm-chart:
+    permissions:
+      actions: 'read'
+      contents: 'read'
+      id-token: 'write'
     needs: check-changes
     if: needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-test.yml
 
   lint-helm-chart:
+    permissions:
+      actions: 'read'
+      contents: 'read'
+      id-token: 'write'
     needs: check-changes
     if: needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-lint.yml
 
   release-helm-chart:
+    permissions:
+      actions: 'read'
+      contents: 'read'
+      id-token: 'write'
     needs: check-changes
     if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-release.yml
@@ -104,13 +114,20 @@ jobs:
   # - Changes to workflow file itself
   ############################################################################
   check-docs:
+    permissions:
+      actions: 'read'
+      contents: 'read'
+      id-token: 'write'
+      pull-requests: 'read'
     needs: check-changes
     if: needs.check-changes.outputs.changes-docs == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     container:
-      image: python:3.10
+      image: python:3.10.17-bullseye@sha256:0b9be13617fed7d883b30e31a47371a8bdd60a4bb5e45fcda63cb4a3846f6d98
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        persist-credentials: false
     - run: python3 -m pip install linkcheckmd
     - name: Check dead-link
       run: python3 ci/script/local_docs_link_check.py
@@ -173,6 +190,8 @@ jobs:
         MATRIX="${MATRIX%,}]}"
         echo "$MATRIX" >> "$GITHUB_OUTPUT"
         echo "$MATRIX"
+
+
   test-core-client:
     needs:
       - prepare-core-client-matrix
@@ -204,14 +223,22 @@ jobs:
   # Only runs on main/release branches after successful tests
   # Also runs on pull requests targeting main/release branches with the docker label
   docker-core-client:
+    permissions:
+      actions: 'write'
+      attestations: 'write'
+      contents: 'write'
+      id-token: 'write'
+      pull-requests: 'write'
+      packages: 'write'
     needs:
       - test-core-client
       - docker-golden-image
     if: >-
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@4597dee06cf8e3e977f66aa8b1824ef4e1d84a22
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@ef9d90453e0d776453026c751fbbd48e410d605a
     with:
+      docker-file: "./docker/core-client/Dockerfile"
       working-directory: "./core-client"
       push_image: true
       image-name: 'kms-core-client'
@@ -272,11 +299,13 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+    env:
+      EVENT_NAME: ${{ github.event_name }}
     steps:
     - id: set-matrix
       run: |
         MATRIX="matrix={\"include\":["
-        if [[ "${{ github.event_name }}" == "schedule" ]]; then
+        if [[ "${EVENT_NAME}" == "schedule" ]]; then
           # Nightly tests: Run comprehensive test suite in release mode
           MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly_tests\"}"
         else
@@ -322,6 +351,13 @@ jobs:
   # Only runs on main/release branches after successful tests
   # Uses a custom Dockerfile optimized for production
   docker-core-service:
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      pull-requests: read
+      packages: write
+      attestations: write
     needs:
       - test-core-service
       - docker-golden-image
@@ -330,6 +366,7 @@ jobs:
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-docker-big-instance.yml
     with:
+      docker-file: "./docker/core/service/Dockerfile"
       working-directory: "./core/service"
       push_image: true
       image-name: 'kms-service'
@@ -346,22 +383,25 @@ jobs:
   # Only runs on main/release branches after core service image is built
   # Creates both regular container and enclave-specific images
   docker-nitro-enclave:
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      pull-requests: read
+      packages: write
+      attestations: write
     needs:
       - docker-core-service
     if: >-
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
     uses: ./.github/workflows/common-nitro-enclave.yml
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
     with:
+      docker-file-enclave: "./docker/core/service/enclave.dockerfile"
       working-directory: "./core/service"
       push_image: true
       image-name: 'kms-service'
       image-enclave-name: 'kms-service-enclave'
-      docker-file-enclave: 'enclave.dockerfile'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
@@ -442,11 +482,19 @@ jobs:
   # Provides dependencies for building rust kms-core images
   ############################################################################
   docker-golden-image:
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      pull-requests: read
+      packages: write
+      attestations: write
     if: >-
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6cf56f7cf2ab47b6d40658b5e73872216bcdd981
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@ef9d90453e0d776453026c751fbbd48e410d605a
     with:
+      docker-file: "./docker/base/Dockerfile"
       working-directory: "./base"
       push_image: true
       image-name: 'kms-golden-image'

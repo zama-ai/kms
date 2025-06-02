@@ -70,13 +70,15 @@ env:
   DOCKER_BUILDKIT: 1
   NPM_TAG: ""
 
+permissions: {}
+
 jobs:
   compile-rust-unit-tests:
     timeout-minutes: 500
     runs-on: ${{ inputs.runs-on }}
     services:
       redis:
-        image: ${{ inputs.run-redis && 'redis/redis-stack:latest' || '' }}
+        image: ${{ inputs.run-redis && 'redis/redis-stack:7.4.0-v3@sha256:c2019e98fd5abce4dd11feec004de44d1709d2366a6efa5ffb2bd0daf8f9c6a4' || '' }}
         ports:
           - 6379:6379
     defaults:
@@ -90,10 +92,13 @@ jobs:
         with:
           submodules: true
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: true
 
       - name: Get Rust version
+        env:
+          GH_WORKSPACE: ${{ github.workspace }}
         run: |
-          version="$(cat ${{ github.workspace }}/toolchain.txt)"
+          version="$(cat "$GH_WORKSPACE/toolchain.txt")"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Setup Home
@@ -107,9 +112,9 @@ jobs:
         env:
           GIT_LFS_VERSION: "3.6.1"
         run: |
-          wget https://github.com/git-lfs/git-lfs/releases/download/v${{ env.GIT_LFS_VERSION }}/git-lfs-linux-amd64-v${{ env.GIT_LFS_VERSION }}.tar.gz
-          tar -xzf git-lfs-linux-amd64-v${{ env.GIT_LFS_VERSION }}.tar.gz
-          ./git-lfs-${{ env.GIT_LFS_VERSION }}/install.sh
+          wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
+          tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
+          "./git-lfs-${GIT_LFS_VERSION}/install.sh"
           git lfs pull
 
       # Needed to be able to pull some docker images for the simulator test
@@ -200,7 +205,9 @@ jobs:
           version: "26.x"
 
       - name: Setup usage of private repo
-        run: git config --global url."https://${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
+        env:
+          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+        run: git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
 
       - name: Setup minio
         if: ${{ inputs.run-minio }}
@@ -209,8 +216,8 @@ jobs:
           MINIO_SECRET_KEY: minioadmin
         run: |
           docker run -d -p 9000:9000 --name minio \
-                     -e "MINIO_ACCESS_KEY=${{ env.MINIO_ACCESS_KEY }}" \
-                     -e "MINIO_SECRET_KEY=${{ env.MINIO_SECRET_KEY }}" \
+                     -e "MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}" \
+                     -e "MINIO_SECRET_KEY=${MINIO_SECRET_KEY}" \
                      -v /tmp/data:/data \
                      -v /tmp/config:/root/.minio \
                      minio/minio server /data
@@ -231,15 +238,17 @@ jobs:
           chmod +x "${HOME}"/minio-binaries/mc
           export PATH="${PATH}:${HOME}/minio-binaries/"
 
-          mc alias set "${{ env.MINIO_ALIAS }}" http://127.0.0.1:9000 "${{ env.MINIO_ACCESS_KEY }}" "${{ env.MINIO_SECRET_KEY }}"
-          mc mb "${{ env.MINIO_ALIAS }}"/"${{ env.MINIO_BUCKET }}"
-          mc anonymous set public "${{ env.MINIO_ALIAS }}"/"${{ env.MINIO_BUCKET }}"
+          mc alias set "${MINIO_ALIAS}" http://127.0.0.1:9000 "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+          mc mb "${MINIO_ALIAS}"/"${MINIO_BUCKET}"
+          mc anonymous set public "${MINIO_ALIAS}"/"${MINIO_BUCKET}"
 
       - name: Formatting
         run: cargo fmt --all -- --check
 
       - name: Linting
-        run: cargo clippy --all-targets --all-features --package ${{inputs.package-name}} -- -D warnings
+        env:
+          PACKAGE_NAME: ${{inputs.package-name}}
+        run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
 
       # Test execution
       - name: Run Tests
@@ -253,6 +262,7 @@ jobs:
           AWS_DEFAULT_REGION: "eu-north-1"
           AWS_ENDPOINT: "http://127.0.0.1:9000"
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          ARGS_TESTS: ${{inputs.args-tests}}
         run: |
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
@@ -264,7 +274,7 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo test ${{ inputs.args-tests }}
+          RUST_BACKTRACE=full cargo test ${ARGS_TESTS:+$ARGS_TESTS}
 
       - name: Generate unique ID
         id: unique-id
@@ -288,11 +298,12 @@ jobs:
           # which builds images which need private git access
           # building images in every integration test run is bad
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          ARGS_TESTS: ${{inputs.args-tests}}
         run: |
           export CARGO_INCREMENTAL=0
           export RUSTFLAGS='-Cinstrument-coverage'
           export LLVM_PROFILE_FILE='cargo-test-%p-%m.profraw'
-          cargo test ${{ inputs.args-tests }}
+          cargo test "${ARGS_TESTS}"
           cargo install grcov
           mkdir coverage
           ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage/ -t markdown
@@ -335,7 +346,9 @@ jobs:
 
       - name: Build wasm with tests
         if: ${{ inputs.run-wasm }}
-        run: wasm-pack build --target nodejs . --no-default-features ${{ inputs.wasm-test-feature }}
+        env:
+          WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
+        run: wasm-pack build --target nodejs . --no-default-features "${WASM_TEST_FEATURE}"
 
       - name: Install node
         if: ${{ inputs.run-wasm }}
@@ -345,9 +358,11 @@ jobs:
 
       - name: Generate wasm test files
         if: ${{ inputs.run-wasm }}
+        env:
+          WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
         run: |
-          cargo test test_user_decryption_threshold_and_write_transcript ${{ inputs.wasm-test-feature }} --lib
-          cargo test test_user_decryption_centralized_and_write_transcript ${{ inputs.wasm-test-feature }} --lib
+          cargo test test_user_decryption_threshold_and_write_transcript "${WASM_TEST_FEATURE}" --lib
+          cargo test test_user_decryption_centralized_and_write_transcript "${WASM_TEST_FEATURE}" --lib
 
       - name: Test wasm
         if: ${{ inputs.run-wasm }}

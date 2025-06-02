@@ -9,6 +9,9 @@ concurrency:
   group: workflow-pr-dockerfile-${{ github.ref }}
   cancel-in-progress: ${{ !contains(fromJSON('["release/", "main"]'),github.ref) }}
 
+permissions:
+  contents: read
+
 jobs:
     prepare-batch:
         runs-on: ubuntu-latest
@@ -22,6 +25,7 @@ jobs:
             with:
               submodules: true
               token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+              persist-credentials: false
 
           - name: Get changed product files
             id: list_changed_files
@@ -35,28 +39,34 @@ jobs:
             id: list_dockerfile
             env:
                 ALL_CHANGED_FILES: ${{ steps.list_changed_files.outputs.all_changed_files }}
+                ANY_CHANGED: ${{ steps.list_changed_files.outputs.any_changed }}
             run: |
                 IFS=$'\n' # Set Internal Field Separator to newline
                 for filepath in $ALL_CHANGED_FILES; do
                     echo "File changed: $filepath"
                 done
-                echo "LIST_DOCKERFILES=$ALL_CHANGED_FILES" >> "$GITHUB_OUTPUT"
-                echo "DOCKERFILE_CHANGED=${{ steps.list_changed_files.outputs.any_changed }}" >> "$GITHUB_OUTPUT"
+                echo "LIST_DOCKERFILES=${ALL_CHANGED_FILES}" >> "$GITHUB_OUTPUT"
+                echo "DOCKERFILE_CHANGED=${ANY_CHANGED}" >> "$GITHUB_OUTPUT"
 
     lint-dockerfile:
         needs: prepare-batch
         runs-on: ubuntu-latest
         steps:
           - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683    ## v4.2.2
+            with:
+              persist-credentials: false
 
           - name: Lint All Dockerfiles (adapt find to suit your needs)
+            env:
+                LIST_DOCKERFILES: ${{ needs.prepare-batch.outputs.LIST_DOCKERFILES }}
             run: |
                 curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.19.2
-                for filepath in ${{ needs.prepare-batch.outputs.LIST_DOCKERFILES }}; do
+                for filepath in $LIST_DOCKERFILES; do
                     echo "Linting $filepath"
                     trivy config "$filepath"
                 done
 
     docker-scanning:
         uses: zama-ai/security-hub/.github/workflows/03-sca-trivy-docker-kms-callable-wf.yml@a3df5139ef24c0c917472cdf558a2086caa2a874
-        secrets: inherit
+        secrets:
+          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}

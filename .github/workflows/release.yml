@@ -10,8 +10,7 @@ on:
         default: "main"
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   release:
@@ -36,9 +35,9 @@ jobs:
     needs:
       - release
     permissions:
-      contents: "write"
-      id-token: "write"
-      packages: "write"
+      contents: write
+      id-token: write
+      packages: write
     with:
       version: ${{ needs.release.outputs.version }}
     secrets:
