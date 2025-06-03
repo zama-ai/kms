@@ -12,6 +12,11 @@ permissions:
 
 jobs:
   helm-release:
+    permissions:
+      actions: 'read'
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
     runs-on: ubuntu-latest
     environment: main
     steps:
