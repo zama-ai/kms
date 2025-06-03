@@ -121,6 +121,10 @@ Read this [section](./config/dev/README.md) for more information.
 
 Read this [section](./docs/ci/release.md) for more information.
 
+### Staging environment
+
+Read [this](https://www.notion.so/zamaai/KMS-Environments-2065a7358d5e80e480acdc9ba0ce79b0)
+
 
 ## External Resources
 
