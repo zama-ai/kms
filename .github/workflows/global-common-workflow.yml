@@ -20,7 +20,10 @@ concurrency:
   group: ${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
-permissions: {}
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
 
 jobs:
   # Initial job that determines which components have changed
