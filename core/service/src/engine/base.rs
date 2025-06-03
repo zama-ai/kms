@@ -53,10 +53,17 @@ use threshold_fhe::hashing::DomainSep;
 use tokio::sync::Mutex;
 use tracing::error;
 
+// Domain separators for cryptographic operations to ensure domain separation
+
+/// Domain separator for request ID hashing
 pub(crate) const DSEP_REQUEST_ID: DomainSep = *b"REQST_ID";
+/// Domain separator for handle generation
 pub(crate) const DSEP_HANDLE: DomainSep = *b"_HANDLE_";
+/// Domain separator for external public data
 pub(crate) const DSEP_PUBDATA_EXTERNAL: DomainSep = *b"PDAT_EXT";
+/// Domain separator for public key data
 pub(crate) const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
+/// Domain separator for CRS (Common Reference String) data
 pub(crate) const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
 
 #[cfg(feature = "non-wasm")]
@@ -65,32 +72,40 @@ pub enum KmsFheKeyHandlesVersioned {
     V0(KmsFheKeyHandles),
 }
 
-/// This is a data structure that holds the private key material
-/// of the centralized KMS.
+/// Centralized KMS private key material storage
+///
+/// This structure securely holds sensitive key material used by the KMS,
+/// including the client key, optional decompression key, and public key metadata.
 #[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, Versionize)]
 #[versionize(KmsFheKeyHandlesVersioned)]
 pub struct KmsFheKeyHandles {
+    /// Client's private key for FHE operations
     pub client_key: FhePrivateKey,
+
+    /// Optional key for ciphertext decompression
     pub decompression_key: Option<DecompressionKey>,
-    /// Mapping key type to information
+
+    /// Maps public key types to their corresponding signed handles and metadata
     pub public_key_info: HashMap<PubDataType, SignedPubDataHandleInternal>,
 }
 
 impl Named for KmsFheKeyHandles {
+    /// Returns the type name for versioning and serialization
     const NAME: &'static str = "KmsFheKeyHandles";
 }
 
 #[cfg(feature = "non-wasm")]
 impl KmsFheKeyHandles {
-    /// Compute key handles for the public key materials.
-    /// Note that the handles include a signature on the versionized keys.
+    /// Computes key handles for public key materials with signatures.
     ///
-    /// This function should only be used with keys that are freshly generate.
-    /// It should not be used for keys that were generated in the past
-    /// because a version upgrade in any key material will cause the output
-    /// of `compute_info` to be a different value, and this will lead to
-    /// signature verification errors.
+    /// # Important
+    /// - Only use with freshly generated keys
+    /// - Not suitable for existing keys due to versioning constraints
+    /// - Version upgrades will invalidate signatures
+    ///
+    /// # Security Note
+    /// Signatures are computed over versionized keys to ensure consistency.
     pub fn new(
         sig_key: &PrivateSigKey,
         client_key: FhePrivateKey,
@@ -125,9 +140,18 @@ impl KmsFheKeyHandles {
     }
 }
 
-/// Method for deterministically deriving a request ID from an arbitrary string.
-/// Is currently only used for testing purposes and internal usage (i.e. for PRSS IDs)
-/// since deriving is the responsibility of the smart contract.
+/// Derives a deterministic request ID from an input string.
+///
+/// # Usage
+/// Primarily for testing and internal purposes (e.g., PRSS IDs).
+/// In production, request IDs should be derived by the smart contract.
+///
+/// # Arguments
+/// * `name` - Input string to derive ID from
+///
+/// # Returns
+/// - `Ok(RequestId)` on success
+/// - `Err` if hashing fails
 pub fn derive_request_id(name: &str) -> anyhow::Result<RequestId> {
     let mut digest = serialize_hash_element(&DSEP_REQUEST_ID, &name.to_string())?;
     if digest.len() < ID_LENGTH {
@@ -142,9 +166,15 @@ pub fn derive_request_id(name: &str) -> anyhow::Result<RequestId> {
     Ok(RequestId::from_str(&res_hex)?)
 }
 
-/// Computes the public into on a serializable `element`.
-/// More specifically, computes the unique handle of the `element` and signs this handle using the
-/// `kms`.
+/// Computes and signs a unique handle for a serializable element.
+///
+/// # Process
+/// 1. Serializes the element
+/// 2. Computes a unique handle
+/// 3. Signs the handle using the provided key
+///
+/// # Security
+/// Uses domain separation to prevent signature misuse.
 pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
     sk: &PrivateSigKey,
     dsep: &DomainSep,
@@ -170,8 +200,16 @@ pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
     })
 }
 
-/// Compute a handle of an element, based on its digest
-/// More specifically compute the hash digest, truncate it and convert it to a hex string
+/// Computes a unique handle for an element using its hash digest.
+///
+/// # Process
+/// 1. Hashes the element with domain separation
+/// 2. Truncates the hash
+/// 3. Converts to hex string
+///
+/// # Returns
+/// - `Ok(String)` with hex-encoded handle
+/// - `Err` if hashing fails
 pub fn compute_handle<S>(element: &S) -> anyhow::Result<String>
 where
     S: Serialize + Versionize + Named,

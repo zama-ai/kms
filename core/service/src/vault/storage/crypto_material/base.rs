@@ -2,52 +2,435 @@
 //!
 //! This module provides the foundational storage implementation used by
 //! both centralized and threshold KMS variants.
-
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
-
-use kms_grpc::{
-    rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKeyOwned},
-    RequestId,
-};
-use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
-
 use crate::{
     anyhow_error_and_warn_log,
+    cryptography::internal_crypto_types::PrivateSigKey,
+    engine::{base::KmsFheKeyHandles, threshold::service::ThresholdFheKeys},
     util::meta_store::MetaStore,
     vault::storage::{
-        delete_at_request_id, delete_pk_at_request_id, store_versioned_at_request_id, Storage,
+        delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
+        store_pk_at_request_id, store_versioned_at_request_id, Storage,
     },
 };
+use kms_grpc::{
+    rpc_types::{
+        PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
+        WrappedPublicKeyOwned,
+    },
+    RequestId,
+};
+use serde::Serialize;
+use std::{collections::HashMap, sync::Arc};
+use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
+use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
+use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
-use super::CryptoMaterialReader;
+use super::{check_data_exists, log_storage_success, CryptoMaterialReader};
 
 /// A cached generic storage entity for the common data structures
 /// used by both the centralized and the threshold KMS.
-/// Cloning this object is cheap since it uses Arc internally.
+///
+/// This struct provides thread-safe access to public, private, and optional backup storage,
+/// along with a cache for generated public keys. Cloning is cheap due to internal Arc usage.
 pub struct CryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
     BackS: Storage + Send + Sync + 'static,
 > {
-    // Storage for data that is supposed to be readable by anyone on the internet,
-    // but _may_ be susceptible to malicious modifications.
+    /// Storage for publicly readable data (may be susceptible to malicious modifications)
     pub(crate) public_storage: Arc<Mutex<PubS>>,
-    // Storage for data that is supposed to only be readable, writable and modifiable by the entity
-    // owner and where any modification will be detected.
+
+    /// Storage for private data (only accessible by owner, modifications are detectable)
     pub(crate) private_storage: Arc<Mutex<PrivS>>,
-    // Optional second private storage for backup and recovery
+
+    /// Optional backup storage for recovery purposes
     pub(crate) backup_storage: Option<Arc<Mutex<BackS>>>,
-    // Map storing the already generated public keys.
+
+    /// Cache for already generated public keys
     pub(crate) pk_cache: Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>,
 }
 
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > CryptoMaterialStorage<PubS, PrivS, BackS>
+impl<PubS, PrivS, BackS> CryptoMaterialStorage<PubS, PrivS, BackS>
+where
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
 {
+    // =========================
+    // Initializers
+    // =========================
+
+    /// Creates a new CryptoMaterialStorage with pre-wrapped storages.
+    ///
+    /// Use this when you already have Arc<Mutex<_>> wrapped storages.
+    pub fn new(
+        public_storage: Arc<Mutex<PubS>>,
+        private_storage: Arc<Mutex<PrivS>>,
+        backup_storage: Option<Arc<Mutex<BackS>>>,
+        pk_cache: Option<Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>>,
+    ) -> Self {
+        Self {
+            public_storage,
+            private_storage,
+            backup_storage,
+            pk_cache: pk_cache.unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new()))),
+        }
+    }
+
+    /// Creates a CryptoMaterialStorage by wrapping the provided storages.
+    pub fn from(
+        public_storage: PubS,
+        private_storage: PrivS,
+        backup_storage: Option<BackS>,
+        pk_cache: Option<Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>>,
+    ) -> Self {
+        Self::new(
+            Arc::new(Mutex::new(public_storage)),
+            Arc::new(Mutex::new(private_storage)),
+            backup_storage.map(|s| Arc::new(Mutex::new(s))),
+            pk_cache,
+        )
+    }
+
+    /// Getter for public_storage
+    pub fn get_public_storage(&self) -> Arc<Mutex<PubS>> {
+        Arc::clone(&self.public_storage)
+    }
+
+    /// Getter for private_storage  
+    pub fn get_private_storage(&self) -> Arc<Mutex<PrivS>> {
+        Arc::clone(&self.private_storage)
+    }
+
+    /// Getter for backup_storage (if present)
+    pub fn get_backup_storage(&self) -> Option<Arc<Mutex<BackS>>> {
+        self.backup_storage.as_ref().map(Arc::clone)
+    }
+
+    // =========================
+    // Existence Check Methods
+    // =========================
+
+    /// Check if data exists in both public and private storage
+    pub async fn data_exists(
+        &self,
+        req_id: &RequestId,
+        pub_data_type: &str,
+        priv_data_type: &str,
+    ) -> anyhow::Result<bool> {
+        let pub_storage = self.public_storage.lock().await;
+        let priv_storage = self.private_storage.lock().await;
+
+        check_data_exists(
+            &*pub_storage,
+            &*priv_storage,
+            req_id,
+            pub_data_type,
+            priv_data_type,
+        )
+        .await
+    }
+
+    /// Check if signing keys exist in the storage.
+    ///
+    /// This method checks if signing keys exist in the private storage.
+    ///
+    /// # Returns
+    /// `Ok(true)` if signing keys exist, `Ok(false)` if they don't, or an error if the check fails.
+    pub async fn private_signing_keys_exist(&self) -> anyhow::Result<bool> {
+        let priv_storage = self.private_storage.lock().await;
+        let keys: HashMap<RequestId, PrivateSigKey> =
+            read_all_data_versioned(&*priv_storage, &PrivDataType::SigningKey.to_string())
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to read signing key data: {}", e))?;
+
+        Ok(!keys.is_empty())
+    }
+
+    /// Check if FHE keys exist (for central server)
+    pub async fn fhe_keys_exist(&self, key_id: &RequestId) -> anyhow::Result<bool> {
+        self.data_exists(
+            key_id,
+            &PubDataType::PublicKey.to_string(),
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+    }
+
+    /// Check if threshold FHE keys exist
+    pub async fn threshold_fhe_keys_exist(&self, key_id: &RequestId) -> anyhow::Result<bool> {
+        self.data_exists(
+            key_id,
+            &PubDataType::PublicKey.to_string(),
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+    }
+
+    /// Check if CRS exists
+    pub async fn crs_exists(&self, crs_handle: &RequestId) -> anyhow::Result<bool> {
+        self.data_exists(
+            crs_handle,
+            &PubDataType::CRS.to_string(),
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await
+    }
+
+    /// Get signing key from private storage
+    pub async fn get_signing_key(&self) -> anyhow::Result<PrivateSigKey> {
+        let priv_storage = self.private_storage.lock().await;
+        super::utils::get_core_signing_key(&*priv_storage).await
+    }
+
+    /// Store threshold public key
+    pub async fn store_threshold_public_key(
+        &self,
+        key_id: &RequestId,
+        public_key: WrappedPublicKey<'_>,
+    ) -> anyhow::Result<()> {
+        let mut pub_storage = self.public_storage.lock().await;
+        store_pk_at_request_id(&mut *pub_storage, key_id, public_key).await
+    }
+
+    /// Store threshold public server key
+    pub async fn store_threshold_public_server_key(
+        &self,
+        key_id: &RequestId,
+        server_key: &tfhe::ServerKey,
+    ) -> anyhow::Result<()> {
+        let mut pub_storage = self.public_storage.lock().await;
+        store_versioned_at_request_id(
+            &mut *pub_storage,
+            key_id,
+            server_key,
+            &PubDataType::ServerKey.to_string(),
+        )
+        .await
+    }
+
+    /// Store threshold private FHE key info
+    pub async fn store_threshold_private_fhe_key_info(
+        &self,
+        key_id: &RequestId,
+        threshold_fhe_keys: &ThresholdFheKeys,
+    ) -> anyhow::Result<()> {
+        let mut priv_storage = self.private_storage.lock().await;
+        store_versioned_at_request_id(
+            &mut *priv_storage,
+            key_id,
+            threshold_fhe_keys,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+    }
+
+    // =========================
+    // Storage Primitives
+    // =========================
+
+    // Simplified storage methods without metadata
+    pub async fn store_private_serializable_data<T>(
+        &self,
+        req_id: &RequestId,
+        data: &T,
+        data_type: PrivDataType,
+    ) -> anyhow::Result<()>
+    where
+        T: Serialize + tfhe::Versionize + tfhe::named::Named + Send + Sync,
+        for<'a> <T as tfhe::Versionize>::Versioned<'a>: Serialize + Send + Sync,
+    {
+        let mut priv_storage = self.private_storage.lock().await;
+        store_versioned_at_request_id(&mut *priv_storage, req_id, data, &data_type.to_string())
+            .await?;
+
+        tracing::info!(
+            "Successfully stored private {} data for request ID {} in {}",
+            data_type.to_string(),
+            req_id,
+            priv_storage.info()
+        );
+        Ok(())
+    }
+
+    pub async fn store_public_serializable_data<T>(
+        &self,
+        req_id: &RequestId,
+        data: &T,
+        data_type: PubDataType,
+    ) -> anyhow::Result<()>
+    where
+        T: Serialize + tfhe::Versionize + tfhe::named::Named + Send + Sync,
+        for<'a> <T as tfhe::Versionize>::Versioned<'a>: Serialize + Send + Sync,
+    {
+        let mut pub_storage = self.public_storage.lock().await;
+        store_versioned_at_request_id(&mut *pub_storage, req_id, data, &data_type.to_string())
+            .await?;
+
+        tracing::info!(
+            "Successfully stored public {} data for request ID {} in {}",
+            data_type.to_string(),
+            req_id,
+            pub_storage.info()
+        );
+        Ok(())
+    }
+
+    // =========================
+    // Convenience Storage Methods
+    // =========================
+
+    /// Store CRS (public parameters + private info)
+    pub async fn store_crs(
+        &self,
+        crs_handle: &RequestId,
+        public_params: &CompactPkeCrs,
+        crs_info: &SignedPubDataHandleInternal,
+        is_threshold: bool,
+    ) -> anyhow::Result<()> {
+        // Store private CRS info
+        self.store_private_serializable_data(crs_handle, crs_info, PrivDataType::CrsInfo)
+            .await?;
+        log_storage_success(
+            crs_handle,
+            self.private_storage.lock().await.info(),
+            "CRS data",
+            false,
+            is_threshold,
+        );
+
+        // Store public CRS
+        self.store_public_serializable_data(crs_handle, public_params, PubDataType::CRS)
+            .await?;
+        log_storage_success(
+            crs_handle,
+            self.public_storage.lock().await.info(),
+            "CRS data",
+            true,
+            is_threshold,
+        );
+
+        Ok(())
+    }
+
+    /// Store FHE keys (public key, server key, key info, optional private key)
+    pub async fn store_fhe_keys(
+        &self,
+        req_id: &RequestId,
+        public_keys: &FhePubKeySet,
+        key_info: &KmsFheKeyHandles,
+        is_threshold: bool,
+        write_privkey: bool,
+    ) -> anyhow::Result<()> {
+        // Store key info
+        self.store_private_serializable_data(req_id, key_info, PrivDataType::FheKeyInfo)
+            .await?;
+        log_storage_success(
+            req_id,
+            self.private_storage.lock().await.info(),
+            "key data",
+            false,
+            is_threshold,
+        );
+
+        // Optionally store private key
+        if write_privkey {
+            self.store_private_serializable_data(
+                req_id,
+                &key_info.client_key,
+                PrivDataType::FhePrivateKey,
+            )
+            .await?;
+            log_storage_success(
+                req_id,
+                self.private_storage.lock().await.info(),
+                "individual private key",
+                false,
+                is_threshold,
+            );
+        }
+
+        // Store public key
+        self.store_threshold_public_key(req_id, WrappedPublicKey::Compact(&public_keys.public_key))
+            .await?;
+        log_storage_success(
+            req_id,
+            self.public_storage.lock().await.info(),
+            "key",
+            true,
+            is_threshold,
+        );
+
+        // Store server key
+        self.store_public_serializable_data(
+            req_id,
+            &public_keys.server_key,
+            PubDataType::ServerKey,
+        )
+        .await?;
+        log_storage_success(
+            req_id,
+            self.public_storage.lock().await.info(),
+            if is_threshold {
+                "server key data"
+            } else {
+                "server signing key"
+            },
+            true,
+            is_threshold,
+        );
+
+        Ok(())
+    }
+
+    /// Store threshold FHE keys
+    pub async fn store_threshold_fhe_keys(
+        &self,
+        key_id: &RequestId,
+        public_key: &tfhe::CompactPublicKey,
+        server_key: &tfhe::ServerKey,
+        threshold_fhe_keys: &ThresholdFheKeys,
+    ) -> anyhow::Result<()> {
+        // Store public key
+        self.store_threshold_public_key(key_id, WrappedPublicKey::Compact(public_key))
+            .await?;
+        log_storage_success(
+            key_id,
+            self.public_storage.lock().await.info(),
+            "key data",
+            true,
+            true,
+        );
+
+        // Store server key
+        self.store_threshold_public_server_key(key_id, server_key)
+            .await?;
+        log_storage_success(
+            key_id,
+            self.public_storage.lock().await.info(),
+            "server key data",
+            true,
+            true,
+        );
+
+        // Store private FHE key info
+        self.store_threshold_private_fhe_key_info(key_id, threshold_fhe_keys)
+            .await?;
+        log_storage_success(
+            key_id,
+            self.private_storage.lock().await.info(),
+            "key data",
+            false,
+            true,
+        );
+
+        Ok(())
+    }
+
+    // =========================
+    // Ensure_xxx_existence Methods
+    // =========================
+
     /// Tries to delete all the types of key material related to a specific [RequestId].
     pub async fn purge_key_material(
         &self,
