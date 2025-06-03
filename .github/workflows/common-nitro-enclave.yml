@@ -57,8 +57,8 @@ permissions: {}
 jobs:
   determine-tag:
     permissions:
-      actions: 'read'
-      contents: 'read'
+      actions: read
+      contents: read
     runs-on: ubuntu-latest
     outputs:
       docker_tag: ${{ steps.set-tag.outputs.tag }}
@@ -84,10 +84,10 @@ jobs:
 
   build-and-push-enclave:
     permissions:
-      actions: 'read'
-      contents: 'read'
-      attestations: 'write'
-      packages: 'write'
+      actions: read
+      contents: read
+      attestations: write
+      packages: write
       id-token: write
     needs: determine-tag
     outputs:
