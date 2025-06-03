@@ -107,7 +107,7 @@ jobs:
       contents: 'read'
       id-token: 'write'
     needs: check-changes
-    if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart == 'true'
+    if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart == 'true' && github.event_name != 'schedule'
     uses: ./.github/workflows/helm-release.yml
 
   ############################################################################
