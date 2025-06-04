@@ -314,7 +314,7 @@ jobs:
           MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly_tests\"}"
         else
           # Regular tests: Run different test suites in parallel with specific features
-          MATRIX="${MATRIX}{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly_tests --test-threads=1 --nocapture\"}"
+          MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib -- --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly_tests --test-threads=1 --nocapture\"}"
         fi
         MATRIX="${MATRIX%,}]}"
         echo "$MATRIX" >> "$GITHUB_OUTPUT"
@@ -389,7 +389,7 @@ jobs:
   docker-nitro-enclave:
     permissions:
       actions: read
-      contents: read
+      contents: write
       id-token: write
       pull-requests: read
       packages: write

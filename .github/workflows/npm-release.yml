@@ -11,7 +11,7 @@ jobs:
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/service'
-      args-tests: '--lib'
+      args-tests: '-F testing --lib'
       run-wasm: true
       package-name: 'kms'
       npm-release: true

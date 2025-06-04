@@ -85,7 +85,7 @@ jobs:
   build-and-push-enclave:
     permissions:
       actions: read
-      contents: read
+      contents: write
       attestations: write
       packages: write
       id-token: write
