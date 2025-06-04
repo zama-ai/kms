@@ -1578,7 +1578,7 @@ dependencies = [
 
 [[package]]
 name = "backward-compatibility"
-version = "0.11.0-rc14"
+version = "0.11.0-rc16"
 dependencies = [
  "aes-prng",
  "bincode 1.3.3",
@@ -1891,7 +1891,7 @@ dependencies = [
 
 [[package]]
 name = "cc-tests-utils"
-version = "0.11.0-rc14"
+version = "0.11.0-rc16"
 
 [[package]]
 name = "cexpr"
@@ -2044,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "conf-trace"
-version = "0.11.0-rc14"
+version = "0.11.0-rc16"
 dependencies = [
  "anyhow",
  "axum",
@@ -3837,7 +3837,7 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.11.0-rc14"
+version = "0.11.0-rc16"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3916,7 +3916,7 @@ dependencies = [
 
 [[package]]
 name = "kms-core-client"
-version = "0.11.0-rc14"
+version = "0.11.0-rc16"
 dependencies = [
  "aes-prng",
  "alloy-primitives",
@@ -3948,7 +3948,7 @@ dependencies = [
 
 [[package]]
 name = "kms-grpc"
-version = "0.11.0-rc14"
+version = "0.11.0-rc16"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -6834,7 +6834,7 @@ dependencies = [
 
 [[package]]
 name = "test-utils"
-version = "0.11.0-rc14"
+version = "0.11.0-rc16"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7006,7 +7006,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-fhe"
-version = "0.11.0-rc14"
+version = "0.11.0-rc16"
 dependencies = [
  "aes",
  "aes-prng",
