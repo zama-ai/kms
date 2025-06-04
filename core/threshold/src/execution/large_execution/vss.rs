@@ -97,12 +97,12 @@ where
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Debug, Default)]
-struct DoublePoly<Z>
+pub(crate) struct DoublePoly<Z>
 where
     Poly<Z>: Eq,
 {
-    share_in_x: Poly<Z>,
-    share_in_y: Poly<Z>,
+    pub(crate) share_in_x: Poly<Z>,
+    pub(crate) share_in_y: Poly<Z>,
 }
 
 /// Struct to hold data sent during round 1 of VSS, composed of
@@ -231,9 +231,13 @@ impl<BCast: Broadcast> Vss for RealVss<BCast> {
     }
 }
 
-type MapRoleDoublePoly<Z> = HashMap<Role, Vec<DoublePoly<Z>>>;
+pub(crate) type MapRoleDoublePoly<Z> = HashMap<Role, Vec<DoublePoly<Z>>>;
 
-fn sample_secret_polys<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+pub(crate) fn sample_secret_polys<
+    Z: Ring + RingEmbed,
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+>(
     session: &mut S,
     secrets: &[Z],
 ) -> anyhow::Result<(Vec<BivariatePoly<Z>>, MapRoleDoublePoly<Z>)> {
@@ -265,7 +269,7 @@ fn sample_secret_polys<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHa
     Ok((bivariate_poly, map_double_shares))
 }
 
-async fn round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+pub(crate) async fn round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &mut S,
     num_secrets: usize,
     bivariate_poly: Vec<BivariatePoly<Z>>,
@@ -409,7 +413,7 @@ fn parse_round_1_received_data<Z: Ring>(
     }
 }
 
-async fn round_2<
+pub(crate) async fn round_2<
     Z: Ring + RingEmbed,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
@@ -519,7 +523,7 @@ fn verify_round_2_broadcast<Z: Ring>(
 // Role0 -> Some(v) with v indexed as v[dealer_idx][Pj index][secret_idx]
 // Role1 -> None means somethings wrong happened, consider all values to be 0
 //...
-async fn round_3<
+pub(crate) async fn round_3<
     Z: Ring + RingEmbed,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
@@ -588,7 +592,7 @@ async fn round_3<
     Ok(unhappy_vec)
 }
 
-async fn round_4<
+pub(crate) async fn round_4<
     Z: Ring + RingEmbed,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
@@ -1124,7 +1128,7 @@ fn round_4_fix_conflicts<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSession
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::algebra::bivariate::{BivariateEval, BivariatePoly};
+    use crate::algebra::bivariate::BivariateEval;
     use crate::algebra::galois_rings::degree_4::{
         ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64,
     };
@@ -1140,16 +1144,15 @@ pub(crate) mod tests {
         runtime::party::Role,
         runtime::session::{BaseSessionHandles, LargeSession, ParameterHandles},
     };
+    use crate::malicious_execution::large_execution::malicious_vss::{
+        WrongDegreeSharingVss, WrongSecretLenVss,
+    };
     use crate::networking::NetworkMode;
     use crate::session_id::SessionId;
-    #[cfg(feature = "slow_tests")]
-    use crate::tests::helper::tests::roles_from_idxs;
     use crate::tests::helper::tests::{
         execute_protocol_large_w_disputes_and_malicious, TestingParameters,
     };
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
-    use aes_prng::AesRng;
-    use rand::SeedableRng;
     use rstest::rstest;
     use std::num::Wrapping;
     use tokio::task::JoinSet;
@@ -1181,7 +1184,7 @@ pub(crate) mod tests {
     //TODO: When we actually have malicious strategies implemented for broadcast,
     //test them in VSS
     impl<BCast: Broadcast> RealVss<BCast> {
-        pub fn init(broadcast_strategy: &BCast) -> Self {
+        pub fn new(broadcast_strategy: &BCast) -> Self {
             Self {
                 broadcast: broadcast_strategy.clone(),
             }
@@ -1399,269 +1402,6 @@ pub(crate) mod tests {
         }
     }
 
-    //We now define cheating strategies, each implement the VSS trait
-    ///Does nothing, and output an empty Vec
-    #[derive(Default, Clone)]
-    pub(crate) struct DroppingVssFromStart {}
-
-    ///Does round 1 and then drops
-    #[derive(Default, Clone)]
-    pub(crate) struct DroppingVssAfterR1 {}
-
-    ///Does round 1 and 2 and then drops
-    #[derive(Default, Clone)]
-    pub(crate) struct DroppingVssAfterR2<BCast: Broadcast> {
-        broadcast: BCast,
-    }
-
-    ///Participate in the protocol, but lies to some parties in the first round
-    #[derive(Default, Clone)]
-    pub(crate) struct MaliciousVssR1<BCast: Broadcast> {
-        broadcast: BCast,
-        roles_to_lie_to: Vec<Role>,
-    }
-
-    #[derive(Default, Clone)]
-    pub(crate) struct WrongSecretLenVss<BCast: Broadcast> {
-        broadcast: BCast,
-    }
-
-    #[derive(Default, Clone)]
-    pub(crate) struct WrongDegreeSharingVss<BCast: Broadcast> {
-        broadcast: BCast,
-    }
-
-    impl<BCast: Broadcast> WrongDegreeSharingVss<BCast> {
-        fn sample_secret_polys<
-            Z: Ring + RingEmbed,
-            R: Rng + CryptoRng,
-            S: BaseSessionHandles<R>,
-        >(
-            session: &mut S,
-            secrets: &[Z],
-        ) -> anyhow::Result<(Vec<BivariatePoly<Z>>, MapRoleDoublePoly<Z>)> {
-            // We intentionally sent the degree to be too high (off by one) compared
-            // to an honest behaviour.
-            let degree = session.threshold() as usize + 1;
-            //Sample the bivariate polynomials Vec<F(X,Y)>
-            let bivariate_poly = secrets
-                .iter()
-                .map(|s| BivariatePoly::from_secret(session.rng(), *s, degree))
-                .collect::<Result<Vec<_>, _>>()?;
-            //Evaluate the bivariate poly in its first and second variables
-            //to create a mapping role -> Vec<(F(X,alpha_role), F(alpha_role,Y))>
-            let map_double_shares: MapRoleDoublePoly<Z> = session
-                .role_assignments()
-                .keys()
-                .map(|r| {
-                    let embedded_role = Z::embed_exceptional_set(r.one_based())?;
-                    let mut vec_map = Vec::with_capacity(bivariate_poly.len());
-                    for p in &bivariate_poly {
-                        let share_in_x = p.partial_y_evaluation(embedded_role)?;
-                        let share_in_y = p.partial_x_evaluation(embedded_role)?;
-                        vec_map.push(DoublePoly {
-                            share_in_x,
-                            share_in_y,
-                        });
-                    }
-                    Ok::<(Role, Vec<DoublePoly<Z>>), anyhow::Error>((*r, vec_map))
-                })
-                .try_collect()?;
-            Ok((bivariate_poly, map_double_shares))
-        }
-    }
-
-    #[async_trait]
-    impl<BCast: Broadcast> Vss for WrongDegreeSharingVss<BCast> {
-        async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
-            &self,
-            session: &mut S,
-            secrets: &[Z],
-        ) -> anyhow::Result<Vec<Vec<Z>>> {
-            let num_secrets = secrets.len();
-            let (bivariate_poly, map_double_shares) = Self::sample_secret_polys(session, secrets)?;
-            let vss = round_1(session, num_secrets, bivariate_poly, map_double_shares).await?;
-            let verification_map = round_2(session, num_secrets, &vss, &self.broadcast).await?;
-            let unhappy_vec = round_3(
-                session,
-                num_secrets,
-                &vss,
-                &verification_map,
-                &self.broadcast,
-            )
-            .await?;
-            Ok(round_4(session, num_secrets, &vss, unhappy_vec, &self.broadcast).await?)
-        }
-    }
-
-    #[async_trait]
-    impl Vss for DroppingVssFromStart {
-        //Do nothing, and output an empty Vec
-        async fn execute_many<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
-            &self,
-            _session: &mut S,
-            _secrets: &[Z],
-        ) -> anyhow::Result<Vec<Vec<Z>>> {
-            Ok(Vec::new())
-        }
-
-        async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
-            &self,
-            _session: &mut S,
-            _secret: &Z,
-        ) -> anyhow::Result<Vec<Z>> {
-            Ok(Vec::new())
-        }
-    }
-
-    #[async_trait]
-    impl Vss for DroppingVssAfterR1 {
-        //Do round1, and output an empty Vec
-        async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
-            &self,
-            session: &mut S,
-            secrets: &[Z],
-        ) -> anyhow::Result<Vec<Vec<Z>>> {
-            let (bivariate_poly, map_double_shares) = sample_secret_polys(session, secrets)?;
-            let _ = round_1(session, secrets.len(), bivariate_poly, map_double_shares).await?;
-            Ok(Vec::new())
-        }
-
-        async fn execute<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
-            &self,
-            session: &mut S,
-            secret: &Z,
-        ) -> anyhow::Result<Vec<Z>> {
-            let _ = self.execute_many(session, &[*secret]).await?;
-            Ok(Vec::new())
-        }
-    }
-
-    impl<BCast: Broadcast> DroppingVssAfterR2<BCast> {
-        pub fn init(broadcast_strategy: &BCast) -> Self {
-            Self {
-                broadcast: broadcast_strategy.clone(),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl<BCast: Broadcast> Vss for DroppingVssAfterR2<BCast> {
-        //Do round1 and round2, and output an empty Vec
-        async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
-            &self,
-            session: &mut S,
-            secrets: &[Z],
-        ) -> anyhow::Result<Vec<Vec<Z>>> {
-            let (bivariate_poly, map_double_shares) = sample_secret_polys(session, secrets)?;
-            let num_secrets = secrets.len();
-            let vss = round_1(session, num_secrets, bivariate_poly, map_double_shares).await?;
-            let _ = round_2(session, num_secrets, &vss, &self.broadcast).await?;
-            Ok(Vec::new())
-        }
-
-        async fn execute<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
-            &self,
-            session: &mut S,
-            secret: &Z,
-        ) -> anyhow::Result<Vec<Z>> {
-            let _ = self.execute_many(session, &[*secret]).await?;
-            Ok(Vec::new())
-        }
-    }
-
-    impl<BCast: Broadcast> MaliciousVssR1<BCast> {
-        pub fn init(broadcast_strategy: &BCast, roles_from_zero: &[usize]) -> Self {
-            Self {
-                broadcast: broadcast_strategy.clone(),
-                roles_to_lie_to: roles_from_zero
-                    .iter()
-                    .map(|id_role| Role::indexed_by_zero(*id_role))
-                    .collect_vec(),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl<BCast: Broadcast> Vss for MaliciousVssR1<BCast> {
-        async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
-            &self,
-            session: &mut S,
-            secrets: &[Z],
-        ) -> anyhow::Result<Vec<Vec<Z>>> {
-            //Execute a malicious round 1
-            let num_secrets = secrets.len();
-            let vss = malicious_round_1(session, secrets, &self.roles_to_lie_to).await?;
-            let verification_map = round_2(session, num_secrets, &vss, &self.broadcast).await?;
-            let unhappy_vec = round_3(
-                session,
-                num_secrets,
-                &vss,
-                &verification_map,
-                &self.broadcast,
-            )
-            .await?;
-            Ok(round_4(session, num_secrets, &vss, unhappy_vec, &self.broadcast).await?)
-        }
-    }
-
-    //This code executes a round1 where the party sends malformed double shares for its VSS to parties in roles_to_lie_to
-    async fn malicious_round_1<
-        Z: Ring + RingEmbed,
-        R: Rng + CryptoRng,
-        S: BaseSessionHandles<R>,
-    >(
-        session: &mut S,
-        secrets: &[Z],
-        roles_to_lie_to: &[Role],
-    ) -> anyhow::Result<Round1VSSOutput<Z>> {
-        let num_secrets = secrets.len();
-        let mut rng = AesRng::seed_from_u64(0);
-        let bivariate_poly = secrets
-            .iter()
-            .map(|secret| {
-                BivariatePoly::from_secret(&mut rng, *secret, session.threshold() as usize).unwrap()
-            })
-            .collect_vec();
-        let map_double_shares: MapRoleDoublePoly<Z> = session
-            .role_assignments()
-            .keys()
-            .map(|r| {
-                let embedded_role = Z::embed_exceptional_set(r.one_based()).unwrap();
-                let correct_bpolys = (0..num_secrets)
-                    .map(|i| DoublePoly {
-                        share_in_x: bivariate_poly[i]
-                            .partial_y_evaluation(embedded_role)
-                            .unwrap(),
-                        share_in_y: bivariate_poly[i]
-                            .partial_x_evaluation(embedded_role)
-                            .unwrap(),
-                    })
-                    .collect_vec();
-                if roles_to_lie_to.contains(r) {
-                    // we only lie for one of the polynomials, the first one
-                    let mut wrong_bpolys = correct_bpolys.clone();
-                    wrong_bpolys[0] = DoublePoly {
-                        share_in_x: Poly::<Z>::sample_random_with_fixed_constant(
-                            &mut rng,
-                            Z::ONE,
-                            session.threshold().into(),
-                        ),
-                        share_in_y: Poly::<Z>::sample_random_with_fixed_constant(
-                            &mut rng,
-                            Z::ZERO,
-                            session.threshold().into(),
-                        ),
-                    };
-                    (*r, wrong_bpolys)
-                } else {
-                    (*r, correct_bpolys)
-                }
-            })
-            .collect();
-        round_1(session, num_secrets, bivariate_poly, map_double_shares).await
-    }
-
     fn test_vss_small<Z: ErrorCorrect + Invert + PRSSConversions, const EXTENSION_DEGREE: usize>(
         params: TestingParameters,
         num_secrets: usize,
@@ -1707,32 +1447,6 @@ pub(crate) mod tests {
                 assert!(reconstructed_secret.is_ok());
                 assert_eq!(expected_secrets[vss_idx][i], reconstructed_secret.unwrap());
             }
-        }
-    }
-
-    #[async_trait]
-    impl<BCast: Broadcast> Vss for WrongSecretLenVss<BCast> {
-        // The adversary will halve the number of secrets
-        async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
-            &self,
-            session: &mut S,
-            secrets: &[Z],
-        ) -> anyhow::Result<Vec<Vec<Z>>> {
-            assert!(secrets.len() > 1);
-            let num_secrets = secrets.len() / 2;
-            let (bivariate_poly, map_double_shares) =
-                sample_secret_polys(session, &secrets[..num_secrets])?;
-            let vss = round_1(session, num_secrets, bivariate_poly, map_double_shares).await?;
-            let verification_map = round_2(session, num_secrets, &vss, &self.broadcast).await?;
-            let unhappy_vec = round_3(
-                session,
-                num_secrets,
-                &vss,
-                &verification_map,
-                &self.broadcast,
-            )
-            .await?;
-            Ok(round_4(session, num_secrets, &vss, unhappy_vec, &self.broadcast).await?)
         }
     }
 
@@ -1866,9 +1580,7 @@ pub(crate) mod tests {
         #[case] num_secrets: usize,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
     ) {
-        let wrong_secret_len_vss = WrongSecretLenVss {
-            broadcast: broadcast_strategy,
-        };
+        let wrong_secret_len_vss = WrongSecretLenVss::new(&broadcast_strategy);
         test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
@@ -1891,9 +1603,8 @@ pub(crate) mod tests {
         #[case] num_secrets: usize,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
     ) {
-        let malicious_strategy = WrongDegreeSharingVss {
-            broadcast: broadcast_strategy,
-        };
+        let malicious_strategy = WrongDegreeSharingVss::new(&broadcast_strategy);
+
         test_vss_strategies_large::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             1,
@@ -1920,6 +1631,8 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7,2,&[1,3],&[],&[],true,None), 2)]
     #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true,None), 2)]
     fn test_vss_dropping_from_start(#[case] params: TestingParameters, #[case] num_secrets: usize) {
+        use crate::malicious_execution::large_execution::malicious_vss::DroppingVssFromStart;
+
         let dropping_vss_from_start = DroppingVssFromStart::default();
         test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
@@ -1955,10 +1668,9 @@ pub(crate) mod tests {
         #[case] num_secrets: usize,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
     ) {
-        let malicious_vss_r1 = MaliciousVssR1 {
-            roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
-            broadcast: broadcast_strategy,
-        };
+        use crate::malicious_execution::large_execution::malicious_vss::MaliciousVssR1;
+
+        let malicious_vss_r1 = MaliciousVssR1::new(&broadcast_strategy, &params.roles_to_lie_to);
         test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,
@@ -1984,6 +1696,8 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7,2,&[1,3],&[],&[],true,None), 2)]
     #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true,None), 2)]
     fn test_vss_dropout_after_r1(#[case] params: TestingParameters, #[case] num_secrets: usize) {
+        use crate::malicious_execution::large_execution::malicious_vss::DroppingVssAfterR1;
+
         let dropping_vss_after_r1 = DroppingVssAfterR1::default();
         test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
@@ -2014,9 +1728,9 @@ pub(crate) mod tests {
         #[case] num_secrets: usize,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
     ) {
-        let dropping_vss_after_r2 = DroppingVssAfterR2 {
-            broadcast: broadcast_strategy,
-        };
+        use crate::malicious_execution::large_execution::malicious_vss::DroppingVssAfterR2;
+
+        let dropping_vss_after_r2 = DroppingVssAfterR2::new(&broadcast_strategy);
         test_vss_strategies_large::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             num_secrets,

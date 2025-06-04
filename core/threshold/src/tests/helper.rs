@@ -8,7 +8,7 @@ pub mod tests_and_benches {
 
     use crate::{
         algebra::structure_traits::{ErrorCorrect, Invert, Ring},
-        execution::small_execution::prf::PRSSConversions,
+        execution::{runtime::party::Role, small_execution::prf::PRSSConversions},
         networking::NetworkMode,
     };
     use aes_prng::AesRng;
@@ -169,6 +169,14 @@ pub mod tests_and_benches {
 
         res
     }
+
+    ///Generate a vector of roles from zero indexed vector of id
+    pub fn roles_from_idxs(idx_roles: &[usize]) -> Vec<Role> {
+        idx_roles
+            .iter()
+            .map(|idx_role| Role::indexed_by_zero(*idx_role))
+            .collect()
+    }
 }
 
 #[cfg(any(test, feature = "testing"))]
@@ -253,6 +261,7 @@ pub mod testing {
 #[cfg(test)]
 pub mod tests {
     use super::testing::get_networkless_base_session_for_parties;
+    use super::tests_and_benches::roles_from_idxs;
     use crate::{
         algebra::structure_traits::{ErrorCorrect, Invert, Ring},
         execution::{
@@ -403,14 +412,6 @@ pub mod tests {
                 .collect_vec();
             (dispute_map, malicious_due_to_dispute)
         }
-    }
-
-    ///Generate a vector of roles from zero indexed vector of id
-    pub fn roles_from_idxs(idx_roles: &[usize]) -> Vec<Role> {
-        idx_roles
-            .iter()
-            .map(|idx_role| Role::indexed_by_zero(*idx_role))
-            .collect_vec()
     }
 
     /// Deterministic key generation

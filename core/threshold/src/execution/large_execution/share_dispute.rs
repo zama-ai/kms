@@ -65,26 +65,8 @@ pub trait ShareDispute: Send + Sync + Clone + Default {
 #[derive(Default, Clone)]
 pub struct RealShareDispute {}
 
-/// Returns the ids (one based) of the roles I am in dispute with but that are not corrupt
-fn _compute_idx_dispute_not_corrupt<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
-    session: &L,
-) -> anyhow::Result<Vec<usize>> {
-    Ok(session
-        .disputed_roles()
-        .get(&session.my_role()?)?
-        .iter()
-        .filter_map(|id| {
-            if session.corrupt_roles().contains(id) {
-                None
-            } else {
-                Some(id.one_based())
-            }
-        })
-        .collect())
-}
-
 /// Returns the ids (one based) of the roles I am in dispute with
-fn compute_idx_dispute<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+pub(crate) fn compute_idx_dispute<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
     session: &L,
 ) -> anyhow::Result<Vec<usize>> {
     Ok(session
@@ -95,7 +77,7 @@ fn compute_idx_dispute<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         .collect())
 }
 
-fn share_secrets<Z, R: Rng + CryptoRng>(
+pub(crate) fn share_secrets<Z, R: Rng + CryptoRng>(
     rng: &mut R,
     secrets: &[Z],
     punctured_idx: &[usize],
@@ -114,7 +96,7 @@ where
 }
 
 //Fill in missing values with 0s
-fn fill_incomplete_output<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+pub(crate) fn fill_incomplete_output<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
     session: &L,
     result: &mut HashMap<Role, Vec<Z>>,
     len: usize,
@@ -232,7 +214,7 @@ impl ShareDispute for RealShareDispute {
     }
 }
 
-async fn send_and_receive_share_dispute_double<
+pub(crate) async fn send_and_receive_share_dispute_double<
     Z: Ring,
     R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
@@ -316,7 +298,7 @@ async fn send_and_receive_share_dispute_double<
     })
 }
 
-async fn send_and_receive_share_dispute_single<
+pub(crate) async fn send_and_receive_share_dispute_single<
     Z: Ring,
     R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
@@ -382,7 +364,7 @@ async fn send_and_receive_share_dispute_single<
 
 /// Constructs a random polynomial given a set of `threshold` party IDs which should evaluate to 0 on the interpolated polynomial.
 /// Returns all the `num_parties` y-values interpolated from the `dispute_party_ids` point embedded onto the x-axis.
-pub fn interpolate_poly_w_punctures<Z, R: Rng + CryptoRng>(
+pub(crate) fn interpolate_poly_w_punctures<Z, R: Rng + CryptoRng>(
     rng: &mut R,
     num_parties: usize,
     threshold: usize,
@@ -417,7 +399,7 @@ where
 /// Takes a base polynomial and increases its degree by multiplying roots of the form (1 - X/embed(i)) for each i in [points_of_new_roots].
 /// Such that the new polynomial has same constant term, and evaluates to 0 at each embed(i) for i in [points_of_new_roots]
 /// Then returns all the 0..[num_parties] points on the polynomial.
-pub fn evaluate_w_new_roots<Z>(
+pub(crate) fn evaluate_w_new_roots<Z>(
     num_parties: usize,
     points_of_new_roots: Vec<usize>,
     base_poly: &Poly<Z>,
@@ -441,10 +423,7 @@ where
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{
-        compute_idx_dispute, evaluate_w_new_roots, send_and_receive_share_dispute_double,
-        send_and_receive_share_dispute_single, share_secrets,
-    };
+    use super::evaluate_w_new_roots;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::networking::NetworkMode;
     use crate::{
@@ -454,261 +433,25 @@ pub(crate) mod tests {
             structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, Zero},
         },
         execution::{
-            communication::p2p::send_to_honest_parties,
             large_execution::share_dispute::{
-                interpolate_poly_w_punctures, RealShareDispute, ShareDispute, ShareDisputeOutput,
-                ShareDisputeOutputDouble,
+                interpolate_poly_w_punctures, RealShareDispute, ShareDispute,
             },
             runtime::{
                 party::Role,
-                session::{
-                    BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
-                },
+                session::{BaseSessionHandles, LargeSession, ParameterHandles},
             },
             sharing::{shamir::ShamirSharings, share::Share},
         },
-        networking::value::NetworkValue,
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious, TestingParameters,
         },
     };
     use aes_prng::AesRng;
-    use async_trait::async_trait;
     use itertools::Itertools;
     use rand::SeedableRng;
-    use rand::{CryptoRng, Rng};
     use rstest::rstest;
-    use std::{collections::HashMap, num::Wrapping};
+    use std::num::Wrapping;
     use tracing_test::traced_test;
-
-    ///Dropout strategy
-    #[derive(Default, Clone)]
-    pub(crate) struct DroppingShareDispute {}
-
-    ///Send an incorrect amount
-    #[derive(Default, Clone)]
-    pub(crate) struct WrongShareDisputeRecons {}
-
-    ///Strategy of a malicious party that just sends BS (but correct amount of correct type)
-    /// Not really used to test ShareDispute itself, but rather higher level protocols
-    #[derive(Default, Clone)]
-    pub(crate) struct MaliciousShareDisputeRecons {
-        roles_to_lie_to: Vec<Role>,
-    }
-
-    impl MaliciousShareDisputeRecons {
-        pub fn init(roles_from_zero: &[usize]) -> Self {
-            Self {
-                roles_to_lie_to: roles_from_zero
-                    .iter()
-                    .map(|id_role| Role::indexed_by_zero(*id_role))
-                    .collect_vec(),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl ShareDispute for DroppingShareDispute {
-        async fn execute<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
-            &self,
-            _session: &mut L,
-            _secrets: &[Z],
-        ) -> anyhow::Result<ShareDisputeOutput<Z>> {
-            Ok(ShareDisputeOutput::default())
-        }
-
-        async fn execute_double<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
-            &self,
-            _session: &mut L,
-            _secrets: &[Z],
-        ) -> anyhow::Result<ShareDisputeOutputDouble<Z>> {
-            Ok(ShareDisputeOutputDouble::default())
-        }
-    }
-
-    #[async_trait]
-    impl ShareDispute for WrongShareDisputeRecons {
-        async fn execute<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
-            &self,
-            session: &mut L,
-            secrets: &[Z],
-        ) -> anyhow::Result<ShareDisputeOutput<Z>> {
-            //Sample random not enough shares
-            let vec_polypoints: Vec<Vec<Z>> = (0..secrets.len() - 1)
-                .map(|_secret_idx| {
-                    (0_usize..session.num_parties())
-                        .map(|_party_idx| Z::sample(session.rng()))
-                        .collect::<Vec<Z>>()
-                })
-                .collect_vec();
-
-            //Map each parties' role with their shares (one share per secret)
-            //Except its not of correct type, and we are sending one too few shares per party
-            let mut polypoints_map: HashMap<Role, NetworkValue<Z>> = HashMap::new();
-            for polypoints in vec_polypoints.into_iter() {
-                for (role_id, polypoint) in polypoints.into_iter().enumerate() {
-                    let curr_role = Role::indexed_by_zero(role_id);
-                    match polypoints_map.get_mut(&curr_role) {
-                        Some(NetworkValue::VecRingValue(v)) => v.push(polypoint),
-                        None => {
-                            let mut new_party_vec = Vec::with_capacity(secrets.len());
-                            new_party_vec.push(polypoint);
-                            polypoints_map
-                                .insert(curr_role, NetworkValue::VecRingValue(new_party_vec));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            send_to_honest_parties(&polypoints_map, session)
-                .await
-                .unwrap();
-            Ok(ShareDisputeOutput::default())
-        }
-
-        async fn execute_double<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
-            &self,
-            session: &mut L,
-            secrets: &[Z],
-        ) -> anyhow::Result<ShareDisputeOutputDouble<Z>> {
-            //Sample random and not enough shares
-            let vec_polypoints: Vec<Vec<Z>> = (0..secrets.len() - 1)
-                .map(|_secret_idx| {
-                    (0_usize..session.num_parties())
-                        .map(|_party_idx| Z::sample(session.rng()))
-                        .collect::<Vec<Z>>()
-                })
-                .collect_vec();
-
-            //Map each parties' role with their shares (one share per secret)
-            //Except its not of correct type, and we are sending one too few shares per party
-            let mut polypoints_map: HashMap<Role, NetworkValue<Z>> = HashMap::new();
-            for polypoints in vec_polypoints.into_iter() {
-                for (role_id, polypoint) in polypoints.into_iter().enumerate() {
-                    let curr_role = Role::indexed_by_zero(role_id);
-                    match polypoints_map.get_mut(&curr_role) {
-                        Some(NetworkValue::VecPairRingValue(v)) => v.push((polypoint, polypoint)),
-                        None => {
-                            let mut new_party_vec = Vec::with_capacity(secrets.len());
-                            new_party_vec.push((polypoint, polypoint));
-                            polypoints_map
-                                .insert(curr_role, NetworkValue::VecPairRingValue(new_party_vec));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            send_to_honest_parties(&polypoints_map, session)
-                .await
-                .unwrap();
-            Ok(ShareDisputeOutputDouble::default())
-        }
-    }
-
-    #[async_trait]
-    impl ShareDispute for MaliciousShareDisputeRecons {
-        async fn execute_double<
-            Z: Ring + RingEmbed + Invert,
-            R: Rng + CryptoRng,
-            L: LargeSessionHandles<R>,
-        >(
-            &self,
-            session: &mut L,
-            secrets: &[Z],
-        ) -> anyhow::Result<ShareDisputeOutputDouble<Z>> {
-            let num_parties = session.num_parties();
-            let degree_t = session.threshold() as usize;
-            let degree_2t = 2 * degree_t;
-
-            //Get the IDs of all parties I'm in dispute with (ignoring the fact that some might or might not be in the Corrupt set)
-            let dispute_ids = compute_idx_dispute(session)?;
-
-            //Sample one random polynomial of correct degree per secret
-            //and evaluate it at the parties' points
-            let vec_polypoints_t: Vec<Vec<Z>> =
-                share_secrets(session.rng(), secrets, &dispute_ids, num_parties, degree_t)?;
-            let vec_polypoints_2t: Vec<Vec<Z>> =
-                share_secrets(session.rng(), secrets, &dispute_ids, num_parties, degree_2t)?;
-
-            //Map each parties' role with their pairs of shares (one share of deg t and one of deg 2t per secret)
-            let mut polypoints_map: HashMap<Role, NetworkValue<Z>> = HashMap::new();
-            for (mut polypoints_t, mut polypoints_2t) in vec_polypoints_t
-                .into_iter()
-                .zip(vec_polypoints_2t.into_iter())
-            {
-                for (role_id, (polypoint_t, polypoint_2t)) in polypoints_t
-                    .iter_mut()
-                    .zip(polypoints_2t.iter_mut())
-                    .enumerate()
-                {
-                    let curr_role = Role::indexed_by_zero(role_id);
-                    //Cheat if we should
-                    if self.roles_to_lie_to.contains(&curr_role) {
-                        let cheating_poly = Z::sample(session.rng());
-                        *polypoint_t += cheating_poly;
-                        *polypoint_2t += cheating_poly;
-                    }
-                    match polypoints_map.get_mut(&curr_role) {
-                        Some(NetworkValue::VecPairRingValue(v)) => {
-                            v.push((*polypoint_t, *polypoint_2t))
-                        }
-                        None => {
-                            let mut new_party_vec = Vec::with_capacity(secrets.len());
-                            new_party_vec.push((*polypoint_t, *polypoint_2t));
-                            polypoints_map
-                                .insert(curr_role, NetworkValue::VecPairRingValue(new_party_vec));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            send_and_receive_share_dispute_double(session, polypoints_map, secrets.len()).await
-        }
-
-        async fn execute<
-            Z: Ring + RingEmbed + Invert,
-            R: Rng + CryptoRng,
-            L: LargeSessionHandles<R>,
-        >(
-            &self,
-            session: &mut L,
-            secrets: &[Z],
-        ) -> anyhow::Result<ShareDisputeOutput<Z>> {
-            let num_parties = session.num_parties();
-            let degree = session.threshold() as usize;
-            //Get the IDs of all parties I'm in dispute with (ignoring the fact that some might or might not be in the Corrupt set)
-            let dispute_ids: Vec<usize> = compute_idx_dispute(session)?;
-
-            //Sample one random polynomial of correct degree per secret
-            //and evaluate it at the parties' points
-            let mut vec_polypoints: Vec<Vec<Z>> =
-                share_secrets(session.rng(), secrets, &dispute_ids, num_parties, degree)?;
-
-            //Map each parties' role with their shares (one share per secret)
-            let mut polypoints_map: HashMap<Role, NetworkValue<Z>> = HashMap::new();
-            for polypoints in vec_polypoints.iter_mut() {
-                for (role_id, polypoint) in polypoints.iter_mut().enumerate() {
-                    let curr_role = Role::indexed_by_zero(role_id);
-                    if self.roles_to_lie_to.contains(&curr_role) {
-                        let cheating_poly = Z::sample(session.rng());
-                        *polypoint += cheating_poly;
-                    }
-                    match polypoints_map.get_mut(&curr_role) {
-                        Some(NetworkValue::VecRingValue(v)) => v.push(*polypoint),
-                        None => {
-                            let mut new_party_vec = Vec::with_capacity(secrets.len());
-                            new_party_vec.push(*polypoint);
-                            polypoints_map
-                                .insert(curr_role, NetworkValue::VecRingValue(new_party_vec));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            send_and_receive_share_dispute_single(session, polypoints_map, secrets.len()).await
-        }
-    }
 
     /// Test share_dispute for different malicious strategies, doing both execute and execute_double
     /// Accepts a set of dispute pairs that will be inserted to the honest parties' sessions
@@ -919,6 +662,8 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(4, 1, &[2], &[], &[(0,2),(1,3)], false, None))]
     #[case(TestingParameters::init(7, 2, &[2,6], &[], &[(0,2),(1,3),(0,4),(1,5)], false, None))]
     fn test_share_dispute_dropout(#[case] params: TestingParameters) {
+        use crate::malicious_execution::large_execution::malicious_share_dispute::DroppingShareDispute;
+
         let dropping_share_dispute = DroppingShareDispute::default();
         test_share_dispute_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
@@ -941,6 +686,8 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(4, 1, &[2], &[], &[(0,2),(1,3)], false, None))]
     #[case(TestingParameters::init(7, 2, &[2,6], &[], &[(0,2),(1,3),(0,4),(1,5)], false, None))]
     fn test_malicious_share_dispute(#[case] params: TestingParameters) {
+        use crate::malicious_execution::large_execution::malicious_share_dispute::WrongShareDisputeRecons;
+
         let malicious_share_dispute_recons = WrongShareDisputeRecons::default();
 
         test_share_dispute_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(

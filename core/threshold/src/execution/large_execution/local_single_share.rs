@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tracing::instrument;
 
-const LOCAL_SINGLE_MAX_ITER: usize = 30;
+pub(crate) const LOCAL_SINGLE_MAX_ITER: usize = 30;
 
 pub type SecureLocalSingleShare =
     RealLocalSingleShare<SecureCoinflip, SecureShareDispute, SyncReliableBroadcast>;
@@ -67,6 +67,16 @@ pub struct RealLocalSingleShare<C: Coinflip, S: ShareDispute, BCast: Broadcast> 
     coinflip: C,
     share_dispute: S,
     broadcast: BCast,
+}
+
+impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> RealLocalSingleShare<C, S, BCast> {
+    pub fn new(coinflip_strategy: C, share_dispute_strategy: S, broadcast_strategy: BCast) -> Self {
+        RealLocalSingleShare {
+            coinflip: coinflip_strategy,
+            share_dispute: share_dispute_strategy,
+            broadcast: broadcast_strategy,
+        }
+    }
 }
 
 #[async_trait]
@@ -137,7 +147,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
     }
 }
 
-async fn send_receive_pads<Z, R, L, S>(
+pub(crate) async fn send_receive_pads<Z, R, L, S>(
     session: &mut L,
     share_dispute: &S,
 ) -> anyhow::Result<ShareDisputeOutput<Z>>
@@ -152,7 +162,7 @@ where
     share_dispute.execute(session, &my_pads).await
 }
 
-async fn verify_sharing<
+pub(crate) async fn verify_sharing<
     Z: Ring + Derive + ErrorCorrect,
     R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
@@ -419,11 +429,7 @@ pub(crate) fn look_for_disputes<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHand
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{anyhow_error_and_log, LOCAL_SINGLE_MAX_ITER};
-    use super::{
-        send_receive_pads, verify_sharing, Derive, LocalSingleShare, RealLocalSingleShare,
-        SecureLocalSingleShare,
-    };
+    use super::{Derive, LocalSingleShare, RealLocalSingleShare, SecureLocalSingleShare};
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     use crate::algebra::structure_traits::{ErrorCorrect, Invert, RingEmbed};
@@ -431,22 +437,23 @@ pub(crate) mod tests {
     use crate::execution::communication::broadcast::SyncReliableBroadcast;
     #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::{
-        coinflip::{
-            tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
-            RealCoinflip, SecureCoinflip,
-        },
-        share_dispute::{
-            tests::{DroppingShareDispute, MaliciousShareDisputeRecons, WrongShareDisputeRecons},
-            RealShareDispute,
-        },
-        vss::{
-            tests::{DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1},
-            RealVss, SecureVss, Vss,
-        },
+        coinflip::{RealCoinflip, SecureCoinflip},
+        share_dispute::RealShareDispute,
+        vss::{RealVss, SecureVss, Vss},
     };
     #[cfg(feature = "slow_tests")]
     use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
     use crate::execution::sharing::shamir::RevealOp;
+    #[cfg(feature = "slow_tests")]
+    use crate::malicious_execution::large_execution::{
+        malicious_coinflip::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
+        malicious_share_dispute::{
+            DroppingShareDispute, MaliciousShareDisputeRecons, WrongShareDisputeRecons,
+        },
+        malicious_vss::{
+            DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
+        },
+    };
     use crate::networking::NetworkMode;
     use crate::{
         execution::{
@@ -459,224 +466,15 @@ pub(crate) mod tests {
             sharing::{shamir::ShamirSharings, share::Share},
         },
         tests::helper::tests::{
-            execute_protocol_large_w_disputes_and_malicious, roles_from_idxs, TestingParameters,
+            execute_protocol_large_w_disputes_and_malicious, TestingParameters,
         },
     };
 
     use crate::algebra::structure_traits::Ring;
     use aes_prng::AesRng;
-    use async_trait::async_trait;
     use itertools::Itertools;
     use rand::SeedableRng;
-    use rand::{CryptoRng, Rng};
     use rstest::rstest;
-    use std::collections::HashMap;
-
-    impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> RealLocalSingleShare<C, S, BCast> {
-        pub(crate) fn init(
-            coinflip_strategy: C,
-            share_dispute_strategy: S,
-            broadcast_strategy: BCast,
-        ) -> Self {
-            RealLocalSingleShare {
-                coinflip: coinflip_strategy,
-                share_dispute: share_dispute_strategy,
-                broadcast: broadcast_strategy,
-            }
-        }
-    }
-
-    /// Lie in broadcast as sender
-    #[derive(Clone, Default)]
-    pub(crate) struct MaliciousSenderLocalSingleShare<
-        C: Coinflip,
-        S: ShareDispute,
-        BCast: Broadcast,
-    > {
-        coinflip: C,
-        share_dispute: S,
-        broadcast: BCast,
-        roles_to_lie_to: Vec<Role>,
-    }
-
-    impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> MaliciousSenderLocalSingleShare<C, S, BCast> {
-        pub fn init(
-            coinflip_strategy: C,
-            share_dispute_strategy: S,
-            broadcast_strategy: BCast,
-            roles_to_lie_to: &[usize],
-        ) -> Self {
-            Self {
-                coinflip: coinflip_strategy,
-                share_dispute: share_dispute_strategy,
-                broadcast: broadcast_strategy,
-                roles_to_lie_to: roles_from_idxs(roles_to_lie_to),
-            }
-        }
-    }
-
-    /// Lie in broadcast as receiver
-    #[derive(Clone, Default)]
-    pub(crate) struct MaliciousReceiverLocalSingleShare<
-        C: Coinflip,
-        S: ShareDispute,
-        BCast: Broadcast,
-    > {
-        coinflip: C,
-        share_dispute: S,
-        broadcast: BCast,
-        roles_to_lie_to: Vec<Role>,
-    }
-
-    impl<C: Coinflip, S: ShareDispute, BCast: Broadcast>
-        MaliciousReceiverLocalSingleShare<C, S, BCast>
-    {
-        pub fn init(
-            coinflip_strategy: C,
-            share_dispute_strategy: S,
-            broadcast_strategy: BCast,
-            roles_to_lie_to: &[usize],
-        ) -> Self {
-            Self {
-                coinflip: coinflip_strategy,
-                share_dispute: share_dispute_strategy,
-                broadcast: broadcast_strategy,
-                roles_to_lie_to: roles_from_idxs(roles_to_lie_to),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
-        for MaliciousSenderLocalSingleShare<C, S, BCast>
-    {
-        async fn execute<
-            Z: Ring + RingEmbed + Derive + Invert + ErrorCorrect,
-            R: Rng + CryptoRng,
-            L: LargeSessionHandles<R>,
-        >(
-            &self,
-            session: &mut L,
-            secrets: &[Z],
-        ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
-            //Keeps executing til verification passes
-            for _ in 0..LOCAL_SINGLE_MAX_ITER {
-                let mut shared_secrets;
-                let mut x;
-                let mut shared_pads;
-
-                // The following loop is guaranteed to terminate.
-                // We we will leave it once the corrupt set does not change.
-                // This happens right away on the happy path or worst case after all parties are in there and no new parties can be added.
-                loop {
-                    let corrupt_start = session.corrupt_roles().clone();
-                    //ShareDispute will fill shares from disputed parties with 0s
-                    shared_secrets = self.share_dispute.execute(session, secrets).await?;
-
-                    shared_pads =
-                        send_receive_pads::<Z, R, L, S>(session, &self.share_dispute).await?;
-
-                    x = self.coinflip.execute(session).await?;
-
-                    // if the corrupt roles have not changed, we can exit the loop and move on, otherwise start from the top
-                    if *session.corrupt_roles() == corrupt_start {
-                        break;
-                    }
-                }
-
-                //Pretend I sent other shares to party in roles_to_lie_to
-                for (sent_role, sent_shares) in shared_secrets.shares_own_secret.iter_mut() {
-                    if self.roles_to_lie_to.contains(sent_role) {
-                        let modified_sent_shares = sent_shares
-                            .iter()
-                            .map(|share| *share + Z::ONE)
-                            .collect_vec();
-                        *sent_shares = modified_sent_shares;
-                    }
-                }
-                if verify_sharing(
-                    session,
-                    &mut shared_secrets,
-                    &shared_pads,
-                    &x,
-                    secrets.len(),
-                    &self.broadcast,
-                )
-                .await?
-                {
-                    return Ok(shared_secrets.all_shares);
-                }
-            }
-            Err(anyhow_error_and_log(
-            "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `MaliciousSenderLocalSingleShare`",
-        ))
-        }
-    }
-
-    #[async_trait]
-    impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
-        for MaliciousReceiverLocalSingleShare<C, S, BCast>
-    {
-        async fn execute<
-            Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-            R: Rng + CryptoRng,
-            L: LargeSessionHandles<R>,
-        >(
-            &self,
-            session: &mut L,
-            secrets: &[Z],
-        ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
-            for _ in 0..LOCAL_SINGLE_MAX_ITER {
-                let mut shared_secrets;
-                let mut x;
-                let mut shared_pads;
-
-                // The following loop is guaranteed to terminate.
-                // We we will leave it once the corrupt set does not change.
-                // This happens right away on the happy path or worst case after all parties are in there and no new parties can be added.
-                loop {
-                    let corrupt_start = session.corrupt_roles().clone();
-
-                    //ShareDispute will fill shares from disputed parties with 0s
-                    shared_secrets = self.share_dispute.execute(session, secrets).await?;
-
-                    shared_pads =
-                        send_receive_pads::<Z, R, L, S>(session, &self.share_dispute).await?;
-
-                    x = self.coinflip.execute(session).await?;
-
-                    // if the corrupt roles have not changed, we can exit the loop and move on, otherwise start from the top
-                    if *session.corrupt_roles() == corrupt_start {
-                        break;
-                    }
-                }
-
-                //Pretend I received other shares from party in roles_to_lie_to
-                for (rcv_role, rcv_shares) in shared_secrets.all_shares.iter_mut() {
-                    if self.roles_to_lie_to.contains(rcv_role) {
-                        let modified_rcv_shares =
-                            rcv_shares.iter().map(|share| *share + Z::ONE).collect_vec();
-                        *rcv_shares = modified_rcv_shares;
-                    }
-                }
-                if verify_sharing(
-                    session,
-                    &mut shared_secrets,
-                    &shared_pads,
-                    &x,
-                    secrets.len(),
-                    &self.broadcast,
-                )
-                .await?
-                {
-                    return Ok(shared_secrets.all_shares);
-                }
-            }
-            Err(anyhow_error_and_log(
-                "Failed to verify sharing after {LOCAL_SINGLE_MAX_ITER} iterations for `MaliciousReceiverLocalSingleShare`",
-        ))
-        }
-    }
 
     fn test_lsl_strategies<
         Z: Ring + RingEmbed + Derive + Invert + ErrorCorrect,
@@ -821,19 +619,19 @@ pub(crate) mod tests {
         #[values(
             DroppingVssFromStart::default(),
             DroppingVssAfterR1::default(),
-            MaliciousVssR1::init(&broadcast_strategy,&params.roles_to_lie_to)
+            MaliciousVssR1::new(&broadcast_strategy,&params.roles_to_lie_to)
         )]
         _vss_strategy: V,
         #[values(
-            RealCoinflip::init(_vss_strategy.clone(), _robust_open_strategy.clone()),
-            DroppingCoinflipAfterVss::init(_vss_strategy.clone())
+            RealCoinflip::new(_vss_strategy.clone(), _robust_open_strategy.clone()),
+            DroppingCoinflipAfterVss::new(_vss_strategy.clone())
         )]
         coinflip_strategy: C,
         #[values(
             RealShareDispute::default(),
             DroppingShareDispute::default(),
             WrongShareDisputeRecons::default(),
-            MaliciousShareDisputeRecons::init(&params.roles_to_lie_to)
+            MaliciousShareDisputeRecons::new(&params.roles_to_lie_to)
         )]
         share_dispute_strategy: S,
     ) {
@@ -869,14 +667,14 @@ pub(crate) mod tests {
         #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
-            RealVss::init(&broadcast_strategy),
-            DroppingVssAfterR2::init(&broadcast_strategy),
-            MaliciousVssR1::init(&broadcast_strategy,&params.roles_to_lie_to)
+            RealVss::new(&broadcast_strategy),
+            DroppingVssAfterR2::new(&broadcast_strategy),
+            MaliciousVssR1::new(&broadcast_strategy,&params.roles_to_lie_to)
         )]
         _vss_strategy: V,
         #[values(
-            RealCoinflip::init(_vss_strategy.clone(),_robust_open_strategy.clone()),
-            MaliciousCoinflipRecons::init(_vss_strategy.clone(),_robust_open_strategy.clone()),
+            RealCoinflip::new(_vss_strategy.clone(),_robust_open_strategy.clone()),
+            MaliciousCoinflipRecons::new(_vss_strategy.clone(),_robust_open_strategy.clone()),
         )]
         coinflip_strategy: C,
         #[values(RealShareDispute::default())] share_dispute_strategy: S,
@@ -898,7 +696,7 @@ pub(crate) mod tests {
     }
 
     #[rstest]
-    #[case(TestingParameters::init(4,1,&[2],&[0],&[],true,None), SecureCoinflip::default(), MaliciousShareDisputeRecons::init(&params.roles_to_lie_to), SyncReliableBroadcast::default())]
+    #[case(TestingParameters::init(4,1,&[2],&[0],&[],true,None), SecureCoinflip::default(), MaliciousShareDisputeRecons::new(&params.roles_to_lie_to), SyncReliableBroadcast::default())]
     #[case(TestingParameters::init(4,1,&[2],&[],&[],false,None), MaliciousCoinflipRecons::<SecureVss,SecureRobustOpen>::default(), RealShareDispute::default(), SyncReliableBroadcast::default())]
     #[cfg(feature = "slow_tests")]
     fn test_lsl_malicious_subprotocols_fine_grain<
@@ -948,24 +746,26 @@ pub(crate) mod tests {
         #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
-            RealVss::init(&broadcast_strategy),
-            DroppingVssAfterR2::init(&broadcast_strategy),
-            MaliciousVssR1::init(&broadcast_strategy,&params.roles_to_lie_to)
+            RealVss::new(&broadcast_strategy),
+            DroppingVssAfterR2::new(&broadcast_strategy),
+            MaliciousVssR1::new(&broadcast_strategy,&params.roles_to_lie_to)
         )]
         _vss_strategy: V,
         #[values(
-            RealCoinflip::init(_vss_strategy.clone(),_robust_open_strategy.clone()),
-            MaliciousCoinflipRecons::init(_vss_strategy.clone(),_robust_open_strategy.clone()),
+            RealCoinflip::new(_vss_strategy.clone(),_robust_open_strategy.clone()),
+            MaliciousCoinflipRecons::new(_vss_strategy.clone(),_robust_open_strategy.clone()),
         )]
         coinflip_strategy: C,
         #[values(RealShareDispute::default())] share_dispute_strategy: S,
     ) {
-        let malicious_lsl = MaliciousReceiverLocalSingleShare {
-            coinflip: coinflip_strategy,
-            share_dispute: share_dispute_strategy,
-            broadcast: broadcast_strategy,
-            roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
-        };
+        use crate::malicious_execution::large_execution::malicious_local_single_share::MaliciousReceiverLocalSingleShare;
+
+        let malicious_lsl = MaliciousReceiverLocalSingleShare::new(
+            coinflip_strategy,
+            share_dispute_strategy,
+            broadcast_strategy,
+            &params.roles_to_lie_to,
+        );
         test_lsl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_lsl.clone(),
@@ -997,24 +797,27 @@ pub(crate) mod tests {
         #[values(SecureRobustOpen::default())] _robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
         #[values(
-            RealVss::init(&broadcast_strategy),
-            DroppingVssAfterR2::init(&broadcast_strategy),
-            MaliciousVssR1::init(&broadcast_strategy,&params.roles_to_lie_to)
+            RealVss::new(&broadcast_strategy),
+            DroppingVssAfterR2::new(&broadcast_strategy),
+            MaliciousVssR1::new(&broadcast_strategy,&params.roles_to_lie_to)
         )]
         _vss_strategy: V,
         #[values(
-            RealCoinflip::init(_vss_strategy.clone(),_robust_open_strategy.clone()),
-            MaliciousCoinflipRecons::init(_vss_strategy.clone(),_robust_open_strategy.clone()),
+            RealCoinflip::new(_vss_strategy.clone(),_robust_open_strategy.clone()),
+            MaliciousCoinflipRecons::new(_vss_strategy.clone(),_robust_open_strategy.clone()),
         )]
         coinflip_strategy: C,
         #[values(RealShareDispute::default())] share_dispute_strategy: S,
     ) {
-        let malicious_lsl = MaliciousSenderLocalSingleShare {
-            coinflip: coinflip_strategy,
-            share_dispute: share_dispute_strategy,
-            broadcast: broadcast_strategy,
-            roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
-        };
+        use crate::malicious_execution::large_execution::malicious_local_single_share::MaliciousSenderLocalSingleShare;
+
+        let malicious_lsl = MaliciousSenderLocalSingleShare::new(
+            coinflip_strategy,
+            share_dispute_strategy,
+            broadcast_strategy,
+            &params.roles_to_lie_to,
+        );
+
         test_lsl_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_lsl.clone(),

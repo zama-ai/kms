@@ -230,7 +230,7 @@ async fn next_triple_batch<
 /// Computes a new batch of random values and appends the new batch to the the existing stash of prepreocessing random values.
 /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
 #[instrument(name="MPC_Large.GenRandom",skip_all, fields(sid = ?session.session_id(), own_identity = ?session.own_identity(), batch_size = ?amount))]
-async fn next_random_batch<
+pub(crate) async fn next_random_batch<
     Z: Ring,
     S: SingleSharing<Z>,
     R: Rng + CryptoRng,
@@ -265,19 +265,26 @@ async fn next_random_batch<
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 mod tests {
-    #[cfg(feature = "slow_tests")]
-    use super::next_random_batch;
     use super::SecureLargePreprocessing;
     use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert};
     use crate::execution::config::BatchParams;
-    #[cfg(feature = "slow_tests")]
-    use crate::execution::large_execution::{
-        double_sharing::DoubleSharing, single_sharing::SingleSharing,
-    };
-    #[cfg(feature = "slow_tests")]
-    use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
     use crate::execution::sharing::shamir::RevealOp;
+    use crate::malicious_execution::large_execution::{
+        malicious_coinflip::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
+        malicious_local_double_share::{
+            MaliciousReceiverLocalDoubleShare, MaliciousSenderLocalDoubleShare,
+        },
+        malicious_local_single_share::{
+            MaliciousReceiverLocalSingleShare, MaliciousSenderLocalSingleShare,
+        },
+        malicious_share_dispute::{
+            DroppingShareDispute, MaliciousShareDisputeRecons, WrongShareDisputeRecons,
+        },
+        malicious_vss::{
+            DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
+        },
+    };
     use crate::networking::NetworkMode;
     use crate::{
         algebra::{
@@ -287,34 +294,14 @@ mod tests {
         execution::{
             communication::broadcast::{Broadcast, SyncReliableBroadcast},
             large_execution::{
-                coinflip::{
-                    tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
-                    Coinflip, RealCoinflip,
-                },
+                coinflip::{Coinflip, RealCoinflip},
                 double_sharing::RealDoubleSharing,
-                local_double_share::{
-                    tests::{MaliciousReceiverLocalDoubleShare, MaliciousSenderLocalDoubleShare},
-                    LocalDoubleShare, RealLocalDoubleShare,
-                },
-                local_single_share::{
-                    tests::{MaliciousReceiverLocalSingleShare, MaliciousSenderLocalSingleShare},
-                    LocalSingleShare, RealLocalSingleShare,
-                },
+                local_double_share::{LocalDoubleShare, RealLocalDoubleShare},
+                local_single_share::{LocalSingleShare, RealLocalSingleShare},
                 offline::RealLargePreprocessing,
-                share_dispute::{
-                    tests::{
-                        DroppingShareDispute, MaliciousShareDisputeRecons, WrongShareDisputeRecons,
-                    },
-                    RealShareDispute, ShareDispute,
-                },
+                share_dispute::{RealShareDispute, ShareDispute},
                 single_sharing::RealSingleSharing,
-                vss::{
-                    tests::{
-                        DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart,
-                        MaliciousVssR1,
-                    },
-                    RealVss, SecureVss, Vss,
-                },
+                vss::{RealVss, SecureVss, Vss},
             },
             online::triple::Triple,
             runtime::session::{
@@ -333,12 +320,6 @@ mod tests {
         },
     };
     use aes_prng::AesRng;
-    #[cfg(feature = "slow_tests")]
-    use async_trait::async_trait;
-    #[cfg(feature = "slow_tests")]
-    use itertools::Itertools;
-    #[cfg(feature = "slow_tests")]
-    use rand::{CryptoRng, Rng};
     use rstest::rstest;
 
     fn test_offline_strategies<
@@ -463,164 +444,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "slow_tests")]
-    ///Malicious strategy that introduces an error in the reconstruction of beaver
-    #[derive(Clone)]
-    pub(crate) struct CheatingLargePreprocessing<
-        Z: Ring,
-        Rnd: Rng + CryptoRng,
-        Ses: LargeSessionHandles<Rnd>,
-        S: SingleSharing<Z>,
-        D: DoubleSharing<Z>,
-        RO: RobustOpen,
-    > {
-        single_sharing: S,
-        double_sharing: D,
-        robust_open: RO,
-        ring_marker: std::marker::PhantomData<Z>,
-        rnd_marker: std::marker::PhantomData<Rnd>,
-        session_marker: std::marker::PhantomData<Ses>,
-    }
-
-    #[cfg(feature = "slow_tests")]
-    impl<
-            Z: Ring,
-            Rnd: Rng + CryptoRng,
-            Ses: LargeSessionHandles<Rnd>,
-            S: SingleSharing<Z>,
-            D: DoubleSharing<Z>,
-            RO: RobustOpen,
-        > CheatingLargePreprocessing<Z, Rnd, Ses, S, D, RO>
-    {
-        pub fn new(single_sharing: S, double_sharing: D, robust_open: RO) -> Self {
-            Self {
-                single_sharing,
-                double_sharing,
-                robust_open,
-                ring_marker: std::marker::PhantomData,
-                rnd_marker: std::marker::PhantomData,
-                session_marker: std::marker::PhantomData,
-            }
-        }
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[async_trait]
-    impl<
-            Z: Derive + ErrorCorrect,
-            Rnd: Rng + CryptoRng + Send + Sync,
-            Ses: LargeSessionHandles<Rnd>,
-            S: SingleSharing<Z>,
-            D: DoubleSharing<Z>,
-            RO: RobustOpen,
-        > Preprocessing<Z, Rnd, Ses> for CheatingLargePreprocessing<Z, Rnd, Ses, S, D, RO>
-    {
-        async fn execute(
-            &mut self,
-            large_session: &mut Ses,
-            batch_sizes: BatchParams,
-        ) -> anyhow::Result<InMemoryBasePreprocessing<Z>> {
-            let mut base_preprocessing = InMemoryBasePreprocessing::<Z>::default();
-
-            //Init single sharing, we need 2 calls per triple and 1 call per randomness
-            self.single_sharing
-                .init(large_session, 2 * batch_sizes.triples + batch_sizes.randoms)
-                .await?;
-
-            //Init double sharing, we need 1 call per triple
-            self.double_sharing
-                .init(large_session, batch_sizes.triples)
-                .await?;
-
-            if batch_sizes.triples > 0 {
-                //Preprocess a batch of triples
-                base_preprocessing.append_triples(
-                    self.next_triple_batch(batch_sizes.triples, large_session)
-                        .await?,
-                );
-            }
-            if batch_sizes.randoms > 0 {
-                //Preprocess a batch of randomness using the secure implem
-                base_preprocessing.append_randoms(
-                    next_random_batch(batch_sizes.randoms, &mut self.single_sharing, large_session)
-                        .await?,
-                );
-            }
-
-            Ok(base_preprocessing)
-        }
-    }
-
-    #[cfg(feature = "slow_tests")]
-    impl<
-            Z: Derive + ErrorCorrect,
-            Rnd: Rng + CryptoRng,
-            Ses: LargeSessionHandles<Rnd>,
-            S: SingleSharing<Z>,
-            D: DoubleSharing<Z>,
-            RO: RobustOpen,
-        > CheatingLargePreprocessing<Z, Rnd, Ses, S, D, RO>
-    {
-        //Lie to other in reconstructing masked product
-        async fn next_triple_batch(
-            &mut self,
-            amount: usize,
-            session: &mut Ses,
-        ) -> anyhow::Result<Vec<Triple<Z>>> {
-            let mut vec_share_x = Vec::with_capacity(amount);
-            let mut vec_share_y = Vec::with_capacity(amount);
-            let mut vec_double_share_v = Vec::with_capacity(amount);
-            for _ in 0..amount {
-                vec_share_x.push(self.single_sharing.next(session).await?);
-                vec_share_y.push(self.single_sharing.next(session).await?);
-                vec_double_share_v.push(self.double_sharing.next(session).await?);
-            }
-
-            //Add random error to every d and remove one
-            let mut network_vec_share_d = vec_share_x
-                .iter()
-                .zip(vec_share_y.iter())
-                .zip(vec_double_share_v.iter())
-                .map(|((x, y), v)| {
-                    let res = *x * *y + v.degree_2t + Z::sample(session.rng());
-                    res
-                })
-                .collect_vec();
-            network_vec_share_d.pop();
-
-            let recons_vec_share_d = self
-                .robust_open
-                .robust_open_list_to_all(
-                    session,
-                    network_vec_share_d,
-                    2 * session.threshold() as usize,
-                )
-                .await?
-                .unwrap();
-
-            let vec_share_z: Vec<_> = recons_vec_share_d
-                .into_iter()
-                .zip(vec_double_share_v.iter())
-                .map(|(d, v)| d - v.degree_t)
-                .collect_vec();
-
-            let my_role = session.my_role()?;
-            let res = vec_share_x
-                .into_iter()
-                .zip(vec_share_y)
-                .zip(vec_share_z)
-                .map(|((x, y), z)| {
-                    Triple::new(
-                        Share::new(my_role, x),
-                        Share::new(my_role, y),
-                        Share::new(my_role, z),
-                    )
-                })
-                .collect_vec();
-            Ok(res)
-        }
-    }
-
     // Rounds (happy path)
     // init single sharing
     //         share dispute = 1 round
@@ -678,24 +501,24 @@ mod tests {
         #[values(
                 DroppingVssFromStart::default(),
                 DroppingVssAfterR1::default(),
-                MaliciousVssR1::init(&_broadcast_strategy,&params.roles_to_lie_to)
+                MaliciousVssR1::new(&_broadcast_strategy,&params.roles_to_lie_to)
             )]
         _vss_strategy: V,
         #[values(
-                RealCoinflip::init(_vss_strategy.clone(),robust_open_strategy.clone()),
-                DroppingCoinflipAfterVss::init(_vss_strategy.clone())
+                RealCoinflip::new(_vss_strategy.clone(),robust_open_strategy.clone()),
+                DroppingCoinflipAfterVss::new(_vss_strategy.clone())
             )]
         _coinflip_strategy: C,
         #[values(
                 RealShareDispute::default(),
                 DroppingShareDispute::default(),
                 WrongShareDisputeRecons::default(),
-                MaliciousShareDisputeRecons::init(&params.roles_to_lie_to)
+                MaliciousShareDisputeRecons::new(&params.roles_to_lie_to)
 
             )]
         _share_dispute_strategy: S,
         #[values(
-                RealLocalSingleShare::init(
+                RealLocalSingleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone()
@@ -703,7 +526,7 @@ mod tests {
             )]
         lsl_strategy: LSL,
         #[values(
-                RealLocalDoubleShare::init(
+                RealLocalDoubleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone()
@@ -751,19 +574,19 @@ mod tests {
         #[values(SyncReliableBroadcast::default())] _broadcast_strategy: BCast,
         #[values(SecureVss::default())] _vss_strategy: V,
         #[values(
-                RealCoinflip::init(_vss_strategy.clone(),robust_open_strategy.clone()),
-                DroppingCoinflipAfterVss::init(_vss_strategy.clone())
+                RealCoinflip::new(_vss_strategy.clone(),robust_open_strategy.clone()),
+                DroppingCoinflipAfterVss::new(_vss_strategy.clone())
             )]
         _coinflip_strategy: C,
         #[values(
                 RealShareDispute::default(),
                 DroppingShareDispute::default(),
                 WrongShareDisputeRecons::default(),
-                MaliciousShareDisputeRecons::init(&params.roles_to_lie_to)
+                MaliciousShareDisputeRecons::new(&params.roles_to_lie_to)
             )]
         _share_dispute_strategy: S,
         #[values(
-                MaliciousSenderLocalSingleShare::init(
+                MaliciousSenderLocalSingleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
@@ -772,7 +595,7 @@ mod tests {
             )]
         lsl_strategy: LSL,
         #[values(
-                MaliciousSenderLocalDoubleShare::init(
+                MaliciousSenderLocalDoubleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
@@ -819,24 +642,24 @@ mod tests {
         #[values(SecureRobustOpen::default())] robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] _broadcast_strategy: BCast,
         #[values(
-                RealVss::init(&_broadcast_strategy),
-                DroppingVssAfterR2::init(&_broadcast_strategy),
-                MaliciousVssR1::init(&_broadcast_strategy,&params.roles_to_lie_to)
+                RealVss::new(&_broadcast_strategy),
+                DroppingVssAfterR2::new(&_broadcast_strategy),
+                MaliciousVssR1::new(&_broadcast_strategy,&params.roles_to_lie_to)
             )]
         _vss_strategy: V,
         #[values(
-                RealCoinflip::init(_vss_strategy.clone(),robust_open_strategy.clone()),
-                MaliciousCoinflipRecons::init(_vss_strategy.clone(),robust_open_strategy.clone()),
+                RealCoinflip::new(_vss_strategy.clone(),robust_open_strategy.clone()),
+                MaliciousCoinflipRecons::new(_vss_strategy.clone(),robust_open_strategy.clone()),
             )]
         _coinflip_strategy: C,
         #[values(RealShareDispute::default())] _share_dispute_strategy: S,
         #[values(
-                RealLocalSingleShare::init(
+                RealLocalSingleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
                 ),
-                MaliciousReceiverLocalSingleShare::init(
+                MaliciousReceiverLocalSingleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
@@ -845,12 +668,12 @@ mod tests {
             )]
         lsl_strategy: LSL,
         #[values(
-                RealLocalDoubleShare::init(
+                RealLocalDoubleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
                 ),
-                MaliciousReceiverLocalDoubleShare::init(
+                MaliciousReceiverLocalDoubleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
@@ -953,24 +776,24 @@ mod tests {
         #[values(
                 DroppingVssFromStart::default(),
                 DroppingVssAfterR1::default(),
-                MaliciousVssR1::init(&_broadcast_strategy,&params.roles_to_lie_to)
+                MaliciousVssR1::new(&_broadcast_strategy,&params.roles_to_lie_to)
             )]
         _vss_strategy: V,
         #[values(
-                RealCoinflip::init(_vss_strategy.clone(),robust_open_strategy.clone()),
-                DroppingCoinflipAfterVss::init(_vss_strategy.clone())
+                RealCoinflip::new(_vss_strategy.clone(),robust_open_strategy.clone()),
+                DroppingCoinflipAfterVss::new(_vss_strategy.clone())
             )]
         _coinflip_strategy: C,
         #[values(
                 RealShareDispute::default(),
                 DroppingShareDispute::default(),
                 WrongShareDisputeRecons::default(),
-                MaliciousShareDisputeRecons::init(&params.roles_to_lie_to)
+                MaliciousShareDisputeRecons::new(&params.roles_to_lie_to)
 
             )]
         _share_dispute_strategy: S,
         #[values(
-                RealLocalSingleShare::init(
+                RealLocalSingleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
@@ -978,7 +801,7 @@ mod tests {
             )]
         lsl_strategy: LSL,
         #[values(
-                RealLocalDoubleShare::init(
+                RealLocalDoubleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
@@ -1024,21 +847,21 @@ mod tests {
         params: TestingParameters,
         #[values(SecureRobustOpen::default())] robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] _broadcast_strategy: BCast,
-        #[values(RealVss::init(&_broadcast_strategy))] _vss_strategy: V,
+        #[values(RealVss::new(&_broadcast_strategy))] _vss_strategy: V,
         #[values(
-                RealCoinflip::init(_vss_strategy.clone(),robust_open_strategy.clone()),
-                DroppingCoinflipAfterVss::init(_vss_strategy.clone())
+                RealCoinflip::new(_vss_strategy.clone(),robust_open_strategy.clone()),
+                DroppingCoinflipAfterVss::new(_vss_strategy.clone())
             )]
         _coinflip_strategy: C,
         #[values(
                 RealShareDispute::default(),
                 DroppingShareDispute::default(),
                 WrongShareDisputeRecons::default(),
-                MaliciousShareDisputeRecons::init(&params.roles_to_lie_to)
+                MaliciousShareDisputeRecons::new(&params.roles_to_lie_to)
             )]
         _share_dispute_strategy: S,
         #[values(
-                MaliciousSenderLocalSingleShare::init(
+                MaliciousSenderLocalSingleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
@@ -1047,7 +870,7 @@ mod tests {
             )]
         lsl_strategy: LSL,
         #[values(
-                MaliciousSenderLocalDoubleShare::init(
+                MaliciousSenderLocalDoubleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
@@ -1095,24 +918,24 @@ mod tests {
         #[values(SecureRobustOpen::default())] robust_open_strategy: RO,
         #[values(SyncReliableBroadcast::default())] _broadcast_strategy: BCast,
         #[values(
-                RealVss::init(&_broadcast_strategy),
-                DroppingVssAfterR2::init(&_broadcast_strategy),
-                MaliciousVssR1::init(&_broadcast_strategy,&params.roles_to_lie_to)
+                RealVss::new(&_broadcast_strategy),
+                DroppingVssAfterR2::new(&_broadcast_strategy),
+                MaliciousVssR1::new(&_broadcast_strategy,&params.roles_to_lie_to)
             )]
         _vss_strategy: V,
         #[values(
-                RealCoinflip::init(_vss_strategy.clone(),robust_open_strategy.clone()),
-                MaliciousCoinflipRecons::init(_vss_strategy.clone(),robust_open_strategy.clone()),
+                RealCoinflip::new(_vss_strategy.clone(),robust_open_strategy.clone()),
+                MaliciousCoinflipRecons::new(_vss_strategy.clone(),robust_open_strategy.clone()),
             )]
         _coinflip_strategy: C,
         #[values(RealShareDispute::default())] _share_dispute_strategy: S,
         #[values(
-                RealLocalSingleShare::init(
+                RealLocalSingleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
                 ),
-                MaliciousReceiverLocalSingleShare::init(
+                MaliciousReceiverLocalSingleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
@@ -1121,12 +944,12 @@ mod tests {
             )]
         lsl_strategy: LSL,
         #[values(
-                RealLocalDoubleShare::init(
+                RealLocalDoubleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
                 ),
-                MaliciousReceiverLocalDoubleShare::init(
+                MaliciousReceiverLocalDoubleShare::new(
                     _coinflip_strategy.clone(),
                     _share_dispute_strategy.clone(),
                     _broadcast_strategy.clone(),
@@ -1135,6 +958,8 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
+        use crate::malicious_execution::large_execution::malicious_offline::CheatingLargePreprocessing;
+
         let malicious_offline = CheatingLargePreprocessing::new(
             RealSingleSharing::new(lsl_strategy.clone()),
             RealDoubleSharing::new(ldl_strategy.clone()),
