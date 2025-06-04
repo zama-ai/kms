@@ -88,7 +88,7 @@ data:
         {{- if $.Values.kmsCore.nitroEnclave.enabled }}
            {{- if .Values.kmsCore.thresholdMode.tls.trustedReleases }}
              {{ range .Values.kmsCore.thresholdMode.tls.trustedReleases }}
-    [[threshold.tls.full_auto.trustedReleases]]
+    [[threshold.tls.full_auto.trusted_releases]]
     pcr0 = {{ .pcr0 | quote }}
     pcr1 = {{ .pcr1 | quote }}
     pcr2 = {{ .pcr2 | quote }}
