@@ -87,7 +87,7 @@ jobs:
     uses: ./.github/workflows/common-nitro-enclave.yml
     permissions:
       actions: read
-      contents: read
+      contents: write
       id-token: write
       pull-requests: read
       packages: write
