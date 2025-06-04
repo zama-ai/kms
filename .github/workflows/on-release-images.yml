@@ -24,6 +24,7 @@ jobs:
       packages: write
       attestations: write
     with:
+      docker-file: "./docker/base/Dockerfile"
       working-directory: "./base"
       push_image: true
       image-name: 'kms-golden-image'
@@ -44,6 +45,7 @@ jobs:
       packages: write
       attestations: write
     with:
+      docker-file: "./docker/core-client/Dockerfile"
       working-directory: "./core-client"
       push_image: true
       image-name: 'kms-core-client'
@@ -65,6 +67,7 @@ jobs:
       packages: write
       attestations: write
     with:
+      docker-file: "./docker/core/service/Dockerfile"
       working-directory: "./core/service"
       push_image: true
       image-name: 'kms-service'
@@ -90,10 +93,10 @@ jobs:
       packages: write
       attestations: write
     with:
+      docker-file-enclave: "./docker/core/service/enclave.dockerfile"
       working-directory: "./core/service"
       push_image: true
       image-name: 'kms-service'
       image-enclave-name: 'kms-service-enclave'
-      docker-file-enclave: 'enclave.dockerfile'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
