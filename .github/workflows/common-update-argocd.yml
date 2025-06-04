@@ -57,7 +57,7 @@ jobs:
           APPLICATION_IMAGE: ${{ inputs.application-image }}
           DOCKER_TAG: ${{ inputs.image-tag }}
         with:
-          cmd: yq -i '.${APPLICATION_IMAGE}.image.tag = "${DOCKER_TAG}"' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
+          cmd: yq -i '."${APPLICATION_IMAGE}".image.tag = "${DOCKER_TAG}"' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
 
       - name: Add enclave deployment
         if: ${{ inputs.enclave-deployment }}
