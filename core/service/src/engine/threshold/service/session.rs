@@ -1,7 +1,9 @@
 // === Standard Library ===
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 // === External Crates ===
+use aes_prng::AesRng;
+use kms_grpc::RequestId;
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
@@ -19,10 +21,209 @@ use tokio::sync::RwLock;
 // === Internal Crate ===
 use crate::{engine::base::BaseKmsStruct, tonic_some_or_err};
 
+const ERR_SESSION_NOT_INITIALIZED: &str = "SessionPreparer is not initialized";
+
+/// This is a singleton for managing session preparers.
+/// Essentially keeping a map of `RequestId` (which is the context ID) to `SessionPreparer`.
+///
+/// This data structure should only be used by the Init GRPC endpoint.
+/// The other GRPC endpoints that use session should use `SessionPreparerGetter`.
+pub struct SessionPreparerManager {
+    inner: SessionPreparerGetter,
+}
+
+impl SessionPreparerManager {
+    /// Creates a new `SessionPreparerManager`.
+    pub fn empty(name: String) -> Self {
+        Self {
+            inner: SessionPreparerGetter {
+                session_preparer: Arc::new(RwLock::new(HashMap::new())),
+                name,
+            },
+        }
+    }
+
+    /// Make a getter that cannot modify the manager.
+    pub fn make_getter(&self) -> SessionPreparerGetter {
+        SessionPreparerGetter {
+            session_preparer: self.inner.session_preparer.clone(),
+            name: self.inner.name.clone(),
+        }
+    }
+
+    /// Returns a new instance of the session preparer for the given context ID.
+    pub async fn get(&self, request_id: &RequestId) -> anyhow::Result<SessionPreparer> {
+        self.inner.get(request_id).await
+    }
+
+    /// Inserts a new session preparer into the manager.
+    pub async fn insert(&self, request_id: RequestId, session_preparer: SessionPreparer) {
+        self.inner.insert(request_id, session_preparer).await
+    }
+}
+
+/// Getter for the session preparer.
+///
+/// Unlike [SessionPreparer], we are allowed clone this type
+/// as it's inside an Arc and to get the actual [SessionPreparer] we
+/// must call [SessionPreparerGetter::get] which will return a new instance
+/// that does not have a cloned Rng state.
+#[derive(Clone)]
+pub struct SessionPreparerGetter {
+    session_preparer: Arc<RwLock<HashMap<RequestId, SessionPreparer>>>,
+    name: String,
+}
+
+impl SessionPreparerGetter {
+    /// Returns a new instance of the session preparer for the given context ID.
+    pub async fn get(&self, request_id: &RequestId) -> anyhow::Result<SessionPreparer> {
+        let guarded_session_preparer = self.session_preparer.read().await;
+        match guarded_session_preparer.get(request_id) {
+            Some(session_preparer) => Ok(session_preparer.new_instance().await),
+            None => Err(anyhow::anyhow!(
+                "No session preparer found for context ID: {}",
+                request_id
+            )),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Inserts a new session preparer into the manager.
+    /// This function should be private and only used by the `SessionPreparerManager`.
+    async fn insert(&self, request_id: RequestId, session_preparer: SessionPreparer) {
+        self.session_preparer
+            .write()
+            .await
+            .insert(request_id, session_preparer);
+    }
+}
+
 /// This is a shared type between all the modules,
 /// it's responsible for creating sessions and holds
 /// information on the network setting.
+///
+/// The session may be empty, when that is the case calling any method will return an error.
 pub struct SessionPreparer {
+    inner: Option<InnerSessionPreparer>,
+}
+
+impl SessionPreparer {
+    /// Creates an empty session preparer, which will return an error on any method call.
+    pub fn empty() -> Self {
+        Self { inner: None }
+    }
+
+    /// Creates a new session preparer with the given parameters.
+    pub fn new(
+        base_kms: BaseKmsStruct,
+        threshold: u8,
+        my_id: usize,
+        role_assignments: RoleAssignment,
+        networking_strategy: Arc<RwLock<NetworkingStrategy>>,
+        prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>, // TODO make generic?
+        prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,   // TODO make generic?
+    ) -> Self {
+        Self {
+            inner: Some(InnerSessionPreparer {
+                base_kms,
+                threshold,
+                my_id,
+                role_assignments,
+                networking_strategy,
+                prss_setup_z128,
+                prss_setup_z64,
+            }),
+        }
+    }
+
+    pub fn threshold(&self) -> anyhow::Result<u8> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))
+            .map(|inner| inner.threshold)
+    }
+
+    pub fn my_id(&self) -> anyhow::Result<usize> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))
+            .map(|inner| inner.my_id)
+    }
+
+    pub fn my_id_string_unchecked(&self) -> String {
+        self.inner
+            .as_ref()
+            .map(|inner| inner.my_id.to_string())
+            .unwrap_or("ID UNSPECIFIED".to_string())
+    }
+
+    pub fn own_identity(&self) -> anyhow::Result<Identity> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .own_identity()
+    }
+
+    pub async fn get_networking(
+        &self,
+        session_id: SessionId,
+        network_mode: NetworkMode,
+    ) -> anyhow::Result<threshold_fhe::execution::runtime::session::NetworkingImpl> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .get_networking(session_id, network_mode)
+            .await
+    }
+
+    pub async fn make_base_session(
+        &self,
+        session_id: SessionId,
+        network_mode: NetworkMode,
+    ) -> anyhow::Result<BaseSessionStruct<AesRng, SessionParameters>> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .make_base_session(session_id, network_mode)
+            .await
+    }
+
+    pub async fn prepare_ddec_data_from_sessionid_z128(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .prepare_ddec_data_from_sessionid_z128(session_id)
+            .await
+    }
+
+    pub async fn prepare_ddec_data_from_sessionid_z64(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .prepare_ddec_data_from_sessionid_z64(session_id)
+            .await
+    }
+
+    pub async fn new_instance(&self) -> Self {
+        match self.inner.as_ref() {
+            None => Self { inner: None },
+            Some(inner) => Self {
+                inner: Some(inner.new_instance().await),
+            },
+        }
+    }
+}
+
+struct InnerSessionPreparer {
     pub base_kms: BaseKmsStruct,
     pub threshold: u8,
     pub my_id: usize,
@@ -32,8 +233,8 @@ pub struct SessionPreparer {
     pub prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,   // TODO make generic?
 }
 
-impl SessionPreparer {
-    pub fn own_identity(&self) -> anyhow::Result<Identity> {
+impl InnerSessionPreparer {
+    fn own_identity(&self) -> anyhow::Result<Identity> {
         let id = tonic_some_or_err(
             self.role_assignments
                 .get(&Role::indexed_from_one(self.my_id)),
@@ -42,7 +243,7 @@ impl SessionPreparer {
         Ok(id.to_owned())
     }
 
-    pub async fn get_networking(
+    async fn get_networking(
         &self,
         session_id: SessionId,
         network_mode: NetworkMode,
@@ -106,7 +307,7 @@ impl SessionPreparer {
         Ok(session)
     }
 
-    pub async fn prepare_ddec_data_from_sessionid_z64(
+    async fn prepare_ddec_data_from_sessionid_z64(
         &self,
         session_id: SessionId,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
@@ -128,7 +329,7 @@ impl SessionPreparer {
     }
 
     /// Retuns a copy of the `SessionPreparer` with a fresh randomness generator so it is safe to use.
-    pub async fn new_instance(&self) -> Self {
+    async fn new_instance(&self) -> Self {
         Self {
             base_kms: self.base_kms.new_instance().await,
             threshold: self.threshold,

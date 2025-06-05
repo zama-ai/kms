@@ -57,7 +57,9 @@ use crate::{
         base::{compute_info, BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY},
         prepare_shutdown_signals,
         threshold::{
+            generic::GenericKms,
             service::public_decryptor::SecureNoiseFloodDecryptor,
+            service::session::SessionPreparerManager,
             service::user_decryptor::SecureNoiseFloodPartialDecryptor, threshold_kms::ThresholdKms,
         },
     },
@@ -316,6 +318,7 @@ where
     // since it doesn't permit setting rustls configuration directly, and we
     // need to supply a custom certificate verifier to enable AWS Nitro
     // attestation in TLS
+    // TODO this needs to be initiated later when we have context
     let router = Server::builder()
         .http2_adaptive_window(Some(true))
         .add_service(networking_server)
@@ -326,17 +329,6 @@ where
         own_identity,
         mpc_socket_addr
     );
-
-    let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
-        move |session_id, roles, network_mode| {
-            let nm = networking_manager.clone();
-            Box::pin(async move {
-                let manager = nm.read().await;
-                let impl_networking = manager.make_session(session_id, roles, network_mode)?;
-                Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
-            })
-        },
-    )));
 
     let abort_handle = tokio::spawn(async move {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -431,15 +423,22 @@ where
         key_info_versioned,
     );
 
-    let session_preparer = SessionPreparer {
-        base_kms: base_kms.new_instance().await,
-        threshold: config.threshold,
-        my_id: config.my_id,
-        role_assignments: role_assignments.clone(),
-        networking_strategy,
-        prss_setup_z128: Arc::clone(&prss_setup_z128),
-        prss_setup_z64: Arc::clone(&prss_setup_z64),
-    };
+    // TODO initially this will be empty once we have context
+    let session_preparer = SessionPreparer::new(
+        base_kms.new_instance().await,
+        config.threshold,
+        config.my_id,
+        role_assignments.clone(),
+        Arc::clone(&prss_setup_z128),
+        Arc::clone(&prss_setup_z64),
+        Arc::clone(&networking_manager),
+    );
+    let session_preparer_manager =
+        SessionPreparerManager::empty(session_preparer.my_id_string_unchecked());
+    session_preparer_manager
+        .insert(RequestId::from_bytes([0u8; 32]), session_preparer)
+        .await;
+    let session_preparer_getter = session_preparer_manager.make_getter();
 
     let metastore_status_service = MetaStoreStatusServiceImpl::new(
         Some(dkg_pubinfo_meta_store.clone()),  // key_gen_store
@@ -462,17 +461,19 @@ where
         prss_setup_z128: Arc::clone(&prss_setup_z128),
         prss_setup_z64: Arc::clone(&prss_setup_z64),
         private_storage: crypto_storage.get_private_storage(),
-        session_preparer: session_preparer.new_instance().await,
+        session_preparer_manager,
         health_reporter: thread_core_health_reporter.clone(),
         _init: PhantomData,
     };
+
+    // TODO eventually this PRSS ID should come from the context request
+    // the PRSS should never be run in this function.
     let req_id_prss = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?; // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
     if run_prss {
         tracing::info!(
             "Initializing threshold KMS server and generating a new PRSS Setup for {}",
             config.my_id
         );
-
         initiator.init_prss(&req_id_prss).await?;
     } else {
         tracing::info!(
@@ -496,7 +497,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         user_decrypt_meta_store,
-        session_preparer: Arc::new(session_preparer.new_instance().await),
+        session_preparer_getter: session_preparer_getter.clone(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         decryption_mode: config.decryption_mode,
@@ -507,7 +508,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         pub_dec_meta_store,
-        session_preparer: Arc::new(session_preparer.new_instance().await),
+        session_preparer_getter: session_preparer_getter.clone(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         decryption_mode: config.decryption_mode,
@@ -519,7 +520,7 @@ where
         crypto_storage: crypto_storage.clone(),
         preproc_buckets: Arc::clone(&preproc_buckets),
         dkg_pubinfo_meta_store,
-        session_preparer: session_preparer.new_instance().await,
+        session_preparer_getter: session_preparer_getter.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
@@ -534,7 +535,7 @@ where
         preproc_buckets,
         preproc_factory,
         num_sessions_preproc,
-        session_preparer: session_preparer.new_instance().await,
+        session_preparer_getter: session_preparer_getter.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
@@ -545,7 +546,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         crs_meta_store,
-        session_preparer,
+        session_preparer_getter,
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),

@@ -42,7 +42,7 @@ use crate::{
     engine::{
         base::retrieve_parameters,
         keyset_configuration::preproc_proto_to_keyset_config,
-        threshold::traits::KeyGenPreprocessor,
+        threshold::{service::session::SessionPreparerGetter, traits::KeyGenPreprocessor},
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -55,7 +55,7 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::{session::SessionPreparer, BucketMetaStore};
+use super::BucketMetaStore;
 
 pub struct RealPreprocessor<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>>
 {
@@ -65,7 +65,7 @@ pub struct RealPreprocessor<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<R
     pub preproc_factory:
         Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
     pub num_sessions_preproc: u16,
-    pub session_preparer: SessionPreparer,
+    pub session_preparer_getter: SessionPreparerGetter,
     pub tracker: Arc<TaskTracker>,
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
@@ -80,6 +80,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         request_id: RequestId,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
+        // TODO find the context ID
+        let session_preparer = self
+            .session_preparer_getter
+            .get(&RequestId::from_bytes([0u8; 32]))
+            .await?;
+
         // Prepare the timer before giving it to the tokio task
         // that runs the computation
         let timer = metrics::METRICS
@@ -90,7 +96,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             guarded_meta_store.insert(&request_id)?;
         }
         // Derive a sequence of sessionId from request_id
-        let own_identity = self.session_preparer.own_identity()?;
+        let own_identity = session_preparer.own_identity()?;
 
         let sids = (0..self.num_sessions_preproc)
             .map(|ctr| request_id.derive_session_id_with_counter(ctr as u64))
@@ -99,8 +105,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let base_sessions = {
             let mut res = Vec::with_capacity(sids.len());
             for sid in sids {
-                let base_session = self
-                    .session_preparer
+                let base_session = session_preparer
                     .make_base_session(sid, NetworkMode::Sync)
                     .await?;
                 res.push(base_session)

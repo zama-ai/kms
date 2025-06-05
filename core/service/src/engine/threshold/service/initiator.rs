@@ -31,7 +31,7 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::{session::SessionPreparer, RealThresholdKms};
+use super::{session::SessionPreparerManager, RealThresholdKms};
 
 pub struct RealInitiator<
     PrivS: Storage + Send + Sync + 'static,
@@ -41,8 +41,8 @@ pub struct RealInitiator<
     pub prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
     pub prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
     pub private_storage: Arc<Mutex<PrivS>>,
-    pub session_preparer: SessionPreparer,
-    pub health_reporter: HealthReporter,
+    pub session_preparer_manager: SessionPreparerManager,
+    pub health_reporter: Arc<RwLock<HealthReporter>>,
     pub(crate) _init: PhantomData<Init>,
 }
 
@@ -53,7 +53,14 @@ impl<
             + Default,
     > RealInitiator<PrivS, Init>
 {
+    // Note that `req_id` is not the context ID. It is the request ID for the PRSS setup.
     pub async fn init_prss_from_disk(&self, req_id: &RequestId) -> anyhow::Result<()> {
+        // TODO set the correct context ID here.
+        let session_preparer = self
+            .session_preparer_manager
+            .get(&RequestId::from_bytes([0u8; 32]))
+            .await?;
+
         let prss_setup_z128_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
             let parameters = self
@@ -127,10 +134,16 @@ impl<
 
     // NOTE: this function will overwrite the existing PRSS state
     pub async fn init_prss(&self, req_id: &RequestId) -> anyhow::Result<()> {
+        // TODO set the correct context ID here.
+        let session_preparer = self
+            .session_preparer_manager
+            .get(&RequestId::from_bytes([0u8; 32]))
+            .await?;
+
         // TODO(zama-ai/kms-internal/issues/2721),
         // we never try to store the PRSS in meta_store, so the ID is not guaranteed to be unique
 
-        let own_identity = self.session_preparer.own_identity()?;
+        let own_identity = session_preparer.own_identity()?;
         let session_id = req_id.derive_session_id()?;
 
         // PRSS robust init requires broadcast, which is implemented with Sync network assumption
@@ -212,6 +225,8 @@ impl<
     > Initiator for RealInitiator<PrivS, Init>
 {
     async fn init(&self, request: Request<v1::InitRequest>) -> Result<Response<Empty>, Status> {
+        // TODO set the correct context ID here as it should be contained in the InitRequest.
+
         let inner = request.into_inner();
         let request_id =
             parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::Init)?;
