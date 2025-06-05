@@ -36,7 +36,7 @@ use tracing::Instrument;
 use crate::{
     engine::{
         base::{preproc_proto_to_keyset_config, retrieve_parameters},
-        threshold::traits::KeyGenPreprocessor,
+        threshold::{service::session::SessionPreparerGetter, traits::KeyGenPreprocessor},
         validation::validate_request_id,
     },
     tonic_handle_potential_err, tonic_some_or_err,
@@ -47,7 +47,7 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::{session::SessionPreparer, BucketMetaStore};
+use super::BucketMetaStore;
 
 pub struct RealPreprocessor {
     // TODO eventually add mode to allow for nlarge as well.
@@ -56,7 +56,7 @@ pub struct RealPreprocessor {
     pub preproc_factory:
         Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
     pub num_sessions_preproc: u16,
-    pub session_preparer: SessionPreparer,
+    pub session_preparer_getter: SessionPreparerGetter,
     pub tracker: Arc<TaskTracker>,
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
@@ -70,6 +70,12 @@ impl RealPreprocessor {
         request_id: RequestId,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
+        // TODO find the context ID
+        let session_preparer = self
+            .session_preparer_getter
+            .get(&RequestId::from_bytes([0u8; 32]))
+            .await?;
+
         let _request_counter = metrics::METRICS
             .increment_request_counter(OP_KEYGEN_PREPROC)
             .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
@@ -80,7 +86,7 @@ impl RealPreprocessor {
             .time_operation(OP_KEYGEN_PREPROC)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+                b.tag(TAG_PARTY_ID, session_preparer.my_id_string_unchecked())
                     .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
             });
         {
@@ -88,7 +94,7 @@ impl RealPreprocessor {
             guarded_meta_store.insert(&request_id)?;
         }
         // Derive a sequence of sessionId from request_id
-        let own_identity = self.session_preparer.own_identity()?;
+        let own_identity = session_preparer.own_identity()?;
 
         let sids = (0..self.num_sessions_preproc)
             .map(|ctr| request_id.derive_session_id_with_counter(ctr as u64))
@@ -96,8 +102,7 @@ impl RealPreprocessor {
         let base_sessions = {
             let mut res = Vec::with_capacity(sids.len());
             for sid in sids {
-                let base_session = self
-                    .session_preparer
+                let base_session = session_preparer
                     .make_base_session(sid, NetworkMode::Sync)
                     .await?;
                 res.push(base_session)

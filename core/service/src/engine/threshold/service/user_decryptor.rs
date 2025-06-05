@@ -45,7 +45,7 @@ use crate::{
             compute_external_user_decrypt_signature, deserialize_to_low_level, BaseKmsStruct,
             UserDecryptCallValues,
         },
-        threshold::traits::UserDecryptor,
+        threshold::{service::session::SessionPreparerGetter, traits::UserDecryptor},
         traits::BaseKms,
         validation::{validate_user_decrypt_req, DSEP_USER_DECRYPTION},
     },
@@ -68,7 +68,7 @@ pub struct RealUserDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     pub user_decrypt_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
-    pub session_preparer: Arc<SessionPreparer>,
+    pub session_preparer_getter: SessionPreparerGetter,
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
     pub decryption_mode: DecryptionMode,
@@ -280,8 +280,8 @@ impl<
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
             verification_key: server_verf_key,
-            party_id: session_prep.my_id as u32,
-            degree: session_prep.threshold as u32,
+            party_id: session_prep.my_id()? as u32,
+            degree: session_prep.threshold()? as u32,
         };
 
         let external_signature =
@@ -301,12 +301,20 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
+        // TODO obtain the context ID from request
+        let session_preparer = Arc::new(
+            self.session_preparer_getter
+                .get(&RequestId::from_bytes([0u8; 32]))
+                .await
+                .map_err(|e| Status::internal(format!("Failed to get session preparer: {}", e)))?,
+        );
+
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+                b.tag(TAG_PARTY_ID, session_preparer.my_id_string_unchecked())
                     .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
             })
             .map(|b| b.start())
@@ -326,7 +334,7 @@ impl<
         let inner = request.into_inner();
         tracing::info!(
             "Party {:?} received a new user decryption request with request_id {:?}",
-            self.session_preparer.own_identity(),
+            session_preparer.own_identity(),
             inner.request_id
         );
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) =
@@ -365,11 +373,11 @@ impl<
             format!("Cannot find threshold keys with key ID {key_id}"),
         )?;
 
-        let prep = Arc::clone(&self.session_preparer);
+        let prep = Arc::clone(&session_preparer);
         let dec_mode = self.decryption_mode;
 
         let metric_tags = vec![
-            (TAG_PARTY_ID, prep.my_id.to_string()),
+            (TAG_PARTY_ID, prep.my_id_string_unchecked()),
             (TAG_KEY_ID, key_id.as_str()),
             (
                 TAG_PUBLIC_DECRYPTION_KIND,

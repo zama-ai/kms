@@ -42,7 +42,7 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::session::SessionPreparer;
+use super::session::SessionPreparerGetter;
 
 // === Insecure Feature-Specific Imports ===
 cfg_if::cfg_if! {
@@ -60,7 +60,7 @@ pub struct RealCrsGenerator<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     pub crs_meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
-    pub session_preparer: SessionPreparer,
+    pub session_preparer_getter: SessionPreparerGetter,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
     // Map of ongoing crs generation tasks
@@ -139,7 +139,13 @@ impl<
         permit: OwnedSemaphorePermit,
         insecure: bool,
     ) -> anyhow::Result<()> {
-        //Retrieve the correct tag
+        // TODO find the session from context ID
+        let session_preparer = self
+            .session_preparer_getter
+            .get(&RequestId::from_bytes([0u8; 32]))
+            .await?;
+
+        // Retrieve the correct tag
         let op_tag = if insecure {
             OP_INSECURE_CRS_GEN
         } else {
@@ -156,7 +162,7 @@ impl<
             .time_operation(op_tag)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+                b.tag(TAG_PARTY_ID, session_preparer.my_id_string_unchecked())
                     .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
             });
         {
@@ -169,8 +175,7 @@ impl<
         }
 
         let session_id = req_id.derive_session_id()?;
-        let session = self
-            .session_preparer
+        let session = session_preparer
             .prepare_ddec_data_from_sessionid_z128(session_id)
             .await?
             .to_base_session();
@@ -369,7 +374,7 @@ impl<
                 base_kms: value.base_kms.new_instance().await,
                 crypto_storage: value.crypto_storage.clone(),
                 crs_meta_store: Arc::clone(&value.crs_meta_store),
-                session_preparer: value.session_preparer.new_instance().await,
+                session_preparer_getter: value.session_preparer_getter.clone(),
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),

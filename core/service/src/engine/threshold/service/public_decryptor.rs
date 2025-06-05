@@ -39,7 +39,7 @@ use crate::{
             compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct,
             PubDecCallValues,
         },
-        threshold::traits::PublicDecryptor,
+        threshold::{service::session::SessionPreparerGetter, traits::PublicDecryptor},
         traits::BaseKms,
         validation::{validate_public_decrypt_req, validate_request_id, DSEP_PUBLIC_DECRYPTION},
     },
@@ -62,7 +62,7 @@ pub struct RealPublicDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
     pub pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
-    pub session_preparer: Arc<SessionPreparer>,
+    pub session_preparer_getter: SessionPreparerGetter,
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
     pub decryption_mode: DecryptionMode,
@@ -183,19 +183,27 @@ impl<
     > PublicDecryptor for RealPublicDecryptor<PubS, PrivS, BackS>
 {
     #[tracing::instrument(skip(self, request), fields(
-        party_id = ?self.session_preparer.my_id,
+        party_id = ?self.session_preparer_getter.name(),
         operation = "decrypt"
     ))]
     async fn public_decrypt(
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let context_id = RequestId::from_bytes([0u8; 32]); // Dummy context ID for now
+        let session_preparer = Arc::new(
+            self.session_preparer_getter
+                .get(&context_id)
+                .await
+                .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?,
+        );
+
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+                b.tag(TAG_PARTY_ID, session_preparer.my_id_string_unchecked())
                     .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
             })
             .map(|b| b.start())
@@ -281,7 +289,7 @@ impl<
                 .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
                 .and_then(|b| {
                     b.tags([
-                        (TAG_PARTY_ID, self.session_preparer.my_id.to_string()),
+                        (TAG_PARTY_ID, session_preparer.my_id_string_unchecked()),
                         (TAG_KEY_ID, key_id.as_str()),
                         (
                             TAG_PUBLIC_DECRYPTION_KIND,
@@ -310,7 +318,7 @@ impl<
             );
 
             let crypto_storage = self.crypto_storage.clone();
-            let prep = Arc::clone(&self.session_preparer);
+            let prep = Arc::clone(&session_preparer);
 
             // we do not need to hold the handle,
             // the result of the computation is tracked by the pub_dec_meta_store

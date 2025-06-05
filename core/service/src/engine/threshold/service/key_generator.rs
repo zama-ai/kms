@@ -44,7 +44,9 @@ use crate::{
             retrieve_parameters, BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY,
         },
         threshold::{
-            service::{kms_impl::compute_all_info, ThresholdFheKeys},
+            service::{
+                kms_impl::compute_all_info, session::SessionPreparerGetter, ThresholdFheKeys,
+            },
             traits::KeyGenerator,
         },
         validation::validate_request_id,
@@ -58,7 +60,7 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::{session::SessionPreparer, BucketMetaStore};
+use super::BucketMetaStore;
 
 // === Insecure Feature-Specific Imports ===
 #[cfg(feature = "insecure")]
@@ -80,7 +82,7 @@ pub struct RealKeyGenerator<
     // TODO eventually add mode to allow for nlarge as well.
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     pub dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
-    pub session_preparer: SessionPreparer,
+    pub session_preparer_getter: SessionPreparerGetter,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
     // Map of ongoing key generation tasks
@@ -111,7 +113,7 @@ impl<
                 crypto_storage: value.crypto_storage.clone(),
                 preproc_buckets: Arc::clone(&value.preproc_buckets),
                 dkg_pubinfo_meta_store: Arc::clone(&value.dkg_pubinfo_meta_store),
-                session_preparer: value.session_preparer.new_instance().await,
+                session_preparer_getter: value.session_preparer_getter.clone(),
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
@@ -172,7 +174,13 @@ impl<
         eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
-        //Retrieve the right metric tag
+        // TODO find the context ID
+        let session_preparer = self
+            .session_preparer_getter
+            .get(&RequestId::from_bytes([0u8; 32]))
+            .await?;
+
+        // Retrieve the right metric tag
         let op_tag = match (&preproc_handle_w_mode, keyset_config) {
             (PreprocHandleWithMode::Secure(_), ddec_keyset_config::KeySetConfig::Standard(_)) => {
                 OP_KEYGEN
@@ -200,7 +208,7 @@ impl<
             .time_operation(op_tag)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+                b.tag(TAG_PARTY_ID, session_preparer.my_id_string_unchecked())
                     .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
             });
         // Update status
@@ -212,7 +220,7 @@ impl<
         // Create the base session necessary to run the DKG
         let base_session = {
             let session_id = req_id.derive_session_id()?;
-            self.session_preparer
+            session_preparer
                 .make_base_session(session_id, NetworkMode::Async)
                 .await?
         };

@@ -29,23 +29,29 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::{session::SessionPreparer, RealThresholdKms};
+use super::{session::SessionPreparerManager, RealThresholdKms};
 
 pub struct RealInitiator<PrivS: Storage + Send + Sync + 'static> {
     // TODO eventually add mode to allow for nlarge as well.
     pub prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
     pub prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
     pub private_storage: Arc<Mutex<PrivS>>,
-    pub session_preparer: SessionPreparer,
+    pub session_preparer_manager: SessionPreparerManager,
     pub health_reporter: Arc<RwLock<HealthReporter>>,
 }
 
 impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
+    // Note that `req_id` is not the context ID. It is the request ID for the PRSS setup.
     pub async fn init_prss_from_disk(&self, req_id: &RequestId) -> anyhow::Result<()> {
+        // TODO set the correct context ID here.
+        let session_preparer = self
+            .session_preparer_manager
+            .get(&RequestId::from_bytes([0u8; 32]))
+            .await?;
+
         let prss_setup_z128_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
-            let base_session = self
-                .session_preparer
+            let base_session = session_preparer
                 .make_base_session(req_id.derive_session_id()?, NetworkMode::Sync)
                 .await?;
             read_versioned_at_request_id(
@@ -76,8 +82,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 
         let prss_setup_z64_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
-            let base_session = self
-                .session_preparer
+            let base_session = session_preparer
                 .make_base_session(req_id.derive_session_id()?, NetworkMode::Sync)
                 .await?;
             read_versioned_at_request_id(
@@ -118,16 +123,21 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
     }
 
     pub async fn init_prss(&self, req_id: &RequestId) -> anyhow::Result<()> {
+        // TODO set the correct context ID here.
+        let session_preparer = self
+            .session_preparer_manager
+            .get(&RequestId::from_bytes([0u8; 32]))
+            .await?;
+
         if self.prss_setup_z128.read().await.is_some() || self.prss_setup_z64.read().await.is_some()
         {
             return Err(anyhow_error_and_log("PRSS state already exists"));
         }
 
-        let own_identity = self.session_preparer.own_identity()?;
+        let own_identity = session_preparer.own_identity()?;
         let session_id = req_id.derive_session_id()?;
         //PRSS robust init requires broadcast, which is implemented with Sync network assumption
-        let mut base_session = self
-            .session_preparer
+        let mut base_session = session_preparer
             .make_base_session(session_id, NetworkMode::Sync)
             .await?;
 
@@ -199,6 +209,8 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 #[tonic::async_trait]
 impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> {
     async fn init(&self, request: Request<v1::InitRequest>) -> Result<Response<Empty>, Status> {
+        // TODO set the correct context ID here as it should be contained in the InitRequest.
+
         let inner = request.into_inner();
 
         let request_id = tonic_some_or_err(
