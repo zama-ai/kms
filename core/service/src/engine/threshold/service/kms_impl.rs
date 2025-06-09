@@ -207,18 +207,10 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealBackupOperator<PubS, PrivS>,
 >;
 
-#[allow(clippy::too_many_arguments)]
-pub async fn new_real_threshold_kms<PubS, PrivS, F>(
-    config: ThresholdPartyConf,
-    public_storage: PubS,
-    private_storage: PrivS,
-    backup_storage: Option<Vault>,
-    security_module: Option<SecurityModuleProxy>,
+async fn start_mpc_node<F>(
+    config: &ThresholdPartyConf,
     mpc_listener: TcpListener,
-    sk: PrivateSigKey,
     tls_identity: Option<BasicTLSConfig>,
-    run_prss: bool,
-    rate_limiter_conf: Option<RateLimiterConfig>,
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS>,
@@ -226,30 +218,8 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     MetaStoreStatusServiceImpl,
 )>
 where
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
-    // load keys from storage
-    let key_info_versioned: HashMap<RequestId, ThresholdFheKeys> =
-        read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
-    let mut public_key_info = HashMap::new();
-    let mut pk_map = HashMap::new();
-    let custodian_context: HashMap<RequestId, InternalCustodianContext> =
-        read_all_data_versioned(&private_storage, &PrivDataType::CustodianInfo.to_string()).await?;
-
-    for (id, info) in key_info_versioned.clone().into_iter() {
-        public_key_info.insert(id, info.pk_meta_data.clone());
-
-        let pk = read_pk_at_request_id(&public_storage, &id).await?;
-        pk_map.insert(id, pk);
-    }
-
-    // load crs_info (roughly hashes of CRS) from storage
-    let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
-        read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-
-    // set up the MPC service
     let role_assignments: RoleAssignment = config
         .peers
         .clone()
@@ -386,6 +356,53 @@ where
         );
         Ok(())
     });
+    Ok((abort_handle, networking_strategy))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
+    config: ThresholdPartyConf,
+    public_storage: PubS,
+    private_storage: PrivS,
+    backup_storage: Option<BackS>,
+    security_module: Option<SecurityModuleProxy>,
+    mpc_listener: TcpListener,
+    sk: PrivateSigKey,
+    tls_identity: Option<BasicTLSConfig>,
+    run_prss: bool,
+    rate_limiter_conf: Option<RateLimiterConfig>,
+    shutdown_signal: F,
+) -> anyhow::Result<(
+    RealThresholdKms<PubS, PrivS, BackS>,
+    HealthServer<impl Health>,
+)>
+where
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    // load keys from storage
+    let key_info_versioned: HashMap<RequestId, ThresholdFheKeys> =
+        read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
+    let mut public_key_info = HashMap::new();
+    let mut pk_map = HashMap::new();
+    for (id, info) in key_info_versioned.clone().into_iter() {
+        public_key_info.insert(id, info.pk_meta_data.clone());
+
+        let pk = read_pk_at_request_id(&public_storage, &id).await?;
+        pk_map.insert(id, pk);
+    }
+
+    // load crs_info (roughly hashes of CRS) from storage
+    let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
+        read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+
+    let (abort_handle, networking_strategy) =
+        start_mpc_node(&config, mpc_listener, tls_identity, shutdown_signal).await?;
+
+    let custodian_context: HashMap<RequestId, InternalCustodianContext> =
+        read_all_data_versioned(&private_storage, &PrivDataType::CustodianInfo.to_string()).await?;
 
     // If no RedisConf is provided, we just use in-memory storage for the
     // preprocessing. Note: This is only allowed for testing.
@@ -429,7 +446,14 @@ where
         key_info_versioned,
     );
 
-    // TODO initially this will be empty once we have context
+    // TODO initially the SessionPreparerManager is empty
+    // and becomes available when we have the context
+    let role_assignments: RoleAssignment = config
+        .peers
+        .clone()
+        .into_iter()
+        .map(|peer_config| peer_config.into_role_identity())
+        .collect();
     let session_preparer = SessionPreparer::new(
         base_kms.new_instance().await,
         config.threshold,
