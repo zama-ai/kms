@@ -571,6 +571,7 @@ impl Client {
             domain,
             keyset_config,
             keyset_added_info,
+            context_id: None,
         })
     }
 
@@ -602,6 +603,7 @@ impl Client {
             max_num_bits,
             request_id: Some((*request_id).into()),
             domain,
+            context_id: None,
         })
     }
 
@@ -622,6 +624,7 @@ impl Client {
             params: param.unwrap_or_default().into(),
             keyset_config,
             request_id: Some((*request_id).into()),
+            context_id: None,
         })
     }
 
@@ -761,6 +764,7 @@ impl Client {
             key_id: Some((*key_id).into()),
             domain: Some(domain_msg),
             request_id: Some((*request_id).into()),
+            context_id: None,
         };
         Ok(req)
     }
@@ -864,6 +868,7 @@ impl Client {
                 typed_ciphertexts,
                 key_id: Some((*key_id).into()),
                 domain: Some(domain_msg),
+                context_id: None,
             },
             UnifiedPublicEncKey::MlKem1024(enc_pk),
             UnifiedPrivateEncKey::MlKem1024(enc_sk),

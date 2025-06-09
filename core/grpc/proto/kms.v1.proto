@@ -72,6 +72,8 @@ message KeyGenPreprocRequest {
   FheParameter params = 2;
   // The keyset configuration that controls what kind of key to generate.
   KeySetConfig keyset_config = 3;
+  // MPC context ID which is used to identify the context to use for this request.
+  RequestId context_id = 4;
 }
 
 enum KeySetCompressionConfig {
@@ -111,6 +113,9 @@ message KeyGenRequest {
   // For certain keyset_config, additional information is needed,
   // this is given by the documentation of KeySetAddedInfo.
   KeySetAddedInfo keyset_added_info = 6;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  RequestId context_id = 7;
 }
 
 message KeyGenResult {
@@ -157,6 +162,9 @@ message CrsGenRequest {
   // If this is not provided, then it defaults to ZK_DEFAULT_MAX_NUM_CLEARTEXT.
   optional uint32 max_num_bits = 3;
   Eip712DomainMsg domain = 4;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  RequestId context_id = 5;
 }
 
 message CrsGenResult {
@@ -212,6 +220,9 @@ message PublicDecryptionRequest {
 
   // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  RequestId context_id = 5;
 }
 
 // KMS-internal Public Decryption Response Payload, containing meta data, plaintexts
@@ -275,6 +286,9 @@ message UserDecryptionRequest {
   bytes enc_key = 5;
 
   Eip712DomainMsg domain = 6;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  RequestId context_id = 7;
 }
 
 message UserDecryptionResponse {
