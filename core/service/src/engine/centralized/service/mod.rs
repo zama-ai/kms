@@ -7,6 +7,7 @@
 // - key_gen.rs: Key generation implementation
 
 // Module components
+mod context;
 mod crs_gen;
 mod decryption;
 mod endpoint;

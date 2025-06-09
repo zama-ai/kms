@@ -44,4 +44,16 @@ service CoreServiceEndpoint {
   // Get a reference to the CRS.
   // This query fails if the result is not available yet.
   rpc GetCrsGenResult(kms.v1.RequestId) returns (kms.v1.CrsGenResult);
+
+  // Create a new KMS context, it may be created without an existing one.
+  rpc NewKmsContext(kms.v1.NewKmsContextRequest) returns (kms.v1.Empty);
+
+  // Destroy an existing KMS context.
+  rpc DestroyKmsContext(kms.v1.DestroyKmsContextRequest) returns (kms.v1.Empty);
+
+  // Create a new custodian context, it may be created without an existing one.
+  rpc NewCustodianContext(kms.v1.NewCustodianContextRequest) returns (kms.v1.Empty);
+
+  // Destroy an existing custodian context.
+  rpc DestroyCustodianContext(kms.v1.DestroyCustodianContextRequest) returns (kms.v1.Empty);
 }

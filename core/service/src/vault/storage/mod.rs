@@ -1,4 +1,5 @@
 use crate::anyhow_error_and_log;
+use crate::engine::context;
 use anyhow::anyhow;
 use aws_sdk_s3::Client as S3Client;
 use kms_grpc::rpc_types::{
@@ -231,7 +232,7 @@ pub async fn store_pk_at_request_id<S: Storage>(
     Ok(())
 }
 
-pub async fn read_pk_at_request_id<S: Storage>(
+pub async fn read_pk_at_request_id<S: StorageReader>(
     storage: &S,
     request_id: &RequestId,
 ) -> anyhow::Result<WrappedPublicKeyOwned> {
@@ -250,6 +251,38 @@ pub async fn read_pk_at_request_id<S: Storage>(
     };
 
     Ok(out)
+}
+
+/// Simple wrapper around [store_versioned_at_request_id]
+/// for the Context PrivDataType.
+pub async fn store_context_at_request_id<S: Storage>(
+    storage: &mut S,
+    request_id: &RequestId,
+    context_info: &context::ContextInfo,
+) -> anyhow::Result<()> {
+    store_versioned_at_request_id(
+        storage,
+        request_id,
+        context_info,
+        &PrivDataType::ContextInfo.to_string(),
+    )
+    .await
+}
+
+/// Simple wrapper around [read_context_at_request_id]
+/// for the Context PrivDataType.
+pub async fn read_context_at_request_id<S: StorageReader>(
+    storage: &S,
+    request_id: &RequestId,
+) -> anyhow::Result<context::ContextInfo> {
+    read_versioned_at_request_id(storage, request_id, &PrivDataType::ContextInfo.to_string()).await
+}
+
+pub async fn delete_context_at_request_id<S: Storage>(
+    storage: &mut S,
+    request_id: &RequestId,
+) -> anyhow::Result<()> {
+    delete_at_request_id(storage, request_id, &PrivDataType::ContextInfo.to_string()).await
 }
 
 /// Helper method for reading all data of a specific type.

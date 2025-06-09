@@ -85,3 +85,26 @@ pub trait InsecureCrsGenerator {
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status>;
 }
+
+#[tonic::async_trait]
+pub trait ContextManager {
+    async fn new_kms_context(
+        &self,
+        request: Request<NewKmsContextRequest>,
+    ) -> Result<Response<Empty>, Status>;
+
+    async fn destroy_kms_context(
+        &self,
+        request: Request<DestroyKmsContextRequest>,
+    ) -> Result<Response<Empty>, Status>;
+
+    async fn new_custodian_context(
+        &self,
+        request: Request<NewCustodianContextRequest>,
+    ) -> Result<Response<Empty>, Status>;
+
+    async fn destroy_custodian_context(
+        &self,
+        request: Request<DestroyCustodianContextRequest>,
+    ) -> Result<Response<Empty>, Status>;
+}

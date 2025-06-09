@@ -277,6 +277,7 @@ pub enum PrivDataType {
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
+    ContextInfo,
 }
 
 impl fmt::Display for PrivDataType {
@@ -287,6 +288,7 @@ impl fmt::Display for PrivDataType {
             PrivDataType::CrsInfo => write!(f, "CrsInfo"),
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
+            PrivDataType::ContextInfo => write!(f, "Context"),
         }
     }
 }

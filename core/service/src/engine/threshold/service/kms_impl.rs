@@ -62,9 +62,10 @@ use crate::{
 
 // === Current Module Imports ===
 use super::{
-    crs_generator::RealCrsGenerator, initiator::RealInitiator, key_generator::RealKeyGenerator,
-    preprocessor::RealPreprocessor, public_decryptor::RealPublicDecryptor,
-    session::SessionPreparer, user_decryptor::RealUserDecryptor,
+    context_manager::RealContextManager, crs_generator::RealCrsGenerator, initiator::RealInitiator,
+    key_generator::RealKeyGenerator, preprocessor::RealPreprocessor,
+    public_decryptor::RealPublicDecryptor, session::SessionPreparer,
+    user_decryptor::RealUserDecryptor,
 };
 
 // === Insecure Feature-Specific Imports ===
@@ -140,6 +141,7 @@ pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
     RealKeyGenerator<PubS, PrivS, BackS>,
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS, BackS>,
+    RealContextManager<PubS, PrivS, BackS>,
 >;
 
 #[cfg(feature = "insecure")]
@@ -152,6 +154,7 @@ pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS, BackS>,
     RealInsecureCrsGenerator<PubS, PrivS, BackS>,
+    RealContextManager<PubS, PrivS, BackS>,
 >;
 
 #[allow(clippy::too_many_arguments)]
@@ -491,6 +494,11 @@ where
     #[cfg(feature = "insecure")]
     let insecure_crs_generator = RealInsecureCrsGenerator::from_real_crsgen(&crs_generator).await;
 
+    let context_manager = RealContextManager {
+        base_kms: base_kms.new_instance().await,
+        crypto_storage: crypto_storage.clone(),
+    };
+
     let kms = GenericKms::new(
         initiator,
         user_decryptor,
@@ -502,6 +510,7 @@ where
         crs_generator,
         #[cfg(feature = "insecure")]
         insecure_crs_generator,
+        context_manager,
         Arc::clone(&tracker),
         Arc::clone(&thread_core_health_reporter),
         abort_handle,

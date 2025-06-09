@@ -1,4 +1,5 @@
 use crate::engine::centralized::central_kms::RealCentralizedKms;
+use crate::engine::centralized::service::context::{delete_kms_context_impl, new_kms_context_impl};
 use crate::tonic_some_or_err;
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{self, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult};
@@ -153,5 +154,41 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::CrsGenResult>, Status> {
         self.get_crs_gen_result(request).await
+    }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn new_kms_context(
+        &self,
+        request: Request<kms_grpc::kms::v1::NewKmsContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
+        new_kms_context_impl(&self.crypto_storage, request).await
+    }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn destroy_kms_context(
+        &self,
+        request: Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        delete_kms_context_impl(&self.crypto_storage, request).await
+    }
+
+    #[tracing::instrument(skip(self, _request))]
+    async fn new_custodian_context(
+        &self,
+        _request: Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        Err(Status::unimplemented(
+            "new_custodian_context is not implemented",
+        ))
+    }
+
+    #[tracing::instrument(skip(self, _request))]
+    async fn destroy_custodian_context(
+        &self,
+        _request: Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        Err(Status::unimplemented(
+            "destroy_custodian_context is not implemented",
+        ))
     }
 }
