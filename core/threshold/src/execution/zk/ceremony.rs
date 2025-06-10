@@ -418,6 +418,13 @@ impl InternalPublicParameter {
     }
 }
 
+#[derive(Zeroize)]
+struct ZeroizeForPartialProof {
+    tau: curve::Zp,
+    r: curve::Zp,
+    tau_powers: Vec<curve::Zp>,
+}
+
 /// Compute a new proof round.
 ///
 /// Note that this function is deterministic, i.e. the parameters `tau` and `r` (r_{pok, j}) must be generated freshly at random outside this function.
@@ -428,6 +435,9 @@ fn make_partial_proof_deterministic(
     r: curve::Zp,
 ) -> PartialProof {
     let b1 = current_pp.witness_dim();
+
+    // [tau_powers] should not be re-allocated (e.g., extended) because
+    // zeroize does not guarantee that the deallocated memory is zeroed.
     let tau_powers = (0..2 * b1)
         .scan(curve::Zp::ONE, |acc, _| {
             *acc = acc.mul(tau);
@@ -456,6 +466,8 @@ fn make_partial_proof_deterministic(
                     if i == b1 {
                         curve::G1::ZERO
                     } else {
+                        // TODO(#2483) Dereferencing t could create a copy that is not zeroized
+                        // this will be resolved when tfhe-rs implements the ZeroizeOnDrop trait for Zp
                         g.mul_scalar(*t)
                     }
                 })
@@ -465,7 +477,11 @@ fn make_partial_proof_deterministic(
                 .g2s
                 .par_iter()
                 .zip(&tau_powers)
-                .map(|(g, t)| g.mul_scalar(*t))
+                .map(|(g, t)| {
+                    // TODO(#2483) Dereferencing t could create a copy that is not zeroized
+                    // this will be resolved when tfhe-rs implements the ZeroizeOnDrop trait for Zp
+                    g.mul_scalar(*t)
+                })
                 .collect(),
         ),
     };
@@ -486,6 +502,10 @@ fn make_partial_proof_deterministic(
     let h_pok = h_pok[0];
     let s_pok = h_pok * (tau) + r;
 
+    // This will not be needed once tfhe-rs implements the ZeroizeOnDrop trait for Zp (#2483)
+    let mut for_zeroize = ZeroizeForPartialProof { tau, r, tau_powers };
+    for_zeroize.zeroize();
+
     PartialProof {
         h_pok,
         s_pok,
@@ -502,6 +522,9 @@ pub fn make_centralized_public_parameters<R: Rng + CryptoRng>(
 
     let mut tau = curve::Zp::rand(rng);
     let mut r = curve::Zp::rand(rng);
+
+    // Note [tau] and [r] are copied into [make_partial_proof_deterministic] since Zp is a Copy,
+    // we need to make sure they're zeroized after use inside.
     let pproof = make_partial_proof_deterministic(&pparam, tau, 1, r);
     tau.zeroize();
     r.zeroize();
@@ -732,6 +755,8 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
                 let mut r = curve::Zp::rand(&mut session.rng());
                 let (send, recv) = tokio::sync::oneshot::channel();
                 rayon::spawn_fifo(move || {
+                    // [tau] and [r] are copied into [make_partial_proof_deterministic] since Zp is a Copy
+                    // we need to make sure they're zeroized after use inside.
                     let partial_proof = make_partial_proof_deterministic(&pp, tau, round + 1, r);
                     tau.zeroize();
                     r.zeroize();
