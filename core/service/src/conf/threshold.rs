@@ -31,6 +31,7 @@ pub struct ThresholdPartyConf {
     pub min_dec_cache: usize,
     pub preproc_redis: Option<RedisConf>,
     pub num_sessions_preproc: Option<u16>,
+    // NOTE: eventually the peer list will be removed in favor of context
     #[validate(nested)]
     pub peers: Vec<PeerConf>,
     pub core_to_core_net: Option<CoreToCoreNetworkConfig>,

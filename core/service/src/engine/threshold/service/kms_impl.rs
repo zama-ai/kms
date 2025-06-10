@@ -31,7 +31,6 @@ use threshold_fhe::{
         tls::{
             build_ca_certs_map, AttestedClientVerifier, BasicTLSConfig, SendingServiceTLSConfig,
         },
-        Networking, NetworkingStrategy,
     },
 };
 use tokio::{
@@ -356,7 +355,7 @@ where
         );
         Ok(())
     });
-    Ok((abort_handle, networking_strategy))
+    Ok((abort_handle, networking_manager))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -398,15 +397,16 @@ where
     let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
         read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
-    let (abort_handle, networking_strategy) =
-        start_mpc_node(&config, mpc_listener, tls_identity, shutdown_signal).await?;
+    // the initial MPC node might not accept any peers because initially there's no context
+    let (abort_handle, networking_manager) =
+        start_mpc_node(&config, mpc_listener, tls_identity.clone(), shutdown_signal).await?;
 
     let custodian_context: HashMap<RequestId, InternalCustodianContext> =
         read_all_data_versioned(&private_storage, &PrivDataType::CustodianInfo.to_string()).await?;
 
     // If no RedisConf is provided, we just use in-memory storage for the
     // preprocessing. Note: This is only allowed for testing.
-    let preproc_factory = match config.preproc_redis {
+    let preproc_factory = match &config.preproc_redis {
         None => {
             if cfg!(feature = "insecure") || cfg!(feature = "testing") {
                 create_memory_factory()
@@ -414,7 +414,7 @@ where
                 panic!("Redis configuration must be provided")
             }
         }
-        Some(conf) => create_redis_factory(format!("PARTY_{}", config.my_id), &conf),
+        Some(conf) => create_redis_factory(format!("PARTY_{}", config.my_id), conf),
     };
     let num_sessions_preproc = config
         .num_sessions_preproc
@@ -446,28 +446,8 @@ where
         key_info_versioned,
     );
 
-    // TODO initially the SessionPreparerManager is empty
-    // and becomes available when we have the context
-    let role_assignments: RoleAssignment = config
-        .peers
-        .clone()
-        .into_iter()
-        .map(|peer_config| peer_config.into_role_identity())
-        .collect();
-    let session_preparer = SessionPreparer::new(
-        base_kms.new_instance().await,
-        config.threshold,
-        config.my_id,
-        role_assignments.clone(),
-        Arc::clone(&prss_setup_z128),
-        Arc::clone(&prss_setup_z64),
-        Arc::clone(&networking_manager),
-    );
     let session_preparer_manager =
-        SessionPreparerManager::empty(session_preparer.my_id_string_unchecked());
-    session_preparer_manager
-        .insert(RequestId::from_bytes([0u8; 32]), session_preparer)
-        .await;
+        SessionPreparerManager::empty(config.my_id.to_string(), networking_manager);
     let session_preparer_getter = session_preparer_manager.make_getter();
 
     let metastore_status_service = MetaStoreStatusServiceImpl::new(
@@ -495,6 +475,9 @@ where
         session_preparer_manager,
         health_reporter: thread_core_health_reporter.clone(),
         _init: PhantomData,
+        threshold_config: config.clone(),
+        tls_identity: tls_identity.clone(),
+        base_kms: base_kms.new_instance().await,
     };
 
     // TODO eventually this PRSS ID should come from the context request
