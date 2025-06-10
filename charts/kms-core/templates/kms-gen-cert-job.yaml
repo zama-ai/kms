@@ -128,6 +128,7 @@ spec:
                      "port" 443
                 ) | indent 10 | trim }}
         {{- /* Generate signing key and CA certificate */}}
+      containers:
         - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
           imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
           name: kms-core-enclave-gen-signing-key
