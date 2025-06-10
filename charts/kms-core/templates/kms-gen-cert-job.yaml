@@ -23,7 +23,7 @@ spec:
       restartPolicy: OnFailure
       serviceAccountName: {{ .Release.Name }}-gen-keys-config-writer
       securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- toYaml .Values.podSecurityContextForEnclave | nindent 8 }}
       subdomain: {{ include "kmsCoreName" . }}
       initContainers:
         - image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
