@@ -20,6 +20,7 @@ spec:
         app: kms-core-gen-keys-cert
         app.kubernetes.io/name: {{ $kmsGenKeyCertName }}
     spec:
+      restartPolicy: Always
       serviceAccountName: {{ .Release.Name }}-gen-keys-config-writer
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
@@ -181,7 +182,6 @@ spec:
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
         {{- end }}
-      restartPolicy: Always
       imagePullSecrets:
         - name: registry-credentials
       nodeSelector:
