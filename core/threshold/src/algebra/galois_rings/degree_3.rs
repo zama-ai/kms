@@ -234,9 +234,9 @@ impl ResiduePolyF3Z64 {
 }
 
 lazy_static! {
-    static ref EXCEPTIONAL_SET_STORE_4_128: RwLock<HashMap<(usize, usize), Vec<ResiduePolyF3Z128>>> =
+    static ref EXCEPTIONAL_SET_STORE_3_128: RwLock<HashMap<(usize, usize), Vec<ResiduePolyF3Z128>>> =
         RwLock::new(HashMap::new());
-    static ref EXCEPTIONAL_SET_STORE_4_64: RwLock<HashMap<(usize, usize), Vec<ResiduePolyF3Z64>>> =
+    static ref EXCEPTIONAL_SET_STORE_3_64: RwLock<HashMap<(usize, usize), Vec<ResiduePolyF3Z64>>> =
         RwLock::new(HashMap::new());
 }
 
@@ -246,7 +246,7 @@ impl MemoizedExceptionals for ResiduePolyF3Z64 {
         Ok(compute_powers(point, degree))
     }
     fn storage() -> &'static RwLock<HashMap<(usize, usize), Vec<Self>>> {
-        &EXCEPTIONAL_SET_STORE_4_64
+        &EXCEPTIONAL_SET_STORE_3_64
     }
 }
 
@@ -256,7 +256,7 @@ impl MemoizedExceptionals for ResiduePolyF3Z128 {
         Ok(compute_powers(point, degree))
     }
     fn storage() -> &'static RwLock<HashMap<(usize, usize), Vec<Self>>> {
-        &EXCEPTIONAL_SET_STORE_4_128
+        &EXCEPTIONAL_SET_STORE_3_128
     }
 }
 
