@@ -164,6 +164,15 @@ spec:
               name: hugepage
             - name: nitro-device
               mountPath: /dev/nitro_enclaves
+          ports:
+            - containerPort: {{ .Values.kmsCore.ports.client }}
+              protocol: TCP
+            {{- if .Values.kmsCore.thresholdMode.enabled }}
+            - containerPort: {{ .Values.kmsCore.ports.peer }}
+              protocol: TCP
+            {{- end }}
+            - containerPort: {{ .Values.kmsCore.ports.metrics }}
+              protocol: TCP
           resources:
             requests:
               memory: 2Gi
@@ -174,7 +183,10 @@ spec:
               memory: 4Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
-        {{- end }}
+          lifecycle:
+            preStop:
+              exec:
+                command: [ "nitro-cli", "terminate-enclave", "--all" ]
       imagePullSecrets:
         - name: registry-credentials
       nodeSelector:
