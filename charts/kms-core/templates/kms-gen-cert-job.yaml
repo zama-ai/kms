@@ -12,19 +12,16 @@ metadata:
     "helm.sh/hook-weight": "0"
   name: {{ $kmsGenKeyCertName }}
 spec:
-  ordinals:
-    start: {{ include "kmsPeersStartID" . }}
   template:
     metadata:
       labels:
         app: kms-core-gen-keys-cert
         app.kubernetes.io/name: {{ $kmsGenKeyCertName }}
     spec:
-      restartPolicy: OnFailure
-      serviceAccountName: {{ .Release.Name }}-gen-keys-config-writer
+      serviceAccountName: {{ .Values.kmsCore.serviceAccountName }}
       securityContext:
         {{- toYaml .Values.podSecurityContextForEnclave | nindent 8 }}
-      subdomain: {{ include "kmsCoreName" . }}
+      restartPolicy: OnFailure
       initContainers:
         - image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
           imagePullPolicy: {{ .Values.kubeUtils.image.pullPolicy }}
@@ -76,7 +73,6 @@ spec:
               name: config-files
             - mountPath: {{ .Values.kmsCore.workdir }}
               name: workdir
-        {{- if .Values.kmsCore.nitroEnclave.enabled }}
         {{- /* Init Enclave Logger Socket, hardcoded to 3000 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
         - {{ include "proxyFromEnclave"
                (dict "name" "kms-core-enclave-logger"
@@ -84,7 +80,6 @@ spec:
                      "vsockPort" 3000
                      "to" "STDOUT"
                ) | indent 10 | trim }}
-        {{- if .Values.kmsCore.nitroEnclave.ports.imds }}
         {{- /* Init AWS IMDS Proxy Socket */}}
         - {{ include "proxyFromEnclaveTcp"
                (dict "name" "aws-imds-proxy"
@@ -93,8 +88,6 @@ spec:
                      "address" "169.254.169.254"
                      "port" 80
                 ) | indent 10 | trim }}
-        {{- end }}
-        {{- if .Values.kmsCore.nitroEnclave.ports.sts }}
         {{- /* Init Enclave Web Identity Token Socket, hardcoded to 4100 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
         - {{ include "proxyFromEnclave"
                (dict "name" "enclave-web-identity-token"
@@ -110,7 +103,6 @@ spec:
                      "address" (printf "sts.%s.amazonaws.com" .Values.kmsCore.aws.region)
                      "port" 443
                 ) | indent 10 | trim }}
-        {{- end }}
         {{- /* Init AWS S3 Proxy Socket */}}
         - {{ include "proxyFromEnclaveTcp"
                (dict "name" "aws-s3-proxy"
