@@ -9,7 +9,6 @@ metadata:
     app: kms-core
     app.kubernetes.io/name: {{ $kmsGenKeyCertName }}
   annotations:
-    "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "-1"
   name: {{ $kmsGenKeyCertName }}
 spec:
