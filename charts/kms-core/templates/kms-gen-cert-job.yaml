@@ -1,4 +1,4 @@
-{{- if .Values.kmsCore.thresholdMode.tls.enabled -}}
+{{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.thresholdMode.tls.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $kmsGenKeyCertName := include "kmsGenKeyCertJobName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
@@ -59,10 +59,6 @@ spec:
               echo "### END - kms-server.toml ###"
               {{- end }}
           env:
-            - name: KMS_CORE__THRESHOLD__MY_ID
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
             - name: NO_COLOR
               value: "true"
             - name: RUN_MODE
@@ -154,10 +150,6 @@ spec:
               socat VSOCK-LISTEN:4000,fork,reuseaddr OPEN:kms-gen-keys.toml,rdonly &
               nitro-cli run-enclave --config /var/lib/kms-core/config/enclave.json
           env:
-            - name: KMS_CORE__THRESHOLD__MY_ID
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
             - name: "NO_COLOR"
               value: "true"
             - name: RUN_MODE
