@@ -2,6 +2,7 @@ syntax = "proto3";
 package kms.v1;
 
 // Initialization request for bootstrapping the threshold KMS.
+// This request will be removed in favor of NewKmsContextRequest.
 message InitRequest {
     // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
     RequestId request_id = 1;
