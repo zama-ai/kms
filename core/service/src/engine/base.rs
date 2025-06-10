@@ -33,6 +33,7 @@ use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::integer::BooleanBlock;
 use tfhe::named::Named;
 use tfhe::safe_serialization::safe_deserialize;
+use tfhe::FheUint80;
 use tfhe::{
     FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
     FheUint4, FheUint512, FheUint64, FheUint8,
@@ -332,6 +333,14 @@ pub fn deserialize_to_low_level(
         FheTypes::Uint64 => {
             deserialize_to_low_level_helper!(
                 FheUint64,
+                ct_format,
+                serialized_high_level,
+                decompression_key
+            )
+        }
+        FheTypes::Uint80 => {
+            deserialize_to_low_level_helper!(
+                FheUint80,
                 ct_format,
                 serialized_high_level,
                 decompression_key

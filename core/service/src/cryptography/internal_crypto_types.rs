@@ -55,6 +55,8 @@ impl Serialize for PublicEncKey {
     }
 }
 
+impl_generic_versionize!(PublicEncKey);
+
 impl<'de> Deserialize<'de> for PublicEncKey {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

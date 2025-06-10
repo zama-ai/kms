@@ -332,3 +332,116 @@ message TypedSigncryptedCiphertext {
   // has a different way of packing compared to what is specified in the plaintext modulus.
   uint32 packing_factor = 4;
 }
+
+// The public information for a single KMS node.
+message KmsNode {
+  // The human-readable name of the KMS node operator,
+  // every party in an MPC protocol must have a unique name.
+  string name = 1;
+  // The ID of the party in the MPC protocol,
+  // every party in an MPC protocol must have a unique ID.
+  int32 party_id = 2;
+  // The verification key of the KMS node operator,
+  // this is the public key used to verify the signatures produced by the KMS node.
+  bytes verification_key = 3;
+  // The public key used for encrypting backup shares.
+  bytes backup_encryption_public_key = 4;
+
+  // The external port and host of the KMS node,
+  // this is used for connecting to the KMS node from other KMS parties.
+  string external_url = 5;
+
+  // The TLS certificate of the KMS node.
+  bytes tls_cert = 6;
+
+  // The public storage URL of the KMS node,
+  // this is used for storing and retrieving public FHE keys,
+  // evaluation keys and other public data.
+  string public_storage_url = 7;
+
+  // A list of public keys that are permitted to make transactions to the public chain on behalf this node.
+  // I.e. the signing keys of this entity which they will use to make transactions to the Gateway.
+  // It may be empty if the node does not have any such keys, in this case the verification_key will be used.
+  repeated bytes extra_verification_keys = 8;
+}
+
+// The context of the KMS, containing the list of KMS nodes and other metadata.
+message KmsContext {
+  // The list of KMS nodes in the context.
+  repeated KmsNode kms_nodes = 1;
+
+  // A monotonically increasing counter stored on the Gateway
+  // that is increased by 1 every time a new context of a specific type is generated.
+  RequestId context_id = 2;
+
+  // The previous context ID which might be empty if this is the first context.
+  // Contexts are linked together in a chain, but they are not allowed to fork or cycle.
+  RequestId previous_context_id = 3;
+
+  // A software version tag and information if minor (non-breaking) upgrades/downgrades are permitted.
+  // If minor upgrades/downgrades are not permitted then a digest of the binaries to run should also be included.
+  bytes software_version = 4;
+
+  // The corruption threshold for this context.
+  // In the optimal case, n = 3 * threshold + 1, where n is the number of KMS nodes.
+  // The threshold must be set to 0 if the kms_nodes list contains only one node.
+  int32 threshold = 5;
+}
+
+// The information held by the custodian nodes in a custodian context.
+message CustodianNode {
+  // The human-readable name of the custodian node.
+  string name = 1;
+  // The public encryption key of the custodian node,
+  // that the KMS parties use to back their shares to the custodian.
+  bytes public_encryption_key = 2;
+}
+
+// The context of the custodian nodes.
+message CustodianContext {
+  // The list of custodian nodes in the context that are
+  // responsible for backing up and recovering key materials.
+  // The number of custodian nodes does not need to match the number of KMS nodes,
+  // they are operated independently.
+  repeated CustodianNode custodian_nodes = 1;
+
+  // A monotonically increasing counter stored on the Gateway
+  // that is increased by 1 every time a new context of a specific type is generated.
+  RequestId context_id = 2;
+
+  // The previous context ID which might be empty if this is the first context.
+  // Contexts are linked together in a chain, but they are not allowed to fork or cycle.
+  RequestId previous_context_id = 3;
+
+  // The corruption threshold for this context.
+  // It does not need to match the KMS context threshold
+  // and we only need to ensure a majority of custodian nodes are honest
+  // since the backup and recovery steps are synchronous.
+  int32 threshold = 4;
+}
+
+// Request to create a new KMS context.
+// If the active_context may be empty, then the new_context must be the first context
+// in the chain of contexts.
+message NewKmsContextRequest {
+  KmsContext active_context = 1;
+  KmsContext new_context = 2;
+}
+
+// Response to destroy the key materials associated with a KMS context.
+// Note that the context information itself is not removed, only the key materials.
+message DestroyKmsContextRequest {
+  RequestId context_id = 1;
+}
+
+message NewCustodianContextRequest {
+  // The active custodian context, may be empty if this is the first context.
+  CustodianContext active_context = 1;
+  // The new custodian context to create.
+  CustodianContext new_context = 2;
+}
+
+message DestroyCustodianContextRequest {
+  // The ID of the custodian context to destroy.
+  RequestId context_id = 1;
+}

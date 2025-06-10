@@ -50,7 +50,7 @@ use tfhe::zk::CompactPkeCrs;
 use tfhe::Seed;
 use tfhe::{
     ClientKey, ConfigBuilder, FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048,
-    FheUint256, FheUint32, FheUint4, FheUint512, FheUint64, FheUint8,
+    FheUint256, FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, FheUint80,
 };
 use tfhe::{FheTypes, ServerKey};
 #[cfg(feature = "non-wasm")]
@@ -641,6 +641,15 @@ fn unsafe_decrypt(
             deserialize_to_low_level_and_decrypt_helper!(
                 FheUint64,
                 TypedPlaintext::from_u64,
+                ct_format,
+                serialized_high_level,
+                keys
+            )
+        }
+        FheTypes::Uint80 => {
+            deserialize_to_low_level_and_decrypt_helper!(
+                FheUint80,
+                TypedPlaintext::from_u80,
                 ct_format,
                 serialized_high_level,
                 keys

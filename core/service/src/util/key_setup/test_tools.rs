@@ -18,7 +18,7 @@ use tfhe::safe_serialization::safe_serialize;
 use tfhe::zk::CompactPkeCrs;
 use tfhe::{
     FheBool, FheTypes, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256,
-    FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, HlCompactable, HlCompressible,
+    FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, FheUint80, HlCompactable, HlCompressible,
     HlExpandable, ServerKey, Unversionize, Versionize,
 };
 use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
@@ -139,6 +139,13 @@ pub fn compute_cipher(
             server_key,
             enc_config,
         ),
+        TestingPlaintext::U80(x) => enc_and_serialize_ctxt::<_, FheUint80>(
+            x,
+            FheUint80::num_bits(),
+            pk,
+            server_key,
+            enc_config,
+        ),
         TestingPlaintext::U128(x) => enc_and_serialize_ctxt::<_, FheUint128>(
             x,
             FheUint128::num_bits(),
@@ -199,6 +206,7 @@ pub enum TestingPlaintext {
     U16(u16),
     U32(u32),
     U64(u64),
+    U80(u128),
     U128(u128),
     U160(tfhe::integer::bigint::U256),
     U256(tfhe::integer::bigint::U256),
@@ -216,6 +224,7 @@ impl From<TestingPlaintext> for FheTypes {
             TestingPlaintext::U16(_) => FheTypes::Uint16,
             TestingPlaintext::U32(_) => FheTypes::Uint32,
             TestingPlaintext::U64(_) => FheTypes::Uint64,
+            TestingPlaintext::U80(_) => FheTypes::Uint80,
             TestingPlaintext::U128(_) => FheTypes::Uint128,
             TestingPlaintext::U160(_) => FheTypes::Uint160,
             TestingPlaintext::U256(_) => FheTypes::Uint256,
@@ -235,6 +244,7 @@ impl From<TestingPlaintext> for TypedPlaintext {
             TestingPlaintext::U16(x) => TypedPlaintext::from_u16(x),
             TestingPlaintext::U32(x) => TypedPlaintext::from_u32(x),
             TestingPlaintext::U64(x) => TypedPlaintext::from_u64(x),
+            TestingPlaintext::U80(x) => TypedPlaintext::from_u80(x),
             TestingPlaintext::U128(x) => TypedPlaintext::from_u128(x),
             TestingPlaintext::U160(x) => TypedPlaintext::from_u160(x),
             TestingPlaintext::U256(x) => TypedPlaintext::from_u256(x),
@@ -255,6 +265,7 @@ impl TestingPlaintext {
             TestingPlaintext::U16(_) => 16,
             TestingPlaintext::U32(_) => 32,
             TestingPlaintext::U64(_) => 64,
+            TestingPlaintext::U80(_) => 80,
             TestingPlaintext::U128(_) => 128,
             TestingPlaintext::U160(_) => 160,
             TestingPlaintext::U256(_) => 256,
@@ -279,6 +290,7 @@ impl TryFrom<TypedPlaintext> for TestingPlaintext {
             FheTypes::Uint16 => Ok(TestingPlaintext::U16(value.as_u16())),
             FheTypes::Uint32 => Ok(TestingPlaintext::U32(value.as_u32())),
             FheTypes::Uint64 => Ok(TestingPlaintext::U64(value.as_u64())),
+            FheTypes::Uint80 => Ok(TestingPlaintext::U80(value.as_u80())),
             FheTypes::Uint128 => Ok(TestingPlaintext::U128(value.as_u128())),
             FheTypes::Uint160 => Ok(TestingPlaintext::U160(value.as_u160())),
             FheTypes::Uint256 => Ok(TestingPlaintext::U256(value.as_u256())),

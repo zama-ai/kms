@@ -391,6 +391,17 @@ impl<
                     )
                     .await
                     .map(|x| TypedPlaintext::new(x, fhe_type)),
+                    FheTypes::Uint80 => Self::inner_decrypt::<u128>(
+                        internal_sid,
+                        prep,
+                        ciphertext,
+                        fhe_type,
+                        ct_format,
+                        fhe_keys_rlock,
+                        dec_mode,
+                    )
+                    .await
+                    .map(TypedPlaintext::from_u80),
                     FheTypes::Bool
                     | FheTypes::Uint4
                     | FheTypes::Uint8

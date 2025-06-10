@@ -277,6 +277,7 @@ pub enum PrivDataType {
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
+    ContextInfo,
 }
 
 impl fmt::Display for PrivDataType {
@@ -287,6 +288,7 @@ impl fmt::Display for PrivDataType {
             PrivDataType::CrsInfo => write!(f, "CrsInfo"),
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
+            PrivDataType::ContextInfo => write!(f, "Context"),
         }
     }
 }
@@ -299,6 +301,7 @@ fn unchecked_fhe_types_to_string(value: FheTypes) -> String {
         FheTypes::Uint16 => "Euint16".to_string(),
         FheTypes::Uint32 => "Euint32".to_string(),
         FheTypes::Uint64 => "Euint64".to_string(),
+        FheTypes::Uint80 => "Euint80".to_string(),
         FheTypes::Uint128 => "Euint128".to_string(),
         FheTypes::Uint160 => "Euint160".to_string(),
         FheTypes::Uint256 => "Euint256".to_string(),
@@ -316,6 +319,7 @@ fn string_to_fhe_types(value: &str) -> anyhow::Result<FheTypes> {
         "Euint8" => Ok(FheTypes::Uint8),
         "Euint16" => Ok(FheTypes::Uint16),
         "Euint32" => Ok(FheTypes::Uint32),
+        "Euint80" => Ok(FheTypes::Uint80),
         "Euint64" => Ok(FheTypes::Uint64),
         "Euint128" => Ok(FheTypes::Uint128),
         "Euint160" => Ok(FheTypes::Uint160),
@@ -326,25 +330,6 @@ fn string_to_fhe_types(value: &str) -> anyhow::Result<FheTypes> {
         _ => Err(anyhow::anyhow!(
             "Trying to import FheType from unsupported value"
         )),
-    }
-}
-
-// TODO replace this method with the TryFrom<i32> from tfhe-rs when available
-fn i32_to_fhe_types(value: i32) -> anyhow::Result<FheTypes> {
-    match value {
-        0 => Ok(FheTypes::Bool),
-        1 => Ok(FheTypes::Uint4),
-        2 => Ok(FheTypes::Uint8),
-        3 => Ok(FheTypes::Uint16),
-        4 => Ok(FheTypes::Uint32),
-        5 => Ok(FheTypes::Uint64),
-        6 => Ok(FheTypes::Uint128),
-        7 => Ok(FheTypes::Uint160),
-        8 => Ok(FheTypes::Uint256),
-        9 => Ok(FheTypes::Uint512),
-        10 => Ok(FheTypes::Uint1024),
-        11 => Ok(FheTypes::Uint2048),
-        _ => anyhow::bail!("Unsupported i32 representation of fhe_type: {}", value),
     }
 }
 
@@ -366,6 +351,7 @@ pub fn fhe_types_to_num_blocks(
         FheTypes::Uint16 => Ok(16_usize.div_ceil(msg_modulus)),
         FheTypes::Uint32 => Ok(32_usize.div_ceil(msg_modulus)),
         FheTypes::Uint64 => Ok(64_usize.div_ceil(msg_modulus)),
+        FheTypes::Uint80 => Ok(80_usize.div_ceil(msg_modulus)),
         FheTypes::Uint128 => Ok(128_usize.div_ceil(msg_modulus)),
         FheTypes::Uint160 => Ok(160_usize.div_ceil(msg_modulus)),
         FheTypes::Uint256 => Ok(256_usize.div_ceil(msg_modulus)),
@@ -452,11 +438,13 @@ impl TypedPlaintext {
     }
 
     pub fn fhe_type(&self) -> anyhow::Result<FheTypes> {
-        i32_to_fhe_types(self.fhe_type)
+        self.fhe_type
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid FHE type: {}", self.fhe_type))
     }
 
     pub fn fhe_type_string(&self) -> String {
-        if let Ok(fhe_type) = i32_to_fhe_types(self.fhe_type) {
+        if let Ok(fhe_type) = self.fhe_type.try_into() {
             unchecked_fhe_types_to_string(fhe_type)
         } else {
             UNSUPPORTED_FHE_TYPE_STR.to_string()
@@ -514,6 +502,14 @@ impl TypedPlaintext {
         Self {
             bytes: value.to_le_bytes().to_vec(),
             fhe_type: FheTypes::Uint64 as i32,
+        }
+    }
+
+    pub fn from_u80(value: u128) -> Self {
+        Self {
+            // Safe to take slice of 10 byte since the value is 16 bytes
+            bytes: value.to_le_bytes()[..10].to_vec(),
+            fhe_type: FheTypes::Uint80 as i32,
         }
     }
 
@@ -642,6 +638,19 @@ impl TypedPlaintext {
             tracing::warn!("U64 Plaintext should have 8 Bytes, but was not ({} Bytes). Truncating/Padding to 8 Bytes", self.bytes.len());
         }
         u64::from_le_bytes(sub_slice::<8>(&self.bytes))
+    }
+
+    pub fn as_u80(&self) -> u128 {
+        if self.fhe_type != FheTypes::Uint80 as i32 {
+            tracing::warn!("Plaintext is not of type u80. Returning the value modulo 2^80 or padding with leading zeros");
+        }
+        if self.bytes.len() != 10 {
+            tracing::warn!("U80 Plaintext should have 10 Bytes, but was not ({} Bytes). Truncating/Padding to 10 Bytes", self.bytes.len());
+        }
+
+        // We need a full 128-bit slice to convert to u128, but also need to make sure it's within 2^80.
+        let res = u128::from_le_bytes(sub_slice::<16>(&self.bytes));
+        res % (1 << 80)
     }
 
     pub fn as_u128(&self) -> u128 {
@@ -806,11 +815,13 @@ pub trait FheTypeResponse {
 
 impl TypedSigncryptedCiphertext {
     pub fn fhe_type(&self) -> anyhow::Result<FheTypes> {
-        i32_to_fhe_types(self.fhe_type)
+        self.fhe_type
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid FHE type: {}", self.fhe_type))
     }
 
     pub fn fhe_type_string(&self) -> String {
-        if let Ok(fhe_type) = i32_to_fhe_types(self.fhe_type) {
+        if let Ok(fhe_type) = self.fhe_type.try_into() {
             unchecked_fhe_types_to_string(fhe_type)
         } else {
             UNSUPPORTED_FHE_TYPE_STR.to_string()
@@ -820,11 +831,13 @@ impl TypedSigncryptedCiphertext {
 
 impl TypedCiphertext {
     pub fn fhe_type(&self) -> anyhow::Result<FheTypes> {
-        i32_to_fhe_types(self.fhe_type)
+        self.fhe_type
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid FHE type: {}", self.fhe_type))
     }
 
     pub fn fhe_type_string(&self) -> String {
-        if let Ok(fhe_type) = i32_to_fhe_types(self.fhe_type) {
+        if let Ok(fhe_type) = self.fhe_type.try_into() {
             unchecked_fhe_types_to_string(fhe_type)
         } else {
             UNSUPPORTED_FHE_TYPE_STR.to_string()

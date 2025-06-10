@@ -3,7 +3,8 @@ use crate::client::test_tools::ServerHandle;
 use crate::consts::DEFAULT_URL;
 use crate::engine::threshold::generic::GenericKms;
 use crate::engine::threshold::traits::{
-    CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
+    ContextManager, CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor,
+    UserDecryptor,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
@@ -68,6 +69,7 @@ type DummyThresholdKms = GenericKms<
     DummyKeyGenerator,
     DummyPreprocessor,
     DummyCrsGenerator,
+    DummyContextManager,
 >;
 
 #[cfg(feature = "insecure")]
@@ -80,6 +82,7 @@ type DummyThresholdKms = GenericKms<
     DummyPreprocessor,
     DummyCrsGenerator,
     DummyCrsGenerator, // the insecure one is the same as the dummy one
+    DummyContextManager,
 >;
 
 async fn new_dummy_threshold_kms() -> (DummyThresholdKms, HealthServer<impl Health>) {
@@ -101,6 +104,7 @@ async fn new_dummy_threshold_kms() -> (DummyThresholdKms, HealthServer<impl Heal
             DummyCrsGenerator {},
             #[cfg(feature = "insecure")]
             DummyCrsGenerator {},
+            DummyContextManager {},
             Arc::new(TaskTracker::new()),
             Arc::new(RwLock::new(threshold_health_reporter)),
             handle,
@@ -299,5 +303,38 @@ impl InsecureCrsGenerator for DummyCrsGenerator {
             request_id: Some(request.into_inner()),
             crs_results: Some(SignedPubDataHandle::default()),
         }))
+    }
+}
+
+struct DummyContextManager;
+
+#[tonic::async_trait]
+impl ContextManager for DummyContextManager {
+    async fn new_kms_context(
+        &self,
+        _request: Request<kms_grpc::kms::v1::NewKmsContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
+        Ok(Response::new(kms_grpc::kms::v1::Empty {}))
+    }
+
+    async fn destroy_kms_context(
+        &self,
+        _request: Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
+        Ok(Response::new(kms_grpc::kms::v1::Empty {}))
+    }
+
+    async fn new_custodian_context(
+        &self,
+        _request: Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
+        Ok(Response::new(kms_grpc::kms::v1::Empty {}))
+    }
+
+    async fn destroy_custodian_context(
+        &self,
+        _request: Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
+        Ok(Response::new(kms_grpc::kms::v1::Empty {}))
     }
 }

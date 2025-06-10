@@ -5,11 +5,12 @@
 use crate::{
     anyhow_error_and_warn_log,
     cryptography::internal_crypto_types::PrivateSigKey,
-    engine::{base::KmsFheKeyHandles, threshold::service::ThresholdFheKeys},
+    engine::{base::KmsFheKeyHandles, context::ContextInfo, threshold::service::ThresholdFheKeys},
     util::meta_store::MetaStore,
     vault::storage::{
         delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
-        store_pk_at_request_id, store_versioned_at_request_id, Storage,
+        store_context_at_request_id, store_pk_at_request_id, store_versioned_at_request_id,
+        Storage,
     },
 };
 use kms_grpc::{
@@ -838,6 +839,24 @@ where
             }
         }
 
+        Ok(())
+    }
+
+    pub async fn write_context_info(
+        &self,
+        req_id: &RequestId,
+        context_info: &ContextInfo,
+        is_threshold: bool,
+    ) -> anyhow::Result<()> {
+        let mut priv_storage = self.private_storage.lock().await;
+        store_context_at_request_id(&mut *priv_storage, req_id, context_info).await?;
+        log_storage_success(
+            req_id,
+            priv_storage.info(),
+            "context info",
+            false,
+            is_threshold,
+        );
         Ok(())
     }
 }

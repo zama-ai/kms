@@ -5,6 +5,7 @@
 //! storage system.
 
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
+use crate::vault::storage::StorageReader;
 use crate::{
     anyhow_error_and_warn_log,
     client::ClientDataType,
@@ -231,7 +232,11 @@ pub fn calculate_max_num_bits(dkg_params: &DKGParams) -> usize {
 ///
 /// # Errors
 /// Returns an error if the storage operation fails, no key is found, or multiple keys are found.
-async fn get_unique<S: Storage, T: DeserializeOwned + Unversionize + Named + Send, U: Display>(
+async fn get_unique<
+    S: StorageReader,
+    T: DeserializeOwned + Unversionize + Named + Send,
+    U: Display,
+>(
     storage: &S,
     storage_type: U,
 ) -> anyhow::Result<T> {
@@ -259,7 +264,9 @@ async fn get_unique<S: Storage, T: DeserializeOwned + Unversionize + Named + Sen
         .ok_or_else(|| anyhow_error_and_warn_log("Failed to remove key from map".to_string()))
 }
 
-pub async fn get_core_signing_key<S: Storage>(priv_storage: &S) -> anyhow::Result<PrivateSigKey> {
+pub async fn get_core_signing_key<S: StorageReader>(
+    priv_storage: &S,
+) -> anyhow::Result<PrivateSigKey> {
     get_unique::<S, PrivateSigKey, PrivDataType>(priv_storage, PrivDataType::SigningKey).await
 }
 

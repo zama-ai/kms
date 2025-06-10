@@ -112,6 +112,9 @@ fn decrypted_blocks_to_plaintext(
         }
         FheTypes::Uint128 => combine_decryptions::<u128>(bits_in_block, recon_blocks)
             .map(|x| TypedPlaintext::new(x, fhe_type)),
+        FheTypes::Uint80 => {
+            combine_decryptions::<u128>(bits_in_block, recon_blocks).map(TypedPlaintext::from_u80)
+        }
         FheTypes::Bool
         | FheTypes::Uint4
         | FheTypes::Uint8
@@ -2317,11 +2320,9 @@ pub(crate) mod tests {
     use crate::vault::storage::{file::FileStorage, StorageType};
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use kms_grpc::kms::v1::CrsGenRequest;
-    #[cfg(feature = "wasm_tests")]
-    use kms_grpc::kms::v1::TypedPlaintext;
     use kms_grpc::kms::v1::{
         Empty, FheParameter, InitRequest, KeySetAddedInfo, KeySetConfig, KeySetType,
-        TypedCiphertext, UserDecryptionRequest, UserDecryptionResponse,
+        TypedCiphertext, TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse,
     };
     use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
     use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -3764,6 +3765,7 @@ pub(crate) mod tests {
                 TestingPlaintext::U32(9876),
                 TestingPlaintext::U16(420),
                 TestingPlaintext::Bool(true),
+                TestingPlaintext::U80((1u128 << 80) - 1),
             ],
             EncryptionConfig {
                 compression: false,
@@ -3957,22 +3959,7 @@ pub(crate) mod tests {
 
             // check that the plaintexts are correct
             for (i, plaintext) in received_plaintexts.iter().enumerate() {
-                assert_eq!(msgs[i].fhe_type(), plaintext.fhe_type().unwrap());
-
-                match msgs[i] {
-                    TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-                    TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
-                    TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-                    TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-                    TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-                    TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-                    TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-                    TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
-                    TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
-                    TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
-                    TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
-                    TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
-                }
+                assert_plaintext(&msgs[i], plaintext);
             }
         }
 
@@ -4333,25 +4320,30 @@ pub(crate) mod tests {
             };
 
             for plaintext in plaintexts {
-                assert_eq!(msg.fhe_type(), plaintext.fhe_type().unwrap());
-                match msg {
-                    TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-                    TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
-                    TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-                    TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-                    TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-                    TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-                    TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-                    TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
-                    TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
-                    TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
-                    TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
-                    TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
-                }
+                assert_plaintext(&msg, &plaintext);
             }
         }
 
         kms_server.assert_shutdown().await;
+    }
+
+    fn assert_plaintext(expected: &TestingPlaintext, plaintext: &TypedPlaintext) {
+        assert_eq!(expected.fhe_type(), plaintext.fhe_type().unwrap());
+        match expected {
+            TestingPlaintext::Bool(x) => assert_eq!(*x, plaintext.as_bool()),
+            TestingPlaintext::U4(x) => assert_eq!(*x, plaintext.as_u4()),
+            TestingPlaintext::U8(x) => assert_eq!(*x, plaintext.as_u8()),
+            TestingPlaintext::U16(x) => assert_eq!(*x, plaintext.as_u16()),
+            TestingPlaintext::U32(x) => assert_eq!(*x, plaintext.as_u32()),
+            TestingPlaintext::U64(x) => assert_eq!(*x, plaintext.as_u64()),
+            TestingPlaintext::U80(x) => assert_eq!(*x, plaintext.as_u80()),
+            TestingPlaintext::U128(x) => assert_eq!(*x, plaintext.as_u128()),
+            TestingPlaintext::U160(x) => assert_eq!(*x, plaintext.as_u160()),
+            TestingPlaintext::U256(x) => assert_eq!(*x, plaintext.as_u256()),
+            TestingPlaintext::U512(x) => assert_eq!(*x, plaintext.as_u512()),
+            TestingPlaintext::U1024(x) => assert_eq!(*x, plaintext.as_u1024()),
+            TestingPlaintext::U2048(x) => assert_eq!(*x, plaintext.as_u2048()),
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -4697,22 +4689,7 @@ pub(crate) mod tests {
 
             // check that the plaintexts are correct
             for (i, plaintext) in received_plaintexts.iter().enumerate() {
-                assert_eq!(msgs[i].fhe_type(), plaintext.fhe_type().unwrap());
-
-                match msgs[i] {
-                    TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-                    TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
-                    TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-                    TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-                    TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-                    TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-                    TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-                    TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
-                    TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
-                    TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
-                    TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
-                    TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
-                }
+                assert_plaintext(&msgs[i], plaintext);
             }
         }
     }
@@ -4723,6 +4700,7 @@ pub(crate) mod tests {
     #[case(true, TestingPlaintext::U8(88), 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(true, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(false, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
+    #[case(true, TestingPlaintext::U80((1u128 << 80) - 1), 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(true, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
     #[case(false, TestingPlaintext::U32(u32::MAX), 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::BitDecSmall)]
     #[tokio::test(flavor = "multi_thread")]
@@ -5104,21 +5082,7 @@ pub(crate) mod tests {
                 final_result
             };
             for plaintext in plaintexts {
-                assert_eq!(msg.fhe_type(), plaintext.fhe_type().unwrap());
-                match msg {
-                    TestingPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-                    TestingPlaintext::U4(x) => assert_eq!(x, plaintext.as_u4()),
-                    TestingPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-                    TestingPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-                    TestingPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-                    TestingPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-                    TestingPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-                    TestingPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
-                    TestingPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
-                    TestingPlaintext::U512(x) => assert_eq!(x, plaintext.as_u512()),
-                    TestingPlaintext::U1024(x) => assert_eq!(x, plaintext.as_u1024()),
-                    TestingPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
-                }
+                assert_plaintext(&msg, &plaintext);
             }
         }
     }

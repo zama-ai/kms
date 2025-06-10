@@ -1,5 +1,6 @@
 use crate::engine::threshold::traits::{
-    CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
+    ContextManager, CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor,
+    UserDecryptor,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
@@ -24,6 +25,7 @@ pub struct GenericKms<
     PP: Sync,
     CG: Sync,
     #[cfg(feature = "insecure")] ICG: Sync,
+    CM: Sync,
 > {
     initiator: IN,
     user_decryptor: UD,
@@ -35,6 +37,7 @@ pub struct GenericKms<
     crs_generator: CG,
     #[cfg(feature = "insecure")]
     insecure_crs_generator: ICG,
+    context_manager: CM,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     tracker: Arc<TaskTracker>,
     health_reporter: Arc<RwLock<HealthReporter>>,
@@ -42,8 +45,17 @@ pub struct GenericKms<
 }
 
 #[cfg(feature = "insecure")]
-impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG: Sync>
-    GenericKms<IN, UD, PD, KG, IKG, PP, CG, ICG>
+impl<
+        IN: Sync,
+        UD: Sync,
+        PD: Sync,
+        KG: Sync,
+        IKG: Sync,
+        PP: Sync,
+        CG: Sync,
+        ICG: Sync,
+        CM: Sync,
+    > GenericKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM>
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -55,6 +67,7 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG:
         keygen_preprocessor: PP,
         crs_generator: CG,
         insecure_crs_generator: ICG,
+        context_manager: CM,
         tracker: Arc<TaskTracker>,
         health_reporter: Arc<RwLock<HealthReporter>>,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
@@ -68,6 +81,7 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG:
             keygen_preprocessor,
             crs_generator,
             insecure_crs_generator,
+            context_manager,
             tracker,
             health_reporter,
             mpc_abort_handle,
@@ -77,8 +91,17 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG:
 
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
-impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG: Sync> Shutdown
-    for GenericKms<IN, UD, PD, KG, IKG, PP, CG, ICG>
+impl<
+        IN: Sync,
+        UD: Sync,
+        PD: Sync,
+        KG: Sync,
+        IKG: Sync,
+        PP: Sync,
+        CG: Sync,
+        ICG: Sync,
+        CM: Sync,
+    > Shutdown for GenericKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM>
 {
     async fn shutdown(&self) -> anyhow::Result<()> {
         self.health_reporter
@@ -112,8 +135,17 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG:
 
 #[cfg(feature = "insecure")]
 #[allow(clippy::let_underscore_future)]
-impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG: Sync> Drop
-    for GenericKms<IN, UD, PD, KG, IKG, PP, CG, ICG>
+impl<
+        IN: Sync,
+        UD: Sync,
+        PD: Sync,
+        KG: Sync,
+        IKG: Sync,
+        PP: Sync,
+        CG: Sync,
+        ICG: Sync,
+        CM: Sync,
+    > Drop for GenericKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM>
 {
     fn drop(&mut self) {
         // Let the shutdown run in the background
@@ -122,8 +154,8 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, IKG: Sync, PP: Sync, CG: Sync, ICG:
 }
 
 #[cfg(not(feature = "insecure"))]
-impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync>
-    GenericKms<IN, UD, PD, KG, PP, CG>
+impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync>
+    GenericKms<IN, UD, PD, KG, PP, CG, CM>
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -133,6 +165,7 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync>
         key_generator: KG,
         keygen_preprocessor: PP,
         crs_generator: CG,
+        context_manager: CM,
         tracker: Arc<TaskTracker>,
         health_reporter: Arc<RwLock<HealthReporter>>,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
@@ -144,6 +177,7 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync>
             key_generator,
             keygen_preprocessor,
             crs_generator,
+            context_manager,
             tracker,
             health_reporter,
             mpc_abort_handle,
@@ -153,8 +187,8 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync>
 
 #[tonic::async_trait]
 #[cfg(not(feature = "insecure"))]
-impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync> Shutdown
-    for GenericKms<IN, UD, PD, KG, PP, CG>
+impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync> Shutdown
+    for GenericKms<IN, UD, PD, KG, PP, CG, CM>
 {
     async fn shutdown(&self) -> anyhow::Result<()> {
         self.health_reporter
@@ -188,8 +222,8 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync> Shutdown
 
 #[cfg(not(feature = "insecure"))]
 #[allow(clippy::let_underscore_future)]
-impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync> Drop
-    for GenericKms<IN, UD, PD, KG, PP, CG>
+impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync> Drop
+    for GenericKms<IN, UD, PD, KG, PP, CG, CM>
 {
     fn drop(&mut self) {
         // Let the shutdown run in the background
@@ -208,7 +242,8 @@ macro_rules! impl_endpoint {
                 KG: KeyGenerator + Sync + Send + 'static,
                 PP: KeyGenPreprocessor + Sync + Send + 'static,
                 CG: CrsGenerator + Sync + Send + 'static,
-            > CoreServiceEndpoint for GenericKms<IN, UD, PD, KG, PP, CG> $implementations
+                CM: ContextManager + Sync + Send + 'static,
+            > CoreServiceEndpoint for GenericKms<IN, UD, PD, KG, PP, CG, CM> $implementations
 
         #[cfg(feature="insecure")]
         #[tonic::async_trait]
@@ -221,7 +256,8 @@ macro_rules! impl_endpoint {
                 PP: KeyGenPreprocessor + Sync + Send + 'static,
                 CG: CrsGenerator + Sync + Send + 'static,
                 ICG: InsecureCrsGenerator + Sync + Send + 'static,
-            > CoreServiceEndpoint for GenericKms<IN, UD, PD, KG, IKG, PP, CG, ICG> $implementations
+                CM: ContextManager + Sync + Send + 'static,
+            > CoreServiceEndpoint for GenericKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM> $implementations
     }
 }
 
@@ -335,5 +371,36 @@ impl_endpoint! {
             self.insecure_crs_generator.get_result(request).await
         }
 
+        #[tracing::instrument(skip(self, request))]
+        async fn new_kms_context(
+            &self,
+            request: Request<NewKmsContextRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            self.context_manager.new_kms_context(request).await
+        }
+
+        #[tracing::instrument(skip(self, request))]
+        async fn destroy_kms_context(
+            &self,
+            request: Request<DestroyKmsContextRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            self.context_manager.destroy_kms_context(request).await
+        }
+
+        #[tracing::instrument(skip(self, request))]
+        async fn new_custodian_context(
+            &self,
+            request: Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            self.context_manager.new_custodian_context(request).await
+        }
+
+        #[tracing::instrument(skip(self, request))]
+        async fn destroy_custodian_context(
+            &self,
+            request: Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
+        ) -> Result<Response<Empty>, Status> {
+            self.context_manager.destroy_custodian_context(request).await
+        }
     }
 }
