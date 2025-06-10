@@ -14,7 +14,7 @@ use threshold_fhe::{
         runtime::session::ParameterHandles,
         small_execution::prss::{PRSSInit, PRSSSetup, RobustSecurePrssInit},
     },
-    networking::NetworkMode,
+    networking::{NetworkMode, Networking, NetworkingStrategy},
 };
 use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Response, Status};
@@ -23,7 +23,11 @@ use tonic_health::server::HealthReporter;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    engine::{base::derive_request_id, threshold::traits::Initiator},
+    conf::threshold::ThresholdPartyConf,
+    engine::{
+        base::derive_request_id,
+        threshold::{service::session::SessionPreparer, traits::Initiator},
+    },
     tonic_some_or_err,
     vault::storage::{read_versioned_at_request_id, store_versioned_at_request_id, Storage},
 };
@@ -38,6 +42,10 @@ pub struct RealInitiator<PrivS: Storage + Send + Sync + 'static> {
     pub private_storage: Arc<Mutex<PrivS>>,
     pub session_preparer_manager: SessionPreparerManager,
     pub health_reporter: Arc<RwLock<HealthReporter>>,
+    // This is needed as a workaround to initialize the session preparer
+    pub threshold_config: ThresholdPartyConf,
+    pub tls_identity: Option<threshold_fhe::networking::tls::BasicTLSConfig>,
+    pub base_kms: crate::engine::base::BaseKmsStruct,
 }
 
 impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
@@ -210,6 +218,41 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> {
     async fn init(&self, request: Request<v1::InitRequest>) -> Result<Response<Empty>, Status> {
         // TODO set the correct context ID here as it should be contained in the InitRequest.
+        // since the connector is not giving us a context yet, we read it from file
+        // eventually this piece of code will move to the context endpoint and this
+        // endpoint will be removed.
+
+        let networking_manager = self.session_preparer_manager.get_networking_manager().await;
+        let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
+            move |session_id, roles, network_mode| {
+                let nm = networking_manager.clone();
+                Box::pin(async move {
+                    let manager = nm.read().await;
+                    let impl_networking = manager.make_session(session_id, roles, network_mode);
+                    Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
+                })
+            },
+        )));
+
+        let role_assignments: threshold_fhe::execution::runtime::party::RoleAssignment = self
+            .threshold_config
+            .peers
+            .clone()
+            .into_iter()
+            .map(|peer_config| peer_config.into_role_identity())
+            .collect();
+        let session_preparer = SessionPreparer::new(
+            self.base_kms.new_instance().await,
+            self.threshold_config.threshold,
+            self.threshold_config.my_id,
+            role_assignments,
+            networking_strategy,
+            Arc::clone(&self.prss_setup_z128),
+            Arc::clone(&self.prss_setup_z64),
+        );
+        self.session_preparer_manager
+            .insert(RequestId::from_bytes([0u8; 32]), session_preparer)
+            .await;
 
         let inner = request.into_inner();
 

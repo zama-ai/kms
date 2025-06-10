@@ -490,6 +490,7 @@ mod tests {
                 ciphertexts: ciphertexts.clone(),
                 key_id: None,
                 domain: Some(domain.clone()),
+                context_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -504,6 +505,7 @@ mod tests {
                 ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
+                context_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -521,6 +523,7 @@ mod tests {
                 ciphertexts: vec![],
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
+                context_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -535,6 +538,7 @@ mod tests {
                 ciphertexts: vec![],
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
+                context_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -549,6 +553,7 @@ mod tests {
                 ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
+                context_id: None,
             };
             let (_, _, _, _, domain) = validate_public_decrypt_req(&req).unwrap();
             assert!(domain.is_some());
@@ -597,6 +602,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
+                context_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -613,6 +619,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
+                context_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -632,6 +639,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
+                context_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -648,6 +656,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
+                context_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -664,6 +673,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(Some(1)),
                 enc_key: enc_pk_buf.clone(),
+                context_id: None,
             };
             assert_eq!(
                 "Error parsing checksummed client address: 0xD8Da6bf26964Af9d7EEd9e03e53415d37AA96045 - Bad address checksum",
@@ -682,6 +692,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: bad_enc_pk_buf,
+                context_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -698,6 +709,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
+                context_id: None,
             };
             assert!(validate_user_decrypt_req(&req).is_ok());
         }
@@ -746,7 +758,7 @@ mod tests {
         );
         let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
 
-        let req = kms_grpc::kms::v1::UserDecryptionRequest {
+        let req = UserDecryptionRequest {
             request_id: Some(v1::RequestId {
                 request_id: "dummy request ID".to_owned(),
             }),
@@ -755,6 +767,7 @@ mod tests {
             key_id: Some(key_id.into()),
             typed_ciphertexts: vec![typed_ciphertext],
             domain: Some(domain_msg),
+            context_id: None,
         };
 
         {
@@ -1154,6 +1167,7 @@ mod tests {
                     .into(),
             ),
             domain: None,
+            context_id: None,
         };
 
         let digest = serialize_hash_element(&DSEP_REQ_RESP, &request).unwrap();
@@ -1261,6 +1275,7 @@ mod tests {
                         .into(),
                 ),
                 domain: None,
+                context_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
@@ -1290,6 +1305,7 @@ mod tests {
                         .into(),
                 ),
                 domain: None,
+                context_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
