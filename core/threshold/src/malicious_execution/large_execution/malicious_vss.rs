@@ -18,11 +18,19 @@ use crate::{
         runtime::{party::Role, session::BaseSessionHandles},
     },
     tests::helper::tests_and_benches::roles_from_idxs,
+    ProtocolDescription,
 };
 
 ///Does nothing, and output an empty Vec
 #[derive(Default, Clone)]
 pub struct DroppingVssFromStart {}
+
+impl ProtocolDescription for DroppingVssFromStart {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-DroppingVssFromStart", indent)
+    }
+}
 
 #[async_trait]
 impl Vss for DroppingVssFromStart {
@@ -47,6 +55,13 @@ impl Vss for DroppingVssFromStart {
 ///Does round 1 and then drops
 #[derive(Default, Clone)]
 pub struct DroppingVssAfterR1 {}
+
+impl ProtocolDescription for DroppingVssAfterR1 {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-DroppingVssAfterR1", indent)
+    }
+}
 
 #[async_trait]
 impl Vss for DroppingVssAfterR1 {
@@ -75,6 +90,17 @@ impl Vss for DroppingVssAfterR1 {
 #[derive(Default, Clone)]
 pub struct DroppingVssAfterR2<BCast: Broadcast> {
     broadcast: BCast,
+}
+
+impl<BCast: Broadcast> ProtocolDescription for DroppingVssAfterR2<BCast> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-DroppingVssAfterR2:\n{}",
+            indent,
+            BCast::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<BCast: Broadcast> DroppingVssAfterR2<BCast> {
@@ -111,10 +137,23 @@ impl<BCast: Broadcast> Vss for DroppingVssAfterR2<BCast> {
 }
 
 ///Participate in the protocol, but lies to some parties in the first round
+/// TODO: Make it such that if roles_to_lie_to is empty we lie to everyone
+/// (because we rely on default implem in lots of places)
 #[derive(Default, Clone)]
 pub struct MaliciousVssR1<BCast: Broadcast> {
     broadcast: BCast,
     roles_to_lie_to: Vec<Role>,
+}
+
+impl<BCast: Broadcast> ProtocolDescription for MaliciousVssR1<BCast> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-MaliciousVssR1:\n{}",
+            indent,
+            BCast::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<BCast: Broadcast> MaliciousVssR1<BCast> {
@@ -207,6 +246,17 @@ pub struct WrongSecretLenVss<BCast: Broadcast> {
     broadcast: BCast,
 }
 
+impl<BCast: Broadcast> ProtocolDescription for WrongSecretLenVss<BCast> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-WrongSecretLenVss:\n{}",
+            indent,
+            BCast::protocol_desc(depth + 1)
+        )
+    }
+}
+
 impl<BCast: Broadcast> WrongSecretLenVss<BCast> {
     pub fn new(broadcast_strategy: &BCast) -> Self {
         Self {
@@ -253,6 +303,17 @@ impl<BCast: Broadcast> WrongDegreeSharingVss<BCast> {
         Self {
             broadcast: broadcast_strategy.clone(),
         }
+    }
+}
+
+impl<BCast: Broadcast> ProtocolDescription for WrongDegreeSharingVss<BCast> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-WrongDegreeSharingVss:\n{}",
+            indent,
+            BCast::protocol_desc(depth + 1)
+        )
     }
 }
 

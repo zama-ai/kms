@@ -6,6 +6,7 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{party::Role, session::LargeSessionHandles},
+    ProtocolDescription,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -17,7 +18,7 @@ use tracing::instrument;
 pub type SecureSingleSharing<Z> = RealSingleSharing<Z, SecureLocalSingleShare>;
 
 #[async_trait]
-pub trait SingleSharing<Z: Ring>: Send + Sync + Clone {
+pub trait SingleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
     async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -37,6 +38,17 @@ pub struct RealSingleSharing<Z, S: LocalSingleShare> {
     available_shares: Vec<Z>,
     max_num_iterations: usize,
     vdm_matrix: ArrayD<Z>,
+}
+
+impl<Z, S: LocalSingleShare> ProtocolDescription for RealSingleSharing<Z, S> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-RealSingleSharing:\n{}",
+            indent,
+            S::protocol_desc(depth + 1)
+        )
+    }
 }
 
 //Custom implementaiton of Clone to make sure we do not clone

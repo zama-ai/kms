@@ -503,9 +503,9 @@ impl<R: Ring> TriplePreprocessing<R> for RedisPreprocessing<R> {
     }
 }
 
-mod bitdec;
-mod dkg;
-mod noiseflood;
+pub(crate) mod bitdec;
+pub(crate) mod dkg;
+pub(crate) mod noiseflood;
 
 #[cfg(test)]
 pub mod tests {

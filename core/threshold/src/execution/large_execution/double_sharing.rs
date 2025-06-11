@@ -9,6 +9,7 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{party::Role, session::LargeSessionHandles},
+    ProtocolDescription,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -27,7 +28,7 @@ pub struct DoubleShare<Z> {
 }
 
 #[async_trait]
-pub trait DoubleSharing<Z: Ring>: Send + Sync + Clone {
+pub trait DoubleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
     async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -48,6 +49,17 @@ pub struct RealDoubleSharing<Z, S: LocalDoubleShare> {
     available_shares: Vec<(Z, Z)>,
     max_num_iterations: usize,
     vdm_matrix: ArrayD<Z>,
+}
+
+impl<Z, S: LocalDoubleShare> ProtocolDescription for RealDoubleSharing<Z, S> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-RealDoubleSharing:\n{}",
+            indent,
+            S::protocol_desc(depth + 1)
+        )
+    }
 }
 
 //Custom implementaiton of Clone to make sure we do not clone

@@ -8,6 +8,7 @@ use crate::{
         runtime::session::LargeSessionHandles,
         sharing::open::RobustOpen,
     },
+    ProtocolDescription,
 };
 
 ///Performs the VSS and does nothing after that (returns its secret)
@@ -19,6 +20,17 @@ pub struct DroppingCoinflipAfterVss<V: Vss> {
 impl<V: Vss> DroppingCoinflipAfterVss<V> {
     pub fn new(vss_strategy: V) -> Self {
         Self { vss: vss_strategy }
+    }
+}
+
+impl<V: Vss> ProtocolDescription for DroppingCoinflipAfterVss<V> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-DroppingCoinflipAfterVss:\n{}",
+            indent,
+            V::protocol_desc(depth + 1)
+        )
     }
 }
 
@@ -45,6 +57,18 @@ impl<V: Vss> Coinflip for DroppingCoinflipAfterVss<V> {
 pub struct MaliciousCoinflipRecons<V: Vss, RO: RobustOpen> {
     vss: V,
     robust_open: RO,
+}
+
+impl<V: Vss, RO: RobustOpen> ProtocolDescription for MaliciousCoinflipRecons<V, RO> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-MaliciousCoinflipRecons:\n{}\n{}",
+            indent,
+            V::protocol_desc(depth + 1),
+            RO::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<V: Vss, RO: RobustOpen> MaliciousCoinflipRecons<V, RO> {

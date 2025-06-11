@@ -10,12 +10,20 @@ use crate::{
             prf::PrfKey,
         },
     },
+    ProtocolDescription,
 };
 
 // Malicious implementation of both [`AgreeRandom`] and [`AgreeRandomFromShare`]
 // that simply does nothing
 #[derive(Clone, Default)]
 pub struct MaliciousAgreeRandomDrop {}
+
+impl ProtocolDescription for MaliciousAgreeRandomDrop {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-MaliciousAgreeRandomDrop", indent)
+    }
+}
 
 #[async_trait]
 impl AgreeRandom for MaliciousAgreeRandomDrop {

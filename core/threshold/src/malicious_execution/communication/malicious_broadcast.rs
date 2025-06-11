@@ -18,12 +18,20 @@ use crate::{
         runtime::{party::Role, session::BaseSessionHandles},
     },
     networking::value::{BcastHash, BroadcastValue, NetworkValue},
+    ProtocolDescription,
 };
 
 /// Malicious implementation of the [`Broadcast`] protocol
 /// that simply does nothing.
 #[derive(Clone, Default)]
 pub struct MaliciousBroadcastDrop {}
+
+impl ProtocolDescription for MaliciousBroadcastDrop {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-MaliciousBroadcastDrop", indent)
+    }
+}
 
 #[async_trait]
 impl Broadcast for MaliciousBroadcastDrop {
@@ -42,6 +50,13 @@ impl Broadcast for MaliciousBroadcastDrop {
 /// and then acts honestly
 #[derive(Clone, Default)]
 pub struct MaliciousBroadcastSender {}
+
+impl ProtocolDescription for MaliciousBroadcastSender {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-MaliciousBroadcastSender", indent)
+    }
+}
 
 #[async_trait]
 impl Broadcast for MaliciousBroadcastSender {
@@ -185,6 +200,13 @@ impl Broadcast for MaliciousBroadcastSender {
 /// The party outputs what it sees during round 1
 #[derive(Default, Clone)]
 pub struct MaliciousBroadcastSenderEcho {}
+
+impl ProtocolDescription for MaliciousBroadcastSenderEcho {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-MaliciousBroadcastSenderEcho", indent)
+    }
+}
 
 #[async_trait]
 impl Broadcast for MaliciousBroadcastSenderEcho {

@@ -32,8 +32,7 @@ pub trait BitGenOdd {
     async fn gen_bits_odd<
         Z: Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
         Rnd: Rng + CryptoRng,
-        Prss: PRSSPrimitives<Z>,
-        Ses: SmallSessionHandles<Z, Rnd, Prss>,
+        Ses: SmallSessionHandles<Z, Rnd>,
         P: BasePreprocessing<Z> + Send + ?Sized,
     >(
         amount: usize,
@@ -52,8 +51,7 @@ impl BitGenOdd for RealBitGenOdd {
     async fn gen_bits_odd<
         Z: Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
         Rnd: Rng + CryptoRng,
-        Prss: PRSSPrimitives<Z>,
-        Ses: SmallSessionHandles<Z, Rnd, Prss>,
+        Ses: SmallSessionHandles<Z, Rnd>,
         P: BasePreprocessing<Z> + Send + ?Sized,
     >(
         amount: usize,

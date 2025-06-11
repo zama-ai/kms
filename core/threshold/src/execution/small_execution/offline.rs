@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use tonic::async_trait;
 use tracing::{info_span, instrument};
 
-use super::prss::{PRSSPrimitives, SecurePRSSState};
+use super::prss::PRSSPrimitives;
 use crate::error::error_handler::log_error_wrapper;
 use crate::execution::communication::broadcast::SyncReliableBroadcast;
 use crate::execution::config::BatchParams;
@@ -23,11 +23,12 @@ use crate::{
         sharing::{shamir::ShamirSharings, share::Share},
     },
     networking::value::BroadcastValue,
+    ProtocolDescription,
 };
 
 #[async_trait]
 pub trait Preprocessing<Z: Clone, Rnd: Rng + CryptoRng, S: BaseSessionHandles<Rnd>>:
-    Send + Sync
+    ProtocolDescription + Send + Sync
 {
     /// Executes both GenTriples and NextRandom based on the given `batch_sizes`.
     async fn execute(
@@ -38,38 +39,36 @@ pub trait Preprocessing<Z: Clone, Rnd: Rng + CryptoRng, S: BaseSessionHandles<Rn
 }
 
 #[derive(Clone)]
-pub struct RealSmallPreprocessing<Z: Ring, Prss: PRSSPrimitives<Z>, BCast: Broadcast> {
+pub struct RealSmallPreprocessing<BCast: Broadcast> {
     broadcast: BCast,
-    // Note: We need phantom data here to specify
-    // an implementation of the PRSSPrimitives even if we do not hold anything
-    // that implements it inside this struct (as we fetch it from the session).
-    ring_marker: std::marker::PhantomData<Z>,
-    // This phantom data is here to allow us to define the above phantom data.
-    prss_marker: std::marker::PhantomData<Prss>,
 }
 
-impl<Z: Ring, Prss: PRSSPrimitives<Z>, BCast: Broadcast> RealSmallPreprocessing<Z, Prss, BCast> {
-    /// Creates an instance of a preprocessing protocol.
-    pub fn new(broadcast: BCast) -> Self {
-        Self {
-            broadcast,
-            ring_marker: std::marker::PhantomData,
-            prss_marker: std::marker::PhantomData,
-        }
+impl<BCast: Broadcast> ProtocolDescription for RealSmallPreprocessing<BCast> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-RealSmallPreprocessing:\n{}",
+            indent,
+            BCast::protocol_desc(depth + 1)
+        )
     }
 }
 
-impl<Z: Ring, Prss: PRSSPrimitives<Z>, BCast: Broadcast + Default> Default
-    for RealSmallPreprocessing<Z, Prss, BCast>
-{
+impl<BCast: Broadcast> RealSmallPreprocessing<BCast> {
+    /// Creates an instance of a preprocessing protocol.
+    pub fn new(broadcast: BCast) -> Self {
+        Self { broadcast }
+    }
+}
+
+impl<BCast: Broadcast + Default> Default for RealSmallPreprocessing<BCast> {
     fn default() -> Self {
         Self::new(BCast::default())
     }
 }
 
 /// Alias for [`RealSmallPreprocessing`] with a secure implementation of [`PRSSPrimitives`] and [`Broadcast`]
-pub type SecureSmallPreprocessing<Z> =
-    RealSmallPreprocessing<Z, SecurePRSSState<Z>, SyncReliableBroadcast>;
+pub type SecureSmallPreprocessing = RealSmallPreprocessing<SyncReliableBroadcast>;
 
 #[async_trait]
 impl<
@@ -77,10 +76,9 @@ impl<
         Rnd: Rng + CryptoRng + Send + Sync,
         // Note: Having the phantom data inside the struct definition
         // allows us to define this trait constraint.
-        Prss: PRSSPrimitives<Z>,
-        Ses: SmallSessionHandles<Z, Rnd, Prss>,
+        Ses: SmallSessionHandles<Z, Rnd>,
         BCast: Broadcast,
-    > Preprocessing<Z, Rnd, Ses> for RealSmallPreprocessing<Z, Prss, BCast>
+    > Preprocessing<Z, Rnd, Ses> for RealSmallPreprocessing<BCast>
 {
     async fn execute(
         &mut self,
@@ -112,12 +110,7 @@ impl<
 
 /// Computes a new batch of random values and appends the new batch to the the existing stash of preprocessing random values.
 #[instrument(name="MPC_Small.GenRandom",skip(amount,session), fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?amount))]
-async fn next_random_batch<
-    Z: Ring,
-    Rnd: Rng + CryptoRng,
-    Prss: PRSSPrimitives<Z>,
-    Ses: SmallSessionHandles<Z, Rnd, Prss>,
->(
+async fn next_random_batch<Z: Ring, Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
     amount: usize,
     session: &mut Ses,
 ) -> anyhow::Result<Vec<Share<Z>>> {
@@ -145,8 +138,7 @@ async fn next_random_batch<
 async fn next_triple_batch<
     Z: ErrorCorrect,
     Rnd: Rng + CryptoRng,
-    Prss: PRSSPrimitives<Z>,
-    Ses: SmallSessionHandles<Z, Rnd, Prss>,
+    Ses: SmallSessionHandles<Z, Rnd>,
     BCast: Broadcast,
 >(
     session: &mut Ses,
@@ -362,12 +354,7 @@ fn parse_d_shares<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
 
 /// Output amount of PRSS.Next() calls
 #[instrument(name="PRSS.Next",skip(session,amount),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?amount))]
-fn prss_list<
-    Z: Ring,
-    Rnd: Rng + CryptoRng,
-    Prss: PRSSPrimitives<Z>,
-    Ses: SmallSessionHandles<Z, Rnd, Prss>,
->(
+fn prss_list<Z: Ring, Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
     session: &mut Ses,
     amount: usize,
 ) -> anyhow::Result<Vec<Z>> {
@@ -381,12 +368,7 @@ fn prss_list<
 
 /// Output amount of PRZS.Next() calls
 #[instrument(name="PRZS.Next",skip(session,amount),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?amount))]
-fn przs_list<
-    Z: Ring,
-    Rnd: Rng + CryptoRng,
-    Prss: PRSSPrimitives<Z>,
-    Ses: SmallSessionHandles<Z, Rnd, Prss>,
->(
+fn przs_list<Z: Ring, Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
     session: &mut Ses,
     amount: usize,
 ) -> anyhow::Result<Vec<Z>> {
@@ -403,12 +385,7 @@ fn przs_list<
 /// The method finds the corrupt parties (based on what they broadcast) and adds them to the list of corrupt parties in the session.
 ///
 /// __NOTE__: This method could be batched.
-async fn check_d<
-    Z: Ring,
-    Rnd: Rng + CryptoRng,
-    Prss: PRSSPrimitives<Z>,
-    Ses: SmallSessionHandles<Z, Rnd, Prss>,
->(
+async fn check_d<Z: Ring, Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
     session: &mut Ses,
     prss_ctr: u128,
     przs_ctr: u128,
@@ -474,9 +451,9 @@ mod test {
     use crate::execution::small_execution::agree_random::RobustSecureAgreeRandom;
     use crate::execution::small_execution::offline::reconstruct_d_values;
     use crate::execution::small_execution::prss::{
-        DerivePRSSState, PRSSInit, PRSSPrimitives, RobustSecurePrssInit, SecurePRSSState,
+        DerivePRSSState, PRSSInit, RobustSecurePrssInit,
     };
-    use crate::malicious_execution::runtime::malicious_session::MaliciousSmallSessionStruct;
+    use crate::malicious_execution::runtime::malicious_session::GenericSmallSessionStruct;
     use crate::malicious_execution::small_execution::malicious_offline::{
         MaliciousOfflineDrop, MaliciousOfflineWrongAmount,
     };
@@ -533,18 +510,22 @@ mod test {
         Z: ErrorCorrect + Invert + PRSSConversions,
         const EXTENSION_DEGREE: usize,
         PrssInitMalicious: PRSSInit<Z> + Default,
-        PrssMalicious: PRSSPrimitives<Z> + Clone + 'static,
         PreprocMalicious: Preprocessing<
                 Z,
                 AesRng,
-                MaliciousSmallSessionStruct<Z, AesRng, PrssMalicious, SessionParameters>,
+                GenericSmallSessionStruct<
+                    Z,
+                    AesRng,
+                    <PrssInitMalicious::OutputType as DerivePRSSState<Z>>::OutputType,
+                    SessionParameters,
+                >,
             > + Clone
             + 'static,
     >(
         params: TestingParameters,
         malicious_offline: PreprocMalicious,
     ) where
-        <PrssInitMalicious::OutputType as DerivePRSSState<Z>>::OutputType: Into<PrssMalicious>,
+        <PrssInitMalicious::OutputType as DerivePRSSState<Z>>::OutputType: Clone,
     {
         let mut task_honest = |mut session: SmallSession<Z>| async move {
             // explicitly init the session
@@ -554,7 +535,7 @@ mod test {
                 .await
                 .unwrap();
             let my_role = session.my_role().unwrap();
-            let mut honest_offline = SecureSmallPreprocessing::<Z>::default();
+            let mut honest_offline = SecureSmallPreprocessing::default();
             let preprocessing = honest_offline
                 .execute(&mut new_session, BATCH_PARAMS)
                 .await
@@ -567,13 +548,12 @@ mod test {
                 // explicitly init the session
                 // to be able to run different PRSS init strategies
                 let base_session = session.to_base_session().unwrap();
-                let mut malicious_session =
-                    MaliciousSmallSessionStruct::<_, _, PrssMalicious, _>::new_and_init_prss_state(
-                        base_session,
-                        PrssInitMalicious::default(),
-                    )
-                    .await
-                    .unwrap();
+                let mut malicious_session = GenericSmallSessionStruct::new_and_init_prss_state(
+                    base_session,
+                    PrssInitMalicious::default(),
+                )
+                .await
+                .unwrap();
 
                 let my_role = malicious_session.my_role().unwrap();
                 let preprocessing = malicious_offline
@@ -731,14 +711,12 @@ mod test {
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
             RobustSecurePrssInit,
             _,
-            _,
         >(params.clone(), SecureSmallPreprocessing::default());
 
         test_offline_small_strategies::<
             ResiduePolyF4Z64,
             { ResiduePolyF4Z64::EXTENSION_DEGREE },
             RobustSecurePrssInit,
-            _,
             _,
         >(params, SecureSmallPreprocessing::default());
     }
@@ -753,14 +731,12 @@ mod test {
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
             MaliciousPrssDrop,
-            MaliciousPrssDrop,
             _,
         >(params.clone(), MaliciousOfflineDrop::default());
 
         test_offline_small_strategies::<
             ResiduePolyF4Z64,
             { ResiduePolyF4Z64::EXTENSION_DEGREE },
-            MaliciousPrssDrop,
             MaliciousPrssDrop,
             _,
         >(params, MaliciousOfflineDrop::default());
@@ -776,7 +752,6 @@ mod test {
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
             RobustSecurePrssInit,
-            SecurePRSSState<ResiduePolyF4Z128>,
             _,
         >(params.clone(), MaliciousOfflineDrop::default());
 
@@ -784,7 +759,6 @@ mod test {
             ResiduePolyF4Z64,
             { ResiduePolyF4Z64::EXTENSION_DEGREE },
             RobustSecurePrssInit,
-            SecurePRSSState<ResiduePolyF4Z64>,
             _,
         >(params, MaliciousOfflineDrop::default());
     }
@@ -799,7 +773,6 @@ mod test {
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
             RobustSecurePrssInit,
-            SecurePRSSState<ResiduePolyF4Z128>,
             _,
         >(
             params.clone(),
@@ -810,7 +783,6 @@ mod test {
             ResiduePolyF4Z64,
             { ResiduePolyF4Z64::EXTENSION_DEGREE },
             RobustSecurePrssInit,
-            SecurePRSSState<ResiduePolyF4Z64>,
             _,
         >(
             params,
@@ -837,14 +809,9 @@ mod test {
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
             MaliciousPrss<ResiduePolyF4Z128>,
             _,
-            _,
         >(
             params.clone(),
-            RealSmallPreprocessing::<
-                ResiduePolyF4Z128,
-                MaliciousPrss<ResiduePolyF4Z128>,
-                SyncReliableBroadcast,
-            >::default(),
+            RealSmallPreprocessing::<SyncReliableBroadcast>::default(),
         );
 
         test_offline_small_strategies::<
@@ -852,14 +819,9 @@ mod test {
             { ResiduePolyF4Z64::EXTENSION_DEGREE },
             MaliciousPrss<ResiduePolyF4Z64>,
             _,
-            _,
         >(
             params,
-            RealSmallPreprocessing::<
-                ResiduePolyF4Z64,
-                MaliciousPrss<ResiduePolyF4Z64>,
-                SyncReliableBroadcast,
-            >::default(),
+            RealSmallPreprocessing::<SyncReliableBroadcast>::default(),
         );
     }
 
@@ -882,14 +844,9 @@ mod test {
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
             MaliciousPrss<ResiduePolyF4Z128>,
             _,
-            _,
         >(
             params.clone(),
-            RealSmallPreprocessing::<
-                ResiduePolyF4Z128,
-                <MaliciousPrss<ResiduePolyF4Z128> as DerivePRSSState<ResiduePolyF4Z128>>::OutputType,
-                SyncReliableBroadcast,
-            >::default(),
+            RealSmallPreprocessing::<SyncReliableBroadcast>::default(),
         );
 
         test_offline_small_strategies::<
@@ -897,14 +854,9 @@ mod test {
             { ResiduePolyF4Z64::EXTENSION_DEGREE },
             MaliciousPrss<ResiduePolyF4Z64>,
             _,
-            _,
         >(
             params,
-            RealSmallPreprocessing::<
-                ResiduePolyF4Z64,
-                <MaliciousPrss<ResiduePolyF4Z64> as DerivePRSSState<ResiduePolyF4Z64>>::OutputType,
-                SyncReliableBroadcast,
-            >::default(),
+            RealSmallPreprocessing::<SyncReliableBroadcast>::default(),
         );
     }
 

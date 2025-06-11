@@ -14,6 +14,7 @@ use crate::{
         runtime::{party::Role, session::LargeSessionHandles},
     },
     tests::helper::tests_and_benches::roles_from_idxs,
+    ProtocolDescription,
 };
 use async_trait::async_trait;
 use rand::{CryptoRng, Rng};
@@ -26,6 +27,21 @@ pub struct MaliciousSenderLocalDoubleShare<C: Coinflip, S: ShareDispute, BCast: 
     share_dispute: S,
     broadcast: BCast,
     roles_to_lie_to: Vec<Role>,
+}
+
+impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
+    for MaliciousSenderLocalDoubleShare<C, S, BCast>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-MaliciousSenderLocalDoubleShare:\n{}\n{}\n{}",
+            indent,
+            C::protocol_desc(depth + 1),
+            S::protocol_desc(depth + 1),
+            BCast::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> MaliciousSenderLocalDoubleShare<C, S, BCast> {
@@ -51,6 +67,21 @@ pub struct MaliciousReceiverLocalDoubleShare<C: Coinflip, S: ShareDispute, BCast
     share_dispute: S,
     broadcast: BCast,
     roles_to_lie_to: Vec<Role>,
+}
+
+impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
+    for MaliciousReceiverLocalDoubleShare<C, S, BCast>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-MaliciousReceiverLocalDoubleShare:\n{}\n{}\n{}",
+            indent,
+            C::protocol_desc(depth + 1),
+            S::protocol_desc(depth + 1),
+            BCast::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast>

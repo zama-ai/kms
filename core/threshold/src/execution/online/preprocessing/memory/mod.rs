@@ -224,6 +224,6 @@ mod tests {
     test_preprocessing![Z128, u128];
 }
 
-mod bitdec;
-mod dkg;
-mod noiseflood;
+pub(crate) mod bitdec;
+pub(crate) mod dkg;
+pub(crate) mod noiseflood;

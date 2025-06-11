@@ -62,8 +62,7 @@ fn partial_decrypt<N: Const + NTTConstants<LevelOne>>(
 pub(crate) async fn noise_flood_decryption<
     N: Clone + Const + NTTConstants<LevelOne>,
     R: Rng + CryptoRng,
-    Prss: PRSSPrimitives<LevelOne>,
-    S: SmallSessionHandles<LevelOne, R, Prss>,
+    S: SmallSessionHandles<LevelOne, R>,
 >(
     session: &mut S,
     keyshares: &PrivateBgvKeySet,

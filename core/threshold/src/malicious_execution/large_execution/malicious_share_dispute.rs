@@ -11,6 +11,7 @@ use crate::{
     },
     networking::value::NetworkValue,
     tests::helper::tests_and_benches::roles_from_idxs,
+    ProtocolDescription,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -20,6 +21,13 @@ use std::collections::HashMap;
 ///Dropout strategy
 #[derive(Default, Clone)]
 pub struct DroppingShareDispute {}
+
+impl ProtocolDescription for DroppingShareDispute {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-DroppingShareDispute", indent)
+    }
+}
 
 #[async_trait]
 impl ShareDispute for DroppingShareDispute {
@@ -43,6 +51,13 @@ impl ShareDispute for DroppingShareDispute {
 ///Send an incorrect amount
 #[derive(Default, Clone)]
 pub struct WrongShareDisputeRecons {}
+
+impl ProtocolDescription for WrongShareDisputeRecons {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-WrongShareDisputeRecons", indent)
+    }
+}
 
 #[async_trait]
 impl ShareDispute for WrongShareDisputeRecons {
@@ -127,6 +142,13 @@ impl ShareDispute for WrongShareDisputeRecons {
 #[derive(Default, Clone)]
 pub struct MaliciousShareDisputeRecons {
     roles_to_lie_to: Vec<Role>,
+}
+
+impl ProtocolDescription for MaliciousShareDisputeRecons {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-MaliciousShareDisputeRecons", indent)
+    }
 }
 
 impl MaliciousShareDisputeRecons {

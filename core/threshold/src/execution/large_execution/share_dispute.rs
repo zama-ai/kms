@@ -9,6 +9,7 @@ use crate::{
         runtime::{party::Role, session::LargeSessionHandles},
     },
     networking::value::NetworkValue,
+    ProtocolDescription,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -36,7 +37,7 @@ pub struct ShareDisputeOutputDouble<Z> {
 //Not sure it makes sense to do a dummy implementation?
 //what would it look like?
 #[async_trait]
-pub trait ShareDispute: Send + Sync + Clone + Default {
+pub trait ShareDispute: ProtocolDescription + Send + Sync + Clone {
     /// Executes the ShareDispute protocol on a vector of secrets,
     /// expecting all parties to also share a vector of secrets of the same length.
     /// Returns:
@@ -64,6 +65,13 @@ pub trait ShareDispute: Send + Sync + Clone + Default {
 
 #[derive(Default, Clone)]
 pub struct RealShareDispute {}
+
+impl ProtocolDescription for RealShareDispute {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-RealShareDispute", indent)
+    }
+}
 
 /// Returns the ids (one based) of the roles I am in dispute with
 pub(crate) fn compute_idx_dispute<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(

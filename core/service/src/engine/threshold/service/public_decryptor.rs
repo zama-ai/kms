@@ -21,7 +21,8 @@ use kms_grpc::{
 use tfhe::FheTypes;
 use threshold_fhe::{
     execution::endpoints::decryption::{
-        decrypt_using_bitdec, decrypt_using_noiseflooding, DecryptionMode, Small,
+        decrypt_using_noiseflooding, secure_decrypt_using_bitdec, DecryptionMode,
+        NoiseFloodSmallSession,
     },
     session_id::SessionId,
 };
@@ -106,7 +107,7 @@ impl<
                         .await,
                     "Could not prepare ddec data for noiseflood decryption".to_string(),
                 )?;
-                let mut preparation = Small::new(session.clone());
+                let mut preparation = NoiseFloodSmallSession::new(session.clone());
 
                 decrypt_using_noiseflooding(
                     &mut session,
@@ -130,7 +131,7 @@ impl<
                     "Could not prepare ddec data for bitdec decryption".to_string(),
                 )?;
 
-                decrypt_using_bitdec(
+                secure_decrypt_using_bitdec(
                     &mut session,
                     &low_level_ct.try_get_small_ct()?,
                     &keys.private_keys,

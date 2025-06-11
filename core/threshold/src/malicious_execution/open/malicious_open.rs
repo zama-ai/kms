@@ -8,12 +8,20 @@ use crate::{
         runtime::session::BaseSessionHandles,
         sharing::open::{OpeningKind, RobustOpen, SecureRobustOpen},
     },
+    ProtocolDescription,
 };
 
 /// Malicious implementation of the [`RobustOpen`] protocol
 /// that simply does nothing
 #[derive(Clone, Default)]
 pub struct MaliciousRobustOpenDrop {}
+
+impl ProtocolDescription for MaliciousRobustOpenDrop {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-MaliciousRobustOpenDrop", indent)
+    }
+}
 
 #[async_trait]
 impl RobustOpen for MaliciousRobustOpenDrop {
@@ -32,6 +40,12 @@ impl RobustOpen for MaliciousRobustOpenDrop {
 #[derive(Clone, Default)]
 pub struct MaliciousRobustOpenLie {}
 
+impl ProtocolDescription for MaliciousRobustOpenLie {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-MaliciousRobustOpenLie", indent)
+    }
+}
 #[async_trait]
 impl RobustOpen for MaliciousRobustOpenLie {
     async fn execute<Z: Ring + ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(

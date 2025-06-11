@@ -13,6 +13,7 @@ use crate::{
     },
     hashing::{hash_element, hash_element_w_size, DomainSep},
     networking::value::{AgreeRandomValue, NetworkValue},
+    ProtocolDescription,
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -27,7 +28,7 @@ pub(crate) const DSEP_AR: DomainSep = *b"AGREERND";
 /// Trait to capture the AgreeRandom protocols
 /// with no secret input
 #[async_trait]
-pub trait AgreeRandom: Clone + Send + Sync {
+pub trait AgreeRandom: ProtocolDescription + Clone + Send + Sync {
     /// Perform a batched version of Agree Random on all subsets of size n-t
     ///
     /// This follows the AgreeRandom and AgreeRandom-w-Abort protocols in the NIST document.
@@ -40,7 +41,7 @@ pub trait AgreeRandom: Clone + Send + Sync {
 /// Trait to capture the AgreeRandom protocol
 /// with a secret input
 #[async_trait]
-pub trait AgreeRandomFromShare: Clone + Send + Sync {
+pub trait AgreeRandomFromShare: ProtocolDescription + Clone + Send + Sync {
     /// Perform a batched version of Agree Random on all subsets of size n-t
     /// where parties agree on the hash of the reconstructed value.
     ///
@@ -57,15 +58,40 @@ pub trait AgreeRandomFromShare: Clone + Send + Sync {
 /// Defines the passively secure protocol [`AgreeRandom`] described in the NIST document
 pub struct PassiveSecureAgreeRandom {}
 
+impl ProtocolDescription for PassiveSecureAgreeRandom {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-PassiveSecureAgreeRandom", indent)
+    }
+}
+
 #[derive(Clone, Default)]
 /// Defines the secure with abort [`AgreeRandom`] protocol described in the NIST document
 pub struct AbortSecureAgreeRandom {}
+
+impl ProtocolDescription for AbortSecureAgreeRandom {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-AbortSecureAgreeRandom", indent)
+    }
+}
 
 #[derive(Clone)]
 /// Defines the robust [`AgreeRandomFromShare`] protocol described in the NIST document
 /// Relies on a [`RobustOpen`] protocol
 pub struct RobustRealAgreeRandom<RO: RobustOpen> {
     robust_open: RO,
+}
+
+impl<RO: RobustOpen> ProtocolDescription for RobustRealAgreeRandom<RO> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-RobustRealAgreeRandom:\n{}",
+            indent,
+            RO::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<RO: RobustOpen> RobustRealAgreeRandom<RO> {
@@ -90,9 +116,23 @@ pub type RobustSecureAgreeRandom = RobustRealAgreeRandom<SecureRobustOpen>;
 /// Defines a dummy (insecure) version of the [`AgreeRandom`] protocol
 pub struct DummyAgreeRandom {}
 
+impl ProtocolDescription for DummyAgreeRandom {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-DummyAgreeRandom", indent)
+    }
+}
+
 #[derive(Clone, Default)]
 /// Defines a dummy (insecure) version of the [`AgreeRandomFromShare`] protocol
 pub struct DummyAgreeRandomFromShare {}
+
+impl ProtocolDescription for DummyAgreeRandomFromShare {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-DummyAgreeRandomFromShare", indent)
+    }
+}
 
 #[async_trait]
 impl<RO: RobustOpen> AgreeRandomFromShare for RobustRealAgreeRandom<RO> {

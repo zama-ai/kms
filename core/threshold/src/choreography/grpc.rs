@@ -27,11 +27,11 @@ use crate::choreography::requests::{
 };
 use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
 use crate::execution::endpoints::decryption::{
-    combine_plaintext_blocks, init_prep_bitdec_large, init_prep_bitdec_small,
-    run_decryption_noiseflood_64, task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode,
-    NoiseFloodPreparation, RadixOrBoolCiphertext, SnsRadixOrBoolCiphertext,
+    combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
+    task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, NoiseFloodPreparation,
+    RadixOrBoolCiphertext, SnsRadixOrBoolCiphertext,
 };
-use crate::execution::endpoints::decryption::{Large, Small};
+use crate::execution::endpoints::decryption::{NoiseFloodLargeSession, NoiseFloodSmallSession};
 use crate::execution::endpoints::keygen::FhePubKeySet;
 use crate::execution::endpoints::keygen::{
     distributed_keygen_z128, distributed_keygen_z64, PrivateKeySet,
@@ -39,28 +39,31 @@ use crate::execution::endpoints::keygen::{
 use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::large_execution::offline::SecureLargePreprocessing;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
+use crate::execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
 use crate::execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
+use crate::execution::online::preprocessing::orchestration::producers::bits_producer::GenericBitProducer;
+use crate::execution::online::preprocessing::orchestration::producers::randoms_producer::GenericRandomProducer;
+use crate::execution::online::preprocessing::orchestration::producers::triples_producer::GenericTripleProducer;
 use crate::execution::online::preprocessing::{
-    BitDecPreprocessing, DKGPreprocessing, NoiseFloodPreprocessing, PreprocessorFactory,
+    BitDecPreprocessing, DKGPreprocessing, InMemoryBitDecPreprocessing, NoiseFloodPreprocessing,
+    PreprocessorFactory,
 };
 use crate::execution::online::reshare::{reshare_sk_same_sets, ResharePreprocRequired};
 use crate::execution::runtime::party::{Identity, Role};
+use crate::execution::runtime::session::ToBaseSession;
 use crate::execution::runtime::session::{BaseSession, BaseSessionHandles};
 use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
 use crate::execution::runtime::session::{LargeSession, SessionParameters};
-use crate::execution::runtime::session::{SmallSession, ToBaseSession};
 use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::execution::small_execution::prf::PRSSConversions;
-use crate::execution::small_execution::prss::DerivePRSSState;
+use crate::execution::small_execution::prss::{DerivePRSSState, PRSSPrimitives};
 use crate::execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
 use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
+use crate::malicious_execution::runtime::malicious_session::GenericSmallSessionStruct;
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use crate::networking::value::BroadcastValue;
 use crate::networking::{NetworkMode, NetworkingStrategy};
-use crate::{
-    execution::small_execution::prss::{PRSSInit, PRSSSetup, RobustSecurePrssInit},
-    session_id::SessionId,
-};
+use crate::{execution::small_execution::prss::PRSSInit, session_id::SessionId};
 use aes_prng::AesRng;
 use async_trait::async_trait;
 use clap::ValueEnum;
@@ -82,13 +85,15 @@ pub enum SupportedRing {
 }
 
 #[derive(Clone)]
-enum SupportedPRSSSetup<const EXTENSION_DEGREE: usize> {
+enum SupportedPRSSSetup<PRSSSetupTypeZ64: Clone, PRSSSetupTypeZ128: Clone> {
     //NOTE: For now we never deal with ResiduePolyF8Z64 option
-    ResiduePolyZ64(PRSSSetup<ResiduePoly<Z64, EXTENSION_DEGREE>>),
-    ResiduePolyZ128(PRSSSetup<ResiduePoly<Z128, EXTENSION_DEGREE>>),
+    ResiduePolyZ64(PRSSSetupTypeZ64),
+    ResiduePolyZ128(PRSSSetupTypeZ128),
 }
 
-impl<const EXTENSION_DEGREE: usize> SupportedPRSSSetup<EXTENSION_DEGREE> {
+impl<PRSSSetupTypeZ64: Clone, PRSSSetupTypeZ128: Clone>
+    SupportedPRSSSetup<PRSSSetupTypeZ64, PRSSSetupTypeZ128>
+{
     // This method returns Result<T, tonic::Status> directly rather than using our BoxedStatus wrapper.
     // This is a deliberate design choice for the following reasons:
     // 1. This is a gRPC service method that directly propagates errors to the transport layer
@@ -97,7 +102,7 @@ impl<const EXTENSION_DEGREE: usize> SupportedPRSSSetup<EXTENSION_DEGREE> {
     // The clippy::result_large_err warning is suppressed because this is an API boundary
     // where the error type is dictated by the external interface requirements.
     #[allow(clippy::result_large_err)]
-    fn get_poly64(&self) -> Result<PRSSSetup<ResiduePoly<Z64, EXTENSION_DEGREE>>, tonic::Status> {
+    fn get_poly64(&self) -> Result<PRSSSetupTypeZ64, tonic::Status> {
         match self {
             SupportedPRSSSetup::ResiduePolyZ64(res) => Ok(res.clone()),
             _ => Err(tonic::Status::new(
@@ -115,7 +120,7 @@ impl<const EXTENSION_DEGREE: usize> SupportedPRSSSetup<EXTENSION_DEGREE> {
     // The clippy::result_large_err warning is suppressed because this is an API boundary
     // where the error type is dictated by the external interface requirements.
     #[allow(clippy::result_large_err)]
-    fn get_poly128(&self) -> Result<PRSSSetup<ResiduePoly<Z128, EXTENSION_DEGREE>>, tonic::Status> {
+    fn get_poly128(&self) -> Result<PRSSSetupTypeZ128, tonic::Status> {
         match self {
             SupportedPRSSSetup::ResiduePolyZ128(res) => Ok(res.clone()),
             _ => Err(tonic::Status::new(
@@ -143,16 +148,21 @@ type DKGPreprocSnsStore<const EXTENSION_DEGREE: usize> = DashMap<
 type KeyStore<const EXTENSION_DEGREE: usize> =
     DashMap<SessionId, Arc<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>>;
 type DDecPreprocNFStore<const EXTENSION_DEGREE: usize> =
-    DashMap<SessionId, Vec<Box<dyn NoiseFloodPreprocessing<EXTENSION_DEGREE>>>>;
+    DashMap<SessionId, Vec<InMemoryNoiseFloodPreprocessing<EXTENSION_DEGREE>>>;
 type DDecPreprocBitDecStore<const EXTENSION_DEGREE: usize> =
-    DashMap<SessionId, Vec<Vec<Box<dyn BitDecPreprocessing<EXTENSION_DEGREE>>>>>;
+    DashMap<SessionId, Vec<Vec<InMemoryBitDecPreprocessing<EXTENSION_DEGREE>>>>;
 type DDecResultStore = DashMap<SessionId, Vec<Z64>>;
 type CrsStore = DashMap<SessionId, InternalPublicParameter>;
 type StatusStore = DashMap<SessionId, JoinHandle<()>>;
+type PRSSStore<PRSSSetupTypeZ64, PRSSSetupTypeZ128> =
+    DashMap<SupportedRing, SupportedPRSSSetup<PRSSSetupTypeZ64, PRSSSetupTypeZ128>>;
 
-#[derive(Default)]
-struct GrpcDataStores<const EXTENSION_DEGREE: usize> {
-    prss_setup: Arc<DashMap<SupportedRing, SupportedPRSSSetup<EXTENSION_DEGREE>>>,
+struct GrpcDataStores<
+    const EXTENSION_DEGREE: usize,
+    PRSSSetupTypeZ64: Clone,
+    PRSSSetupTypeZ128: Clone,
+> {
+    prss_setup: Arc<PRSSStore<PRSSSetupTypeZ64, PRSSSetupTypeZ128>>,
     dkg_preproc_store_regular: Arc<DKGPreprocRegularStore<EXTENSION_DEGREE>>,
     dkg_preproc_store_sns: Arc<DKGPreprocSnsStore<EXTENSION_DEGREE>>,
     key_store: Arc<KeyStore<EXTENSION_DEGREE>>,
@@ -163,17 +173,120 @@ struct GrpcDataStores<const EXTENSION_DEGREE: usize> {
     status_store: Arc<StatusStore>,
 }
 
-pub struct GrpcChoreography<const EXTENSION_DEGREE: usize> {
+impl<const EXTENSION_DEGREE: usize, PRSSSetupTypeZ64: Clone, PRSSSetupTypeZ128: Clone> Default
+    for GrpcDataStores<EXTENSION_DEGREE, PRSSSetupTypeZ64, PRSSSetupTypeZ128>
+{
+    fn default() -> Self {
+        Self {
+            prss_setup: Arc::new(DashMap::new()),
+            dkg_preproc_store_regular: Arc::new(DashMap::new()),
+            dkg_preproc_store_sns: Arc::new(DashMap::new()),
+            key_store: Arc::new(DashMap::new()),
+            ddec_preproc_store_nf: Arc::new(DashMap::new()),
+            ddec_preproc_store_bd: Arc::new(DashMap::new()),
+            ddec_result_store: Arc::new(DashMap::new()),
+            crs_store: Arc::new(DashMap::new()),
+            status_store: Arc::new(DashMap::new()),
+        }
+    }
+}
+
+// Type aliases for complex associated types
+type PRSSInitOutput64<P, const EXTENSION_DEGREE: usize> =
+    <P as PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>>::OutputType;
+
+type PRSSInitOutput128<P, const EXTENSION_DEGREE: usize> =
+    <P as PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>>::OutputType;
+
+type PRSSState64<P, const EXTENSION_DEGREE: usize> =
+    <PRSSInitOutput64<P, EXTENSION_DEGREE> as DerivePRSSState<
+        ResiduePoly<Z64, EXTENSION_DEGREE>,
+    >>::OutputType;
+
+type PRSSState128<P, const EXTENSION_DEGREE: usize> =
+    <PRSSInitOutput128<P, EXTENSION_DEGREE> as DerivePRSSState<
+        ResiduePoly<Z128, EXTENSION_DEGREE>,
+    >>::OutputType;
+
+type GenericSmallSessionZ64<P, const EXTENSION_DEGREE: usize> =
+    GenericSmallSessionStruct<ResiduePoly<Z64, EXTENSION_DEGREE>, AesRng, P, SessionParameters>;
+
+type GenericSmallSessionZ128<P, const EXTENSION_DEGREE: usize> =
+    GenericSmallSessionStruct<ResiduePoly<Z128, EXTENSION_DEGREE>, AesRng, P, SessionParameters>;
+
+pub struct GrpcChoreography<
+    const EXTENSION_DEGREE: usize,
+    PRSSInitStrategy: Default,
+    SmallOfflineStrategy: Default,
+    LargeOfflineStrategyZ64: Default,
+    LargeOfflineStrategyZ128: Default,
+> where
+    PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>,
+    PRSSInitStrategy: PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+{
     own_identity: Identity,
     networking_strategy: Arc<NetworkingStrategy>,
     factory: Arc<Mutex<Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>>>,
-    data: GrpcDataStores<EXTENSION_DEGREE>,
+    data: GrpcDataStores<
+        EXTENSION_DEGREE,
+        <PRSSInitStrategy as PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>>::OutputType,
+        <PRSSInitStrategy as PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>>::OutputType,
+    >,
+    _marker_prss_strat: std::marker::PhantomData<PRSSInitStrategy>,
+    _marker_small_offline_strat: std::marker::PhantomData<SmallOfflineStrategy>,
+    _marker_large_offline_z64_strat: std::marker::PhantomData<LargeOfflineStrategyZ64>,
+    _marker_large_offline_z128_strat: std::marker::PhantomData<LargeOfflineStrategyZ128>,
 }
 
-impl<const EXTENSION_DEGREE: usize> GrpcChoreography<EXTENSION_DEGREE>
+impl<
+        const EXTENSION_DEGREE: usize,
+        PRSSInitStrategy: Default + 'static,
+        SmallOfflineStrategy: Default + 'static,
+        LargeOfflineStrategyZ64: Default + 'static,
+        LargeOfflineStrategyZ128: Default + 'static,
+    >
+    GrpcChoreography<
+        EXTENSION_DEGREE,
+        PRSSInitStrategy,
+        SmallOfflineStrategy,
+        LargeOfflineStrategyZ64,
+        LargeOfflineStrategyZ128,
+    >
 where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    // Ring requirements for both Z64 and Z128 polynomials
     ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+
+    // PRSS initialization and state derivation
+    PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>
+        + PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+
+    PRSSState64<PRSSInitStrategy, EXTENSION_DEGREE>:
+        PRSSPrimitives<ResiduePoly<Z64, EXTENSION_DEGREE>> + Clone,
+
+    PRSSState128<PRSSInitStrategy, EXTENSION_DEGREE>:
+        PRSSPrimitives<ResiduePoly<Z128, EXTENSION_DEGREE>> + Clone,
+
+    // Preprocessing strategies
+    SmallOfflineStrategy: Preprocessing<
+            ResiduePoly<Z64, EXTENSION_DEGREE>,
+            AesRng,
+            GenericSmallSessionZ64<
+                PRSSState64<PRSSInitStrategy, EXTENSION_DEGREE>,
+                EXTENSION_DEGREE,
+            >,
+        > + Preprocessing<
+            ResiduePoly<Z128, EXTENSION_DEGREE>,
+            AesRng,
+            GenericSmallSessionZ128<
+                PRSSState128<PRSSInitStrategy, EXTENSION_DEGREE>,
+                EXTENSION_DEGREE,
+            >,
+        >,
+    LargeOfflineStrategyZ64:
+        Preprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>, AesRng, LargeSession>,
+    LargeOfflineStrategyZ128:
+        Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, AesRng, LargeSession>,
 {
     pub fn new(
         own_identity: Identity,
@@ -181,12 +294,77 @@ where
         factory: Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>,
     ) -> Self {
         tracing::debug!("Starting Party with identity: {own_identity}");
+        println!("{}", Self::describe_self());
         GrpcChoreography {
             own_identity,
             networking_strategy: Arc::new(networking_strategy),
             factory: Arc::new(Mutex::new(factory)),
             data: GrpcDataStores::default(),
+            _marker_prss_strat: std::marker::PhantomData,
+            _marker_small_offline_strat: std::marker::PhantomData,
+            _marker_large_offline_z64_strat: std::marker::PhantomData,
+            _marker_large_offline_z128_strat: std::marker::PhantomData,
         }
+    }
+
+    pub fn describe_self() -> String {
+        // Get all protocol descriptions
+        let prss_desc = PRSSInitStrategy::protocol_desc(1);
+        let small_desc = SmallOfflineStrategy::protocol_desc(1);
+        let large_z64_desc = LargeOfflineStrategyZ64::protocol_desc(1);
+        let large_z128_desc = LargeOfflineStrategyZ128::protocol_desc(1);
+
+        // Calculate the maximum width needed
+        let header = "GRPC CHOREOGRAPHY PROTOCOL DESCRIPTIONS";
+        let section_headers = [
+            "PRSSInit:",
+            "SmallOffline:",
+            "LargeOfflineZ64:",
+            "LargeOfflineZ128:",
+        ];
+
+        // Find max line width across ALL content (including headers and section titles)
+        let max_desc_width = [&prss_desc, &small_desc, &large_z64_desc, &large_z128_desc]
+            .iter()
+            .flat_map(|desc| desc.lines())
+            .map(|line| line.len())
+            .max()
+            .unwrap_or(0);
+
+        let max_header_width = section_headers.iter().map(|h| h.len()).max().unwrap_or(0);
+        let main_header_width = header.len();
+
+        // Calculate the CONTENT width (what goes between the | |)
+        let content_width = max_desc_width.max(max_header_width).max(main_header_width);
+
+        // Helper function to format content lines with consistent width
+        let format_section = |title: &str, content: &str| {
+            let mut result = String::new();
+            result.push_str(&format!("│ {:^width$} │\n", title, width = content_width));
+
+            for line in content.lines() {
+                result.push_str(&format!("│ {:<width$} │\n", line, width = content_width));
+            }
+            result
+        };
+
+        // Build the table
+        let line = '─'.to_string().repeat(content_width + 2).to_string();
+        format!(
+            "┌{}┐\n│ {:^width$} │\n├{}┤\n{}├{}┤\n{}├{}┤\n{}├{}┤\n{}└{}┘",
+            &line,
+            header,
+            &line,
+            format_section("PRSSInit:", &prss_desc),
+            &line,
+            format_section("SmallOffline:", &small_desc),
+            &line,
+            format_section("LargeOfflineZ64:", &large_z64_desc),
+            &line,
+            format_section("LargeOfflineZ128:", &large_z128_desc),
+            &line,
+            width = content_width
+        )
     }
 
     pub fn into_server(self) -> ChoreographyServer<impl Choreography> {
@@ -280,10 +458,55 @@ where
 }
 
 #[async_trait]
-impl<const EXTENSION_DEGREE: usize> Choreography for GrpcChoreography<EXTENSION_DEGREE>
+impl<
+        const EXTENSION_DEGREE: usize,
+        PRSSInitStrategy: Default + 'static,
+        SmallOfflineStrategy: Default + 'static,
+        LargeOfflineStrategyZ64: Default + 'static,
+        LargeOfflineStrategyZ128: Default + 'static,
+    > Choreography
+    for GrpcChoreography<
+        EXTENSION_DEGREE,
+        PRSSInitStrategy,
+        SmallOfflineStrategy,
+        LargeOfflineStrategyZ64,
+        LargeOfflineStrategyZ128,
+    >
 where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    // Ring requirements for both Z64 and Z128 polynomials
     ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
+
+    // PRSS initialization and state derivation
+    PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>
+        + PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,
+
+    PRSSState64<PRSSInitStrategy, EXTENSION_DEGREE>:
+        PRSSPrimitives<ResiduePoly<Z64, EXTENSION_DEGREE>> + Clone,
+
+    PRSSState128<PRSSInitStrategy, EXTENSION_DEGREE>:
+        PRSSPrimitives<ResiduePoly<Z128, EXTENSION_DEGREE>> + Clone,
+
+    // Preprocessing strategies
+    SmallOfflineStrategy: Preprocessing<
+            ResiduePoly<Z64, EXTENSION_DEGREE>,
+            AesRng,
+            GenericSmallSessionZ64<
+                PRSSState64<PRSSInitStrategy, EXTENSION_DEGREE>,
+                EXTENSION_DEGREE,
+            >,
+        > + Preprocessing<
+            ResiduePoly<Z128, EXTENSION_DEGREE>,
+            AesRng,
+            GenericSmallSessionZ128<
+                PRSSState128<PRSSInitStrategy, EXTENSION_DEGREE>,
+                EXTENSION_DEGREE,
+            >,
+        >,
+    LargeOfflineStrategyZ64:
+        Preprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>, AesRng, LargeSession>,
+    LargeOfflineStrategyZ128:
+        Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, AesRng, LargeSession>,
 {
     #[instrument(
         name = "PRSS-INIT",
@@ -344,10 +567,22 @@ where
         match ring {
             SupportedRing::ResiduePolyZ128 => {
                 let my_future = || async move {
-                    let prss_setup = RobustSecurePrssInit::default()
-                        .init(&mut base_session)
-                        .await
-                        .unwrap();
+                    let prss_setup = PRSSInit::<ResiduePoly<Z128, EXTENSION_DEGREE>>::init(
+                        &PRSSInitStrategy::default(),
+                        &mut base_session,
+                    )
+                    .await;
+
+                    let prss_setup = match prss_setup {
+                        Ok(prss_setup) => prss_setup,
+                        Err(prss_setup) => {
+                            panic!(
+                                "Failed to initialize PRSS for ResiduePolyZ128: {:?}",
+                                prss_setup
+                            );
+                        }
+                    };
+
                     store.insert(
                         SupportedRing::ResiduePolyZ128,
                         SupportedPRSSSetup::ResiduePolyZ128(prss_setup),
@@ -360,12 +595,25 @@ where
                     tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
             }
+
             SupportedRing::ResiduePolyZ64 => {
                 let my_future = || async move {
-                    let prss_setup = RobustSecurePrssInit::default()
-                        .init(&mut base_session)
-                        .await
-                        .unwrap();
+                    let prss_setup = PRSSInit::<ResiduePoly<Z64, EXTENSION_DEGREE>>::init(
+                        &PRSSInitStrategy::default(),
+                        &mut base_session,
+                    )
+                    .await;
+
+                    let prss_setup = match prss_setup {
+                        Ok(prss_setup) => prss_setup,
+                        Err(prss_setup) => {
+                            panic!(
+                                "Failed to initialize PRSS for ResiduePolyZ64: {:?}",
+                                prss_setup
+                            );
+                        }
+                    };
+
                     store.insert(
                         SupportedRing::ResiduePolyZ64,
                         SupportedPRSSSetup::ResiduePolyZ64(prss_setup),
@@ -471,9 +719,23 @@ where
                         .unwrap()
                     };
                     let (sessions, preproc) = {
-                        //let _enter = tracing::info_span!("orchestrate").entered();
                         orchestrator
-                            .orchestrate_small_session_dkg_processing(sessions)
+                            .orchestrate_dkg_processing::<_, GenericTripleProducer<
+                                _,
+                                _,
+                                _,
+                                SmallOfflineStrategy,
+                            >, GenericRandomProducer<
+                                _,
+                                _,
+                                _,
+                                SmallOfflineStrategy,
+                            >, GenericBitProducer<
+                                _,
+                                _,
+                                _,
+                                SmallOfflineStrategy,
+                            >>(sessions)
                             .instrument(tracing::info_span!("orchestrate"))
                             .await
                             .unwrap()
@@ -503,9 +765,23 @@ where
                         .unwrap()
                     };
                     let (sessions, preproc) = {
-                        //let _enter = tracing::info_span!("orchestrate").entered();
                         orchestrator
-                            .orchestrate_large_session_dkg_processing(sessions)
+                            .orchestrate_dkg_processing::<_, GenericTripleProducer<
+                                _,
+                                _,
+                                _,
+                                LargeOfflineStrategyZ64,
+                            >, GenericRandomProducer<
+                                _,
+                                _,
+                                _,
+                                LargeOfflineStrategyZ64,
+                            >, GenericBitProducer<
+                                _,
+                                _,
+                                _,
+                                LargeOfflineStrategyZ64,
+                            >>(sessions)
                             .instrument(tracing::info_span!("orchestrate"))
                             .await
                             .unwrap()
@@ -546,7 +822,22 @@ where
                     };
                     let (sessions, preproc) = {
                         orchestrator
-                            .orchestrate_small_session_dkg_processing(sessions)
+                            .orchestrate_dkg_processing::<_, GenericTripleProducer<
+                                _,
+                                _,
+                                _,
+                                SmallOfflineStrategy,
+                            >, GenericRandomProducer<
+                                _,
+                                _,
+                                _,
+                                SmallOfflineStrategy,
+                            >, GenericBitProducer<
+                                _,
+                                _,
+                                _,
+                                SmallOfflineStrategy,
+                            >>(sessions)
                             .await
                             .unwrap()
                     };
@@ -575,7 +866,22 @@ where
                     };
                     let (sessions, preproc) = {
                         orchestrator
-                            .orchestrate_large_session_dkg_processing(sessions)
+                            .orchestrate_dkg_processing::<_, GenericTripleProducer<
+                                _,
+                                _,
+                                _,
+                                LargeOfflineStrategyZ128,
+                            >, GenericRandomProducer<
+                                _,
+                                _,
+                                _,
+                                LargeOfflineStrategyZ128,
+                            >, GenericBitProducer<
+                                _,
+                                _,
+                                _,
+                                LargeOfflineStrategyZ128,
+                            >>(sessions)
                             .await
                             .unwrap()
                     };
@@ -927,7 +1233,7 @@ where
                                 let mut res = Vec::new();
                                 for _ in 0..num_ctxt {
                                     //We need to generate preprocessing for one block as we parallelised it
-                                    match init_prep_bitdec_large(&mut large_session, 1).await {
+                                    match init_prep_bitdec::<EXTENSION_DEGREE,_,LargeOfflineStrategyZ64>(&mut large_session, 1).await {
                                         Ok(preproc) => res.push(preproc),
                                         Err(_e) => {
                                             tracing::error!(
@@ -1005,7 +1311,7 @@ where
                             async move {
                                 let mut res = Vec::new();
                                 for _ in 0..num_ctxt {
-                                    match init_prep_bitdec_small(
+                                    match init_prep_bitdec::<EXTENSION_DEGREE,_,SmallOfflineStrategy>(
                                         &mut small_session,
                                         1, //We need to generate preprocessing for one block as we parallelised it
                                     )
@@ -1077,7 +1383,8 @@ where
                             format!("Failed to create Base Session: {:?}", e),
                         )
                     })?;
-                let mut small_session = Small::new(create_small_session(base_session, &prss_setup));
+                let mut small_session =
+                    NoiseFloodSmallSession::new(create_small_session(base_session, &prss_setup));
                 let store = self.data.ddec_preproc_store_nf.clone();
                 let my_future = || async move {
                     for _ in 0..num_ctxt {
@@ -1123,7 +1430,9 @@ where
                             format!("Failed to create Base Session: {:?}", e),
                         )
                     })?;
-                let mut large_session = Large::new(create_large_session(base_session));
+                let mut large_session = NoiseFloodLargeSession::<LargeOfflineStrategyZ128>::new(
+                    create_large_session(base_session),
+                );
                 let store = self.data.ddec_preproc_store_nf.clone();
                 let my_future = || async move {
                     for _ in 0..num_ctxt {
@@ -1330,7 +1639,7 @@ where
                         // Instantiate required number of small sessions
                         let small_sessions = create_small_sessions(base_sessions, &prss_setup)
                             .into_iter()
-                            .map(Small::new)
+                            .map(NoiseFloodSmallSession::new)
                             .collect_vec();
 
                         // Spawn a tokio task for each session
@@ -1360,7 +1669,7 @@ where
                                         res.push(
                                             run_decryption_noiseflood_64(
                                                 &mut base_session,
-                                                noiseflood_preprocessing.as_mut(),
+                                                &mut noiseflood_preprocessing,
                                                 &key_ref.1,
                                                 &ctxt,
                                             )
@@ -1479,13 +1788,16 @@ where
                                         let ks = Arc::clone(&ks);
                                         tasks.spawn(
                                             async move {
-                                                let mut bitdec_preprocessing =
-                                                    init_prep_bitdec_small(
-                                                        &mut small_session,
-                                                        inner_blocks_ctxt.len(),
-                                                    )
-                                                    .await
-                                                    .unwrap();
+                                                let mut bitdec_preprocessing = init_prep_bitdec::<
+                                                    EXTENSION_DEGREE,
+                                                    _,
+                                                    SmallOfflineStrategy,
+                                                >(
+                                                    &mut small_session,
+                                                    inner_blocks_ctxt.len(),
+                                                )
+                                                .await
+                                                .unwrap();
                                                 //Split preprocessing into chunks for each ctxt
                                                 let mut inner_preprocessings = (0
                                                     ..inner_blocks_ctxt.len())
@@ -1638,17 +1950,12 @@ where
                     })?.1
                     } else {
                         let sid_u128: u128 = session_id.into();
+                        let mut dummy_preproc =
+                            DummyPreprocessing::new(sid_u128 as u64, base_session.clone());
                         (0..num_sessions)
                             .map(|_| {
                                 (0..num_ctxts)
-                                    .map(|_| {
-                                        let my_box: Box<dyn BitDecPreprocessing<EXTENSION_DEGREE>> =
-                                            Box::new(DummyPreprocessing::new(
-                                                sid_u128 as u64,
-                                                base_session.clone(),
-                                            ));
-                                        my_box
-                                    })
+                                    .map(|_| dummy_preproc.cast_to_in_memory_impl(1).unwrap())
                                     .collect_vec()
                             })
                             .collect_vec()
@@ -1701,7 +2008,7 @@ where
                                 .clone(),
                         );
                         let mut tasks = JoinSet::new();
-                        for (block_idx, (ctxts_blocks, (mut session, inner_preprocessings))) in
+                        for (block_idx, (ctxts_blocks, (mut session, mut inner_preprocessings))) in
                             ctxts_w_session_layout
                                 .into_iter()
                                 .zip(base_sessions.into_iter().zip(preprocessings.into_iter()))
@@ -1709,23 +2016,13 @@ where
                         {
                             let ksk = ks.clone();
                             let key_share = key_ref.clone();
-                            //Each task decrypts the ith block of all ciphertexts
-                            //At this point the inner_preprocessings needs to be in memory
 
                             tasks.spawn(
                                 async move {
-                                    let mut in_mem_prep = Vec::new();
-                                    for mut inner_preprocessing in inner_preprocessings.into_iter()
-                                    {
-                                        //NOTE: Ensures here we have enough material in RAM to decrypt
-                                        // ideally you'd want to do that sooner so request to Redis
-                                        // are batched (see here we only cast material for 1 ctxt)
-                                        in_mem_prep
-                                            .push(inner_preprocessing.cast_to_in_memory_impl(1).unwrap());
-                                    }
+
                                     (block_idx,task_decryption_bitdec_par::<EXTENSION_DEGREE, _, _, _, u64>(
                                         &mut session,
-                                        &mut in_mem_prep,
+                                        &mut inner_preprocessings,
                                         &key_share.1,
                                         &ksk,
                                         ctxts_blocks,
@@ -1785,15 +2082,19 @@ where
                         tonic::Status::new(tonic::Code::Aborted,format!("Can not find NoiseFlood preproc that corresponds to session ID {preproc_sid}"))
                     })?.1
                     } else {
+                        //Assume all ctxt have the same number of blocks
+                        let num_blocks_per_ctxt = ctxts.first().unwrap().len();
                         let sid_u128: u128 = session_id.into();
+                        let mut dummy_preproc =
+                            DummyPreprocessing::new(sid_u128 as u64, base_session.clone());
                         (0..num_ctxts)
                             .map(|_| {
-                                let my_box: Box<dyn NoiseFloodPreprocessing<EXTENSION_DEGREE>> =
-                                    Box::new(DummyPreprocessing::new(
-                                        sid_u128 as u64,
-                                        base_session.clone(),
-                                    ));
-                                my_box
+                                let mut inner =
+                                    InMemoryNoiseFloodPreprocessing::<EXTENSION_DEGREE>::default();
+                                inner
+                                    .fill_from_bits_preproc(&mut dummy_preproc, num_blocks_per_ctxt)
+                                    .unwrap();
+                                inner
                             })
                             .collect_vec()
                     };
@@ -1826,7 +2127,7 @@ where
                             res.push(
                                 run_decryption_noiseflood_64(
                                     &mut base_session,
-                                    preprocessing.as_mut(),
+                                    &mut preprocessing,
                                     &key_ref.1,
                                     &ct_large,
                                 )
@@ -2355,24 +2656,30 @@ pub fn gen_random_sid(rng: &mut AesRng, current_sid: u128) -> SessionId {
     )
 }
 
-pub fn create_small_session<Z: ErrorCorrect + Invert + PRSSConversions>(
+pub fn create_small_session<
+    Z: ErrorCorrect + Invert + PRSSConversions,
+    PRSSSetupType: DerivePRSSState<Z>,
+>(
     base_session: BaseSessionStruct<AesRng, SessionParameters>,
-    prss_setup: &PRSSSetup<Z>,
-) -> SmallSession<Z> {
+    prss_setup: &PRSSSetupType,
+) -> GenericSmallSessionStruct<Z, AesRng, PRSSSetupType::OutputType, SessionParameters> {
     create_small_sessions(vec![base_session], prss_setup)
         .pop()
         .unwrap()
 }
 
-pub fn create_small_sessions<Z: ErrorCorrect + Invert + PRSSConversions>(
+pub fn create_small_sessions<
+    Z: ErrorCorrect + Invert + PRSSConversions,
+    PRSSSetupType: DerivePRSSState<Z>,
+>(
     base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
-    prss_setup: &PRSSSetup<Z>,
-) -> Vec<SmallSession<Z>> {
+    prss_setup: &PRSSSetupType,
+) -> Vec<GenericSmallSessionStruct<Z, AesRng, PRSSSetupType::OutputType, SessionParameters>> {
     base_sessions
         .into_iter()
         .map(|base_session| {
             let prss_state = prss_setup.new_prss_session_state(base_session.session_id());
-            SmallSession::new_from_prss_state(base_session, prss_state).unwrap()
+            GenericSmallSessionStruct::new_from_prss_state(base_session, prss_state).unwrap()
         })
         .collect_vec()
 }

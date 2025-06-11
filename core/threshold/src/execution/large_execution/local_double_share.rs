@@ -15,6 +15,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::runtime::party::Role,
     networking::value::BroadcastValue,
+    ProtocolDescription,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -34,7 +35,7 @@ pub struct DoubleShares<Z> {
 }
 
 #[async_trait]
-pub trait LocalDoubleShare: Send + Sync + Clone {
+pub trait LocalDoubleShare: ProtocolDescription + Send + Sync + Clone {
     async fn execute<
         Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
         R: Rng + CryptoRng,
@@ -58,6 +59,21 @@ pub struct RealLocalDoubleShare<C: Coinflip, S: ShareDispute, BCast: Broadcast> 
     coinflip: C,
     share_dispute: S,
     broadcast: BCast,
+}
+
+impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
+    for RealLocalDoubleShare<C, S, BCast>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-RealLocalDoubleShare:\n{}\n{}\n{}",
+            indent,
+            C::protocol_desc(depth + 1),
+            S::protocol_desc(depth + 1),
+            BCast::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> RealLocalDoubleShare<C, S, BCast> {

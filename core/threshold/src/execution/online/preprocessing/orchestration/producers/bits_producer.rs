@@ -1,43 +1,53 @@
+use aes_prng::AesRng;
 use num_integer::div_ceil;
+use rand::{CryptoRng, Rng};
 use tokio::{sync::mpsc::Sender, task::JoinSet};
 use tracing::instrument;
 
 use crate::{
-    algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve},
+    algebra::structure_traits::{ErrorCorrect, Invert, Ring, Solve},
     error::error_handler::anyhow_error_and_log,
     execution::{
         config::BatchParams,
         large_execution::offline::SecureLargePreprocessing,
         online::{
             gen_bits::{BitGenEven, RealBitGenEven},
-            preprocessing::orchestration::progress_tracker::ProgressTracker,
+            preprocessing::orchestration::{
+                producer_traits::BitProducerTrait, progress_tracker::ProgressTracker,
+            },
         },
-        runtime::session::{LargeSession, ParameterHandles, SmallSession},
+        runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
         sharing::share::Share,
-        small_execution::{
-            offline::{Preprocessing, SecureSmallPreprocessing},
-            prf::PRSSConversions,
-        },
+        small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
     },
 };
 
-use super::common::{execute_preprocessing, ProducerLargeSession, ProducerSmallSession};
+use super::common::{execute_preprocessing, ProducerSession};
 
-/// Produces bits in all session concurrently
-/// NOTE: Includes the triple and randomness production
-/// required to produce a bit
-pub struct SmallSessionBitProducer<Z: PRSSConversions + ErrorCorrect + Invert> {
+pub struct GenericBitProducer<Z, Rnd, S, PreprocStrat>
+where
+    Z: Ring,
+    Rnd: Rng + CryptoRng + Sync + 'static,
+    S: BaseSessionHandles<Rnd> + 'static,
+{
     pub(crate) batch_size: usize,
     pub(crate) total_size: usize,
-    pub(crate) producers: Vec<ProducerSmallSession<Z, Vec<Share<Z>>>>,
+    pub(crate) producers: Vec<ProducerSession<Rnd, S, Vec<Share<Z>>>>,
     pub(crate) progress_tracker: Option<ProgressTracker>,
+    _marker_strat: std::marker::PhantomData<PreprocStrat>,
 }
 
-impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionBitProducer<Z> {
-    pub fn new(
+impl<Z, Rnd, S, PreprocStrat> BitProducerTrait<Z, S> for GenericBitProducer<Z, Rnd, S, PreprocStrat>
+where
+    Z: ErrorCorrect + Invert,
+    Rnd: Rng + CryptoRng + Sync + 'static,
+    S: BaseSessionHandles<Rnd> + 'static,
+    PreprocStrat: Preprocessing<Z, Rnd, S> + Default,
+{
+    fn new(
         batch_size: usize,
         total_size: usize,
-        mut sessions: Vec<SmallSession<Z>>,
+        mut sessions: Vec<S>,
         channels: Vec<Sender<Vec<Share<Z>>>>,
         progress_tracker: Option<ProgressTracker>,
     ) -> anyhow::Result<Self> {
@@ -51,7 +61,7 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionBitProducer<Z> {
         let producers = sessions
             .into_iter()
             .zip(channels)
-            .map(|(session, channel)| ProducerSmallSession::new(session, channel))
+            .map(|(session, channel)| ProducerSession::new(session, channel))
             .collect();
 
         Ok(Self {
@@ -59,11 +69,12 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionBitProducer<Z> {
             total_size,
             producers,
             progress_tracker,
+            _marker_strat: std::marker::PhantomData,
         })
     }
 
     #[instrument(name="Bit Factory",skip(self),fields(num_sessions= ?self.producers.len()))]
-    pub fn start_bit_gen_even_production(self) -> JoinSet<Result<SmallSession<Z>, anyhow::Error>>
+    fn start_bit_gen_even_production(self) -> JoinSet<Result<S, anyhow::Error>>
     where
         Z: Solve,
     {
@@ -71,7 +82,7 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionBitProducer<Z> {
         let num_loops = div_ceil(self.total_size, self.batch_size * num_producers);
 
         let batch_size = self.batch_size;
-        let task_gen = |mut session: SmallSession<Z>,
+        let task_gen = |mut session: S,
                         sender_channel: Sender<Vec<Share<Z>>>,
                         progress_tracker: Option<ProgressTracker>| async move {
             let base_batch_size = BatchParams {
@@ -79,7 +90,7 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionBitProducer<Z> {
                 randoms: batch_size,
             };
 
-            let mut preprocessing = SecureSmallPreprocessing::default();
+            let mut preprocessing = PreprocStrat::default();
             for _ in 0..num_loops {
                 let mut correlated_randomness =
                     preprocessing.execute(&mut session, base_batch_size).await?;
@@ -100,82 +111,11 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionBitProducer<Z> {
     }
 }
 
-/// Produces bits in all session concurrently
-/// NOTE: Includes the triple and randomness production
-/// required to produce a bit
-pub struct LargeSessionBitProducer<Z: ErrorCorrect + Invert + Derive> {
-    batch_size: usize,
-    total_size: usize,
-    producers: Vec<ProducerLargeSession<Vec<Share<Z>>>>,
-    progress_tracker: Option<ProgressTracker>,
-}
+pub type SecureSmallSessionBitProducer<Z> =
+    GenericBitProducer<Z, AesRng, SmallSession<Z>, SecureSmallPreprocessing>;
 
-impl<Z: ErrorCorrect + Invert + Derive> LargeSessionBitProducer<Z> {
-    pub fn new(
-        batch_size: usize,
-        total_size: usize,
-        mut sessions: Vec<LargeSession>,
-        channels: Vec<Sender<Vec<Share<Z>>>>,
-        progress_tracker: Option<ProgressTracker>,
-    ) -> anyhow::Result<Self> {
-        if sessions.len() != channels.len() {
-            return Err(anyhow_error_and_log(format!("Trying to instantiate a producer with {} sessions and {} channels, but we need as many sessions as channels",sessions.len(), channels.len())));
-        }
-
-        //Always sort the sessions by sid so we are sure it's order the same way for all parties
-        sessions.sort_by_key(|s| s.session_id());
-
-        let producers = sessions
-            .into_iter()
-            .zip(channels)
-            .map(|(session, channel)| ProducerLargeSession::new(session, channel))
-            .collect();
-
-        Ok(Self {
-            batch_size,
-            total_size,
-            producers,
-            progress_tracker,
-        })
-    }
-
-    #[instrument(name="Bit Factory",skip(self),fields(num_sessions= ?self.producers.len()))]
-    pub fn start_bit_gen_even_production(self) -> JoinSet<Result<LargeSession, anyhow::Error>>
-    where
-        Z: Solve,
-    {
-        let num_producers = self.producers.len();
-        let num_loops = div_ceil(self.total_size, self.batch_size * num_producers);
-
-        let batch_size = self.batch_size;
-        let task_gen = |mut session: LargeSession,
-                        sender_channel: Sender<Vec<Share<Z>>>,
-                        progress_tracker: Option<ProgressTracker>| async move {
-            let base_batch_size = BatchParams {
-                triples: batch_size,
-                randoms: batch_size,
-            };
-
-            let mut preprocessing = SecureLargePreprocessing::default();
-            for _ in 0..num_loops {
-                let mut correlated_randomness =
-                    preprocessing.execute(&mut session, base_batch_size).await?;
-                let bits = RealBitGenEven::gen_bits_even(
-                    batch_size,
-                    &mut correlated_randomness,
-                    &mut session,
-                )
-                .await?;
-
-                //Drop the error on purpose as the receiver end might be closed already if we produced too much
-                let _ = sender_channel.send(bits).await;
-                progress_tracker.as_ref().map(|p| p.increment(batch_size));
-            }
-            Ok::<_, anyhow::Error>(session)
-        };
-        execute_preprocessing(self.producers, task_gen, self.progress_tracker)
-    }
-}
+pub type SecureLargeSessionBitProducer<Z> =
+    GenericBitProducer<Z, AesRng, LargeSession, SecureLargePreprocessing<Z>>;
 
 #[cfg(test)]
 mod tests {

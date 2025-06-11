@@ -188,7 +188,7 @@ impl RealPreprocessor {
                 tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);
                 // Execute the orchestration with the successfully created orchestrator
                 match orchestrator
-                    .orchestrate_small_session_dkg_processing(sessions)
+                    .orchestrate_dkg_processing_secure_small_session(sessions)
                     .await
                 {
                     Ok((_, preproc_handle)) => Ok(Arc::new(Mutex::new(preproc_handle))),

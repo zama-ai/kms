@@ -26,6 +26,7 @@ use crate::{
     },
     networking::value::BroadcastValue,
     session_id::SessionId,
+    ProtocolDescription,
 };
 use anyhow::Context;
 use itertools::Itertools;
@@ -41,7 +42,7 @@ use tracing::instrument;
 
 /// Trait to capture the primitives of the PRSS/PRZS after init.
 #[async_trait]
-pub trait PRSSPrimitives<Z>: Send + Sync {
+pub trait PRSSPrimitives<Z>: ProtocolDescription + Send + Sync {
     fn prss_next(&mut self, party_id: Role) -> anyhow::Result<Z>;
     fn przs_next(&mut self, party_id: Role, threshold: u8) -> anyhow::Result<Z>;
     fn mask_next(&mut self, party_id: Role, bd: u128) -> anyhow::Result<Z>;
@@ -60,22 +61,22 @@ pub trait PRSSPrimitives<Z>: Send + Sync {
     fn get_counters(&self) -> PRSSCounters;
 }
 
-pub trait DerivePRSSState<Z> {
+pub trait DerivePRSSState<Z>: ProtocolDescription + Clone + Send + Sync {
     /// Defines the output of the derivation function,
     /// that is a PRSS state.
     /// A PRSS state is something that implements [`PRSSPrimitives`].
-    type OutputType: PRSSPrimitives<Z>;
+    type OutputType: PRSSPrimitives<Z> + 'static;
     fn new_prss_session_state(&self, sid: SessionId) -> Self::OutputType;
 }
 
 /// Trait to capture the init phase of the PRSS.
 #[async_trait]
-pub trait PRSSInit<Z>: Send + Sync + Sized {
+pub trait PRSSInit<Z>: ProtocolDescription + Send + Sync + Sized {
     /// Defines the output of PRSSInit.
     /// We need to be able to derive a PRSS state
     /// from this output.
     /// A PRSS state is something that implements [`PRSSPrimitives`]).
-    type OutputType: DerivePRSSState<Z> + Send + Sync;
+    type OutputType: DerivePRSSState<Z> + 'static;
 
     /// One time init of the PRSS by creating a [`PRSSSetup`] object
     /// which can be used to create a session specific [`PRSSState`] through
@@ -99,6 +100,20 @@ impl<A: AgreeRandom> AbortRealPrssInit<A> {
     }
 }
 
+impl<A: AgreeRandom> ProtocolDescription for AbortRealPrssInit<A> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-AbortRealPrssInit:\n{}\n{} ",
+            indent,
+            A::protocol_desc(depth + 1),
+            //Put a dummy Z, we just need something
+            // using depth + 2 because it's not a subprotocol but a byproduct of the init
+            PRSSSetup::<u8>::protocol_desc(depth + 2),
+        )
+    }
+}
+
 impl<A: AgreeRandom + Default> Default for AbortRealPrssInit<A> {
     fn default() -> Self {
         Self {
@@ -117,6 +132,19 @@ pub type AbortSecurePrssInit = AbortRealPrssInit<AbortSecureAgreeRandom>;
 pub struct RobustRealPrssInit<A: AgreeRandomFromShare, V: Vss> {
     agree_random: A,
     vss: V,
+}
+
+impl<A: AgreeRandomFromShare, V: Vss> ProtocolDescription for RobustRealPrssInit<A, V> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-RobustRealPrssInit:\n{}\n{}\n{} ",
+            indent,
+            A::protocol_desc(depth + 1),
+            V::protocol_desc(depth + 1),
+            PRSSSetup::<u8>::protocol_desc(depth + 2),
+        )
+    }
 }
 
 impl<A: AgreeRandomFromShare, V: Vss> RobustRealPrssInit<A, V> {
@@ -320,6 +348,19 @@ pub struct PRSSSetup<Z: Default + Clone + Serialize> {
     pub(crate) alpha_powers: Vec<Vec<Z>>,
 }
 
+impl<Z: Default + Clone + Serialize> ProtocolDescription for PRSSSetup<Z> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        //Using a fat arrow here to indicate that this is a byproduct of Init and
+        // not really a subprotocol
+        format!(
+            "{}=>PRSSSetup:\n{}",
+            indent,
+            SecurePRSSState::<Z>::protocol_desc(depth + 2)
+        )
+    }
+}
+
 impl<Z: Default + Clone + Serialize> Named for PRSSSetup<Z> {
     const NAME: &'static str = "PRSSSetup";
 }
@@ -342,6 +383,14 @@ pub struct PRSSState<Z: Default + Clone + Serialize, B: Broadcast> {
     /// the initialized PRFs for each set
     pub(crate) prfs: Vec<PrfAes>,
     pub(crate) broadcast: B,
+}
+
+impl<Z: Default + Clone + Serialize, B: Broadcast> ProtocolDescription for PRSSState<Z, B> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        // Using a fat arrow here to indicate that this is a byproduct of Setup
+        format!("{}=>PRSSState:\n{}", indent, B::protocol_desc(depth + 1))
+    }
 }
 
 /// Alias for [`PRSSState`] with a secure implementation of [`Broadcast`]

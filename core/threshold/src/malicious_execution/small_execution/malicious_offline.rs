@@ -8,11 +8,9 @@ use crate::{
         config::BatchParams,
         online::preprocessing::memory::InMemoryBasePreprocessing,
         runtime::session::{BaseSessionHandles, SmallSessionHandles},
-        small_execution::{
-            offline::{Preprocessing, RealSmallPreprocessing},
-            prss::PRSSPrimitives,
-        },
+        small_execution::offline::{Preprocessing, RealSmallPreprocessing},
     },
+    ProtocolDescription,
 };
 
 /// Malicious implementation of [`Preprocessing`]
@@ -20,6 +18,13 @@ use crate::{
 /// and returns an empty [`InMemoryBasePreprocessing`]
 #[derive(Clone, Default)]
 pub struct MaliciousOfflineDrop {}
+
+impl ProtocolDescription for MaliciousOfflineDrop {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-MaliciousOfflineDrop", indent)
+    }
+}
 
 #[async_trait]
 impl<Z: Clone + Default, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>>
@@ -38,30 +43,38 @@ impl<Z: Clone + Default, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHan
 /// Malicious implementation of [`Preprocessing`] for small sessions
 /// that behaves honestly except uses an incorrect batch size
 #[derive(Clone, Default)]
-pub struct MaliciousOfflineWrongAmount<Z, Prss: PRSSPrimitives<Z>, Bcast: Broadcast> {
+pub struct MaliciousOfflineWrongAmount<Z, Bcast: Broadcast> {
     broadcast: Bcast,
     ring_marker: std::marker::PhantomData<Z>,
-    prss_marker: std::marker::PhantomData<Prss>,
 }
 
-impl<Z, Prss: PRSSPrimitives<Z>, Bcast: Broadcast> MaliciousOfflineWrongAmount<Z, Prss, Bcast> {
+impl<Z, Bcast: Broadcast> MaliciousOfflineWrongAmount<Z, Bcast> {
     pub fn new(broadcast: Bcast) -> Self {
         Self {
             broadcast,
             ring_marker: std::marker::PhantomData,
-            prss_marker: std::marker::PhantomData,
         }
+    }
+}
+
+impl<Z, Bcast: Broadcast> ProtocolDescription for MaliciousOfflineWrongAmount<Z, Bcast> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-MaliciousOfflineWrongAmount:\n{}",
+            indent,
+            Bcast::protocol_desc(depth + 1)
+        )
     }
 }
 
 #[async_trait]
 impl<
         Z: ErrorCorrect,
-        Prss: PRSSPrimitives<Z>,
         Bcast: Broadcast,
         Rnd: Rng + CryptoRng + Send + Sync,
-        Ses: SmallSessionHandles<Z, Rnd, Prss>,
-    > Preprocessing<Z, Rnd, Ses> for MaliciousOfflineWrongAmount<Z, Prss, Bcast>
+        Ses: SmallSessionHandles<Z, Rnd>,
+    > Preprocessing<Z, Rnd, Ses> for MaliciousOfflineWrongAmount<Z, Bcast>
 {
     /// Executes both GenTriples and NextRandom based on the given `batch_sizes`.
     async fn execute(
@@ -79,7 +92,7 @@ impl<
 
         let malicious_batch_sizes = BatchParams { triples, randoms };
 
-        RealSmallPreprocessing::<Z, Prss, Bcast>::new(self.broadcast.clone())
+        RealSmallPreprocessing::<Bcast>::new(self.broadcast.clone())
             .execute(session, malicious_batch_sizes)
             .await
     }

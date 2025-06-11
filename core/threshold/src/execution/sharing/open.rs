@@ -15,6 +15,7 @@ use crate::{
         runtime::{party::Role, session::BaseSessionHandles},
     },
     networking::value::NetworkValue,
+    ProtocolDescription,
 };
 
 use super::{
@@ -33,7 +34,7 @@ pub enum OpeningKind<Z> {
 }
 
 #[async_trait]
-pub trait RobustOpen: Send + Sync + Clone {
+pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
     /// Inputs:
     /// - session
     /// - shares (wrapped inside [`OpeningKind`] to know who to open to) of the secrets to open
@@ -165,6 +166,13 @@ pub trait RobustOpen: Send + Sync + Clone {
 
 #[derive(Default, Clone)]
 pub struct SecureRobustOpen {}
+
+impl ProtocolDescription for SecureRobustOpen {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-SecureRobustOpen", indent)
+    }
+}
 
 #[async_trait]
 impl RobustOpen for SecureRobustOpen {

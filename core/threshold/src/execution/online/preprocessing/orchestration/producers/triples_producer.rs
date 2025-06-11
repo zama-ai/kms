@@ -1,42 +1,57 @@
+use aes_prng::AesRng;
 use num_integer::div_ceil;
+use rand::{CryptoRng, Rng};
 use tokio::{sync::mpsc::Sender, task::JoinSet};
 use tracing::instrument;
 
 use crate::{
-    algebra::structure_traits::{Derive, ErrorCorrect, Invert},
+    algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
     execution::{
         config::BatchParams,
         large_execution::offline::SecureLargePreprocessing,
         online::{
             preprocessing::{
-                orchestration::progress_tracker::ProgressTracker, TriplePreprocessing,
+                orchestration::{
+                    producer_traits::TripleProducerTrait, progress_tracker::ProgressTracker,
+                },
+                TriplePreprocessing,
             },
             triple::Triple,
         },
-        runtime::session::{LargeSession, ParameterHandles, SmallSession},
-        small_execution::{
-            offline::{Preprocessing, SecureSmallPreprocessing},
-            prf::PRSSConversions,
-        },
+        runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
+        small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
     },
 };
 
-use super::common::{execute_preprocessing, ProducerLargeSession, ProducerSmallSession};
+use super::common::{execute_preprocessing, ProducerSession};
 
-/// Produces triple in all session concurrently
-pub struct SmallSessionTripleProducer<Z: PRSSConversions + ErrorCorrect + Invert> {
+pub struct GenericTripleProducer<Z, Rnd, S, PreprocStrat>
+where
+    Z: Ring,
+    Rnd: Rng + CryptoRng + Sync + 'static,
+    S: BaseSessionHandles<Rnd> + 'static,
+{
     batch_size: usize,
     total_size: usize,
-    producers: Vec<ProducerSmallSession<Z, Vec<Triple<Z>>>>,
+    producers: Vec<ProducerSession<Rnd, S, Vec<Triple<Z>>>>,
     progress_tracker: Option<ProgressTracker>,
+    _marker_strat: std::marker::PhantomData<PreprocStrat>,
 }
 
-impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionTripleProducer<Z> {
-    pub fn new(
+/// Implement the TripleProducerTrait for GenericTripleProducer
+impl<Z, Rnd, S, PreprocStrat> TripleProducerTrait<Z, S>
+    for GenericTripleProducer<Z, Rnd, S, PreprocStrat>
+where
+    Z: Ring,
+    Rnd: Rng + CryptoRng + Sync + 'static,
+    S: BaseSessionHandles<Rnd> + 'static,
+    PreprocStrat: Preprocessing<Z, Rnd, S> + Default,
+{
+    fn new(
         batch_size: usize,
         total_size: usize,
-        mut sessions: Vec<SmallSession<Z>>,
+        mut sessions: Vec<S>,
         channels: Vec<Sender<Vec<Triple<Z>>>>,
         progress_tracker: Option<ProgressTracker>,
     ) -> anyhow::Result<Self> {
@@ -50,7 +65,7 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionTripleProducer<Z> {
         let producers = sessions
             .into_iter()
             .zip(channels)
-            .map(|(session, channel)| ProducerSmallSession::new(session, channel))
+            .map(|(session, channel)| ProducerSession::new(session, channel))
             .collect();
 
         Ok(Self {
@@ -58,16 +73,17 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionTripleProducer<Z> {
             total_size,
             producers,
             progress_tracker,
+            _marker_strat: std::marker::PhantomData,
         })
     }
 
     #[instrument(name="Triple Factory",skip(self),fields(num_sessions= ?self.producers.len()))]
-    pub fn start_triple_production(self) -> JoinSet<Result<SmallSession<Z>, anyhow::Error>> {
+    fn start_triple_production(self) -> JoinSet<Result<S, anyhow::Error>> {
         let num_producers = self.producers.len();
         let num_loops = div_ceil(self.total_size, self.batch_size * num_producers);
 
         let batch_size = self.batch_size;
-        let task_gen = |mut session: SmallSession<Z>,
+        let task_gen = |mut session: S,
                         sender_channel: Sender<Vec<Triple<Z>>>,
                         progress_tracker: Option<ProgressTracker>| async move {
             let base_batch_size = BatchParams {
@@ -75,7 +91,7 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionTripleProducer<Z> {
                 randoms: 0,
             };
 
-            let mut preprocessing = SecureSmallPreprocessing::default();
+            let mut preprocessing = PreprocStrat::default();
             for _ in 0..num_loops {
                 let triples = preprocessing
                     .execute(&mut session, base_batch_size)
@@ -92,73 +108,11 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionTripleProducer<Z> {
     }
 }
 
-/// Produces triple in all session concurrently
-pub struct LargeSessionTripleProducer<Z: ErrorCorrect + Invert + Derive> {
-    batch_size: usize,
-    total_size: usize,
-    producers: Vec<ProducerLargeSession<Vec<Triple<Z>>>>,
-    progress_tracker: Option<ProgressTracker>,
-}
+pub type SecureSmallSessionTripleProducer<Z> =
+    GenericTripleProducer<Z, AesRng, SmallSession<Z>, SecureSmallPreprocessing>;
 
-impl<Z: ErrorCorrect + Invert + Derive> LargeSessionTripleProducer<Z> {
-    pub fn new(
-        batch_size: usize,
-        total_size: usize,
-        mut sessions: Vec<LargeSession>,
-        channels: Vec<Sender<Vec<Triple<Z>>>>,
-        progress_tracker: Option<ProgressTracker>,
-    ) -> anyhow::Result<Self> {
-        if sessions.len() != channels.len() {
-            return Err(anyhow_error_and_log(format!("Trying to instantiate a producer with {} sessions and {} channels, but we need as many sessions as channels",sessions.len(), channels.len())));
-        }
-
-        //Always sort the sessions by sid so we are sure it's order the same way for all parties
-        sessions.sort_by_key(|s| s.session_id());
-
-        let producers = sessions
-            .into_iter()
-            .zip(channels)
-            .map(|(session, channel)| ProducerLargeSession::new(session, channel))
-            .collect();
-
-        Ok(Self {
-            batch_size,
-            total_size,
-            producers,
-            progress_tracker,
-        })
-    }
-
-    #[instrument(name="Triple Factory",skip(self),fields(num_sessions= ?self.producers.len()))]
-    pub fn start_triple_production(self) -> JoinSet<Result<LargeSession, anyhow::Error>> {
-        let num_producers = self.producers.len();
-        let num_loops = div_ceil(self.total_size, self.batch_size * num_producers);
-
-        let batch_size = self.batch_size;
-        let task_gen = |mut session: LargeSession,
-                        sender_channel: Sender<Vec<Triple<Z>>>,
-                        progress_tracker: Option<ProgressTracker>| async move {
-            let base_batch_size = BatchParams {
-                triples: batch_size,
-                randoms: 0,
-            };
-
-            let mut preprocessing = SecureLargePreprocessing::default();
-            for _ in 0..num_loops {
-                let triples = preprocessing
-                    .execute(&mut session, base_batch_size)
-                    .await?
-                    .next_triple_vec(batch_size)?;
-
-                //Drop the error on purpose as the receiver end might be closed already if we produced too much
-                let _ = sender_channel.send(triples).await;
-                progress_tracker.as_ref().map(|p| p.increment(batch_size));
-            }
-            Ok::<_, anyhow::Error>(session)
-        };
-        execute_preprocessing(self.producers, task_gen, self.progress_tracker)
-    }
-}
+pub type SecureLargeSessionTripleProducer<Z> =
+    GenericTripleProducer<Z, AesRng, LargeSession, SecureLargePreprocessing<Z>>;
 
 #[cfg(test)]
 mod tests {

@@ -203,9 +203,9 @@ testing = ["dep:tokio", "non-wasm"]
 slow_tests = ["testing", "all_extension_degrees"]
 experimental = ["dep:crypto-bigint", "choreographer", "testing"]
 templating = ["minijinja"]
-choreographer = []
+choreographer = ["malicious_strategies"]
 measure_memory = ["dep:peak_alloc", "choreographer"]
-malicious_strategies = []
+malicious_strategies = ["testing"]
 # put all the dependencies that does not work well with wasm
 # namely libraries that doesn't work on 32-bit architectures
 # or uses tokio

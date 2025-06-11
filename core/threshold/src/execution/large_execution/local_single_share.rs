@@ -15,6 +15,7 @@ use crate::{
         },
     },
     networking::value::BroadcastValue,
+    ProtocolDescription,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -30,7 +31,7 @@ pub type SecureLocalSingleShare =
     RealLocalSingleShare<SecureCoinflip, SecureShareDispute, SyncReliableBroadcast>;
 
 #[async_trait]
-pub trait LocalSingleShare: Send + Sync + Clone {
+pub trait LocalSingleShare: ProtocolDescription + Send + Sync + Clone {
     ///Executes a batch LocalSingleShare where every party is sharing a vector of secrets
     ///
     ///NOTE: This does not always guarantee privacy of the inputs towards honest parties (but this is intended behaviour!)
@@ -67,6 +68,21 @@ pub struct RealLocalSingleShare<C: Coinflip, S: ShareDispute, BCast: Broadcast> 
     coinflip: C,
     share_dispute: S,
     broadcast: BCast,
+}
+
+impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
+    for RealLocalSingleShare<C, S, BCast>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-RealLocalSingleShare:\n{}\n{}\n{}",
+            indent,
+            C::protocol_desc(depth + 1),
+            S::protocol_desc(depth + 1),
+            BCast::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> RealLocalSingleShare<C, S, BCast> {

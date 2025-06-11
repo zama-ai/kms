@@ -1,16 +1,12 @@
 use std::{future::Future, marker::PhantomData};
 
-use aes_prng::AesRng;
 use rand::{CryptoRng, Rng};
 use tokio::{sync::mpsc::Sender, task::JoinSet};
 use tracing::Instrument;
 
-use crate::{
-    algebra::structure_traits::Ring,
-    execution::{
-        online::preprocessing::orchestration::progress_tracker::ProgressTracker,
-        runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
-    },
+use crate::execution::{
+    online::preprocessing::orchestration::progress_tracker::ProgressTracker,
+    runtime::session::BaseSessionHandles,
 };
 
 /// Struct that holds a session
@@ -27,25 +23,14 @@ pub(crate) struct ProducerSession<
     _marker: PhantomData<Rnd>,
 }
 
-pub(crate) type ProducerSmallSession<Z, T> = ProducerSession<AesRng, SmallSession<Z>, T>;
-pub(crate) type ProducerLargeSession<T> = ProducerSession<AesRng, LargeSession, T>;
-
-impl<Z: Ring, T> ProducerSmallSession<Z, T> {
-    pub(crate) fn new(session: SmallSession<Z>, sender_channel: Sender<T>) -> Self {
+impl<Rnd: Rng + CryptoRng + Sync + 'static, S: BaseSessionHandles<Rnd>, T>
+    ProducerSession<Rnd, S, T>
+{
+    pub(crate) fn new(session: S, sender_channel: Sender<T>) -> Self {
         Self {
             session,
             sender_channel,
-            _marker: PhantomData::<AesRng>,
-        }
-    }
-}
-
-impl<T> ProducerLargeSession<T> {
-    pub(crate) fn new(session: LargeSession, sender_channel: Sender<T>) -> Self {
-        Self {
-            session,
-            sender_channel,
-            _marker: PhantomData::<AesRng>,
+            _marker: PhantomData::<Rnd>,
         }
     }
 }
@@ -97,13 +82,16 @@ pub(crate) mod tests {
         execution::{
             online::{
                 preprocessing::orchestration::{
+                    producer_traits::{BitProducerTrait, RandomProducerTrait, TripleProducerTrait},
                     producers::{
-                        bits_producer::{LargeSessionBitProducer, SmallSessionBitProducer},
+                        bits_producer::{
+                            SecureLargeSessionBitProducer, SecureSmallSessionBitProducer,
+                        },
                         randoms_producer::{
-                            LargeSessionRandomProducer, SmallSessionRandomProducer,
+                            SecureLargeSessionRandomProducer, SecureSmallSessionRandomProducer,
                         },
                         triples_producer::{
-                            LargeSessionTripleProducer, SmallSessionTripleProducer,
+                            SecureLargeSessionTripleProducer, SecureSmallSessionTripleProducer,
                         },
                     },
                     progress_tracker::ProgressTracker,
@@ -245,7 +233,7 @@ pub(crate) mod tests {
                     ProgressTracker::new(&type_production.to_string(), num_correlations, 100);
                 let mut joinset = match type_production {
                     Typeproduction::Triples => {
-                        let triple_producer = LargeSessionTripleProducer::new(
+                        let triple_producer = SecureLargeSessionTripleProducer::new(
                             batch_size,
                             num_correlations,
                             sessions,
@@ -256,7 +244,7 @@ pub(crate) mod tests {
                         triple_producer.start_triple_production()
                     }
                     Typeproduction::Randoms => {
-                        let random_producer = LargeSessionRandomProducer::new(
+                        let random_producer = SecureLargeSessionRandomProducer::new(
                             batch_size,
                             num_correlations,
                             sessions,
@@ -267,7 +255,7 @@ pub(crate) mod tests {
                         random_producer.start_random_production()
                     }
                     Typeproduction::Bits => {
-                        let bit_producer = LargeSessionBitProducer::new(
+                        let bit_producer = SecureLargeSessionBitProducer::new(
                             batch_size,
                             num_correlations,
                             sessions,
@@ -355,7 +343,7 @@ pub(crate) mod tests {
                     ProgressTracker::new(&type_production.to_string(), num_correlations, 100);
                 let mut joinset = match type_production {
                     Typeproduction::Triples => {
-                        let triple_producer = SmallSessionTripleProducer::new(
+                        let triple_producer = SecureSmallSessionTripleProducer::new(
                             batch_size,
                             num_correlations,
                             sessions,
@@ -366,7 +354,7 @@ pub(crate) mod tests {
                         triple_producer.start_triple_production()
                     }
                     Typeproduction::Randoms => {
-                        let random_producer = SmallSessionRandomProducer::new(
+                        let random_producer = SecureSmallSessionRandomProducer::new(
                             batch_size,
                             num_correlations,
                             sessions,
@@ -377,7 +365,7 @@ pub(crate) mod tests {
                         random_producer.start_random_production()
                     }
                     Typeproduction::Bits => {
-                        let bit_producer = SmallSessionBitProducer::new(
+                        let bit_producer = SecureSmallSessionBitProducer::new(
                             batch_size,
                             num_correlations,
                             sessions,

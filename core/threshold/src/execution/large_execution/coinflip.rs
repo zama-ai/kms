@@ -5,13 +5,14 @@ use rand::{CryptoRng, Rng};
 use tracing::instrument;
 
 use super::vss::{SecureVss, Vss};
-use crate::algebra::structure_traits::{ErrorCorrect, Ring, RingEmbed};
+use crate::algebra::structure_traits::{ErrorCorrect, Ring};
 use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         runtime::session::LargeSessionHandles,
         sharing::open::{RobustOpen, SecureRobustOpen},
     },
+    ProtocolDescription,
 };
 
 /// Secure implementation of Coinflip as defined in NIST document
@@ -21,19 +22,22 @@ use crate::{
 pub type SecureCoinflip = RealCoinflip<SecureVss, SecureRobustOpen>;
 
 #[async_trait]
-pub trait Coinflip: Send + Sync + Clone {
-    async fn execute<Z, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+pub trait Coinflip: ProtocolDescription + Send + Sync + Clone {
+    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
-    ) -> anyhow::Result<Z>
-    where
-        Z: ErrorCorrect,
-        Z: Ring,
-        Z: RingEmbed;
+    ) -> anyhow::Result<Z>;
 }
 
 #[derive(Default, Clone)]
 pub struct DummyCoinflip {}
+
+impl ProtocolDescription for DummyCoinflip {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-DummyCoinflip", indent)
+    }
+}
 
 #[async_trait]
 impl Coinflip for DummyCoinflip {
@@ -53,6 +57,18 @@ pub struct RealCoinflip<V: Vss, RO: RobustOpen> {
     robust_open: RO,
 }
 
+impl<V: Vss, RO: RobustOpen> ProtocolDescription for RealCoinflip<V, RO> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-RealCoinflip:\n{}\n{}",
+            indent,
+            V::protocol_desc(depth + 1),
+            RO::protocol_desc(depth + 1)
+        )
+    }
+}
+
 impl<V: Vss, RO: RobustOpen> RealCoinflip<V, RO> {
     pub fn new(vss: V, robust_open: RO) -> Self {
         Self { vss, robust_open }
@@ -68,8 +84,6 @@ impl<V: Vss, RO: RobustOpen> Coinflip for RealCoinflip<V, RO> {
     ) -> anyhow::Result<Z>
     where
         Z: ErrorCorrect,
-        Z: Ring,
-        Z: RingEmbed,
     {
         //NOTE: I don't care if I am in Corrupt
         let my_secret = Z::sample(session.rng());

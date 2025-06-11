@@ -260,7 +260,7 @@ fn test_dkg_orchestrator_large(
 
             let (mut sessions, mut preproc) = rt_handle.block_on(async {
                 orchestrator
-                    .orchestrate_large_session_dkg_processing(sessions)
+                    .orchestrate_dkg_processing_secure_large_session(sessions)
                     .await
                     .unwrap()
             });

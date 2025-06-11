@@ -20,3 +20,6 @@ pub mod open {
 pub mod runtime {
     pub mod malicious_session;
 }
+
+#[cfg(all(feature = "choreographer", not(feature = "experimental")))]
+pub mod malicious_moby;

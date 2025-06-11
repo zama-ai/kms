@@ -406,6 +406,11 @@ impl Choreography for ExperimentalGrpcChoreography {
         let my_future = || async move {
             let small_sessions = create_small_sessions(base_sessions, &prss_setup);
 
+            let small_sessions = small_sessions
+                .into_iter()
+                .map(|s| s.to_secure_small_session())
+                .collect();
+
             let orchestrator = BGVPreprocessingOrchestrator::new(N65536::VALUE);
 
             let (sessions, preproc) = orchestrator

@@ -6,6 +6,7 @@ use crate::execution::runtime::session::BaseSessionHandles;
 use crate::networking::value::BcastHash;
 use crate::networking::value::BroadcastValue;
 use crate::networking::value::NetworkValue;
+use crate::ProtocolDescription;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
@@ -21,7 +22,7 @@ type VoteJobType = (Role, anyhow::Result<HashMap<Role, BcastHash>>);
 type GenericEchoVoteJob<T> = JoinSet<Result<(Role, anyhow::Result<HashMap<Role, T>>), Elapsed>>;
 
 #[async_trait]
-pub trait Broadcast: Send + Sync + Clone {
+pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
     /// Execution of the _regular_ protocol, must be defined for all structs implementing this trait.
     ///
     /// Takes an `sender_list`, an explicit list of all the senders
@@ -152,6 +153,13 @@ pub trait Broadcast: Send + Sync + Clone {
 #[derive(Default, Clone)]
 /// Implements the synchronous broadcast protocol defined in the NIST document
 pub struct SyncReliableBroadcast {}
+
+impl ProtocolDescription for SyncReliableBroadcast {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-SyncReliableBroadcast", indent)
+    }
+}
 
 /// Receives the contribution from all the senders in parallel
 ///

@@ -20,6 +20,7 @@ use crate::{
         runtime::{party::Role, session::BaseSessionHandles},
     },
     networking::value::{BroadcastValue, NetworkValue},
+    ProtocolDescription,
 };
 
 /// Secure implementation of VSS as defined in NIST document
@@ -29,7 +30,7 @@ use crate::{
 pub type SecureVss = RealVss<SyncReliableBroadcast>;
 
 #[async_trait]
-pub trait Vss: Send + Sync + Clone {
+pub trait Vss: Send + Sync + Clone + ProtocolDescription {
     /// Executes a Verifiable Secret Sharing
     /// where every party inputs one secret.
     /// The trait provides a default implementation for [execute]
@@ -147,6 +148,13 @@ pub struct Round1VSSOutput<Z: Ring> {
 #[derive(Default, Clone)]
 pub struct DummyVss {}
 
+impl ProtocolDescription for DummyVss {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-DummyVss", indent)
+    }
+}
+
 #[async_trait]
 impl Vss for DummyVss {
     async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
@@ -201,10 +209,24 @@ impl Vss for DummyVss {
     }
 }
 
-//TODO: Once ready, add SyncBroadcast via generic and trait bounds
 #[derive(Default, Clone)]
 pub struct RealVss<BCast: Broadcast> {
     broadcast: BCast,
+}
+
+impl<BCast: Broadcast> ProtocolDescription for RealVss<BCast> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-RealVss:\n{}", indent, BCast::protocol_desc(depth + 1))
+    }
+}
+
+impl<BCast: Broadcast> RealVss<BCast> {
+    pub fn new(broadcast_strategy: &BCast) -> Self {
+        Self {
+            broadcast: broadcast_strategy.clone(),
+        }
+    }
 }
 
 #[async_trait]
@@ -1179,16 +1201,6 @@ pub(crate) mod tests {
         let secrets: Vec<Vec<ResiduePolyF4Z128>> = (0..num_parties).map(secret_f).collect();
 
         (identities, secrets)
-    }
-
-    //TODO: When we actually have malicious strategies implemented for broadcast,
-    //test them in VSS
-    impl<BCast: Broadcast> RealVss<BCast> {
-        pub fn new(broadcast_strategy: &BCast) -> Self {
-            Self {
-                broadcast: broadcast_strategy.clone(),
-            }
-        }
     }
 
     #[test]

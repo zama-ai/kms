@@ -270,12 +270,11 @@ pub type SmallSession64<const EXTENSION_DEGREE: usize> =
 pub type SmallSession128<const EXTENSION_DEGREE: usize> =
     SmallSession<crate::algebra::galois_rings::common::ResiduePoly<Z128, EXTENSION_DEGREE>>;
 
-pub trait SmallSessionHandles<Z: Ring, R: Rng + CryptoRng, P: PRSSPrimitives<Z>>:
-    BaseSessionHandles<R>
-{
-    fn prss_as_mut(&mut self) -> &mut P;
+pub trait SmallSessionHandles<Z: Ring, R: Rng + CryptoRng>: BaseSessionHandles<R> {
+    type PRSSPrimitivesType: PRSSPrimitives<Z>;
+    fn prss_as_mut(&mut self) -> &mut Self::PRSSPrimitivesType;
     /// Returns the non-mutable prss state if it exists or return an error
-    fn prss(&self) -> P;
+    fn prss(&self) -> Self::PRSSPrimitivesType;
 }
 
 #[derive(Clone)]
@@ -374,8 +373,10 @@ impl<
         Z: Ring + RingEmbed + Invert + PRSSConversions,
         R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone,
         P: ParameterHandles,
-    > SmallSessionHandles<Z, R, SecurePRSSState<Z>> for SmallSessionStruct<Z, R, P>
+    > SmallSessionHandles<Z, R> for SmallSessionStruct<Z, R, P>
 {
+    type PRSSPrimitivesType = SecurePRSSState<Z>;
+
     fn prss_as_mut(&mut self) -> &mut SecurePRSSState<Z> {
         &mut self.prss_state
     }

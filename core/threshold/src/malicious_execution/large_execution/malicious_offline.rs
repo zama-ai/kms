@@ -13,6 +13,7 @@ use crate::{
         runtime::session::LargeSessionHandles,
         sharing::{open::RobustOpen, share::Share},
     },
+    ProtocolDescription,
 };
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
@@ -34,6 +35,27 @@ pub struct CheatingLargePreprocessing<
     ring_marker: std::marker::PhantomData<Z>,
     rnd_marker: std::marker::PhantomData<Rnd>,
     session_marker: std::marker::PhantomData<Ses>,
+}
+
+impl<
+        Z: Ring,
+        Rnd: Rng + CryptoRng,
+        Ses: LargeSessionHandles<Rnd>,
+        S: SingleSharing<Z>,
+        D: DoubleSharing<Z>,
+        RO: RobustOpen,
+    > ProtocolDescription for CheatingLargePreprocessing<Z, Rnd, Ses, S, D, RO>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-CheatingLargePreprocessing:\n{}\n{}\n{}",
+            indent,
+            S::protocol_desc(depth + 1),
+            D::protocol_desc(depth + 1),
+            RO::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<

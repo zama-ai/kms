@@ -3,25 +3,30 @@ use std::collections::{HashMap, HashSet};
 use rand::{CryptoRng, Rng, SeedableRng};
 
 use crate::{
-    algebra::structure_traits::Ring,
+    algebra::structure_traits::{Invert, Ring, RingEmbed},
     execution::{
         runtime::{
             party::{Identity, Role},
             session::{
                 BaseSessionHandles, BaseSessionStruct, NetworkingImpl, ParameterHandles,
-                SmallSessionHandles,
+                SmallSessionHandles, SmallSessionStruct, ToBaseSession,
             },
         },
-        small_execution::prss::{DerivePRSSState, PRSSInit, PRSSPrimitives},
+        small_execution::{
+            prf::PRSSConversions,
+            prss::{DerivePRSSState, PRSSInit, PRSSPrimitives, SecurePRSSState},
+        },
     },
     session_id::SessionId,
 };
 
-/// Defines a malicious small session
+/// Defines a generic small session
 /// that accepts any arbitrary PRSS strategy
 /// (whereas the regular small session only executes the secure PRSS)
+/// This is useful for testing purposes
+/// where we want to use a different PRSS strategy
 #[derive(Clone)]
-pub struct MaliciousSmallSessionStruct<
+pub struct GenericSmallSessionStruct<
     Z: Ring,
     R: Rng + CryptoRng + SeedableRng,
     Prss: PRSSPrimitives<Z>,
@@ -37,7 +42,7 @@ impl<
         R: Rng + CryptoRng + SeedableRng + Clone + Send + Sync,
         Prss: PRSSPrimitives<Z>,
         P: ParameterHandles,
-    > MaliciousSmallSessionStruct<Z, R, Prss, P>
+    > GenericSmallSessionStruct<Z, R, Prss, P>
 {
     pub async fn new_and_init_prss_state<PrssInit: PRSSInit<Z>>(
         mut base_session: BaseSessionStruct<R, P>,
@@ -56,7 +61,7 @@ impl<
         base_session: BaseSessionStruct<R, P>,
         prss_state: Prss,
     ) -> anyhow::Result<Self> {
-        Ok(MaliciousSmallSessionStruct {
+        Ok(GenericSmallSessionStruct {
             base_session,
             prss_state,
             ring_marker: std::marker::PhantomData,
@@ -69,7 +74,7 @@ impl<
         R: Rng + CryptoRng + SeedableRng + Send + Sync + Clone,
         Prss: PRSSPrimitives<Z> + Clone,
         P: ParameterHandles,
-    > ParameterHandles for MaliciousSmallSessionStruct<Z, R, Prss, P>
+    > ParameterHandles for GenericSmallSessionStruct<Z, R, Prss, P>
 {
     fn my_role(&self) -> anyhow::Result<Role> {
         self.base_session.my_role()
@@ -112,7 +117,7 @@ impl<
         R: Rng + CryptoRng + SeedableRng + Send + Sync + Clone,
         Prss: PRSSPrimitives<Z> + Clone,
         P: ParameterHandles,
-    > BaseSessionHandles<R> for MaliciousSmallSessionStruct<Z, R, Prss, P>
+    > BaseSessionHandles<R> for GenericSmallSessionStruct<Z, R, Prss, P>
 {
     fn rng(&mut self) -> &mut R {
         self.base_session.rng()
@@ -136,13 +141,46 @@ impl<
         R: Rng + CryptoRng + SeedableRng + Send + Sync + Clone,
         Prss: PRSSPrimitives<Z> + Clone,
         P: ParameterHandles,
-    > SmallSessionHandles<Z, R, Prss> for MaliciousSmallSessionStruct<Z, R, Prss, P>
+    > SmallSessionHandles<Z, R> for GenericSmallSessionStruct<Z, R, Prss, P>
 {
+    type PRSSPrimitivesType = Prss;
     fn prss_as_mut(&mut self) -> &mut Prss {
         &mut self.prss_state
     }
 
     fn prss(&self) -> Prss {
         self.prss_state.to_owned()
+    }
+}
+
+impl<
+        Z: Ring,
+        R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone,
+        Prss: PRSSPrimitives<Z> + Clone,
+        P: ParameterHandles,
+    > ToBaseSession<R, BaseSessionStruct<R, P>> for GenericSmallSessionStruct<Z, R, Prss, P>
+{
+    fn to_base_session(&mut self) -> anyhow::Result<BaseSessionStruct<R, P>> {
+        Ok(BaseSessionStruct {
+            rng: R::from_rng(self.rng())?,
+            network: self.base_session.network().clone(),
+            corrupt_roles: self.base_session.corrupt_roles().clone(),
+            parameters: self.base_session.parameters.clone(),
+        })
+    }
+}
+
+// If the generic session uses a secure PRSS state, allow convrersion to a SmallSession
+impl<
+        Z: Ring + RingEmbed + Invert + PRSSConversions,
+        R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone,
+        P: ParameterHandles,
+    > GenericSmallSessionStruct<Z, R, SecurePRSSState<Z>, P>
+{
+    pub fn to_secure_small_session(self) -> SmallSessionStruct<Z, R, P> {
+        SmallSessionStruct {
+            base_session: self.base_session,
+            prss_state: self.prss_state,
+        }
     }
 }

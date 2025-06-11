@@ -21,7 +21,8 @@ use rand::{CryptoRng, RngCore};
 use threshold_fhe::{
     algebra::galois_rings::common::pack_residue_poly,
     execution::endpoints::decryption::{
-        partial_decrypt_using_bitdec, partial_decrypt_using_noiseflooding, DecryptionMode, Small,
+        partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec, DecryptionMode,
+        NoiseFloodSmallSession,
     },
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
@@ -138,7 +139,7 @@ impl<
                             .await,
                         "Could not prepare ddec data for noiseflood decryption".to_string(),
                     )?;
-                    let mut preparation = Small::new(session.clone());
+                    let mut preparation = NoiseFloodSmallSession::new(session.clone());
 
                     let pdec = partial_decrypt_using_noiseflooding(
                         &mut session,
@@ -185,7 +186,7 @@ impl<
                         "Could not prepare ddec data for bitdec decryption".to_string(),
                     )?;
 
-                    let pdec = partial_decrypt_using_bitdec(
+                    let pdec = secure_partial_decrypt_using_bitdec(
                         &mut session,
                         &low_level_ct.try_get_small_ct()?,
                         &keys.private_keys,
