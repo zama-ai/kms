@@ -522,8 +522,7 @@ jobs:
   # Deploys to kms-threshold-staging namespace
   ############################################################################
   update-kms-core-client-argocd-staging:
-    # if: github.event_name == 'schedule'
-    if: (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    if: github.event_name == 'schedule'
     needs:
       - test-core-client
       - docker-core-client
