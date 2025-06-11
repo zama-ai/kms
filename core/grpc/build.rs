@@ -81,12 +81,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(all(feature = "non-wasm", not(feature = "insecure")))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    default_builder().compile_protos(&["proto/kms-service.v1.proto"], &["proto"])?;
+    default_builder().compile_protos(
+        &[
+            "proto/kms-service.v1.proto",
+            "proto/metastore-status.v1.proto",
+        ],
+        &["proto"],
+    )?;
     Ok(())
 }
 
 #[cfg(all(feature = "non-wasm", feature = "insecure"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    default_builder().compile_protos(&["proto/kms-service-insecure.v1.proto"], &["proto"])?;
+    default_builder().compile_protos(
+        &[
+            "proto/kms-service-insecure.v1.proto",
+            "proto/metastore-status.v1.proto",
+        ],
+        &["proto"],
+    )?;
     Ok(())
 }

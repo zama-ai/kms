@@ -1,0 +1,98 @@
+syntax = "proto3";
+package metastore_status.v1;
+
+import "kms.v1.proto";
+
+// Enum representing different types of meta-stores in the system
+enum MetaStoreType {
+  KEY_GENERATION = 0;
+  PUBLIC_DECRYPTION = 1;
+  USER_DECRYPTION = 2;
+  CRS_GENERATION = 3;
+  PREPROCESSING = 4;
+  ALL = 5;  // Special value to query across all meta-store types
+}
+
+// Enum representing the processing status of a request
+enum RequestProcessingStatus {
+  PROCESSING = 0;  // Request is still being processed
+  COMPLETED = 1;   // Request has completed successfully
+  FAILED = 2;      // Request has failed
+  ANY = 3;         // Special value to query any status
+}
+
+// Information about the status of a specific request
+message RequestStatusInfo {
+  // The request ID
+  kms.v1.RequestId request_id = 1;
+  // The type of meta-store this request belongs to
+  MetaStoreType meta_store_type = 2;
+  // The current processing status
+  RequestProcessingStatus status = 3;
+  // Error message if the request failed, empty otherwise
+  optional string error_message = 4;
+}
+
+// Request to get the status of specific request IDs
+message GetRequestStatusesRequest {
+  // List of request IDs to get status for
+  repeated kms.v1.RequestId request_ids = 1;
+  // Optional filter by meta-store type
+  optional MetaStoreType meta_store_type = 2;
+}
+
+// Response containing the status of requested request IDs
+message GetRequestStatusesResponse {
+  // Status information for each requested request ID
+  // May not include all requested IDs if some were not found
+  repeated RequestStatusInfo statuses = 1;
+}
+
+// Information about a meta-store's configuration
+message MetaStoreInfo {
+  // The type of meta-store
+  MetaStoreType type = 1;
+  // Maximum capacity of this meta-store
+  int32 capacity = 2;
+  // Current number of items in this meta-store
+  int32 current_count = 3;
+}
+
+// Response containing meta-store information
+message GetMetaStoreInfoResponse {
+  // Information about each meta-store
+  repeated MetaStoreInfo meta_stores = 1;
+}
+
+// Request to list all requests in the system
+message ListRequestsRequest {
+  // Filter by meta-store type
+  MetaStoreType meta_store_type = 1;
+  // Filter by processing status (optional)
+  optional RequestProcessingStatus status_filter = 2;
+  // Maximum total number of results to return (optional)
+  // If not specified, will use the meta-store's capacity as the default
+  optional int32 max_results = 3;
+  // Pagination token for fetching next batch of results
+  optional string page_token = 4;
+}
+
+// Response containing a list of requests
+message ListRequestsResponse {
+  // List of request statuses
+  repeated RequestStatusInfo requests = 1;
+  // Token for fetching the next page of results, if any
+  optional string next_page_token = 2;
+}
+
+// Service for querying the status of requests across different meta-stores
+service MetaStoreStatusService {
+  // Get status information for specific request IDs
+  rpc GetRequestStatuses(GetRequestStatusesRequest) returns (GetRequestStatusesResponse);
+  
+  // List all requests with optional filtering
+  rpc ListRequests(ListRequestsRequest) returns (ListRequestsResponse);
+  
+  // Get information about meta-stores (including capacity)
+  rpc GetMetaStoreInfo(kms.v1.Empty) returns (GetMetaStoreInfoResponse);
+}
