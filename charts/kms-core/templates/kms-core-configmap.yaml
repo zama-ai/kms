@@ -38,7 +38,7 @@ data:
     {{- end }}
   kms-gen-keys.toml: |
     [keygen]
-
+    enabled = true
     {{ if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
     my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
