@@ -140,6 +140,7 @@ spec:
               # because we need to serve kms-server.toml on the same port later
               socat VSOCK-LISTEN:4000,fork,reuseaddr OPEN:kms-gen-keys.toml,rdonly &
               nitro-cli run-enclave --config /var/lib/kms-core/config/enclave.json
+              sleep 60
           env:
             - name: "NO_COLOR"
               value: "true"
