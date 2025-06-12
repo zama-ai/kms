@@ -62,11 +62,9 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
-          {{- if .Values.kmsCore.envFrom.configmap.name }}
           envFrom:
             - configMapRef:
-                name: {{ .Values.kmsCore.envFrom.configmap.name }}
-          {{- end }}
+                name: tkms-enclave-staging-1
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
             - mountPath: /var/lib/kms-core/config
@@ -149,11 +147,9 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
-          {{- if .Values.kmsCore.envFrom.configmap.name }}
           envFrom:
             - configMapRef:
-                name: {{ .Values.kmsCore.envFrom.configmap.name }}
-          {{- end }}
+                name: tkms-enclave-staging-1
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
             - mountPath: {{ .Values.kmsCore.workdir }}
@@ -167,10 +163,8 @@ spec:
           ports:
             - containerPort: {{ .Values.kmsCore.ports.client }}
               protocol: TCP
-            {{- if .Values.kmsCore.thresholdMode.enabled }}
             - containerPort: {{ .Values.kmsCore.ports.peer }}
               protocol: TCP
-            {{- end }}
             - containerPort: {{ .Values.kmsCore.ports.metrics }}
               protocol: TCP
           resources:
@@ -202,7 +196,6 @@ spec:
           configMap:
             name: {{ include "kmsCoreName" . }}-config
             defaultMode: 0664
-        {{- if .Values.kmsCore.nitroEnclave.enabled }}
         - name: hugepage
           emptyDir:
             medium: HugePages
@@ -210,5 +203,4 @@ spec:
           hostPath:
             path: /dev/nitro_enclaves
             type: CharDevice
-        {{- end }}
 {{- end -}}
