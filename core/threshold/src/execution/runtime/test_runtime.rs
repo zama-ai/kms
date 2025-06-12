@@ -1,6 +1,6 @@
 use super::{
     party::{Identity, Role, RoleAssignment},
-    session::{BaseSessionStruct, LargeSession, ParameterHandles, SessionParameters, SmallSession},
+    session::{BaseSession, LargeSession, ParameterHandles, SessionParameters, SmallSession},
 };
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Ring},
@@ -126,14 +126,14 @@ impl<Z: Ring, const EXTENSION_DEGREE: usize> DistributedTestRuntime<Z, EXTENSION
         session_id: SessionId,
         player_id: usize,
         rng: Option<AesRng>,
-    ) -> BaseSessionStruct<AesRng, SessionParameters> {
+    ) -> BaseSession {
         let role_assignments = self.role_assignments.clone();
         let net = Arc::clone(&self.user_nets[player_id]);
         let own_role = Role::indexed_by_zero(player_id);
         let identity = self.role_assignments[&own_role].clone();
         let parameters =
             SessionParameters::new(self.threshold, session_id, identity, role_assignments).unwrap();
-        BaseSessionStruct::new(
+        BaseSession::new(
             parameters,
             net,
             rng.unwrap_or_else(|| AesRng::seed_from_u64(own_role.zero_based() as u64)),
@@ -154,14 +154,12 @@ where
         party_id: usize,
         rng: Option<AesRng>,
     ) -> SmallSession<Z> {
-        let mut base_session = self.base_session_for_party(session_id, party_id, rng);
-        Self::add_dummy_prss(&mut base_session)
+        let base_session = self.base_session_for_party(session_id, party_id, rng);
+        Self::add_dummy_prss(base_session)
     }
 
     // Setups and adds a PRSS state with DummyAgreeRandom to the current session
-    pub fn add_dummy_prss(
-        session: &mut BaseSessionStruct<AesRng, SessionParameters>,
-    ) -> SmallSession<Z> {
+    pub fn add_dummy_prss(mut session: BaseSession) -> SmallSession<Z> {
         // this only works for DummyAgreeRandom
         // for RealAgreeRandom this needs to happen async/in parallel, so the parties can actually talk to each other at the same time
         // ==> use a JoinSet where this is called and collect the results later.
@@ -171,12 +169,11 @@ where
         let prss_setup = rt
             .block_on(async {
                 AbortRealPrssInit::<DummyAgreeRandom>::default()
-                    .init(session)
+                    .init(&mut session)
                     .await
             })
             .unwrap();
         let sid = session.session_id();
-        SmallSession::new_from_prss_state(session.clone(), prss_setup.new_prss_session_state(sid))
-            .unwrap()
+        SmallSession::new_from_prss_state(session, prss_setup.new_prss_session_state(sid)).unwrap()
     }
 }

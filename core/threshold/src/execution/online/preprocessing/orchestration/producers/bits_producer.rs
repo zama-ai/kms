@@ -1,6 +1,4 @@
-use aes_prng::AesRng;
 use num_integer::div_ceil;
-use rand::{CryptoRng, Rng};
 use tokio::{sync::mpsc::Sender, task::JoinSet};
 use tracing::instrument;
 
@@ -24,25 +22,23 @@ use crate::{
 
 use super::common::{execute_preprocessing, ProducerSession};
 
-pub struct GenericBitProducer<Z, Rnd, S, PreprocStrat>
+pub struct GenericBitProducer<Z, S, PreprocStrat>
 where
     Z: Ring,
-    Rnd: Rng + CryptoRng + Sync + 'static,
-    S: BaseSessionHandles<Rnd> + 'static,
+    S: BaseSessionHandles + 'static,
 {
     pub(crate) batch_size: usize,
     pub(crate) total_size: usize,
-    pub(crate) producers: Vec<ProducerSession<Rnd, S, Vec<Share<Z>>>>,
+    pub(crate) producers: Vec<ProducerSession<S, Vec<Share<Z>>>>,
     pub(crate) progress_tracker: Option<ProgressTracker>,
     _marker_strat: std::marker::PhantomData<PreprocStrat>,
 }
 
-impl<Z, Rnd, S, PreprocStrat> BitProducerTrait<Z, S> for GenericBitProducer<Z, Rnd, S, PreprocStrat>
+impl<Z, S, PreprocStrat> BitProducerTrait<Z, S> for GenericBitProducer<Z, S, PreprocStrat>
 where
     Z: ErrorCorrect + Invert,
-    Rnd: Rng + CryptoRng + Sync + 'static,
-    S: BaseSessionHandles<Rnd> + 'static,
-    PreprocStrat: Preprocessing<Z, Rnd, S> + Default,
+    S: BaseSessionHandles + 'static,
+    PreprocStrat: Preprocessing<Z, S> + Default,
 {
     fn new(
         batch_size: usize,
@@ -112,10 +108,10 @@ where
 }
 
 pub type SecureSmallSessionBitProducer<Z> =
-    GenericBitProducer<Z, AesRng, SmallSession<Z>, SecureSmallPreprocessing>;
+    GenericBitProducer<Z, SmallSession<Z>, SecureSmallPreprocessing>;
 
 pub type SecureLargeSessionBitProducer<Z> =
-    GenericBitProducer<Z, AesRng, LargeSession, SecureLargePreprocessing<Z>>;
+    GenericBitProducer<Z, LargeSession, SecureLargePreprocessing<Z>>;
 
 #[cfg(test)]
 mod tests {

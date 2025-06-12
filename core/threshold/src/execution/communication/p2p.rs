@@ -1,4 +1,3 @@
-use rand::{CryptoRng, Rng};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -23,12 +22,12 @@ use crate::{
 /// Returns true if everything is fine.
 /// By not making sense, we mean that the party is either the same as the currently executing party or that the
 /// currently executing party is in conflict with the sender/receiver, or the sender/receiver is corrupt
-fn check_roles<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+fn check_roles<L: LargeSessionHandles>(
     communicating_with: &Role,
     session: &L,
 ) -> anyhow::Result<bool> {
     // Ensure we don't send to ourself
-    if communicating_with == &session.my_role()? {
+    if communicating_with == &session.my_role() {
         tracing::info!("You are trying to communicate with yourself.");
         return Ok(false);
     }
@@ -44,7 +43,7 @@ fn check_roles<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
     // Observe that if a party is corrupt it will also be in dispute, hence we have already returned above and only write the log that they are corrupt
     if session
         .disputed_roles()
-        .get(&session.my_role()?)?
+        .get(&session.my_role())?
         .contains(communicating_with)
     {
         tracing::info!(
@@ -56,18 +55,15 @@ fn check_roles<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
     Ok(true)
 }
 
-fn check_talking_to_myself<R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
-    r: &Role,
-    session: &B,
-) -> anyhow::Result<bool> {
-    Ok(r != &session.my_role()?)
+fn check_talking_to_myself<B: BaseSessionHandles>(r: &Role, session: &B) -> anyhow::Result<bool> {
+    Ok(r != &session.my_role())
 }
 
 /// Send specific values to all parties.
 /// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
 /// Automatically increases the round counter when called
 /// Note: This also sends to corrupt parties
-pub async fn send_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub async fn send_to_parties<Z: Ring, B: BaseSessionHandles>(
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
     session: &B,
 ) -> anyhow::Result<()> {
@@ -81,7 +77,7 @@ pub async fn send_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<
 /// I.e. not the sending party or in dispute or corrupt.
 /// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
 /// Automatically increases the round counter when called
-pub async fn send_to_honest_parties<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+pub async fn send_to_honest_parties<Z: Ring, L: LargeSessionHandles>(
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
     session: &L,
 ) -> anyhow::Result<()> {
@@ -92,12 +88,12 @@ pub async fn send_to_honest_parties<Z: Ring, R: Rng + CryptoRng, L: LargeSession
 
 /// Add a job of sending specific values to specific parties.
 /// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
-async fn internal_send_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+async fn internal_send_to_parties<Z: Ring, B: BaseSessionHandles>(
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
     session: &B,
     check_fn: &(dyn Fn(&Role, &B) -> anyhow::Result<bool> + Sync),
 ) -> anyhow::Result<()> {
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     for (cur_receiver, cur_value) in values_to_send.iter() {
         // do not send to myself
         if cur_receiver != &my_role {
@@ -124,7 +120,7 @@ async fn internal_send_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHan
 
 /// Send specific values to specific parties.
 /// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
-pub async fn send_distinct_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub async fn send_distinct_to_parties<Z: Ring, B: BaseSessionHandles>(
     session: &B,
     sender: &Role,
     values_to_send: HashMap<&Role, NetworkValue<Z>>,
@@ -143,7 +139,7 @@ pub async fn send_distinct_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessio
 /// Receive specific values to specific parties.
 /// The list of parties to receive from is given in `senders`.
 /// Returns [`NetworkValue::Bot`] in case of failure to receive but without adding parties to the corruption or dispute sets.
-pub async fn receive_from_parties<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+pub async fn receive_from_parties<Z: Ring, S: BaseSessionHandles>(
     senders: &Vec<Role>,
     session: &S,
 ) -> anyhow::Result<HashMap<Role, NetworkValue<Z>>> {
@@ -161,11 +157,7 @@ pub async fn receive_from_parties<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHan
 /// The list of parties to receive from is given in `senders`.
 /// Returns [`NetworkValue::Bot`] in case of failure to receive but without adding parties to the corruption or dispute sets.
 /// Do not expect anything from disputed or corrupted parties
-pub async fn receive_from_parties_w_dispute<
-    Z: Ring,
-    R: Rng + CryptoRng,
-    L: LargeSessionHandles<R>,
->(
+pub async fn receive_from_parties_w_dispute<Z: Ring, L: LargeSessionHandles>(
     senders: &Vec<Role>,
     session: &L,
 ) -> anyhow::Result<HashMap<Role, NetworkValue<Z>>> {
@@ -182,7 +174,7 @@ pub async fn receive_from_parties_w_dispute<
 /// Add a job of receiving values from specific parties.
 /// Each of the senders are contained in [senders].
 /// If we don't receive anything, the value [NetworkValue::Bot] is returned
-fn internal_receive_from_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+fn internal_receive_from_parties<Z: Ring, B: BaseSessionHandles>(
     jobs: &mut JoinSet<(Role, NetworkValue<Z>)>,
     senders: &Vec<Role>,
     session: &B,
@@ -214,7 +206,7 @@ fn internal_receive_from_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHand
         } else {
             tracing::info!(
                 "I am {:?} trying to receive from sender {:?}, who doesn't pass check",
-                session.my_role()?,
+                session.my_role(),
                 cur_sender
             );
             continue;
@@ -224,7 +216,7 @@ fn internal_receive_from_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHand
 }
 
 /// Send to all parties and automatically increase round counter
-pub async fn send_to_all<T, Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub async fn send_to_all<T, Z: Ring, B: BaseSessionHandles>(
     session: &B,
     sender: &Role,
     msg: T,
@@ -254,7 +246,7 @@ where
 /// from the inside enum.
 ///
 /// **NOTE: We do not try to receive any value from the non_answering_parties set.**
-pub fn generic_receive_from_all_senders<V, Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub fn generic_receive_from_all_senders<V, Z: Ring, B: BaseSessionHandles>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &B,
     receiver: &Role,
@@ -284,7 +276,7 @@ where
 
             let networking = Arc::clone(session.network());
             let identity = session.own_identity();
-            let my_role = session.my_role()?;
+            let my_role = session.my_role();
             let timeout = session.network().get_timeout_current_round()?;
             let task = async move {
                 let stripped_message = timeout_at(timeout, networking.receive(&sender_id)).await;
@@ -311,7 +303,7 @@ where
 }
 
 /// Wrapper around [generic_receive_from_all_senders] where the sender list is all the parties.
-pub fn generic_receive_from_all<V, Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub fn generic_receive_from_all<V, Z: Ring, B: BaseSessionHandles>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &B,
     receiver: &Role,

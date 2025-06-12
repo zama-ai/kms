@@ -31,7 +31,6 @@ use crate::{
 use anyhow::Context;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
-use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
@@ -47,12 +46,12 @@ pub trait PRSSPrimitives<Z>: ProtocolDescription + Send + Sync {
     fn przs_next(&mut self, party_id: Role, threshold: u8) -> anyhow::Result<Z>;
     fn mask_next(&mut self, party_id: Role, bd: u128) -> anyhow::Result<Z>;
 
-    async fn prss_check<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn prss_check<S: BaseSessionHandles>(
         &self,
         session: &mut S,
         ctr: u128,
     ) -> anyhow::Result<HashMap<Role, Z>>;
-    async fn przs_check<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn przs_check<S: BaseSessionHandles>(
         &self,
         session: &mut S,
         ctr: u128,
@@ -81,7 +80,7 @@ pub trait PRSSInit<Z>: ProtocolDescription + Send + Sync + Sized {
     /// One time init of the PRSS by creating a [`PRSSSetup`] object
     /// which can be used to create a session specific [`PRSSState`] through
     /// [`PRSSSetup::new_prss_session_state`]
-    async fn init<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn init<S: BaseSessionHandles>(
         &self,
         session: &mut S,
     ) -> anyhow::Result<Self::OutputType>;
@@ -175,13 +174,13 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandom> PRSSInit<Z>
     ///
     /// __NOTE__: Needs to be instantiated with [`RealAgreeRandomWithAbort`] to match the spec
     #[instrument(name="PRSS.Init (abort)",skip(self,session),fields(sid=?session.session_id(),own_identity = ?session.own_identity()))]
-    async fn init<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn init<S: BaseSessionHandles>(
         &self,
         session: &mut S,
     ) -> anyhow::Result<Self::OutputType> {
         let num_parties = session.num_parties();
         let binom_nt = num_integer::binomial(num_parties, session.threshold() as usize);
-        let party_id = session.my_role()?.one_based();
+        let party_id = session.my_role().one_based();
 
         if binom_nt > PRSS_SIZE_MAX {
             return Err(anyhow_error_and_log(
@@ -233,7 +232,7 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss
     ///
     /// __NOTE__: Needs to be instantiated with [`RealAgreeRandomWithAbort`] to match the spec
     #[instrument(name="PRSS.Init (robust)",skip(self,session),fields(sid=?session.session_id(),own_identity = ?session.own_identity()))]
-    async fn init<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn init<S: BaseSessionHandles>(
         &self,
         session: &mut S,
     ) -> anyhow::Result<Self::OutputType> {
@@ -248,7 +247,7 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss
         }
 
         let c: usize = binom_nt.div_ceil(n - t);
-        let party_id = session.my_role()?.one_based();
+        let party_id = session.my_role().one_based();
 
         //Generate random secret contribution
         let secrets = (0..c).map(|_| Z::sample(session.rng())).collect_vec();
@@ -562,7 +561,7 @@ where
     /// Compute the PRSS.check() method which returns the summed up psi value for each party based on the supplied counter `ctr`.
     /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
     #[instrument(name = "PRSS.check", skip(self, session), fields(sid=?session.session_id(),own_identity=?session.own_identity()))]
-    async fn prss_check<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn prss_check<S: BaseSessionHandles>(
         &self,
         session: &mut S,
         ctr: u128,
@@ -585,7 +584,7 @@ where
         //Broadcast (as sender and receiver) all the psi values
         let broadcast_result = self
             .broadcast
-            .broadcast_from_all_w_corrupt_set_update::<Z, R, S>(
+            .broadcast_from_all_w_corrupt_set_update::<Z, S>(
                 session,
                 BroadcastValue::PRSSVotes(psi_values),
             )
@@ -604,7 +603,7 @@ where
     /// Compute the PRZS.check() method which returns the summed up chi value for each party based on the supplied counter `ctr`.
     /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
     #[instrument(name = "PRZS.Check", skip(self, session, ctr), fields(sid=?session.session_id(),own_identity=?session.own_identity()))]
-    async fn przs_check<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn przs_check<S: BaseSessionHandles>(
         &self,
         session: &mut S,
         ctr: u128,
@@ -627,7 +626,7 @@ where
 
         let broadcast_result = self
             .broadcast
-            .broadcast_from_all_w_corrupt_set_update::<Z, R, S>(
+            .broadcast_from_all_w_corrupt_set_update::<Z, S>(
                 session,
                 BroadcastValue::PRSSVotes(chi_values),
             )
@@ -651,7 +650,7 @@ where
 /// Helper method for sorting the votes. Takes the `broadcast_result` and for each [PrssSet] sorts which parties has voted/replied for each of the different [Value]s.
 /// The result is a map from each unique received [PrssSet] to another map which maps from all possible received [Value]s associated
 /// with the [PrssSet] to the set of [Role]s which has voted/replied to the specific [Value] for the specific [PrssSet].
-fn sort_votes<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+fn sort_votes<Z: Ring, S: BaseSessionHandles>(
     broadcast_result: &HashMap<Role, BroadcastValue<Z>>,
     session: &mut S,
 ) -> anyhow::Result<HashMap<PartySet, ValueVotes<Z>>> {
@@ -689,7 +688,7 @@ fn sort_votes<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 /// That is, if it is not present in `value_votes` it gets added and in either case `cur_role` gets counted as having
 /// voted for `cur_prf_val`.
 /// In case `cur_role` has already voted for `cur_prf_val` they get added to the list of corrupt parties.
-fn add_vote<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+fn add_vote<Z: Ring, S: BaseSessionHandles>(
     value_votes: &mut ValueVotes<Z>,
     cur_prf_val: &Vec<Z>,
     cur_role: Role,
@@ -721,7 +720,7 @@ fn add_vote<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 ///
 /// __NOTE__: If for a given prss_set, the value with max vote has <= threshold votes, this means this
 ///  prss_set is __NOT__ a valid prss_set, and all parties that voted for this prss_set must be malicious.
-fn find_winning_prf_values<'a, Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+fn find_winning_prf_values<'a, Z: Ring, S: BaseSessionHandles>(
     count: &'a HashMap<PartySet, ValueVotes<Z>>,
     session: &mut S,
 ) -> anyhow::Result<HashMap<&'a PartySet, &'a Vec<Z>>> {
@@ -757,7 +756,7 @@ fn find_winning_prf_values<'a, Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandle
 /// Helper method for finding the parties who did not vote for the results and add them to the corrupt set.
 /// Goes through `true_prf_vals` and find which parties did not vote for the psi values it contains.
 /// This is done by cross-referencing the votes in `count`
-fn handle_non_voting_parties<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+fn handle_non_voting_parties<Z: Ring, S: BaseSessionHandles>(
     true_prf_vals: &HashMap<&PartySet, &Vec<Z>>,
     count: &HashMap<PartySet, ValueVotes<Z>>,
     session: &mut S,
@@ -925,10 +924,7 @@ mod tests {
             endpoints::decryption::{threshold_decrypt64, DecryptionMode},
             runtime::party::{Identity, Role},
             runtime::{
-                session::{
-                    BaseSessionHandles, ParameterHandles, SessionParameters, SmallSession,
-                    SmallSessionStruct,
-                },
+                session::{BaseSessionHandles, ParameterHandles, SmallSession},
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
             sharing::{shamir::ShamirSharings, share::Share},
@@ -958,10 +954,8 @@ mod tests {
         for mut sess in sessions.into_iter() {
             let prss_init = prss_init.clone();
             jobs.spawn(async move {
-                let epoc = prss_init
-                    .init::<AesRng, SmallSessionStruct<Z, AesRng, SessionParameters>>(&mut sess)
-                    .await;
-                (sess.my_role().unwrap().zero_based(), epoc)
+                let epoc = prss_init.init::<SmallSession<Z>>(&mut sess).await;
+                (sess.my_role().zero_based(), epoc)
             });
         }
 
@@ -1158,7 +1152,7 @@ mod tests {
         let _guard = rt.enter();
         let prss_setups = rt.block_on(async {
             let prss_init = AbortRealPrssInit::<AbortSecureAgreeRandom>::default();
-            setup_prss_sess::<ResiduePolyF4Z128, _>(sessions.clone(), prss_init).await
+            setup_prss_sess::<ResiduePolyF4Z128, _>(sessions, prss_init).await
         });
 
         runtime.setup_prss(prss_setups);
@@ -1173,6 +1167,17 @@ mod tests {
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
 
+        // (re)create sessions for each prss party
+        let sessions: Vec<SmallSession<ResiduePolyF4Z128>> = (0..num_parties)
+            .map(|p| {
+                seed[0] = p as u8;
+                runtime.small_session_for_party(
+                    SessionId::from(u128::MAX),
+                    p,
+                    Some(AesRng::from_seed(seed)),
+                )
+            })
+            .collect();
         // Test with Dummy AgreeRandom
         let _guard = rt.enter();
         let prss_setups = rt.block_on(async {
@@ -1957,7 +1962,7 @@ mod tests {
             let secure_prss_init = PRSSHonest::default();
             let setup = secure_prss_init.init(&mut session).await.unwrap();
             let mut state = setup.new_prss_session_state(session.session_id());
-            let role = session.my_role().unwrap();
+            let role = session.my_role();
             let prss_output_shares = (0..num_secrets)
                 .map(|_| Share::<Z>::new(role, state.prss_next(role).unwrap()))
                 .collect::<Vec<_>>();
@@ -1988,7 +1993,7 @@ mod tests {
             |mut session: SmallSession<Z>, malicious_prss_init: PRSSMalicious| async move {
                 let setup = malicious_prss_init.init(&mut session).await.unwrap();
                 let mut state = setup.new_prss_session_state(session.session_id());
-                let role = session.my_role().unwrap();
+                let role = session.my_role();
                 let prss_output_shares = (0..num_secrets)
                     .map(|_| Share::<Z>::new(role, state.prss_next(role).unwrap()))
                     .collect::<Vec<_>>();

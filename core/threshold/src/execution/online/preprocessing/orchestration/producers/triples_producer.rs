@@ -1,6 +1,4 @@
-use aes_prng::AesRng;
 use num_integer::div_ceil;
-use rand::{CryptoRng, Rng};
 use tokio::{sync::mpsc::Sender, task::JoinSet};
 use tracing::instrument;
 
@@ -26,27 +24,24 @@ use crate::{
 
 use super::common::{execute_preprocessing, ProducerSession};
 
-pub struct GenericTripleProducer<Z, Rnd, S, PreprocStrat>
+pub struct GenericTripleProducer<Z, S, PreprocStrat>
 where
     Z: Ring,
-    Rnd: Rng + CryptoRng + Sync + 'static,
-    S: BaseSessionHandles<Rnd> + 'static,
+    S: BaseSessionHandles + 'static,
 {
     batch_size: usize,
     total_size: usize,
-    producers: Vec<ProducerSession<Rnd, S, Vec<Triple<Z>>>>,
+    producers: Vec<ProducerSession<S, Vec<Triple<Z>>>>,
     progress_tracker: Option<ProgressTracker>,
     _marker_strat: std::marker::PhantomData<PreprocStrat>,
 }
 
 /// Implement the TripleProducerTrait for GenericTripleProducer
-impl<Z, Rnd, S, PreprocStrat> TripleProducerTrait<Z, S>
-    for GenericTripleProducer<Z, Rnd, S, PreprocStrat>
+impl<Z, S, PreprocStrat> TripleProducerTrait<Z, S> for GenericTripleProducer<Z, S, PreprocStrat>
 where
     Z: Ring,
-    Rnd: Rng + CryptoRng + Sync + 'static,
-    S: BaseSessionHandles<Rnd> + 'static,
-    PreprocStrat: Preprocessing<Z, Rnd, S> + Default,
+    S: BaseSessionHandles + 'static,
+    PreprocStrat: Preprocessing<Z, S> + Default,
 {
     fn new(
         batch_size: usize,
@@ -109,10 +104,10 @@ where
 }
 
 pub type SecureSmallSessionTripleProducer<Z> =
-    GenericTripleProducer<Z, AesRng, SmallSession<Z>, SecureSmallPreprocessing>;
+    GenericTripleProducer<Z, SmallSession<Z>, SecureSmallPreprocessing>;
 
 pub type SecureLargeSessionTripleProducer<Z> =
-    GenericTripleProducer<Z, AesRng, LargeSession, SecureLargePreprocessing<Z>>;
+    GenericTripleProducer<Z, LargeSession, SecureLargePreprocessing<Z>>;
 
 #[cfg(test)]
 mod tests {

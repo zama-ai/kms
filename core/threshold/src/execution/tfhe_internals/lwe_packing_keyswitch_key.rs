@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use tfhe::{
     boolean::prelude::{
         DecompositionBaseLog, DecompositionLevelCount, GlweDimension, LweDimension, PolynomialSize,
@@ -84,11 +83,11 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LwePackingKeyswitchKeyShares<Z,
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    pub async fn open_to_tfhers_type<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    pub async fn open_to_tfhers_type<S: BaseSessionHandles>(
         self,
         session: &S,
     ) -> anyhow::Result<LwePackingKeyswitchKeyOwned<u64>> {
-        let my_role = session.my_role()?;
+        let my_role = session.my_role();
         let input_key_lwe_dimension = LweDimension(self.data.len());
         let output_key_glwe_dimension = self.output_glwe_size.to_glwe_dimension();
         let output_key_polynomial_size = self.output_polynomial_size();

@@ -50,9 +50,9 @@ use crate::execution::online::preprocessing::{
 };
 use crate::execution::online::reshare::{reshare_sk_same_sets, ResharePreprocRequired};
 use crate::execution::runtime::party::{Identity, Role};
+use crate::execution::runtime::session::ParameterHandles;
 use crate::execution::runtime::session::ToBaseSession;
 use crate::execution::runtime::session::{BaseSession, BaseSessionHandles};
-use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
 use crate::execution::runtime::session::{LargeSession, SessionParameters};
 use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
 use crate::execution::small_execution::prf::PRSSConversions;
@@ -70,7 +70,7 @@ use clap::ValueEnum;
 use dashmap::DashMap;
 use gen::{CrsGenRequest, CrsGenResponse};
 use itertools::Itertools;
-use rand::{CryptoRng, Rng, RngCore, SeedableRng};
+use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::num::Wrapping;
@@ -209,10 +209,10 @@ type PRSSState128<P, const EXTENSION_DEGREE: usize> =
     >>::OutputType;
 
 type GenericSmallSessionZ64<P, const EXTENSION_DEGREE: usize> =
-    GenericSmallSessionStruct<ResiduePoly<Z64, EXTENSION_DEGREE>, AesRng, P, SessionParameters>;
+    GenericSmallSessionStruct<ResiduePoly<Z64, EXTENSION_DEGREE>, P>;
 
 type GenericSmallSessionZ128<P, const EXTENSION_DEGREE: usize> =
-    GenericSmallSessionStruct<ResiduePoly<Z128, EXTENSION_DEGREE>, AesRng, P, SessionParameters>;
+    GenericSmallSessionStruct<ResiduePoly<Z128, EXTENSION_DEGREE>, P>;
 
 pub struct GrpcChoreography<
     const EXTENSION_DEGREE: usize,
@@ -270,23 +270,19 @@ where
     // Preprocessing strategies
     SmallOfflineStrategy: Preprocessing<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
-            AesRng,
             GenericSmallSessionZ64<
                 PRSSState64<PRSSInitStrategy, EXTENSION_DEGREE>,
                 EXTENSION_DEGREE,
             >,
         > + Preprocessing<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
-            AesRng,
             GenericSmallSessionZ128<
                 PRSSState128<PRSSInitStrategy, EXTENSION_DEGREE>,
                 EXTENSION_DEGREE,
             >,
         >,
-    LargeOfflineStrategyZ64:
-        Preprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>, AesRng, LargeSession>,
-    LargeOfflineStrategyZ128:
-        Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, AesRng, LargeSession>,
+    LargeOfflineStrategyZ64: Preprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>, LargeSession>,
+    LargeOfflineStrategyZ128: Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, LargeSession>,
 {
     pub fn new(
         own_identity: Identity,
@@ -380,7 +376,7 @@ where
         role_assignments: HashMap<Role, Identity>,
         network_mode: NetworkMode,
         seed: Option<u64>,
-    ) -> anyhow::Result<BaseSessionStruct<AesRng, SessionParameters>> {
+    ) -> anyhow::Result<BaseSession> {
         Ok(self
             .create_base_sessions(
                 request_sid,
@@ -411,7 +407,7 @@ where
         role_assignments: HashMap<Role, Identity>,
         network_mode: NetworkMode,
         seed: Option<u64>,
-    ) -> anyhow::Result<Vec<BaseSessionStruct<AesRng, SessionParameters>>> {
+    ) -> anyhow::Result<Vec<BaseSession>> {
         let mut session_id_generator = AesRng::from_seed(request_sid.to_le_bytes());
         let sids = (0..num_sessions)
             .map(|_| gen_random_sid(&mut session_id_generator, request_sid.into()))
@@ -449,7 +445,7 @@ where
                 AesRng::from_entropy()
             };
             base_sessions.push(
-                BaseSessionStruct::new(params.clone(), networking, aes_rng)
+                BaseSession::new(params.clone(), networking, aes_rng)
                     .expect("Failed to create Base Session"),
             );
         }
@@ -490,23 +486,19 @@ where
     // Preprocessing strategies
     SmallOfflineStrategy: Preprocessing<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
-            AesRng,
             GenericSmallSessionZ64<
                 PRSSState64<PRSSInitStrategy, EXTENSION_DEGREE>,
                 EXTENSION_DEGREE,
             >,
         > + Preprocessing<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
-            AesRng,
             GenericSmallSessionZ128<
                 PRSSState128<PRSSInitStrategy, EXTENSION_DEGREE>,
                 EXTENSION_DEGREE,
             >,
         >,
-    LargeOfflineStrategyZ64:
-        Preprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>, AesRng, LargeSession>,
-    LargeOfflineStrategyZ128:
-        Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, AesRng, LargeSession>,
+    LargeOfflineStrategyZ64: Preprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>, LargeSession>,
+    LargeOfflineStrategyZ128: Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, LargeSession>,
 {
     #[instrument(
         name = "PRSS-INIT",
@@ -723,15 +715,12 @@ where
                             .orchestrate_dkg_processing::<_, GenericTripleProducer<
                                 _,
                                 _,
-                                _,
                                 SmallOfflineStrategy,
                             >, GenericRandomProducer<
                                 _,
                                 _,
-                                _,
                                 SmallOfflineStrategy,
                             >, GenericBitProducer<
-                                _,
                                 _,
                                 _,
                                 SmallOfflineStrategy,
@@ -769,15 +758,12 @@ where
                             .orchestrate_dkg_processing::<_, GenericTripleProducer<
                                 _,
                                 _,
-                                _,
                                 LargeOfflineStrategyZ64,
                             >, GenericRandomProducer<
                                 _,
                                 _,
-                                _,
                                 LargeOfflineStrategyZ64,
                             >, GenericBitProducer<
-                                _,
                                 _,
                                 _,
                                 LargeOfflineStrategyZ64,
@@ -825,15 +811,12 @@ where
                             .orchestrate_dkg_processing::<_, GenericTripleProducer<
                                 _,
                                 _,
-                                _,
                                 SmallOfflineStrategy,
                             >, GenericRandomProducer<
                                 _,
                                 _,
-                                _,
                                 SmallOfflineStrategy,
                             >, GenericBitProducer<
-                                _,
                                 _,
                                 _,
                                 SmallOfflineStrategy,
@@ -869,15 +852,12 @@ where
                             .orchestrate_dkg_processing::<_, GenericTripleProducer<
                                 _,
                                 _,
-                                _,
                                 LargeOfflineStrategyZ128,
                             >, GenericRandomProducer<
                                 _,
                                 _,
-                                _,
                                 LargeOfflineStrategyZ128,
                             >, GenericBitProducer<
-                                _,
                                 _,
                                 _,
                                 LargeOfflineStrategyZ128,
@@ -994,7 +974,7 @@ where
             }
             (DKGParams::WithoutSnS(_), None) => {
                 let sid_u128: u128 = session_id.into();
-                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, base_session.clone());
+                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
                     let keys = distributed_keygen_z64(&mut base_session, &mut preproc, dkg_params)
                         .await
@@ -1037,7 +1017,7 @@ where
             }
             (DKGParams::WithSnS(_), None) => {
                 let sid_u128: u128 = session_id.into();
-                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, base_session.clone());
+                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
                     let keys = distributed_keygen_z128(&mut base_session, &mut preproc, dkg_params)
                         .await
@@ -1812,7 +1792,6 @@ where
                                                     EXTENSION_DEGREE,
                                                     _,
                                                     _,
-                                                    _,
                                                     u64,
                                                 >(
                                                     &mut base_session,
@@ -1926,15 +1905,13 @@ where
             .unwrap();
 
             //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
-            let mut base_session =
-                BaseSessionStruct::new(params, networking, AesRng::from_entropy()).map_err(
-                    |e| {
-                        tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!("Failed to create Base Session: {:?}", e),
-                        )
-                    },
-                )?;
+            let mut base_session = BaseSession::new(params, networking, AesRng::from_entropy())
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create Base Session: {:?}", e),
+                    )
+                })?;
             match decryption_mode {
                 // For BitDec we do parallelization by spawning one session per "raw" ctxt
                 DecryptionMode::BitDecLarge | DecryptionMode::BitDecSmall => {
@@ -1951,7 +1928,7 @@ where
                     } else {
                         let sid_u128: u128 = session_id.into();
                         let mut dummy_preproc =
-                            DummyPreprocessing::new(sid_u128 as u64, base_session.clone());
+                            DummyPreprocessing::new(sid_u128 as u64, &base_session);
                         (0..num_sessions)
                             .map(|_| {
                                 (0..num_ctxts)
@@ -2019,15 +1996,18 @@ where
 
                             tasks.spawn(
                                 async move {
-
-                                    (block_idx,task_decryption_bitdec_par::<EXTENSION_DEGREE, _, _, _, u64>(
-                                        &mut session,
-                                        &mut inner_preprocessings,
-                                        &key_share.1,
-                                        &ksk,
-                                        ctxts_blocks,
+                                    (
+                                        block_idx,
+                                        task_decryption_bitdec_par::<EXTENSION_DEGREE, _, _, u64>(
+                                            &mut session,
+                                            &mut inner_preprocessings,
+                                            &key_share.1,
+                                            &ksk,
+                                            ctxts_blocks,
+                                        )
+                                        .await,
+                                        session,
                                     )
-                                    .await,session)
                                 }
                                 .instrument(tracing::Span::current()),
                             );
@@ -2086,7 +2066,7 @@ where
                         let num_blocks_per_ctxt = ctxts.first().unwrap().len();
                         let sid_u128: u128 = session_id.into();
                         let mut dummy_preproc =
-                            DummyPreprocessing::new(sid_u128 as u64, base_session.clone());
+                            DummyPreprocessing::new(sid_u128 as u64, &base_session);
                         (0..num_ctxts)
                             .map(|_| {
                                 let mut inner =
@@ -2259,7 +2239,7 @@ where
         let my_future = || async move {
             let real_ceremony = SecureCeremony::default();
             let pp = real_ceremony
-                .execute::<Z64, _, _>(
+                .execute::<Z64, _>(
                     &mut base_session,
                     witness_dim as usize,
                     request.max_num_bits,
@@ -2498,8 +2478,8 @@ where
                         correlated_randomness_z64,
                         correlated_randomness_z128,
                         [
-                            small_session_z64.to_base_session().unwrap(),
-                            small_session_z128.to_base_session().unwrap(),
+                            small_session_z64.to_base_session(),
+                            small_session_z128.to_base_session(),
                         ],
                     )
                 }
@@ -2520,8 +2500,8 @@ where
                         correlated_randomness_z64,
                         correlated_randomness_z128,
                         [
-                            large_session_z64.to_base_session().unwrap(),
-                            large_session_z128.to_base_session().unwrap(),
+                            large_session_z64.to_base_session(),
+                            large_session_z128.to_base_session(),
                         ],
                     )
                 }
@@ -2543,7 +2523,7 @@ where
                 reshare_params.new_key_sid,
                 Arc::new((public_key_set, new_private_key_set)),
             );
-            let mut sessions = sessions.to_vec();
+            let mut sessions = sessions.into_iter().collect_vec();
             sessions.push(reshare_base_session);
             fill_network_memory_info_multiple_sessions(sessions);
         };
@@ -2571,12 +2551,7 @@ where
 /// - total number of bytes sent across all sessions
 /// - total number of bytes received across all sessions
 /// - peak memory usage in bytes as given by the custom allocator
-pub(crate) fn fill_network_memory_info_multiple_sessions<
-    R: Rng + CryptoRng,
-    B: BaseSessionHandles<R>,
->(
-    sessions: Vec<B>,
-) {
+pub(crate) fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(sessions: Vec<B>) {
     let span = tracing::Span::current();
     // Take the max number of rounds across all sessions
     // (as they ran in parallel the sum isn't really a good measure)
@@ -2615,12 +2590,7 @@ pub(crate) fn fill_network_memory_info_multiple_sessions<
     span.record("peak_mem", MEM_ALLOCATOR.get().unwrap().peak_usage());
 }
 
-pub(crate) fn fill_network_memory_info_single_session<
-    R: Rng + CryptoRng,
-    B: BaseSessionHandles<R>,
->(
-    session: B,
-) {
+pub(crate) fn fill_network_memory_info_single_session<B: BaseSessionHandles>(session: B) {
     fill_network_memory_info_multiple_sessions(vec![session]);
 }
 
@@ -2660,9 +2630,9 @@ pub fn create_small_session<
     Z: ErrorCorrect + Invert + PRSSConversions,
     PRSSSetupType: DerivePRSSState<Z>,
 >(
-    base_session: BaseSessionStruct<AesRng, SessionParameters>,
+    base_session: BaseSession,
     prss_setup: &PRSSSetupType,
-) -> GenericSmallSessionStruct<Z, AesRng, PRSSSetupType::OutputType, SessionParameters> {
+) -> GenericSmallSessionStruct<Z, PRSSSetupType::OutputType> {
     create_small_sessions(vec![base_session], prss_setup)
         .pop()
         .unwrap()
@@ -2672,9 +2642,9 @@ pub fn create_small_sessions<
     Z: ErrorCorrect + Invert + PRSSConversions,
     PRSSSetupType: DerivePRSSState<Z>,
 >(
-    base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
+    base_sessions: Vec<BaseSession>,
     prss_setup: &PRSSSetupType,
-) -> Vec<GenericSmallSessionStruct<Z, AesRng, PRSSSetupType::OutputType, SessionParameters>> {
+) -> Vec<GenericSmallSessionStruct<Z, PRSSSetupType::OutputType>> {
     base_sessions
         .into_iter()
         .map(|base_session| {
@@ -2684,15 +2654,11 @@ pub fn create_small_sessions<
         .collect_vec()
 }
 
-pub fn create_large_session(
-    base_session: BaseSessionStruct<AesRng, SessionParameters>,
-) -> LargeSession {
+pub fn create_large_session(base_session: BaseSession) -> LargeSession {
     create_large_sessions(vec![base_session]).pop().unwrap()
 }
 
-pub fn create_large_sessions(
-    base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
-) -> Vec<LargeSession> {
+pub fn create_large_sessions(base_sessions: Vec<BaseSession>) -> Vec<LargeSession> {
     base_sessions
         .into_iter()
         .map(LargeSession::new)

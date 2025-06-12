@@ -61,14 +61,13 @@ fn partial_decrypt<N: Const + NTTConstants<LevelOne>>(
 #[instrument(name = "BGV.Threshold-Dec", skip_all,fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub(crate) async fn noise_flood_decryption<
     N: Clone + Const + NTTConstants<LevelOne>,
-    R: Rng + CryptoRng,
-    S: SmallSessionHandles<LevelOne, R>,
+    S: SmallSessionHandles<LevelOne>,
 >(
     session: &mut S,
     keyshares: &PrivateBgvKeySet,
     ciphertext: &LevelledCiphertext<LevelEll, N>,
 ) -> anyhow::Result<Vec<u32>> {
-    let own_role = session.my_role()?;
+    let own_role = session.my_role();
     let prss_state = session.prss_as_mut();
 
     let q = LevelOne {
@@ -262,7 +261,7 @@ mod tests {
             let private_keyset = Arc::new(PrivateBgvKeySet::from_eval_domain(ntt_shares));
 
             set.spawn(async move {
-                let my_role = session.my_role().unwrap();
+                let my_role = session.my_role();
                 let m = noise_flood_decryption(&mut session, private_keyset.as_ref(), ctc.as_ref())
                     .await
                     .unwrap();

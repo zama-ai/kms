@@ -28,7 +28,6 @@ use crate::{
     networking::value::BroadcastValue,
 };
 use itertools::{izip, Itertools};
-use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use tracing::instrument;
 use zeroize::Zeroize;
@@ -141,8 +140,7 @@ where
     fields(sid=?session.session_id(),own_identity=?session.own_identity())
 )]
 pub async fn reshare_sk_same_sets<
-    Rnd: Rng + CryptoRng,
-    Ses: BaseSessionHandles<Rnd>,
+    Ses: BaseSessionHandles,
     P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
     P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
     const EXTENSION_DEGREE: usize,
@@ -246,8 +244,7 @@ where
 }
 
 pub async fn reshare_same_sets<
-    Rnd: Rng + CryptoRng,
-    Ses: BaseSessionHandles<Rnd>,
+    Ses: BaseSessionHandles,
     P: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
     Z: BaseRing + Zeroize,
     const EXTENSION_DEGREE: usize,
@@ -277,7 +274,7 @@ where
     }
 
     // open r_{i,j} to party j
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     //let mut opened = vec![]; // this will be zeroized later
     //for other_role in &all_roles_sorted {
     //    let rs_share = rs_shares
@@ -428,7 +425,7 @@ mod tests {
             constants::SMALL_TEST_KEY_PATH,
             online::preprocessing::dummy::DummyPreprocessing,
             runtime::{
-                session::{LargeSession, ParameterHandles},
+                session::ParameterHandles,
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
             sharing::shamir::InputOp,
@@ -715,16 +712,10 @@ mod tests {
             let mut session = runtime.large_session_for_party(session_id, index_id);
 
             set.spawn(async move {
-                let mut preproc128 = DummyPreprocessing::<
-                    ResiduePoly<Z128, EXTENSION_DEGREE>,
-                    AesRng,
-                    LargeSession,
-                >::new(42, session.clone());
-                let mut preproc64 = DummyPreprocessing::<
-                    ResiduePoly<Z64, EXTENSION_DEGREE>,
-                    AesRng,
-                    LargeSession,
-                >::new(42, session.clone());
+                let mut preproc128 =
+                    DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(42, &session);
+                let mut preproc64 =
+                    DummyPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(42, &session);
 
                 //Testing ResharePreprocRequired
                 let preproc_required =
@@ -756,7 +747,7 @@ mod tests {
                 //Making sure ResharPreprocRequired doesn't ask for too much preprocessing
                 assert_eq!(new_preproc_64.available_randoms.len(), 0);
                 assert_eq!(new_preproc_128.available_randoms.len(), 0);
-                (session.my_role().unwrap(), out, party_keyshare)
+                (session.my_role(), out, party_keyshare)
             });
         }
 

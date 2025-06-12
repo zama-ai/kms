@@ -1,4 +1,3 @@
-use aes_prng::AesRng;
 use tonic::async_trait;
 
 use crate::{
@@ -25,7 +24,7 @@ use crate::{
 };
 
 #[async_trait]
-impl BGVDkgPreprocessing for DummyPreprocessing<LevelKsw, AesRng, SmallSession<LevelKsw>> {
+impl BGVDkgPreprocessing for DummyPreprocessing<LevelKsw> {
     async fn fill_from_base_preproc(
         &mut self,
         _poly_size: usize,

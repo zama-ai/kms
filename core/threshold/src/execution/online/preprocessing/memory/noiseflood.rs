@@ -73,7 +73,7 @@ where
         session: &mut SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         amount: usize,
     ) -> anyhow::Result<()> {
-        let own_role = session.my_role()?;
+        let own_role = session.my_role();
 
         let prss_span = info_span!("PRSS-MASK.Next", batch_size = amount);
         let masks = prss_span.in_scope(|| {

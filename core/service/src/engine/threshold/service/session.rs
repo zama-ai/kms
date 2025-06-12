@@ -2,13 +2,12 @@
 use std::sync::Arc;
 
 // === External Crates ===
-use aes_prng::AesRng;
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
         runtime::{
             party::{Identity, Role, RoleAssignment},
-            session::{BaseSessionStruct, SessionParameters, SmallSession},
+            session::{BaseSession, SessionParameters, SmallSession},
         },
         small_execution::prss::{DerivePRSSState, PRSSSetup},
     },
@@ -56,7 +55,7 @@ impl SessionPreparer {
         &self,
         session_id: SessionId,
         network_mode: NetworkMode,
-    ) -> anyhow::Result<BaseSessionStruct<AesRng, SessionParameters>> {
+    ) -> anyhow::Result<BaseSession> {
         let networking = self.get_networking(session_id, network_mode).await;
         let own_identity = self.own_identity()?;
 
@@ -67,7 +66,7 @@ impl SessionPreparer {
             self.role_assignments.clone(),
         )?;
         let base_session =
-            BaseSessionStruct::new(parameters, networking?, self.base_kms.new_rng().await)?;
+            BaseSession::new(parameters, networking?, self.base_kms.new_rng().await)?;
         Ok(base_session)
     }
 

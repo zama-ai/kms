@@ -186,7 +186,7 @@ pub mod testing {
         execution::{
             runtime::{
                 party::{Identity, Role},
-                session::{BaseSessionStruct, SessionParameters},
+                session::{BaseSession, ParameterHandles, SessionParameters},
             },
             small_execution::{
                 agree_random::DummyAgreeRandom,
@@ -219,12 +219,13 @@ pub mod testing {
                 Identity(format!("localhost:{}", 5000 + i)),
             );
         }
-        SessionParameters {
+        SessionParameters::new(
             threshold,
-            session_id: SessionId::from(1),
-            own_identity: role_assignment.get(&role).unwrap().clone(),
-            role_assignments: role_assignment,
-        }
+            SessionId::from(1),
+            role_assignment.get(&role).unwrap().clone(),
+            role_assignment,
+        )
+        .unwrap()
     }
 
     /// Returns a base session to be used with multiple parties
@@ -232,11 +233,11 @@ pub mod testing {
         amount: usize,
         threshold: u8,
         role: Role,
-    ) -> BaseSessionStruct<AesRng, SessionParameters> {
+    ) -> BaseSession {
         let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
-        let id = parameters.own_identity.clone();
-        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
-        BaseSessionStruct {
+        let id = parameters.own_identity();
+        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity()]);
+        BaseSession {
             parameters,
             network: Arc::new(net_producer.user_net(id, NetworkMode::Sync, None)),
             rng: AesRng::seed_from_u64(role.zero_based() as u64),
@@ -245,7 +246,7 @@ pub mod testing {
     }
 
     pub fn get_dummy_prss_setup<Z: ErrorCorrect + Invert + PRSSConversions>(
-        mut session: BaseSessionStruct<AesRng, SessionParameters>,
+        mut session: BaseSession,
     ) -> PRSSSetup<Z> {
         let rt = Runtime::new().unwrap();
 
@@ -269,7 +270,7 @@ pub mod tests {
             runtime::{
                 party::{Identity, Role},
                 session::{
-                    BaseSessionStruct, LargeSession, LargeSessionHandles, ParameterHandles,
+                    BaseSession, LargeSession, LargeSessionHandles, ParameterHandles,
                     SessionParameters, SmallSession,
                 },
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
@@ -425,22 +426,15 @@ pub mod tests {
         let mut role_assignment = HashMap::new();
         let id = Identity("localhost:5000".to_string());
         role_assignment.insert(Role::indexed_by_one(1), id.clone());
-        SessionParameters {
-            threshold: 0,
-            session_id: SessionId::from(1),
-            own_identity: id,
-            role_assignments: role_assignment,
-        }
+        SessionParameters::new(0, SessionId::from(1), id, role_assignment).unwrap()
     }
 
     /// Returns a base session to be used with a single party, with role 1, suitable for testing with dummy constructs
-    pub fn get_base_session(
-        network_mode: NetworkMode,
-    ) -> BaseSessionStruct<AesRng, SessionParameters> {
+    pub fn get_base_session(network_mode: NetworkMode) -> BaseSession {
         let parameters = get_dummy_parameters();
-        let id = parameters.own_identity.clone();
-        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
-        BaseSessionStruct {
+        let id = parameters.own_identity();
+        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity()]);
+        BaseSession {
             parameters,
             network: Arc::new(net_producer.user_net(id, network_mode, None)),
             rng: AesRng::seed_from_u64(42),

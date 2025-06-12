@@ -77,7 +77,7 @@ where
         session: &mut SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         amount: usize,
     ) -> anyhow::Result<()> {
-        let own_role = session.my_role()?;
+        let own_role = session.my_role();
 
         let masks = (0..amount)
             .map(|_| session.prss_state.mask_next(own_role, B_SWITCH_SQUASH))

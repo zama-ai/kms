@@ -14,8 +14,6 @@ use crate::experimental::constants::PLAINTEXT_MODULUS;
 use crate::networking::value::NetworkValue;
 use aes_prng::AesRng;
 use itertools::Itertools;
-use rand::CryptoRng;
-use rand::Rng;
 use rand::SeedableRng;
 use std::sync::Arc;
 use tokio::task::JoinSet;
@@ -30,7 +28,7 @@ pub(crate) fn gen_key_set() -> (PublicBgvKeySet, SecretKey) {
     (pk, sk)
 }
 
-pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+pub async fn transfer_pub_key<S: BaseSessionHandles>(
     session: &S,
     pubkey: Option<PublicBgvKeySet>,
     role: &Role,
@@ -84,7 +82,7 @@ pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     }
 }
 
-pub async fn transfer_secret_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+pub async fn transfer_secret_key<S: BaseSessionHandles>(
     session: &mut S,
     secret_key: Option<SecretKey>,
     role: &Role,

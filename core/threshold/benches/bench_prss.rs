@@ -9,7 +9,7 @@ use threshold_fhe::{
         large_execution::vss::DummyVss,
         runtime::{
             party::{Identity, Role},
-            session::{BaseSessionStruct, SessionParameters},
+            session::{BaseSession, ParameterHandles, SessionParameters},
         },
         small_execution::{
             agree_random::DummyAgreeRandomFromShare,
@@ -65,11 +65,11 @@ pub fn get_base_session_for_parties(
     threshold: u8,
     role: Role,
     network_mode: NetworkMode,
-) -> BaseSessionStruct<AesRng, SessionParameters> {
+) -> BaseSession {
     let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
-    let id = parameters.own_identity.clone();
-    let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
-    BaseSessionStruct::new(
+    let id = parameters.own_identity();
+    let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity()]);
+    BaseSession::new(
         parameters,
         Arc::new(net_producer.user_net(id, network_mode, None)),
         AesRng::seed_from_u64(42),
@@ -90,12 +90,13 @@ pub fn get_dummy_parameters_for_parties(
             Identity(format!("localhost:{}", 5000 + i)),
         );
     }
-    SessionParameters {
+    SessionParameters::new(
         threshold,
-        session_id: SessionId::from(1),
-        own_identity: role_assignment.get(&role).unwrap().clone(),
-        role_assignments: role_assignment,
-    }
+        SessionId::from(1),
+        role_assignment.get(&role).unwrap().clone(),
+        role_assignment,
+    )
+    .unwrap()
 }
 
 criterion_group!(prss, bench_prss);

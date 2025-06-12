@@ -17,7 +17,6 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 
 /// Lie in broadcast as sender
@@ -66,8 +65,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
 {
     async fn execute<
         Z: Ring + RingEmbed + Derive + Invert + ErrorCorrect,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
+        L: LargeSessionHandles,
     >(
         &self,
         session: &mut L,
@@ -87,7 +85,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
                 //ShareDispute will fill shares from disputed parties with 0s
                 shared_secrets = self.share_dispute.execute(session, secrets).await?;
 
-                shared_pads = send_receive_pads::<Z, R, L, S>(session, &self.share_dispute).await?;
+                shared_pads = send_receive_pads::<Z, L, S>(session, &self.share_dispute).await?;
 
                 x = self.coinflip.execute(session).await?;
 
@@ -176,8 +174,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
 {
     async fn execute<
         Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
+        L: LargeSessionHandles,
     >(
         &self,
         session: &mut L,
@@ -197,7 +194,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
                 //ShareDispute will fill shares from disputed parties with 0s
                 shared_secrets = self.share_dispute.execute(session, secrets).await?;
 
-                shared_pads = send_receive_pads::<Z, R, L, S>(session, &self.share_dispute).await?;
+                shared_pads = send_receive_pads::<Z, L, S>(session, &self.share_dispute).await?;
 
                 x = self.coinflip.execute(session).await?;
 

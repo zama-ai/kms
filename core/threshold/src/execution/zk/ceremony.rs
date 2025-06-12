@@ -710,7 +710,7 @@ fn verify_wellformedness(new_pp: &InternalPublicParameter) -> anyhow::Result<()>
 
 #[async_trait]
 pub trait Ceremony: Send + Sync + Clone {
-    async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         witness_dim: usize,
@@ -726,7 +726,7 @@ pub struct RealCeremony<BCast: Broadcast> {
 #[async_trait]
 impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
     #[instrument(name = "CRS-Ceremony", skip_all, fields(sid=?session.session_id(),own_identity=?session.own_identity()))]
-    async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         witness_dim: usize,
@@ -737,7 +737,7 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
         // even if the adversary can pick the order, it does not affect the security
         let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
         all_roles_sorted.sort();
-        let my_role = session.my_role()?;
+        let my_role = session.my_role();
 
         let mut pp = InternalPublicParameter::new(witness_dim, max_num_pt_bits);
         tracing::info!(
@@ -791,7 +791,7 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
                 // do the following if it is not my turn to contribute
                 match self
                     .broadcast
-                    .broadcast_w_corrupt_set_update::<Z, _, _>(session, vec![*role], None)
+                    .broadcast_w_corrupt_set_update::<Z, _>(session, vec![*role], None)
                     .await
                 {
                     Ok(res) => {
@@ -875,7 +875,7 @@ mod tests {
 
     #[async_trait]
     impl Ceremony for InsecureCeremony {
-        async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+        async fn execute<Z: Ring, S: BaseSessionHandles>(
             &self,
             session: &mut S,
             witness_dim: usize,
@@ -929,10 +929,10 @@ mod tests {
             let ceremony = ceremony_f();
             set.spawn(async move {
                 let out = ceremony
-                    .execute::<ResiduePolyF4Z64, _, _>(&mut session, witness_dim, Some(1))
+                    .execute::<ResiduePolyF4Z64, _>(&mut session, witness_dim, Some(1))
                     .await
                     .unwrap();
-                (session.my_role().unwrap(), out)
+                (session.my_role(), out)
             });
         }
 
@@ -1003,7 +1003,7 @@ mod tests {
 
     #[async_trait]
     impl Ceremony for DroppingCeremony {
-        async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+        async fn execute<Z: Ring, S: BaseSessionHandles>(
             &self,
             session: &mut S,
             _crs_size: usize,
@@ -1021,7 +1021,7 @@ mod tests {
 
     #[async_trait]
     impl<BCast: Broadcast> Ceremony for BadProofCeremony<BCast> {
-        async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+        async fn execute<Z: Ring, S: BaseSessionHandles>(
             &self,
             session: &mut S,
             witness_dim: usize,
@@ -1029,7 +1029,7 @@ mod tests {
         ) -> anyhow::Result<InternalPublicParameter> {
             let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
             all_roles_sorted.sort();
-            let my_role = session.my_role()?;
+            let my_role = session.my_role();
 
             let mut pp = InternalPublicParameter::new(witness_dim, max_num_bits);
 
@@ -1051,7 +1051,7 @@ mod tests {
                 } else {
                     let hm = self
                         .broadcast
-                        .broadcast_w_corrupt_set_update::<Z, _, _>(session, vec![*role], None)
+                        .broadcast_w_corrupt_set_update::<Z, _>(session, vec![*role], None)
                         .await
                         .unwrap();
                     let msg = hm.get(role).unwrap();
@@ -1074,7 +1074,7 @@ mod tests {
     impl<BCast: Broadcast> Ceremony for RushingCeremony<BCast> {
         // this implements an adversary that rushes the protocol,
         // i.e., it starts before it is his turn to do run
-        async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+        async fn execute<Z: Ring, S: BaseSessionHandles>(
             &self,
             session: &mut S,
             witness_dim: usize,
@@ -1082,7 +1082,7 @@ mod tests {
         ) -> anyhow::Result<InternalPublicParameter> {
             let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
             all_roles_sorted.sort();
-            let my_role = session.my_role()?;
+            let my_role = session.my_role();
 
             let pp = InternalPublicParameter {
                 round: 0,
@@ -1128,9 +1128,9 @@ mod tests {
         let mut task_honest = |mut session: LargeSession| async move {
             let real_ceremony = SecureCeremony::default();
             (
-                session.my_role().unwrap().zero_based(),
+                session.my_role().zero_based(),
                 real_ceremony
-                    .execute::<Z, _, _>(&mut session, witness_dim, Some(1))
+                    .execute::<Z, _>(&mut session, witness_dim, Some(1))
                     .await
                     .unwrap(),
                 session.corrupt_roles().clone(),
@@ -1139,9 +1139,9 @@ mod tests {
 
         let mut task_malicious = |mut session: LargeSession, malicious_party: C| async move {
             let _ = malicious_party
-                .execute::<Z, _, _>(&mut session, witness_dim, Some(1))
+                .execute::<Z, _>(&mut session, witness_dim, Some(1))
                 .await;
-            session.my_role().unwrap().zero_based()
+            session.my_role().zero_based()
         };
 
         //CRS generation is round robin, so Sync by nature

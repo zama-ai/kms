@@ -1,4 +1,3 @@
-use rand::{CryptoRng, Rng};
 use tonic::async_trait;
 
 use crate::{
@@ -36,17 +35,13 @@ impl<V: Vss> ProtocolDescription for DroppingCoinflipAfterVss<V> {
 
 #[async_trait]
 impl<V: Vss> Coinflip for DroppingCoinflipAfterVss<V> {
-    async fn execute<
-        Z: Ring + RingEmbed + ErrorCorrect,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute<Z: Ring + RingEmbed + ErrorCorrect, L: LargeSessionHandles>(
         &self,
         session: &mut L,
     ) -> anyhow::Result<Z> {
         let my_secret = Z::sample(session.rng());
 
-        let _ = self.vss.execute::<Z, R, L>(session, &my_secret).await?;
+        let _ = self.vss.execute::<Z, L>(session, &my_secret).await?;
 
         Ok(my_secret)
     }
@@ -82,17 +77,13 @@ impl<V: Vss, RO: RobustOpen> MaliciousCoinflipRecons<V, RO> {
 
 #[async_trait]
 impl<V: Vss, RO: RobustOpen> Coinflip for MaliciousCoinflipRecons<V, RO> {
-    async fn execute<
-        Z: Ring + RingEmbed + ErrorCorrect,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute<Z: Ring + RingEmbed + ErrorCorrect, L: LargeSessionHandles>(
         &self,
         session: &mut L,
     ) -> anyhow::Result<Z> {
         let my_secret = Z::sample(session.rng());
 
-        let shares_of_contributions = self.vss.execute::<Z, R, L>(session, &my_secret).await?;
+        let shares_of_contributions = self.vss.execute::<Z, L>(session, &my_secret).await?;
 
         //Add an error to share_of_coins
         let mut share_of_coins = shares_of_contributions.into_iter().sum();

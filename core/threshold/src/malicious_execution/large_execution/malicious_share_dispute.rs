@@ -15,7 +15,6 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 
 ///Dropout strategy
@@ -31,7 +30,7 @@ impl ProtocolDescription for DroppingShareDispute {
 
 #[async_trait]
 impl ShareDispute for DroppingShareDispute {
-    async fn execute<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<Z: Ring, L: LargeSessionHandles>(
         &self,
         _session: &mut L,
         _secrets: &[Z],
@@ -39,7 +38,7 @@ impl ShareDispute for DroppingShareDispute {
         Ok(ShareDisputeOutput::default())
     }
 
-    async fn execute_double<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute_double<Z: Ring, L: LargeSessionHandles>(
         &self,
         _session: &mut L,
         _secrets: &[Z],
@@ -61,7 +60,7 @@ impl ProtocolDescription for WrongShareDisputeRecons {
 
 #[async_trait]
 impl ShareDispute for WrongShareDisputeRecons {
-    async fn execute<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<Z: Ring, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -98,7 +97,7 @@ impl ShareDispute for WrongShareDisputeRecons {
         Ok(ShareDisputeOutput::default())
     }
 
-    async fn execute_double<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute_double<Z: Ring, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -161,11 +160,7 @@ impl MaliciousShareDisputeRecons {
 
 #[async_trait]
 impl ShareDispute for MaliciousShareDisputeRecons {
-    async fn execute_double<
-        Z: Ring + RingEmbed + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute_double<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -220,11 +215,7 @@ impl ShareDispute for MaliciousShareDisputeRecons {
         send_and_receive_share_dispute_double(session, polypoints_map, secrets.len()).await
     }
 
-    async fn execute<
-        Z: Ring + RingEmbed + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],

@@ -14,7 +14,6 @@ use crate::{
 use async_trait::async_trait;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
-use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use tracing::instrument;
 
@@ -29,13 +28,13 @@ pub struct DoubleShare<Z> {
 
 #[async_trait]
 pub trait DoubleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
-    async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
         l: usize,
     ) -> anyhow::Result<()>;
 
-    async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn next<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<DoubleShare<Z>>;
@@ -94,7 +93,7 @@ impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, S: LocalDoubleShare> 
     for RealDoubleSharing<Z, S>
 {
     #[instrument(name="DoubleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),own_identity=?session.own_identity(), batch_size = ?l))]
-    async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
         l: usize,
@@ -128,7 +127,7 @@ impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, S: LocalDoubleShare> 
     }
 
     //NOTE: This is instrumented by the caller function to use the same span for all calls
-    async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn next<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<DoubleShare<Z>> {
@@ -264,7 +263,7 @@ pub(crate) mod tests {
             for _ in 0..num_output {
                 res.push(double_sharing.next(&mut session).await.unwrap());
             }
-            (session.my_role().unwrap(), res)
+            (session.my_role(), res)
         };
 
         // Rounds (only on the happy path here)
@@ -341,7 +340,7 @@ pub(crate) mod tests {
             let extracted_size = session.num_parties() - session.threshold() as usize;
             let num_output = ldl_batch_size * extracted_size + 1;
             let mut res = Vec::new();
-            if session.my_role().unwrap().zero_based() != 1 {
+            if session.my_role().zero_based() != 1 {
                 let mut double_sharing = SecureDoubleSharing::<ResiduePolyF4Z128>::default();
                 double_sharing
                     .init(&mut session, ldl_batch_size)
@@ -359,7 +358,7 @@ pub(crate) mod tests {
                     })
                 }
             }
-            (session.my_role().unwrap(), res)
+            (session.my_role(), res)
         }
 
         //DoubleSharing assumes Sync network

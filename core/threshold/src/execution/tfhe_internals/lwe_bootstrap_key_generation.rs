@@ -1,5 +1,4 @@
 use itertools::{EitherOrBoth, Itertools};
-use rand::{CryptoRng, Rng};
 use tfhe::{
     core_crypto::prelude::ByteRandomGenerator,
     shortint::parameters::{DecompositionBaseLog, DecompositionLevelCount},
@@ -23,7 +22,7 @@ use super::{
     randomness::MPCEncryptionRandomGenerator,
 };
 
-pub async fn generate_lwe_bootstrap_key<Z, Gen, Rnd, S, P, const EXTENSION_DEGREE: usize>(
+pub async fn generate_lwe_bootstrap_key<Z, Gen, S, P, const EXTENSION_DEGREE: usize>(
     input_lwe_secret_key: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output_glwe_secret_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output: &mut LweBootstrapKeyShare<Z, EXTENSION_DEGREE>,
@@ -34,8 +33,7 @@ pub async fn generate_lwe_bootstrap_key<Z, Gen, Rnd, S, P, const EXTENSION_DEGRE
 where
     Z: BaseRing,
     Gen: ByteRandomGenerator,
-    Rnd: Rng + CryptoRng,
-    S: BaseSessionHandles<Rnd>,
+    S: BaseSessionHandles,
     P: TriplePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
@@ -79,14 +77,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn allocate_and_generate_lwe_bootstrap_key<
-    Z,
-    Gen,
-    Rnd,
-    S,
-    P,
-    const EXTENSION_DEGREE: usize,
->(
+pub async fn allocate_and_generate_lwe_bootstrap_key<Z, Gen, S, P, const EXTENSION_DEGREE: usize>(
     input_lwe_secret_key: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output_glwe_secret_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     decomp_base_log: DecompositionBaseLog,
@@ -99,8 +90,7 @@ pub async fn allocate_and_generate_lwe_bootstrap_key<
 where
     Z: BaseRing,
     Gen: ByteRandomGenerator,
-    Rnd: Rng + CryptoRng,
-    S: BaseSessionHandles<Rnd>,
+    S: BaseSessionHandles,
     P: TriplePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
@@ -199,7 +189,7 @@ mod tests {
         let num_key_bits_glwe = glwe_dimension * polynomial_size;
 
         let mut task = |mut session: LargeSession| async move {
-            let mut large_preproc = DummyPreprocessing::new(seed as u64, session.clone());
+            let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             //Generate the Lwe key
             let lwe_secret_key_share = LweSecretKeyShare::<Z128, 4> {
@@ -259,12 +249,12 @@ mod tests {
             .unwrap();
 
             let bk = bk_share
-                .open_to_tfhers_type::<u128, _, _>(&session)
+                .open_to_tfhers_type::<u128, _>(&session)
                 .await
                 .unwrap();
 
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 lwe_secret_key_share,
                 glwe_secret_key_share,
                 bk,

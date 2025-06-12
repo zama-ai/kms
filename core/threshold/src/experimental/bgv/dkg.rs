@@ -15,7 +15,6 @@ use crate::{
 };
 use crypto_bigint::{NonZero, U1536};
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use std::ops::Mul;
 use tracing::instrument;
 
@@ -41,12 +40,7 @@ impl BGVShareSecretKey {
 }
 
 #[instrument(name="BGV.Threshold-KeyGen",skip_all, fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
-pub async fn bgv_distributed_keygen<
-    N,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
-    P: BGVDkgPreprocessing,
->(
+pub async fn bgv_distributed_keygen<N, S: BaseSessionHandles, P: BGVDkgPreprocessing>(
     session: &mut S,
     preprocessing: &mut P,
     plaintext_mod: u64,
@@ -56,7 +50,7 @@ where
     RqElement<LevelKsw, N>: Mul<RqElement<LevelKsw, N>, Output = RqElement<LevelKsw, N>>,
     for<'r> RqElement<LevelKsw, N>: Mul<&'r LevelKsw, Output = RqElement<LevelKsw, N>>,
 {
-    let own_role = session.my_role()?;
+    let own_role = session.my_role();
     let p = LevelKsw::from_u128(plaintext_mod as u128);
     //Sample secret key share
     let sk_share = preprocessing.next_ternary_vec(N::VALUE)?;
@@ -250,12 +244,9 @@ mod tests {
         let parties = 5;
         let threshold = 1;
         let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
-            let mut prep = DummyPreprocessing::<LevelKsw, AesRng, SmallSession<LevelKsw>>::new(
-                0,
-                session.clone(),
-            );
+            let mut prep = DummyPreprocessing::<LevelKsw>::new(0, &session);
 
-            let (pk, sk) = bgv_distributed_keygen::<N65536, _, _, _>(
+            let (pk, sk) = bgv_distributed_keygen::<N65536, _, _>(
                 &mut session,
                 &mut prep,
                 PLAINTEXT_MODULUS.get().0,
@@ -288,11 +279,7 @@ mod tests {
         let parties = 5;
         let threshold = 1;
         let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
-            let mut dummy_preproc =
-                DummyPreprocessing::<LevelKsw, AesRng, SmallSession<LevelKsw>>::new(
-                    0,
-                    session.clone(),
-                );
+            let mut dummy_preproc = DummyPreprocessing::<LevelKsw>::new(0, &session);
 
             session
                 .network()
@@ -308,7 +295,7 @@ mod tests {
                 .network()
                 .set_timeout_for_next_round(*NETWORK_TIMEOUT_ASYNC)
                 .unwrap();
-            let (pk, sk) = bgv_distributed_keygen::<N65536, _, _, _>(
+            let (pk, sk) = bgv_distributed_keygen::<N65536, _, _>(
                 &mut session,
                 &mut bgv_preproc,
                 PLAINTEXT_MODULUS.get().0,

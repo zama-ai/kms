@@ -1,5 +1,4 @@
 use aes_prng::AesRng;
-use rand::{CryptoRng, Rng};
 use tonic::async_trait;
 
 use crate::{
@@ -25,7 +24,7 @@ impl ProtocolDescription for MaliciousRobustOpenDrop {
 
 #[async_trait]
 impl RobustOpen for MaliciousRobustOpenDrop {
-    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn execute<Z: ErrorCorrect, B: BaseSessionHandles>(
         &self,
         _session: &B,
         _shares: OpeningKind<Z>,
@@ -48,7 +47,7 @@ impl ProtocolDescription for MaliciousRobustOpenLie {
 }
 #[async_trait]
 impl RobustOpen for MaliciousRobustOpenLie {
-    async fn execute<Z: Ring + ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring + ErrorCorrect, B: BaseSessionHandles>(
         &self,
         session: &B,
         shares: OpeningKind<Z>,

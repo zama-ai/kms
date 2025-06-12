@@ -1,5 +1,4 @@
 use itertools::{EitherOrBoth, Itertools};
-use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use tfhe::{
     core_crypto::{
@@ -74,12 +73,12 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweCompactPublicKeyShare<Z, EXT
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    pub async fn open_to_tfhers_type<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    pub async fn open_to_tfhers_type<S: BaseSessionHandles>(
         self,
         session: &S,
     ) -> anyhow::Result<LweCompactPublicKeyOwned<u64>> {
         let lwe_dimension = LweDimension(self.glwe_ciphertext_share.polynomial_size.0);
-        let my_role = session.my_role()?;
+        let my_role = session.my_role();
         let shared_body = self
             .glwe_ciphertext_share
             .body
@@ -263,11 +262,11 @@ mod tests {
         let num_key_bits = lwe_dimension;
 
         let mut task = |mut session: LargeSession| async move {
-            let my_role = session.my_role().unwrap();
+            let my_role = session.my_role();
 
             let seed = 0;
 
-            let mut large_preproc = DummyPreprocessing::new(seed as u64, session.clone());
+            let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             let vec_shared_bits =
                 RealBitGenEven::gen_bits_even(num_key_bits, &mut large_preproc, &mut session)

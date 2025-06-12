@@ -145,7 +145,7 @@ mod tests {
         let batch = 100;
 
         let mut task = |session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
-            let mut preproc = DummyPreprocessing::<ResiduePolyF4Z64, _, _>::new(0, session.clone());
+            let mut preproc = DummyPreprocessing::<ResiduePolyF4Z64>::new(0, &session);
 
             let res_vec = RealSecretDistributions::newhope(batch, bound, &mut preproc).unwrap();
 
@@ -193,15 +193,14 @@ mod tests {
         let batch = 100_usize;
 
         let mut task = |session: LargeSession| async move {
-            let mut large_preproc =
-                DummyPreprocessing::<ResiduePolyF4Z128, _, _>::new(0, session.clone());
+            let mut large_preproc = DummyPreprocessing::<ResiduePolyF4Z128>::new(0, &session);
 
             let res_vec =
                 RealSecretDistributions::t_uniform(batch, bound, &mut large_preproc).unwrap();
 
             let opened_res = open_list(&res_vec, &session).await.unwrap();
 
-            (session.my_role().unwrap(), opened_res)
+            (session.my_role(), opened_res)
         };
 
         // Rounds (only on the happy path here)
@@ -263,15 +262,14 @@ mod tests {
         let batch = 100_usize;
 
         let mut task = |session: LargeSession| async move {
-            let mut large_preproc =
-                DummyPreprocessing::<ResiduePolyF4Z64, _, _>::new(0, session.clone());
+            let mut large_preproc = DummyPreprocessing::<ResiduePolyF4Z64>::new(0, &session);
 
             let res_vec =
                 RealSecretDistributions::t_uniform(batch, bound, &mut large_preproc).unwrap();
 
             let opened_res = open_list(&res_vec, &session).await.unwrap();
 
-            (session.my_role().unwrap(), opened_res)
+            (session.my_role(), opened_res)
         };
 
         // Rounds (only on the happy path here)

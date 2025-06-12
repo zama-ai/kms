@@ -2,7 +2,6 @@
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 // === External Crates ===
-use aes_prng::AesRng;
 use conf_trace::{
     metrics,
     metrics_names::{
@@ -26,7 +25,7 @@ use threshold_fhe::{
         },
         keyset_config as ddec_keyset_config,
         online::preprocessing::DKGPreprocessing,
-        runtime::session::{BaseSessionStruct, SessionParameters},
+        runtime::session::BaseSession,
         tfhe_internals::parameters::DKGParams,
     },
     networking::NetworkMode,
@@ -395,7 +394,7 @@ impl<
     }
 
     async fn decompression_key_gen_closure<P>(
-        base_session: &mut BaseSessionStruct<AesRng, SessionParameters>,
+        base_session: &mut BaseSession,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
         params: DKGParams,
         keyset_added_info: KeySetAddedInfo,
@@ -521,7 +520,7 @@ impl<
 
     #[cfg(feature = "insecure")]
     async fn reconstruct_glwe_and_compression_key_shares(
-        base_session: &BaseSessionStruct<AesRng, SessionParameters>,
+        base_session: &BaseSession,
         params: DKGParams,
         glwe_shares: GlweSecretKeyShare<Z128, 4>,
         compression_shares: CompressionPrivateKeyShares<Z128, 4>,
@@ -531,7 +530,7 @@ impl<
         use threshold_fhe::{
             algebra::galois_rings::common::ResiduePoly,
             execution::{
-                runtime::party::Role,
+                runtime::{party::Role, session::ParameterHandles},
                 sharing::open::{RobustOpen, SecureRobustOpen},
                 tfhe_internals::test_feature::{
                     to_hl_client_key, transfer_decompression_key, INPUT_PARTY_ID,
@@ -547,7 +546,7 @@ impl<
             .robust_open_list_to(
                 base_session,
                 glwe_shares.data.iter().map(|x| x.value()).collect_vec(),
-                base_session.parameters.threshold as usize,
+                base_session.threshold() as usize,
                 &output_party,
             )
             .await?;
@@ -560,7 +559,7 @@ impl<
                     .iter()
                     .map(|x| x.value())
                     .collect_vec(),
-                base_session.parameters.threshold as usize,
+                base_session.threshold() as usize,
                 &output_party,
             )
             .await?;
@@ -651,7 +650,7 @@ impl<
     #[allow(clippy::too_many_arguments)]
     pub async fn decompression_key_gen_background(
         req_id: &RequestId,
-        mut base_session: BaseSessionStruct<AesRng, SessionParameters>,
+        mut base_session: BaseSession,
         meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
@@ -744,7 +743,7 @@ impl<
     }
 
     async fn key_gen_from_existing_compression_sk<P>(
-        base_session: &mut BaseSessionStruct<AesRng, SessionParameters>,
+        base_session: &mut BaseSession,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
         params: DKGParams,
         keyset_added_info: KeySetAddedInfo,
@@ -791,7 +790,7 @@ impl<
     #[allow(clippy::too_many_arguments)]
     async fn key_gen_background(
         req_id: &RequestId,
-        mut base_session: BaseSessionStruct<AesRng, SessionParameters>,
+        mut base_session: BaseSession,
         meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
         preproc_handle_w_mode: PreprocHandleWithMode,

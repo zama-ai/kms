@@ -15,7 +15,7 @@ use kms_grpc::{
 use threshold_fhe::{
     algebra::base_ring::Z64,
     execution::{
-        runtime::session::{BaseSessionStruct, SessionParameters, ToBaseSession},
+        runtime::session::{BaseSession, ToBaseSession},
         tfhe_internals::parameters::DKGParams,
         zk::ceremony::{compute_witness_dim, Ceremony, SecureCeremony},
     },
@@ -173,7 +173,7 @@ impl<
             .session_preparer
             .prepare_ddec_data_from_sessionid_z128(session_id)
             .await?
-            .to_base_session()?;
+            .to_base_session();
 
         let meta_store = Arc::clone(&self.crs_meta_store);
         let meta_store_cancelled = Arc::clone(&self.crs_meta_store);
@@ -237,7 +237,7 @@ impl<
         req_id: &RequestId,
         witness_dim: usize,
         max_num_bits: Option<u32>,
-        mut base_session: BaseSessionStruct<AesRng, SessionParameters>,
+        mut base_session: BaseSession,
         rng: AesRng,
         meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
@@ -264,10 +264,7 @@ impl<
             }
             #[cfg(feature = "insecure")]
             {
-                let my_role = base_session
-                    .my_role()
-                    .map_err(|e| tracing::error!("Error getting role: {e}"))
-                    .expect("No role found in the session");
+                let my_role = base_session.my_role();
                 // We let the first party sample the seed (we are using 1-based party IDs)
                 let input_party_id = 1;
                 if my_role.one_based() == input_party_id {
@@ -291,7 +288,7 @@ impl<
             // secure ceremony (insecure = false)
             let real_ceremony = SecureCeremony::default();
             let internal_pp = real_ceremony
-                .execute::<Z64, _, _>(&mut base_session, witness_dim, max_num_bits)
+                .execute::<Z64, _>(&mut base_session, witness_dim, max_num_bits)
                 .await;
             internal_pp.and_then(|internal| internal.try_into_tfhe_zk_pok_pp(&pke_params))
         };

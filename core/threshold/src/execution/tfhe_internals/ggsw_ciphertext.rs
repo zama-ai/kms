@@ -35,7 +35,6 @@ use super::{
     randomness::MPCEncryptionRandomGenerator,
 };
 use itertools::{EitherOrBoth, Itertools};
-use rand::{CryptoRng, Rng};
 use tfhe::{
     core_crypto::{
         commons::{
@@ -140,9 +139,8 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> GgswCiphertextShare<Z, EXTENSIO
 }
 
 pub async fn ggsw_encode_messages<
-    Rnd: Rng + CryptoRng,
     Z: BaseRing,
-    S: BaseSessionHandles<Rnd>,
+    S: BaseSessionHandles,
     P,
     const EXTENSION_DEGREE: usize,
 >(
@@ -207,9 +205,8 @@ where
 ///This functions compute the necessary encoding required for GGSW
 ///In particular this does the MPC multiplication between the shared key bits and the secret message
 pub async fn ggsw_encode_message<
-    Rnd: Rng + CryptoRng,
     Z: BaseRing,
-    S: BaseSessionHandles<Rnd>,
+    S: BaseSessionHandles,
     P,
     const EXTENSION_DEGREE: usize,
 >(
@@ -433,7 +430,7 @@ mod tests {
         let num_key_bits = glwe_dimension.0 * polynomial_size.0;
 
         let mut task = |mut session: LargeSession| async move {
-            let my_role = session.my_role().unwrap();
+            let my_role = session.my_role();
             let shared_message = ShamirSharings::share(
                 &mut AesRng::seed_from_u64(0),
                 ResiduePolyF4Z64::from_scalar(Wrapping(msg)),
@@ -446,7 +443,7 @@ mod tests {
             let t_uniform_amount =
                 polynomial_size.0 * glwe_dimension.to_glwe_size().0 * decomp_level_count.0;
 
-            let mut large_preproc = DummyPreprocessing::new(seed as u64, session.clone());
+            let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             let glwe_secret_key_share = GlweSecretKeyShare {
                 data: RealBitGenEven::gen_bits_even(num_key_bits, &mut large_preproc, &mut session)

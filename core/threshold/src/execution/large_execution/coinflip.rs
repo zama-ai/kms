@@ -1,7 +1,6 @@
 use aes_prng::AesRng;
 use async_trait::async_trait;
 use rand::SeedableRng;
-use rand::{CryptoRng, Rng};
 use tracing::instrument;
 
 use super::vss::{SecureVss, Vss};
@@ -23,7 +22,7 @@ pub type SecureCoinflip = RealCoinflip<SecureVss, SecureRobustOpen>;
 
 #[async_trait]
 pub trait Coinflip: ProtocolDescription + Send + Sync + Clone {
-    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ErrorCorrect, L: LargeSessionHandles>(
         &self,
         session: &mut L,
     ) -> anyhow::Result<Z>;
@@ -41,7 +40,7 @@ impl ProtocolDescription for DummyCoinflip {
 
 #[async_trait]
 impl Coinflip for DummyCoinflip {
-    async fn execute<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<Z: Ring, L: LargeSessionHandles>(
         &self,
         _session: &mut L,
     ) -> anyhow::Result<Z> {
@@ -78,10 +77,7 @@ impl<V: Vss, RO: RobustOpen> RealCoinflip<V, RO> {
 #[async_trait]
 impl<V: Vss, RO: RobustOpen> Coinflip for RealCoinflip<V, RO> {
     #[instrument(name="CoinFlip",skip(self,session),fields(sid = ?session.session_id(), own_identity=?session.own_identity()))]
-    async fn execute<Z, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
-        &self,
-        session: &mut L,
-    ) -> anyhow::Result<Z>
+    async fn execute<Z, L: LargeSessionHandles>(&self, session: &mut L) -> anyhow::Result<Z>
     where
         Z: ErrorCorrect,
     {
@@ -179,7 +175,7 @@ pub(crate) mod tests {
                 (
                     party_nb,
                     dummy_coinflip
-                        .execute::<ResiduePolyF4Z128, _, _>(&mut session)
+                        .execute::<ResiduePolyF4Z128, _>(&mut session)
                         .await
                         .unwrap(),
                 )
@@ -213,20 +209,17 @@ pub(crate) mod tests {
         let mut task_honest = |mut session: LargeSession| async move {
             let real_coinflip = SecureCoinflip::default();
             (
-                session.my_role().unwrap().zero_based(),
-                real_coinflip
-                    .execute::<Z, _, _>(&mut session)
-                    .await
-                    .unwrap(),
+                session.my_role().zero_based(),
+                real_coinflip.execute::<Z, _>(&mut session).await.unwrap(),
                 session.corrupt_roles().clone(),
             )
         };
 
         let mut task_malicious = |mut session: LargeSession, malicious_coinflip: C| async move {
             (
-                session.my_role().unwrap().zero_based(),
+                session.my_role().zero_based(),
                 malicious_coinflip
-                    .execute::<Z, _, _>(&mut session)
+                    .execute::<Z, _>(&mut session)
                     .await
                     .unwrap(),
                 session.corrupt_roles().clone(),

@@ -2,7 +2,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 // === External Crates ===
-use aes_prng::AesRng;
 use conf_trace::{
     metrics,
     metrics_names::{OP_KEYGEN_PREPROC, TAG_PARTY_ID},
@@ -21,7 +20,7 @@ use threshold_fhe::{
         },
         runtime::{
             party::Identity,
-            session::{BaseSessionStruct, ParameterHandles, SessionParameters, SmallSession},
+            session::{BaseSession, ParameterHandles, SmallSession},
         },
         small_execution::prss::{DerivePRSSState, PRSSSetup},
         tfhe_internals::parameters::DKGParams,
@@ -146,7 +145,7 @@ impl RealPreprocessor {
     #[allow(clippy::too_many_arguments)]
     async fn preprocessing_background(
         req_id: &RequestId,
-        base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
+        base_sessions: Vec<BaseSession>,
         bucket_store: Arc<RwLock<MetaStore<BucketMetaStore>>>,
         prss_setup: PRSSSetup<ResiduePolyF4Z128>,
         own_identity: Identity,
@@ -157,7 +156,7 @@ impl RealPreprocessor {
     ) {
         let _permit = permit; // dropped at the end of the function
         fn create_sessions(
-            base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
+            base_sessions: Vec<BaseSession>,
             prss_setup: PRSSSetup<ResiduePolyF4Z128>,
         ) -> Vec<SmallSession<ResiduePolyF4Z128>> {
             base_sessions

@@ -187,7 +187,7 @@ mod tests {
         let num_key_bits_glwe = glwe_dimension * polynomial_size;
 
         let mut task = |mut session: LargeSession| async move {
-            let mut large_preproc = DummyPreprocessing::new(seed as u64, session.clone());
+            let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             //Generate the Lwe key
             let lwe_secret_key_share = LweSecretKeyShare::<Z64, 4> {
@@ -248,7 +248,7 @@ mod tests {
                 .await
                 .unwrap();
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 lwe_secret_key_share,
                 glwe_secret_key_share,
                 ksk_opened,

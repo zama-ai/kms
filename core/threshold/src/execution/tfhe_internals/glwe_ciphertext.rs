@@ -255,7 +255,7 @@ mod tests {
         let num_key_bits = glwe_dimension * polynomial_size.0;
 
         let mut task = |mut session: LargeSession| async move {
-            let my_role = session.my_role().unwrap();
+            let my_role = session.my_role();
             let encoded_message = (0..polynomial_size.0)
                 .map(|idx| {
                     ShamirSharings::share(
@@ -272,7 +272,7 @@ mod tests {
 
             let t_uniform_amount = polynomial_size.0;
 
-            let mut large_preproc = DummyPreprocessing::new(seed as u64, session.clone());
+            let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             let glwe_secret_key_share = GlweSecretKeyShare {
                 data: RealBitGenEven::gen_bits_even(num_key_bits, &mut large_preproc, &mut session)
@@ -311,7 +311,7 @@ mod tests {
             )
             .unwrap();
 
-            (session.my_role().unwrap(), glwe_secret_key_share, glwe_ctxt)
+            (session.my_role(), glwe_secret_key_share, glwe_ctxt)
         };
         let parties = 5;
         let threshold = 1;

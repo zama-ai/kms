@@ -1,4 +1,3 @@
-use rand::{CryptoRng, Rng};
 use std::marker::PhantomData;
 use tracing::instrument;
 
@@ -110,11 +109,7 @@ where
     }
 
     /// Computes XOR(\<a\>,\<b\>) for a and b vectors of vectors
-    async fn xor_list_secret_secret<
-        Rnd: Rng + CryptoRng,
-        Ses: BaseSessionHandles<Rnd>,
-        P: TriplePreprocessing<Z> + ?Sized,
-    >(
+    async fn xor_list_secret_secret<Ses: BaseSessionHandles, P: TriplePreprocessing<Z> + ?Sized>(
         lhs: &[SecretBitArray<Z>],
         rhs: &[SecretBitArray<Z>],
         preproc: &mut P,
@@ -140,11 +135,7 @@ where
         Ok(BatchedBits::format_to_batch(flattened, batch_size))
     }
 
-    async fn and_list_secret_secret<
-        Rnd: Rng + CryptoRng,
-        Ses: BaseSessionHandles<Rnd>,
-        P: TriplePreprocessing<Z> + ?Sized,
-    >(
+    async fn and_list_secret_secret<Ses: BaseSessionHandles, P: TriplePreprocessing<Z> + ?Sized>(
         lhs: &[SecretBitArray<Z>],
         rhs: &[SecretBitArray<Z>],
         preproc: &mut P,
@@ -191,11 +182,7 @@ where
     /// lhs = lhs1 concat lhs2, rhs = rhs1 concat rhs2
     /// (and_left, and_right) = lhs AND rhs
     /// Then lhs1 XOR rhs1 is computed using and_left and other (local) linear operations.
-    async fn compressed_xor_and<
-        Rnd: Rng + CryptoRng,
-        Ses: BaseSessionHandles<Rnd>,
-        P: TriplePreprocessing<Z> + ?Sized,
-    >(
+    async fn compressed_xor_and<Ses: BaseSessionHandles, P: TriplePreprocessing<Z> + ?Sized>(
         lhs1: &[SecretBitArray<Z>],
         rhs1: &[SecretBitArray<Z>],
         lhs2: &[SecretBitArray<Z>],
@@ -228,8 +215,7 @@ where
 
     #[instrument(name="BitAdd (secret,clear)",skip(session,lhs,rhs,prep),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?lhs.len()))]
     async fn binary_adder_secret_clear<
-        Rnd: Rng + CryptoRng,
-        Ses: BaseSessionHandles<Rnd>,
+        Ses: BaseSessionHandles,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
         session: &mut Ses,
@@ -286,11 +272,7 @@ where
     /// If the error reached the topmost bit we return 0
     /// o/w we return m
     /// Hence we do a final MUX, depending on the bit b.
-    pub async fn extract_ptxts<
-        Rnd: Rng + CryptoRng,
-        Ses: BaseSessionHandles<Rnd>,
-        P: TriplePreprocessing<Z> + ?Sized,
-    >(
+    pub async fn extract_ptxts<Ses: BaseSessionHandles, P: TriplePreprocessing<Z> + ?Sized>(
         partial_decs: Vec<SecretBitArray<Z>>,
         message_mod_bits: usize,
         preproc: &mut P,
@@ -352,8 +334,7 @@ where
     /// Computes XOR(\<a\>,\<b\>) for a and b vecs
     #[instrument(name="XOR", skip(lhs,rhs,preproc,session),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?lhs.len()))]
     pub async fn xor_list_secret_secret<
-        Rnd: Rng + CryptoRng,
-        Ses: BaseSessionHandles<Rnd>,
+        Ses: BaseSessionHandles,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
         lhs: &SecretVec<Z>,
@@ -367,8 +348,7 @@ where
 
     /// Computes AND(\<a\>,\<b\>) for a and b vecs
     pub async fn and_list_secret_secret<
-        Rnd: Rng + CryptoRng,
-        Ses: BaseSessionHandles<Rnd>,
+        Ses: BaseSessionHandles,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
         lhs: &SecretVec<Z>,
@@ -417,13 +397,7 @@ where
 /// Bit decomposition of the input, assuming the secret lies in the base ring and not the extension.
 /// Algorithm BitDec(<a>), Fig. 84 in the NIST Doc
 #[instrument(name="BitDec",skip(session,prep,inputs),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?inputs.len()))]
-pub async fn bit_dec_batch<
-    Z,
-    const EXTENSION_DEGREE: usize,
-    P,
-    Rnd: Rng + CryptoRng,
-    Ses: BaseSessionHandles<Rnd>,
->(
+pub async fn bit_dec_batch<Z, const EXTENSION_DEGREE: usize, P, Ses: BaseSessionHandles>(
     session: &mut Ses,
     prep: &mut P,
     inputs: SecretVec<ResiduePoly<Z, EXTENSION_DEGREE>>,
@@ -535,7 +509,7 @@ mod tests {
         )
         .unwrap()
         .shares;
-        shares[session.my_role().unwrap().zero_based()]
+        shares[session.my_role().zero_based()]
     }
 
     #[test]
@@ -558,11 +532,7 @@ mod tests {
                 .iter()
                 .map(|cur_val| get_my_share(*cur_val, &session))
                 .collect_vec();
-            let mut preprocessing = DummyPreprocessing::<
-                ResiduePolyF4Z64,
-                AesRng,
-                SmallSession<ResiduePolyF4Z64>,
-            >::new(42, session.clone());
+            let mut preprocessing = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &session);
             let bits = Bits::<ResiduePolyF4Z64>::xor_list_secret_secret(
                 &lhs,
                 &rhs,
@@ -652,11 +622,7 @@ mod tests {
         let ref_val = Wrapping(a) + Wrapping(b);
 
         let mut task = |mut session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
-            let mut prep = DummyPreprocessing::<
-                ResiduePolyF4Z64,
-                AesRng,
-                SmallSession<ResiduePolyF4Z64>,
-            >::new(42, session.clone());
+            let mut prep = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &session);
 
             let input_a = (0..Z64::CHAR_LOG2)
                 .map(|bit_idx| get_my_share((a >> bit_idx) & 1, &session))
@@ -719,11 +685,7 @@ mod tests {
         let bits_d: Vec<_> = (0..64).map(|bit_idx| (d >> bit_idx) & 1).collect();
 
         let mut task = |mut session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
-            let mut prep = DummyPreprocessing::<
-                ResiduePolyF4Z64,
-                AesRng,
-                SmallSession<ResiduePolyF4Z64>,
-            >::new(42, session.clone());
+            let mut prep = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &session);
 
             let input_a = (0..Z64::CHAR_LOG2)
                 .map(|bit_idx| get_my_share((a >> bit_idx) & 1, &session))
@@ -857,16 +819,12 @@ mod tests {
         let ref_val: Vec<_> = (0..64).map(|bit_idx| (a >> bit_idx) & 1).collect();
 
         let mut task = |mut session: SmallSession<ResiduePolyF4Z64>, _bot: Option<String>| async move {
-            let mut prep = DummyPreprocessing::<
-                ResiduePolyF4Z64,
-                AesRng,
-                SmallSession<ResiduePolyF4Z64>,
-            >::new(42, session.clone());
+            let mut prep = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &session);
 
             let input_a = get_my_share(a, &session);
             let input_a = vec![input_a];
 
-            let bits = bit_dec_batch::<Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _, _, _>(
+            let bits = bit_dec_batch::<Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _, _>(
                 &mut session,
                 &mut prep,
                 input_a,

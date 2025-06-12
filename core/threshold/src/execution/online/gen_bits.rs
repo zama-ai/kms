@@ -8,15 +8,13 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use tracing::instrument;
 
 #[async_trait]
 pub trait BitGenEven {
     async fn gen_bits_even<
         Z: Ring + RingEmbed + Solve + Invert + ErrorCorrect,
-        Rnd: Rng + CryptoRng,
-        Ses: BaseSessionHandles<Rnd>,
+        Ses: BaseSessionHandles,
         P: BasePreprocessing<Z> + Send + ?Sized,
     >(
         amount: usize,
@@ -39,8 +37,7 @@ impl BitGenEven for RealBitGenEven {
     #[instrument(name="MPC.GenBits", skip(amount, preproc, session), fields(sid = ?session.session_id(), own_identity = ?session.own_identity(),batch_size=?amount))]
     async fn gen_bits_even<
         Z: Invert + Solve + ErrorCorrect,
-        Rnd: Rng + CryptoRng,
-        Ses: BaseSessionHandles<Rnd>,
+        Ses: BaseSessionHandles,
         P: BasePreprocessing<Z> + Send + ?Sized,
     >(
         amount: usize,
@@ -118,7 +115,7 @@ mod tests {
                     let threshold = 1;
                     const AMOUNT: usize = 10;
                     async fn task(mut session: SmallSession<$z>, _bot: Option<String>) -> Vec<$z> {
-                        let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
+                        let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
                         let bits = RealBitGenEven::gen_bits_even(AMOUNT, &mut preprocessing, &mut session)
                             .await
                             .unwrap();
@@ -140,9 +137,9 @@ mod tests {
                     let bad_party: Role = Role::indexed_by_one(2);
                     const AMOUNT: usize = 10;
                     let mut task = |mut session: SmallSession<$z>, _bot: Option<String>| async move {
-                        let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
+                        let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
                         // Execute with dummy prepreocessing for honest parties and a mock for the bad one
-                        let bits = if session.my_role().unwrap() == bad_party {
+                        let bits = if session.my_role() == bad_party {
                             let mut mock =
                                 MockBasePreprocessing::<$z>::new();
                             // Mock the bad party's preprocessing by returning incorrect shares on calls to next_random_vec

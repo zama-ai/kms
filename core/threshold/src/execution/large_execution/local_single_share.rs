@@ -20,7 +20,6 @@ use crate::{
 use async_trait::async_trait;
 use itertools::Itertools;
 use num_integer::div_ceil;
-use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tracing::instrument;
@@ -43,11 +42,7 @@ pub trait LocalSingleShare: ProtocolDescription + Send + Sync + Clone {
     /// Output:
     /// - A HashMap that maps role to the vector of shares receive from that party (including my own shares).
     /// Corrupt parties are mapped to the default 0 sharing
-    async fn execute<
-        Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -102,8 +97,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
     #[instrument(name="LocalSingleShare",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size = ?secrets.len()))]
     async fn execute<
         Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
+        L: LargeSessionHandles,
     >(
         &self,
         session: &mut L,
@@ -163,14 +157,13 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
     }
 }
 
-pub(crate) async fn send_receive_pads<Z, R, L, S>(
+pub(crate) async fn send_receive_pads<Z, L, S>(
     session: &mut L,
     share_dispute: &S,
 ) -> anyhow::Result<ShareDisputeOutput<Z>>
 where
     Z: Ring + RingEmbed + Derive + Invert,
-    R: Rng + CryptoRng,
-    L: LargeSessionHandles<R>,
+    L: LargeSessionHandles,
     S: ShareDispute,
 {
     let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
@@ -180,8 +173,7 @@ where
 
 pub(crate) async fn verify_sharing<
     Z: Ring + Derive + ErrorCorrect,
-    R: Rng + CryptoRng,
-    L: LargeSessionHandles<R>,
+    L: LargeSessionHandles,
     BCast: Broadcast,
 >(
     session: &mut L,
@@ -196,7 +188,7 @@ pub(crate) async fn verify_sharing<
     let (pads_shares_all, my_shared_pads) = (&pads.all_shares, &pads.shares_own_secret);
     let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
     let roles = session.role_assignments().keys().cloned().collect_vec();
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     //TODO: Could be done in parallel (to minimize round complexity)
     for g in 0..m {
         tracing::warn!("I AM {my_role} DOING LOOP OF LSL {g} out of {m}");
@@ -321,11 +313,7 @@ pub(crate) fn compute_check_values<Z: Ring>(
 
 //Verify that the sender for each lsl did give a 0 share to parties it is in dispute with
 //and that the overall sharing is a degree t polynomial
-pub(crate) fn verify_sender_challenge<
-    Z: Ring + ErrorCorrect,
-    R: Rng + CryptoRng,
-    L: LargeSessionHandles<R>,
->(
+pub(crate) fn verify_sender_challenge<Z: Ring + ErrorCorrect, L: LargeSessionHandles>(
     bcast_data: &HashMap<Role, MapsSharesChallenges<Z>>,
     session: &mut L,
     threshold: usize,
@@ -333,7 +321,7 @@ pub(crate) fn verify_sender_challenge<
 ) -> anyhow::Result<HashSet<Role>> {
     let mut newly_corrupt = HashSet::<Role>::new();
 
-    let my_role = session.my_role().unwrap();
+    let my_role = session.my_role();
 
     for (role_pi, bcast_value) in bcast_data {
         if role_pi != &my_role {
@@ -399,7 +387,7 @@ pub(crate) fn verify_sender_challenge<
 
 /// Add party to dispute based on the challenges in bcast_data
 /// returns true if no new dispute appeared, false else
-pub(crate) fn look_for_disputes<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+pub(crate) fn look_for_disputes<Z: Ring, L: LargeSessionHandles>(
     bcast_data: &HashMap<Role, MapsSharesChallenges<Z>>,
     session: &mut L,
 ) -> anyhow::Result<bool> {
@@ -510,7 +498,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 real_lsl.execute(&mut session, &secrets).await.unwrap(),
                 session.corrupt_roles().clone(),
                 session.disputed_roles().clone(),
@@ -522,7 +510,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 malicious_lsl.execute(&mut session, &secrets).await,
             )
         };

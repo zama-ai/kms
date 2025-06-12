@@ -13,8 +13,6 @@ use crate::execution::online::preprocessing::InMemoryBitDecPreprocessing;
 use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use crate::execution::runtime::party::Identity;
 use crate::execution::runtime::session::BaseSession;
-#[cfg(any(test, feature = "testing"))]
-use crate::execution::runtime::session::BaseSessionStruct;
 use crate::execution::runtime::session::ParameterHandles;
 use crate::execution::runtime::session::SmallSessionHandles;
 use crate::execution::runtime::session::ToBaseSession;
@@ -48,7 +46,6 @@ use async_trait::async_trait;
 use itertools::Itertools;
 #[cfg(any(test, feature = "testing"))]
 use rand::SeedableRng;
-use rand::{CryptoRng, Rng};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::num::Wrapping;
@@ -75,8 +72,7 @@ use super::reconstruct::{combine_decryptions, reconstruct_message};
 // a bit convoluted and could probably be refactored to be simpler.
 pub struct NoiseFloodSmallSession<
     const EXTENSION_DEGREE: usize,
-    // Forcing AesRng here to avoid needing phantomdata (also we only use AesRng anyway)
-    Ses: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>, AesRng>,
+    Ses: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>>,
 > where
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
@@ -85,7 +81,7 @@ pub struct NoiseFloodSmallSession<
 
 impl<
         const EXTENSION_DEGREE: usize,
-        Ses: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>, AesRng>,
+        Ses: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>>,
     > NoiseFloodSmallSession<EXTENSION_DEGREE, Ses>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
@@ -111,7 +107,7 @@ impl<PreprocStrat> NoiseFloodLargeSession<PreprocStrat> {
     }
 }
 
-pub type SecureLarge<Z> = NoiseFloodLargeSession<SecureLargePreprocessing<Z>>;
+pub type SecureNoiseFloodLargeSession<Z> = NoiseFloodLargeSession<SecureLargePreprocessing<Z>>;
 
 #[async_trait]
 pub trait NoiseFloodPreparation<const EXTENSION_DEGREE: usize> {
@@ -119,12 +115,14 @@ pub trait NoiseFloodPreparation<const EXTENSION_DEGREE: usize> {
         &mut self,
         num_ctxt: usize,
     ) -> anyhow::Result<InMemoryNoiseFloodPreprocessing<EXTENSION_DEGREE>>;
+
+    fn get_mut_base_session(&mut self) -> &mut BaseSession;
 }
 
 #[async_trait]
 impl<
         const EXTENSION_DEGREE: usize,
-        Ses: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>, AesRng>,
+        Ses: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>> + ToBaseSession,
     > NoiseFloodPreparation<EXTENSION_DEGREE> for NoiseFloodSmallSession<EXTENSION_DEGREE, Ses>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
@@ -139,7 +137,7 @@ where
     ) -> anyhow::Result<InMemoryNoiseFloodPreprocessing<EXTENSION_DEGREE>> {
         let session = self.session.get_mut();
         let mut sns_preprocessing = InMemoryNoiseFloodPreprocessing::default();
-        let own_role = session.my_role()?;
+        let own_role = session.my_role();
 
         let prss_span = info_span!("PRSS-MASK.Next", batch_size = num_ctxt);
         let masks = prss_span.in_scope(|| {
@@ -156,12 +154,16 @@ where
         sns_preprocessing.append_masks(masks);
         Ok(sns_preprocessing)
     }
+
+    fn get_mut_base_session(&mut self) -> &mut BaseSession {
+        self.session.get_mut().get_mut_base_session()
+    }
 }
 
 #[async_trait]
 impl<
         const EXTENSION_DEGREE: usize,
-        PreprocStrat: Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, AesRng, LargeSession> + Default,
+        PreprocStrat: Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, LargeSession> + Default,
     > NoiseFloodPreparation<EXTENSION_DEGREE> for NoiseFloodLargeSession<PreprocStrat>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -185,11 +187,15 @@ where
         sns_preprocessing
             .fill_from_base_preproc(
                 &mut correlated_randomness,
-                &mut session.to_base_session()?,
+                session.get_mut_base_session(),
                 num_ctxt,
             )
             .await?;
         Ok(sns_preprocessing)
+    }
+
+    fn get_mut_base_session(&mut self) -> &mut BaseSession {
+        self.session.get_mut().get_mut_base_session()
     }
 }
 
@@ -200,8 +206,7 @@ where
 /// This is the entry point of the decryption protocol.
 ///
 /// # Arguments
-/// * `session` - The session object that contains the networking and the role of the party_keyshare
-/// * `preparation` - The preparation object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
+/// * `noiseflood_session` - The preparation object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
 /// * `ck` - The conversion key, used for switch&squash
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
@@ -221,10 +226,9 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip_all, fields(sid = ?session.session_id(), own_identity = %_own_identity, mode = %_mode))]
-pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, S, P, R, T>(
-    session: &mut S,
-    preparation: &mut P,
+#[instrument(skip_all, fields(sid, own_identity = %_own_identity, mode = %_mode))]
+pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, T>(
+    noiseflood_session: &mut P,
     server_key: &ServerKey,
     ck: &NoiseSquashingKey,
     ct: LowLevelCiphertext,
@@ -233,8 +237,6 @@ pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, S, P, R,
     _own_identity: Identity,
 ) -> anyhow::Result<(HashMap<String, T>, Duration)>
 where
-    R: Rng + CryptoRng + Send,
-    S: BaseSessionHandles<R>,
     P: NoiseFloodPreparation<EXTENSION_DEGREE>,
     T: tfhe::integer::block_decomposition::Recomposable
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
@@ -255,8 +257,11 @@ where
 
     let mut results = HashMap::with_capacity(1);
     let len = ct_large.len();
-    let mut preprocessing = preparation.init_prep_noiseflooding(len).await?;
-    let outputs = run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, _, T>(
+    let mut preprocessing = noiseflood_session.init_prep_noiseflooding(len).await?;
+    let session = noiseflood_session.get_mut_base_session();
+    let sid: u128 = session.session_id().into();
+    tracing::Span::current().record("sid", sid);
+    let outputs = run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, T>(
         session,
         &mut preprocessing,
         secret_key_share,
@@ -283,8 +288,8 @@ where
 /// This is the entry point of the User decryption protocol.
 ///
 /// # Arguments
-/// * `session` - The session object that contains the networking and the role of the party_keyshare
-/// * `preparation` - The preparation object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
+/// * `parameters` - The parameters object that contains the required session information
+/// * `noiseflood_session` - The preparation object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
 /// * `ck` - The conversion key, used for switch&squash
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
@@ -304,10 +309,10 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-#[instrument(skip(session, preparation, server_key, ck, ct, secret_key_share), fields(sid = ?session.session_id(), own_identity = %session.own_identity(), mode = %_mode))]
-pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, S, P, R>(
-    session: &mut S,
-    preparation: &mut P,
+#[instrument(skip_all, fields(sid = ?parameters.session_id(), own_identity = %parameters.own_identity(), mode = %_mode))]
+pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P>(
+    parameters: SessionParameters,
+    noiseflood_session: &mut P,
     server_key: &ServerKey,
     ck: &NoiseSquashingKey,
     ct: LowLevelCiphertext,
@@ -319,8 +324,6 @@ pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, 
     Duration,
 )>
 where
-    R: Rng + CryptoRng + Send,
-    S: BaseSessionHandles<R>,
     P: NoiseFloodPreparation<EXTENSION_DEGREE>,
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
@@ -351,7 +354,7 @@ where
 
     let mut results = HashMap::with_capacity(1);
     let len = ct_large.len();
-    let mut preparation = preparation.init_prep_noiseflooding(len).await?;
+    let mut preparation = noiseflood_session.init_prep_noiseflooding(len).await?;
     let mut shared_masked_ptxts = Vec::with_capacity(len);
     for current_ct_block in ct_large.packed_blocks() {
         let partial_decrypt = partial_decrypt128(secret_key_share, current_ct_block)?;
@@ -362,10 +365,10 @@ where
 
     tracing::info!(
         "Noiseflood result in session {:?} is ready, got {} blocks",
-        session.session_id(),
+        parameters.session_id(),
         len
     );
-    results.insert(format!("{}", session.session_id()), shared_masked_ptxts);
+    results.insert(format!("{}", parameters.session_id()), shared_masked_ptxts);
 
     let execution_stop_timer = Instant::now();
     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
@@ -398,7 +401,7 @@ where
 /// 3. The results are returned
 ///
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.base_session.parameters.session_id, own_identity = %_own_identity, mode = %_mode))]
+#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), own_identity = %_own_identity, mode = %_mode))]
 pub async fn secure_decrypt_using_bitdec<const EXTENSION_DEGREE: usize, T>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     ct: &RadixOrBoolCiphertext,
@@ -416,11 +419,11 @@ where
     let execution_start_timer = Instant::now();
     let mut results = HashMap::with_capacity(1);
 
-    let sid = session.base_session.parameters.session_id;
+    let sid = session.session_id();
 
     let mut preparation = secure_init_prep_bitdec_small_session(session, ct.len()).await?;
 
-    let outputs = run_decryption_bitdec::<EXTENSION_DEGREE, _, _, _, T>(
+    let outputs = run_decryption_bitdec::<EXTENSION_DEGREE, _, _, T>(
         session,
         &mut preparation,
         secret_key_share,
@@ -464,7 +467,7 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.base_session.parameters.session_id, own_identity = ?session.base_session.parameters.own_identity, mode = %_mode))]
+#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity(), mode = %_mode))]
 pub async fn secure_partial_decrypt_using_bitdec<const EXTENSION_DEGREE: usize>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     ct: &RadixOrBoolCiphertext,
@@ -480,8 +483,8 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
     let execution_start_timer = Instant::now();
-    let sid = session.base_session.parameters.session_id;
-    let own_role = session.my_role()?;
+    let sid = session.session_id();
+    let own_role = session.my_role();
     let mut prep = secure_init_prep_bitdec_small_session(session, ct.len()).await?;
 
     let mut results = HashMap::with_capacity(1);
@@ -493,7 +496,7 @@ where
     }
 
     // bit decomposition
-    let bits = bit_dec_batch::<Z64, EXTENSION_DEGREE, _, _, _>(
+    let bits = bit_dec_batch::<Z64, EXTENSION_DEGREE, _, _>(
         &mut session.base_session,
         &mut prep,
         pdec_blocks,
@@ -548,16 +551,14 @@ where
 }
 
 #[cfg(any(test, feature = "testing"))]
-async fn setup_small_session<Z>(
-    mut base_session: BaseSessionStruct<AesRng, SessionParameters>,
-) -> SmallSession<Z>
+async fn setup_small_session<Z>(mut base_session: BaseSession) -> SmallSession<Z>
 where
     Z: ErrorCorrect,
     Z: Invert,
     Z: PRSSConversions,
 {
     use crate::execution::{
-        runtime::session::{ParameterHandles, SmallSessionStruct},
+        runtime::session::{ParameterHandles, SmallSession},
         small_execution::prss::{AbortSecurePrssInit, DerivePRSSState, PRSSInit},
     };
     let session_id = base_session.session_id();
@@ -566,11 +567,8 @@ where
         .init(&mut base_session)
         .await
         .unwrap();
-    SmallSessionStruct::new_from_prss_state(
-        base_session,
-        prss_setup.new_prss_session_state(session_id),
-    )
-    .unwrap()
+    SmallSession::new_from_prss_state(base_session, prss_setup.new_prss_session_state(session_id))
+        .unwrap()
 }
 
 /// Generically compute preprocessing information for a bit-decomposition decryption for the given session and number of ciphertexts.
@@ -581,8 +579,8 @@ fields(batch_size=?num_ctxts)
 )]
 pub async fn init_prep_bitdec<
     const EXTENSION_DEGREE: usize,
-    Sess: BaseSessionHandles<AesRng> + ToBaseSession<AesRng, BaseSession>,
-    PreprocStrat: Preprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>, AesRng, Sess> + Default,
+    Sess: BaseSessionHandles + ToBaseSession,
+    PreprocStrat: Preprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>, Sess> + Default,
 >(
     session: &mut Sess,
     num_ctxts: usize,
@@ -604,7 +602,7 @@ where
     bitdec_preprocessing
         .fill_from_base_preproc(
             &mut correlated_randomness,
-            &mut session.to_base_session()?,
+            session.get_mut_base_session(),
             num_ctxts,
         )
         .await?;
@@ -706,23 +704,23 @@ where
         let session_params =
             SessionParameters::new(threshold, session_id, identity.clone(), role_assignments)
                 .unwrap();
-        let base_session =
-            BaseSessionStruct::new(session_params, net, AesRng::from_entropy()).unwrap();
+        let base_session = BaseSession::new(session_params, net, AesRng::from_entropy()).unwrap();
 
         match mode {
             DecryptionMode::NoiseFloodSmall => {
                 let large_ct = large_ct.unwrap();
                 set.spawn(async move {
-                    let mut session =
+                    let session =
                         setup_small_session::<ResiduePoly<Z128, EXTENSION_DEGREE>>(base_session)
                             .await;
 
-                    let mut noiseflood_preprocessing = NoiseFloodSmallSession::new(session.clone())
+                    let mut session_noiseflood = NoiseFloodSmallSession::new(session);
+                    let mut noiseflood_preprocessing = session_noiseflood
                         .init_prep_noiseflooding(ct.len())
                         .await
                         .unwrap();
                     let out = run_decryption_noiseflood_64(
-                        &mut session,
+                        session_noiseflood.session.get_mut(),
                         &mut noiseflood_preprocessing,
                         &party_keyshare,
                         &large_ct,
@@ -736,13 +734,14 @@ where
             DecryptionMode::NoiseFloodLarge => {
                 let large_ct = large_ct.unwrap();
                 set.spawn(async move {
-                    let mut session = LargeSession::new(base_session);
-                    let mut noiseflood_preprocessing = SecureLarge::new(session.clone())
+                    let session = LargeSession::new(base_session);
+                    let mut session_noiseflood = SecureNoiseFloodLargeSession::new(session);
+                    let mut noiseflood_preprocessing = session_noiseflood
                         .init_prep_noiseflooding(ct.len())
                         .await
                         .unwrap();
                     let out = run_decryption_noiseflood_64(
-                        &mut session,
+                        session_noiseflood.session.get_mut(),
                         &mut noiseflood_preprocessing,
                         &party_keyshare,
                         &large_ct,
@@ -808,11 +807,7 @@ where
     Ok(results)
 }
 
-async fn open_masked_ptxts<
-    const EXTENSION_DEGREE: usize,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
->(
+async fn open_masked_ptxts<const EXTENSION_DEGREE: usize, S: BaseSessionHandles>(
     session: &S,
     res: Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>,
     keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
@@ -826,11 +821,7 @@ where
     reconstruct_message(openeds, &keyshares.parameters)
 }
 
-async fn open_bit_composed_ptxts<
-    const EXTENSION_DEGREE: usize,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
->(
+async fn open_bit_composed_ptxts<const EXTENSION_DEGREE: usize, S: BaseSessionHandles>(
     session: &S,
     res: Vec<ResiduePoly<Z64, EXTENSION_DEGREE>>,
 ) -> anyhow::Result<Vec<Z64>>
@@ -865,8 +856,7 @@ where
 )]
 pub async fn run_decryption_noiseflood<
     const EXTENSION_DEGREE: usize,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
     T,
 >(
@@ -899,8 +889,7 @@ where
 
 pub async fn run_decryption_noiseflood_64<
     const EXTENSION_DEGREE: usize,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
 >(
     session: &mut S,
@@ -911,7 +900,7 @@ pub async fn run_decryption_noiseflood_64<
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let res = run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, _, u64>(
+    let res = run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, u64>(
         session,
         preprocessing,
         keyshares,
@@ -924,8 +913,7 @@ where
 pub async fn run_decryption_bitdec_64<
     const EXTENSION_DEGREE: usize,
     P: BitDecPreprocessing<EXTENSION_DEGREE> + Send + ?Sized,
-    Rnd: Rng + CryptoRng,
-    Ses: BaseSessionHandles<Rnd>,
+    Ses: BaseSessionHandles,
 >(
     session: &mut Ses,
     prep: &mut P,
@@ -948,8 +936,7 @@ where
 pub async fn run_decryption_bitdec<
     const EXTENSION_DEGREE: usize,
     P: BitDecPreprocessing<EXTENSION_DEGREE> + Send + ?Sized,
-    Rnd: Rng + CryptoRng,
-    Ses: BaseSessionHandles<Rnd>,
+    Ses: BaseSessionHandles,
     T,
 >(
     session: &mut Ses,
@@ -963,7 +950,7 @@ where
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve,
 {
-    let own_role = session.my_role()?;
+    let own_role = session.my_role();
 
     let mut shared_ptxts = Vec::with_capacity(ciphertext.len());
     for current_ct_block in ciphertext.blocks() {
@@ -971,7 +958,7 @@ where
         shared_ptxts.push(Share::new(own_role, partial_dec));
     }
 
-    let bits = bit_dec_batch::<Z64, EXTENSION_DEGREE, P, _, _>(session, prep, shared_ptxts).await?;
+    let bits = bit_dec_batch::<Z64, EXTENSION_DEGREE, P, _>(session, prep, shared_ptxts).await?;
 
     let total_bits = keyshares.parameters.total_block_bits() as usize;
 
@@ -1025,8 +1012,7 @@ pub struct BlockPartialDecrypt {
 pub async fn task_decryption_bitdec_par<
     const EXTENSION_DEGREE: usize,
     P: BitDecPreprocessing<EXTENSION_DEGREE> + Send,
-    Rnd: Rng + CryptoRng,
-    Ses: BaseSessionHandles<Rnd>,
+    Ses: BaseSessionHandles,
     T,
 >(
     session: &mut Ses,
@@ -1040,7 +1026,7 @@ where
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve,
 {
-    let role = session.my_role()?;
+    let role = session.my_role();
     // This vec will be joined on "main" task and all results recombined there
     let mut vec_partial_decryptions = Vec::new();
     for (block, preprocessing) in ciphertexts.iter().zip(preprocessings.iter_mut()) {
@@ -1049,12 +1035,9 @@ where
             role,
             partial_decrypt64(keyshares, ksk, block).unwrap(),
         )];
-        let bits = bit_dec_batch::<Z64, EXTENSION_DEGREE, _, _, _>(
-            session,
-            preprocessing,
-            partial_decrypt,
-        )
-        .await?;
+        let bits =
+            bit_dec_batch::<Z64, EXTENSION_DEGREE, _, _>(session, preprocessing, partial_decrypt)
+                .await?;
 
         let total_bits = keyshares.parameters.total_block_bits() as usize;
 

@@ -19,6 +19,7 @@ use crate::execution::online::secret_distributions::RealSecretDistributions;
 use crate::execution::online::secret_distributions::SecretDistributions;
 use crate::execution::online::triple::Triple;
 use crate::execution::runtime::session::BaseSession;
+use crate::execution::runtime::session::SessionParameters;
 use crate::execution::runtime::session::SmallSession;
 use crate::execution::sharing::shamir::RevealOp;
 use crate::execution::sharing::shamir::ShamirSharings;
@@ -28,9 +29,7 @@ use crate::{
     algebra::poly::Poly,
     algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
-    execution::{
-        runtime::party::Role, runtime::session::BaseSessionHandles, sharing::share::Share,
-    },
+    execution::{runtime::party::Role, runtime::session::ParameterHandles, sharing::share::Share},
 };
 use aes_prng::AesRng;
 use rand::{CryptoRng, Rng, SeedableRng};
@@ -41,28 +40,26 @@ use tonic::async_trait;
 /// with `threshold` degree.
 /// Its implementation is deterministic but pseudorandomly and fully derived using the `seed`.
 #[derive(Clone)]
-pub struct DummyPreprocessing<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> {
+pub struct DummyPreprocessing<Z> {
     seed: u64,
-    session: Ses,
+    parameters: SessionParameters,
     pub rnd_ctr: u64,
     pub trip_ctr: u64,
     _phantom: std::marker::PhantomData<Z>,
-    _phantom2: std::marker::PhantomData<Rnd>,
 }
 
-impl<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> DummyPreprocessing<Z, Rnd, Ses>
+impl<Z> DummyPreprocessing<Z>
 where
     Z: Ring + RingEmbed,
 {
     /// Dummy preprocessing which generates shares deterministically from `seed`
-    pub fn new(seed: u64, session: Ses) -> Self {
-        DummyPreprocessing::<Z, Rnd, Ses> {
+    pub fn new<Ses: ParameterHandles>(seed: u64, session: &Ses) -> Self {
+        DummyPreprocessing::<Z> {
             seed,
-            session,
+            parameters: session.to_parameters(),
             rnd_ctr: 0,
             trip_ctr: 0,
             _phantom: Default::default(),
-            _phantom2: Default::default(),
         }
     }
 
@@ -87,8 +84,7 @@ where
     }
 }
 
-impl<Z, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> TriplePreprocessing<Z>
-    for DummyPreprocessing<Z, Rnd, Ses>
+impl<Z> TriplePreprocessing<Z> for DummyPreprocessing<Z>
 where
     Z: Ring + RingEmbed,
 {
@@ -100,37 +96,37 @@ where
         let mut rng: AesRng = AesRng::seed_from_u64(self.seed ^ self.trip_ctr ^ TRIP_FLAG);
         self.trip_ctr += 1;
         let a = Z::sample(&mut rng);
-        let a_vec = DummyPreprocessing::<Z, Rnd, Ses>::share(
-            self.session.num_parties(),
-            self.session.threshold(),
+        let a_vec = DummyPreprocessing::<Z>::share(
+            self.parameters.num_parties(),
+            self.parameters.threshold(),
             a,
             &mut rng,
         )?;
         // Retrive the share of the calling party
         let a_share = a_vec
-            .get(self.session.my_role()?.zero_based())
+            .get(self.parameters.my_role().zero_based())
             .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
         let b = Z::sample(&mut rng);
-        let b_vec = DummyPreprocessing::<Z, Rnd, Ses>::share(
-            self.session.num_parties(),
-            self.session.threshold(),
+        let b_vec = DummyPreprocessing::<Z>::share(
+            self.parameters.num_parties(),
+            self.parameters.threshold(),
             b,
             &mut rng,
         )?;
         // Retrive the share of the calling party
         let b_share = b_vec
-            .get(self.session.my_role()?.zero_based())
+            .get(self.parameters.my_role().zero_based())
             .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
         // Compute the c shares based on the true values of a and b
-        let c_vec = DummyPreprocessing::<Z, Rnd, Ses>::share(
-            self.session.num_parties(),
-            self.session.threshold(),
+        let c_vec = DummyPreprocessing::<Z>::share(
+            self.parameters.num_parties(),
+            self.parameters.threshold(),
             a * b,
             &mut rng,
         )?;
         // Retrive the share of the calling party
         let c_share = c_vec
-            .get(self.session.my_role()?.zero_based())
+            .get(self.parameters.my_role().zero_based())
             .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
         Ok(Triple::new(*a_share, *b_share, *c_share))
     }
@@ -153,8 +149,7 @@ where
     }
 }
 
-impl<Z, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> RandomPreprocessing<Z>
-    for DummyPreprocessing<Z, Rnd, Ses>
+impl<Z> RandomPreprocessing<Z> for DummyPreprocessing<Z>
 where
     Z: Ring + RingEmbed,
 {
@@ -167,13 +162,13 @@ where
         self.rnd_ctr += 1;
         let secret = Z::sample(&mut rng);
         let all_parties_shares = Self::share(
-            self.session.num_parties(),
-            self.session.threshold(),
+            self.parameters.num_parties(),
+            self.parameters.threshold(),
             secret,
             &mut rng,
         )?;
         let my_share = all_parties_shares
-            .get(self.session.my_role()?.zero_based())
+            .get(self.parameters.my_role().zero_based())
             .ok_or_else(|| anyhow_error_and_log("Party share does not exist".to_string()))?;
         Ok(*my_share)
     }
@@ -196,15 +191,9 @@ where
     }
 }
 
-impl<Z, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> BasePreprocessing<Z>
-    for DummyPreprocessing<Z, Rnd, Ses>
-where
-    Z: Ring + RingEmbed,
-{
-}
+impl<Z> BasePreprocessing<Z> for DummyPreprocessing<Z> where Z: Ring + RingEmbed {}
 
-impl<Z, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> BitPreprocessing<Z>
-    for DummyPreprocessing<Z, Rnd, Ses>
+impl<Z> BitPreprocessing<Z> for DummyPreprocessing<Z>
 where
     Z: Ring + RingEmbed,
 {
@@ -220,18 +209,18 @@ where
         const BIT_FLAG: u64 = 0xB542074E84A9D88E;
         let mut rng = AesRng::seed_from_u64(BIT_FLAG ^ self.seed);
         let mut res = Vec::with_capacity(amount);
-        let my_share_zero = DummyPreprocessing::<Z, Rnd, Ses>::share(
-            self.session.num_parties(),
-            self.session.threshold(),
+        let my_share_zero = DummyPreprocessing::<Z>::share(
+            self.parameters.num_parties(),
+            self.parameters.threshold(),
             Z::ZERO,
             &mut rng,
-        )?[self.session.my_role()?.zero_based()];
-        let my_share_one = DummyPreprocessing::<Z, Rnd, Ses>::share(
-            self.session.num_parties(),
-            self.session.threshold(),
+        )?[self.parameters.my_role().zero_based()];
+        let my_share_one = DummyPreprocessing::<Z>::share(
+            self.parameters.num_parties(),
+            self.parameters.threshold(),
             Z::ONE,
             &mut rng,
-        )?[self.session.my_role()?.zero_based()];
+        )?[self.parameters.my_role().zero_based()];
         for _ in 0..amount {
             let bit = rng.get_bit() == 1;
             let secret = if bit { my_share_one } else { my_share_zero };
@@ -246,12 +235,8 @@ where
 }
 
 #[async_trait]
-impl<
-        const EXTENSION_DEGREE: usize,
-        Rnd: Rng + CryptoRng + Send + Sync,
-        Ses: BaseSessionHandles<Rnd>,
-    > BitDecPreprocessing<EXTENSION_DEGREE>
-    for DummyPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>, Rnd, Ses>
+impl<const EXTENSION_DEGREE: usize> BitDecPreprocessing<EXTENSION_DEGREE>
+    for DummyPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>>
 where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
 {
@@ -279,12 +264,8 @@ where
 }
 
 #[async_trait]
-impl<
-        const EXTENSION_DEGREE: usize,
-        Rnd: Rng + CryptoRng + Send + Sync,
-        Ses: BaseSessionHandles<Rnd>,
-    > NoiseFloodPreprocessing<EXTENSION_DEGREE>
-    for DummyPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, Rnd, Ses>
+impl<const EXTENSION_DEGREE: usize> NoiseFloodPreprocessing<EXTENSION_DEGREE>
+    for DummyPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
@@ -351,8 +332,7 @@ where
 }
 
 #[async_trait]
-impl<Z, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> DKGPreprocessing<Z>
-    for DummyPreprocessing<Z, Rnd, Ses>
+impl<Z> DKGPreprocessing<Z> for DummyPreprocessing<Z>
 where
     Z: Ring + RingEmbed,
 {
@@ -399,39 +379,35 @@ where
 /// Dummy preprocessing struct constructed primarely for use for debugging
 /// Concretely the struct can be used _non-interactively_ since shares will all be points,
 /// i.e. sharing of threshold=0
-pub struct DummyDebugPreprocessing<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> {
+pub struct DummyDebugPreprocessing<Z> {
     seed: u64,
-    session: Ses,
+    session: SessionParameters,
     rnd_ctr: u64,
     trip_ctr: u64,
-    _phantom_rnd: std::marker::PhantomData<Rnd>,
     _phantom_z: std::marker::PhantomData<Z>,
 }
-impl<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> DummyDebugPreprocessing<Z, Rnd, Ses> {
+impl<Z> DummyDebugPreprocessing<Z> {
     // Dummy preprocessing which generates shares deterministically from `seed`
-    pub fn new(seed: u64, session: Ses) -> Self {
-        DummyDebugPreprocessing::<Z, Rnd, Ses> {
+    pub fn new<Ses: ParameterHandles>(seed: u64, session: &Ses) -> Self {
+        DummyDebugPreprocessing::<Z> {
             seed,
-            session,
+            session: session.to_parameters(),
             rnd_ctr: 0,
             trip_ctr: 0,
-            _phantom_rnd: Default::default(),
             _phantom_z: Default::default(),
         }
     }
 }
-impl<Z: Ring, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>>
-    TriplePreprocessing<Z> for DummyDebugPreprocessing<Z, Rnd, Ses>
-{
+impl<Z: Ring> TriplePreprocessing<Z> for DummyDebugPreprocessing<Z> {
     /// Computes a dummy triple deterministically constructed from the seed in [DummyPreprocessing].
     fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
         // Used to distinguish calls to next random and next triple
         const TRIP_FLAG: u64 = 0x47873E027A425DDE;
         let mut rng: AesRng = AesRng::seed_from_u64(self.seed ^ self.trip_ctr ^ TRIP_FLAG);
         self.trip_ctr += 1;
-        let a = Share::new(self.session.my_role()?, Z::sample(&mut rng));
-        let b = Share::new(self.session.my_role()?, Z::sample(&mut rng));
-        let c = Share::new(self.session.my_role()?, a.value() * b.value());
+        let a = Share::new(self.session.my_role(), Z::sample(&mut rng));
+        let b = Share::new(self.session.my_role(), Z::sample(&mut rng));
+        let c = Share::new(self.session.my_role(), a.value() * b.value());
         Ok(Triple::new(a, b, c))
     }
 
@@ -454,9 +430,7 @@ impl<Z: Ring, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>>
     }
 }
 
-impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> RandomPreprocessing<Z>
-    for DummyDebugPreprocessing<Z, Rnd, Ses>
-{
+impl<Z: Ring> RandomPreprocessing<Z> for DummyDebugPreprocessing<Z> {
     /// Computes a random element deterministically but pseudorandomly constructed from the seed in [DummyPreprocessing].
     fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
         // Used to distinguish calls to next random and next triple
@@ -464,7 +438,7 @@ impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> RandomPreproce
         // Construct a rng uniquely defined from the dummy seed and the ctr
         let mut rng: AesRng = AesRng::seed_from_u64(self.seed ^ self.rnd_ctr ^ RAND_FLAG);
         self.rnd_ctr += 1;
-        Ok(Share::new(self.session.my_role()?, Z::sample(&mut rng)))
+        Ok(Share::new(self.session.my_role(), Z::sample(&mut rng)))
     }
 
     fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
@@ -486,14 +460,11 @@ impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> RandomPreproce
     }
 }
 
-impl<Z: Ring, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> BasePreprocessing<Z>
-    for DummyDebugPreprocessing<Z, Rnd, Ses>
-{
-}
+impl<Z: Ring> BasePreprocessing<Z> for DummyDebugPreprocessing<Z> {}
 
 /// Helper method to reconstructs a shared ring element based on a vector of shares.
 /// Returns an error if reconstruction fails, and otherwise the reconstructed ring value.
-pub fn reconstruct<Z: Ring + ErrorCorrect, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
+pub fn reconstruct<Z: Ring + ErrorCorrect, Ses: ParameterHandles>(
     session: &Ses,
     shares: Vec<Share<Z>>,
 ) -> anyhow::Result<Z> {
@@ -512,7 +483,6 @@ mod tests {
         tests::helper::testing::get_networkless_base_session_for_parties,
         tests::helper::tests::get_base_session,
     };
-    use aes_prng::AesRng;
     use paste::paste;
     use std::num::Wrapping;
 
@@ -524,19 +494,14 @@ mod tests {
     use crate::execution::online::preprocessing::RandomPreprocessing;
     use crate::execution::online::preprocessing::TriplePreprocessing;
     use crate::execution::online::triple::Triple;
-    use crate::execution::runtime::session::BaseSessionHandles;
-    use crate::execution::runtime::session::BaseSessionStruct;
-    use crate::execution::runtime::session::ParameterHandles;
-    use crate::execution::runtime::session::SessionParameters;
-    use crate::execution::runtime::session::SmallSession;
+    use crate::execution::runtime::session::{BaseSessionHandles, ParameterHandles};
     use itertools::Itertools;
 
     #[test]
     fn test_debug_dummy_rand() {
         //Dummy do not care about network assumption, default to Sync
         let session = get_base_session(NetworkMode::Sync);
-        let mut preprocessing =
-            DummyDebugPreprocessing::<ResiduePolyF4Z128, _, _>::new(42, session.clone());
+        let mut preprocessing = DummyDebugPreprocessing::<ResiduePolyF4Z128>::new(42, &session);
         let rand = preprocessing.next_random_vec(2).unwrap();
         // Check that the values are different
         assert_ne!(rand[0], rand[1]);
@@ -551,8 +516,7 @@ mod tests {
     fn test_debug_dummy_triple() {
         //Dummy do not care about network assumption, default to Sync
         let session = get_base_session(NetworkMode::Sync);
-        let mut preprocessing =
-            DummyDebugPreprocessing::<ResiduePolyF4Z128, _, _>::new(42, session.clone());
+        let mut preprocessing = DummyDebugPreprocessing::<ResiduePolyF4Z128>::new(42, &session);
         let trips: Vec<Triple<ResiduePolyF4Z128>> = preprocessing.next_triple_vec(2).unwrap();
         assert_ne!(trips[0], trips[1]);
         let recon_one_a = reconstruct(&session, vec![trips[0].a]).unwrap();
@@ -570,8 +534,7 @@ mod tests {
     fn test_debug_dummy_multiple_calls() {
         //Dummy do not care about network assumption, default to Sync
         let session = get_base_session(NetworkMode::Sync);
-        let mut preprocessing =
-            DummyDebugPreprocessing::<ResiduePolyF4Z128, _, _>::new(42, session.clone());
+        let mut preprocessing = DummyDebugPreprocessing::<ResiduePolyF4Z128>::new(42, &session);
         let rand_a: Share<ResiduePolyF4Z128> = preprocessing.next_random().unwrap();
         let trip_a: Triple<ResiduePolyF4Z128> = preprocessing.next_triple().unwrap();
         let rand_b: Share<ResiduePolyF4Z128> = preprocessing.next_random().unwrap();
@@ -599,7 +562,7 @@ mod tests {
                 fn [<test_threshold_dummy_share $z:lower>]() {
                     let msg = ResiduePolyF4::<$z>::from_scalar(Wrapping(42));
                     let mut session = get_networkless_base_session_for_parties(10, 3, Role::indexed_by_one(1));
-                    let shares = DummyPreprocessing::<ResiduePolyF4<$z>, AesRng, SmallSession<ResiduePolyF4<$z>>>::share(
+                    let shares = DummyPreprocessing::<ResiduePolyF4<$z>>::share(
                         session.num_parties(),
                         session.threshold(),
                         msg,
@@ -617,7 +580,7 @@ mod tests {
                     let mut preps = Vec::new();
                     for i in 1..=parties {
                         let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePolyF4<$z>, AesRng, _>::new(42, session));
+                        preps.push(DummyPreprocessing::<ResiduePolyF4<$z>>::new(42, &session));
                     }
                     let recon = [<get_rand_ $z:lower>](parties, threshold, 2, &mut preps);
                     // Check that the values are different
@@ -630,7 +593,7 @@ mod tests {
                     parties: usize,
                     threshold: u8,
                     amount: usize,
-                    preps: &mut [DummyPreprocessing::<ResiduePolyF4<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>],
+                    preps: &mut [DummyPreprocessing::<ResiduePolyF4<$z>>],
                 ) -> Vec<ResiduePolyF4<$z>> {
                     let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(1));
                     let mut res = Vec::new();
@@ -658,7 +621,7 @@ mod tests {
                     let mut preps = Vec::new();
                     for i in 1..=parties {
                         let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePolyF4<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>::new(42, session));
+                        preps.push(DummyPreprocessing::<ResiduePolyF4<$z>>::new(42, &session));
                     }
                     let trips = [<get_trip_ $z:lower>](parties, threshold, 2, &mut preps);
                     assert_ne!(trips[0], trips[1]);
@@ -668,7 +631,7 @@ mod tests {
                     parties: usize,
                     threshold: u8,
                     amount: usize,
-                    preps: &mut [DummyPreprocessing::<ResiduePolyF4<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>],
+                    preps: &mut [DummyPreprocessing::<ResiduePolyF4<$z>>],
                 ) -> Vec<(ResiduePolyF4<$z>, ResiduePolyF4<$z>, ResiduePolyF4<$z>)> {
                     let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(1));
                     let mut res = Vec::new();
@@ -708,7 +671,7 @@ mod tests {
                     let mut preps = Vec::new();
                     for i in 1..=parties {
                         let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePolyF4<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>::new(42, session));
+                        preps.push(DummyPreprocessing::<ResiduePolyF4<$z>>::new(42, &session));
                     }
                     let rand_a = [<get_rand_ $z:lower>](parties, threshold, 1, &mut preps)[0];
                     let trip_a = [<get_trip_ $z:lower>](parties, threshold, 1, &mut preps)[0];

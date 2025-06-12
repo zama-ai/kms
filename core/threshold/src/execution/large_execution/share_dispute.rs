@@ -43,7 +43,7 @@ pub trait ShareDispute: ProtocolDescription + Send + Sync + Clone {
     /// Returns:
     /// - a hashmap which maps roles to shares I received
     /// - another hashmap which maps roles to shares I sent
-    async fn execute<Z: Ring + RingEmbed + Invert, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -52,11 +52,7 @@ pub trait ShareDispute: ProtocolDescription + Send + Sync + Clone {
     /// Executes the ShareDispute protocol on a vector of secrets,
     /// actually sharing the secret using a sharing of degree t and one of degree 2t
     /// Needed for doubleSharings
-    async fn execute_double<
-        Z: Ring + RingEmbed + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute_double<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -74,12 +70,12 @@ impl ProtocolDescription for RealShareDispute {
 }
 
 /// Returns the ids (one based) of the roles I am in dispute with
-pub(crate) fn compute_idx_dispute<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+pub(crate) fn compute_idx_dispute<L: LargeSessionHandles>(
     session: &L,
 ) -> anyhow::Result<Vec<usize>> {
     Ok(session
         .disputed_roles()
-        .get(&session.my_role()?)?
+        .get(&session.my_role())?
         .iter()
         .map(|id| id.one_based())
         .collect())
@@ -104,7 +100,7 @@ where
 }
 
 //Fill in missing values with 0s
-pub(crate) fn fill_incomplete_output<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+pub(crate) fn fill_incomplete_output<Z: Ring, L: LargeSessionHandles>(
     session: &L,
     result: &mut HashMap<Role, Vec<Z>>,
     len: usize,
@@ -123,11 +119,7 @@ pub(crate) fn fill_incomplete_output<Z: Ring, R: Rng + CryptoRng, L: LargeSessio
 #[async_trait]
 impl ShareDispute for RealShareDispute {
     #[instrument(name="ShareDispute (t,2t)",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size= ?secrets.len()))]
-    async fn execute_double<
-        Z: Ring + RingEmbed + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute_double<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -179,11 +171,7 @@ impl ShareDispute for RealShareDispute {
     }
 
     #[instrument(name="ShareDispute (t)",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?secrets.len()))]
-    async fn execute<
-        Z: Ring + RingEmbed + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -222,11 +210,7 @@ impl ShareDispute for RealShareDispute {
     }
 }
 
-pub(crate) async fn send_and_receive_share_dispute_double<
-    Z: Ring,
-    R: Rng + CryptoRng,
-    L: LargeSessionHandles<R>,
->(
+pub(crate) async fn send_and_receive_share_dispute_double<Z: Ring, L: LargeSessionHandles>(
     session: &mut L,
     polypoints_map: HashMap<Role, NetworkValue<Z>>,
     num_secrets: usize,
@@ -237,9 +221,9 @@ pub(crate) async fn send_and_receive_share_dispute_double<
     let mut received_values = receive_from_parties_w_dispute(&sender_list, session).await?;
     //Insert shares for my own sharing
     received_values.insert(
-        session.my_role()?,
+        session.my_role(),
         polypoints_map
-            .get(&session.my_role()?)
+            .get(&session.my_role())
             .ok_or_else(|| anyhow_error_and_log("Can not find my own share"))?
             .clone(),
     );
@@ -306,11 +290,7 @@ pub(crate) async fn send_and_receive_share_dispute_double<
     })
 }
 
-pub(crate) async fn send_and_receive_share_dispute_single<
-    Z: Ring,
-    R: Rng + CryptoRng,
-    L: LargeSessionHandles<R>,
->(
+pub(crate) async fn send_and_receive_share_dispute_single<Z: Ring, L: LargeSessionHandles>(
     session: &mut L,
     polypoints_map: HashMap<Role, NetworkValue<Z>>,
     num_secrets: usize,
@@ -322,13 +302,13 @@ pub(crate) async fn send_and_receive_share_dispute_single<
 
     //Insert shares for my own sharing
     received_values.insert(
-        session.my_role()?,
+        session.my_role(),
         polypoints_map
-            .get(&session.my_role()?)
+            .get(&session.my_role())
             .ok_or_else(|| {
                 anyhow_error_and_log(format!(
                     "I am {} and can not find my own share",
-                    session.my_role().unwrap()
+                    session.my_role()
                 ))
             })?
             .clone(),
@@ -484,7 +464,7 @@ pub(crate) mod tests {
                 .collect_vec();
 
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 secrets.clone(),
                 real_share_dispute
                     .execute(&mut session, &secrets)
@@ -503,7 +483,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 malicious_share_dispute
                     .execute(&mut session, &secrets)
                     .await,

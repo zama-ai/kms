@@ -1,7 +1,6 @@
 use std::ops::DerefMut;
 
 use itertools::{EitherOrBoth, Itertools};
-use rand::{CryptoRng, Rng};
 use tfhe::{
     core_crypto::{
         commons::{
@@ -89,11 +88,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweBootstrapKeyShare<Z, EXTENSI
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    pub async fn open_to_tfhers_type<
-        Scalar: UnsignedInteger,
-        R: Rng + CryptoRng,
-        S: BaseSessionHandles<R>,
-    >(
+    pub async fn open_to_tfhers_type<Scalar: UnsignedInteger, S: BaseSessionHandles>(
         self,
         session: &S,
     ) -> anyhow::Result<LweBootstrapKeyOwned<Scalar>> {
@@ -110,7 +105,7 @@ where
         let decomp_level_count = self.decomposition_level_count();
         let input_lwe_dimension = self.input_lwe_dimension();
 
-        let my_role = session.my_role()?;
+        let my_role = session.my_role();
 
         let num_masks = self.ggsw_list.len()
             * self.glwe_size().0

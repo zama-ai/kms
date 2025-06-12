@@ -18,7 +18,7 @@ use crate::{
 use anyhow::Context;
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
+use rand::RngCore;
 use std::collections::HashMap;
 use tracing::instrument;
 
@@ -32,10 +32,7 @@ pub trait AgreeRandom: ProtocolDescription + Clone + Send + Sync {
     /// Perform a batched version of Agree Random on all subsets of size n-t
     ///
     /// This follows the AgreeRandom and AgreeRandom-w-Abort protocols in the NIST document.
-    async fn execute<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
-        &self,
-        session: &mut S,
-    ) -> anyhow::Result<Vec<PrfKey>>;
+    async fn execute<S: BaseSessionHandles>(&self, session: &mut S) -> anyhow::Result<Vec<PrfKey>>;
 }
 
 /// Trait to capture the AgreeRandom protocol
@@ -46,7 +43,7 @@ pub trait AgreeRandomFromShare: ProtocolDescription + Clone + Send + Sync {
     /// where parties agree on the hash of the reconstructed value.
     ///
     /// This follows the AgreeRandom-Robust protocol of the NIST document.
-    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: ErrorCorrect, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         shares: Vec<Z>,
@@ -142,7 +139,7 @@ impl<RO: RobustOpen> AgreeRandomFromShare for RobustRealAgreeRandom<RO> {
     /// The parties in party_set[set_id] agree on shares[set_id]
     /// Returns the list of agreed randomness only for the subsets I am part of
     #[instrument(name="AgreeRandom-Robust",skip(self,session,shares,all_party_sets),fields(sid = ?session.session_id(),own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
-    async fn execute<Z: ErrorCorrect, Rnd: Rng + CryptoRng, L: BaseSessionHandles<Rnd>>(
+    async fn execute<Z: ErrorCorrect, L: BaseSessionHandles>(
         &self,
         session: &mut L,
         shares: Vec<Z>,
@@ -192,18 +189,15 @@ impl AgreeRandom for PassiveSecureAgreeRandom {
     /// n and t are dictated by the [`BaseSessionHandles`] parameters num_parties and threshold.
     /// Returns the list of agreed randomness in a vec indexed by set_id
     #[instrument(name = "AgreeRandom", skip(self,session),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()))]
-    async fn execute<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
-        &self,
-        session: &mut S,
-    ) -> anyhow::Result<Vec<PrfKey>> {
+    async fn execute<S: BaseSessionHandles>(&self, session: &mut S) -> anyhow::Result<Vec<PrfKey>> {
         let num_parties = session.num_parties();
-        let party_id = session.my_role()?.one_based();
+        let party_id = session.my_role().one_based();
         let session_id = session.session_id().into();
         let round_id = session.network().get_current_round()?;
 
         //Compute all the subsets of size n-t I am part of
         let mut party_sets = compute_party_sets(
-            session.my_role()?,
+            session.my_role(),
             session.num_parties(),
             session.threshold() as usize,
         );
@@ -232,7 +226,7 @@ impl AgreeRandom for PassiveSecureAgreeRandom {
 
         //Format is vec[sender_id][set_id]
         let (mut rcv_coms, mut rcv_keys_opens) =
-            agree_random_communication::<R, S>(session, &coms, &keys_opens).await?;
+            agree_random_communication::<S>(session, &coms, &keys_opens).await?;
 
         let r_a_keys = verify_and_xor_keys(
             party_id,
@@ -255,23 +249,17 @@ impl AgreeRandom for AbortSecureAgreeRandom {
     /// n and t are dictated by the [`BaseSessionHandles`] parameters num_parties and threshold.
     /// Returns the list of agreed randomness in a vec indexed by set_id
     #[instrument(name="AgreeRandom-w-Abort",skip(self,session),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()))]
-    async fn execute<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
-        &self,
-        session: &mut S,
-    ) -> anyhow::Result<Vec<PrfKey>> {
+    async fn execute<S: BaseSessionHandles>(&self, session: &mut S) -> anyhow::Result<Vec<PrfKey>> {
         let num_parties = session.num_parties();
-        let party_id = session.my_role()?.one_based();
+        let party_id = session.my_role().one_based();
 
         //Compute all the subsets of size n-t I am part of
-        let mut party_sets = compute_party_sets(
-            session.my_role()?,
-            num_parties,
-            session.threshold() as usize,
-        );
+        let mut party_sets =
+            compute_party_sets(session.my_role(), num_parties, session.threshold() as usize);
 
         // run plain AgreeRandom to determine random keys as a first step
         let ars = PassiveSecureAgreeRandom::default()
-            .execute::<R, S>(session)
+            .execute::<S>(session)
             .await?;
 
         debug_assert_eq!(ars.len(), party_sets.len());
@@ -304,7 +292,7 @@ impl AgreeRandom for AbortSecureAgreeRandom {
         let receive_from_roles = key_to_send.keys().cloned().collect_vec();
         // Note: we have to use a type because NetworkValue is generic, but values sent in the agree random
         // protocol are agnostic to the underlying ring. So we pick Z64 as default.
-        let received_keys = receive_from_parties::<Z64, R, S>(&receive_from_roles, session).await?;
+        let received_keys = receive_from_parties::<Z64, S>(&receive_from_roles, session).await?;
 
         let mut rcv_keys = check_and_unpack_keys(&received_keys, num_parties)?;
 
@@ -317,12 +305,9 @@ impl AgreeRandom for AbortSecureAgreeRandom {
 
 #[async_trait]
 impl AgreeRandom for DummyAgreeRandom {
-    async fn execute<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
-        &self,
-        session: &mut S,
-    ) -> anyhow::Result<Vec<PrfKey>> {
+    async fn execute<S: BaseSessionHandles>(&self, session: &mut S) -> anyhow::Result<Vec<PrfKey>> {
         let party_sets = compute_party_sets(
-            session.my_role()?,
+            session.my_role(),
             session.num_parties(),
             session.threshold() as usize,
         );
@@ -353,7 +338,7 @@ impl AgreeRandom for DummyAgreeRandom {
 #[async_trait]
 impl AgreeRandomFromShare for DummyAgreeRandomFromShare {
     // Just runs dummy agree random, ignoring shares and all_party_sets
-    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: ErrorCorrect, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         _shares: Vec<Z>,
@@ -574,13 +559,13 @@ fn verify_and_xor_keys(
 }
 
 /// Does the communication for RealAgreeRandom and returns the unpacked commitments and keys/openings
-async fn agree_random_communication<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+async fn agree_random_communication<S: BaseSessionHandles>(
     session: &mut S,
     coms: &[Vec<Commitment>],
     keys_opens: &[Vec<(PrfKey, Opening)>],
 ) -> anyhow::Result<(Vec<Vec<Commitment>>, Vec<Vec<(PrfKey, Opening)>>)> {
     let num_parties = session.num_parties();
-    let party_id = session.my_role()?.one_based();
+    let party_id = session.my_role().one_based();
 
     // Send commitments to all other parties. Each party gets the commitment for _all_ sets that they are member of at once to avoid multiple comm rounds
     // Note: we have to use a type because NetworkValue is generic, but values sent in the agree random
@@ -600,7 +585,7 @@ async fn agree_random_communication<R: Rng + CryptoRng, S: BaseSessionHandles<R>
     // Note: we have to use a type because NetworkValue is generic, but values sent in the agree random
     // protocol are agnostic to the underlying ring. So we pick Z64 as default.
     let receive_from_roles = coms_to_send.keys().cloned().collect_vec();
-    let received_coms = receive_from_parties::<Z64, R, S>(&receive_from_roles, session).await?;
+    let received_coms = receive_from_parties::<Z64, S>(&receive_from_roles, session).await?;
 
     let rcv_coms = check_and_unpack_coms(&received_coms, num_parties)?;
 
@@ -624,7 +609,7 @@ async fn agree_random_communication<R: Rng + CryptoRng, S: BaseSessionHandles<R>
     // receive keys and openings from other parties
     // Note: we have to use a type because NetworkValue is generic, but values sent in the agree random
     // protocol are agnostic to the underlying ring. So we pick Z64 as default.
-    let received_keys = receive_from_parties::<Z64, R, S>(&receive_from_roles, session).await?;
+    let received_keys = receive_from_parties::<Z64, S>(&receive_from_roles, session).await?;
 
     let rcv_keys_opens = check_and_unpack_keys_openings(&received_keys, num_parties)?;
 
@@ -739,7 +724,7 @@ mod tests {
 
             let _guard = rt.enter();
             let keys = rt
-                .block_on(async { DummyAgreeRandom::default().execute::<_, _>(&mut sess).await })
+                .block_on(async { DummyAgreeRandom::default().execute::<_>(&mut sess).await })
                 .unwrap();
 
             let vd = VecDeque::from(keys);
@@ -840,7 +825,7 @@ mod tests {
             let secure_agree_random_w_abort = AHonest::default();
 
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 secure_agree_random_w_abort.execute(&mut session).await,
             )
         };
@@ -849,7 +834,7 @@ mod tests {
         let mut task_malicious =
             |mut session: SmallSession<ResiduePolyF4Z128>, malicious_agree_random: AMalicious| async move {
                 (
-                    session.my_role().unwrap(),
+                    session.my_role(),
                     malicious_agree_random.execute(&mut session).await,
                 )
             };
@@ -907,7 +892,7 @@ mod tests {
 
             let num_parties = session.num_parties();
             let threshold = session.threshold() as usize;
-            let my_role = session.my_role().unwrap();
+            let my_role = session.my_role();
 
             let all_party_sets: Vec<Vec<usize>> =
                 create_sets(num_parties, threshold).into_iter().collect();
@@ -932,7 +917,7 @@ mod tests {
         let mut task_malicious = |mut session: SmallSession<Z>, malicious_agree_random: A| async move {
             let num_parties = session.num_parties();
             let threshold = session.threshold() as usize;
-            let my_role = session.my_role().unwrap();
+            let my_role = session.my_role();
 
             let all_party_sets: Vec<Vec<usize>> =
                 create_sets(num_parties, threshold).into_iter().collect();
@@ -946,7 +931,7 @@ mod tests {
                 43,
             );
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 malicious_agree_random
                     .execute(&mut session, shares, &all_party_sets)
                     .await,

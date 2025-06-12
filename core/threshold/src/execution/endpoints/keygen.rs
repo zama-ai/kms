@@ -34,7 +34,6 @@ use crate::{
 };
 use itertools::Itertools;
 use num_integer::div_ceil;
-use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use tfhe::core_crypto::algorithms::convert_standard_lwe_bootstrap_key_to_fourier_128;
 use tfhe::core_crypto::commons::traits::UnsignedInteger;
@@ -421,8 +420,7 @@ impl<const EXTENSION_DEGREE: usize> GenericPrivateKeySet<Z64, EXTENSION_DEGREE> 
 async fn sample_seed<
     Z: Ring + ErrorCorrect,
     P: RandomPreprocessing<Z> + ?Sized,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
 >(
     sec: u64,
     session: &mut S,
@@ -445,8 +443,7 @@ async fn sample_seed<
 fn generate_lwe_key_shares<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     Gen: ByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
@@ -462,7 +459,7 @@ where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let params = params.get_params_basics_handle();
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     //Init the shared LWE secret key
     tracing::info!("(Party {my_role}) Generating LWE Secret key...Start");
     let lwe_secret_key_share =
@@ -492,8 +489,7 @@ where
 async fn generate_lwe_private_public_key_pair<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     Gen: ByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
@@ -525,8 +521,7 @@ where
 async fn generate_mod_switch_noise_reduction_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     Gen: ByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
@@ -539,7 +534,7 @@ async fn generate_mod_switch_noise_reduction_key<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     tracing::info!("(Party {my_role}) Generating MSNRK...Start");
     let vec_tuniform_noise = preprocessing
         .next_noise_vec(params.num_needed_noise, params.noise_bound)?
@@ -572,8 +567,7 @@ where
 async fn generate_key_switch_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     Gen: ByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
@@ -587,7 +581,7 @@ async fn generate_key_switch_key<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     tracing::info!("(Party {my_role}) Generating KSK...Start");
     let vec_tuniform_noise = preprocessing
         .next_noise_vec(params.num_needed_noise, params.noise_bound)?
@@ -616,8 +610,7 @@ where
 async fn generate_bootstrap_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     Gen: ByteRandomGenerator,
     Scalar: UnsignedInteger,
     const EXTENSION_DEGREE: usize,
@@ -632,7 +625,7 @@ async fn generate_bootstrap_key<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     //First sample the noise
     let vec_tuniform_noise = preprocessing
         .next_noise_vec(params.num_needed_noise, params.noise_bound)?
@@ -659,9 +652,7 @@ where
     tracing::info!("(Party {my_role}) Generating BK {:?} ...Done", params);
     tracing::info!("(Party {my_role}) Opening BK {:?} ...Start", params);
     //Open the bk and cast it to TFHE-rs type
-    let bk = bk_share
-        .open_to_tfhers_type::<Scalar, _, _>(session)
-        .await?;
+    let bk = bk_share.open_to_tfhers_type::<Scalar, _>(session).await?;
     tracing::info!("(Party {my_role}) Opening BK {:?} ...Done", params);
     Ok(bk)
 }
@@ -670,8 +661,7 @@ where
 async fn generate_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     Gen: ByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
@@ -724,8 +714,7 @@ where
 async fn generate_compression_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     Gen: ByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
@@ -795,8 +784,7 @@ where
 #[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn distributed_keygen<
     Z: BaseRing,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
     const EXTENSION_DEGREE: usize,
 >(
@@ -814,8 +802,7 @@ where
 /// while [CompressionKey], [DecompressionKey] exists because we do not copy the secret shares again.
 async fn distributed_keygen_compression_material<
     Z: BaseRing,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
     const EXTENSION_DEGREE: usize,
 >(
@@ -899,8 +886,7 @@ where
 /// Note that there is some redundancy of information because we also explicitly ask the [`BaseRing`] as trait parameter
 async fn distributed_keygen_from_optional_compression_sk<
     Z: BaseRing,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
     const EXTENSION_DEGREE: usize,
 >(
@@ -913,7 +899,7 @@ where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let params_basics_handle = params.get_params_basics_handle();
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
     //Init the XOF with the seed computed above
     let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
@@ -1122,8 +1108,7 @@ where
 }
 
 pub async fn distributed_keygen_z64<
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send + ?Sized,
     const EXTENSION_DEGREE: usize,
 >(
@@ -1151,8 +1136,7 @@ where
 }
 
 pub async fn distributed_keygen_z128<
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
     const EXTENSION_DEGREE: usize,
 >(
@@ -1177,8 +1161,7 @@ where
 
 #[instrument(name="DKG with optional compression SK Z128", skip(existing_compression_sk, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub async fn distributed_keygen_from_optional_compression_sk_z128<
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
     const EXTENSION_DEGREE: usize,
 >(
@@ -1210,8 +1193,7 @@ where
 
 #[instrument(name="Gen Decompression Key Z128", skip(private_glwe_compute_key, private_compression_key, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub async fn distributed_decompression_keygen_z128<
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
     const EXTENSION_DEGREE: usize,
 >(
@@ -1988,13 +1970,13 @@ pub mod tests {
                 .fill_from_base_preproc(
                     params,
                     keyset_config,
-                    &mut session.to_base_session().unwrap(),
+                    session.get_mut_base_session(),
                     &mut small_preproc,
                 )
                 .await
                 .unwrap();
 
-            let my_role = session.my_role().unwrap();
+            let my_role = session.my_role();
             let prefix = prefix.unwrap();
             let path_compression_key_shares_1 = Path::new(&prefix).join("compression_key_shares_1");
             let path_glwe_key_shares_2 = Path::new(&prefix).join("glwe_key_shares_2");
@@ -2103,11 +2085,8 @@ pub mod tests {
             {
                 // we use dummy preprocessing to generate the existing compression sk
                 // because it won't consume our preprocessing materials
-                let mut dummy_preproc = DummyPreprocessing::<
-                    ResiduePoly<Z128, EXTENSION_DEGREE>,
-                    _,
-                    _,
-                >::new(0_u64, session.clone());
+                let mut dummy_preproc =
+                    DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(0_u64, &session);
                 let params_basics_handles = params.get_params_basics_handle();
                 Some(
                     CompressionPrivateKeyShares::new_from_preprocessing(
@@ -2147,7 +2126,7 @@ pub mod tests {
                 .fill_from_base_preproc(
                     params,
                     keyset_config,
-                    &mut session.to_base_session().unwrap(),
+                    session.get_mut_base_session(),
                     &mut small_preproc,
                 )
                 .await
@@ -2157,7 +2136,7 @@ pub mod tests {
             assert_ne!(0, dkg_preproc.triples_len());
             assert_ne!(0, dkg_preproc.randoms_len());
 
-            let my_role = session.my_role().unwrap();
+            let my_role = session.my_role();
             let (pk, sk) = if keyset_config.is_standard_using_existing_compression_sk() {
                 distributed_keygen_from_optional_compression_sk(
                     &mut session,
@@ -2232,10 +2211,10 @@ pub mod tests {
         ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     {
         let mut task = |mut session: LargeSession| async move {
-            let my_role = session.my_role().unwrap();
-            let mut large_preproc = DummyPreprocessing::new(0_u64, session.clone());
+            let my_role = session.my_role();
+            let mut large_preproc = DummyPreprocessing::new(0_u64, &session);
 
-            let (pk, sk) = super::distributed_keygen::<Z128, _, _, _, EXTENSION_DEGREE>(
+            let (pk, sk) = super::distributed_keygen::<Z128, _, _, EXTENSION_DEGREE>(
                 &mut session,
                 &mut large_preproc,
                 params,

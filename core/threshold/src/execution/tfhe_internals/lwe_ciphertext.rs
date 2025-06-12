@@ -1,5 +1,4 @@
 use itertools::{EitherOrBoth, Itertools};
-use rand::{CryptoRng, Rng};
 use tfhe::{
     boolean::prelude::LweDimension,
     core_crypto::{
@@ -88,8 +87,7 @@ pub(crate) fn opened_lwe_masks_bodies_to_tfhers_u64<Z: BaseRing>(
 pub(crate) async fn open_to_tfhers_type<
     Z: BaseRing,
     const EXTENSION_DEGREE: usize,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
 >(
     ciphertext_share_list: Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>,
     session: &S,
@@ -97,7 +95,7 @@ pub(crate) async fn open_to_tfhers_type<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
 
     // Split the body and the mask, so that we can open the body which are initially secret shared
     let (masks, shared_bodies): (Vec<Vec<Z>>, Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>) =
@@ -294,7 +292,7 @@ mod tests {
         let num_key_bits = lwe_dimension;
 
         let mut task = |mut session: LargeSession| async move {
-            let my_role = session.my_role().unwrap();
+            let my_role = session.my_role();
             let encoded_message = ShamirSharings::share(
                 &mut AesRng::seed_from_u64(0),
                 ResiduePolyF4Z64::from_scalar(Wrapping(msg << scaling)),
@@ -305,7 +303,7 @@ mod tests {
             .shares[my_role.zero_based()]
             .value();
 
-            let mut large_preproc = DummyPreprocessing::new(seed as u64, session.clone());
+            let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             let lwe_secret_key_share = LweSecretKeyShare {
                 data: RealBitGenEven::gen_bits_even(num_key_bits, &mut large_preproc, &mut session)

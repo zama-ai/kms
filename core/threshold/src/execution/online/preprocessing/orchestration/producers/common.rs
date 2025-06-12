@@ -1,6 +1,5 @@
-use std::{future::Future, marker::PhantomData};
+use std::future::Future;
 
-use rand::{CryptoRng, Rng};
 use tokio::{sync::mpsc::Sender, task::JoinSet};
 use tracing::Instrument;
 
@@ -13,36 +12,23 @@ use crate::execution::{
 /// and an outgoing channel
 /// which will be filled with the result
 /// of that session
-pub(crate) struct ProducerSession<
-    Rnd: Rng + CryptoRng + Sync + 'static,
-    S: BaseSessionHandles<Rnd>,
-    T,
-> {
+pub(crate) struct ProducerSession<S: BaseSessionHandles, T> {
     session: S,
     sender_channel: Sender<T>,
-    _marker: PhantomData<Rnd>,
 }
 
-impl<Rnd: Rng + CryptoRng + Sync + 'static, S: BaseSessionHandles<Rnd>, T>
-    ProducerSession<Rnd, S, T>
-{
+impl<S: BaseSessionHandles, T> ProducerSession<S, T> {
     pub(crate) fn new(session: S, sender_channel: Sender<T>) -> Self {
         Self {
             session,
             sender_channel,
-            _marker: PhantomData::<Rnd>,
         }
     }
 }
 
 ///Generic functions that spawn the threads for processing
-pub(crate) fn execute_preprocessing<
-    Rnd: Rng + CryptoRng + Sync + 'static,
-    C,
-    S: BaseSessionHandles<Rnd> + 'static,
-    TaskOutput,
->(
-    producer_sessions: Vec<ProducerSession<Rnd, S, C>>,
+pub(crate) fn execute_preprocessing<C, S: BaseSessionHandles + 'static, TaskOutput>(
+    producer_sessions: Vec<ProducerSession<S, C>>,
     task_gen: impl Fn(S, Sender<C>, Option<ProgressTracker>) -> TaskOutput,
     progress_tracker: Option<ProgressTracker>,
 ) -> JoinSet<Result<S, anyhow::Error>>

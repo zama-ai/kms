@@ -69,20 +69,16 @@ fn bit_dec_online(c: &mut Criterion) {
             |b, &config| {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
-                        let mut prep =
-                            DummyPreprocessing::<ResiduePolyF8Z64, AesRng, LargeSession>::new(
-                                42,
-                                session.clone(),
-                            );
+                        let mut prep = DummyPreprocessing::<ResiduePolyF8Z64>::new(42, &session);
 
                         let input_a = get_my_share(
                             2,
                             session.num_parties(),
                             session.threshold() as usize,
-                            session.my_role().unwrap().zero_based(),
+                            session.my_role().zero_based(),
                         );
                         let _bits =
-                            bit_dec_batch::<Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _, _>(
+                            bit_dec_batch::<Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _>(
                                 &mut session,
                                 &mut prep,
                                 [input_a].to_vec(),
@@ -141,7 +137,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                                     i as u64,
                                     session.num_parties(),
                                     session.threshold() as usize,
-                                    session.my_role().unwrap().zero_based(),
+                                    session.my_role().zero_based(),
                                 )
                             })
                             .collect();
@@ -150,8 +146,8 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                             Z64,
                             { ResiduePolyF8Z64::EXTENSION_DEGREE },
                             _,
-                            _,
-                            _,
+                            _
+
                         >(
                             &mut session, &mut bitdec_prep, inputs
                         )
@@ -209,13 +205,13 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                                     i as u64,
                                     session.num_parties(),
                                     session.threshold() as usize,
-                                    session.my_role().unwrap().zero_based(),
+                                    session.my_role().zero_based(),
                                 )
                             })
                             .collect();
 
                         let _bits =
-                            bit_dec_batch::<Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _, _>(
+                            bit_dec_batch::<Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _>(
                                 &mut session,
                                 &mut bitdec_prep,
                                 inputs,

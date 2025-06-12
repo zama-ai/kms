@@ -20,9 +20,12 @@ use kms_grpc::{
 use rand::{CryptoRng, RngCore};
 use threshold_fhe::{
     algebra::galois_rings::common::pack_residue_poly,
-    execution::endpoints::decryption::{
-        partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec, DecryptionMode,
-        NoiseFloodSmallSession,
+    execution::{
+        endpoints::decryption::{
+            partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec,
+            DecryptionMode, NoiseFloodSmallSession,
+        },
+        runtime::session::ParameterHandles,
     },
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
@@ -133,17 +136,18 @@ impl<
 
             let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
-                    let mut session = tonic_handle_potential_err(
+                    let session = tonic_handle_potential_err(
                         session_prep
                             .prepare_ddec_data_from_sessionid_z128(session_id)
                             .await,
                         "Could not prepare ddec data for noiseflood decryption".to_string(),
                     )?;
-                    let mut preparation = NoiseFloodSmallSession::new(session.clone());
+                    let session_parameters = session.to_parameters();
+                    let mut noiseflood_session = NoiseFloodSmallSession::new(session);
 
                     let pdec = partial_decrypt_using_noiseflooding(
-                        &mut session,
-                        &mut preparation,
+                        session_parameters,
+                        &mut noiseflood_session,
                         &keys.integer_server_key,
                         keys.sns_key
                             .as_ref()

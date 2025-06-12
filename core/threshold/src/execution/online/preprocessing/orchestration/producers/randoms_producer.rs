@@ -1,6 +1,4 @@
-use aes_prng::AesRng;
 use num_integer::div_ceil;
-use rand::{CryptoRng, Rng};
 use tokio::{sync::mpsc::Sender, task::JoinSet};
 use tracing::instrument;
 
@@ -24,26 +22,23 @@ use crate::{
 
 use super::common::{execute_preprocessing, ProducerSession};
 
-pub struct GenericRandomProducer<Z, Rnd, S, PreprocStrat>
+pub struct GenericRandomProducer<Z, S, PreprocStrat>
 where
     Z: Ring,
-    Rnd: Rng + CryptoRng + Sync + 'static,
-    S: BaseSessionHandles<Rnd> + 'static,
+    S: BaseSessionHandles + 'static,
 {
     batch_size: usize,
     total_size: usize,
-    producers: Vec<ProducerSession<Rnd, S, Vec<Share<Z>>>>,
+    producers: Vec<ProducerSession<S, Vec<Share<Z>>>>,
     progress_tracker: Option<ProgressTracker>,
     _marker_strat: std::marker::PhantomData<PreprocStrat>,
 }
 
-impl<Z, Rnd, S, PreprocStrat> RandomProducerTrait<Z, S>
-    for GenericRandomProducer<Z, Rnd, S, PreprocStrat>
+impl<Z, S, PreprocStrat> RandomProducerTrait<Z, S> for GenericRandomProducer<Z, S, PreprocStrat>
 where
     Z: Ring,
-    Rnd: Rng + CryptoRng + Sync + 'static,
-    S: BaseSessionHandles<Rnd> + 'static,
-    PreprocStrat: Preprocessing<Z, Rnd, S> + Default,
+    S: BaseSessionHandles + 'static,
+    PreprocStrat: Preprocessing<Z, S> + Default,
 {
     fn new(
         batch_size: usize,
@@ -106,10 +101,10 @@ where
 }
 
 pub type SecureSmallSessionRandomProducer<Z> =
-    GenericRandomProducer<Z, AesRng, SmallSession<Z>, SecureSmallPreprocessing>;
+    GenericRandomProducer<Z, SmallSession<Z>, SecureSmallPreprocessing>;
 
 pub type SecureLargeSessionRandomProducer<Z> =
-    GenericRandomProducer<Z, AesRng, LargeSession, SecureLargePreprocessing<Z>>;
+    GenericRandomProducer<Z, LargeSession, SecureLargePreprocessing<Z>>;
 
 #[cfg(test)]
 mod tests {

@@ -8,7 +8,6 @@ use crate::networking::value::BroadcastValue;
 use crate::networking::value::NetworkValue;
 use crate::ProtocolDescription;
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use tokio::task::JoinSet;
@@ -32,7 +31,7 @@ pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
     /// and does __NOT__ mutate the corrupt set even it finds a malicious sender.
     /// Use [`Broadcast::broadcast_w_corrupt_set_update`] to ignore known corrupt parties and update
     /// the malicious set with malicious senders.
-    async fn execute<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
         session: &B,
         sender_list: &[Role],
@@ -50,7 +49,7 @@ pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
     /// and does __NOT__ mutate the corrupt set even it finds a malicious sender.
     /// Use [`Broadcast::broadcast_from_all_w_corrupt_set_update`] to ignore known corrupt parties and update
     /// the malicious set with malicious senders.
-    async fn broadcast_from_all<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn broadcast_from_all<Z: Ring, B: BaseSessionHandles>(
         &self,
         session: &B,
         my_message: BroadcastValue<Z>,
@@ -67,11 +66,7 @@ pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
     /// This corresponds to the "modified" version of the protocol in the NIST document.
     ///
     /// WARNING: It is CRUCIAL that the corrupt roles are ignored, as otherwise they could cause a DoS attack with the current logic of the functions using this method.
-    async fn broadcast_from_all_w_corrupt_set_update<
-        Z: Ring,
-        R: Rng + CryptoRng,
-        Ses: BaseSessionHandles<R>,
-    >(
+    async fn broadcast_from_all_w_corrupt_set_update<Z: Ring, Ses: BaseSessionHandles>(
         &self,
         session: &mut Ses,
         my_message: BroadcastValue<Z>,
@@ -91,11 +86,7 @@ pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
     ///
     /// WARNING: It is CRUCIAL that the corrupt roles are ignored, as otherwise they could cause a DoS attack with the current logic of the functions using this method.
     #[instrument(name= "Syn-Bcast-Corrupt",skip(self,session,sender_list,my_message),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()))]
-    async fn broadcast_w_corrupt_set_update<
-        Z: Ring,
-        R: Rng + CryptoRng,
-        Ses: BaseSessionHandles<R>,
-    >(
+    async fn broadcast_w_corrupt_set_update<Z: Ring, Ses: BaseSessionHandles>(
         &self,
         session: &mut Ses,
         sender_list: Vec<Role>,
@@ -169,11 +160,7 @@ impl ProtocolDescription for SyncReliableBroadcast {
 /// - role of current party
 /// - the list of expected senders
 /// - a mutable set of non answering parties
-pub(crate) async fn receive_contribution_from_all_senders<
-    Z: Ring,
-    R: Rng + CryptoRng,
-    B: BaseSessionHandles<R>,
->(
+pub(crate) async fn receive_contribution_from_all_senders<Z: Ring, B: BaseSessionHandles>(
     round1_data: &mut RoleValueMap<Z>,
     session: &B,
     receiver: &Role,
@@ -240,11 +227,7 @@ pub(crate) async fn receive_contribution_from_all_senders<
 ///
 /// Output is:
 ///  - a Map from (Role, Hash(contribution)) to (contribution, 1) with an entry __IFF__ there was enough echo for this particular contribution
-pub(crate) async fn receive_echos_from_all_batched<
-    Z: Ring,
-    R: Rng + CryptoRng,
-    B: BaseSessionHandles<R>,
->(
+pub(crate) async fn receive_echos_from_all_batched<Z: Ring, B: BaseSessionHandles>(
     session: &B,
     receiver: &Role,
     non_answering_parties: &mut HashSet<Role>,
@@ -288,7 +271,7 @@ pub(crate) async fn receive_echos_from_all_batched<
 /// - role of current party
 /// - a set of non answering parties that we wont try to receive from
 ///
-fn receive_from_all_votes<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+fn receive_from_all_votes<Z: Ring, B: BaseSessionHandles>(
     jobs: &mut JoinSet<Result<VoteJobType, Elapsed>>,
     session: &B,
     receiver: &Role,
@@ -389,7 +372,7 @@ async fn process_echos<Z: Ring>(
 /// Sender casts a vote only for messages m in registered_votes for which numbers of votes >= threshold
 ///
 /// __NOTE__:  We vote using the Hash of the broadcast value
-pub(crate) async fn cast_threshold_vote<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub(crate) async fn cast_threshold_vote<Z: Ring, B: BaseSessionHandles>(
     session: &B,
     sender: &Role,
     registered_votes: &HashMap<(Role, BcastHash), u32>,
@@ -418,7 +401,7 @@ pub(crate) async fn cast_threshold_vote<Z: Ring, R: Rng + CryptoRng, B: BaseSess
 /// For threshold rounds, look at the votes we have received, and cast a vote if needed
 ///
 /// If enough votes >=(T+R) and sender hasn't voted then vote
-pub(crate) async fn gather_votes<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub(crate) async fn gather_votes<Z: Ring, B: BaseSessionHandles>(
     session: &B,
     sender: &Role,
     registered_votes: &mut HashMap<(Role, BcastHash), u32>,
@@ -433,7 +416,7 @@ pub(crate) async fn gather_votes<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHand
         let mut vote_recv_tasks = JoinSet::new();
 
         // The error we propagate here is if sender IDs and roles cannot be tied together.
-        receive_from_all_votes::<Z, R, B>(
+        receive_from_all_votes::<Z, B>(
             &mut vote_recv_tasks,
             session,
             sender,
@@ -471,7 +454,7 @@ pub(crate) async fn gather_votes<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHand
                 *num_votes += 1;
             }
         }
-        cast_threshold_vote::<Z, R, B>(
+        cast_threshold_vote::<Z, B>(
             session,
             sender,
             &round_registered_votes,
@@ -485,7 +468,7 @@ pub(crate) async fn gather_votes<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHand
 #[async_trait]
 impl Broadcast for SyncReliableBroadcast {
     #[instrument(name= "Syn-Bcast",skip(self,session,sender_list,my_message),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()))]
-    async fn execute<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
         session: &B,
         sender_list: &[Role],
@@ -506,7 +489,7 @@ impl Broadcast for SyncReliableBroadcast {
         }
         let min_honest_nodes = num_parties as u32 - threshold as u32;
 
-        let my_role = session.my_role()?;
+        let my_role = session.my_role();
         let is_sender = sender_list.contains(&my_role);
         let mut bcast_data: RoleValueMap<Z> = sender_list
             .iter()
@@ -582,7 +565,7 @@ impl Broadcast for SyncReliableBroadcast {
         let mut casted_vote: HashMap<Role, bool> =
             sender_list.iter().map(|role| (*role, false)).collect();
 
-        cast_threshold_vote::<Z, R, B>(session, &my_role, &registered_votes, 1).await?;
+        cast_threshold_vote::<Z, B>(session, &my_role, &registered_votes, 1).await?;
 
         //Keep track of which instances of bcast we already voted for so we don't vote twice
         for ((role, _), _) in registered_votes.iter() {
@@ -599,7 +582,7 @@ impl Broadcast for SyncReliableBroadcast {
 
         // receive votes from the other parties, if we have at least T for a message m associated to a party Pi
         // then we know for sure that Pi has broadcasted message m
-        gather_votes::<Z, R, B>(
+        gather_votes::<Z, B>(
             session,
             &my_role,
             &mut registered_votes,
@@ -803,7 +786,7 @@ mod tests {
             let real_broadcast = SyncReliableBroadcast::default();
             let my_data = BroadcastValue::from(Z::sample(session.rng()));
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 my_data.clone(),
                 real_broadcast
                     .broadcast_from_all_w_corrupt_set_update(&mut session, my_data)
@@ -816,7 +799,7 @@ mod tests {
         let mut task_malicious = |mut session: SmallSession<Z>, malicious_broadcast: B| async move {
             let my_data = BroadcastValue::from(Z::sample(session.rng()));
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 my_data.clone(),
                 malicious_broadcast
                     .broadcast_from_all_w_corrupt_set_update(&mut session, my_data)

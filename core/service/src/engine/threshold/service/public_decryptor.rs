@@ -101,17 +101,16 @@ impl<
 
         let dec = match dec_mode {
             DecryptionMode::NoiseFloodSmall => {
-                let mut session = tonic_handle_potential_err(
+                let session = tonic_handle_potential_err(
                     session_prep
                         .prepare_ddec_data_from_sessionid_z128(session_id)
                         .await,
                     "Could not prepare ddec data for noiseflood decryption".to_string(),
                 )?;
-                let mut preparation = NoiseFloodSmallSession::new(session.clone());
+                let mut noiseflood_session = NoiseFloodSmallSession::new(session);
 
                 decrypt_using_noiseflooding(
-                    &mut session,
-                    &mut preparation,
+                    &mut noiseflood_session,
                     &keys.integer_server_key,
                     keys.sns_key
                         .as_ref()

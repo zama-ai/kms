@@ -20,7 +20,6 @@ use crate::{
 use async_trait::async_trait;
 use itertools::Itertools;
 use num_integer::div_ceil;
-use rand::{CryptoRng, Rng};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tracing::instrument;
 
@@ -36,11 +35,7 @@ pub struct DoubleShares<Z> {
 
 #[async_trait]
 pub trait LocalDoubleShare: ProtocolDescription + Send + Sync + Clone {
-    async fn execute<
-        Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -93,8 +88,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
     #[instrument(name="LocalDoubleShare",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?secrets.len()))]
     async fn execute<
         Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
+        L: LargeSessionHandles,
     >(
         &self,
         session: &mut L,
@@ -177,14 +171,13 @@ pub(crate) fn format_output<Z>(
     Ok(result)
 }
 
-pub(crate) async fn send_receive_pads_double<Z, R, L, S>(
+pub(crate) async fn send_receive_pads_double<Z, L, S>(
     session: &mut L,
     share_dispute: &S,
 ) -> anyhow::Result<ShareDisputeOutputDouble<Z>>
 where
     Z: Ring + RingEmbed + Derive + Invert,
-    R: Rng + CryptoRng,
-    L: LargeSessionHandles<R>,
+    L: LargeSessionHandles,
     S: ShareDispute,
 {
     let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
@@ -194,8 +187,7 @@ where
 
 pub(crate) async fn verify_sharing<
     Z: Ring + Derive + ErrorCorrect,
-    R: Rng + CryptoRng,
-    L: LargeSessionHandles<R>,
+    L: LargeSessionHandles,
     BCast: Broadcast,
 >(
     session: &mut L,
@@ -226,7 +218,7 @@ pub(crate) async fn verify_sharing<
 
     let roles = session.role_assignments().keys().cloned().collect_vec();
     let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
 
     //TODO: Could be done in parallel (to minimize round complexity)
     for g in 0..m {
@@ -458,7 +450,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 real_ldl.execute(&mut session, &secrets).await.unwrap(),
                 session.corrupt_roles().clone(),
                 session.disputed_roles().clone(),
@@ -470,7 +462,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 malicious_ldl.execute(&mut session, &secrets).await,
             )
         };

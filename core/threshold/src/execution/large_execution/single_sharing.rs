@@ -11,7 +11,6 @@ use crate::{
 use async_trait::async_trait;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
-use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use tracing::instrument;
 
@@ -19,15 +18,12 @@ pub type SecureSingleSharing<Z> = RealSingleSharing<Z, SecureLocalSingleShare>;
 
 #[async_trait]
 pub trait SingleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
-    async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
         l: usize,
     ) -> anyhow::Result<()>;
-    async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
-        &mut self,
-        session: &mut L,
-    ) -> anyhow::Result<Z>;
+    async fn next<L: LargeSessionHandles>(&mut self, session: &mut L) -> anyhow::Result<Z>;
 }
 
 //Might want to store the dispute set at the output of the lsl call
@@ -83,7 +79,7 @@ impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, S: LocalSingleShare> 
     for RealSingleSharing<Z, S>
 {
     #[instrument(name="SingleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),own_identity=?session.own_identity(), batch_size = ?l))]
-    async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
         l: usize,
@@ -117,10 +113,7 @@ impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, S: LocalSingleShare> 
     }
 
     //NOTE: This is instrumented by the caller function to use the same span for all calls
-    async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
-        &mut self,
-        session: &mut L,
-    ) -> anyhow::Result<Z> {
+    async fn next<L: LargeSessionHandles>(&mut self, session: &mut L) -> anyhow::Result<Z> {
         //If there's no shares available we recompute a new batch
         if self.available_shares.is_empty() {
             //If there's no more randomness to extract we re init
@@ -250,7 +243,7 @@ pub(crate) mod tests {
             for _ in 0..num_output {
                 res.push(single_sharing.next(&mut session).await.unwrap());
             }
-            (session.my_role().unwrap(), res)
+            (session.my_role(), res)
         };
 
         // Rounds (only on the happy path here)
@@ -322,7 +315,7 @@ pub(crate) mod tests {
             let extracted_size = session.num_parties() - session.threshold() as usize;
             let num_output = lsl_batch_size * extracted_size + 1;
             let mut res = Vec::<ResiduePolyF4Z128>::new();
-            if session.my_role().unwrap().one_based() != 2 {
+            if session.my_role().one_based() != 2 {
                 let mut single_sharing = SecureSingleSharing::<ResiduePolyF4Z128>::default();
                 single_sharing
                     .init(&mut session, lsl_batch_size)
@@ -337,7 +330,7 @@ pub(crate) mod tests {
                     res.push(ResiduePolyF4Z128::sample(session.rng()));
                 }
             }
-            (session.my_role().unwrap(), res)
+            (session.my_role(), res)
         }
 
         // SingleSharing assumes Sync network

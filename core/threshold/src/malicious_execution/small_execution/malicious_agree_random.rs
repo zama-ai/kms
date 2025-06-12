@@ -1,4 +1,3 @@
-use rand::{CryptoRng, Rng};
 use tonic::async_trait;
 
 use crate::{
@@ -27,7 +26,7 @@ impl ProtocolDescription for MaliciousAgreeRandomDrop {
 
 #[async_trait]
 impl AgreeRandom for MaliciousAgreeRandomDrop {
-    async fn execute<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<S: BaseSessionHandles>(
         &self,
         _session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {
@@ -37,7 +36,7 @@ impl AgreeRandom for MaliciousAgreeRandomDrop {
 
 #[async_trait]
 impl AgreeRandomFromShare for MaliciousAgreeRandomDrop {
-    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: ErrorCorrect, S: BaseSessionHandles>(
         &self,
         _session: &mut S,
         _shares: Vec<Z>,

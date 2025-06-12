@@ -1,5 +1,5 @@
 use aes_prng::AesRng;
-use rand::{CryptoRng, Rng, SeedableRng};
+use rand::SeedableRng;
 use serde::Serialize;
 use std::collections::HashMap;
 use tonic::async_trait;
@@ -40,7 +40,7 @@ impl ProtocolDescription for MaliciousPrssDrop {
 impl<Z: Zero> PRSSInit<Z> for MaliciousPrssDrop {
     type OutputType = MaliciousPrssDrop;
     /// Does nothing and returns an empty [`PRSSSetup`]
-    async fn init<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn init<S: BaseSessionHandles>(
         &self,
         _session: &mut S,
     ) -> anyhow::Result<Self::OutputType> {
@@ -73,7 +73,7 @@ impl<Z: Zero> PRSSPrimitives<Z> for MaliciousPrssDrop {
     }
 
     /// Does nothing and returns an empty map
-    async fn prss_check<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn prss_check<S: BaseSessionHandles>(
         &self,
         _session: &mut S,
         _ctr: u128,
@@ -81,7 +81,7 @@ impl<Z: Zero> PRSSPrimitives<Z> for MaliciousPrssDrop {
         Ok(HashMap::new())
     }
     /// Does nothing and returns an empty map
-    async fn przs_check<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn przs_check<S: BaseSessionHandles>(
         &self,
         _session: &mut S,
         _ctr: u128,
@@ -162,7 +162,7 @@ impl<
 {
     type OutputType = MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>;
 
-    async fn init<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn init<S: BaseSessionHandles>(
         &self,
         session: &mut S,
     ) -> anyhow::Result<Self::OutputType> {
@@ -241,7 +241,7 @@ impl<
     }
 
     /// Performs prss check honestly from the correctly derived prss state
-    async fn prss_check<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn prss_check<S: BaseSessionHandles>(
         &self,
         session: &mut S,
         ctr: u128,
@@ -253,7 +253,7 @@ impl<
             .await
     }
     /// Performs przs check honestly from the correctly derived prss state
-    async fn przs_check<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn przs_check<S: BaseSessionHandles>(
         &self,
         session: &mut S,
         ctr: u128,
@@ -312,7 +312,7 @@ impl<
 {
     type OutputType = MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>;
 
-    async fn init<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn init<S: BaseSessionHandles>(
         &self,
         session: &mut S,
     ) -> anyhow::Result<Self::OutputType> {

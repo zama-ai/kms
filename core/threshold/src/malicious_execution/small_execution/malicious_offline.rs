@@ -1,4 +1,3 @@
-use rand::{CryptoRng, Rng};
 use tonic::async_trait;
 
 use crate::{
@@ -27,9 +26,7 @@ impl ProtocolDescription for MaliciousOfflineDrop {
 }
 
 #[async_trait]
-impl<Z: Clone + Default, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>>
-    Preprocessing<Z, Rnd, Ses> for MaliciousOfflineDrop
-{
+impl<Z: Clone + Default, Ses: BaseSessionHandles> Preprocessing<Z, Ses> for MaliciousOfflineDrop {
     /// Executes both GenTriples and NextRandom based on the given `batch_sizes`.
     async fn execute(
         &mut self,
@@ -69,12 +66,8 @@ impl<Z, Bcast: Broadcast> ProtocolDescription for MaliciousOfflineWrongAmount<Z,
 }
 
 #[async_trait]
-impl<
-        Z: ErrorCorrect,
-        Bcast: Broadcast,
-        Rnd: Rng + CryptoRng + Send + Sync,
-        Ses: SmallSessionHandles<Z, Rnd>,
-    > Preprocessing<Z, Rnd, Ses> for MaliciousOfflineWrongAmount<Z, Bcast>
+impl<Z: ErrorCorrect, Bcast: Broadcast, Ses: SmallSessionHandles<Z>> Preprocessing<Z, Ses>
+    for MaliciousOfflineWrongAmount<Z, Bcast>
 {
     /// Executes both GenTriples and NextRandom based on the given `batch_sizes`.
     async fn execute(

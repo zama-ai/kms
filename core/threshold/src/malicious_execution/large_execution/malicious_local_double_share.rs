@@ -17,7 +17,6 @@ use crate::{
     ProtocolDescription,
 };
 use async_trait::async_trait;
-use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 
 /// Lie in broadcast as sender
@@ -108,8 +107,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
 {
     async fn execute<
         Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
+        L: LargeSessionHandles,
     >(
         &self,
         session: &mut L,
@@ -131,7 +129,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
                 shared_secrets_double = self.share_dispute.execute_double(session, secrets).await?;
 
                 shared_pads =
-                    send_receive_pads_double::<Z, R, L, S>(session, &self.share_dispute).await?;
+                    send_receive_pads_double::<Z, L, S>(session, &self.share_dispute).await?;
 
                 x = self.coinflip.execute(session).await?;
 
@@ -189,8 +187,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
 {
     async fn execute<
         Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
+        L: LargeSessionHandles,
     >(
         &self,
         session: &mut L,
@@ -209,7 +206,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
                 shared_secrets_double = self.share_dispute.execute_double(session, secrets).await?;
 
                 shared_pads =
-                    send_receive_pads_double::<Z, R, L, S>(session, &self.share_dispute).await?;
+                    send_receive_pads_double::<Z, L, S>(session, &self.share_dispute).await?;
 
                 x = self.coinflip.execute(session).await?;
 

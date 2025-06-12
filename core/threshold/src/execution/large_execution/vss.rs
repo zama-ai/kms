@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use itertools::{EitherOrBoth, Itertools};
-use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tokio::task::JoinError;
@@ -42,7 +41,7 @@ pub trait Vss: Send + Sync + Clone + ProtocolDescription {
     ///
     /// Returns
     /// - a vector of shares (share at index i is a sharing of the secret of party i)
-    async fn execute<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secret: &Z,
@@ -73,7 +72,7 @@ pub trait Vss: Send + Sync + Clone + ProtocolDescription {
     /// - a vector of shares (shares at index i is a sharing of the secrets of party i)
     /// so in a successful execution shares.len() should be the number of parties
     /// and shares[0].len() should be the number of secrets
-    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -157,12 +156,12 @@ impl ProtocolDescription for DummyVss {
 
 #[async_trait]
 impl Vss for DummyVss {
-    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
     ) -> anyhow::Result<Vec<Vec<Z>>> {
-        let own_role = session.my_role()?;
+        let own_role = session.my_role();
         let num_parties = session.num_parties();
 
         // send all secrets to all parties
@@ -232,7 +231,7 @@ impl<BCast: Broadcast> RealVss<BCast> {
 #[async_trait]
 impl<BCast: Broadcast> Vss for RealVss<BCast> {
     #[instrument(name="VSS", skip(self,session, secrets),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()), batch_size= ?secrets.len())]
-    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -255,11 +254,7 @@ impl<BCast: Broadcast> Vss for RealVss<BCast> {
 
 pub(crate) type MapRoleDoublePoly<Z> = HashMap<Role, Vec<DoublePoly<Z>>>;
 
-pub(crate) fn sample_secret_polys<
-    Z: Ring + RingEmbed,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
->(
+pub(crate) fn sample_secret_polys<Z: Ring + RingEmbed, S: BaseSessionHandles>(
     session: &mut S,
     secrets: &[Z],
 ) -> anyhow::Result<(Vec<BivariatePoly<Z>>, MapRoleDoublePoly<Z>)> {
@@ -291,13 +286,13 @@ pub(crate) fn sample_secret_polys<
     Ok((bivariate_poly, map_double_shares))
 }
 
-pub(crate) async fn round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+pub(crate) async fn round_1<Z: Ring, S: BaseSessionHandles>(
     session: &mut S,
     num_secrets: usize,
     bivariate_poly: Vec<BivariatePoly<Z>>,
     map_double_shares: MapRoleDoublePoly<Z>,
 ) -> anyhow::Result<Round1VSSOutput<Z>> {
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     let num_parties = session.num_parties();
 
     // Init the received data with all 0s for all roles, will be filled
@@ -435,18 +430,13 @@ fn parse_round_1_received_data<Z: Ring>(
     }
 }
 
-pub(crate) async fn round_2<
-    Z: Ring + RingEmbed,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
-    BCast: Broadcast,
->(
+pub(crate) async fn round_2<Z: Ring + RingEmbed, S: BaseSessionHandles, BCast: Broadcast>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
     broadcast: &BCast,
 ) -> anyhow::Result<HashMap<Role, Option<Vec<VerificationValues<Z>>>>> {
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     let num_parties = session.num_parties();
 
     //For every VSS, compute
@@ -545,12 +535,7 @@ fn verify_round_2_broadcast<Z: Ring>(
 // Role0 -> Some(v) with v indexed as v[dealer_idx][Pj index][secret_idx]
 // Role1 -> None means somethings wrong happened, consider all values to be 0
 //...
-pub(crate) async fn round_3<
-    Z: Ring + RingEmbed,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
-    BCast: Broadcast,
->(
+pub(crate) async fn round_3<Z: Ring + RingEmbed, S: BaseSessionHandles, BCast: Broadcast>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
@@ -558,7 +543,7 @@ pub(crate) async fn round_3<
     broadcast: &BCast,
 ) -> anyhow::Result<Vec<HashSet<Role>>> {
     let num_parties = session.num_parties();
-    let own_role = session.my_role()?;
+    let own_role = session.my_role();
 
     //First create a HashSet<usize, role, role> that references all the conflicts
     //the usize represents the dealer idx of the conflict.
@@ -614,12 +599,7 @@ pub(crate) async fn round_3<
     Ok(unhappy_vec)
 }
 
-pub(crate) async fn round_4<
-    Z: Ring + RingEmbed,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
-    BCast: Broadcast,
->(
+pub(crate) async fn round_4<Z: Ring + RingEmbed, S: BaseSessionHandles, BCast: Broadcast>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
@@ -627,7 +607,7 @@ pub(crate) async fn round_4<
     broadcast: &BCast,
 ) -> anyhow::Result<Vec<Vec<Z>>> {
     let mut msg = BTreeMap::<(u64, Role), ValueOrPoly<Z>>::new();
-    let own_role = session.my_role()?;
+    let own_role = session.my_role();
 
     //For all dealers
     //For all parties Pi in unhappy, if I'm Sender OR I'm not in unhappy, help solve the conflict
@@ -725,7 +705,7 @@ pub(crate) async fn round_4<
     Ok(result)
 }
 
-fn vss_receive_round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+fn vss_receive_round_1<Z: Ring, S: BaseSessionHandles>(
     session: &S,
     jobs: &mut JoinSet<ResultRound1<Z>>,
     my_role: Role,
@@ -1030,7 +1010,7 @@ fn round_4_conflict_resolution<Z: Ring + RingEmbed>(
     Ok(())
 }
 
-fn round_4_fix_conflicts<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+fn round_4_fix_conflicts<Z: Ring + RingEmbed, S: BaseSessionHandles>(
     session: &mut S,
     num_secrets: usize,
     dealer_idx: usize,
@@ -1424,7 +1404,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
-                session.my_role().unwrap().zero_based(),
+                session.my_role().zero_based(),
                 real_vss.execute_many(&mut session, &secrets).await.unwrap(),
                 secrets,
                 session.corrupt_roles().clone(),
@@ -1489,7 +1469,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
-                session.my_role().unwrap().zero_based(),
+                session.my_role().zero_based(),
                 real_vss.execute_many(&mut session, &secrets).await.unwrap(),
                 secrets,
                 session.corrupt_roles().clone(),
@@ -1501,7 +1481,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             let _ = malicious_vss.execute_many(&mut session, &secrets).await;
-            (session.my_role().unwrap().zero_based(), secrets)
+            (session.my_role().zero_based(), secrets)
         };
 
         // VSS assumes sync network

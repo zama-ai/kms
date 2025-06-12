@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use tonic::async_trait;
 use tracing::{info_span, instrument};
 
@@ -31,8 +30,7 @@ pub trait BitGenOdd {
     //a sqrt mod q_L cf ['SqrtLargestPrimeFactor']
     async fn gen_bits_odd<
         Z: Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
-        Rnd: Rng + CryptoRng,
-        Ses: SmallSessionHandles<Z, Rnd>,
+        Ses: SmallSessionHandles<Z>,
         P: BasePreprocessing<Z> + Send + ?Sized,
     >(
         amount: usize,
@@ -50,8 +48,7 @@ impl BitGenOdd for RealBitGenOdd {
     #[instrument(name="MPC.GenBits",skip(amount, preproc, session), fields(sid = ?session.session_id(), own_identity= ?session.own_identity(), batch_size=?amount))]
     async fn gen_bits_odd<
         Z: Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
-        Rnd: Rng + CryptoRng,
-        Ses: SmallSessionHandles<Z, Rnd>,
+        Ses: SmallSessionHandles<Z>,
         P: BasePreprocessing<Z> + Send + ?Sized,
     >(
         amount: usize,
@@ -59,7 +56,7 @@ impl BitGenOdd for RealBitGenOdd {
         session: &mut Ses,
     ) -> anyhow::Result<Vec<Share<Z>>> {
         let two_inv = Z::TWO.invert()?;
-        let own_role = session.my_role()?;
+        let own_role = session.my_role();
 
         let mut s_vec = Vec::with_capacity(amount);
         let mut a_vec = Vec::with_capacity(amount);
@@ -133,7 +130,6 @@ impl BitGenOdd for RealBitGenOdd {
 
 #[cfg(test)]
 mod tests {
-    use aes_prng::AesRng;
 
     use crate::{
         algebra::structure_traits::{One, Ring, Zero},
@@ -155,10 +151,7 @@ mod tests {
         let threshold = 1;
         let amount = 100;
         let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
-            let mut preproc = DummyPreprocessing::<LevelKsw, AesRng, SmallSession<LevelKsw>>::new(
-                0,
-                session.clone(),
-            );
+            let mut preproc = DummyPreprocessing::<LevelKsw>::new(0, &session);
 
             RealBitGenOdd::gen_bits_odd(amount, &mut preproc, &mut session)
                 .await

@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use aes_prng::AesRng;
-use rand::{CryptoRng, Rng};
 use tonic::async_trait;
 
 use crate::{
@@ -35,7 +34,7 @@ impl ProtocolDescription for MaliciousBroadcastDrop {
 
 #[async_trait]
 impl Broadcast for MaliciousBroadcastDrop {
-    async fn execute<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
         _session: &B,
         _sender_list: &[Role],
@@ -60,7 +59,7 @@ impl ProtocolDescription for MaliciousBroadcastSender {
 
 #[async_trait]
 impl Broadcast for MaliciousBroadcastSender {
-    async fn execute<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
         session: &B,
         sender_list: &[Role],
@@ -77,7 +76,7 @@ impl Broadcast for MaliciousBroadcastSender {
         let threshold = session.threshold();
         let min_honest_nodes = num_parties as u32 - threshold as u32;
 
-        let my_role = session.my_role().unwrap();
+        let my_role = session.my_role();
         let is_sender = sender_list.contains(&my_role);
         let mut bcast_data = HashMap::with_capacity(num_senders);
 
@@ -151,7 +150,7 @@ impl Broadcast for MaliciousBroadcastSender {
         let mut casted_vote: HashMap<Role, bool> =
             sender_list.iter().map(|role| (*role, false)).collect();
 
-        cast_threshold_vote::<Z, R, B>(session, &my_role, &registered_votes, 1).await?;
+        cast_threshold_vote::<Z, B>(session, &my_role, &registered_votes, 1).await?;
 
         //Keep track of which instances of bcast we already voted for so we don't vote twice
         for ((role, _), _) in registered_votes.iter() {
@@ -168,7 +167,7 @@ impl Broadcast for MaliciousBroadcastSender {
 
         // receive votes from the other parties, if we have at least T for a message m associated to a party Pi
         // then we know for sure that Pi has broadcasted message m
-        gather_votes::<Z, R, B>(
+        gather_votes::<Z, B>(
             session,
             &my_role,
             &mut registered_votes,
@@ -210,7 +209,7 @@ impl ProtocolDescription for MaliciousBroadcastSenderEcho {
 
 #[async_trait]
 impl Broadcast for MaliciousBroadcastSenderEcho {
-    async fn execute<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
         session: &B,
         sender_list: &[Role],
@@ -223,7 +222,7 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
         }
         let num_senders = sender_list.len();
 
-        let my_role = session.my_role().unwrap();
+        let my_role = session.my_role();
         let num_parties = session.num_parties();
         let role_to_lie_to = Role::indexed_by_zero((my_role.zero_based() + 1) % num_parties);
 
