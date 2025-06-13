@@ -33,7 +33,7 @@ fn bench_decode_z2(c: &mut Criterion) {
             }
 
             // f = a0 + ... + a_{t} * X^t
-            let f = ShamirFieldPoly { coefs };
+            let f = ShamirFieldPoly::from_coefs(coefs);
 
             // compute f(1),...,f(t+1)
             let party_ids: Vec<u8> = (1..2 * threshold + 2).map(|x| x as u8).collect();

@@ -611,14 +611,15 @@ where
         //  compute s_e^(j)/p mod p and decode
         for bit_idx in 0..ring_size {
             let sliced_syndrome_coefs: Vec<_> = syndrome_poly
-                .coefs
+                .coefs()
                 .iter()
                 .map(|c| c.bit_compose(bit_idx))
                 .collect();
 
-            let sliced_syndrome = ShamirFieldPoly::<<Self as QuotientMaximalIdeal>::QuotientOutput> {
-                coefs: sliced_syndrome_coefs,
-            };
+            let sliced_syndrome =
+                ShamirFieldPoly::<<Self as QuotientMaximalIdeal>::QuotientOutput>::from_coefs(
+                    sliced_syndrome_coefs,
+                );
 
             // bit error in this for this bit-idx
             let ej = syndrome_decoding_z2(&parties, &sliced_syndrome, threshold);
@@ -673,7 +674,7 @@ where
         let lagrange_polys = lagrange_numerators(&parties);
 
         let alpha_powers = compute_powers_list(&parties, r);
-        let mut res = Poly::zeros(r);
+        let mut res = Poly::zero();
 
         // compute syndrome coefficients
         for j in 0..r {
@@ -685,7 +686,7 @@ where
                 coef += numerator * denom.invert()?;
             }
 
-            res.coefs[j] = coef;
+            res.set_coef(j, coef);
         }
 
         Ok(res)
@@ -726,7 +727,7 @@ where
         pos: usize,
     ) -> anyhow::Result<Poly<Self>> {
         let coefs: Vec<Self> = x
-            .coefs
+            .coefs()
             .iter()
             .map(|coef_2| Self::bit_lift(*coef_2, pos))
             .collect::<anyhow::Result<Vec<_>>>()?;

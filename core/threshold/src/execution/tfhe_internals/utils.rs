@@ -50,7 +50,7 @@ pub fn slice_semi_reverse_negacyclic_convolution<Z: BaseRing, const EXTENSION_DE
     let rhs_pol = Poly::from_coefs(rev_rhs);
 
     let res = pol_mul_reduce(&lhs_pol, &rhs_pol, output.len())?;
-    *output = res.coefs;
+    *output = res.coefs().to_vec();
     Ok(())
 }
 
@@ -73,20 +73,20 @@ pub fn pol_mul_reduce<Z: BaseRing, const EXTENSION_DEGREE: usize>(
         .collect_vec();
 
     debug_assert!(
-        output_size == poly_1.coefs.len(),
+        output_size == poly_1.coefs().len(),
         "Output polynomial size {:?} is not the same as input polynomial1 {:?}.",
         output_size,
-        poly_1.coefs.len(),
+        poly_1.coefs().len(),
     );
     debug_assert!(
-        output_size == poly_2.coefs.len(),
+        output_size == poly_2.coefs().len(),
         "Output polynomial size {:?} is not the same as input polynomial2 {:?}.",
         output_size,
-        poly_2.coefs.len(),
+        poly_2.coefs().len(),
     );
 
-    for (lhs_degree, lhs_coef) in poly_1.coefs.iter().enumerate() {
-        for (rhs_degree, rhs_coef) in poly_2.coefs.iter().enumerate() {
+    for (lhs_degree, lhs_coef) in poly_1.coefs().iter().enumerate() {
+        for (rhs_degree, rhs_coef) in poly_2.coefs().iter().enumerate() {
             let target_degree = lhs_degree + rhs_degree;
             if target_degree < output_size {
                 let output_coefficient = coefs.get_mut(target_degree).ok_or_else(|| {
@@ -153,7 +153,7 @@ where
 
     for coef_output_coef_pol in output_body
         .iter_mut()
-        .zip_longest(pol_output_body.coefs.iter())
+        .zip_longest(pol_output_body.coefs().iter())
     {
         if let EitherOrBoth::Both(coef_output, coef_pol) = coef_output_coef_pol {
             *coef_output = *coef_pol;

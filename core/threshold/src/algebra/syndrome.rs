@@ -15,10 +15,7 @@ pub fn lagrange_numerators<F: Ring + Neg<Output = F>>(points: &[F]) -> Vec<Poly<
             let mut numerator = Poly::one();
             for (j, xj) in points.iter().enumerate() {
                 if i != j {
-                    numerator = numerator
-                        * Poly {
-                            coefs: vec![-*xj, F::ONE],
-                        };
+                    numerator = numerator * Poly::from_coefs(vec![-*xj, F::ONE]);
                 }
             }
             numerator
@@ -34,10 +31,7 @@ fn prod_alpha_z<F: Field>(points: &[F]) -> Poly<F> {
     // Empty products are treated as one
     let mut poly = Poly::one();
     for p in points {
-        poly = poly
-            * Poly {
-                coefs: vec![F::ONE, -*p],
-            };
+        poly = poly * Poly::from_coefs(vec![F::ONE, -*p]);
     }
     tracing::info!("check is {:?}", poly);
     poly
@@ -54,7 +48,7 @@ pub fn compute_syndrome<F: Field + std::fmt::Debug>(x_alpha: &[F], ci: &[F], v: 
     let lagrange_polys = lagrange_numerators(x_alpha);
     let alpha_powers = compute_powers_list(x_alpha, r);
 
-    let mut syndrome = Poly::zeros(r);
+    let mut syndrome = Poly::zero();
 
     // compute each coefficient of the syndrome
     for j in 0..r {
@@ -68,8 +62,10 @@ pub fn compute_syndrome<F: Field + std::fmt::Debug>(x_alpha: &[F], ci: &[F], v: 
             debug_assert_eq!(alpha_powers[i][1], x_alpha[i]);
         }
 
-        syndrome.coefs[j] = coef;
+        syndrome.set_coef(j, coef);
     }
+
+    syndrome.compress();
     syndrome
 }
 
@@ -129,8 +125,8 @@ pub fn decode_syndrome<F: Field>(syndrome: &Poly<F>, x_alpha: &[F], r: usize) ->
     }
 
     let (mut t0, mut t1) = (Poly::zero(), Poly::one());
-    let mut r0 = Poly::zeros(r + 1);
-    r0.coefs[r] = F::ONE; // R = Z^r
+    let mut r0 = Poly::zero();
+    r0.set_coef(r, F::ONE); // R = Z^r
     let mut r1 = syndrome.clone();
 
     while r0.deg() >= r / 2 {
@@ -225,12 +221,10 @@ mod tests {
     }
 
     fn test_compute_syndrome_field<BaseField: Field>(num_parties: u128) {
-        let f = Poly {
-            coefs: vec![BaseField::from_u128(7), BaseField::from_u128(42)],
-        };
+        let f = Poly::from_coefs(vec![BaseField::from_u128(7), BaseField::from_u128(42)]);
 
         let n = num_parties;
-        let v = f.coefs.len(); //called k for RS codes in some literature, equals threshold + 1
+        let v = f.coefs().len(); //called k for RS codes in some literature, equals threshold + 1
         let r = n as usize - v;
 
         tracing::debug!("n={n}, v={v}, r={r}, detect={r}, correct={}", r / 2);
@@ -242,7 +236,7 @@ mod tests {
         // syndrome should be zero without error
         let syndrome = compute_syndrome(&xs, &ys, v);
         tracing::info!("syndrome (ok): {:?}", syndrome);
-        assert_eq!(syndrome, Poly::zeros(r));
+        assert!(syndrome.is_zero());
 
         // with no errors we can just do plain Lagrange interpolation
         let l_poly = lagrange_interpolation(&xs, &ys).unwrap();
@@ -267,7 +261,7 @@ mod tests {
         // syndrome should not be zero with errors
         let syndrome = compute_syndrome(&xs, &ys, v);
         tracing::info!("syndrome (xx): {:?}", syndrome);
-        assert_ne!(syndrome, Poly::zeros(r));
+        assert!(!syndrome.is_zero());
     }
 
     #[test]
@@ -306,16 +300,14 @@ mod tests {
     }
 
     fn test_syndrome_decode_field<BaseField: Field>() {
-        let f = Poly {
-            coefs: vec![
-                BaseField::from_u128(99),
-                BaseField::from_u128(100),
-                BaseField::from_u128(8),
-            ],
-        };
+        let f = Poly::from_coefs(vec![
+            BaseField::from_u128(99),
+            BaseField::from_u128(100),
+            BaseField::from_u128(8),
+        ]);
 
         let n = 7;
-        let v = f.coefs.len(); //called k for RS codes in some literature, equals threshold + 1
+        let v = f.coefs().len(); //called k for RS codes in some literature, equals threshold + 1
         let r = n as usize - v;
 
         tracing::debug!("n={n}, v={v}, r=detect={r}, correct={}", r / 2);

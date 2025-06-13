@@ -277,7 +277,7 @@ where
     fn lazy_eval(&self, powers: &[ResiduePolyF5<Z>]) -> ResiduePolyF5<Z> {
         let mut res_coefs = [Z::ZERO; 9];
         // now we go through each
-        for (coef_2, coef_r) in self.coefs.iter().zip(powers) {
+        for (coef_2, coef_r) in self.coefs().iter().zip(powers) {
             for bit_idx in 0..5 {
                 if ((coef_2 >> bit_idx) & 1) == 1 {
                     for (j, cr) in coef_r.coefs.iter().enumerate() {

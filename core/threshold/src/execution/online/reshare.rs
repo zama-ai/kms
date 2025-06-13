@@ -364,12 +364,12 @@ where
     let mut all_syndrome_poly_shares = Vec::with_capacity(share_count * n1);
     for shares in s_share_vec {
         let shamir_sharing = ShamirSharings::create(shares);
-        let mut syndrome_share = ResiduePoly::<Z, EXTENSION_DEGREE>::syndrome_compute(
+        let syndrome_share = ResiduePoly::<Z, EXTENSION_DEGREE>::syndrome_compute(
             &shamir_sharing,
             session.threshold() as usize,
         )?;
         all_shamir_shares.push(shamir_sharing);
-        all_syndrome_poly_shares.append(&mut syndrome_share.coefs);
+        all_syndrome_poly_shares.append(&mut syndrome_share.into_container());
     }
 
     let all_syndrome_polys = match SecureRobustOpen::default()

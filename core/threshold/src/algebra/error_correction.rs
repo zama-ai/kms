@@ -1,9 +1,7 @@
 use super::{
     galois_rings::common::{LutMulReduction, ResiduePoly},
     poly::{gao_decoding, BitWiseEval, Poly},
-    structure_traits::{
-        BaseRing, ErrorCorrect, Field, QuotientMaximalIdeal, Ring, RingEmbed, Zero,
-    },
+    structure_traits::{BaseRing, ErrorCorrect, Field, QuotientMaximalIdeal, Ring, RingEmbed},
 };
 use crate::algebra::poly::BitwisePoly;
 use crate::error::error_handler::anyhow_error_and_log;
@@ -61,14 +59,12 @@ fn accumulate_and_lift_bitwise_poly<Z: BaseRing, const EXTENSION_DEGREE: usize>(
 ) where
     ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
 {
-    while res.coefs.len() < p.coefs.len() {
-        res.coefs.push(ResiduePoly::<Z, EXTENSION_DEGREE>::ZERO);
-    }
-    for (i, coef) in p.coefs.iter().enumerate() {
+    for (i, coef) in p.coefs().iter().enumerate() {
         let c8: u8 = (*coef).into();
         for d in 0..EXTENSION_DEGREE {
             if ((c8 >> d) & 1) != 0 {
-                res.coefs[i].coefs[d] += Z::ONE << amount;
+                // NOTE: get_mut will not panic here because it'll create extra coefficients if needed
+                res.get_mut(i).coefs[d] += Z::ONE << amount;
             }
         }
     }
@@ -377,16 +373,14 @@ mod tests {
     }
 
     fn test_error_correction<BaseField: Field>() {
-        let f = ShamirFieldPoly::<BaseField> {
-            coefs: vec![
-                BaseField::from_u128(25),
-                BaseField::from_u128(2),
-                BaseField::from_u128(233),
-            ],
-        };
+        let f = ShamirFieldPoly::<BaseField>::from_coefs(vec![
+            BaseField::from_u128(25),
+            BaseField::from_u128(2),
+            BaseField::from_u128(233),
+        ]);
 
         let num_parties = 7;
-        let threshold = f.coefs.len() - 1; // = 2 here
+        let threshold = f.coefs().len() - 1; // = 2 here
         let max_err = (num_parties as usize - threshold) / 2; // = 2 here
 
         let mut shares: Vec<_> = (1..=num_parties)
