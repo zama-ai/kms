@@ -147,6 +147,9 @@ has_value "keygen" && \
 	has_value "threshold" && \
 	    {
 		log "generating signing keys for threshold KMS"
+		PARTY_ID_ARG=""
+		has_value "threshold.my_id" && \
+		    PARTY_ID_ARG="--signing-key-party-id $(get_value "threshold.my_id")"
 		kms-gen-keys \
 		    --pub-url "$(get_value "public_vault.storage")" \
 		    --priv-url "$(get_value "private_vault.storage")" \
@@ -157,12 +160,11 @@ has_value "keygen" && \
 		    --aws-s3-endpoint "$(get_value "aws.s3_endpoint")" \
 		    --aws-kms-endpoint "$(get_value "aws.awskms_endpoint")" \
 		    --cmd signing-keys \
-		    threshold \
-		    --signing-key-party-id "$(get_value "threshold.my_id")" \
+		    threshold $PARTY_ID_ARG \
 		    --num-parties "$(get_value "threshold.num_parties")" \
 		    --tls-subject "$(get_value "threshold.tls_subject")" \
 		    |& logger || fail "cannot generate keys"
-	    }	
+	    }
     }
 has_value "keygen" || \
     log "[keygen] configuration section not present, skipping key generation"
@@ -193,7 +195,7 @@ has_value "service" && \
 
 	# showtime!
 	log "starting kms-server"
-	kms-server --config-file=$KMS_SERVER_CONFIG_FILE |& logger	
+	kms-server --config-file=$KMS_SERVER_CONFIG_FILE |& logger
     }
 has_value "service" || \
     log "[service] configuration section not present, not launching kms-server"
