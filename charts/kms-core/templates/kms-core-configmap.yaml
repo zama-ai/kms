@@ -44,7 +44,6 @@ data:
       {{- if .Values.kmsCore.thresholdMode.peersList }}
     num_parties = {{ len .Values.kmsCore.thresholdMode.peersList }}
       {{- else }}
-    my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
     num_parties = {{ int .Values.kmsPeers.count }}
       {{- end }}
       {{ if .Values.kmsCore.addressOverride }}
