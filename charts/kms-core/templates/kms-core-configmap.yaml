@@ -49,7 +49,7 @@ data:
       {{ if .Values.kmsCore.addressOverride }}
     tls_subject = {{ .Values.kmsCore.addressOverride | quote }}
       {{- else }}
-    tls_subject = "{{ include "kmsCoreName" . }}-${KMS_CORE__THRESHOLD__MY_ID}"
+    tls_subject = "{{ include "kmsCoreName" . }}"
       {{- end }}
     {{- end }}
   kms-server.toml: |
