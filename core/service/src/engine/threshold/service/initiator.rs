@@ -24,7 +24,7 @@ use tonic_health::server::HealthReporter;
 use crate::{
     engine::{
         base::derive_request_id,
-        threshold::{service::session::SessionPreparer, traits::Initiator},
+        threshold::{service::session::{SessionPreparer, DEFAULT_CONTEXT_ID_ARR}, traits::Initiator},
         validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
     vault::storage::{read_versioned_at_request_id, store_versioned_at_request_id, Storage},
@@ -62,7 +62,7 @@ impl<
         // TODO set the correct context ID here.
         let session_preparer = self
             .session_preparer_manager
-            .get(&RequestId::from_bytes([0u8; 32]))
+            .get(&RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR))
             .await?;
 
         let prss_setup_z128_from_file = {
@@ -141,7 +141,7 @@ impl<
         // TODO set the correct context ID here.
         let session_preparer = self
             .session_preparer_manager
-            .get(&RequestId::from_bytes([0u8; 32]))
+            .get(&RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR))
             .await?;
 
         // TODO(zama-ai/kms-internal/issues/2721),
@@ -263,7 +263,10 @@ impl<
             Arc::clone(&self.prss_setup_z64),
         );
         self.session_preparer_manager
-            .insert(RequestId::from_bytes([0u8; 32]), session_preparer)
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
             .await;
 
         let inner = request.into_inner();

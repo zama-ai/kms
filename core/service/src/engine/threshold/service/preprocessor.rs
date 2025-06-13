@@ -42,7 +42,7 @@ use crate::{
     engine::{
         base::retrieve_parameters,
         keyset_configuration::preproc_proto_to_keyset_config,
-        threshold::{service::session::SessionPreparerGetter, traits::KeyGenPreprocessor},
+        threshold::{service::session::{SessionPreparerGetter, DEFAULT_CONTEXT_ID_ARR}, traits::KeyGenPreprocessor},
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -78,12 +78,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         dkg_params: DKGParams,
         keyset_config: ddec_keyset_config::KeySetConfig,
         request_id: RequestId,
+        context_id: Option<RequestId>,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
-        // TODO find the context ID
         let session_preparer = self
             .session_preparer_getter
-            .get(&RequestId::from_bytes([0u8; 32]))
+            .get(&context_id.unwrap_or(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR)))
             .await?;
 
         // Prepare the timer before giving it to the tokio task
@@ -272,7 +272,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         if !entry_exists {
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
             // We don't increment the error counter here but rather in launch_dkg_preproc
-            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
+            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, inner.context_id.map(|x| x.into()), permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
             Ok(Response::new(Empty {}))
         } else {
             Err(tonic::Status::already_exists(format!(
