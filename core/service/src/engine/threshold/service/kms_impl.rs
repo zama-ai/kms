@@ -31,6 +31,7 @@ use threshold_fhe::{
         tls::{
             build_ca_certs_map, AttestedClientVerifier, BasicTLSConfig, SendingServiceTLSConfig,
         },
+        Networking, NetworkingStrategy,
     },
 };
 use tokio::{
@@ -61,7 +62,7 @@ use crate::{
         threshold::{
             generic::GenericKms,
             service::public_decryptor::SecureNoiseFloodDecryptor,
-            service::session::SessionPreparerManager,
+            service::session::{SessionPreparer, SessionPreparerManager, DEFAULT_CONTEXT_ID_ARR},
             service::user_decryptor::SecureNoiseFloodPartialDecryptor, threshold_kms::ThresholdKms,
         },
     },
@@ -371,6 +372,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     shutdown_signal: F,
+    add_testing_session_preparer: bool,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS, BackS>,
     HealthServer<impl Health>,
@@ -446,8 +448,46 @@ where
         key_info_versioned,
     );
 
+    // Note that the manager is empty, it needs to be filled with session preparers
+    // For testing this needs to be done manually.
     let session_preparer_manager =
-        SessionPreparerManager::empty(config.my_id.to_string(), networking_manager);
+        SessionPreparerManager::empty(config.my_id.to_string(), networking_manager.clone());
+
+    // Optionally add a testing session preparer.
+    if add_testing_session_preparer {
+        let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
+            move |session_id, roles, network_mode| {
+                let nm = networking_manager.clone();
+                Box::pin(async move {
+                    let manager = nm.read().await;
+                    let impl_networking = manager.make_session(session_id, roles, network_mode);
+                    Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
+                })
+            },
+        )));
+
+        let role_assignments: threshold_fhe::execution::runtime::party::RoleAssignment = config
+            .peers
+            .clone()
+            .into_iter()
+            .map(|peer_config| peer_config.into_role_identity())
+            .collect();
+        let session_preparer = SessionPreparer::new(
+            base_kms.new_instance().await,
+            config.threshold,
+            config.my_id,
+            role_assignments,
+            networking_strategy,
+            Arc::clone(&prss_setup_z128),
+            Arc::clone(&prss_setup_z64),
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+    }
     let session_preparer_getter = session_preparer_manager.make_getter();
 
     let metastore_status_service = MetaStoreStatusServiceImpl::new(

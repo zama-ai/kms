@@ -523,6 +523,7 @@ async fn main() -> anyhow::Result<()> {
                 false,
                 core_config.rate_limiter_conf,
                 std::future::pending(),
+                false,
             )
             .await?;
             let meta_store_status_service = Arc::new(metastore_status_service);

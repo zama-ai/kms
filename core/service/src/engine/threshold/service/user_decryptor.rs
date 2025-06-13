@@ -55,7 +55,10 @@ use crate::{
             compute_external_user_decrypt_signature, deserialize_to_low_level, BaseKmsStruct,
             UserDecryptCallValues,
         },
-        threshold::{service::session::SessionPreparerGetter, traits::UserDecryptor},
+        threshold::{
+            service::session::{SessionPreparerGetter, DEFAULT_CONTEXT_ID_ARR},
+            traits::UserDecryptor,
+        },
         traits::BaseKms,
         validation::{
             parse_proto_request_id, validate_user_decrypt_req, RequestIdParsingErr,
@@ -420,12 +423,20 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        // TODO obtain the context ID from request
+        let inner = request.into_inner();
+        tracing::info!(
+            request_id = ?inner.request_id,
+            "Received a new user decryption request",
+        );
+        let context_id = inner
+            .context_id
+            .clone()
+            .unwrap_or(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into());
         let session_preparer = Arc::new(
             self.session_preparer_getter
-                .get(&RequestId::from_bytes([0u8; 32]))
+                .get(&context_id.into())
                 .await
-                .map_err(|e| Status::internal(format!("Failed to get session preparer: {}", e)))?,
+                .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?,
         );
 
         // Start timing and counting before any operations
@@ -436,12 +447,6 @@ impl<
 
         let permit = self.rate_limiter.start_user_decrypt().await?;
 
-        let inner = request.into_inner();
-        tracing::info!(
-            "Party {:?} received a new user decryption request with request_id {:?}",
-            session_preparer.own_identity(),
-            inner.request_id
-        );
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) =
             validate_user_decrypt_req(&inner).inspect_err(|e| {
                 tracing::error!(
