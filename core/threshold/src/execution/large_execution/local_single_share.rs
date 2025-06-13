@@ -433,21 +433,22 @@ pub(crate) fn look_for_disputes<Z: Ring, L: LargeSessionHandles>(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{Derive, LocalSingleShare, RealLocalSingleShare, SecureLocalSingleShare};
+    use super::{Derive, LocalSingleShare, SecureLocalSingleShare};
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
     use crate::algebra::structure_traits::{ErrorCorrect, Invert, RingEmbed};
-    #[cfg(feature = "slow_tests")]
-    use crate::execution::communication::broadcast::SyncReliableBroadcast;
-    #[cfg(feature = "slow_tests")]
-    use crate::execution::large_execution::{
-        coinflip::{RealCoinflip, SecureCoinflip},
-        share_dispute::RealShareDispute,
-        vss::{RealVss, SecureVss, Vss},
-    };
-    #[cfg(feature = "slow_tests")]
-    use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
     use crate::execution::sharing::shamir::RevealOp;
+    #[cfg(feature = "slow_tests")]
+    use crate::execution::{
+        communication::broadcast::{Broadcast, SyncReliableBroadcast},
+        large_execution::{
+            coinflip::{Coinflip, RealCoinflip, SecureCoinflip},
+            local_single_share::RealLocalSingleShare,
+            share_dispute::{RealShareDispute, ShareDispute},
+            vss::{RealVss, SecureVss, Vss},
+        },
+        sharing::open::{RobustOpen, SecureRobustOpen},
+    };
     #[cfg(feature = "slow_tests")]
     use crate::malicious_execution::large_execution::{
         malicious_coinflip::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
@@ -461,8 +462,6 @@ pub(crate) mod tests {
     use crate::networking::NetworkMode;
     use crate::{
         execution::{
-            communication::broadcast::Broadcast,
-            large_execution::{coinflip::Coinflip, share_dispute::ShareDispute},
             runtime::party::Role,
             runtime::session::{
                 BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,

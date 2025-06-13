@@ -245,7 +245,12 @@ jobs:
       - name: Formatting
         run: cargo fmt --all -- --check
 
-      - name: Linting
+      - name: Linting default features
+        env:
+          PACKAGE_NAME: ${{inputs.package-name}}
+        run: cargo clippy --all-targets --package "${PACKAGE_NAME}" -- -D warnings
+
+      - name: Linting All features
         env:
           PACKAGE_NAME: ${{inputs.package-name}}
         run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings

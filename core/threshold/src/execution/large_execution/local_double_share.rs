@@ -381,15 +381,17 @@ pub(crate) async fn verify_sharing<
 pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
-    use crate::execution::communication::broadcast::SyncReliableBroadcast;
-    #[cfg(feature = "slow_tests")]
-    use crate::execution::large_execution::{
-        coinflip::{RealCoinflip, SecureCoinflip},
-        share_dispute::RealShareDispute,
-        vss::{RealVss, SecureVss, Vss},
+    use crate::execution::{
+        communication::broadcast::{Broadcast, SyncReliableBroadcast},
+        large_execution::{
+            coinflip::{Coinflip, RealCoinflip, SecureCoinflip},
+            local_double_share::RealLocalDoubleShare,
+            share_dispute::RealShareDispute,
+            share_dispute::ShareDispute,
+            vss::{RealVss, SecureVss, Vss},
+        },
+        sharing::open::{RobustOpen, SecureRobustOpen},
     };
-    #[cfg(feature = "slow_tests")]
-    use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
     #[cfg(feature = "slow_tests")]
     use crate::malicious_execution::large_execution::{
         malicious_coinflip::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
@@ -409,14 +411,7 @@ pub(crate) mod tests {
     };
     use crate::{
         execution::{
-            communication::broadcast::Broadcast,
-            large_execution::{
-                coinflip::Coinflip,
-                local_double_share::{
-                    LocalDoubleShare, RealLocalDoubleShare, SecureLocalDoubleShare,
-                },
-                share_dispute::ShareDispute,
-            },
+            large_execution::local_double_share::{LocalDoubleShare, SecureLocalDoubleShare},
             runtime::party::Role,
             runtime::session::{
                 BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,

@@ -109,12 +109,14 @@ pub(crate) mod tests {
 
     use super::{Coinflip, DummyCoinflip, SecureCoinflip};
     #[cfg(feature = "slow_tests")]
-    use crate::execution::communication::broadcast::SyncReliableBroadcast;
-    #[cfg(feature = "slow_tests")]
-    use crate::execution::large_execution::{coinflip::RealCoinflip, vss::SecureVss};
-    use crate::execution::sharing::open::RobustOpen;
-    #[cfg(feature = "slow_tests")]
-    use crate::execution::sharing::open::SecureRobustOpen;
+    use crate::execution::{
+        communication::broadcast::SyncReliableBroadcast,
+        large_execution::{
+            coinflip::RealCoinflip,
+            vss::{SecureVss, Vss},
+        },
+        sharing::open::{RobustOpen, SecureRobustOpen},
+    };
     #[cfg(feature = "slow_tests")]
     use crate::malicious_execution::large_execution::malicious_vss::{
         DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
@@ -122,13 +124,10 @@ pub(crate) mod tests {
 
     use crate::{
         algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
-        execution::{
-            large_execution::vss::Vss,
-            runtime::{
-                party::{Identity, Role},
-                session::{BaseSessionHandles, LargeSession, ParameterHandles},
-                test_runtime::DistributedTestRuntime,
-            },
+        execution::runtime::{
+            party::{Identity, Role},
+            session::{BaseSessionHandles, LargeSession, ParameterHandles},
+            test_runtime::DistributedTestRuntime,
         },
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious,

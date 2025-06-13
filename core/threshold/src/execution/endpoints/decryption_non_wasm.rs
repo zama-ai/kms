@@ -14,6 +14,7 @@ use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use crate::execution::runtime::party::Identity;
 use crate::execution::runtime::session::BaseSession;
 use crate::execution::runtime::session::ParameterHandles;
+use crate::execution::runtime::session::SessionParameters;
 use crate::execution::runtime::session::SmallSessionHandles;
 use crate::execution::runtime::session::ToBaseSession;
 use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
@@ -23,8 +24,7 @@ use crate::execution::small_execution::prss::PRSSPrimitives;
 use crate::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::{
-    runtime::{session::SessionParameters, test_runtime::DistributedTestRuntime},
-    small_execution::prf::PRSSConversions,
+    runtime::test_runtime::DistributedTestRuntime, small_execution::prf::PRSSConversions,
 };
 #[cfg(any(test, feature = "testing"))]
 use crate::session_id::SessionId;
@@ -40,6 +40,7 @@ use crate::{
         runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
     },
 };
+#[cfg(any(test, feature = "testing"))]
 use aes_prng::AesRng;
 use anyhow::Context;
 use async_trait::async_trait;
