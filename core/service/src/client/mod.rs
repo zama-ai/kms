@@ -1312,6 +1312,11 @@ impl Client {
         let amount_shares = validated_resps.len();
         // TODO: in general this is not true, degree isn't a perfect proxy for num_parties
         let num_parties = 3 * degree + 1;
+        if amount_shares > num_parties {
+            return Err(anyhow_error_and_log(format!(
+                    "Received more shares than expected for number of parties. n={num_parties}, #shares={amount_shares}"
+                )));
+        }
 
         let pbs_params = self
             .params
@@ -1319,7 +1324,7 @@ impl Client {
             .to_classic_pbs_parameters();
 
         tracing::info!(
-            "User decryption response reconstruction with mode: {:?}. n={num_parties}, t={degree}, #shares={amount_shares}",
+            "User decryption response reconstruction with mode: {:?}. deg={degree}, #shares={amount_shares}",
             self.decryption_mode
         );
 
@@ -1342,12 +1347,12 @@ impl Client {
                             Ok(Some(r)) => decrypted_blocks.push(r),
                             Ok(None) => {
                                 return Err(anyhow_error_and_log(
-                                    format!("Not enough shares to reconstruct. n={num_parties}, t={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()),
+                                    format!("Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()),
                                 ));
                             }
                             Err(e) => {
                                 return Err(anyhow_error_and_log(format!(
-                                    "Error reconstructing all blocks: {e}. n={num_parties}, t={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()
+                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()
                                 )));
                             }
                         }
@@ -1390,12 +1395,12 @@ impl Client {
                             Ok(Some(r)) => decrypted_blocks.push(r),
                             Ok(None) => {
                                 return Err(anyhow_error_and_log(
-                                    format!("Not enough shares to reconstruct. n={num_parties}, t={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()),
+                                    format!("Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()),
                                 ));
                             }
                             Err(e) => {
                                 return Err(anyhow_error_and_log(format!(
-                                    "Error reconstructing all blocks: {e}. n={num_parties}, t={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()
+                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()
                                 )));
                             }
                         }
@@ -1539,6 +1544,12 @@ impl Client {
             // TODO: in general this is not true, degree isn't a perfect proxy for num_parties
             let num_parties = 3 * degree + 1;
             let amount_shares = agg_resp.len();
+            if amount_shares > num_parties {
+                return Err(anyhow_error_and_log(format!(
+                    "Received more shares than expected for number of parties. n={num_parties}, #shares={amount_shares}"
+                )));
+            }
+
             let mut decrypted_blocks = Vec::new();
             for cur_block_shares in sharings {
                 // NOTE: this performs optimistic reconstruction
@@ -1552,12 +1563,12 @@ impl Client {
                     Ok(Some(r)) => decrypted_blocks.push(r),
                     Ok(None) => {
                         return Err(anyhow_error_and_log(
-                                    format!("Not enough shares to reconstruct. n={num_parties}, t={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()),
+                                    format!("Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()),
                                 ));
                     }
                     Err(e) => {
                         return Err(anyhow_error_and_log(format!(
-                                    "Error reconstructing all blocks: {e}. n={num_parties}, t={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()
+                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()
                                 )));
                     }
                 }

@@ -81,26 +81,26 @@ fn validate_user_decrypt_meta_data_and_signature(
     external_signature: &[u8],
     eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<()> {
-    let types_1 = pivot_resp.fhe_types()?;
-    let types_2 = other_resp.fhe_types()?;
-    if types_1.len() != types_2.len() || types_1.is_empty() || types_2.is_empty() {
+    let pivot_type = pivot_resp.fhe_types()?;
+    let check_type = other_resp.fhe_types()?;
+    if pivot_type.len() != check_type.len() || pivot_type.is_empty() || check_type.is_empty() {
         anyhow::bail!(
             "{}: {}, {}",
             ERR_VALIDATE_USER_DECRYPTION_BAD_FHETYPE_LENGTH,
-            types_1.len(),
-            types_2.len()
+            pivot_type.len(),
+            check_type.len()
         );
     }
 
-    for i in 0..types_1.len() {
-        if types_1[i] != types_2[i] {
+    for i in 0..pivot_type.len() {
+        if pivot_type[i] != check_type[i] {
             anyhow::bail!(
                 "{}: pivot is has verification key {:?} with type {:?}, other has verification key {:?} with type {:?}",
                 ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
                 &pivot_resp.verification_key,
-                types_1[i],
+                pivot_type[i],
                 &other_resp.verification_key,
-                types_2[i],
+                check_type[i],
             );
         }
     }
@@ -144,7 +144,7 @@ fn validate_user_decrypt_meta_data_and_signature(
             eip712_domain,
             expected_addr,
         )
-        .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})", e))?;
+        .inspect_err(|e| tracing::warn!("signature on received response is not valid ({})!", e))?;
     } else {
         let sig = Signature {
             sig: k256::ecdsa::Signature::from_slice(signature)?,
@@ -270,7 +270,8 @@ fn validate_user_decrypt_responses(
     }
 
     // Pick a pivot response
-    let min_occurence = (server_addresses.len() - 1) / 3 + 1; // note that this is floored division
+    let threshold = (server_addresses.len() - 1) / 3; // Note that this is floored division.
+    let min_occurence = threshold + 1; // We need t+1 responses at least to find the pivot response.
     let pivot_payload = match select_most_common_user_dec(min_occurence, agg_resp) {
         Some(inner) => inner,
         None => anyhow::bail!("Cannot find user decryption pivot"),
@@ -278,6 +279,16 @@ fn validate_user_decrypt_responses(
     let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.len());
     let mut party_ids = HashSet::new();
     let mut verification_keys = HashSet::new();
+
+    // if the pivot response degree does not match the threshold, we cannot proceed
+    if pivot_payload.degree != threshold as u32 {
+        anyhow::bail!(
+                "Pivot user decrypt responses gave degree {} which does not match expected threshold {} for {} known servers",
+                pivot_payload.degree,
+                threshold,
+                server_addresses.len()
+            );
+    }
 
     for cur_resp in agg_resp {
         let cur_payload = match &cur_resp.payload {
@@ -307,8 +318,8 @@ fn validate_user_decrypt_responses(
         }
         if pivot_payload.degree != cur_payload.degree {
             tracing::warn!(
-                    "Server who gave ID {} gave degree {} which is inconsistent with the pivot response",
-                    cur_payload.party_id, cur_payload.degree
+                    "Server with claimed ID {} gave degree {} which is inconsistent with the pivot response {}",
+                    cur_payload.party_id, cur_payload.degree, pivot_payload.degree
                 );
             continue;
         }
@@ -318,7 +329,7 @@ fn validate_user_decrypt_responses(
         // Furthermore, observe that we assume the optimal threshold is set.
         if cur_payload.party_id > cur_payload.degree * 3 + 1 {
             tracing::warn!(
-                "Server who gave ID {} is too large. The largest allowed id {}",
+                "Server claimed ID {} is too large. The largest allowed id {}",
                 cur_payload.party_id,
                 cur_payload.degree * 3 + 1
             );
@@ -795,11 +806,12 @@ mod tests {
     #[test]
     fn test_validate_user_decrypt_responses() {
         let mut rng = AesRng::seed_from_u64(0);
-        let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
         let (vk2, sk2) = gen_sig_keys(&mut rng);
+        let (vk3, sk3) = gen_sig_keys(&mut rng);
+        let (vk4, sk4) = gen_sig_keys(&mut rng);
         let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
-            [vk0, vk1, vk2]
+            [vk1, vk2, vk3, vk4]
                 .into_iter()
                 .enumerate()
                 .map(|(i, k)| (i as u32 + 1, k)),
@@ -823,7 +835,7 @@ mod tests {
             dummy_domain.verifying_contract.unwrap(),
         );
 
-        let resp0 = {
+        let resp1 = {
             let payload0 = UserDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
                 digest: vec![1, 2, 3, 4],
@@ -837,7 +849,7 @@ mod tests {
                 degree: 1,
             };
             let external_signature = compute_external_user_decrypt_signature(
-                &sk0,
+                &sk1,
                 &payload0,
                 &dummy_domain,
                 &eph_client_pk,
@@ -850,7 +862,7 @@ mod tests {
             }
         };
 
-        let resp1 = {
+        let resp2 = {
             let payload = UserDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
                 digest: vec![1, 2, 3, 4],
@@ -861,33 +873,6 @@ mod tests {
                     packing_factor: 1,
                 }],
                 party_id: 2,
-                degree: 1,
-            };
-            let external_signature = compute_external_user_decrypt_signature(
-                &sk1,
-                &payload,
-                &dummy_domain,
-                &eph_client_pk,
-            )
-            .unwrap();
-            UserDecryptionResponse {
-                signature: vec![],
-                external_signature,
-                payload: Some(payload),
-            }
-        };
-
-        let resp2 = {
-            let payload = UserDecryptionResponsePayload {
-                verification_key: bc2wrap::serialize(&pks[&3]).unwrap(),
-                digest: vec![1, 2, 3, 4],
-                signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
-                    fhe_type: 1,
-                    signcrypted_ciphertext: vec![1, 2, 3, 4],
-                    external_handle: ciphertext_handle.clone(),
-                    packing_factor: 1,
-                }],
-                party_id: 3,
                 degree: 1,
             };
             let external_signature = compute_external_user_decrypt_signature(
@@ -904,7 +889,79 @@ mod tests {
             }
         };
 
-        // empty responses
+        let resp3 = {
+            let payload = UserDecryptionResponsePayload {
+                verification_key: bc2wrap::serialize(&pks[&3]).unwrap(),
+                digest: vec![1, 2, 3, 4],
+                signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
+                    fhe_type: 1,
+                    signcrypted_ciphertext: vec![1, 2, 3, 4],
+                    external_handle: ciphertext_handle.clone(),
+                    packing_factor: 1,
+                }],
+                party_id: 3,
+                degree: 1,
+            };
+            let external_signature = compute_external_user_decrypt_signature(
+                &sk3,
+                &payload,
+                &dummy_domain,
+                &eph_client_pk,
+            )
+            .unwrap();
+            UserDecryptionResponse {
+                signature: vec![],
+                external_signature,
+                payload: Some(payload),
+            }
+        };
+
+        let resp4 = {
+            let payload = UserDecryptionResponsePayload {
+                verification_key: bc2wrap::serialize(&pks[&4]).unwrap(),
+                digest: vec![1, 2, 3, 4],
+                signcrypted_ciphertexts: vec![TypedSigncryptedCiphertext {
+                    fhe_type: 1,
+                    signcrypted_ciphertext: vec![1, 2, 3, 4],
+                    external_handle: ciphertext_handle.clone(),
+                    packing_factor: 1,
+                }],
+                party_id: 4,
+                degree: 1,
+            };
+            let external_signature = compute_external_user_decrypt_signature(
+                &sk4,
+                &payload,
+                &dummy_domain,
+                &eph_client_pk,
+            )
+            .unwrap();
+            UserDecryptionResponse {
+                signature: vec![],
+                external_signature,
+                payload: Some(payload),
+            }
+        };
+
+        // happy path / sunshine; we should have 4 valid responses
+        {
+            let agg_resp = vec![resp1.clone(), resp2.clone(), resp3.clone(), resp4.clone()];
+
+            assert_eq!(
+                validate_user_decrypt_responses(
+                    &server_addresses,
+                    &client_request,
+                    &dummy_domain,
+                    &agg_resp
+                )
+                .unwrap()
+                .unwrap()
+                .len(),
+                4
+            );
+        }
+
+        // empty responses, should return None
         {
             assert!(validate_user_decrypt_responses(
                 &server_addresses,
@@ -920,9 +977,9 @@ mod tests {
         {
             // we need at least 2 valid responses because our degree is 1,
             // otherwise None will be returned since there are not enough responses
-            let mut bad_resp2 = resp2.clone();
+            let mut bad_resp2 = resp3.clone();
             bad_resp2.payload = None;
-            let agg_resp = vec![resp0.clone(), resp1.clone(), bad_resp2];
+            let agg_resp = vec![resp1.clone(), resp2.clone(), bad_resp2];
 
             // We will have 2 accepted responses because
             // the third one does not have a payload
@@ -940,11 +997,15 @@ mod tests {
             );
         }
 
-        // not enough payload (only 1 is valid but 2 is needed due to the degree)
+        // not enough correct payloads (only 1 is valid)
+        // 2 "good enough ones" are needed to find a pivot for t=1
         {
-            let mut bad_resp1 = resp1.clone();
-            bad_resp1.payload = None;
-            let agg_resp = vec![resp0.clone(), bad_resp1];
+            let mut bad_resp2 = resp2.clone();
+            bad_resp2.payload = None; // no payload here, cannot be used for pivot
+            let mut bad_resp3 = resp3.clone();
+            bad_resp3.payload.as_mut().unwrap().party_id = 2; // payload, but with wrong party ID (i.e. not matching its key) here, otherwise good as pivot
+
+            let agg_resp = vec![resp1.clone(), bad_resp2, bad_resp3];
 
             assert!(validate_user_decrypt_responses(
                 &server_addresses,
@@ -954,6 +1015,45 @@ mod tests {
             )
             .unwrap()
             .is_none());
+        }
+
+        // one repsonse has a wrong degree, but should pass since majority is fine
+        {
+            let mut bad_resp2 = resp2.clone();
+            bad_resp2.payload.as_mut().unwrap().degree = 35; // wrong degree here
+            let agg_resp = vec![resp1.clone(), bad_resp2, resp3.clone()];
+
+            assert_eq!(
+                validate_user_decrypt_responses(
+                    &server_addresses,
+                    &client_request,
+                    &dummy_domain,
+                    &agg_resp
+                )
+                .unwrap()
+                .unwrap()
+                .len(),
+                2
+            );
+        }
+
+        // degree (0) does not match threshold (1) for 4 parties, so we must get an error
+        {
+            let mut bad_resp3 = resp3.clone();
+            bad_resp3.payload.as_mut().unwrap().degree = 0; // payload, but with degree
+            let mut bad_resp2 = resp2.clone();
+            bad_resp2.payload.as_mut().unwrap().degree = 0; // payload, but with degree
+
+            let agg_resp = vec![bad_resp2, bad_resp3];
+
+            assert!(validate_user_decrypt_responses(
+                &server_addresses,
+                &client_request,
+                &dummy_domain,
+                &agg_resp
+            )
+            .unwrap_err().to_string()
+            .contains("Pivot user decrypt responses gave degree 0 which does not match expected threshold 1 for 4 known servers"));
         }
 
         let run_with_customized_resp2 = |party_id, digest, pk, packing_factor| {
@@ -972,7 +1072,7 @@ mod tests {
                     degree: 1,
                 };
                 let external_signature = compute_external_user_decrypt_signature(
-                    &sk2,
+                    &sk3,
                     &payload,
                     &dummy_domain,
                     &eph_client_pk,
@@ -984,7 +1084,7 @@ mod tests {
                     payload: Some(payload),
                 }
             };
-            let agg_resp = vec![resp0.clone(), resp1.clone(), bad_resp2];
+            let agg_resp = vec![resp1.clone(), resp2.clone(), bad_resp2];
 
             assert_eq!(
                 validate_user_decrypt_responses(
@@ -1041,7 +1141,7 @@ mod tests {
 
         // happy path
         {
-            let agg_resp = vec![resp0.clone(), resp1.clone(), resp2.clone()];
+            let agg_resp = vec![resp1.clone(), resp2.clone(), resp3.clone()];
             assert_eq!(
                 validate_user_decrypt_responses(
                     &server_addresses,
@@ -1060,11 +1160,12 @@ mod tests {
     #[test]
     fn test_validate_user_decrypt_responses_against_request() {
         let mut rng = AesRng::seed_from_u64(0);
-        let (vk0, sk0) = gen_sig_keys(&mut rng);
         let (vk1, sk1) = gen_sig_keys(&mut rng);
-        let (vk2, _sk2) = gen_sig_keys(&mut rng);
+        let (vk2, sk2) = gen_sig_keys(&mut rng);
+        let (vk3, _sk3) = gen_sig_keys(&mut rng);
+        let (vk4, _sk4) = gen_sig_keys(&mut rng);
         let pks: HashMap<u32, PublicSigKey> = HashMap::from_iter(
-            [vk0, vk1, vk2]
+            [vk1, vk2, vk3, vk4]
                 .into_iter()
                 .enumerate()
                 .map(|(i, k)| (i as u32 + 1, k)),
@@ -1104,7 +1205,7 @@ mod tests {
                 degree: 1,
             };
             let external_signature = compute_external_user_decrypt_signature(
-                &sk0,
+                &sk1,
                 &payload0,
                 &dummy_domain,
                 &eph_client_pk,
@@ -1131,7 +1232,7 @@ mod tests {
                 degree: 1,
             };
             let external_signature = compute_external_user_decrypt_signature(
-                &sk1,
+                &sk2,
                 &payload,
                 &dummy_domain,
                 &eph_client_pk,

@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// Reconstructs a vector of plaintexts from raw, opened ciphertexts,
-/// by using the contant term of the `openeds` and mapping it down
+/// by using the constant term of the `openeds` and mapping it down
 /// to the message space of a ciphertext block.
 pub fn reconstruct_message<const EXTENSION_DEGREE: usize>(
     openeds: Option<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
@@ -81,8 +81,8 @@ where
 
     for block in decryptions {
         if !recomposer.add_unmasked(block.0) {
-            // End of T::BITS reached no need to try more
-            // recomposition
+            // End of T::BITS reached
+            // no need to try more recomposition
             break;
         };
     }

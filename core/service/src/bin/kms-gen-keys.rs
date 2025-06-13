@@ -178,6 +178,11 @@ impl<'a, PubS: Storage, PrivS: Storage> ThresholdCmdArgs<'a, PubS, PrivS> {
                 );
             }
         }
+        if let Some(id) = signing_key_party_id {
+            if id == 0 {
+                anyhow::bail!("party ID cannot be 0",);
+            }
+        }
         Ok(Self {
             pub_storages,
             priv_storages,

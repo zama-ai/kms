@@ -227,7 +227,7 @@ pub fn fill_indexed_shares<Z: Ring>(
 /// - num_parties as number of parties
 /// - degree as the degree of the sharing (usually either t or 2t)
 /// - threshold as the threshold of maximum corruptions
-/// - num_bots as the number of known Bot (known wrong values) contributions
+/// - num_bots as the number of known Bot (known wrong/empty values) contributions
 /// - indexed_shares as the indexed shares of the parties
 ///
 /// Returns either the result or None if there are not enough shares to do reconstruction yet
@@ -248,8 +248,15 @@ where
     let num_heard_from = sharing.shares.len() + num_bots;
     //Make sure we have enough shares already to try and reconstrcut
     if degree + 2 * threshold < num_parties && num_heard_from > degree + 2 * threshold {
-        // TODO note this might panic
-        let max_errs = threshold - num_bots;
+        // the maximum number of errors we can correct is threshold minus the number of bots
+        // max_errs = threshold - num_bots
+        let max_errs = threshold.checked_sub(num_bots).ok_or_else(|| {
+            anyhow_error_and_warn_log(format!(
+                "Underflow in max_errs: threshold ({}) < num_bots ({})",
+                threshold, num_bots
+            ))
+        })?;
+
         let opened = sharing.err_reconstruct(degree, max_errs)?;
         return Ok(Some(opened));
     }

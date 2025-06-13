@@ -274,10 +274,17 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|e| panic!("Could not bind to {} \n {:?}", mpc_socket_addr, e));
 
             tracing::info!(
-                "Starting threshold KMS server for party {}, listening for MPC communication on {:?}...",
+                "Starting threshold KMS server v{} for party {}, listening for MPC communication on {:?}...",
+                env!("CARGO_PKG_VERSION"),
                 threshold_config.my_id,
                 mpc_socket_addr
             );
+            tracing::info!(
+                "Parameters: using threshold t={}, knowing n={} parties in total (myself included)",
+                threshold_config.threshold,
+                threshold_config.peers.len()
+            );
+
             // Communication between MPC parties can be optionally protected
             // with mTLS which requires a TLS certificate valid both for server
             // and client authentication.
@@ -305,7 +312,7 @@ async fn main() -> anyhow::Result<()> {
                     ref trusted_releases,
                 }) => {
                     let security_module = security_module.unwrap_or_else(|| {
-                            panic!("EIF signing certificate present but not security module, unable to construct TLS identity")    
+                            panic!("EIF signing certificate present but not security module, unable to construct TLS identity")
                         });
                     tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
                     let eif_signing_cert_pem =
@@ -370,6 +377,10 @@ async fn main() -> anyhow::Result<()> {
             .await?;
         }
         None => {
+            tracing::info!(
+                "Starting centralized KMS server v{}...",
+                env!("CARGO_PKG_VERSION"),
+            );
             let (kms, health_service) = RealCentralizedKms::new(
                 public_vault,
                 private_vault,
