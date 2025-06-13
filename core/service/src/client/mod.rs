@@ -2082,6 +2082,7 @@ pub mod test_tools {
                     run_prss,
                     rl_conf,
                     mpc_core_rx.map(drop),
+                    true,
                 )
                 .await;
                 (i, server, service_config)

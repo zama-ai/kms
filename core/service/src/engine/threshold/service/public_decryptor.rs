@@ -39,7 +39,10 @@ use crate::{
             compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct,
             PubDecCallValues,
         },
-        threshold::{service::session::SessionPreparerGetter, traits::PublicDecryptor},
+        threshold::{
+            service::session::{SessionPreparerGetter, DEFAULT_CONTEXT_ID_ARR},
+            traits::PublicDecryptor,
+        },
         traits::BaseKms,
         validation::{validate_public_decrypt_req, validate_request_id, DSEP_PUBLIC_DECRYPTION},
     },
@@ -190,10 +193,19 @@ impl<
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let context_id = RequestId::from_bytes([0u8; 32]); // Dummy context ID for now
+        let inner = request.into_inner();
+        tracing::info!(
+            request_id = ?inner.request_id,
+            "Received new decryption request"
+        );
+
+        let context_id = inner
+            .context_id
+            .clone()
+            .unwrap_or(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into());
         let session_preparer = Arc::new(
             self.session_preparer_getter
-                .get(&context_id)
+                .get(&context_id.into())
                 .await
                 .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?,
         );
@@ -219,12 +231,6 @@ impl<
             .start_pub_decrypt()
             .await
             .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
-
-        let inner = request.into_inner();
-        tracing::info!(
-            request_id = ?inner.request_id,
-            "Received new decryption request"
-        );
 
         let (ciphertexts, req_digest, key_id, req_id, eip712_domain) = tonic_handle_potential_err(
             validate_public_decrypt_req(&inner),

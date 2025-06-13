@@ -26,7 +26,10 @@ use crate::{
     conf::threshold::ThresholdPartyConf,
     engine::{
         base::derive_request_id,
-        threshold::{service::session::SessionPreparer, traits::Initiator},
+        threshold::{
+            service::session::{SessionPreparer, DEFAULT_CONTEXT_ID_ARR},
+            traits::Initiator,
+        },
     },
     tonic_some_or_err,
     vault::storage::{read_versioned_at_request_id, store_versioned_at_request_id, Storage},
@@ -54,7 +57,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         // TODO set the correct context ID here.
         let session_preparer = self
             .session_preparer_manager
-            .get(&RequestId::from_bytes([0u8; 32]))
+            .get(&RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR))
             .await?;
 
         let prss_setup_z128_from_file = {
@@ -134,7 +137,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         // TODO set the correct context ID here.
         let session_preparer = self
             .session_preparer_manager
-            .get(&RequestId::from_bytes([0u8; 32]))
+            .get(&RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR))
             .await?;
 
         if self.prss_setup_z128.read().await.is_some() || self.prss_setup_z64.read().await.is_some()
@@ -251,7 +254,10 @@ impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> 
             Arc::clone(&self.prss_setup_z64),
         );
         self.session_preparer_manager
-            .insert(RequestId::from_bytes([0u8; 32]), session_preparer)
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
             .await;
 
         let inner = request.into_inner();

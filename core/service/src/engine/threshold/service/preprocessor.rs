@@ -36,7 +36,10 @@ use tracing::Instrument;
 use crate::{
     engine::{
         base::{preproc_proto_to_keyset_config, retrieve_parameters},
-        threshold::{service::session::SessionPreparerGetter, traits::KeyGenPreprocessor},
+        threshold::{
+            service::session::{SessionPreparerGetter, DEFAULT_CONTEXT_ID_ARR},
+            traits::KeyGenPreprocessor,
+        },
         validation::validate_request_id,
     },
     tonic_handle_potential_err, tonic_some_or_err,
@@ -68,12 +71,12 @@ impl RealPreprocessor {
         dkg_params: DKGParams,
         keyset_config: ddec_keyset_config::KeySetConfig,
         request_id: RequestId,
+        context_id: Option<RequestId>,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
-        // TODO find the context ID
         let session_preparer = self
             .session_preparer_getter
-            .get(&RequestId::from_bytes([0u8; 32]))
+            .get(&context_id.unwrap_or(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR)))
             .await?;
 
         let _request_counter = metrics::METRICS
@@ -270,7 +273,10 @@ impl KeyGenPreprocessor for RealPreprocessor {
         //If the entry did not exist before, start the preproc
         if !entry_exists {
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
-            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
+            tonic_handle_potential_err(
+                self.launch_dkg_preproc(dkg_params, keyset_config, request_id, inner.context_id.map(|x| x.into()), permit).await,
+                format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params)
+            )?;
         } else {
             tracing::warn!(
                 "Tried to generate preproc multiple times for the same Request ID {} -- skipped it!",

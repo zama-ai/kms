@@ -45,7 +45,9 @@ use crate::{
         },
         threshold::{
             service::{
-                kms_impl::compute_all_info, session::SessionPreparerGetter, ThresholdFheKeys,
+                kms_impl::compute_all_info,
+                session::{SessionPreparerGetter, DEFAULT_CONTEXT_ID_ARR},
+                ThresholdFheKeys,
             },
             traits::KeyGenerator,
         },
@@ -172,12 +174,12 @@ impl<
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
         eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+        context_id: Option<RequestId>,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
-        // TODO find the context ID
         let session_preparer = self
             .session_preparer_getter
-            .get(&RequestId::from_bytes([0u8; 32]))
+            .get(&context_id.unwrap_or(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR)))
             .await?;
 
         // Retrieve the right metric tag
@@ -374,6 +376,7 @@ impl<
                 preproc_handle,
                 request_id,
                 eip712_domain.as_ref(),
+                inner.context_id.as_ref().map(|id| id.into()),
                 permit,
             )
             .await,

@@ -31,7 +31,7 @@ use crate::{
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
         base::{compute_info, retrieve_parameters, BaseKmsStruct, DSEP_PUBDATA_CRS},
-        threshold::traits::CrsGenerator,
+        threshold::{service::session::DEFAULT_CONTEXT_ID_ARR, traits::CrsGenerator},
     },
     tonic_handle_potential_err,
     util::{
@@ -121,6 +121,7 @@ impl<
             dkg_params,
             eip712_domain.as_ref(),
             permit,
+            inner.context_id.map(|id| id.into()),
             insecure,
         )
         .await
@@ -137,12 +138,17 @@ impl<
         dkg_params: DKGParams,
         eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
         permit: OwnedSemaphorePermit,
+        context_id: Option<RequestId>,
         insecure: bool,
     ) -> anyhow::Result<()> {
         // TODO find the session from context ID
         let session_preparer = self
             .session_preparer_getter
-            .get(&RequestId::from_bytes([0u8; 32]))
+            .get(
+                context_id
+                    .as_ref()
+                    .unwrap_or(&RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR)),
+            )
             .await?;
 
         // Retrieve the correct tag
