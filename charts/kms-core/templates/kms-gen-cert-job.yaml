@@ -240,7 +240,7 @@ spec:
           args:
             - -c
             - |
-              wget -O /keygen/ca_pem https://zama-zws-dev-kms-party-tkms-enclave-staging-56zhd/PUB-p{{ .Values.kmsPeers.id }}/CACert/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee
+              wget -O /keygen/ca_pem https://zama-zws-dev-kms-party-tkms-enclave-staging-56zhd.s3.eu-west-1.amazonaws.com/PUB-p{{ .Values.kmsPeers.id }}/CACert/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee
               echo "creating kubernetes configmap "
               kubectl create configmap kms-ca-pem-{{ .Values.kmsPeers.id }} \
                 --from-literal=KMS_CA_PEM="$(cat /keygen/ca_pem)"
