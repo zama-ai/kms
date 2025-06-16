@@ -200,9 +200,6 @@ spec:
           volumeMounts:
             - mountPath: /keygen
               name: keygen
-      volumes:
-        - name: keygen
-          emptyDir: {}
       imagePullSecrets:
         - name: registry-credentials
       nodeSelector:
@@ -212,6 +209,8 @@ spec:
       tolerations:
         {{- toYaml .Values.kmsCore.tolerations | nindent 8 }}
       volumes:
+        - name: keygen
+          emptyDir: {}
         - name: workdir
           emptyDir: {}
         - name: config-files
