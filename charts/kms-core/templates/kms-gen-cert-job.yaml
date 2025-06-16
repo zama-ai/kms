@@ -64,7 +64,7 @@ spec:
               value: {{ .Values.rustLog }}
           envFrom:
             - configMapRef:
-                name: {{ .Values.kmsCore.envFrom.configMap.name }}
+                name: {{ .Values.kmsCore.envFrom.configmap.name }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
             - mountPath: /var/lib/kms-core/config
@@ -152,7 +152,7 @@ spec:
               value: {{ .Values.rustLog }}
           envFrom:
             - configMapRef:
-                name: {{ .Values.kmsCore.envFrom.configMap.name }}
+                name: {{ .Values.kmsCore.envFrom.configmap.name }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
             - mountPath: {{ .Values.kmsCore.workdir }}
