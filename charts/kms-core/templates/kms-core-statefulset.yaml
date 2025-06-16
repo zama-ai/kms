@@ -59,6 +59,7 @@ spec:
               {{- if .Values.kmsCore.nitroEnclave.enabled }}
               export KMS_CORE__PRIVATE_VAULT__KEYCHAIN="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN:={{ .Values.kmsCore.privateVault.awskms.keychain }}}"
               {{- end }}
+              export KMS_CA_PEM="${KMS_CA_PEM:={{ .Values.kmsCore.thresholdMode.tls.ca_certificate.pem }}}"
               envsubst < /var/lib/kms-core/config/aws.toml > aws.toml
               envsubst < /var/lib/kms-core/config/vaults.toml > vaults.toml
               envsubst < /var/lib/kms-core/config/kms-gen-keys.toml > kms-gen-keys.toml
@@ -92,6 +93,8 @@ spec:
             - configMapRef:
                 name: {{ .Values.kmsCore.envFrom.configmap.name }}
           {{- end }}
+            - configMapRef:
+                name: KMS_CA_PEM_{{ .Values.kmsPeers.id }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
             - mountPath: /var/lib/kms-core/config

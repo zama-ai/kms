@@ -99,7 +99,7 @@ data:
           {{- if .Values.kmsCore.thresholdMode.tls.certificate.path }}
     cert.path = {{ .Values.kmsCore.thresholdMode.tls.certificate.path | quote }}
           {{- else }}
-    cert.pem = {{ .Values.kmsCore.thresholdMode.tls.certificate.pem | toToml }}
+    cert.pem = ${KMS_CA_PEM}
           {{- end }}
           {{- if .Values.kmsCore.thresholdMode.tls.privateKey.path }}
     key.path = {{ .Values.kmsCore.thresholdMode.tls.privateKey.path | quote }}
@@ -124,7 +124,7 @@ data:
             {{- if $.Values.kmsCore.thresholdMode.tls.ca_certificate.path }}
     tls_cert.path = {{ $.Values.kmsCore.thresholdMode.tls.ca_certificate.path | quote }}
             {{- else }}
-    tls_cert.pem = {{ $.Values.kmsCore.thresholdMode.tls.ca_certificate.pem | toToml }}
+    tls_cert.pem = ${KMS_CA_PEM}
             {{- end }}
           {{- end }}
         {{- end }}
@@ -184,7 +184,7 @@ data:
       "eif_path": {{ .Values.kmsCore.nitroEnclave.eifPath | quote }}
     }
       {{- if .Values.kmsCore.thresholdMode.tls.enabled }}
-  party_cert.pem: {{ .Values.kmsCore.thresholdMode.tls.ca_certificate.pem | toYaml | indent 2 }}
+  party_cert.pem: ${KMS_CA_PEM}
       {{- end }}
     {{- end }}
 {{- end -}}
