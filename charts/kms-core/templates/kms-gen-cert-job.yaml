@@ -143,7 +143,7 @@ spec:
               sleep 60
           env:
             - name: KMS_CORE__THRESHOLD__MY_ID
-              value: {{ .Values.kmsPeers.id }}
+              value: "{{ .Values.kmsPeers.id }}"
             - name: "NO_COLOR"
               value: "true"
             - name: RUN_MODE
