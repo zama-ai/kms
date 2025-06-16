@@ -53,11 +53,11 @@ kmsCore:
       ca_certificate:
         # You have to define either `path` or `pem`
         # Certificate: path to the certificate file
-        path: /my/very/secret/cert.pem
+        path:
         # Certificate: PEM block
-        pem: |
-          -----BEGIN CERTIFICATE-----
-          -----END CERTIFICATE-----
+        pem:
+        #   -----BEGIN CERTIFICATE-----
+        #   -----END CERTIFICATE-----
       # Nitro enclaves will ignore this value since they generate their own
       # attested ephemeral keypairs
       privateKey:

@@ -185,7 +185,7 @@ spec:
               exec:
                 command: [ "nitro-cli", "terminate-enclave", "--all" ]
       containers:
-        - name: write-gen-keys-to-configmap
+        - name: write-gen-cert-to-configmap
           image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
           name: kms-core-enclave-writing-cert-in-configmap
           command:
