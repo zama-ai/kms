@@ -1,4 +1,4 @@
-{{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.thresholdMode.tls.enabled -}}
+{{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.thresholdMode.tls.enabled .Values.kmsGenCert.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $kmsGenKeyCertName := include "kmsGenKeyCertJobName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
@@ -64,7 +64,7 @@ spec:
               value: {{ .Values.rustLog }}
           envFrom:
             - configMapRef:
-                name: tkms-enclave-staging-1
+                name: {{ .Values.kmsCore.envFrom.configMap.name }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
             - mountPath: /var/lib/kms-core/config
@@ -142,6 +142,8 @@ spec:
               nitro-cli run-enclave --config /var/lib/kms-core/config/enclave.json
               sleep 60
           env:
+            - name: KMS_CORE__THRESHOLD__MY_ID
+              value: {{ .Values.kmsPeers.id }}
             - name: "NO_COLOR"
               value: "true"
             - name: RUN_MODE
@@ -150,7 +152,7 @@ spec:
               value: {{ .Values.rustLog }}
           envFrom:
             - configMapRef:
-                name: tkms-enclave-staging-1
+                name: {{ .Values.kmsCore.envFrom.configMap.name }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
             - mountPath: {{ .Values.kmsCore.workdir }}

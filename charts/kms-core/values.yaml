@@ -178,6 +178,9 @@ kmsInit:
   affinity:
   tolerations:
 
+kmsGenCert:
+  enabled: false
+
 # Automatic Key Generation job
 kmsGenKeys:
   enabled: false
