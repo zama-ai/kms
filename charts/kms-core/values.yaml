@@ -180,6 +180,7 @@ kmsInit:
 
 kmsGenCert:
   enabled: false
+  nameOverride:
 
 # Automatic Key Generation job
 kmsGenKeys:

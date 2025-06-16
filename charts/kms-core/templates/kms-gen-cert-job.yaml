@@ -1,24 +1,25 @@
 {{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.thresholdMode.tls.enabled .Values.kmsGenCert.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
-{{- $kmsGenKeyCertName := include "kmsGenKeyCertJobName" . }}
+{{- $kmsGenCertName := include "kmsGenCertJobName" . }}
+{{- $kmsWriteCertName := include "kmsWriteCertJobName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
 apiVersion: batch/v1
 kind: Job
 metadata:
   labels:
     app: kms-core
-    app.kubernetes.io/name: {{ $kmsGenKeyCertName }}
+    app.kubernetes.io/name: {{ $kmsGenCertName }}
   annotations:
     "helm.sh/hook-weight": "-1"
-  name: {{ $kmsGenKeyCertName }}
+  name: {{ $kmsGenCertName }}
 spec:
   template:
     metadata:
       labels:
         app: kms-core-gen-keys-cert
-        app.kubernetes.io/name: {{ $kmsGenKeyCertName }}
+        app.kubernetes.io/name: {{ $kmsGenCertName }}
     spec:
-      serviceAccountName: {{ .Release.Name }}-gen-cert-config-writer
+      serviceAccountName: {{ .Values.kmsCore.serviceAccountName }}
       securityContext:
         {{- toYaml .Values.podSecurityContextForEnclave | nindent 8 }}
       restartPolicy: Never
@@ -121,6 +122,7 @@ spec:
                      "port" 443
                 ) | indent 10 | trim }}
         {{- /* Generate signing key and CA certificate */}}
+      containers:
         - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
           imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
           name: kms-core-enclave-gen-signing-key
@@ -180,26 +182,10 @@ spec:
               memory: 4Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
-          # lifecycle:
-          #   preStop:
-          #     exec:
-          #       command: [ "nitro-cli", "terminate-enclave", "--all" ]
-      containers:
-        - name: write-gen-cert-to-configmap
-          image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
-          name: kms-core-enclave-writing-cert-in-configmap
-          command:
-            - /bin/sh
-          args:
-            - -c
-            - |
-              wget -O /keygen/ca_pem https://{{ include "kmsPublicVaultStorage" . }}/CACert/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee
-              echo "creating kubernetes configmap "
-              kubectl create configmap KMS_CA_PEM_{{ .Values.kmsPeers.id }} \
-                --from-literal=KMS_CA_PEM="$(cat /keygen/ca_pem)"
-          volumeMounts:
-            - mountPath: /keygen
-              name: keygen
+          lifecycle:
+            preStop:
+              exec:
+                command: [ "nitro-cli", "terminate-enclave", "--all" ]
       imagePullSecrets:
         - name: registry-credentials
       nodeSelector:
@@ -224,6 +210,67 @@ spec:
           hostPath:
             path: /dev/nitro_enclaves
             type: CharDevice
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app: kms-core
+    app.kubernetes.io/name: {{ $kmsWriteCertName }}
+  annotations:
+    "helm.sh/hook-weight": "-1"
+  name: {{ $kmsWriteCertName }}
+spec:
+  template:
+    metadata:
+      labels:
+        app: kms-core-write-cert-in-configmap
+        app.kubernetes.io/name: {{ $kmsWriteCertName }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-gen-cert-config-writer
+      securityContext:
+        {{- toYaml .Values.podSecurityContextForEnclave | nindent 8 }}
+      restartPolicy: Never
+      containers:
+        - name: write-gen-cert-to-configmap
+          image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
+          name: kms-core-enclave-writing-cert-in-configmap
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              wget -O /keygen/ca_pem https://{{ include "kmsPublicVaultStorage" . }}/CACert/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee
+              echo "creating kubernetes configmap "
+              kubectl create configmap kms-ca-pem-{{ .Values.kmsPeers.id }} \
+                --from-literal=KMS_CA_PEM="$(cat /keygen/ca_pem)"
+          volumeMounts:
+            - mountPath: /keygen
+              name: keygen
+      imagePullSecrets:
+        - name: registry-credentials
+      nodeSelector:
+        {{- toYaml .Values.kmsCore.nodeSelector | nindent 8 }}
+      affinity:
+        {{- toYaml .Values.kmsCore.affinity | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.kmsCore.tolerations | nindent 8 }}
+      volumes:
+        - name: keygen
+          emptyDir: {}
+        # - name: workdir
+        #   emptyDir: {}
+        # - name: config-files
+        #   configMap:
+        #     name: {{ include "kmsCoreName" . }}-config
+        #     defaultMode: 0664
+        # - name: hugepage
+        #   emptyDir:
+        #     medium: HugePages
+        # - name: nitro-device
+        #   hostPath:
+        #     path: /dev/nitro_enclaves
+        #     type: CharDevice
 ---
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
