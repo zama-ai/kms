@@ -167,7 +167,7 @@ pub(crate) mod tests {
             let mut session = get_networkless_large_session_for_parties(
                 identities.len(),
                 threshold,
-                Role::indexed_by_zero(party_nb),
+                Role::indexed_from_zero(party_nb),
             );
             set.spawn(async move {
                 let dummy_coinflip = DummyCoinflip::default();
@@ -208,7 +208,7 @@ pub(crate) mod tests {
         let mut task_honest = |mut session: LargeSession| async move {
             let real_coinflip = SecureCoinflip::default();
             (
-                session.my_role().zero_based(),
+                session.my_role(),
                 real_coinflip.execute::<Z, _>(&mut session).await.unwrap(),
                 session.corrupt_roles().clone(),
             )
@@ -216,7 +216,7 @@ pub(crate) mod tests {
 
         let mut task_malicious = |mut session: LargeSession, malicious_coinflip: C| async move {
             (
-                session.my_role().zero_based(),
+                session.my_role(),
                 malicious_coinflip
                     .execute::<Z, _>(&mut session)
                     .await
@@ -256,10 +256,10 @@ pub(crate) mod tests {
 
         //Compute expected results
         let mut expected_res = Z::ZERO;
-        for party_nb in 0..params.num_parties {
+        for party_nb in 1..=params.num_parties {
             if !(params
                 .malicious_roles
-                .contains(&Role::indexed_by_zero(party_nb))
+                .contains(&Role::indexed_from_one(party_nb))
                 && params.should_be_detected)
             {
                 let mut tmp_rng = AesRng::seed_from_u64(party_nb as u64);

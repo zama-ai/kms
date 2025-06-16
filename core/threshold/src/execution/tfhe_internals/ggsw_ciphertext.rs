@@ -438,7 +438,7 @@ mod tests {
                 session.threshold() as usize,
             )
             .unwrap()
-            .shares[my_role.zero_based()];
+            .shares[&my_role];
 
             let t_uniform_amount =
                 polynomial_size.0 * glwe_dimension.to_glwe_size().0 * decomp_level_count.0;

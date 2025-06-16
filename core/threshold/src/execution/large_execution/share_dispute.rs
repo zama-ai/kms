@@ -149,7 +149,7 @@ impl ShareDispute for RealShareDispute {
                 .zip(polypoints_2t.into_iter())
                 .enumerate()
             {
-                let curr_role = Role::indexed_by_zero(role_id);
+                let curr_role = Role::indexed_from_zero(role_id);
                 match polypoints_map.get_mut(&curr_role) {
                     Some(NetworkValue::VecPairRingValue(v)) => v.push((polypoint_t, polypoint_2t)),
                     None => {
@@ -190,7 +190,7 @@ impl ShareDispute for RealShareDispute {
         let mut polypoints_map = HashMap::new();
         for polypoints in vec_polypoints.into_iter() {
             for (role_id, polypoint) in polypoints.into_iter().enumerate() {
-                let curr_role = Role::indexed_by_zero(role_id);
+                let curr_role = Role::indexed_from_zero(role_id);
                 match polypoints_map.get_mut(&curr_role) {
                     Some(NetworkValue::VecRingValue(v)) => v.push(polypoint),
                     None => {
@@ -544,7 +544,7 @@ pub(crate) mod tests {
                             assert_eq!(share_from_pj, &Z::ZERO);
                         }
                     }
-                    reconstruction_vectors_single[role_pj.zero_based()][idx_share]
+                    reconstruction_vectors_single[role_pj][idx_share]
                         .push(Share::new(*role_pi, *share_from_pj));
                 }
             }
@@ -562,7 +562,7 @@ pub(crate) mod tests {
                             assert_eq!(share_from_pj, &Z::ZERO);
                         }
                     }
-                    reconstruction_vectors_double_t[role_pj.zero_based()][idx_share]
+                    reconstruction_vectors_double_t[role_pj][idx_share]
                         .push(Share::new(*role_pi, *share_from_pj));
                 }
             }
@@ -580,7 +580,7 @@ pub(crate) mod tests {
                             assert_eq!(share_from_pj, &Z::ZERO);
                         }
                     }
-                    reconstruction_vectors_double_2t[role_pj.zero_based()][idx_share]
+                    reconstruction_vectors_double_2t[role_pj][idx_share]
                         .push(Share::new(*role_pi, *share_from_pj));
                 }
             }
@@ -592,19 +592,19 @@ pub(crate) mod tests {
                 for (idx_secret, expected_secret) in secrets_pi.iter().enumerate() {
                     //Reconstruct the secret shared by execute
                     let reconst_single_t = ShamirSharings::create(
-                        reconstruction_vectors_single[role_pi.zero_based()][idx_secret].clone(),
+                        reconstruction_vectors_single[&role_pi][idx_secret].clone(),
                     )
                     .reconstruct(params.threshold);
 
                     //Reconstruct the secret of degree t shared by execute_double
                     let reconst_double_t = ShamirSharings::create(
-                        reconstruction_vectors_double_t[role_pi.zero_based()][idx_secret].clone(),
+                        reconstruction_vectors_double_t[&role_pi][idx_secret].clone(),
                     )
                     .reconstruct(params.threshold);
 
                     //Reconstruct the secret of degree 2t shared by execute_double
                     let reconst_double_2t = ShamirSharings::create(
-                        reconstruction_vectors_double_2t[role_pi.zero_based()][idx_secret].clone(),
+                        reconstruction_vectors_double_2t[&role_pi][idx_secret].clone(),
                     )
                     .reconstruct(2 * params.threshold);
 
@@ -762,7 +762,7 @@ pub(crate) mod tests {
             .for_each(|x| assert_eq!(ResiduePolyF4::ZERO, interpolation[*x - 1]));
         // Map the y-points to their corresponding (not embedded) x-points
         let points = (1..parties)
-            .map(|x| Share::new(Role::indexed_by_one(x), interpolation[x - 1]))
+            .map(|x| Share::new(Role::indexed_from_one(x), interpolation[x - 1]))
             .collect();
         let sham = ShamirSharings::create(points);
         // Reconstruct the message and check it is as expected

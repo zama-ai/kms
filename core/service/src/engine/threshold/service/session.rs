@@ -35,7 +35,8 @@ pub struct SessionPreparer {
 impl SessionPreparer {
     pub fn own_identity(&self) -> anyhow::Result<Identity> {
         let id = tonic_some_or_err(
-            self.role_assignments.get(&Role::indexed_by_one(self.my_id)),
+            self.role_assignments
+                .get(&Role::indexed_from_one(self.my_id)),
             "Could not find my own identity in role assignments".to_string(),
         )?;
         Ok(id.to_owned())

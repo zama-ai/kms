@@ -66,7 +66,7 @@ where
         while (set.join_next().await).is_some() {}
         Ok(output)
     } else {
-        let sender = session.identity_from(&Role::indexed_by_one(input_party_id))?;
+        let sender = session.identity_from(&Role::indexed_from_one(input_party_id))?;
 
         let networking = Arc::clone(session.network());
         let data = tokio::spawn(timeout_at(

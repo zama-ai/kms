@@ -590,10 +590,10 @@ mod tests {
     fn test_network_stack() {
         let sid = SessionId::from(0);
         let mut role_assignment = RoleAssignment::new();
-        let role_1 = Role::indexed_by_one(1);
-        let id_1 = Identity("localhost:6000".to_owned());
-        let role_2 = Role::indexed_by_one(2);
-        let id_2 = Identity("localhost:6001".to_owned());
+        let role_1 = Role::indexed_from_one(1);
+        let id_1 = Identity("localhost:6001".to_owned());
+        let role_2 = Role::indexed_from_one(2);
+        let id_2 = Identity("localhost:6002".to_owned());
         role_assignment.insert(role_1, id_1.clone());
         role_assignment.insert(role_2, id_2.clone());
 
@@ -606,7 +606,7 @@ mod tests {
             let role = *role;
             let id_1 = id_1.clone();
             let id_2 = id_2.clone();
-            let port_digit = role.zero_based();
+            let port_digit = role.one_based();
             let role_assignment = role_assignment.clone();
             handles.add(std::thread::spawn(move || {
                 let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -635,7 +635,7 @@ mod tests {
                 );
 
                 let (send, recv) = tokio::sync::oneshot::channel();
-                if role.zero_based() == 0 {
+                if role.one_based() == 1 {
                     tokio::spawn(async move {
                         let msg = vec![1u8; 10];
                         println!("Sending ONCE");
@@ -659,7 +659,7 @@ mod tests {
         }
 
         let id = id_2;
-        let port_digit = 1;
+        let port_digit = 2;
         handles.add(std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(5));
             let runtime = tokio::runtime::Runtime::new().unwrap();

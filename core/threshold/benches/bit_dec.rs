@@ -11,6 +11,7 @@ use threshold_fhe::execution::endpoints::decryption::{
 };
 use threshold_fhe::execution::online::bit_manipulation::bit_dec_batch;
 use threshold_fhe::execution::online::preprocessing::dummy::DummyPreprocessing;
+use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::runtime::session::ParameterHandles;
 use threshold_fhe::execution::runtime::session::{LargeSession, SmallSession};
 use threshold_fhe::execution::sharing::shamir::InputOp;
@@ -44,13 +45,13 @@ impl std::fmt::Display for OneShotConfig {
 /// TODO(Dragos) Add pub types for different prep modes.
 ///
 /// Helper method to get a sharing of a simple u64 value
-fn get_my_share(val: u64, n: usize, threshold: usize, my_id: usize) -> Share<ResiduePolyF8Z64> {
+fn get_my_share(val: u64, n: usize, threshold: usize, my_role: Role) -> Share<ResiduePolyF8Z64> {
     let mut rng = AesRng::seed_from_u64(val);
     let secret = ResiduePolyF8Z64::from_scalar(Wrapping(val));
     let shares = ShamirSharings::share(&mut rng, secret, n, threshold)
         .unwrap()
         .shares;
-    shares[my_id]
+    shares[&my_role]
 }
 
 fn bit_dec_online(c: &mut Criterion) {
@@ -75,7 +76,7 @@ fn bit_dec_online(c: &mut Criterion) {
                             2,
                             session.num_parties(),
                             session.threshold() as usize,
-                            session.my_role().zero_based(),
+                            session.my_role(),
                         );
                         let _bits =
                             bit_dec_batch::<Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _>(
@@ -137,7 +138,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                                     i as u64,
                                     session.num_parties(),
                                     session.threshold() as usize,
-                                    session.my_role().zero_based(),
+                                    session.my_role(),
                                 )
                             })
                             .collect();
@@ -205,7 +206,7 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                                     i as u64,
                                     session.num_parties(),
                                     session.threshold() as usize,
-                                    session.my_role().zero_based(),
+                                    session.my_role(),
                                 )
                             })
                             .collect();

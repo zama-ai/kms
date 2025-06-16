@@ -204,7 +204,7 @@ where
         .collect();
 
     let own_identity = tonic_some_or_err(
-        role_assignments.get(&Role::indexed_by_one(config.my_id)),
+        role_assignments.get(&Role::indexed_from_one(config.my_id)),
         "Could not find my own identity".to_string(),
     )?;
     let mpc_socket_addr = mpc_listener.local_addr()?;

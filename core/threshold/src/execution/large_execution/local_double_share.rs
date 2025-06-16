@@ -504,8 +504,8 @@ pub(crate) mod tests {
 
         //Check that all secrets reconstruct correctly - for parties in malicious set we expect 0
         //For others we expect the real value for both sharings t and 2t
-        for sender_id in 0..params.num_parties {
-            let sender_role = Role::indexed_by_zero(sender_id);
+        for sender_id in 1..=params.num_parties {
+            let sender_role = Role::indexed_from_one(sender_id);
             let expected_secrets = if ref_malicious_set.contains(&sender_role) {
                 (0..num_secrets).map(|_| Z::ZERO).collect_vec()
             } else {

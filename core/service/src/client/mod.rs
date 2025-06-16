@@ -1537,7 +1537,7 @@ impl Client {
                     opt_sharings.as_mut().unwrap(),
                     cur_blocks,
                     num_values,
-                    Role::indexed_by_one(payload.party_id as usize),
+                    Role::indexed_from_one(payload.party_id as usize),
                 )?;
             }
             let sharings = opt_sharings.unwrap();
@@ -1712,7 +1712,7 @@ impl Client {
                             &mut sharings,
                             cur_blocks,
                             num_blocks,
-                            Role::indexed_by_one(cur_resp.party_id as usize),
+                            Role::indexed_from_one(cur_resp.party_id as usize),
                         )?;
                     }
                     Err(e) => {
@@ -1725,7 +1725,7 @@ impl Client {
                             &mut sharings,
                             Vec::new(),
                             num_blocks,
-                            Role::indexed_by_one(cur_resp.party_id as usize),
+                            Role::indexed_from_one(cur_resp.party_id as usize),
                         )?;
                     }
                 };
@@ -6164,16 +6164,16 @@ pub(crate) mod tests {
         if decompression_keygen {
             let mut serialized_ref_decompression_key = Vec::new();
             for (idx, kg_res) in finished.into_iter() {
-                let role = Role::indexed_by_one(idx as usize);
-                let i = role.zero_based();
+                let role = Role::indexed_from_one(idx as usize);
                 let kg_res = kg_res.unwrap().into_inner();
-                let storage = FileStorage::new(None, StorageType::PUB, Some(i + 1)).unwrap();
+                let storage =
+                    FileStorage::new(None, StorageType::PUB, Some(role.one_based())).unwrap();
                 let decompression_key: Option<DecompressionKey> = internal_client
                     .retrieve_key(&kg_res, PubDataType::DecompressionKey, &storage)
                     .await
                     .unwrap();
                 assert!(decompression_key.is_some());
-                if i == 0 {
+                if role.one_based() == 1 {
                     serialized_ref_decompression_key =
                         bc2wrap::serialize(decompression_key.as_ref().unwrap()).unwrap();
                 } else {
@@ -6195,16 +6195,16 @@ pub(crate) mod tests {
             let mut final_public_key = None;
             let mut final_server_key = None;
             for (idx, kg_res) in finished.into_iter() {
-                let role = Role::indexed_by_one(idx as usize);
-                let i = role.zero_based();
+                let role = Role::indexed_from_one(idx as usize);
                 let kg_res = kg_res.unwrap().into_inner();
-                let storage = FileStorage::new(None, StorageType::PUB, Some(i + 1)).unwrap();
+                let storage =
+                    FileStorage::new(None, StorageType::PUB, Some(role.one_based())).unwrap();
                 let pk = internal_client
                     .retrieve_public_key(&kg_res, &storage)
                     .await
                     .unwrap();
                 assert!(pk.is_some());
-                if i == 0 {
+                if role.one_based() == 1 {
                     serialized_ref_pk = bc2wrap::serialize(pk.as_ref().unwrap()).unwrap();
                 } else {
                     assert_eq!(
@@ -6217,7 +6217,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap();
                 assert!(server_key.is_some());
-                if i == 0 {
+                if role.one_based() == 1 {
                     serialized_ref_server_key =
                         bc2wrap::serialize(server_key.as_ref().unwrap()).unwrap();
                 } else {
@@ -6227,7 +6227,8 @@ pub(crate) mod tests {
                     )
                 }
 
-                let priv_storage = FileStorage::new(None, StorageType::PRIV, Some(i + 1)).unwrap();
+                let priv_storage =
+                    FileStorage::new(None, StorageType::PRIV, Some(role.one_based())).unwrap();
                 let sk_urls = priv_storage
                     .all_urls(&PrivDataType::FheKeyInfo.to_string())
                     .await

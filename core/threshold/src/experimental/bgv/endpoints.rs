@@ -64,7 +64,7 @@ pub fn threshold_decrypt(
 
     for (role, identity) in runtime.role_assignments.clone().into_iter() {
         let role_assignments = runtime.role_assignments.clone();
-        let net = Arc::clone(&runtime.user_nets[role.zero_based()]);
+        let net = Arc::clone(&runtime.user_nets[&role]);
         let threshold = runtime.threshold;
 
         let session_params =
@@ -72,7 +72,7 @@ pub fn threshold_decrypt(
                 .unwrap();
         let base_session = BaseSession::new(session_params, net, AesRng::from_entropy()).unwrap();
 
-        let sk_shares = private_keys[role.zero_based()]
+        let sk_shares = private_keys[&role]
             .iter()
             .map(|k| Share::new(role, *k))
             .collect_vec();

@@ -224,7 +224,8 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
 
         let my_role = session.my_role();
         let num_parties = session.num_parties();
-        let role_to_lie_to = Role::indexed_by_zero((my_role.zero_based() + 1) % num_parties);
+        // Lie to the "next" party
+        let role_to_lie_to = Role::indexed_from_zero(my_role.one_based() % num_parties);
 
         let is_sender = sender_list.contains(&my_role);
         let mut bcast_data = HashMap::with_capacity(num_senders);

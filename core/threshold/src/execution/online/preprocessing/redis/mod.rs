@@ -526,7 +526,7 @@ pub mod tests {
                 #[test]
                 fn [<test_share_serialization_deserialization $z:lower>]() {
                     let share = Share::new(
-                        Role::indexed_by_one(1),
+                        Role::indexed_from_one(1),
                         ResiduePolyF4::<$z>::from_scalar(Wrapping(42)),
                     );
 
@@ -538,17 +538,17 @@ pub mod tests {
                 #[test]
                 fn [<test_triple_serialization_deserialization $z:lower>]() {
                     let share_one = Share::new(
-                        Role::indexed_by_one(1),
+                        Role::indexed_from_one(1),
                         ResiduePolyF4::<$z>::from_scalar(Wrapping(42)),
                     );
 
                     let share_two = Share::new(
-                        Role::indexed_by_one(2),
+                        Role::indexed_from_one(2),
                         ResiduePolyF4::<$z>::from_scalar(Wrapping(43)),
                     );
 
                     let share_three = Share::new(
-                        Role::indexed_by_one(3),
+                        Role::indexed_from_one(3),
                         ResiduePolyF4::<$z>::from_scalar(Wrapping(42)),
                     );
 
@@ -567,7 +567,7 @@ pub mod tests {
 
     #[test]
     fn test_share_serialization_deserialization_gf256() {
-        let share = Share::new(Role::indexed_by_one(1), GF16::from(12));
+        let share = Share::new(Role::indexed_from_one(1), GF16::from(12));
 
         let serialized = bc2wrap::serialize(&share).unwrap();
         let deserialized: Share<GF16> = bc2wrap::deserialize(&serialized).unwrap();

@@ -21,7 +21,7 @@ pub struct ChoreoParty {
 
 impl From<&ChoreoParty> for Role {
     fn from(party: &ChoreoParty) -> Role {
-        Role::indexed_by_one(party.id)
+        Role::indexed_from_one(party.id)
     }
 }
 

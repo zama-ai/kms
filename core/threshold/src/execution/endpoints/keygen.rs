@@ -1984,12 +1984,12 @@ pub mod tests {
                 Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
                 _,
             >(path_compression_key_shares_1)
-            .unwrap()[my_role.zero_based()];
+            .unwrap()[&my_role];
             let glwe_key_shares_2 = &read_element::<
                 Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
                 _,
             >(path_glwe_key_shares_2)
-            .unwrap()[my_role.zero_based()];
+            .unwrap()[&my_role];
 
             let params_handle = params.get_params_basics_handle();
             let private_glwe_compute_key = GlweSecretKeyShare {
@@ -2190,7 +2190,7 @@ pub mod tests {
         for (role, pk, sk) in results {
             assert_eq!(pk, pk_ref);
             write_element(
-                prefix_path.join(format!("sk_p{}.der", role.zero_based())),
+                prefix_path.join(format!("sk_p{}.der", role.one_based())),
                 &sk,
             )
             .unwrap();
@@ -2251,7 +2251,7 @@ pub mod tests {
         for (role, pk, sk) in results {
             assert_eq!(pk, pk_ref);
             write_element(
-                prefix_path.join(format!("sk_p{}.der", role.zero_based())),
+                prefix_path.join(format!("sk_p{}.der", role.one_based())),
                 &sk,
             )
             .unwrap();

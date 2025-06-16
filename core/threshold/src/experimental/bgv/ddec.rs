@@ -137,7 +137,7 @@ pub fn keygen_shares<R: Rng + CryptoRng>(
         let mut field_index = LevelOne::ONE;
         for (party_id, shares_per_party) in all_shares.iter_mut().enumerate() {
             shares_per_party.sk.push(Share::new(
-                Role::indexed_by_zero(party_id),
+                Role::indexed_from_zero(party_id),
                 poly.eval(&field_index),
             ));
             field_index += LevelOne::ONE;
@@ -253,7 +253,7 @@ mod tests {
             let ksc = Arc::clone(&ntt_keyshares);
             let ctc = Arc::clone(&ct);
 
-            let own_role = Role::indexed_by_zero(index_id);
+            let own_role = Role::indexed_from_zero(index_id);
             let ntt_shares = ksc.as_ref()[index_id]
                 .iter()
                 .map(|ntt_val| Share::new(own_role, *ntt_val))

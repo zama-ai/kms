@@ -1128,7 +1128,7 @@ mod tests {
         let mut task_honest = |mut session: LargeSession| async move {
             let real_ceremony = SecureCeremony::default();
             (
-                session.my_role().zero_based(),
+                session.my_role(),
                 real_ceremony
                     .execute::<Z, _>(&mut session, witness_dim, Some(1))
                     .await
@@ -1141,7 +1141,7 @@ mod tests {
             let _ = malicious_party
                 .execute::<Z, _>(&mut session, witness_dim, Some(1))
                 .await;
-            session.my_role().zero_based()
+            session.my_role()
         };
 
         //CRS generation is round robin, so Sync by nature

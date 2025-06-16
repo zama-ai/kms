@@ -1190,7 +1190,7 @@ mod tests {
         let mut first_bit_shares = Vec::with_capacity(parties);
         (0..parties).for_each(|i| {
             first_bit_shares.push(Share::new(
-                Role::indexed_by_zero(i),
+                Role::indexed_from_zero(i),
                 *shares[i]
                     .glwe_secret_key_share_sns_as_lwe
                     .as_ref()

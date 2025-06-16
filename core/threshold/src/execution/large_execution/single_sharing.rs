@@ -169,7 +169,7 @@ fn format_for_next<Z: Ring>(
         for party_idx in 0..num_parties {
             vec.push(
                 local_single_shares
-                    .get(&Role::indexed_by_zero(party_idx))
+                    .get(&Role::indexed_from_zero(party_idx))
                     .ok_or_else(|| {
                         anyhow_error_and_log(format!(
                             "Can not find shares for Party {}",
@@ -324,7 +324,7 @@ pub(crate) mod tests {
                 for _ in 0..num_output {
                     res.push(single_sharing.next(&mut session).await.unwrap());
                 }
-                assert!(session.corrupt_roles().contains(&Role::indexed_by_one(2)));
+                assert!(session.corrupt_roles().contains(&Role::indexed_from_one(2)));
             } else {
                 for _ in 0..num_output {
                     res.push(ResiduePolyF4Z128::sample(session.rng()));

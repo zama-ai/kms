@@ -475,7 +475,7 @@ async fn transfer_network_value<S: BaseSessionHandles>(
         let buf_to_send = network_val.clone().to_network();
         for receiver in 1..=num_parties {
             if receiver != input_party_id {
-                let rcv_identity = session.identity_from(&Role::indexed_by_one(receiver))?;
+                let rcv_identity = session.identity_from(&Role::indexed_from_one(receiver))?;
 
                 let networking = Arc::clone(session.network());
 
@@ -489,7 +489,7 @@ async fn transfer_network_value<S: BaseSessionHandles>(
         Ok(network_val)
     } else {
         // receive the value
-        let sender_identity = session.identity_from(&Role::indexed_by_one(input_party_id))?;
+        let sender_identity = session.identity_from(&Role::indexed_from_one(input_party_id))?;
         let networking = Arc::clone(session.network());
         let timeout = session.network().get_timeout_current_round()?;
         tracing::debug!(
@@ -623,7 +623,7 @@ where
             v.insert(
                 i,
                 Share::new(
-                    Role::indexed_by_zero(party_id),
+                    Role::indexed_from_zero(party_id),
                     poly.eval(&ResiduePoly::<_, EXTENSION_DEGREE>::embed_exceptional_set(
                         party_id + 1,
                     )?),
@@ -646,7 +646,7 @@ where
             v.insert(
                 i,
                 Share::new(
-                    Role::indexed_by_zero(party_id),
+                    Role::indexed_from_zero(party_id),
                     poly.eval(&ResiduePoly::<_, EXTENSION_DEGREE>::embed_exceptional_set(
                         party_id + 1,
                     )?),
@@ -670,7 +670,7 @@ where
             v.insert(
                 i,
                 Share::new(
-                    Role::indexed_by_zero(party_id),
+                    Role::indexed_from_zero(party_id),
                     poly.eval(&ResiduePoly::<_, EXTENSION_DEGREE>::embed_exceptional_set(
                         party_id + 1,
                     )?),

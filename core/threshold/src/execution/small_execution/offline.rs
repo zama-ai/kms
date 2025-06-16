@@ -854,24 +854,24 @@ mod test {
     #[tracing_test::traced_test]
     #[test]
     fn test_wrong_type() {
-        let mut session = get_networkless_base_session_for_parties(4, 1, Role::indexed_by_one(1));
+        let mut session = get_networkless_base_session_for_parties(4, 1, Role::indexed_from_one(1));
         // Observe party 1 inputs a vector of size 1 and party 2 inputs a single element
         let d_recons = HashMap::from([
             (
-                Role::indexed_by_one(1),
+                Role::indexed_from_one(1),
                 BroadcastValue::RingVector(Vec::from([ResiduePolyF4Z128::from_scalar(Wrapping(
                     42,
                 ))])),
             ),
             (
-                Role::indexed_by_one(2),
+                Role::indexed_from_one(2),
                 BroadcastValue::RingValue(ResiduePolyF4Z128::from_scalar(Wrapping(13))),
             ),
         ]);
         assert!(session.corrupt_roles().is_empty());
         let res = reconstruct_d_values(&mut session, 1, d_recons).unwrap();
         assert_eq!(1, session.corrupt_roles().len());
-        assert!(session.corrupt_roles().contains(&Role::indexed_by_one(2)));
+        assert!(session.corrupt_roles().contains(&Role::indexed_from_one(2)));
         assert!(logs_contain(
             "did not broadcast the correct type and is thus malicious"
         ));

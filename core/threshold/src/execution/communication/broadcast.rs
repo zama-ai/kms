@@ -330,10 +330,10 @@ where
     }
     //Log timeouts
     for party_id in 1..=num_parties {
-        if !answering_parties.contains(&Role::indexed_by_one(party_id))
+        if !answering_parties.contains(&Role::indexed_from_one(party_id))
             && party_id != receiver.one_based()
         {
-            non_answering_parties.insert(Role::indexed_by_one(party_id));
+            non_answering_parties.insert(Role::indexed_from_one(party_id));
             tracing::warn!("(Process echos) I am {receiver} haven't heard from {party_id}");
         }
     }
@@ -668,7 +668,7 @@ mod tests {
             for (party_no, my_data) in input_values.iter().cloned().enumerate() {
                 let session = test_runtime.base_session_for_party(session_id, party_no, None);
                 let sender_list = sender_parties.to_vec();
-                if sender_parties.contains(&Role::indexed_by_zero(party_no)) {
+                if sender_parties.contains(&Role::indexed_from_zero(party_no)) {
                     set.spawn(async move {
                         SyncReliableBroadcast::default()
                             .execute(&session, &sender_list, Some(my_data))
@@ -700,7 +700,7 @@ mod tests {
 
     #[test]
     fn test_broadcast_all() {
-        let sender_parties: Vec<Role> = (0..4).map(Role::indexed_by_zero).collect();
+        let sender_parties: Vec<Role> = (0..4).map(Role::indexed_from_zero).collect();
         let (identities, input_values, results) = legitimate_broadcast::<
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
@@ -715,15 +715,15 @@ mod tests {
         }
 
         // check output from first party, as they are all equal
-        assert_eq!(results[0][&Role::indexed_by_zero(0)], input_values[0]);
-        assert_eq!(results[0][&Role::indexed_by_zero(1)], input_values[1]);
-        assert_eq!(results[0][&Role::indexed_by_zero(2)], input_values[2]);
-        assert_eq!(results[0][&Role::indexed_by_zero(3)], input_values[3]);
+        assert_eq!(results[0][&Role::indexed_from_zero(0)], input_values[0]);
+        assert_eq!(results[0][&Role::indexed_from_zero(1)], input_values[1]);
+        assert_eq!(results[0][&Role::indexed_from_zero(2)], input_values[2]);
+        assert_eq!(results[0][&Role::indexed_from_zero(3)], input_values[3]);
     }
 
     #[test]
     fn test_broadcast_p3() {
-        let sender_parties = vec![Role::indexed_by_zero(3)];
+        let sender_parties = vec![Role::indexed_from_zero(3)];
         let (identities, input_values, results) = legitimate_broadcast::<
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
@@ -737,17 +737,17 @@ mod tests {
             assert_eq!(results[0], results[i]);
         }
 
-        assert!(!results[0].contains_key(&Role::indexed_by_zero(0)));
-        assert!(!results[0].contains_key(&Role::indexed_by_zero(1)));
-        assert!(!results[0].contains_key(&Role::indexed_by_zero(2)));
-        assert!(results[0].contains_key(&Role::indexed_by_zero(3)));
+        assert!(!results[0].contains_key(&Role::indexed_from_zero(0)));
+        assert!(!results[0].contains_key(&Role::indexed_from_zero(1)));
+        assert!(!results[0].contains_key(&Role::indexed_from_zero(2)));
+        assert!(results[0].contains_key(&Role::indexed_from_zero(3)));
 
         // check output from first party, as they are all equal
-        assert_eq!(results[0][&Role::indexed_by_zero(3)], input_values[3]);
+        assert_eq!(results[0][&Role::indexed_from_zero(3)], input_values[3]);
     }
     #[test]
     fn test_broadcast_p0_p2() {
-        let sender_parties = vec![Role::indexed_by_one(1), Role::indexed_by_one(3)];
+        let sender_parties = vec![Role::indexed_from_one(1), Role::indexed_from_one(3)];
         let (identities, input_values, results) = legitimate_broadcast::<
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
@@ -761,14 +761,14 @@ mod tests {
         }
 
         // contains party P1
-        assert!(results[0].contains_key(&Role::indexed_by_one(1)));
-        assert!(!results[0].contains_key(&Role::indexed_by_one(2)));
-        assert!(results[0].contains_key(&Role::indexed_by_one(3)));
-        assert!(!results[0].contains_key(&Role::indexed_by_one(4)));
+        assert!(results[0].contains_key(&Role::indexed_from_one(1)));
+        assert!(!results[0].contains_key(&Role::indexed_from_one(2)));
+        assert!(results[0].contains_key(&Role::indexed_from_one(3)));
+        assert!(!results[0].contains_key(&Role::indexed_from_one(4)));
 
         // check output from first party, as they are all equal
-        assert_eq!(results[0][&Role::indexed_by_zero(0)], input_values[0]);
-        assert_eq!(results[0][&Role::indexed_by_zero(2)], input_values[2]);
+        assert_eq!(results[0][&Role::indexed_from_zero(0)], input_values[0]);
+        assert_eq!(results[0][&Role::indexed_from_zero(2)], input_values[2]);
     }
 
     /// Generic function to test malicious broadcast strategies.

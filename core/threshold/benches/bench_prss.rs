@@ -33,7 +33,7 @@ fn bench_prss(c: &mut Criterion) {
     let mut sess = get_base_session_for_parties(
         num_parties,
         threshold,
-        Role::indexed_by_one(1),
+        Role::indexed_from_one(1),
         NetworkMode::Sync,
     );
 
@@ -53,7 +53,7 @@ fn bench_prss(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("prss_mask_next", size), |b| {
             b.iter(|| {
                 for _ in 0..*size {
-                    let _e_shares = state.mask_next(Role::indexed_by_one(1), 1_u128 << 70);
+                    let _e_shares = state.mask_next(Role::indexed_from_one(1), 1_u128 << 70);
                 }
             });
         });
@@ -86,7 +86,7 @@ pub fn get_dummy_parameters_for_parties(
     let mut role_assignment = HashMap::new();
     for i in 0..amount {
         role_assignment.insert(
-            Role::indexed_by_zero(i),
+            Role::indexed_from_zero(i),
             Identity(format!("localhost:{}", 5000 + i)),
         );
     }

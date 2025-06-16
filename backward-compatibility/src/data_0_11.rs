@@ -405,7 +405,7 @@ impl KmsV0_11 {
     }
 
     fn gen_threshold_fhe_keys(dir: &PathBuf) -> TestMetadataKMS {
-        let role = Role::indexed_by_one(THRESHOLD_FHE_KEYS_TEST.role_i);
+        let role = Role::indexed_from_one(THRESHOLD_FHE_KEYS_TEST.role_i);
         let mut base_session = get_networkless_base_session_for_parties(
             THRESHOLD_FHE_KEYS_TEST.amount,
             THRESHOLD_FHE_KEYS_TEST.threshold,
@@ -572,7 +572,7 @@ struct DistributedDecryptionV0_11;
 
 impl DistributedDecryptionV0_11 {
     fn gen_prss_setup_rpoly_64(dir: &PathBuf) -> TestMetadataDD {
-        let role = Role::indexed_by_one(PRSS_SETUP_RPOLY_64_TEST.role_i);
+        let role = Role::indexed_from_one(PRSS_SETUP_RPOLY_64_TEST.role_i);
         let base_session = get_networkless_base_session_for_parties(
             PRSS_SETUP_RPOLY_64_TEST.amount,
             PRSS_SETUP_RPOLY_64_TEST.threshold,
@@ -586,7 +586,7 @@ impl DistributedDecryptionV0_11 {
     }
 
     fn gen_prss_setup_rpoly_128(dir: &PathBuf) -> TestMetadataDD {
-        let role = Role::indexed_by_one(PRSS_SETUP_RPOLY_128_TEST.role_i);
+        let role = Role::indexed_from_one(PRSS_SETUP_RPOLY_128_TEST.role_i);
         let base_session = get_networkless_base_session_for_parties(
             PRSS_SETUP_RPOLY_128_TEST.amount,
             PRSS_SETUP_RPOLY_128_TEST.threshold,

@@ -509,7 +509,7 @@ mod tests {
         )
         .unwrap()
         .shares;
-        shares[session.my_role().zero_based()]
+        shares[&session.my_role()]
     }
 
     #[test]

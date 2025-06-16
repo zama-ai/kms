@@ -177,7 +177,7 @@ fn format_for_next<Z: Ring>(
         let mut vec_2t = Vec::with_capacity(num_parties);
         for party_idx in 0..num_parties {
             let double_share_j = local_double_shares
-                .get(&Role::indexed_by_zero(party_idx))
+                .get(&Role::indexed_from_zero(party_idx))
                 .ok_or_else(|| {
                     anyhow_error_and_log(format!("Can not find shares for Party {}", party_idx + 1))
                 })?;
@@ -340,7 +340,7 @@ pub(crate) mod tests {
             let extracted_size = session.num_parties() - session.threshold() as usize;
             let num_output = ldl_batch_size * extracted_size + 1;
             let mut res = Vec::new();
-            if session.my_role().zero_based() != 1 {
+            if session.my_role().one_based() != 1 {
                 let mut double_sharing = SecureDoubleSharing::<ResiduePolyF4Z128>::default();
                 double_sharing
                     .init(&mut session, ldl_batch_size)
@@ -349,7 +349,7 @@ pub(crate) mod tests {
                 for _ in 0..num_output {
                     res.push(double_sharing.next(&mut session).await.unwrap());
                 }
-                assert!(session.corrupt_roles().contains(&Role::indexed_by_zero(1)));
+                assert!(session.corrupt_roles().contains(&Role::indexed_from_one(1)));
             } else {
                 for _ in 0..num_output {
                     res.push(DoubleShare {
@@ -380,7 +380,7 @@ pub(crate) mod tests {
             for (role, res) in result.iter() {
                 res_vec_t.push(Share::new(*role, res[value_idx].degree_t));
                 //Dont take into account corrupt party's share (due to pol. degree)
-                if role.zero_based() != 1 {
+                if role.one_based() != 1 {
                     res_vec_2t.push(Share::new(*role, res[value_idx].degree_2t));
                 }
             }

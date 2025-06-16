@@ -334,9 +334,9 @@ pub mod tests {
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
     {
         let mut sk_shares = HashMap::new();
-        for party in 0..parties {
+        for party in 1..=parties {
             sk_shares.insert(
-                Role::indexed_by_zero(party),
+                Role::indexed_from_one(party),
                 read_element::<PrivateKeySet<EXTENSION_DEGREE>, _>(
                     prefix_path.join(format!("sk_p{}.der", party)).as_path(),
                 )
@@ -371,9 +371,9 @@ pub mod tests {
         HashMap<Role, Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
     ) {
         let mut sk_shares = HashMap::new();
-        for party in 0..parties {
+        for party in 1..=parties {
             sk_shares.insert(
-                Role::indexed_by_zero(party),
+                Role::indexed_from_one(party),
                 read_element::<PrivateKeySet<EXTENSION_DEGREE>, _>(
                     prefix_path.join(format!("sk_p{}.der", party)).as_path(),
                 )

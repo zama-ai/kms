@@ -134,7 +134,7 @@ mod tests {
                 fn [<even_malicious_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
-                    let bad_party: Role = Role::indexed_by_one(2);
+                    let bad_party: Role = Role::indexed_from_one(2);
                     const AMOUNT: usize = 10;
                     let mut task = |mut session: SmallSession<$z>, _bot: Option<String>| async move {
                         let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);

@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn op_overload() {
         let share = Share::new(
-            Role::indexed_by_one(1),
+            Role::indexed_from_one(1),
             ResiduePolyF4Z128::from_scalar(Wrapping(42)),
         );
         let one = ResiduePolyF4Z128::from_scalar(Wrapping(1));

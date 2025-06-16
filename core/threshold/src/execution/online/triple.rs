@@ -278,7 +278,7 @@ mod tests {
                 fn [<mult_party_drop_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
-                    let bad_role: Role = Role::indexed_by_one(4);
+                    let bad_role: Role = Role::indexed_from_one(4);
                     let mut task = |session: SmallSession<$z>, _bot: Option<String>| async move {
                         if session.my_role() != bad_role {
                             let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
@@ -318,7 +318,7 @@ mod tests {
                 fn [<mult_wrong_value_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
-                    let bad_role: Role = Role::indexed_by_one(4);
+                    let bad_role: Role = Role::indexed_from_one(4);
                     let mut task = |session: SmallSession<$z>, _bot: Option<String>| async move {
                         let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
                         let cur_a = preprocessing.next_random().unwrap();

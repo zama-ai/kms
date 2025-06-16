@@ -375,12 +375,11 @@ pub(crate) mod test {
         let shares = secrets
             .iter()
             .map(|secret| {
-                ShamirSharings::share(&mut rng, *secret, num_parties, threshold)
-                    .unwrap()
-                    .shares
-                    .get(my_role.zero_based())
-                    .unwrap()
-                    .value()
+                let shamir_shares =
+                    ShamirSharings::share(&mut rng, *secret, num_parties, threshold)
+                        .unwrap()
+                        .shares;
+                my_role.get_from(&shamir_shares).unwrap().value()
             })
             .collect_vec();
         (secrets, shares)

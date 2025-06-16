@@ -30,6 +30,7 @@ pub struct SessionParameters {
     own_identity: Identity,
     my_role: Role,
     role_assignments: HashMap<Role, Identity>,
+    all_sorted_roles: Vec<Role>,
 }
 
 pub trait ParameterHandles: Sync + Send {
@@ -43,6 +44,7 @@ pub trait ParameterHandles: Sync + Send {
     fn role_assignments(&self) -> &HashMap<Role, Identity>;
     fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>);
     fn to_parameters(&self) -> SessionParameters;
+    fn get_all_sorted_roles(&self) -> &Vec<Role>;
 }
 
 fn role_from_role_assignments(
@@ -69,6 +71,12 @@ fn role_from_role_assignments(
     }
 }
 
+fn all_roles_from_role_assignments(role_assignments: &HashMap<Role, Identity>) -> Vec<Role> {
+    let mut all_roles: Vec<Role> = role_assignments.keys().cloned().collect();
+    all_roles.sort();
+    all_roles
+}
+
 impl SessionParameters {
     pub fn new(
         threshold: u8,
@@ -83,12 +91,14 @@ impl SessionParameters {
             )));
         }
         let my_role = role_from_role_assignments(&role_assignments, &own_identity)?;
+        let all_sorted_roles = all_roles_from_role_assignments(&role_assignments);
         let res = Self {
             threshold,
             session_id,
             own_identity: own_identity.clone(),
             my_role,
             role_assignments,
+            all_sorted_roles,
         };
 
         Ok(res)
@@ -137,10 +147,15 @@ impl ParameterHandles for SessionParameters {
 
     fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
         self.role_assignments = role_assignments;
+        self.all_sorted_roles = all_roles_from_role_assignments(&self.role_assignments);
     }
 
     fn to_parameters(&self) -> SessionParameters {
         self.clone()
+    }
+
+    fn get_all_sorted_roles(&self) -> &Vec<Role> {
+        &self.all_sorted_roles
     }
 }
 
@@ -217,6 +232,10 @@ impl ParameterHandles for BaseSession {
 
     fn to_parameters(&self) -> SessionParameters {
         self.parameters.clone()
+    }
+
+    fn get_all_sorted_roles(&self) -> &Vec<Role> {
+        self.parameters.get_all_sorted_roles()
     }
 }
 
@@ -334,6 +353,10 @@ impl<Z: Ring> ParameterHandles for SmallSession<Z> {
     fn to_parameters(&self) -> SessionParameters {
         self.base_session.to_parameters()
     }
+
+    fn get_all_sorted_roles(&self) -> &Vec<Role> {
+        self.base_session.get_all_sorted_roles()
+    }
 }
 
 impl<Z: Ring> BaseSessionHandles for SmallSession<Z> {
@@ -444,6 +467,10 @@ impl ParameterHandles for LargeSession {
     fn to_parameters(&self) -> SessionParameters {
         self.base_session.to_parameters()
     }
+
+    fn get_all_sorted_roles(&self) -> &Vec<Role> {
+        self.base_session.get_all_sorted_roles()
+    }
 }
 impl BaseSessionHandles for LargeSession {
     type RngType = AesRng;
@@ -534,20 +561,20 @@ impl DisputeSet {
         }
         // Insert the first pair of disputes
         let disputed_roles = &mut self.disputed_roles;
-        let a_disputes = disputed_roles
-            .get_mut(role_a.zero_based())
+        let a_disputes = role_a
+            .get_mut_from(disputed_roles)
             .ok_or_else(|| anyhow_error_and_log("Role does not exist"))?;
         let _ = a_disputes.insert(*role_b);
         // Insert the second pair of disputes
-        let b_disputes: &mut BTreeSet<Role> = disputed_roles
-            .get_mut(role_b.zero_based())
+        let b_disputes: &mut BTreeSet<Role> = role_b
+            .get_mut_from(disputed_roles)
             .ok_or_else(|| anyhow_error_and_log("Role does not exist"))?;
         let _ = b_disputes.insert(*role_a);
         Ok(())
     }
 
     pub fn get(&self, role: &Role) -> anyhow::Result<&BTreeSet<Role>> {
-        if let Some(cur) = self.disputed_roles.get(role.zero_based()) {
+        if let Some(cur) = role.get_from(&self.disputed_roles) {
             Ok(cur)
         } else {
             Err(anyhow_error_and_log("Role does not exist"))
@@ -571,7 +598,7 @@ mod tests {
     #[test]
     fn too_large_threshold() {
         let parties = 3;
-        let params = get_dummy_parameters_for_parties(parties, 0, Role::indexed_by_one(1));
+        let params = get_dummy_parameters_for_parties(parties, 0, Role::indexed_from_one(1));
         // Same amount of parties and threshold, which is not allowed
         assert!(SessionParameters::new(
             parties as u8,
@@ -585,9 +612,9 @@ mod tests {
     #[test]
     fn missing_self_identity() {
         let parties = 3;
-        let mut params = get_dummy_parameters_for_parties(parties, 1, Role::indexed_by_one(1));
+        let mut params = get_dummy_parameters_for_parties(parties, 1, Role::indexed_from_one(1));
         // remove my role
-        params.role_assignments.remove(&Role::indexed_by_one(1));
+        params.role_assignments.remove(&Role::indexed_from_one(1));
         assert!(SessionParameters::new(
             params.threshold(),
             params.session_id(),

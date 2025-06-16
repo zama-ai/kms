@@ -596,7 +596,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> Syndrome for ResiduePoly<Z, EXT
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: QuotientMaximalIdeal,
 {
-    //NIST: Level Zero Operation (I believe this is is SynDecode + last step of correction)
+    //NIST: Level Zero Operation (SynDecode + last step of correction)
     // decode a ring syndrome into an error vector, containing the error magnitudes at the respective indices
     fn syndrome_decode(
         mut syndrome_poly: Poly<Self>,
@@ -638,7 +638,7 @@ where
             let correction_shares = lifted_e
                 .iter()
                 .enumerate()
-                .map(|(idx, val)| Share::new(Role::indexed_by_zero(idx), *val))
+                .map(|(idx, val)| Share::new(Role::indexed_from_zero(idx), *val))
                 .collect_vec();
             let corrected_shamir = ShamirSharings {
                 shares: correction_shares,

@@ -186,7 +186,7 @@ mod tests {
                 // Test what happens when no more triples are preset
                 #[test]
                 fn [<test_no_more_elements_ $z:lower>]() {
-                    let share = Share::new(Role::indexed_by_one(1), ResiduePolyF4::<$z>::from_scalar(Wrapping(1)));
+                    let share = Share::new(Role::indexed_from_one(1), ResiduePolyF4::<$z>::from_scalar(Wrapping(1)));
                     let triple = Triple::new(share.clone(), share.clone(), share.clone());
                     const TRIPLE_BATCH_SIZE: usize = 10; // Replace 10 with the desired value
 

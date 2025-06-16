@@ -164,7 +164,7 @@ where
             .map(|xi| {
                 let embedded_xi: Z = Z::embed_exceptional_set(xi)?;
                 Ok(Share::new(
-                    Role::indexed_by_one(xi),
+                    Role::indexed_from_one(xi),
                     poly.eval(&embedded_xi),
                 ))
             })
@@ -588,11 +588,11 @@ mod tests {
         for (i, share) in packed_shares.into_iter().enumerate() {
             if add_error && i < threshold {
                 packed_sharmir_shares
-                    .add_share(Share::new(Role::indexed_by_zero(i), share[0] + Z::ONE))
+                    .add_share(Share::new(Role::indexed_from_zero(i), share[0] + Z::ONE))
                     .unwrap();
             } else {
                 packed_sharmir_shares
-                    .add_share(Share::new(Role::indexed_by_zero(i), share[0]))
+                    .add_share(Share::new(Role::indexed_from_zero(i), share[0]))
                     .unwrap();
             }
         }

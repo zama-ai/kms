@@ -89,11 +89,17 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ParameterHandles
     fn role_assignments(&self) -> &HashMap<Role, Identity> {
         self.base_session.role_assignments()
     }
+
     fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
         self.base_session.set_role_assignments(role_assignments);
     }
+
     fn to_parameters(&self) -> SessionParameters {
         self.base_session.to_parameters()
+    }
+
+    fn get_all_sorted_roles(&self) -> &Vec<Role> {
+        self.base_session.get_all_sorted_roles()
     }
 }
 

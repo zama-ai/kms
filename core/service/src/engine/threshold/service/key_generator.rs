@@ -538,7 +538,7 @@ impl<
             },
         };
 
-        let output_party = Role::indexed_by_one(INPUT_PARTY_ID);
+        let output_party = Role::indexed_from_one(INPUT_PARTY_ID);
 
         // we need Vec<ResiduePoly> but we're given Vec<Share<ResiduePoly>>
         // so we need to call collect_vec()

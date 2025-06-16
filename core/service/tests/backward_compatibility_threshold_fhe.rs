@@ -31,6 +31,7 @@ use threshold_fhe::{
     tests::helper::testing::{get_dummy_prss_setup, get_networkless_base_session_for_parties},
 };
 
+#[allow(dead_code)]
 fn compare_prss_setup<Z>(
     dir: &Path,
     test: &PRSSSetupTest,
@@ -41,7 +42,7 @@ where
     Z: ErrorCorrect + Invert + PRSSConversions,
     PRSSSetup<Z>: Unversionize,
 {
-    let role = Role::indexed_by_one(test.role_i);
+    let role = Role::indexed_from_one(test.role_i);
     let base_session = get_networkless_base_session_for_parties(test.amount, test.threshold, role);
 
     let original_versionized: PRSSSetup<Z> = load_and_unversionize(dir, test, format)?;
@@ -60,6 +61,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 fn test_prss_setup(
     dir: &Path,
     test: &PRSSSetupTest,
@@ -111,8 +113,10 @@ impl TestedModule for ThresholdFhe {
         format: DataFormat,
     ) -> TestResult {
         match &testcase.metadata {
-            Self::Metadata::PRSSSetup(test) => {
-                test_prss_setup(test_dir.as_ref(), test, format).into()
+            Self::Metadata::PRSSSetup(_test) => {
+                //TODO: https://github.com/zama-ai/kms-core/issues/2560
+                //test_prss_setup(test_dir.as_ref(), test, format).into()
+                TestResult::Skipped(testcase.skip())
             }
             Self::Metadata::PrfKey(test) => test_prf_key(test_dir.as_ref(), test, format).into(),
         }

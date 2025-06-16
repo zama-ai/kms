@@ -300,8 +300,8 @@ mod tests {
                 session.threshold() as usize,
             )
             .unwrap()
-            .shares[my_role.zero_based()]
-            .value();
+            .shares[&my_role]
+                .value();
 
             let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
 

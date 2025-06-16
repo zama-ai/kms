@@ -76,7 +76,7 @@ where
             .map(|xi| {
                 let embedded_xi = Z::embed_exceptional_set(xi)?;
                 Ok(Share::new(
-                    Role::indexed_by_one(xi),
+                    Role::indexed_from_one(xi),
                     poly.eval(&embedded_xi),
                 ))
             })
@@ -102,9 +102,10 @@ where
             a,
             &mut rng,
         )?;
+        let my_role = self.parameters.my_role();
         // Retrive the share of the calling party
-        let a_share = a_vec
-            .get(self.parameters.my_role().zero_based())
+        let a_share = my_role
+            .get_from(&a_vec)
             .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
         let b = Z::sample(&mut rng);
         let b_vec = DummyPreprocessing::<Z>::share(
@@ -114,8 +115,8 @@ where
             &mut rng,
         )?;
         // Retrive the share of the calling party
-        let b_share = b_vec
-            .get(self.parameters.my_role().zero_based())
+        let b_share = my_role
+            .get_from(&b_vec)
             .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
         // Compute the c shares based on the true values of a and b
         let c_vec = DummyPreprocessing::<Z>::share(
@@ -125,8 +126,8 @@ where
             &mut rng,
         )?;
         // Retrive the share of the calling party
-        let c_share = c_vec
-            .get(self.parameters.my_role().zero_based())
+        let c_share = my_role
+            .get_from(&c_vec)
             .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
         Ok(Triple::new(*a_share, *b_share, *c_share))
     }
@@ -167,8 +168,10 @@ where
             secret,
             &mut rng,
         )?;
-        let my_share = all_parties_shares
-            .get(self.parameters.my_role().zero_based())
+        let my_share = self
+            .parameters
+            .my_role()
+            .get_from(&all_parties_shares)
             .ok_or_else(|| anyhow_error_and_log("Party share does not exist".to_string()))?;
         Ok(*my_share)
     }
@@ -209,18 +212,19 @@ where
         const BIT_FLAG: u64 = 0xB542074E84A9D88E;
         let mut rng = AesRng::seed_from_u64(BIT_FLAG ^ self.seed);
         let mut res = Vec::with_capacity(amount);
+        let my_role = self.parameters.my_role();
         let my_share_zero = DummyPreprocessing::<Z>::share(
             self.parameters.num_parties(),
             self.parameters.threshold(),
             Z::ZERO,
             &mut rng,
-        )?[self.parameters.my_role().zero_based()];
+        )?[&my_role];
         let my_share_one = DummyPreprocessing::<Z>::share(
             self.parameters.num_parties(),
             self.parameters.threshold(),
             Z::ONE,
             &mut rng,
-        )?[self.parameters.my_role().zero_based()];
+        )?[&my_role];
         for _ in 0..amount {
             let bit = rng.get_bit() == 1;
             let secret = if bit { my_share_one } else { my_share_zero };
@@ -561,7 +565,7 @@ mod tests {
                 #[test]
                 fn [<test_threshold_dummy_share $z:lower>]() {
                     let msg = ResiduePolyF4::<$z>::from_scalar(Wrapping(42));
-                    let mut session = get_networkless_base_session_for_parties(10, 3, Role::indexed_by_one(1));
+                    let mut session = get_networkless_base_session_for_parties(10, 3, Role::indexed_from_one(1));
                     let shares = DummyPreprocessing::<ResiduePolyF4<$z>>::share(
                         session.num_parties(),
                         session.threshold(),
@@ -579,7 +583,7 @@ mod tests {
                     let threshold = 3;
                     let mut preps = Vec::new();
                     for i in 1..=parties {
-                        let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(i));
+                        let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_from_one(i));
                         preps.push(DummyPreprocessing::<ResiduePolyF4<$z>>::new(42, &session));
                     }
                     let recon = [<get_rand_ $z:lower>](parties, threshold, 2, &mut preps);
@@ -595,7 +599,7 @@ mod tests {
                     amount: usize,
                     preps: &mut [DummyPreprocessing::<ResiduePolyF4<$z>>],
                 ) -> Vec<ResiduePolyF4<$z>> {
-                    let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(1));
+                    let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_from_one(1));
                     let mut res = Vec::new();
                     let mut temp: Vec<Vec<Share<ResiduePolyF4<$z>>>> = Vec::new();
                     for i in 1..=parties {
@@ -620,7 +624,7 @@ mod tests {
                     let threshold = 3;
                     let mut preps = Vec::new();
                     for i in 1..=parties {
-                        let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(i));
+                        let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_from_one(i));
                         preps.push(DummyPreprocessing::<ResiduePolyF4<$z>>::new(42, &session));
                     }
                     let trips = [<get_trip_ $z:lower>](parties, threshold, 2, &mut preps);
@@ -633,7 +637,7 @@ mod tests {
                     amount: usize,
                     preps: &mut [DummyPreprocessing::<ResiduePolyF4<$z>>],
                 ) -> Vec<(ResiduePolyF4<$z>, ResiduePolyF4<$z>, ResiduePolyF4<$z>)> {
-                    let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(1));
+                    let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_from_one(1));
                     let mut res = Vec::new();
                     let mut a_shares = Vec::new();
                     let mut b_shares = Vec::new();
@@ -670,7 +674,7 @@ mod tests {
                     let threshold = 3;
                     let mut preps = Vec::new();
                     for i in 1..=parties {
-                        let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(i));
+                        let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_from_one(i));
                         preps.push(DummyPreprocessing::<ResiduePolyF4<$z>>::new(42, &session));
                     }
                     let rand_a = [<get_rand_ $z:lower>](parties, threshold, 1, &mut preps)[0];

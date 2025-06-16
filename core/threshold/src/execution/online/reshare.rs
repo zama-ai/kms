@@ -461,7 +461,7 @@ mod tests {
             let mut bit_shares = Vec::with_capacity(parties);
             (0..parties).for_each(|i| {
                 bit_shares.push(Share::new(
-                    Role::indexed_by_zero(i),
+                    Role::indexed_from_zero(i),
                     *shares[i].get(j).unwrap(),
                 ));
             });
@@ -638,7 +638,7 @@ mod tests {
                 lwe_compute_secret_key_share: LweSecretKeyShare {
                     data: vec![
                         Share::new(
-                            Role::indexed_by_zero(0),
+                            Role::indexed_from_zero(0),
                             ResiduePoly::<Z64, EXTENSION_DEGREE>::sample(&mut rng)
                         );
                         key_shares[1].lwe_compute_secret_key_share.data.len()
@@ -647,7 +647,7 @@ mod tests {
                 lwe_encryption_secret_key_share: LweSecretKeyShare {
                     data: vec![
                         Share::new(
-                            Role::indexed_by_zero(0),
+                            Role::indexed_from_zero(0),
                             ResiduePoly::<Z64, EXTENSION_DEGREE>::sample(&mut rng)
                         );
                         key_shares[1].lwe_encryption_secret_key_share.data.len()
@@ -656,7 +656,7 @@ mod tests {
                 glwe_secret_key_share: GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
                     data: vec![
                         Share::new(
-                            Role::indexed_by_zero(0),
+                            Role::indexed_from_zero(0),
                             ResiduePoly::<Z64, EXTENSION_DEGREE>::sample(&mut rng)
                         );
                         key_shares[1].glwe_secret_key_share.len()
@@ -666,7 +666,7 @@ mod tests {
                 glwe_secret_key_share_sns_as_lwe: Some(LweSecretKeyShare {
                     data: vec![
                         Share::new(
-                            Role::indexed_by_zero(0),
+                            Role::indexed_from_zero(0),
                             ResiduePoly::<Z128, EXTENSION_DEGREE>::sample(&mut rng)
                         );
                         key_shares[1]
@@ -770,7 +770,7 @@ mod tests {
             .collect_vec();
 
         // we need to sort by identities and then reconstruct
-        results.sort_by(|a, b| a.0.zero_based().cmp(&b.0.zero_based()));
+        results.sort_by(|a, b| a.0.cmp(&(b.0)));
         let (new_shares, old_shares): (Vec<_>, Vec<_>) =
             results.into_iter().map(|(_, b)| b).unzip();
         let actual_sk = reconstruct_sk(new_shares, threshold);

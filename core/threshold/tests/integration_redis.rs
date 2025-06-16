@@ -45,23 +45,23 @@ macro_rules! test_triples {
                 let redis_conf = RedisConf::default();
                 let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
                 let share_one = Share::new(
-                    Role::indexed_by_one(1),
+                    Role::indexed_from_one(1),
                     ResiduePolyF4::<$z>::from_scalar(Wrapping(42)),
                 );
 
                 let share_two = Share::new(
-                    Role::indexed_by_one(2),
+                    Role::indexed_from_one(2),
                     ResiduePolyF4::<$z>::from_scalar(Wrapping(43)),
                 );
 
                 let share_three = Share::new(
-                    Role::indexed_by_one(3),
+                    Role::indexed_from_one(3),
                     ResiduePolyF4::<$z>::from_scalar(Wrapping(42)),
                 );
 
                 let triple = Triple::new(share_one, share_two, share_three);
                 let random = Share::new(
-                    Role::indexed_by_one(4),
+                    Role::indexed_from_one(4),
                     ResiduePolyF4::<$z>::from_scalar(Wrapping(7)),
                 );
                 let mut base_preprocessing = redis_factory.$l();
@@ -91,19 +91,19 @@ fn test_store_fetch_100_triples() {
     let mut cnt = 0;
     for _i in 0..fetch_count {
         let share_one = Share::new(
-            Role::indexed_by_one(1),
+            Role::indexed_from_one(1),
             ResiduePolyF4::<Z64>::from_scalar(Wrapping(cnt)),
         );
         cnt += 1;
 
         let share_two = Share::new(
-            Role::indexed_by_one(2),
+            Role::indexed_from_one(2),
             ResiduePolyF4::<Z64>::from_scalar(Wrapping(cnt)),
         );
         cnt += 1;
 
         let share_three = Share::new(
-            Role::indexed_by_one(3),
+            Role::indexed_from_one(3),
             ResiduePolyF4::<Z64>::from_scalar(Wrapping(cnt)),
         );
         cnt += 1;
@@ -127,7 +127,7 @@ fn test_store_fetch_100_randoms() {
     let mut randoms = Vec::new();
     for i in 0..fetch_count {
         let random = Share::new(
-            Role::indexed_by_one(1),
+            Role::indexed_from_one(1),
             ResiduePolyF4::<Z64>::from_scalar(Wrapping(i)),
         );
         randoms.push(random);
@@ -150,7 +150,7 @@ fn test_store_fetch_100_bits() {
     let mut bits = Vec::new();
     for i in 0..fetch_count {
         let bit = Share::new(
-            Role::indexed_by_one(1),
+            Role::indexed_from_one(1),
             ResiduePolyF4::<Z64>::from_scalar(Wrapping(i)),
         );
         bits.push(bit);
@@ -175,7 +175,7 @@ fn test_fetch_more_than_stored() {
     let mut bits = Vec::new();
     for i in 0..store_count {
         let bit = Share::new(
-            Role::indexed_by_one(1),
+            Role::indexed_from_one(1),
             ResiduePolyF4::<Z64>::from_scalar(Wrapping(i)),
         );
         bits.push(bit);

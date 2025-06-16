@@ -3,7 +3,7 @@ use tonic::async_trait;
 use crate::{
     algebra::structure_traits::ErrorCorrect,
     execution::{
-        runtime::session::BaseSessionHandles,
+        runtime::{party::Role, session::BaseSessionHandles},
         small_execution::{
             agree_random::{AgreeRandom, AgreeRandomFromShare},
             prf::PrfKey,
@@ -40,7 +40,7 @@ impl AgreeRandomFromShare for MaliciousAgreeRandomDrop {
         &self,
         _session: &mut S,
         _shares: Vec<Z>,
-        _all_party_sets: &[Vec<usize>],
+        _all_party_sets: &[Vec<Role>],
     ) -> anyhow::Result<Vec<PrfKey>> {
         Ok(Vec::new())
     }
