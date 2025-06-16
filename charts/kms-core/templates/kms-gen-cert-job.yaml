@@ -10,7 +10,7 @@ metadata:
     app: kms-core
     app.kubernetes.io/name: {{ $kmsGenCertName }}
   annotations:
-    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-weight": "-2"
   name: {{ $kmsGenCertName }}
 spec:
   template:
