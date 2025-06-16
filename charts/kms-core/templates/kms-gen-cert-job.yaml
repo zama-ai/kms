@@ -21,7 +21,7 @@ spec:
       serviceAccountName: {{ .Values.kmsCore.serviceAccountName }}
       securityContext:
         {{- toYaml .Values.podSecurityContextForEnclave | nindent 8 }}
-      restartPolicy: OnFailure
+      restartPolicy: Never
       initContainers:
         - image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
           imagePullPolicy: {{ .Values.kubeUtils.image.pullPolicy }}
