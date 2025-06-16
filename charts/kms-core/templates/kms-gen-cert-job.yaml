@@ -18,7 +18,7 @@ spec:
         app: kms-core-gen-keys-cert
         app.kubernetes.io/name: {{ $kmsGenKeyCertName }}
     spec:
-      serviceAccountName: {{ .Values.kmsCore.serviceAccountName }}
+      serviceAccountName: {{ .Release.Name }}-gen-keys-config-writer
       securityContext:
         {{- toYaml .Values.podSecurityContextForEnclave | nindent 8 }}
       restartPolicy: Never
