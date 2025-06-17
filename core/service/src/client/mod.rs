@@ -1042,7 +1042,7 @@ impl Client {
         )?;
 
         // TODO pivot should actually be picked as the most common response instead of just an
-        // arbitrary one. The same in user decryption
+        // arbitrary one.
         let pivot = some_or_err(
             agg_resp.last(),
             "No elements in user decryption response".to_string(),
@@ -1091,7 +1091,7 @@ impl Client {
         Ok(pts)
     }
 
-    /// Processes the aggregated user decryption response to attempt to decrypt
+    /// Processes the aggregated user decryption responses to attempt to decrypt
     /// the encryption of the secret shared plaintext and returns this. Validates the
     /// response matches the request, checks signatures, and handles both
     /// centralized and distributed cases.
@@ -1203,7 +1203,7 @@ impl Client {
 
         let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&payload.verification_key)?;
 
-        // NOTE: ID start at 1
+        // NOTE: ID starts at 1
         let expected_server_addr = if let Some(server_addr) = stored_server_addrs.get(&1) {
             if *server_addr != alloy_signer::utils::public_key_to_address(cur_verf_key.pk()) {
                 return Err(anyhow_error_and_log("server address is not consistent"));
@@ -1333,7 +1333,13 @@ impl Client {
                 let all_sharings = self.recover_sharings::<Z64>(&validated_resps, client_keys)?;
 
                 let mut out = vec![];
-                for (fhe_type, packing_factor, sharings) in all_sharings {
+                for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
+                    // we can tolerate at most t=degree errors in the recovered shares
+                    if recovery_errors > degree {
+                        return Err(anyhow_error_and_log(
+                            format!("Too many errors in share recovery / signcryption: {recovery_errors} (threshold {degree})"),
+                        ));
+                    }
                     let mut decrypted_blocks = Vec::new();
                     for cur_block_shares in sharings {
                         // NOTE: this performs optimistic reconstruction
@@ -1347,12 +1353,12 @@ impl Client {
                             Ok(Some(r)) => decrypted_blocks.push(r),
                             Ok(None) => {
                                 return Err(anyhow_error_and_log(
-                                    format!("Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()),
+                                    format!("Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}", &cur_block_shares.shares.len()),
                                 ));
                             }
                             Err(e) => {
                                 return Err(anyhow_error_and_log(format!(
-                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()
+                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}", &cur_block_shares.shares.len()
                                 )));
                             }
                         }
@@ -1380,9 +1386,15 @@ impl Client {
                 let all_sharings = self.recover_sharings::<Z128>(&validated_resps, client_keys)?;
 
                 let mut out = vec![];
-                for (fhe_type, packing_factor, sharings) in all_sharings {
-                    let mut decrypted_blocks = Vec::new();
+                for (fhe_type, packing_factor, sharings, recovery_errors) in all_sharings {
+                    // we can tolerate at most t=degree errors in the recovered shares
+                    if recovery_errors > degree {
+                        return Err(anyhow_error_and_log(
+                            format!("Too many errors in share recovery / signcryption: {recovery_errors} (threshold {degree})"),
+                        ));
+                    }
 
+                    let mut decrypted_blocks = Vec::new();
                     for cur_block_shares in sharings {
                         // NOTE: this performs optimistic reconstruction
                         match reconstruct_w_errors_sync(
@@ -1395,12 +1407,12 @@ impl Client {
                             Ok(Some(r)) => decrypted_blocks.push(r),
                             Ok(None) => {
                                 return Err(anyhow_error_and_log(
-                                    format!("Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()),
+                                    format!("Not enough shares to reconstruct. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}", &cur_block_shares.shares.len()),
                                 ));
                             }
                             Err(e) => {
                                 return Err(anyhow_error_and_log(format!(
-                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}", &cur_block_shares.shares.len()
+                                    "Error reconstructing all blocks: {e}. n={num_parties}, deg={degree}, #shares={amount_shares}, block_shares={}, recovery_errors={recovery_errors}", &cur_block_shares.shares.len()
                                 )));
                             }
                         }
@@ -1663,7 +1675,7 @@ impl Client {
         &self,
         agg_resp: &[UserDecryptionResponsePayload],
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ShamirSharings<ResiduePolyF4<Z>>>)>> {
+    ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ShamirSharings<ResiduePolyF4<Z>>>, usize)>> {
         let batch_count = agg_resp
             .first()
             .ok_or_else(|| anyhow::anyhow!("response payloads is empty"))?
@@ -1687,6 +1699,8 @@ impl Client {
             }
             // It is ok to use the first packing factor because this is checked by [self.validate_user_decrypt_responses_against_request]
             let packing_factor = agg_resp[0].signcrypted_ciphertexts[batch_i].packing_factor;
+            // the number of recovery errors in this block (e.g. due to failed signcryption)
+            let mut recovery_errors = 0;
             for cur_resp in agg_resp {
                 // Observe that it has already been verified in [validate_meta_data] that server
                 // verification key is in the set of permissible keys
@@ -1721,16 +1735,11 @@ impl Client {
                             cur_resp.party_id,
                             e
                         );
-                        fill_indexed_shares(
-                            &mut sharings,
-                            Vec::new(),
-                            num_blocks,
-                            Role::indexed_from_one(cur_resp.party_id as usize),
-                        )?;
+                        recovery_errors += 1;
                     }
                 };
             }
-            out.push((fhe_type, packing_factor, sharings));
+            out.push((fhe_type, packing_factor, sharings, recovery_errors));
         }
         Ok(out)
     }
@@ -4795,6 +4804,30 @@ pub(crate) mod tests {
         .await;
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    #[should_panic]
+    async fn test_user_decryption_threshold_all_malicious_failure() {
+        // should panic because the malicious set is too big
+        user_decryption_threshold(
+            TEST_PARAM,
+            &TEST_THRESHOLD_KEY_ID_4P.to_string(),
+            false,
+            TestingPlaintext::U16(u16::MAX),
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
+            1,    // parallelism
+            true, // secure
+            4,    // no. of parties
+            None,
+            Some(vec![1, 2, 3, 4]), // all parties are malicious
+            None,
+        )
+        .await;
+    }
+
     #[rstest::rstest]
     #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
     #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P.to_string(), DecryptionMode::NoiseFloodSmall)]
@@ -5071,6 +5104,7 @@ pub(crate) mod tests {
                 }
                 final_result
             } else {
+                // insecure processing
                 internal_client.server_identities = ServerIdentities::Addrs(HashMap::new());
                 // test with one fewer response if we haven't crashed too many parties already
                 let result_from_dropped_response = if threshold > party_ids_to_crash.len() {

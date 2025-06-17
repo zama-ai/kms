@@ -1,5 +1,6 @@
 use clap::Parser;
 use kms_core_client::*;
+use kms_lib::conf::ValidateConfig;
 use kms_lib::consts::SIGNING_KEY_ID;
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use std::path::Path;
@@ -7,11 +8,12 @@ use std::path::Path;
 // CLI
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
-    println!("Starting Core Client");
+    println!("Starting KMS Core Client v{}", env!("CARGO_PKG_VERSION"));
 
     // Parse command line arguments and configuration file
     // TODO: handle different deployment modes in the configuration
     let config = CmdConfig::parse();
+    config.validate()?;
     if config.logs {
         // Logging configuration
         setup_logging();
@@ -25,10 +27,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
     match res {
         Ok(vec_res) => {
-            for (success, msg) in vec_res.into_iter() {
-                if let Some(value) = success {
-                    // WARNING: This format MUST not be changed since the current deployment configuration runs a grep on "request_id"
-                    println!("{msg} - \"request_id\": \"{}\"", value);
+            for (opt_req_id, msg) in vec_res.into_iter() {
+                match opt_req_id {
+                    Some(req_id) => {
+                        // WARNING: This format MUST not be changed since the current deployment configuration runs a grep on "request_id"
+                        println!("{msg} - \"request_id\": \"{}\"", req_id);
+                    }
+                    None => {
+                        println!("{msg} - no request_id returned");
+                    }
                 }
             }
             return Ok(());

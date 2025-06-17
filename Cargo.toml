@@ -94,6 +94,7 @@ tracing = { version = "=0.1.41", features = ["log"] }
 tracing-appender = "=0.2.3"
 tracing-opentelemetry = "=0.30.0"
 tracing-subscriber = { version = "=0.3.19", features = ["fmt", "std"] }
+validator = { version = "=0.20.0", features = ["derive"] }
 x509-parser = { version = "=0.17.0", features = ["verify"] }
 
 alloy-dyn-abi = "=1.1.2"

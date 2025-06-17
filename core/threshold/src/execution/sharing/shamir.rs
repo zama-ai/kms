@@ -194,7 +194,7 @@ where
 
 /// Maps `values` into [ShamirSharings]s by appending these to `sharings`.
 /// Furthermore, ensure that at least `num_values` shares are added to `sharings`.
-/// The function is useful to ensure that an indexiable vector of Shamir shares exist.
+/// The function is useful to ensure that an indexable vector of Shamir shares exist.
 pub fn fill_indexed_shares<Z: Ring>(
     sharings: &mut [ShamirSharings<Z>],
     values: Vec<Z>,
@@ -202,17 +202,19 @@ pub fn fill_indexed_shares<Z: Ring>(
     party_id: Role,
 ) -> anyhow::Result<()> {
     let values_len = values.len();
+
     values
         .into_iter()
         .zip(sharings.iter_mut())
         .try_for_each(|(v, sharing)| sharing.add_share(Share::new(party_id, v)))?;
 
+    // fill up to num_values with 0s if not enough values were provided
     if values_len < num_values {
         tracing::warn!(
-            "Received {} shares from {} but expected {}. Filling with 0s",
+            "Received {} shares from party {} but expected {}. Filling with 0s",
             values_len,
-            num_values,
-            party_id
+            party_id,
+            num_values
         );
         for sharing in sharings.iter_mut().skip(values_len) {
             sharing.add_share(Share::new(party_id, Z::ZERO))?;
@@ -252,8 +254,8 @@ where
         // max_errs = threshold - num_bots
         let max_errs = threshold.checked_sub(num_bots).ok_or_else(|| {
             anyhow_error_and_warn_log(format!(
-                "Underflow in max_errs: threshold ({}) < num_bots ({})",
-                threshold, num_bots
+                "Underflow in reconstruction computing max_errs:  num_bots ({}) > threshold ({})",
+                num_bots, threshold
             ))
         })?;
 
@@ -297,7 +299,13 @@ where
     let num_heard_from = sharing.shares.len() + num_bots;
     if degree + 3 * threshold < num_parties {
         if num_heard_from > degree + 2 * threshold {
-            let max_errs = threshold - num_bots;
+            // max_errs = threshold - num_bots
+            let max_errs = threshold.checked_sub(num_bots).ok_or_else(|| {
+                anyhow_error_and_warn_log(format!(
+                "Underflow in reconstruction computing max_errs:  num_bots ({}) > threshold ({})",
+                num_bots, threshold
+            ))
+            })?;
             let opened = sharing.err_reconstruct(degree, max_errs)?;
             Ok(Some(opened))
         } else {
