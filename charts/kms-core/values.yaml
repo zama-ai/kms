@@ -181,6 +181,8 @@ kmsInit:
 kmsGenCert:
   enabled: false
   nameOverride:
+  configmap:
+    name:
 
 # Automatic Key Generation job
 kmsGenKeys:
