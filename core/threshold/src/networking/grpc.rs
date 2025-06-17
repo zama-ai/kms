@@ -8,7 +8,7 @@ mod gen {
 use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
 use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
-use super::tls::{extract_subject_from_cert, SendingServiceTLSConfig};
+use super::tls::extract_context_id_and_subject_from_cert;
 use super::NetworkMode;
 use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::networking::constants::{
@@ -278,7 +278,7 @@ impl GrpcNetworkingManager {
     /// Owner should be the external address
     pub fn new(
         owner: Identity,
-        tls_conf: Option<SendingServiceTLSConfig>,
+        tls_conf: Option<tokio_rustls::rustls::client::ClientConfig>,
         conf: Option<CoreToCoreNetworkConfig>,
     ) -> anyhow::Result<Self> {
         #[cfg(feature = "testing")]

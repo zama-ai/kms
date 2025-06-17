@@ -139,4 +139,6 @@ lazy_static::lazy_static! {
     // We do so, since there is ever only one conceptual signing key per party (at least for now).
     // This is a bit hackish, but it works for now.
     pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
+
+    pub static ref DEFAULT_MPC_CONTEXT: RequestId = derive_request_id("DEFAULT_MPC_CONTEXT").unwrap();
 }
