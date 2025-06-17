@@ -251,7 +251,7 @@ spec:
             - -c
             - |
               apk add curl
-              BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/\?list-type\=2\&prefix\=PUB-p{{ .Values.kmsPeers.id }}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
+              BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/?list-type=2&prefix=PUB-p{{ .Values.kmsPeers.id }}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
               curl -s -o /keygen/ca_pem "${CORE_CLIENT__S3_ENDPOINT}/${BUCKET_PATH}"
               echo "creating kubernetes configmap "
               kubectl create configmap kms-ca-pem-{{ .Values.kmsPeers.id }} \
