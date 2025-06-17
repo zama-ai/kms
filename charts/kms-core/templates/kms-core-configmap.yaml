@@ -50,9 +50,11 @@ data:
     num_parties = {{ int .Values.kmsPeers.count }}
       {{- end }}
       {{ if .Values.kmsCore.addressOverride }}
-    tls_subject = {{ .Values.kmsCore.addressOverride | quote }}
+    # tls_subject = {{ .Values.kmsCore.addressOverride | quote }}
+    tls_subject = "localhost"
       {{- else }}
-    tls_subject = "{{ include "kmsCoreName" . }}"
+    # tls_subject = "{{ include "kmsCoreName" . }}"
+    tls_subject = "localhost"
       {{- end }}
     {{- end }}
   kms-server.toml: |
