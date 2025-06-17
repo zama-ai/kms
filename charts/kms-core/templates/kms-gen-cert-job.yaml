@@ -250,8 +250,8 @@ spec:
           args:
             - -c
             - |
-              BUCKET_PATH=$(curl ${CORE_CLIENT__S3_ENDPOINT}/\?list-type\=2\&prefix\=PUB-p{{ .Values.kmsPeers.id }}/CACert/ | grep -o '<Key>[^<]*</Key>' | sed 's/<Key>//;s/<\/Key>//')
-              wget -O /keygen/ca_pem ${CORE_CLIENT__S3_ENDPOINT}/${BUCKET_PATH}
+              BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/\?list-type\=2\&prefix\=PUB-p{{ .Values.kmsPeers.id }}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
+              curl -s -o /keygen/ca_pem "${CORE_CLIENT__S3_ENDPOINT}/${BUCKET_PATH}"
               echo "creating kubernetes configmap "
               kubectl create configmap kms-ca-pem-{{ .Values.kmsPeers.id }} \
                 --from-literal=KMS_CA_PEM="$(cat /keygen/ca_pem)"
