@@ -1,3 +1,6 @@
+//! Implementation of the ceremony protocol for generating a CRS (Common Reference String)
+//! that is used in our zero-knowledge proofs for proving plaintext knowledge.
+
 use crate::{
     algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
@@ -223,6 +226,10 @@ fn compute_meta_parameter(
     Ok(meta_param)
 }
 
+/// Compute the witness dimension for the given parameters.
+///
+/// This corresponds to Step 2 of CRS.Gen from the NIST spec,
+/// but the exact calculation are happening inside tfhe-rs.
 pub fn compute_witness_dim(
     params: &CompactPublicKeyEncryptionParameters,
     max_num_bits: Option<usize>,
@@ -266,6 +273,10 @@ impl WrappedG1G2s {
 }
 
 impl InternalPublicParameter {
+    /// Convert the internal public parameter, which is the result of the ceremony,
+    /// into a [tfhe::zk::CompactPkeCrs] that can be used for zero-knowledge proofs in tfhe-rs.
+    ///
+    /// This is essentially the final step (Step 4) of CRS.Gen from the NIST spec.
     pub fn try_into_tfhe_zk_pok_pp(
         &self,
         params: &CompactPublicKeyEncryptionParameters,
@@ -352,6 +363,8 @@ impl InternalPublicParameter {
     }
 
     /// Create new PublicParameter for given witness dimension containing the generators
+    ///
+    /// This is the CRS-Gen.Init protocol from the NIST spec.
     pub fn new(witness_dim: usize, max_num_bits: Option<u32>) -> Self {
         let max_num_bits = max_num_bits.unwrap_or(ZK_DEFAULT_MAX_NUM_BITS as u32) as usize;
         InternalPublicParameter {
@@ -438,6 +451,9 @@ fn make_partial_proof_deterministic(
 
     // [tau_powers] should not be re-allocated (e.g., extended) because
     // zeroize does not guarantee that the deallocated memory is zeroed.
+    //
+    // we need \tau^1, ..., \tau^{2*b1} for the new CRS
+    // but we do not use \tau^{b1 + 1}
     let tau_powers = (0..2 * b1)
         .scan(curve::Zp::ONE, |acc, _| {
             *acc = acc.mul(tau);
@@ -449,6 +465,9 @@ fn make_partial_proof_deterministic(
     // using current_pp.round + 1 because
     // some rounds might be skipped when malicious parties
     // do not send a valid proof.
+    //
+    // This is Step 1 of CRS-Gen.Update from the NIST spec
+    // where pp_j is computed.
     //
     // The scalar multiplication
     // with powers of tau is the most expensive step.
@@ -486,6 +505,8 @@ fn make_partial_proof_deterministic(
         ),
     };
 
+    // This is Step 2 of CRS-Gen.Update from the NIST spec
+    // where the contributor j runs NIZK to prove the knowledge of the discrete logarithm \tau.
     let g1_jm1 = current_pp.inner.g1s[0]; // g_{1,j-1}
     let r_pok = g1_jm1.mul_scalar(r); // R_{pok, j}
     let g1_j = new_pp.inner.g1s[0]; // g_{1, j}
@@ -551,12 +572,15 @@ fn verify_proof(
     let g1_jm1 = current_pp.inner.g1s[0]; // g_{1,j-1}
     let g1_j = new_pp.inner.g1s[0]; // g_{1, j}
 
+    // Step 3 of CRS-Gen.Update from the NIST spec.
+    //
     // verify the discrete log proof
     // this proof ensures that the prover
     // did not erase the previous CRS contribution
     verify_dlog_proof(partial_proof.s_pok, partial_proof.h_pok, &g1_jm1, &g1_j)?;
 
     // check g1_j is not zero (or 1 in multiplicative notation)
+    // this is also a part of Step 3
     if g1_j == curve::G1::ZERO {
         return Err(anyhow_error_and_log(
             "non-degenerative check failed".to_string(),
@@ -583,6 +607,8 @@ fn verify_proof(
         ));
     }
 
+    // Step 4 of CRS-Gen.Update from the NIST spec.
+    //
     // perform the well-formedness check
     // this check guarantees that the prover
     // is raising the elements in the CRS by the correct powers of tau
@@ -620,6 +646,7 @@ fn verify_dlog_proof(
     Ok(())
 }
 
+/// Step 4 of CRS-Gen.Update from the NIST spec
 fn verify_wellformedness(new_pp: &InternalPublicParameter) -> anyhow::Result<()> {
     // verify the other parts of the new CRS
     let rhos = new_pp.hash_to_scalars(2);
@@ -637,69 +664,77 @@ fn verify_wellformedness(new_pp: &InternalPublicParameter) -> anyhow::Result<()>
     }
 
     // powers of rho start at rho^0
-    let rho0_powers = std::iter::once(curve::Zp::ONE)
+    // this is because the spec uses \rho^{i - 1} for i starting at 1
+    let rho1_powers = std::iter::once(curve::Zp::ONE)
         .chain((0..2 * b1 - 1).scan(curve::Zp::ONE, |acc, _| {
             *acc = acc.mul(rhos[0]);
             Some(*acc)
         }))
         .collect_vec();
-    let rho1_powers = std::iter::once(curve::Zp::ONE)
+    let rho2_powers = std::iter::once(curve::Zp::ONE)
         .chain((0..b1 - 1).scan(curve::Zp::ONE, |acc, _| {
             *acc = acc.mul(rhos[1]);
             Some(*acc)
         }))
         .collect_vec();
 
-    let lhs0 = new_pp
+    // \prod_{i=1, i != b1+1, i!= b1+2}^{2*b1} g_{i,j}^{\rho_1^{i-1}}
+    let lhs1 = new_pp
         .inner
         .g1s
         .par_iter()
         .enumerate()
         .filter_map(|(i, g)| {
+            // note that rho1_powers[i] is \rho_1^{i - 1} in the NIST spec
             if i == b1 || i == b1 + 1 {
                 None
             } else {
-                Some(g.mul_scalar(rho0_powers[i]))
+                Some(g.mul_scalar(rho1_powers[i]))
             }
         })
         .sum::<curve::G1>();
 
-    let lhs1 = new_pp
+    // \hat{g} \cdot \sum_{\ell = 1}^{b1 - 1} \hat{g}_{\ell,j}^{\rho_2^{\ell}}
+    let lhs2 = new_pp
         .inner
         .g2s
         .par_iter()
         .take(b1 - 1)
         .enumerate()
-        .map(|(l, g_hat)| g_hat.mul_scalar(rho1_powers[l + 1]))
+        .map(|(l, g_hat)| g_hat.mul_scalar(rho2_powers[l + 1]))
         .sum::<curve::G2>()
         .add(curve::G2::GENERATOR);
 
     debug_assert_eq!(new_pp.inner.g1s.len(), b1 * 2);
-    let rhs0 = new_pp
+
+    // g \cdot \prod_{i=1, i != b1, i!= b1+1}^{2*b1-1} g_{i,j}^{\rho_1^i}
+    let rhs1 = new_pp
         .inner
         .g1s
         .par_iter()
         .take(b1 * 2 - 1)
         .enumerate()
         .filter_map(|(i, g)| {
+            // note that rho1_powers[i + 1] is \rho_1^i in the NIST spec
             if i == b1 - 1 || i == b1 {
                 None
             } else {
-                Some(g.mul_scalar(rho0_powers[i + 1]))
+                Some(g.mul_scalar(rho1_powers[i + 1]))
             }
         })
         .sum::<curve::G1>()
         .add(curve::G1::GENERATOR);
 
-    let rhs1 = new_pp
+    // \prod_{l=1}^{b1} \hat{g}_{\ell,j}^{\rho_2^{\ell - 1}}
+    let rhs2 = new_pp
         .inner
         .g2s
         .par_iter()
         .enumerate()
-        .map(|(l, g_hat)| g_hat.mul_scalar(rho1_powers[l]))
+        .map(|(l, g_hat)| g_hat.mul_scalar(rho2_powers[l]))
         .sum::<curve::G2>();
 
-    if e(lhs0, lhs1) != e(rhs0, rhs1) {
+    if e(lhs1, lhs2) != e(rhs1, rhs2) {
         return Err(anyhow_error_and_log(
             "well-formedness check failed (2)".to_string(),
         ));
@@ -810,6 +845,9 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
                                     });
                                     let (ver, pp_tmp) = recv.await?;
                                     pp = pp_tmp;
+
+                                    // Step 5 of CRS-Gen.Update from the NIST spec
+                                    // where we receive the proof and update the public parameter if the proof is valid.
                                     match ver {
                                         // verification succeeded, we can update pp with the new value
                                         Ok(new_pp) => pp = new_pp,
