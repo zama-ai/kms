@@ -8,7 +8,7 @@ const {
     ml_kem_pke_decrypt,
     ml_kem_pke_pk_to_u8vec,
     ml_kem_pke_sk_to_u8vec,
-    ml_kem_pke_ct_pk_len,
+    ml_kem_pke_pk_len,
     ml_kem_pke_sk_len,
     process_user_decryption_resp,
     process_user_decryption_resp_from_js,
@@ -38,7 +38,7 @@ test('pke', (_t) => {
 
     // there is extra 8 bytes in the bincode encoding to encode the vector length
     // see https://github.com/bincode-org/bincode/blob/trunk/docs/spec.md#linear-collections-vec-arrays-etc
-    assert.deepEqual(ml_kem_pke_ct_pk_len() + 8, pk_buf.length);
+    assert.deepEqual(ml_kem_pke_pk_len() + 8, pk_buf.length);
     assert.deepEqual(ml_kem_pke_sk_len() + 8, sk_buf.length);
 
     // try to deserialize

@@ -78,8 +78,8 @@ use super::*;
 
 // We can't wasm-bindgen consts, so we put it in a function instead.
 #[wasm_bindgen]
-pub fn ml_kem_pke_ct_pk_len() -> usize {
-    hybrid_ml_kem::ML_KEM_CT_PK_LENGTH
+pub fn ml_kem_pke_pk_len() -> usize {
+    hybrid_ml_kem::ML_KEM_PK_LENGTH
 }
 
 #[wasm_bindgen]

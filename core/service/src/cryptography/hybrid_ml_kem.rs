@@ -1,7 +1,7 @@
 use aes_gcm::{aead::Aead, AeadCore, Aes256Gcm, Key, KeyInit, KeySizeUser};
 use ml_kem::{
     kem::{Decapsulate, DecapsulationKey, Encapsulate, EncapsulationKey},
-    KemCore, MlKem1024Params,
+    KemCore, MlKem512Params,
 };
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -10,21 +10,22 @@ use tfhe_versionable::VersionsDispatch;
 
 use super::error::CryptographyError;
 
-pub(crate) type KemParam = MlKem1024Params;
+pub(crate) type KemParam = MlKem512Params;
 
-pub(crate) const ML_KEM_CT_PK_LENGTH: usize = 1568; // for MlKem1024Params
-pub(crate) const ML_KEM_SK_LEN: usize = 3168; // for MlKem1024Params
+pub(crate) const ML_KEM_CT_LENGTH: usize = 768; // ciphertext size for MlKem512Params
+pub(crate) const ML_KEM_PK_LENGTH: usize = 800; // encapsulation key size for MlKem512Params
+pub(crate) const ML_KEM_SK_LEN: usize = 1632; // decapsulation key size for MlKem512Params
 const NONCE_LEN: usize = 12;
 
 pub(crate) fn keygen<R: Rng + CryptoRng>(
     rng: &mut R,
 ) -> (DecapsulationKey<KemParam>, EncapsulationKey<KemParam>) {
-    ml_kem::MlKem1024::generate(rng)
+    ml_kem::MlKem512::generate(rng)
 }
 
 struct InnerHybridKemCt {
     pub nonce: [u8; NONCE_LEN],
-    pub kem_ct: [u8; ML_KEM_CT_PK_LENGTH],
+    pub kem_ct: [u8; ML_KEM_CT_LENGTH],
     pub payload_ct: Vec<u8>,
 }
 
@@ -55,12 +56,12 @@ impl TryFrom<HybridKemCt> for InnerHybridKemCt {
     type Error = CryptographyError;
 
     fn try_from(value: HybridKemCt) -> Result<Self, Self::Error> {
-        if value.kem_ct.len() != ML_KEM_CT_PK_LENGTH {
+        if value.kem_ct.len() != ML_KEM_CT_LENGTH {
             return Err(CryptographyError::LengthError(
                 "kem ciphertext has the wrong length".to_string(),
             ));
         }
-        let mut kem_ct = [0u8; ML_KEM_CT_PK_LENGTH];
+        let mut kem_ct = [0u8; ML_KEM_CT_LENGTH];
         kem_ct.copy_from_slice(&value.kem_ct);
         Ok(Self {
             nonce: value.nonce,
@@ -144,11 +145,11 @@ mod tests {
         fn pke_sunshine(msg: Vec<u8>) {
             let mut rng = OsRng;
             let (sk, pk) = keygen(&mut rng);
-            assert_eq!(pk.as_bytes().len(), ML_KEM_CT_PK_LENGTH);
+            assert_eq!(pk.as_bytes().len(), ML_KEM_PK_LENGTH);
             assert_eq!(sk.as_bytes().len(), ML_KEM_SK_LEN);
 
             let ct = enc(&mut rng, &msg, &pk).unwrap();
-            assert_eq!(ct.kem_ct.len(), ML_KEM_CT_PK_LENGTH);
+            assert_eq!(ct.kem_ct.len(), ML_KEM_CT_LENGTH);
             assert_eq!(ct.nonce.len(), NONCE_LEN);
 
             let mut ct_buf = Vec::new();
@@ -170,7 +171,7 @@ mod tests {
             let (_sk, pk) = keygen(&mut rng, );
             let (sk, _pk) = keygen(&mut rng, );
             let ct = enc(&mut rng, &msg, &pk).unwrap();
-            assert_eq!(ct.kem_ct.len(), ML_KEM_CT_PK_LENGTH);
+            assert_eq!(ct.kem_ct.len(), ML_KEM_CT_LENGTH);
             let err = dec(ct, &sk).unwrap_err();
             assert!(matches!(err, CryptographyError::AesGcmError(..)));
         }
@@ -180,7 +181,7 @@ mod tests {
             let mut rng = OsRng;
             let (sk, pk) = keygen(&mut rng, );
             let mut ct = enc(&mut rng, &msg, &pk).unwrap();
-            assert_eq!(ct.kem_ct.len(), ML_KEM_CT_PK_LENGTH);
+            assert_eq!(ct.kem_ct.len(), ML_KEM_CT_LENGTH);
             ct.payload_ct[0] ^= 1;
             let err = dec(ct, &sk).unwrap_err();
             assert!(matches!(err, CryptographyError::AesGcmError(..)));

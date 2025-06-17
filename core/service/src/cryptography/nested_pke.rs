@@ -13,7 +13,7 @@ use tfhe_versionable::VersionsDispatch;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::hybrid_ml_kem::KemParam;
 use crate::cryptography::hybrid_ml_kem::ML_KEM_SK_LEN;
-use crate::cryptography::hybrid_ml_kem::{self, ML_KEM_CT_PK_LENGTH};
+use crate::cryptography::hybrid_ml_kem::{self, ML_KEM_PK_LENGTH};
 
 use super::error::CryptographyError;
 use super::hybrid_rsa;
@@ -130,12 +130,12 @@ impl TryFrom<&NestedPublicKey> for InnerNestedPublicKey {
     type Error = CryptographyError;
 
     fn try_from(value: &NestedPublicKey) -> Result<Self, Self::Error> {
-        if value.encapsulation_key.len() != ML_KEM_CT_PK_LENGTH {
+        if value.encapsulation_key.len() != ML_KEM_PK_LENGTH {
             return Err(CryptographyError::LengthError(
                 "encapsulation key has the wrong length".to_string(),
             ));
         }
-        let mut encapsulation_key_buf = [0u8; ML_KEM_CT_PK_LENGTH];
+        let mut encapsulation_key_buf = [0u8; ML_KEM_PK_LENGTH];
         encapsulation_key_buf.copy_from_slice(&value.encapsulation_key);
 
         let rsa_public_key = RsaPublicKey::from_pkcs1_der(&value.rsa_public_key)?;
