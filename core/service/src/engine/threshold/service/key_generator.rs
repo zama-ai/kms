@@ -837,12 +837,12 @@ impl<
                             // TODO insecure keygen from existing compression key is not supported
                             let mut guarded_meta_storage = meta_store.write().await;
                             let _ = guarded_meta_storage.update(
-                            req_id,
-                            Err(
-                                "insecure keygen from existing compression key is not supported"
-                                    .to_string(),
-                            ),
-                        );
+                                req_id,
+                                Err(
+                                    "insecure keygen from existing compression key is not supported"
+                                        .to_string(),
+                                ),
+                            );
                             return;
                         }
                     }

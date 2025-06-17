@@ -19,9 +19,6 @@ use threshold_fhe::{
     },
     networking::{
         grpc::{GrpcNetworkingManager, GrpcServer},
-        tls::{
-            build_ca_certs_map, AttestedClientVerifier, BasicTLSConfig, SendingServiceTLSConfig,
-        },
         Networking, NetworkingStrategy,
     },
 };
@@ -29,10 +26,7 @@ use tokio::{
     net::TcpListener,
     sync::{Mutex, RwLock},
 };
-use tokio_rustls::rustls::{
-    pki_types::{CertificateDer, PrivateKeyDer},
-    server::ServerConfig,
-};
+use tokio_rustls::rustls::{client::ClientConfig, server::ServerConfig};
 use tokio_util::task::TaskTracker;
 use tonic::transport::{server::TcpIncoming, Server};
 use tonic_health::pb::health_server::{Health, HealthServer};
@@ -41,7 +35,7 @@ use tonic_tls::rustls::TlsIncoming;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    conf::threshold::{PeerConf, ThresholdPartyConf, TlsCert},
+    conf::threshold::ThresholdPartyConf,
     consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
@@ -163,7 +157,7 @@ pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
 async fn start_mpc_node<F>(
     config: &ThresholdPartyConf,
     mpc_listener: TcpListener,
-    tls_identity: Option<BasicTLSConfig>,
+    tls_config: Option<(ServerConfig, ClientConfig)>,
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS, BackS>,
@@ -186,55 +180,14 @@ where
     )?;
     let mpc_socket_addr = mpc_listener.local_addr()?;
 
-    // We put the party CA certificates into a hashmap keyed by party addresses
-    // to be able to limit trust anchors to only one CA certificate both on
-    // client and server.
-    let tls_certs = extract_tls_certs(tls_identity, &config.peers).await?;
-
-    // We have to construct a rustls config ourselves instead of using the
-    // wrapper from tonic::transport because we need to provide our own
-    // certificate verifier that can also validate bundled attestation
-    // documents.
-    let tls_config = match tls_certs.clone() {
-        Some(SendingServiceTLSConfig {
-            cert,
-            key,
-            ca_certs,
-            trusted_releases,
-            pcr8_expected,
-        }) => {
-            let cert_chain =
-                vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()];
-            let key_der = PrivateKeyDer::try_from(key.contents.as_slice())
-                .map_err(|e| anyhow_error_and_log(e.to_string()))?
-                .clone_key();
-            let client_verifier =
-                AttestedClientVerifier::new(ca_certs, trusted_releases.clone(), pcr8_expected)?;
-
-            match trusted_releases {
-                Some(_) => tracing::info!("Creating server with TLS and AWS Nitro attestation"),
-                None => {
-                    tracing::info!("Creating server with TLS and without AWS Nitro attestation")
-                }
-            }
-            Some(
-                ServerConfig::builder()
-                    .with_client_cert_verifier(Arc::new(client_verifier))
-                    .with_single_cert(cert_chain, key_der)?,
-            )
-        }
-        None => {
-            tracing::warn!("Creating server without TLS");
-            None
-        }
-    };
-
     let (threshold_health_reporter, threshold_health_service) =
         tonic_health::server::health_reporter();
     // This will setup client TLS if tls_certs is set to Some(...)
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         own_identity.to_owned(),
-        tls_certs,
+        tls_config
+            .as_ref()
+            .map(|(_, client_config)| client_config.clone()),
         config.core_to_core_net,
     )?));
     let manager_clone = Arc::clone(&networking_manager);
@@ -281,10 +234,10 @@ where
         // API dependent on rustls)
         let tcp_incoming = TcpIncoming::from(mpc_listener);
         match tls_config {
-            Some(tls_config) => {
+            Some((server_config, _)) => {
                 router
                     .serve_with_incoming_shutdown(
-                        TlsIncoming::new(tcp_incoming, tls_config.into()),
+                        TlsIncoming::new(tcp_incoming, server_config.into()),
                         graceful_shutdown_signal,
                     )
                     .await
@@ -317,7 +270,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
     backup_storage: Option<BackS>,
     mpc_listener: TcpListener,
     sk: PrivateSigKey,
-    tls_identity: Option<BasicTLSConfig>,
+    tls_config: Option<(ServerConfig, ClientConfig)>,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     shutdown_signal: F,
@@ -350,7 +303,7 @@ where
 
     // the initial MPC node might not accept any peers because initially there's no context
     let (abort_handle, networking_manager) =
-        start_mpc_node(&config, mpc_listener, tls_identity.clone(), shutdown_signal).await?;
+        start_mpc_node(&config, mpc_listener, tls_config, shutdown_signal).await?;
 
     // If no RedisConf is provided, we just use in-memory storage for the
     // preprocessing. Note: This is only allowed for testing.
@@ -461,7 +414,6 @@ where
         session_preparer_manager,
         health_reporter: thread_core_health_reporter.clone(),
         threshold_config: config.clone(),
-        tls_identity: tls_identity.clone(),
         base_kms: base_kms.new_instance().await,
     };
 
@@ -573,43 +525,4 @@ where
     );
 
     Ok((kms, core_service_health_service, metastore_status_service))
-}
-
-/// Helper function to extract the TLS certificates from the peer configurations and TLS configuration.
-/// It returns a `SendingServiceTLSConfig` which consists of a tuple of the server certificate, private key, and a map of CA certificates
-async fn extract_tls_certs(
-    tls_identity: Option<BasicTLSConfig>,
-    peer_configs: &[PeerConf],
-) -> anyhow::Result<Option<SendingServiceTLSConfig>> {
-    if let Some(BasicTLSConfig {
-        cert,
-        key,
-        trusted_releases,
-        pcr8_expected,
-    }) = tls_identity
-    {
-        let mut cert_strings = Vec::new();
-        for peer in peer_configs {
-            match peer.tls_cert.as_ref() {
-                Some(TlsCert::Path(path)) => cert_strings.push(
-                    tokio::fs::read_to_string(path)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("Could not read CA certificates: {e}")),
-                ),
-                Some(TlsCert::Pem(bytes)) => cert_strings.push(Ok(bytes.to_string())),
-                None => {}
-            };
-        }
-        let ca_certs = build_ca_certs_map(cert_strings.into_iter())?;
-        tracing::info!("Using TLS trust anchors: {:?}", ca_certs.keys());
-        Ok(Some(SendingServiceTLSConfig {
-            cert,
-            key,
-            ca_certs,
-            trusted_releases,
-            pcr8_expected,
-        }))
-    } else {
-        Ok(None)
-    }
 }

@@ -12,7 +12,7 @@ use super::constants::{
     NETWORK_TIMEOUT_ASYNC, NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
 };
 use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
-use super::tls::{extract_subject_from_cert, SendingServiceTLSConfig};
+use super::tls::extract_context_id_and_subject_from_cert;
 use super::NetworkMode;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::{Identity, RoleAssignment};
@@ -140,7 +140,7 @@ impl GrpcNetworkingManager {
     /// Owner should be the external address
     pub fn new(
         owner: Identity,
-        tls_conf: Option<SendingServiceTLSConfig>,
+        tls_conf: Option<tokio_rustls::rustls::client::ClientConfig>,
         conf: Option<CoreToCoreNetworkConfig>,
     ) -> anyhow::Result<Self> {
         Ok(GrpcNetworkingManager {
@@ -284,7 +284,7 @@ impl Gnetworking for NetworkingImpl {
                     parse_x509_certificate(certs[0].as_ref())
                         .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))
                         .and_then(|(_rem, cert)| {
-                            extract_subject_from_cert(&cert).map_err(|e| {
+                            extract_context_id_and_subject_from_cert(&cert).map_err(|e| {
                                 tonic::Status::new(tonic::Code::Aborted, e.to_string())
                             })
                         })
