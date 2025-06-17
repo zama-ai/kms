@@ -6,7 +6,10 @@ use strum_macros::EnumIs;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::online::preprocessing::redis::RedisConf;
 use threshold_fhe::execution::runtime::party::{Identity, Role};
-use threshold_fhe::networking::{grpc::CoreToCoreNetworkConfig, tls::ReleasePCRValues};
+use threshold_fhe::networking::{
+    grpc::CoreToCoreNetworkConfig,
+    tls::{extract_context_id_and_subject_from_cert, ReleasePCRValues},
+    };
 use validator::{Validate, ValidationError};
 use x509_parser::pem::{parse_x509_pem, Pem};
 
@@ -121,8 +124,9 @@ impl TlsCert {
             .find(|peer| peer.party_id == my_id)
             .expect("Peer list does not have an entry for my id")
             .address;
-        let subject = threshold_fhe::networking::tls::extract_subject_from_cert(&x509_cert)
-            .map_err(|e| anyhow::anyhow!(e))?;
+        let subject = extract_context_id_and_subject_from_cert(&x509_cert)
+            .map_err(|e| anyhow::anyhow!(e))?
+            .1;
         if subject != *my_hostname {
             anyhow::bail!("Certificate subject {subject} does not match hostname {my_hostname}");
         }

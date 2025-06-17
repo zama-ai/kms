@@ -17,24 +17,17 @@ use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     time::{Duration, Instant},
 };
-use tokio_rustls::rustls::{
-    client::{danger::DangerousClientConfigBuilder, ClientConfig, WebPkiServerVerifier},
-    pki_types::{CertificateDer, PrivateKeyDer, ServerName},
-    RootCertStore,
-};
+use tokio_rustls::rustls::{client::ClientConfig, pki_types::ServerName};
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Uri;
 use tonic::{async_trait, transport::Channel};
 
-use crate::{error::error_handler::anyhow_error_and_log, networking::tls::AttestedServerVerifier};
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::{execution::runtime::party::Identity, session_id::SessionId};
 
 #[cfg(feature = "choreographer")]
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
-use super::{
-    grpc::{MessageQueueStore, OptionConfigWrapper},
-    tls::SendingServiceTLSConfig,
-};
+use super::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, OptionConfigWrapper};
 use super::{NetworkMode, Networking};
 use crate::thread_handles::ThreadHandleGroup;
 
@@ -57,7 +50,7 @@ struct Tag {
 pub trait SendingService: Send + Sync {
     /// Init and start the sending service
     fn new(
-        tls_certs: Option<SendingServiceTLSConfig>,
+        tls_certs: Option<ClientConfig>,
         conf: OptionConfigWrapper,
     ) -> anyhow::Result<Self>
     where
@@ -78,7 +71,7 @@ pub struct GrpcSendingService {
     /// Contains all the information needed by the sync network
     pub(crate) config: OptionConfigWrapper,
     /// A ready-made TLS identity (certificate, keypair and CA roots)
-    pub(crate) tls_certs: Option<SendingServiceTLSConfig>,
+    pub(crate) tls_config: Option<ClientConfig>,
     /// Keep in memory channels we already have available
     channel_map:
         DashMap<Identity, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>,
@@ -97,7 +90,7 @@ impl GrpcSendingService {
             return Ok(channel.clone());
         }
 
-        let proto = match self.tls_certs {
+        let proto = match self.tls_config {
             Some(_) => "https",
             None => "http",
         };
@@ -106,14 +99,8 @@ impl GrpcSendingService {
             anyhow_error_and_log(format!("failed to parse identity as endpoint: {receiver}"))
         })?;
 
-        let channel = match &self.tls_certs {
-            Some(SendingServiceTLSConfig {
-                cert,
-                key,
-                ca_certs,
-                trusted_releases,
-                pcr8_expected,
-            }) => {
+        let channel = match &self.tls_config {
+            Some(client_config) => {
                 // If the host is an IP address then we abort
                 // domain names are needed for TLS.
                 //
@@ -144,63 +131,13 @@ impl GrpcSendingService {
                     endpoint
                 };
 
-                // We put only one CA certificate into the root store
-                // so there's no risk of connecting to a wrong party.
-                let ca_cert = ca_certs.get(domain_name.to_str().as_ref()).ok_or_else(|| {
-                    anyhow_error_and_log(format!(
-                        "No CA certificate present for {:?}",
-                        domain_name.to_str().as_ref()
-                    ))
-                })?;
-                let mut roots = RootCertStore::empty();
-                roots.add(CertificateDer::from_slice(&ca_cert.contents))?;
-                let cert_chain =
-                    vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()];
-                let key_der = PrivateKeyDer::try_from(key.contents.as_slice())
-                    .map_err(|e| anyhow_error_and_log(e.to_string()))?
-                    .clone_key();
-                let tls_config = match trusted_releases {
-                    // if AWS Nitro attestation is configured, we have to replace
-                    // the certificate verifier with a custom one that
-                    // performs PCR value checks in addition to standard
-                    // checks
-                    Some(trusted_releases) => {
-                        tracing::warn!(
-                            "Building TLS channel to {:?} with AWS Nitro attestation",
-                            domain_name.to_str().as_ref()
-                        );
-                        let safe_server_cert_verifier =
-                            WebPkiServerVerifier::builder(Arc::new(roots)).build()?;
-                        DangerousClientConfigBuilder {
-                            cfg: ClientConfig::builder(),
-                        }
-                        .with_custom_certificate_verifier(Arc::new(
-                            AttestedServerVerifier::new(
-                                safe_server_cert_verifier,
-                                trusted_releases.clone(),
-                                *pcr8_expected,
-                            ),
-                        ))
-                    }
-                    // if AWS Nitro attestation is not configured, we don't
-                    // tinker with the certificate verifier to avoid the risks
-                    // of using a custom one, although it could have worked
-                    None => {
-                        tracing::warn!(
-                            "Building TLS channel to {:?} without AWS Nitro attestation",
-                            domain_name.to_str().as_ref()
-                        );
-                        ClientConfig::builder().with_root_certificates(roots)
-                    }
-                }
-                .with_client_auth_cert(cert_chain, key_der)?;
                 let endpoint = Channel::builder(endpoint).http2_adaptive_window(true);
                 // we have to pass a custom TLS connector to
                 // tonic::transport::Channel to be able to use a custom rustls
                 // ClientConfig that overrides the certificate verifier for AWS
                 // Nitro attestation
                 let https_connector = HttpsConnectorBuilder::new()
-                    .with_tls_config(tls_config)
+                    .with_tls_config(client_config.clone())
                     .https_only()
                     .with_server_name_resolver(FixedServerNameResolver::new(domain_name))
                     .enable_http2()
@@ -311,12 +248,12 @@ impl SendingService for GrpcSendingService {
     /// Communicates with the service thread to spin up a new connection with `other`
     /// __NOTE__: This requires the service to be running already
     fn new(
-        tls_certs: Option<SendingServiceTLSConfig>,
-        config: OptionConfigWrapper,
+        tls_config: Option<ClientConfig>,
+            config: OptionConfigWrapper,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             config,
-            tls_certs,
+            tls_config,
             thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
             channel_map: DashMap::new(),
         })

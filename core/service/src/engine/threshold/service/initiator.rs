@@ -46,7 +46,6 @@ pub struct RealInitiator<
     pub(crate) _init: PhantomData<Init>,
     // This is needed as a workaround to initialize the session preparer
     pub threshold_config: ThresholdPartyConf,
-    pub tls_identity: Option<threshold_fhe::networking::tls::BasicTLSConfig>,
     pub base_kms: crate::engine::base::BaseKmsStruct,
 }
 
