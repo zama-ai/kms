@@ -52,6 +52,7 @@ spec:
           args:
             - -c
             - |
+              apk add curl
               export AWS_REGION="${AWS_REGION:={{ .Values.kmsCore.aws.region }}}"
               export AWS_ROLE_ARN="${AWS_ROLE_ARN:={{ .Values.kmsCore.aws.roleArn }}}"
               export KMS_CORE__PUBLIC_VAULT__STORAGE="${KMS_CORE__PUBLIC_VAULT__STORAGE:={{ include "kmsPublicVaultStorage" . }}}"
@@ -60,7 +61,9 @@ spec:
               export KMS_CORE__PRIVATE_VAULT__KEYCHAIN="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN:={{ .Values.kmsCore.privateVault.awskms.keychain }}}"
               {{- end }}
               for i in $(seq 1 {{ len .Values.kmsCore.thresholdMode.peersList }}); do
-                export KMS_CA_PEM_${i}="\"\"\"${KMS_CA_PEM}_${i}\"\"\""
+                BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/?list-type=2&prefix=PUB-p${i}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
+                curl -s -o ./ca_pem "${CORE_CLIENT__S3_ENDPOINT}/${BUCKET_PATH}"
+                export KMS_CA_PEM_${i}="\"\"\"$(cat ./ca_pem)\"\"\""
               done
               envsubst < /var/lib/kms-core/config/aws.toml > aws.toml
               envsubst < /var/lib/kms-core/config/vaults.toml > vaults.toml
