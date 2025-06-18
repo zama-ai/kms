@@ -96,7 +96,7 @@ spec:
                 name: {{ .Values.kmsCore.envFrom.configmap.name }}
           {{- end }}
             - configMapRef:
-                name: {{ .Values.kmsGenCert.configmap.name }}-{{ .Values.kmsPeers.id }}
+                name: "{{ .Values.kmsGenCert.configmap.name }}-{{ .Values.kmsPeers.id }}"
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
             - mountPath: /var/lib/kms-core/config
