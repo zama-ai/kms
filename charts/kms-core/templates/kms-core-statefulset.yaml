@@ -59,7 +59,9 @@ spec:
               {{- if .Values.kmsCore.nitroEnclave.enabled }}
               export KMS_CORE__PRIVATE_VAULT__KEYCHAIN="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN:={{ .Values.kmsCore.privateVault.awskms.keychain }}}"
               {{- end }}
-              export KMS_CA_PEM="\"\"\"${KMS_CA_PEM:={{ .Values.kmsCore.thresholdMode.tls.ca_certificate.pem }}}\"\"\""
+              for i in $(seq 1 {{ .Values.kmsPeers.count }}); do
+                export KMS_CA_PEM_${i}="\"\"\"${KMS_CA_PEM_${i}:={{ .Values.kmsCore.thresholdMode.tls.ca_certificate.pem }}}\"\"\""
+              done
               envsubst < /var/lib/kms-core/config/aws.toml > aws.toml
               envsubst < /var/lib/kms-core/config/vaults.toml > vaults.toml
               envsubst < /var/lib/kms-core/config/kms-gen-keys.toml > kms-gen-keys.toml
