@@ -113,10 +113,8 @@ impl TestedModule for ThresholdFhe {
         format: DataFormat,
     ) -> TestResult {
         match &testcase.metadata {
-            Self::Metadata::PRSSSetup(_test) => {
-                //TODO: https://github.com/zama-ai/kms-core/issues/2560
-                //test_prss_setup(test_dir.as_ref(), test, format).into()
-                TestResult::Skipped(testcase.skip())
+            Self::Metadata::PRSSSetup(test) => {
+                test_prss_setup(test_dir.as_ref(), test, format).into()
             }
             Self::Metadata::PrfKey(test) => test_prf_key(test_dir.as_ref(), test, format).into(),
         }

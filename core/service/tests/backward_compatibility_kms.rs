@@ -346,7 +346,6 @@ fn test_operator_backup_output(
     }
 }
 
-#[expect(dead_code)]
 fn test_nested_pke(
     dir: &Path,
     test: &NestedPkeTest,
@@ -416,19 +415,14 @@ impl TestedModule for KMS {
             Self::Metadata::AppKeyBlob(test) => {
                 test_app_key_blob(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::CustodianSetupMessage(_test) => {
-                //TODO: https://github.com/zama-ai/kms-core/issues/2560
-                //test_custodian_setup_message(test_dir.as_ref(), test, format).into()
-                TestResult::Skipped(testcase.skip())
+            Self::Metadata::CustodianSetupMessage(test) => {
+                test_custodian_setup_message(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::OperatorBackupOutput(_test) => {
-                //TODO: https://github.com/zama-ai/kms-core/issues/2560
-                // test_operator_backup_output(test_dir.as_ref(), test, format).into()
-                TestResult::Skipped(testcase.skip())
+            Self::Metadata::OperatorBackupOutput(test) => {
+                test_operator_backup_output(test_dir.as_ref(), test, format).into()
             }
-            Self::Metadata::NestedPke(_test) => {
-                // test_nested_pke(test_dir.as_ref(), test, format).into()
-                TestResult::Skipped(testcase.skip())
+            Self::Metadata::NestedPke(test) => {
+                test_nested_pke(test_dir.as_ref(), test, format).into()
             }
         }
     }

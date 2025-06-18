@@ -274,12 +274,12 @@ const NESTED_PKE_TEST: NestedPkeTest = NestedPkeTest {
     seed: 42,
 };
 
-fn dummy_domain() -> alloy_sol_types_1_0_0::Eip712Domain {
-    alloy_sol_types_1_0_0::eip712_domain!(
+fn dummy_domain() -> alloy_sol_types_1_1_2::Eip712Domain {
+    alloy_sol_types_1_1_2::eip712_domain!(
         name: "Authorization token",
         version: "1",
         chain_id: 8006,
-        verifying_contract: alloy_primitives_1_0_0::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        verifying_contract: alloy_primitives_1_1_2::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
     )
 }
 
@@ -484,8 +484,14 @@ impl KmsV0_11 {
         let mut rng = AesRng::seed_from_u64(CUSTODIAN_SETUP_MESSAGE_TEST.seed);
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
         let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
-        let custodian =
-            Custodian::new(0, signing_key, verification_key, private_key, public_key).unwrap();
+        let custodian = Custodian::new(
+            Role::indexed_from_zero(0),
+            signing_key,
+            verification_key,
+            private_key,
+            public_key,
+        )
+        .unwrap();
         let custodian_setup_message = custodian.generate_setup_message(&mut rng).unwrap();
         store_versioned_test!(
             &custodian_setup_message,
@@ -502,7 +508,14 @@ impl KmsV0_11 {
             .map(|i| {
                 let (verification_key, signing_key) = gen_sig_keys(&mut rng);
                 let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
-                Custodian::new(i, signing_key, verification_key, private_key, public_key).unwrap()
+                Custodian::new(
+                    Role::indexed_from_zero(i),
+                    signing_key,
+                    verification_key,
+                    private_key,
+                    public_key,
+                )
+                .unwrap()
             })
             .collect();
         let custodian_messages: Vec<_> = custodians
@@ -514,7 +527,7 @@ impl KmsV0_11 {
             let (verification_key, signing_key) = gen_sig_keys(&mut rng);
             let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
             Operator::new(
-                0,
+                Role::indexed_from_zero(0),
                 custodian_messages,
                 signing_key,
                 verification_key,
@@ -530,7 +543,7 @@ impl KmsV0_11 {
                 &OPERATOR_BACKUP_OUTPUT_TEST.plaintext,
                 RequestId::from_bytes(OPERATOR_BACKUP_OUTPUT_TEST.backup_id),
             )
-            .unwrap()[&0];
+            .unwrap()[&Role::indexed_from_zero(0)];
 
         store_versioned_test!(
             operator_backup_output,

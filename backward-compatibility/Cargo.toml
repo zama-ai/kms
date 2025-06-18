@@ -9,9 +9,9 @@ license = "BSD-3-Clause-Clear"
 [dependencies]
 # This is a list of kms-core versions we will generate data for. This list will grow over time.
 # They are only activated when generating data, with the binary target and the "generate" feature.
-kms_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "kms", rev = "e5bcb56f13c808a9e967023e6998cf3f6a8fff43", optional = true }
-kms_grpc_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "kms-grpc", rev = "e5bcb56f13c808a9e967023e6998cf3f6a8fff43", optional = true }
-threshold_fhe_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "threshold-fhe", rev = "e5bcb56f13c808a9e967023e6998cf3f6a8fff43", optional = true, features = [
+kms_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "kms", rev = "c8b0230ad24c74083a4fd99f317ae86b636a48c6", optional = true }
+kms_grpc_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "kms-grpc", rev = "c8b0230ad24c74083a4fd99f317ae86b636a48c6", optional = true }
+threshold_fhe_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "threshold-fhe", rev = "c8b0230ad24c74083a4fd99f317ae86b636a48c6", optional = true, features = [
     "testing",
 ] }
 
@@ -22,8 +22,8 @@ tfhe_versionable_0_5 = { package = "tfhe-versionable", version = "0.5.0", option
 tfhe_1_1 = { package = "tfhe", version = "1.1.3", optional = true, features = [
     "shortint",
 ] }
-alloy-sol-types-1_0_0 = { package = "alloy-sol-types", version = "=1.0.0", optional = true }
-alloy-primitives-1_0_0 = { package = "alloy-primitives", version = "=1.0.0", optional = true }
+alloy-sol-types-1_1_2 = { package = "alloy-sol-types", version = "=1.1.2", optional = true }
+alloy-primitives-1_1_2 = { package = "alloy-primitives", version = "=1.1.2", optional = true }
 serde = { version = "=1.0.219", features = ["derive"] }
 strum = { version = "=0.27.1", features = ["derive"] }
 semver = { version = "=1.0.26", optional = true }
@@ -45,8 +45,11 @@ generate = [
     "dep:threshold_fhe_0_11",
     "dep:tfhe_versionable_0_5",
     "dep:tfhe_1_1",
-    "dep:alloy-sol-types-1_0_0",
-    "dep:alloy-primitives-1_0_0",
+    "dep:alloy-sol-types-1_1_2",
+    "dep:alloy-primitives-1_1_2",
 ]
 load = ["dep:semver"]
 tests = []
+
+[patch.crates-io]
+rcgen = { git = 'https://github.com/mkmks/rcgen.git', branch = 'k256' }
