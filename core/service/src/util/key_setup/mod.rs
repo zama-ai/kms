@@ -30,8 +30,9 @@ use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::{
     tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
-    zk::ceremony::make_centralized_public_parameters,
+    zk::ceremony::public_parameters_by_trusted_setup,
 };
+use threshold_fhe::session_id::SessionId;
 use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
 
 /// Compact public key for FHE operations
@@ -313,8 +314,9 @@ where
     let max_num_bits_u32 = Some(max_num_bits as u32);
 
     // Use proper error handling instead of unwrap
+    let sid = SessionId::from(0); // we're in the centralized case, so no need sid
     let (pp, crs_info) =
-        match gen_centralized_crs(&sk, &dkg_params, max_num_bits_u32, &mut rng, None) {
+        match gen_centralized_crs(&sk, &dkg_params, max_num_bits_u32, None, sid, &mut rng) {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Failed to generate centralized CRS: {}", e);
@@ -1072,18 +1074,21 @@ where
         .get_params_basics_handle()
         .get_compact_pk_enc_params();
 
-    let internal_pp = make_centralized_public_parameters(&pke_params, Some(max_num_bits), &mut rng)
-        .unwrap_or_else(|e| {
-            panic!(
-                "Failed to make centralized public parameters (max_bits: {}): {}",
-                max_num_bits, e
-            );
-        });
+    // Any sid will work for testing
+    let sid = SessionId::from(0u128);
+    let internal_pp =
+        public_parameters_by_trusted_setup(&pke_params, Some(max_num_bits), sid, &mut rng)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Failed to make centralized public parameters (max_bits: {}): {}",
+                    max_num_bits, e
+                );
+            });
 
     // Convert internal parameters to zero-knowledge proof compatible format
     // PANICS: If conversion fails - cryptographic integrity would be compromised
     let pp = internal_pp
-        .try_into_tfhe_zk_pok_pp(&pke_params)
+        .try_into_tfhe_zk_pok_pp(&pke_params, sid)
         .unwrap_or_else(|e| {
             panic!("Failed to convert internal_pp to tfhe_zk_pok_pp: {}", e);
         });

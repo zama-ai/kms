@@ -2246,7 +2246,7 @@ where
                 )
                 .await
                 .unwrap();
-            crs_store.insert(session_id, pp);
+            crs_store.insert(session_id, pp.inner);
             fill_network_memory_info_single_session(base_session);
         };
 

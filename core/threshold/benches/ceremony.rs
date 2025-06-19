@@ -75,7 +75,7 @@ fn bench_ceremony(c: &mut Criterion) {
                         })
                         .into_iter()
                         .collect_vec();
-                    let buf = bc2wrap::serialize(&results[0].1).unwrap();
+                    let buf = bc2wrap::serialize(&results[0].1.inner).unwrap();
                     tracing::info!("crs bytes: {}", buf.len());
                 });
             },

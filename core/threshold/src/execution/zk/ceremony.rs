@@ -9,6 +9,7 @@ use crate::{
         runtime::session::BaseSessionHandles,
     },
     networking::value::BroadcastValue,
+    session_id::SessionId,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -48,14 +49,14 @@ impl PartialProof {
         let (g_list_valid, g_hat_list_valid) = rayon::join(
             || {
                 self.new_pp
-                    .inner
+                    .g1g2list
                     .g1s
                     .par_iter()
                     .all(curve::G1::validate_projective)
             },
             || {
                 self.new_pp
-                    .inner
+                    .g1g2list
                     .g2s
                     .par_iter()
                     .all(curve::G2::validate_projective)
@@ -242,9 +243,9 @@ pub fn compute_witness_dim(
 // instead of our own WrappedG1G2s
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct InternalPublicParameter {
-    round: usize,
+    round: u64,
     max_num_bits: usize,
-    inner: WrappedG1G2s,
+    g1g2list: WrappedG1G2s,
     // we do not include the version number here because
     // players might cheat and change the version number
 }
@@ -254,8 +255,27 @@ impl Default for InternalPublicParameter {
         Self {
             round: 0,
             max_num_bits: 0,
-            inner: WrappedG1G2s::new(vec![], vec![]),
+            g1g2list: WrappedG1G2s::new(vec![], vec![]),
         }
+    }
+}
+
+pub struct FinalizedInternalPublicParameter {
+    pub inner: InternalPublicParameter,
+    pub sid: SessionId,
+}
+
+impl FinalizedInternalPublicParameter {
+    /// Convert the final internal public parameter, which is the result of the ceremony,
+    /// into a [tfhe::zk::CompactPkeCrs] that can be used for zero-knowledge proofs in tfhe-rs.
+    ///
+    /// This is essentially the final step (Step 4) of CRS.Gen from the NIST spec.
+    pub fn try_into_tfhe_zk_pok_pp(
+        &self,
+        params: &CompactPublicKeyEncryptionParameters,
+        sid: SessionId,
+    ) -> anyhow::Result<CompactPkeCrs> {
+        self.inner.try_into_tfhe_zk_pok_pp(params, sid)
     }
 }
 
@@ -277,19 +297,20 @@ impl InternalPublicParameter {
     /// into a [tfhe::zk::CompactPkeCrs] that can be used for zero-knowledge proofs in tfhe-rs.
     ///
     /// This is essentially the final step (Step 4) of CRS.Gen from the NIST spec.
-    pub fn try_into_tfhe_zk_pok_pp(
+    fn try_into_tfhe_zk_pok_pp(
         &self,
         params: &CompactPublicKeyEncryptionParameters,
+        _sid: SessionId, // TODO(#2505) add sid to the from_vec functions
     ) -> anyhow::Result<CompactPkeCrs> {
         let g_list = self
-            .inner
+            .g1g2list
             .g1s
             .clone()
             .into_iter()
             .map(|x| x.normalize())
             .collect_vec();
         let g_hat_list = self
-            .inner
+            .g1g2list
             .g2s
             .clone()
             .into_iter()
@@ -370,7 +391,7 @@ impl InternalPublicParameter {
         InternalPublicParameter {
             round: 0,
             max_num_bits,
-            inner: WrappedG1G2s::new(
+            g1g2list: WrappedG1G2s::new(
                 vec![curve::G1::GENERATOR; witness_dim * 2],
                 vec![curve::G2::GENERATOR; witness_dim],
             ),
@@ -387,7 +408,7 @@ impl InternalPublicParameter {
         Ok(InternalPublicParameter {
             round: 0,
             max_num_bits,
-            inner: WrappedG1G2s::new(
+            g1g2list: WrappedG1G2s::new(
                 vec![curve::G1::GENERATOR; witness_dim * 2],
                 vec![curve::G2::GENERATOR; witness_dim],
             ),
@@ -395,32 +416,38 @@ impl InternalPublicParameter {
     }
 
     pub fn witness_dim(&self) -> usize {
-        self.inner.g2s.len()
+        self.g1g2list.g2s.len()
     }
 
-    fn hash_to_scalars(&self, n: usize) -> Vec<curve::Zp> {
+    // This is Hash' in the NIST spec
+    fn hash_to_scalars(&self, n: usize, sid: SessionId) -> Vec<curve::Zp> {
+        // 16 bytes for sid
         // 8 bytes for round
         // 8 bytes for inner.g1s length
         // 2*b1 * G1 point length
         // 8 bytes for inner.g2s length
         // b1 * G2 point length
-        let capacity = 8
+        let capacity = 16
             + 8
-            + self.inner.g1s.len() * curve::G1::BYTE_SIZE
             + 8
-            + self.inner.g2s.len() * curve::G2::BYTE_SIZE;
+            + self.g1g2list.g1s.len() * curve::G1::BYTE_SIZE
+            + 8
+            + self.g1g2list.g2s.len() * curve::G2::BYTE_SIZE;
 
         // NOTE: all the usize types need to be 8 bytes
         // independent of the architecture, so we convert them to u64
         // before serialization
         let mut buf = Vec::with_capacity(capacity);
-        buf.extend((self.round as u64).to_le_bytes());
-        buf.extend((self.inner.g1s.len() as u64).to_le_bytes());
-        for elem in &self.inner.g1s {
+        let sid_buf = sid.to_le_bytes();
+        debug_assert_eq!(sid_buf.len(), 16);
+        buf.extend(sid_buf);
+        buf.extend(self.round.to_le_bytes());
+        buf.extend((self.g1g2list.g1s.len() as u64).to_le_bytes());
+        for elem in &self.g1g2list.g1s {
             buf.extend(elem.to_le_bytes());
         }
-        buf.extend((self.inner.g2s.len() as u64).to_le_bytes());
-        for elem in &self.inner.g2s {
+        buf.extend((self.g1g2list.g2s.len() as u64).to_le_bytes());
+        for elem in &self.g1g2list.g2s {
             buf.extend(elem.to_le_bytes());
         }
         debug_assert_eq!(buf.len(), capacity);
@@ -444,8 +471,9 @@ struct ZeroizeForPartialProof {
 fn make_partial_proof_deterministic(
     current_pp: &InternalPublicParameter,
     tau: curve::Zp,
-    round: usize,
+    round: u64,
     r: curve::Zp,
+    sid: SessionId,
 ) -> PartialProof {
     let b1 = current_pp.witness_dim();
 
@@ -474,9 +502,9 @@ fn make_partial_proof_deterministic(
     let new_pp = InternalPublicParameter {
         round,
         max_num_bits: current_pp.max_num_bits,
-        inner: WrappedG1G2s::new(
+        g1g2list: WrappedG1G2s::new(
             current_pp
-                .inner
+                .g1g2list
                 .g1s
                 .par_iter()
                 .zip(&tau_powers)
@@ -492,7 +520,7 @@ fn make_partial_proof_deterministic(
                 })
                 .collect(),
             current_pp
-                .inner
+                .g1g2list
                 .g2s
                 .par_iter()
                 .zip(&tau_powers)
@@ -507,14 +535,17 @@ fn make_partial_proof_deterministic(
 
     // This is Step 2 of CRS-Gen.Update from the NIST spec
     // where the contributor j runs NIZK to prove the knowledge of the discrete logarithm \tau.
-    let g1_jm1 = current_pp.inner.g1s[0]; // g_{1,j-1}
+    let g1_jm1 = current_pp.g1g2list.g1s[0]; // g_{1,j-1}
     let r_pok = g1_jm1.mul_scalar(r); // R_{pok, j}
-    let g1_j = new_pp.inner.g1s[0]; // g_{1, j}
+    let g1_j = new_pp.g1g2list.g1s[0]; // g_{1, j}
     let mut h_pok = vec![curve::Zp::ZERO; 1];
+    // This is Hash from the NIST spec
     curve::Zp::hash(
         &mut h_pok,
         &[
             &ZK_DSEP_HASH, // Manually add domain separator
+            &sid.to_le_bytes(),
+            &round.to_le_bytes(),
             &g1_j.to_le_bytes(),
             &g1_jm1.to_le_bytes(),
             &r_pok.to_le_bytes(),
@@ -534,11 +565,18 @@ fn make_partial_proof_deterministic(
     }
 }
 
-pub fn make_centralized_public_parameters<R: Rng + CryptoRng>(
+/// Make a new public parameter from the given TFHE parameters
+/// without using any threshold protocol, so the caller must be
+/// trusted to delete the toxic waste before returning the public parameter.
+///
+/// This is used in the centralized KMS as well as the insecure
+/// version of the threshold KMS.
+pub fn public_parameters_by_trusted_setup<R: Rng + CryptoRng>(
     params: &CompactPublicKeyEncryptionParameters,
     max_num_bits: Option<usize>,
+    sid: SessionId,
     rng: &mut R,
-) -> anyhow::Result<InternalPublicParameter> {
+) -> anyhow::Result<FinalizedInternalPublicParameter> {
     let pparam = InternalPublicParameter::new_from_tfhe_param(params, max_num_bits)?;
 
     let mut tau = curve::Zp::rand(rng);
@@ -546,11 +584,14 @@ pub fn make_centralized_public_parameters<R: Rng + CryptoRng>(
 
     // Note [tau] and [r] are copied into [make_partial_proof_deterministic] since Zp is a Copy,
     // we need to make sure they're zeroized after use inside.
-    let pproof = make_partial_proof_deterministic(&pparam, tau, 1, r);
+    let pproof = make_partial_proof_deterministic(&pparam, tau, 1, r, sid);
     tau.zeroize();
     r.zeroize();
 
-    Ok(pproof.new_pp)
+    Ok(FinalizedInternalPublicParameter {
+        inner: pproof.new_pp,
+        sid,
+    })
 }
 
 // This function returns a custom error message
@@ -561,6 +602,8 @@ pub fn make_centralized_public_parameters<R: Rng + CryptoRng>(
 fn verify_proof(
     current_pp: &InternalPublicParameter,
     partial_proof: &PartialProof,
+    round: u64,
+    sid: SessionId,
 ) -> anyhow::Result<InternalPublicParameter> {
     partial_proof.validate_points()?;
 
@@ -569,15 +612,22 @@ fn verify_proof(
     }
 
     let new_pp = partial_proof.new_pp.clone();
-    let g1_jm1 = current_pp.inner.g1s[0]; // g_{1,j-1}
-    let g1_j = new_pp.inner.g1s[0]; // g_{1, j}
+    let g1_jm1 = current_pp.g1g2list.g1s[0]; // g_{1,j-1}
+    let g1_j = new_pp.g1g2list.g1s[0]; // g_{1, j}
 
     // Step 3 of CRS-Gen.Update from the NIST spec.
     //
     // verify the discrete log proof
     // this proof ensures that the prover
     // did not erase the previous CRS contribution
-    verify_dlog_proof(partial_proof.s_pok, partial_proof.h_pok, &g1_jm1, &g1_j)?;
+    verify_dlog_proof(
+        partial_proof.s_pok,
+        partial_proof.h_pok,
+        &g1_jm1,
+        &g1_j,
+        round,
+        sid,
+    )?;
 
     // check g1_j is not zero (or 1 in multiplicative notation)
     // this is also a part of Step 3
@@ -590,7 +640,7 @@ fn verify_proof(
     // I (caller) need to make sure the lengths are correct
     // the point of reference is the current_pp
     let witness_dim = current_pp.witness_dim();
-    if new_pp.inner.g1s.len() != witness_dim * 2 {
+    if new_pp.g1g2list.g1s.len() != witness_dim * 2 {
         return Err(anyhow_error_and_log(
             "crs length check failed (g)".to_string(),
         ));
@@ -601,7 +651,7 @@ fn verify_proof(
         ));
     }
 
-    if new_pp.inner.g1s[witness_dim] != curve::G1::ZERO {
+    if new_pp.g1g2list.g1s[witness_dim] != curve::G1::ZERO {
         return Err(anyhow_error_and_log(
             "the list of G1s is not correctly punctured".to_string(),
         ));
@@ -612,7 +662,7 @@ fn verify_proof(
     // perform the well-formedness check
     // this check guarantees that the prover
     // is raising the elements in the CRS by the correct powers of tau
-    verify_wellformedness(&new_pp)?;
+    verify_wellformedness(&new_pp, sid)?;
 
     Ok(new_pp)
 }
@@ -622,16 +672,21 @@ fn verify_dlog_proof(
     h_pok: curve::Zp,
     g1_jm1: &curve::G1,
     g1_j: &curve::G1,
+    round: u64,
+    sid: SessionId,
 ) -> anyhow::Result<()> {
     let g1_to_s = g1_jm1.mul_scalar(s_pok);
     let g1_to_h = g1_j.mul_scalar(h_pok.neg());
     let h_pok_2 = {
         let tmp = g1_to_s.add(g1_to_h);
         let mut out = vec![curve::Zp::ZERO; 1];
+        // This is Hash from the NIST spec
         curve::Zp::hash(
             &mut out,
             &[
                 &ZK_DSEP_HASH, // Manually add domain separator
+                &sid.to_le_bytes(),
+                &round.to_le_bytes(),
                 &g1_j.to_le_bytes(),
                 &g1_jm1.to_le_bytes(),
                 &tmp.to_le_bytes(),
@@ -647,16 +702,16 @@ fn verify_dlog_proof(
 }
 
 /// Step 4 of CRS-Gen.Update from the NIST spec
-fn verify_wellformedness(new_pp: &InternalPublicParameter) -> anyhow::Result<()> {
+fn verify_wellformedness(new_pp: &InternalPublicParameter, sid: SessionId) -> anyhow::Result<()> {
     // verify the other parts of the new CRS
-    let rhos = new_pp.hash_to_scalars(2);
+    let rhos = new_pp.hash_to_scalars(2, sid);
     let b1 = new_pp.witness_dim();
-    debug_assert_eq!(new_pp.inner.g1s.len(), b1 * 2);
+    debug_assert_eq!(new_pp.g1g2list.g1s.len(), b1 * 2);
 
     // e(\tau_j^{B1+2} [G1], [G2]) = e(\tau_j^{B1} [G1], \tau_j^2 [G2])
     let e = curve::Gt::pairing;
-    if e(new_pp.inner.g1s[b1 + 1], curve::G2::GENERATOR)
-        != e(new_pp.inner.g1s[b1 - 1], new_pp.inner.g2s[1])
+    if e(new_pp.g1g2list.g1s[b1 + 1], curve::G2::GENERATOR)
+        != e(new_pp.g1g2list.g1s[b1 - 1], new_pp.g1g2list.g2s[1])
     {
         return Err(anyhow_error_and_log(
             "well-formedness check failed (1)".to_string(),
@@ -680,7 +735,7 @@ fn verify_wellformedness(new_pp: &InternalPublicParameter) -> anyhow::Result<()>
 
     // \prod_{i=1, i != b1+1, i!= b1+2}^{2*b1} g_{i,j}^{\rho_1^{i-1}}
     let lhs1 = new_pp
-        .inner
+        .g1g2list
         .g1s
         .par_iter()
         .enumerate()
@@ -696,7 +751,7 @@ fn verify_wellformedness(new_pp: &InternalPublicParameter) -> anyhow::Result<()>
 
     // \hat{g} \cdot \sum_{\ell = 1}^{b1 - 1} \hat{g}_{\ell,j}^{\rho_2^{\ell}}
     let lhs2 = new_pp
-        .inner
+        .g1g2list
         .g2s
         .par_iter()
         .take(b1 - 1)
@@ -705,11 +760,11 @@ fn verify_wellformedness(new_pp: &InternalPublicParameter) -> anyhow::Result<()>
         .sum::<curve::G2>()
         .add(curve::G2::GENERATOR);
 
-    debug_assert_eq!(new_pp.inner.g1s.len(), b1 * 2);
+    debug_assert_eq!(new_pp.g1g2list.g1s.len(), b1 * 2);
 
     // g \cdot \prod_{i=1, i != b1, i!= b1+1}^{2*b1-1} g_{i,j}^{\rho_1^i}
     let rhs1 = new_pp
-        .inner
+        .g1g2list
         .g1s
         .par_iter()
         .take(b1 * 2 - 1)
@@ -727,7 +782,7 @@ fn verify_wellformedness(new_pp: &InternalPublicParameter) -> anyhow::Result<()>
 
     // \prod_{l=1}^{b1} \hat{g}_{\ell,j}^{\rho_2^{\ell - 1}}
     let rhs2 = new_pp
-        .inner
+        .g1g2list
         .g2s
         .par_iter()
         .enumerate()
@@ -750,7 +805,7 @@ pub trait Ceremony: Send + Sync + Clone {
         session: &mut S,
         witness_dim: usize,
         max_num_pt_bits: Option<u32>,
-    ) -> anyhow::Result<InternalPublicParameter>;
+    ) -> anyhow::Result<FinalizedInternalPublicParameter>;
 }
 
 #[derive(Default, Clone)]
@@ -766,7 +821,7 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
         session: &mut S,
         witness_dim: usize,
         max_num_pt_bits: Option<u32>,
-    ) -> anyhow::Result<InternalPublicParameter> {
+    ) -> anyhow::Result<FinalizedInternalPublicParameter> {
         // the parties need to execute the protocol in a deterministic order
         // so we sort the roles to fix this order
         // even if the adversary can pick the order, it does not affect the security
@@ -775,12 +830,16 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
         let my_role = session.my_role();
 
         let mut pp = InternalPublicParameter::new(witness_dim, max_num_pt_bits);
+        let sid = session.session_id();
         tracing::info!(
             "Role {my_role} starting CRS ceremony in session {}",
             session.session_id()
         );
 
         for (round, role) in all_roles_sorted.iter().enumerate() {
+            // we use u64 since the round number is defined by the number of participants
+            // i.e., Role, and internally Role stores u64
+            let round = round as u64 + 1; // round starts at 1, round 0 is the trivial CRS, i.e., pp_0
             if role == &my_role {
                 // We use the rayon's threadpool for handling CPU-intensive tasks
                 // like creating the CRS. This is recommended over tokio::task::spawn_blocking
@@ -792,7 +851,7 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
                 rayon::spawn_fifo(move || {
                     // [tau] and [r] are copied into [make_partial_proof_deterministic] since Zp is a Copy
                     // we need to make sure they're zeroized after use inside.
-                    let partial_proof = make_partial_proof_deterministic(&pp, tau, round + 1, r);
+                    let partial_proof = make_partial_proof_deterministic(&pp, tau, round, r, sid);
                     tau.zeroize();
                     r.zeroize();
                     let _ = send.send(partial_proof);
@@ -840,7 +899,7 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
                                     // The rayon threadpool is used again (see comment above).
                                     let (send, recv) = tokio::sync::oneshot::channel();
                                     rayon::spawn_fifo(move || {
-                                        let res = verify_proof(&pp, &proof);
+                                        let res = verify_proof(&pp, &proof, round, sid);
                                         let _ = send.send((res, pp));
                                     });
                                     let (ver, pp_tmp) = recv.await?;
@@ -879,7 +938,7 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
             }
         }
 
-        Ok(pp)
+        Ok(FinalizedInternalPublicParameter { inner: pp, sid })
     }
 }
 
@@ -918,15 +977,18 @@ mod tests {
             session: &mut S,
             witness_dim: usize,
             max_num_bits: Option<u32>,
-        ) -> anyhow::Result<InternalPublicParameter> {
+        ) -> anyhow::Result<FinalizedInternalPublicParameter> {
             let max_num_bits = max_num_bits.unwrap_or(ZK_DEFAULT_MAX_NUM_BITS as u32) as usize;
-            Ok(InternalPublicParameter {
-                round: session.num_parties(),
-                max_num_bits,
-                inner: WrappedG1G2s::new(
-                    vec![curve::G1::GENERATOR; witness_dim * 2],
-                    vec![curve::G2::GENERATOR; witness_dim],
-                ),
+            Ok(FinalizedInternalPublicParameter {
+                inner: InternalPublicParameter {
+                    round: session.num_parties() as u64,
+                    max_num_bits,
+                    g1g2list: WrappedG1G2s::new(
+                        vec![curve::G1::GENERATOR; witness_dim * 2],
+                        vec![curve::G2::GENERATOR; witness_dim],
+                    ),
+                },
+                sid: session.session_id(),
             })
         }
     }
@@ -986,16 +1048,16 @@ mod tests {
             .into_iter()
             .collect_vec();
 
-        let pp = results.first().unwrap().1.clone();
-        assert_eq!(pp.round, num_parties);
+        let pp = results.first().unwrap().1.inner.clone();
+        assert_eq!(pp.round, num_parties as u64);
         for (_, p) in results {
-            assert_eq!(p, pp);
+            assert_eq!(p.inner, pp);
         }
 
         // check that we can use pp to make a proof
         let mut rng = AesRng::from_entropy();
         let g_list = pp
-            .inner
+            .g1g2list
             .g1s
             .clone()
             .into_iter()
@@ -1003,7 +1065,7 @@ mod tests {
             .collect_vec();
 
         let g_hat_list = pp
-            .inner
+            .g1g2list
             .g2s
             .clone()
             .into_iter()
@@ -1032,7 +1094,7 @@ mod tests {
         InternalPublicParameter {
             round: 0,
             max_num_bits: 1,
-            inner: WrappedG1G2s::new(vec![curve::G1::ZERO; 2 * n], vec![curve::G2::ZERO; n]),
+            g1g2list: WrappedG1G2s::new(vec![curve::G1::ZERO; 2 * n], vec![curve::G2::ZERO; n]),
         }
     }
 
@@ -1046,9 +1108,12 @@ mod tests {
             session: &mut S,
             _crs_size: usize,
             _max_num_bits: Option<u32>,
-        ) -> anyhow::Result<InternalPublicParameter> {
+        ) -> anyhow::Result<FinalizedInternalPublicParameter> {
             // do nothing
-            Ok(InternalPublicParameter::new(session.num_parties(), Some(1)))
+            Ok(FinalizedInternalPublicParameter {
+                inner: InternalPublicParameter::new(session.num_parties(), Some(1)),
+                sid: session.session_id(),
+            })
         }
     }
 
@@ -1064,20 +1129,22 @@ mod tests {
             session: &mut S,
             witness_dim: usize,
             max_num_bits: Option<u32>,
-        ) -> anyhow::Result<InternalPublicParameter> {
+        ) -> anyhow::Result<FinalizedInternalPublicParameter> {
             let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
             all_roles_sorted.sort();
             let my_role = session.my_role();
 
             let mut pp = InternalPublicParameter::new(witness_dim, max_num_bits);
 
+            let sid = session.session_id();
             for (round, role) in all_roles_sorted.iter().enumerate() {
+                let round = round as u64;
                 if role == &my_role {
                     let tau = curve::Zp::rand(&mut session.rng());
                     let r = curve::Zp::rand(&mut session.rng());
                     // make a bad proof
                     let mut proof: PartialProof =
-                        make_partial_proof_deterministic(&pp, tau, round + 1, r);
+                        make_partial_proof_deterministic(&pp, tau, round + 1, r, sid);
                     proof.h_pok += curve::Zp::ONE;
                     let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
 
@@ -1099,7 +1166,10 @@ mod tests {
                 }
             }
 
-            Ok(pp)
+            Ok(FinalizedInternalPublicParameter {
+                inner: pp,
+                sid: session.session_id(),
+            })
         }
     }
 
@@ -1117,7 +1187,7 @@ mod tests {
             session: &mut S,
             witness_dim: usize,
             _max_num_bits: Option<u32>,
-        ) -> anyhow::Result<InternalPublicParameter> {
+        ) -> anyhow::Result<FinalizedInternalPublicParameter> {
             let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
             all_roles_sorted.sort();
             let my_role = session.my_role();
@@ -1125,16 +1195,19 @@ mod tests {
             let pp = InternalPublicParameter {
                 round: 0,
                 max_num_bits: 1,
-                inner: WrappedG1G2s::new(
+                g1g2list: WrappedG1G2s::new(
                     vec![curve::G1::GENERATOR; witness_dim * 2],
                     vec![curve::G2::GENERATOR; witness_dim],
                 ),
             };
 
+            let sid = session.session_id();
             for (round, role) in all_roles_sorted.iter().enumerate() {
+                let round = round as u64;
                 let tau = curve::Zp::rand(&mut session.rng());
                 let r = curve::Zp::rand(&mut session.rng());
-                let proof: PartialProof = make_partial_proof_deterministic(&pp, tau, round + 1, r);
+                let proof: PartialProof =
+                    make_partial_proof_deterministic(&pp, tau, round + 1, r, sid);
                 let vi = BroadcastValue::PartialProof::<Z>(proof);
                 if role == &my_role {
                     let _ = self
@@ -1150,7 +1223,10 @@ mod tests {
                 }
             }
 
-            Ok(pp)
+            Ok(FinalizedInternalPublicParameter {
+                inner: pp,
+                sid: session.session_id(),
+            })
         }
     }
 
@@ -1197,12 +1273,12 @@ mod tests {
 
         // the honest results should be a valid crs and not the initial one
         let honest_pp = results_honest.iter().map(|(_, pp, _)| pp).collect_vec();
-        let pp = honest_pp[0].clone();
+        let pp = honest_pp[0];
         // make sure we're not using the initial pp
-        assert_ne!(pp.inner.g1s[0], pp.inner.g1s[1]);
-        assert_ne!(pp.inner.g2s[0], pp.inner.g2s[1]);
+        assert_ne!(pp.inner.g1g2list.g1s[0], pp.inner.g1g2list.g1s[1]);
+        assert_ne!(pp.inner.g1g2list.g2s[0], pp.inner.g1g2list.g2s[1]);
         for other in honest_pp {
-            assert_eq!(&pp, other);
+            assert_eq!(pp.inner, other.inner);
         }
     }
 
@@ -1279,18 +1355,19 @@ mod tests {
             )
         );
 
+        let sid = SessionId::from(1);
         let pp = InternalPublicParameter::new(2, Some(1));
-        let proof = make_partial_proof_deterministic(&pp, tau, 0, r);
+        let proof = make_partial_proof_deterministic(&pp, tau, 0, r, sid);
         assert_eq!(
-            proof.new_pp.inner.g1s[3],
+            proof.new_pp.g1g2list.g1s[3],
             curve::G1::GENERATOR.mul_scalar(tau_powers[3])
         );
         assert_eq!(
-            proof.new_pp.inner.g1s[1],
+            proof.new_pp.g1g2list.g1s[1],
             curve::G1::GENERATOR.mul_scalar(tau_powers[1])
         );
         assert_eq!(
-            proof.new_pp.inner.g2s[1],
+            proof.new_pp.g1g2list.g2s[1],
             curve::G2::GENERATOR.mul_scalar(tau_powers[1])
         );
     }
@@ -1302,136 +1379,156 @@ mod tests {
         let pp1 = InternalPublicParameter::new(n, Some(1));
         let tau1 = curve::Zp::rand(&mut rng);
         let r = curve::Zp::rand(&mut rng);
+        let sid = SessionId::from(1);
 
-        assert_eq!(pp1.inner.g1s.len(), n * 2);
-        assert_eq!(pp1.inner.g2s.len(), n);
+        assert_eq!(pp1.g1g2list.g1s.len(), n * 2);
+        assert_eq!(pp1.g1g2list.g2s.len(), n);
 
         {
             // first round
-            let proof1 = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            assert!(verify_proof(&pp1, &proof1).is_ok());
+            let proof1 = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            assert!(verify_proof(&pp1, &proof1, 1, sid).is_ok());
 
             // second round
             let pp2 = proof1.new_pp;
             let tau2 = curve::Zp::rand(&mut rng);
-            let proof2 = make_partial_proof_deterministic(&pp2, tau2, 2, r);
-            assert!(verify_proof(&pp2, &proof2).is_ok());
+            let proof2 = make_partial_proof_deterministic(&pp2, tau2, 2, r, sid);
+            assert!(verify_proof(&pp2, &proof2, 2, sid).is_ok());
         }
         {
-            let proof = make_partial_proof_deterministic(&pp1, tau1, 0, r);
-            assert!(verify_proof(&pp1, &proof)
-                .unwrap_err()
-                .to_string()
-                .contains("bad round number"));
-        }
-        {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.h_pok += curve::Zp::ONE;
-            assert!(verify_proof(&pp1, &proof)
+            let proof1 = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let bad_sid = SessionId::from(2); // originally it was 1
+
+            // dlog check failed because input to Hash has the wrong session ID
+            assert!(verify_proof(&pp1, &proof1, 1, bad_sid)
                 .unwrap_err()
                 .to_string()
                 .contains("dlog check failed"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
+            let proof1 = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+
+            // dlog check failed because input to Hash has the wrong round number
+            assert!(verify_proof(&pp1, &proof1, 11, sid)
+                .unwrap_err()
+                .to_string()
+                .contains("dlog check failed"));
+        }
+        {
+            let proof = make_partial_proof_deterministic(&pp1, tau1, 0, r, sid);
+            assert!(verify_proof(&pp1, &proof, 0, sid)
+                .unwrap_err()
+                .to_string()
+                .contains("bad round number"));
+        }
+        {
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            proof.h_pok += curve::Zp::ONE;
+            assert!(verify_proof(&pp1, &proof, 1, sid)
+                .unwrap_err()
+                .to_string()
+                .contains("dlog check failed"));
+        }
+        {
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
             proof.s_pok += curve::Zp::ONE;
-            assert!(verify_proof(&pp1, &proof)
+            assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("dlog check failed"));
         }
         {
             // note that tau=0
-            let proof = make_partial_proof_deterministic(&pp1, curve::Zp::ZERO, 1, r);
-            assert!(verify_proof(&pp1, &proof)
+            let proof = make_partial_proof_deterministic(&pp1, curve::Zp::ZERO, 1, r, sid);
+            assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("non-degenerative check failed"));
         }
         {
             let pp1 = make_degenerative_pp(n);
-            let proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            assert!(verify_proof(&pp1, &proof)
+            let proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("non-degenerative check failed"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.g1s.push(curve::G1::GENERATOR);
-            assert!(verify_proof(&pp1, &proof)
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            proof.new_pp.g1g2list.g1s.push(curve::G1::GENERATOR);
+            assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("crs length check failed (g)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.g2s.push(curve::G2::GENERATOR);
-            assert!(verify_proof(&pp1, &proof)
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            proof.new_pp.g1g2list.g2s.push(curve::G2::GENERATOR);
+            assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("crs length check failed (g_hat)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.g1s[n + 1] += curve::G1::GENERATOR;
-            assert!(verify_proof(&pp1, &proof)
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            proof.new_pp.g1g2list.g1s[n + 1] += curve::G1::GENERATOR;
+            assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("well-formedness check failed (1)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.g1s[n - 1] += curve::G1::GENERATOR;
-            assert!(verify_proof(&pp1, &proof)
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            proof.new_pp.g1g2list.g1s[n - 1] += curve::G1::GENERATOR;
+            assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("well-formedness check failed (1)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.g2s[1] += curve::G2::GENERATOR;
-            assert!(verify_proof(&pp1, &proof)
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            proof.new_pp.g1g2list.g2s[1] += curve::G2::GENERATOR;
+            assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("well-formedness check failed (1)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.g1s[2] += curve::G1::GENERATOR;
-            assert!(verify_proof(&pp1, &proof)
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            proof.new_pp.g1g2list.g1s[2] += curve::G1::GENERATOR;
+            assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.g1s[2 * n - 1] += curve::G1::GENERATOR;
-            assert!(verify_proof(&pp1, &proof)
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            proof.new_pp.g1g2list.g1s[2 * n - 1] += curve::G1::GENERATOR;
+            assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.g2s[2] += curve::G2::GENERATOR;
-            assert!(verify_proof(&pp1, &proof)
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            proof.new_pp.g1g2list.g2s[2] += curve::G2::GENERATOR;
+            assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.g2s[n - 1] += curve::G2::GENERATOR;
-            assert!(verify_proof(&pp1, &proof)
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            proof.new_pp.g1g2list.g2s[n - 1] += curve::G2::GENERATOR;
+            assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.g1s[n] = curve::G1::GENERATOR;
-            assert!(verify_proof(&pp1, &proof)
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            proof.new_pp.g1g2list.g1s[n] = curve::G1::GENERATOR;
+            assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("the list of G1s is not correctly punctured"));

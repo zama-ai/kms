@@ -15,7 +15,7 @@ use kms_grpc::{
 use threshold_fhe::{
     algebra::base_ring::Z64,
     execution::{
-        runtime::session::{BaseSession, ToBaseSession},
+        runtime::session::{BaseSession, ParameterHandles, ToBaseSession},
         tfhe_internals::parameters::DKGParams,
         zk::ceremony::{compute_witness_dim, Ceremony, SecureCeremony},
     },
@@ -48,7 +48,7 @@ use super::session::SessionPreparer;
 cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
         use crate::engine::{centralized::central_kms::async_generate_crs, threshold::traits::InsecureCrsGenerator};
-        use threshold_fhe::execution::{tfhe_internals::test_feature::transfer_crs, runtime::session::ParameterHandles};
+        use threshold_fhe::execution::{tfhe_internals::test_feature::transfer_crs};
     }
 }
 
@@ -268,9 +268,15 @@ impl<
                 // We let the first party sample the seed (we are using 1-based party IDs)
                 let input_party_id = 1;
                 if my_role.one_based() == input_party_id {
-                    let crs_res =
-                        async_generate_crs(&sk, rng, params, max_num_bits, eip712_domain.as_ref())
-                            .await;
+                    let crs_res = async_generate_crs(
+                        &sk,
+                        params,
+                        max_num_bits,
+                        eip712_domain.as_ref(),
+                        base_session.session_id(),
+                        rng,
+                    )
+                    .await;
                     let crs = match crs_res {
                         Ok((crs, _)) => crs,
                         Err(e) => {
@@ -290,7 +296,9 @@ impl<
             let internal_pp = real_ceremony
                 .execute::<Z64, _>(&mut base_session, witness_dim, max_num_bits)
                 .await;
-            internal_pp.and_then(|internal| internal.try_into_tfhe_zk_pok_pp(&pke_params))
+            internal_pp.and_then(|internal| {
+                internal.try_into_tfhe_zk_pok_pp(&pke_params, base_session.session_id())
+            })
         };
         let res_info_pp = pp.and_then(|pp| {
             compute_info(&sk, &DSEP_PUBDATA_CRS, &pp, eip712_domain.as_ref()).map(|info| (pp, info))

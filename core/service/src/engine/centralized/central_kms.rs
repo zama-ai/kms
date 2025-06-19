@@ -61,8 +61,10 @@ use threshold_fhe::execution::keyset_config::KeySetCompressionConfig;
 use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "non-wasm")]
-use threshold_fhe::execution::zk::ceremony::make_centralized_public_parameters;
+use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
 use threshold_fhe::hashing::DomainSep;
+#[cfg(feature = "non-wasm")]
+use threshold_fhe::session_id::SessionId;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::thread_handles::ThreadHandleGroup;
 use tokio::sync::RwLock;
@@ -165,10 +167,11 @@ where
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn async_generate_crs(
     sk: &PrivateSigKey,
-    rng: AesRng,
     params: DKGParams,
     max_num_bits: Option<u32>,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    sid: SessionId,
+    rng: AesRng,
 ) -> anyhow::Result<(CompactPkeCrs, SignedPubDataHandleInternal)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
@@ -179,8 +182,9 @@ pub(crate) async fn async_generate_crs(
             &sk_copy,
             &params,
             max_num_bits,
-            rng,
             eip712_domain_copy.as_ref(),
+            sid,
+            rng,
         );
         let _ = send.send(out);
     });
@@ -284,20 +288,22 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
     params: &DKGParams,
     max_num_bits: Option<u32>,
-    mut rng: R,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    sid: SessionId,
+    mut rng: R,
 ) -> anyhow::Result<(CompactPkeCrs, SignedPubDataHandleInternal)> {
-    let internal_pp = make_centralized_public_parameters(
+    let internal_pp = public_parameters_by_trusted_setup(
         &params
             .get_params_basics_handle()
             .get_compact_pk_enc_params(),
         max_num_bits.map(|x| x as usize),
+        sid,
         &mut rng,
     )?;
     let pke_params = params
         .get_params_basics_handle()
         .get_compact_pk_enc_params();
-    let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params)?;
+    let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params, sid)?;
     let crs_info = crate::engine::base::compute_info(
         sk,
         &crate::engine::base::DSEP_PUBDATA_CRS,
