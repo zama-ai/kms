@@ -70,9 +70,11 @@ kmsCore:
           pcr2: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     # Threshold value is the number of corruptions that the protocol handles.
     # This value appears in the config file as `threshold`.
+    # Value 1 for 4 parties or 4 for 13 parties
     thresholdValue: 1
     decCapacity: 10000
     minDecCache: 6000
+    # Number of sessions to pre-process should be equal to number of vCPUs
     numSessionsPreproc: 2
     decryptionMode: "NoiseFloodSmall"
   # Add the following to enable nitro enclave:
@@ -181,8 +183,6 @@ kmsInit:
 kmsGenCert:
   enabled: false
   nameOverride:
-  configmap:
-    name:
 
 # Automatic Key Generation job
 kmsGenKeys:
