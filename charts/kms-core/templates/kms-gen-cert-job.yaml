@@ -156,6 +156,7 @@ spec:
               nitro-cli run-enclave --config /var/lib/kms-core/config/enclave.json
               sleep 60
               nitro-cli terminate-enclave --all
+              exit 0
           env:
             - name: "NO_COLOR"
               value: "true"
