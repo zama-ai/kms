@@ -41,9 +41,9 @@ data:
   kms-gen-keys.toml: |
     [keygen]
     enabled = true
-    my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
     {{ if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
+    my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
       {{- if .Values.kmsCore.thresholdMode.peersList }}
     num_parties = {{ len .Values.kmsCore.thresholdMode.peersList }}
       {{- else }}
