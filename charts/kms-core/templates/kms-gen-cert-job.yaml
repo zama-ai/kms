@@ -155,6 +155,7 @@ spec:
               # because we need to serve kms-gen-keys.toml on the same port later
               nitro-cli run-enclave --config /var/lib/kms-core/config/enclave.json
               sleep 60
+              nitro-cli terminate-enclave --all
           env:
             - name: "NO_COLOR"
               value: "true"
