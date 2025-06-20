@@ -155,8 +155,7 @@ spec:
               # because we need to serve kms-gen-keys.toml on the same port later
               nitro-cli run-enclave --config /var/lib/kms-core/config/enclave.json
               sleep 60
-              nitro-cli terminate-enclave --all
-              exit 0
+              nitro-cli terminate-enclave --all && sleep 30
           env:
             - name: "NO_COLOR"
               value: "true"
@@ -194,6 +193,10 @@ spec:
               memory: 4Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
+          # lifecycle:
+          #   preStop:
+          #     exec:
+          #       command: [ "nitro-cli", "terminate-enclave", "--all" ]
       imagePullSecrets:
         - name: registry-credentials
       nodeSelector:
