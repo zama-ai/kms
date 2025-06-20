@@ -34,7 +34,7 @@ use sha3::{
 };
 use std::marker::PhantomData;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Display,
     iter::Sum,
     ops::{Add, AddAssign, Mul, Neg, Shl, Sub, SubAssign},
@@ -481,7 +481,7 @@ where
         x: &Self,
         g: u8,
         l: usize,
-        roles: &[Role],
+        roles: &HashSet<Role>,
     ) -> HashMap<Role, Vec<Self>> {
         // Observe that since the application of SHAKE256 is highly specific and needs to be optimized here,
         // we don't use on the wrapper in `hashing.rs`
@@ -531,7 +531,7 @@ where
         x: &Self,
         g: u8,
         l: usize,
-        roles: &[Role],
+        roles: &HashSet<Role>,
     ) -> HashMap<Role, Vec<Self>> {
         // Observe that since the application of SHAKE256 is highly specific and needs to be optimized here,
         // we don't use on the wrapper in `hashing.rs`

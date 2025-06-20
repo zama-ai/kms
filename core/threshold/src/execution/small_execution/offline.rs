@@ -107,7 +107,7 @@ impl<
 }
 
 /// Computes a new batch of random values and appends the new batch to the the existing stash of preprocessing random values.
-#[instrument(name="MPC_Small.GenRandom",skip(amount,session), fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?amount))]
+#[instrument(name="MPC_Small.GenRandom",skip(amount,session), fields(sid= ?session.session_id(), my_role = ?session.my_role(), batch_size = ?amount))]
 async fn next_random_batch<Z: Ring, Ses: SmallSessionHandles<Z>>(
     amount: usize,
     session: &mut Ses,
@@ -132,7 +132,7 @@ async fn next_random_batch<Z: Ring, Ses: SmallSessionHandles<Z>>(
 /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
 /// If corruption occurs during the process then the corrupt parties are added to the corrupt set in `session` and the method
 /// Caller then needs to retry to construct any missing triples, to ensure a full batch has been constructed before returning.
-#[instrument(name="MPC_Small.GenTriples",skip(session,broadcast), fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = amount))]
+#[instrument(name="MPC_Small.GenTriples",skip(session,broadcast), fields(sid= ?session.session_id(), my_role = ?session.my_role(),batch_size = amount))]
 async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: Broadcast>(
     session: &mut Ses,
     amount: usize,
@@ -346,7 +346,7 @@ fn parse_d_shares<Z: Ring, Ses: BaseSessionHandles>(
 }
 
 /// Output amount of PRSS.Next() calls
-#[instrument(name="PRSS.Next",skip(session,amount),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?amount))]
+#[instrument(name="PRSS.Next",skip(session,amount),fields(sid=?session.session_id(),my_role=?session.my_role(),batch_size=?amount))]
 fn prss_list<Z: Ring, Ses: SmallSessionHandles<Z>>(
     session: &mut Ses,
     amount: usize,
@@ -360,7 +360,7 @@ fn prss_list<Z: Ring, Ses: SmallSessionHandles<Z>>(
 }
 
 /// Output amount of PRZS.Next() calls
-#[instrument(name="PRZS.Next",skip(session,amount),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?amount))]
+#[instrument(name="PRZS.Next",skip(session,amount),fields(sid=?session.session_id(),my_role=?session.my_role(),batch_size=?amount))]
 fn przs_list<Z: Ring, Ses: SmallSessionHandles<Z>>(
     session: &mut Ses,
     amount: usize,
@@ -431,9 +431,9 @@ async fn check_d<Z: Ring, Ses: SmallSessionHandles<Z>>(
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, num::Wrapping};
-
+    use futures_util::future::join;
     use rstest::rstest;
+    use std::{collections::HashMap, num::Wrapping};
 
     use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring};
     use crate::execution::communication::broadcast::SyncReliableBroadcast;
@@ -498,7 +498,7 @@ mod test {
     /// the output correlated randomness (and check that the triple relation holds).
     /// We include malicious parties' output in the reconstruction check if the malicious
     /// party did not panic.
-    fn test_offline_small_strategies<
+    async fn test_offline_small_strategies<
         Z: ErrorCorrect + Invert + PRSSConversions,
         const EXTENSION_DEGREE: usize,
         PrssInitMalicious: PRSSInit<Z> + Default,
@@ -560,11 +560,12 @@ mod test {
                 None,
                 &mut task_honest,
                 &mut task_malicious,
-            );
+            )
+            .await;
 
         // If malicious behaviour should be detected, make sure it actually is
         if params.should_be_detected {
-            for (session, _, _) in results_honest.iter() {
+            for (session, _, _) in results_honest.values() {
                 for role in params.malicious_roles.iter() {
                     assert!(
                         session.corrupt_roles().contains(role),
@@ -575,17 +576,19 @@ mod test {
         }
 
         // Make sure the honest parties can reconstruct fine
-        let mut honest_preprocessings = Vec::new();
-        for (_, _, honest_preprocessing) in results_honest {
-            honest_preprocessings.push(honest_preprocessing);
-        }
+        let mut honest_preprocessings = results_honest
+            .values()
+            .map(|(_, _, hp)| hp)
+            .cloned()
+            .collect::<Vec<_>>();
 
-        let mut malicious_preprocessings = Vec::new();
-        for (_, role, malicious_preprocessing) in results_malicious.into_iter().flatten() {
-            if let Ok(malicious_preprocessing) = malicious_preprocessing {
-                malicious_preprocessings.push((role, malicious_preprocessing))
-            }
-        }
+        let mut malicious_preprocessings = results_malicious
+            .iter()
+            .filter_map(|(role, (_, _, mp))| match mp {
+                Ok(mp) => Some((*role, mp.clone())),
+                _ => None,
+            })
+            .collect::<HashMap<Role, _>>();
 
         // Works because all malicious strategies are identical and so they either all
         // output something or none do
@@ -684,20 +687,22 @@ mod test {
     #[case(TestingParameters::init(5, 1, &[], &[], &[], false, Some(10)))]
     #[case(TestingParameters::init(7, 2, &[], &[], &[], false, Some(12)))]
     #[case(TestingParameters::init(10, 3, &[], &[], &[], false, Some(14)))]
-    fn test_offline_small(#[case] params: TestingParameters) {
-        test_offline_small_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(params.clone(), SecureSmallPreprocessing::default());
-
-        test_offline_small_strategies::<
-            ResiduePolyF4Z64,
-            { ResiduePolyF4Z64::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(params, SecureSmallPreprocessing::default());
+    async fn test_offline_small(#[case] params: TestingParameters) {
+        join(
+            test_offline_small_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(params.clone(), SecureSmallPreprocessing::default()),
+            test_offline_small_strategies::<
+                ResiduePolyF4Z64,
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(params, SecureSmallPreprocessing::default()),
+        )
+        .await;
     }
 
     #[rstest]
@@ -705,20 +710,22 @@ mod test {
     #[case(TestingParameters::init(5, 1, &[1], &[], &[], true, None))]
     #[case(TestingParameters::init(7, 2, &[4,5], &[], &[], true, None))]
     #[case(TestingParameters::init(10, 3, &[1,3,7], &[], &[], true, None))]
-    fn test_dropout_offline_small_from_start(#[case] params: TestingParameters) {
-        test_offline_small_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            MaliciousPrssDrop,
-            _,
-        >(params.clone(), MaliciousOfflineDrop::default());
-
-        test_offline_small_strategies::<
-            ResiduePolyF4Z64,
-            { ResiduePolyF4Z64::EXTENSION_DEGREE },
-            MaliciousPrssDrop,
-            _,
-        >(params, MaliciousOfflineDrop::default());
+    async fn test_dropout_offline_small_from_start(#[case] params: TestingParameters) {
+        join(
+            test_offline_small_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                MaliciousPrssDrop,
+                _,
+            >(params.clone(), MaliciousOfflineDrop::default()),
+            test_offline_small_strategies::<
+                ResiduePolyF4Z64,
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                MaliciousPrssDrop,
+                _,
+            >(params, MaliciousOfflineDrop::default()),
+        )
+        .await;
     }
 
     #[rstest]
@@ -726,20 +733,22 @@ mod test {
     #[case(TestingParameters::init(5, 1, &[1], &[], &[], true, None))]
     #[case(TestingParameters::init(7, 2, &[4,5], &[], &[], true, None))]
     #[case(TestingParameters::init(10, 3, &[1,3,7], &[], &[], true, None))]
-    fn test_dropout_offline_small_after_init(#[case] params: TestingParameters) {
-        test_offline_small_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(params.clone(), MaliciousOfflineDrop::default());
-
-        test_offline_small_strategies::<
-            ResiduePolyF4Z64,
-            { ResiduePolyF4Z64::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(params, MaliciousOfflineDrop::default());
+    async fn test_dropout_offline_small_after_init(#[case] params: TestingParameters) {
+        join(
+            test_offline_small_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(params.clone(), MaliciousOfflineDrop::default()),
+            test_offline_small_strategies::<
+                ResiduePolyF4Z64,
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(params, MaliciousOfflineDrop::default()),
+        )
+        .await;
     }
 
     #[rstest]
@@ -747,26 +756,28 @@ mod test {
     #[case(TestingParameters::init(5, 1, &[1], &[], &[], true, None))]
     #[case(TestingParameters::init(7, 2, &[4,5], &[], &[], true, None))]
     #[case(TestingParameters::init(10, 3, &[1,3,7], &[], &[], true, None))]
-    fn test_malicious_wrongamount_offline_small(#[case] params: TestingParameters) {
-        test_offline_small_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(
-            params.clone(),
-            MaliciousOfflineWrongAmount::new(SyncReliableBroadcast::default()),
-        );
-
-        test_offline_small_strategies::<
-            ResiduePolyF4Z64,
-            { ResiduePolyF4Z64::EXTENSION_DEGREE },
-            RobustSecurePrssInit,
-            _,
-        >(
-            params,
-            MaliciousOfflineWrongAmount::new(SyncReliableBroadcast::default()),
-        );
+    async fn test_malicious_wrongamount_offline_small(#[case] params: TestingParameters) {
+        join(
+            test_offline_small_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(
+                params.clone(),
+                MaliciousOfflineWrongAmount::new(SyncReliableBroadcast::default()),
+            ),
+            test_offline_small_strategies::<
+                ResiduePolyF4Z64,
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                RobustSecurePrssInit,
+                _,
+            >(
+                params,
+                MaliciousOfflineWrongAmount::new(SyncReliableBroadcast::default()),
+            ),
+        )
+        .await;
     }
 
     #[rstest]
@@ -775,7 +786,7 @@ mod test {
     #[case(TestingParameters::init(5, 1, &[1], &[], &[], false, None))]
     #[case(TestingParameters::init(7, 2, &[4,5], &[], &[], true, None))]
     #[case(TestingParameters::init(10, 3, &[1,3,7], &[], &[], true, None))]
-    fn test_malicious_wrongprss_offline_small(#[case] params: TestingParameters) {
+    async fn test_malicious_wrongprss_offline_small(#[case] params: TestingParameters) {
         type MaliciousPrss<Z> = MaliciousPrssHonestInitRobustThenRandom<
             RobustSecureAgreeRandom,
             SecureVss,
@@ -783,25 +794,27 @@ mod test {
             Z,
         >;
 
-        test_offline_small_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            MaliciousPrss<ResiduePolyF4Z128>,
-            _,
-        >(
-            params.clone(),
-            RealSmallPreprocessing::<SyncReliableBroadcast>::default(),
-        );
-
-        test_offline_small_strategies::<
-            ResiduePolyF4Z64,
-            { ResiduePolyF4Z64::EXTENSION_DEGREE },
-            MaliciousPrss<ResiduePolyF4Z64>,
-            _,
-        >(
-            params,
-            RealSmallPreprocessing::<SyncReliableBroadcast>::default(),
-        );
+        join(
+            test_offline_small_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                MaliciousPrss<ResiduePolyF4Z128>,
+                _,
+            >(
+                params.clone(),
+                RealSmallPreprocessing::<SyncReliableBroadcast>::default(),
+            ),
+            test_offline_small_strategies::<
+                ResiduePolyF4Z64,
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                MaliciousPrss<ResiduePolyF4Z64>,
+                _,
+            >(
+                params,
+                RealSmallPreprocessing::<SyncReliableBroadcast>::default(),
+            ),
+        )
+        .await;
     }
 
     #[rstest]
@@ -810,7 +823,7 @@ mod test {
     #[case(TestingParameters::init(5, 1, &[1], &[], &[], false, None))]
     #[case(TestingParameters::init(7, 2, &[4,5], &[], &[], true, None))]
     #[case(TestingParameters::init(10, 3, &[1,3,7], &[], &[], true, None))]
-    fn test_malicious_wrongprss_wrongcheck_offline_small(#[case] params: TestingParameters) {
+    async fn test_malicious_wrongprss_wrongcheck_offline_small(#[case] params: TestingParameters) {
         type MaliciousPrss<Z> = MaliciousPrssHonestInitLieAll<
             RobustSecureAgreeRandom,
             SecureVss,
@@ -818,25 +831,27 @@ mod test {
             Z,
         >;
 
-        test_offline_small_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            MaliciousPrss<ResiduePolyF4Z128>,
-            _,
-        >(
-            params.clone(),
-            RealSmallPreprocessing::<SyncReliableBroadcast>::default(),
-        );
-
-        test_offline_small_strategies::<
-            ResiduePolyF4Z64,
-            { ResiduePolyF4Z64::EXTENSION_DEGREE },
-            MaliciousPrss<ResiduePolyF4Z64>,
-            _,
-        >(
-            params,
-            RealSmallPreprocessing::<SyncReliableBroadcast>::default(),
-        );
+        join(
+            test_offline_small_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                MaliciousPrss<ResiduePolyF4Z128>,
+                _,
+            >(
+                params.clone(),
+                RealSmallPreprocessing::<SyncReliableBroadcast>::default(),
+            ),
+            test_offline_small_strategies::<
+                ResiduePolyF4Z64,
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                MaliciousPrss<ResiduePolyF4Z64>,
+                _,
+            >(
+                params,
+                RealSmallPreprocessing::<SyncReliableBroadcast>::default(),
+            ),
+        )
+        .await;
     }
 
     /// Unit testing of [`reconstruct_d_values`]

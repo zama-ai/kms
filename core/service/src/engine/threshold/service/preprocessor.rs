@@ -89,7 +89,7 @@ impl RealPreprocessor {
             .time_operation(OP_KEYGEN_PREPROC)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
-                b.tag(TAG_PARTY_ID, session_preparer.my_id_string_unchecked())
+                b.tag(TAG_PARTY_ID, session_preparer.my_role_string_unchecked())
                     .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
             });
         {
@@ -97,7 +97,7 @@ impl RealPreprocessor {
             guarded_meta_store.insert(&request_id)?;
         }
         // Derive a sequence of sessionId from request_id
-        let own_identity = session_preparer.own_identity()?;
+        let own_identity = session_preparer.own_identity().await?;
 
         let sids = (0..self.num_sessions_preproc)
             .map(|ctr| request_id.derive_session_id_with_counter(ctr as u64))
@@ -275,12 +275,11 @@ impl KeyGenPreprocessor for RealPreprocessor {
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
             tonic_handle_potential_err(
                 self.launch_dkg_preproc(dkg_params, keyset_config, request_id, inner.context_id.map(|x| x.into()), permit).await,
-                format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params)
+                format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}")
             )?;
         } else {
             tracing::warn!(
-                "Tried to generate preproc multiple times for the same Request ID {} -- skipped it!",
-                request_id
+                "Tried to generate preproc multiple times for the same Request ID {request_id} -- skipped it!"
             );
         }
         Ok(Response::new(Empty {}))

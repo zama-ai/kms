@@ -210,7 +210,7 @@ impl<
             .time_operation(op_tag)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
-                b.tag(TAG_PARTY_ID, session_preparer.my_id_string_unchecked())
+                b.tag(TAG_PARTY_ID, session_preparer.my_role_string_unchecked())
                     .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
             });
         // Update status

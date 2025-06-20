@@ -401,8 +401,8 @@ mod tests {
     //Test encryption with our code, decryption with tfhe-rs
     //Note that this does not really test the whole ggsw encryption, as decryption
     //only cares about the last row of the encryption matrix
-    #[test]
-    fn test_ggsw_encryption() {
+    #[tokio::test]
+    async fn test_ggsw_encryption() {
         //Testing with NIST params in P=8
         let polynomial_size = 512_usize;
         let polynomial_size = PolynomialSize(polynomial_size);
@@ -502,7 +502,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         let mut glwe_key_shares: HashMap<Role, Vec<Share<_>>> = HashMap::new();
         let mut ggsw_ctxt_shares: HashMap<Role, Vec<Share<_>>> = HashMap::new();

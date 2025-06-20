@@ -116,7 +116,7 @@ pub type SecureLargeSessionBitProducer<Z> =
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use itertools::Itertools;
 
@@ -135,7 +135,7 @@ mod tests {
                 },
                 BitPreprocessing,
             },
-            runtime::party::Identity,
+            runtime::party::Role,
             sharing::shamir::{RevealOp, ShamirSharings},
         },
     };
@@ -144,7 +144,7 @@ mod tests {
         all_parties_channels: Vec<
             ReceiverChannelCollectionWithTracker<ResiduePoly<Z64, EXTENSION_DEGREE>>,
         >,
-        identities: &[Identity],
+        roles: &HashSet<Role>,
         num_bits: usize,
         threshold: usize,
     ) where
@@ -170,16 +170,12 @@ mod tests {
 
         //Retrieve bits and try reconstruct them
         let mut bits_map = HashMap::new();
-        for ((party_idx, _party_id), bit_preproc) in identities
-            .iter()
-            .enumerate()
-            .zip_eq(bit_preprocs.iter_mut())
-        {
+        for (party, bit_preproc) in roles.iter().zip(bit_preprocs.iter_mut()) {
             let bit_len = bit_preproc.bits_len();
             assert_eq!(bit_len, num_bits);
 
             let bits_shares = bit_preproc.next_bit_vec(num_bits).unwrap();
-            bits_map.insert(party_idx + 1, bits_shares);
+            bits_map.insert(party, bits_shares);
         }
 
         let mut vec_sharings = vec![ShamirSharings::default(); num_bits];
@@ -246,7 +242,7 @@ mod tests {
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
         let num_bits = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, all_parties_channels) = test_production_large::<EXTENSION_DEGREE>(
+        let (roles, all_parties_channels) = test_production_large::<EXTENSION_DEGREE>(
             num_sessions as u128,
             num_bits,
             batch_size,
@@ -255,12 +251,7 @@ mod tests {
             Typeproduction::Bits,
         );
 
-        check_bits_reconstruction(
-            all_parties_channels,
-            &identities,
-            num_bits,
-            threshold as usize,
-        );
+        check_bits_reconstruction(all_parties_channels, &roles, num_bits, threshold as usize);
     }
 
     #[test]

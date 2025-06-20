@@ -12,19 +12,21 @@ use super::constants::{
     NETWORK_TIMEOUT_ASYNC, NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
 };
 use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
-use super::tls::extract_context_id_and_subject_from_cert;
+use super::tls::extract_subject_from_cert;
 use super::NetworkMode;
 use crate::error::error_handler::anyhow_error_and_log;
-use crate::execution::runtime::party::{Identity, RoleAssignment};
+use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
 use crate::networking::Networking;
 use crate::session_id::SessionId;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, OnceLock, RwLock};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::sync::Mutex;
+use std::sync::{Arc, OnceLock};
+use tokio::sync::{
+    mpsc::{channel, Receiver, Sender},
+    Mutex, RwLock,
+};
 use tokio::time::Duration;
 use tonic::transport::server::TcpConnectInfo;
 use x509_parser::parse_x509_certificate;
@@ -119,7 +121,7 @@ impl OptionConfigWrapper {
 #[derive(Debug, Clone)]
 pub struct GrpcNetworkingManager {
     pub message_queues: Arc<MessageQueueStores>,
-    owner: Identity,
+    owner: Role,
     conf: OptionConfigWrapper,
     pub sending_service: GrpcSendingService,
 }
@@ -139,15 +141,22 @@ impl GrpcNetworkingManager {
 
     /// Owner should be the external address
     pub fn new(
-        owner: Identity,
+        owner: Role,
         tls_conf: Option<tokio_rustls::rustls::client::ClientConfig>,
         conf: Option<CoreToCoreNetworkConfig>,
+        peer_tcp_proxy: bool,
+        role_assignment: Arc<RwLock<RoleAssignment>>,
     ) -> anyhow::Result<Self> {
         Ok(GrpcNetworkingManager {
             message_queues: Default::default(),
             owner,
             conf: OptionConfigWrapper { conf },
-            sending_service: GrpcSendingService::new(tls_conf, conf)?,
+            sending_service: GrpcSendingService::new(
+                tls_conf,
+                conf,
+                peer_tcp_proxy,
+                role_assignment,
+            )?,
         })
     }
 
@@ -156,31 +165,37 @@ impl GrpcNetworkingManager {
     /// All the communication are performed using sessions.
     /// There may be multiple session in parallel,
     /// identified by different session IDs.
-    pub fn make_session(
+    pub async fn make_session(
         &self,
         session_id: SessionId,
-        roles: RoleAssignment,
+        role_assignment: Arc<RwLock<RoleAssignment>>,
         network_mode: NetworkMode,
-    ) -> Arc<impl Networking> {
-        let others = roles
+    ) -> anyhow::Result<Arc<impl Networking>> {
+        let role_assignment = role_assignment.read().await;
+
+        let others = role_assignment
             .iter()
-            .filter_map(|(_role, identity)| {
-                if identity != &self.owner {
-                    Some(identity.clone())
+            .filter_map(|(role, _identity)| {
+                if *role != self.owner {
+                    Some(role)
                 } else {
                     None
                 }
             })
+            .cloned()
             .collect_vec();
 
         // Tell the sending service to spawns network threads to communicate wit the others
-        let connection_channel = self.sending_service.add_connections(others).unwrap();
+        let connection_channel = self.sending_service.add_connections(others).await?;
 
         // Create the message queue for this session id (this queue will be written to by the grpc server and read by the NetworkSession)
         let message_store = DashMap::new();
-        for (_role, identity) in roles {
+        for (role, identity) in &*role_assignment {
             let (tx, rx) = channel::<NetworkRoundValue>(self.conf.get_message_limit());
-            message_store.insert(identity, (Arc::new(tx), Arc::new(Mutex::new(rx))));
+            message_store.insert(
+                *role,
+                (identity.clone(), Arc::new(tx), Arc::new(Mutex::new(rx))),
+            );
         }
         let message_store = Arc::new(message_store);
         self.message_queues
@@ -196,8 +211,8 @@ impl GrpcNetworkingManager {
             NetworkMode::Async => *NETWORK_TIMEOUT_ASYNC,
             NetworkMode::Sync => self.conf.get_network_timeout(),
         };
-        Arc::new(NetworkSession {
-            owner: self.owner.clone(),
+        Ok(Arc::new(NetworkSession {
+            owner: self.owner,
             session_id,
             sending_channels: connection_channel,
             receiving_channels: message_store,
@@ -210,7 +225,7 @@ impl GrpcNetworkingManager {
             max_elapsed_time: RwLock::new(Duration::ZERO),
             #[cfg(feature = "choreographer")]
             num_byte_sent: RwLock::new(0),
-        })
+        }))
     }
 
     pub fn delete_session(&self, session_id: SessionId) {
@@ -231,8 +246,9 @@ pub struct NetworkRoundValue {
 }
 
 pub(crate) type MessageQueueStore = DashMap<
-    Identity,
+    Role,
     (
+        Identity,
         Arc<Sender<NetworkRoundValue>>,
         Arc<Mutex<Receiver<NetworkRoundValue>>>,
     ),
@@ -284,7 +300,7 @@ impl Gnetworking for NetworkingImpl {
                     parse_x509_certificate(certs[0].as_ref())
                         .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))
                         .and_then(|(_rem, cert)| {
-                            extract_context_id_and_subject_from_cert(&cert).map_err(|e| {
+                            extract_subject_from_cert(&cert).map_err(|e| {
                                 tonic::Status::new(tonic::Code::Aborted, e.to_string())
                             })
                         })
@@ -310,42 +326,46 @@ impl Gnetworking for NetworkingImpl {
             };
         }
 
-        if let Some(sender) = valid_tls_sender {
-            // tag.sender is an Identity(hostname, port) struct, so we can directly access the hostname
-            // We only need the hostname component since the tls_sender does not include the port
-            let host = &tag.sender.hostname();
-            if sender != *host {
-                return Err(tonic::Status::new(
-                    tonic::Code::Unauthenticated,
-                    format!("wrong sender: expected {host:?} to be in {sender:?}"),
-                ));
-            }
-        } else {
-            tracing::warn!("No valid TLS senders known.");
-        }
-        tracing::debug!("passed sender verification, tag is {:?}", tag);
-
         for _ in 0..NUM_RETRIES_FETCH_MESSAGE_QUEUE {
             if self.message_queues.contains_key(&tag.session_id) {
-                let tx = self
+                let session = self
                     .message_queues
                     .get(&tag.session_id)
                     .ok_or_else(|| {
-                        anyhow_error_and_log("couldn't retrieve session store from message stores")
+                        anyhow_error_and_log(format!("couldn't retrieve session store from message stores: unknown session {}", &tag.session_id))
                     })
-                    .map(|s| {
-                        s.get(&tag.sender)
-                            .ok_or_else(|| {
-                                anyhow_error_and_log(
-                                    "couldn't retrieve channels from session store",
-                                )
-                            })
-                            .map(|s| s.value().0.clone())
-                            .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))
-                    })
-                    .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))??;
+                    .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?;
 
-                let _ = tx
+                let peer = session
+                    .value()
+                    .get(&tag.sender)
+                    .ok_or_else(|| {
+                        anyhow_error_and_log(format!(
+                            "couldn't retrieve channels from session store: unknown sender {}",
+                            &tag.sender
+                        ))
+                    })
+                    .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?;
+
+                if let Some(sender) = valid_tls_sender {
+                    if sender != peer.value().0.to_string() {
+                        return Err(tonic::Status::new(
+                            tonic::Code::Unauthenticated,
+                            format!(
+                                "wrong sender: expected {}, but it was {}",
+                                peer.value().0,
+                                sender
+                            ),
+                        ));
+                    }
+                    tracing::debug!("passed sender verification, tag is {:?}", tag);
+                } else {
+                    tracing::warn!("No valid TLS senders known.");
+                }
+
+                let _ = peer
+                    .value()
+                    .1
                     .send(NetworkRoundValue {
                         value: request.value,
                         round_counter: tag.round_counter,
@@ -368,6 +388,6 @@ impl Gnetworking for NetworkingImpl {
 #[derive(Serialize, Deserialize, Debug)]
 struct Tag {
     session_id: SessionId,
-    sender: Identity,
+    sender: Role,
     round_counter: usize,
 }

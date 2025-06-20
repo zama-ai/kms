@@ -13,12 +13,11 @@ use crate::{
         },
         runtime::{party::Role, session::LargeSessionHandles},
     },
-    tests::helper::tests_and_benches::roles_from_idxs,
     ProtocolDescription,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Lie in broadcast as sender
 #[derive(Clone, Default)]
@@ -26,7 +25,7 @@ pub struct MaliciousSenderLocalDoubleShare<C: Coinflip, S: ShareDispute, BCast: 
     coinflip: C,
     share_dispute: S,
     broadcast: BCast,
-    roles_to_lie_to: Vec<Role>,
+    roles_to_lie_to: HashSet<Role>,
 }
 
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
@@ -49,13 +48,13 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> MaliciousSenderLocalDoubleS
         coinflip_strategy: C,
         share_dispute_strategy: S,
         broadcast_strategy: BCast,
-        roles_to_lie_to: &[usize],
+        roles_to_lie_to: &HashSet<Role>,
     ) -> Self {
         Self {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
             broadcast: broadcast_strategy,
-            roles_to_lie_to: roles_from_idxs(roles_to_lie_to),
+            roles_to_lie_to: roles_to_lie_to.clone(),
         }
     }
 }
@@ -66,7 +65,7 @@ pub struct MaliciousReceiverLocalDoubleShare<C: Coinflip, S: ShareDispute, BCast
     coinflip: C,
     share_dispute: S,
     broadcast: BCast,
-    roles_to_lie_to: Vec<Role>,
+    roles_to_lie_to: HashSet<Role>,
 }
 
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
@@ -91,13 +90,13 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast>
         coinflip_strategy: C,
         share_dispute_strategy: S,
         broadcast_strategy: BCast,
-        roles_to_lie_to: &[usize],
+        roles_to_lie_to: &HashSet<Role>,
     ) -> Self {
         Self {
             coinflip: coinflip_strategy,
             share_dispute: share_dispute_strategy,
             broadcast: broadcast_strategy,
-            roles_to_lie_to: roles_from_idxs(roles_to_lie_to),
+            roles_to_lie_to: roles_to_lie_to.clone(),
         }
     }
 }

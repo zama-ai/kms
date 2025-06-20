@@ -94,7 +94,7 @@ impl<
     {
         tracing::info!(
             "{:?} started inner_decrypt with mode {:?}",
-            session_prep.own_identity(),
+            session_prep.own_identity().await?,
             dec_mode
         );
 
@@ -121,7 +121,7 @@ impl<
                     low_level_ct,
                     &keys.private_keys,
                     dec_mode,
-                    session_prep.own_identity()?,
+                    session_prep.my_role()?,
                 )
                 .await;
                 session_prep.destroy_session(session_id).await;
@@ -141,7 +141,7 @@ impl<
                     &keys.private_keys,
                     &keys.integer_server_key.as_ref().key_switching_key,
                     dec_mode,
-                    session_prep.own_identity()?,
+                    session_prep.my_role()?,
                 )
                 .await;
                 session_prep.destroy_session(session_id).await;
@@ -167,7 +167,7 @@ impl<
                 };
                 tracing::info!(
                     "Decryption completed on {:?}. Inner thread took {:?} ms",
-                    session_prep.own_identity(),
+                    session_prep.own_identity().await?,
                     time.as_millis()
                 );
                 raw_decryption
@@ -215,7 +215,7 @@ impl<
             .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
-                b.tag(TAG_PARTY_ID, session_preparer.my_id_string_unchecked())
+                b.tag(TAG_PARTY_ID, session_preparer.my_role_string_unchecked())
                     .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
             })
             .map(|b| b.start())
@@ -295,7 +295,7 @@ impl<
                 .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
                 .and_then(|b| {
                     b.tags([
-                        (TAG_PARTY_ID, session_preparer.my_id_string_unchecked()),
+                        (TAG_PARTY_ID, session_preparer.my_role_string_unchecked()),
                         (TAG_KEY_ID, key_id.as_str()),
                         (
                             TAG_PUBLIC_DECRYPTION_KIND,

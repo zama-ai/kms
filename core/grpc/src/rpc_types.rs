@@ -1041,6 +1041,9 @@ mod tests {
         let key_id =
             RequestId::from_str("2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40")
                 .unwrap();
+        let context_id =
+            RequestId::from_str("4142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f60")
+                .unwrap();
 
         let alloy_domain = alloy_sol_types::eip712_domain!(
             name: "Authorization token",
@@ -1070,6 +1073,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: vec![],
                 domain: None,
+                context_id: Some(context_id.into()),
             };
             assert!(req
                 .compute_link_checked()
@@ -1087,6 +1091,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: vec![],
                 domain: Some(domain.clone()),
+                context_id: Some(context_id.into()),
             };
             assert!(req
                 .compute_link_checked()
@@ -1107,6 +1112,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: vec![],
                 domain: Some(bad_domain),
+                context_id: Some(context_id.into()),
             };
 
             assert!(req
@@ -1125,6 +1131,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: vec![],
                 domain: Some(domain.clone()),
+                context_id: Some(context_id.into()),
             };
             assert!(req.compute_link_checked().is_ok());
         }

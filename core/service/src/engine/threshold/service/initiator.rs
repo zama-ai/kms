@@ -11,10 +11,10 @@ use kms_grpc::{
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
-        runtime::session::ParameterHandles,
+        runtime::{party::Role, session::ParameterHandles},
         small_execution::prss::{PRSSInit, PRSSSetup, RobustSecurePrssInit},
     },
-    networking::{NetworkMode, Networking, NetworkingStrategy},
+    networking::NetworkMode,
 };
 use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Response, Status};
@@ -144,7 +144,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             return Err(anyhow_error_and_log("PRSS state already exists"));
         }
 
-        let own_identity = session_preparer.own_identity()?;
+        let own_identity = session_preparer.own_identity().await?;
         let session_id = req_id.derive_session_id()?;
         //PRSS robust init requires broadcast, which is implemented with Sync network assumption
         let mut base_session = session_preparer
@@ -157,10 +157,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             base_session.parameters.num_parties(),
             base_session.parameters.threshold()
         );
-        tracing::info!(
-            "Role assignments: {:?}",
-            base_session.parameters.role_assignments()
-        );
+        tracing::info!("Role assignments: {:?}", base_session.parameters.roles());
         let prss_setup_obj_z128: PRSSSetup<ResiduePolyF4Z128> = RobustSecurePrssInit::default()
             .init(&mut base_session)
             .await?;
@@ -225,30 +222,23 @@ impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> 
         // endpoint will be removed.
 
         let networking_manager = self.session_preparer_manager.get_networking_manager().await;
-        let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
-            move |session_id, roles, network_mode| {
-                let nm = networking_manager.clone();
-                Box::pin(async move {
-                    let manager = nm.read().await;
-                    let impl_networking = manager.make_session(session_id, roles, network_mode);
-                    Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
-                })
-            },
-        )));
+        let role_assignment = self.session_preparer_manager.get_role_assignment().await;
 
-        let role_assignments: threshold_fhe::execution::runtime::party::RoleAssignment = self
-            .threshold_config
-            .peers
-            .clone()
-            .into_iter()
-            .map(|peer_config| peer_config.into_role_identity())
-            .collect();
+        let peers = tonic_some_or_err(self.threshold_config.peers.clone(), "Peer list not set in the configuration file, setting it through the context is unsupported yet".to_string())?;
+
+        let mut role_assignment_write = role_assignment.write().await;
+        role_assignment_write.extend(
+            peers
+                .into_iter()
+                .map(|peer_config| peer_config.into_role_identity()),
+        );
+
         let session_preparer = SessionPreparer::new(
             self.base_kms.new_instance().await,
             self.threshold_config.threshold,
-            self.threshold_config.my_id,
-            role_assignments,
-            networking_strategy,
+            Role::indexed_from_one(self.threshold_config.my_id),
+            role_assignment.clone(),
+            networking_manager.clone(),
             Arc::clone(&self.prss_setup_z128),
             Arc::clone(&self.prss_setup_z64),
         );

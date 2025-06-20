@@ -41,7 +41,7 @@ pub struct GenericKms<
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     tracker: Arc<TaskTracker>,
     health_reporter: Arc<RwLock<HealthReporter>>,
-    mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
+    mpc_abort_handle: JoinHandle<anyhow::Result<()>>,
 }
 
 #[cfg(feature = "insecure")]

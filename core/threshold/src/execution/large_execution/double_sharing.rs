@@ -92,7 +92,7 @@ impl<Z: Default, S: LocalDoubleShare + Default> Default for RealDoubleSharing<Z,
 impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
     for RealDoubleSharing<Z, S>
 {
-    #[instrument(name="DoubleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),own_identity=?session.own_identity(), batch_size = ?l))]
+    #[instrument(name="DoubleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),my_role=?session.my_role(), batch_size = ?l))]
     async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
@@ -247,7 +247,7 @@ pub(crate) mod tests {
         tests::helper::tests_and_benches::execute_protocol_large,
     };
 
-    fn test_doublesharing<
+    async fn test_doublesharing<
         Z: Ring + RingEmbed + ErrorCorrect + Derive + Invert,
         const EXTENSION_DEGREE: usize,
     >(
@@ -290,7 +290,8 @@ pub(crate) mod tests {
             NetworkMode::Sync,
             None,
             &mut task,
-        );
+        )
+        .await;
 
         //Check we can reconstruct both degree t and 2t, and they are equal
         let ldl_batch_size = 10_usize;
@@ -317,25 +318,27 @@ pub(crate) mod tests {
     #[rstest]
     #[case(4, 1)]
     #[case(7, 2)]
-    fn test_doublesharing_z128(#[case] num_parties: usize, #[case] threshold: usize) {
+    async fn test_doublesharing_z128(#[case] num_parties: usize, #[case] threshold: usize) {
         test_doublesharing::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>(
             num_parties,
             threshold,
-        );
+        )
+        .await;
     }
 
     #[rstest]
     #[case(4, 1)]
     #[case(7, 2)]
-    fn test_doublesharing_z64(#[case] num_parties: usize, #[case] threshold: usize) {
+    async fn test_doublesharing_z64(#[case] num_parties: usize, #[case] threshold: usize) {
         test_doublesharing::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
             num_parties,
             threshold,
-        );
+        )
+        .await;
     }
 
-    #[test]
-    fn test_doublesharing_dropout() {
+    #[tokio::test]
+    async fn test_doublesharing_dropout() {
         let parties = 5;
         let threshold = 1;
 
@@ -371,7 +374,8 @@ pub(crate) mod tests {
             _,
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
+        >(parties, threshold, None, NetworkMode::Sync, None, &mut task)
+        .await;
 
         //Check we can reconstruct both degree t and 2t, and they are equal
         let ldl_batch_size = 10_usize;

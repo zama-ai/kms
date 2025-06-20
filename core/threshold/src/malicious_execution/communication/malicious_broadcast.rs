@@ -37,7 +37,7 @@ impl Broadcast for MaliciousBroadcastDrop {
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
         _session: &B,
-        _sender_list: &[Role],
+        _senders: &HashSet<Role>,
         _my_message: Option<BroadcastValue<Z>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
         Ok(RoleValueMap::new())
@@ -62,22 +62,22 @@ impl Broadcast for MaliciousBroadcastSender {
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
         session: &B,
-        sender_list: &[Role],
+        senders: &HashSet<Role>,
         my_message: Option<BroadcastValue<Z>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
         let num_parties = session.num_parties();
-        if sender_list.is_empty() {
+        if senders.is_empty() {
             return Err(anyhow_error_and_log(
                 "We expect at least one party as sender in reliable broadcast".to_string(),
             ));
         }
-        let num_senders = sender_list.len();
+        let num_senders = senders.len();
 
         let threshold = session.threshold();
         let min_honest_nodes = num_parties as u32 - threshold as u32;
 
         let my_role = session.my_role();
-        let is_sender = sender_list.contains(&my_role);
+        let is_sender = senders.contains(&my_role);
         let mut bcast_data = HashMap::with_capacity(num_senders);
 
         let mut non_answering_parties = HashSet::new();
@@ -86,21 +86,19 @@ impl Broadcast for MaliciousBroadcastSender {
         // As a cheater I send a different message to all the parties
         // The send calls are followed by receive to get the incoming messages from the others
         let mut round1_data = HashMap::<Role, BroadcastValue<Z>>::new();
-        session.network().increase_round_counter()?;
+        session.network().increase_round_counter().await;
         let mut rng = AesRng::from_random_seed();
         match (my_message.clone(), is_sender) {
             (Some(message), true) => {
                 bcast_data.insert(my_role, message.clone());
                 round1_data.insert(my_role, bcast_data[&my_role].clone());
-                for (other_role, other_identity) in session.role_assignments().iter() {
+                for other_role in session.roles().iter() {
                     let malicious_msg =
                         NetworkValue::Send(BroadcastValue::from(Z::sample(&mut rng)));
-
-                    let other_id = other_identity.clone();
-                    if &my_role != other_role {
+                    if my_role != *other_role {
                         session
                             .network()
-                            .send(malicious_msg.to_network(), &other_id)
+                            .send(malicious_msg.to_network(), other_role)
                             .await?;
                     }
                 }
@@ -118,7 +116,7 @@ impl Broadcast for MaliciousBroadcastSender {
             &mut round1_data,
             session,
             &my_role,
-            sender_list,
+            senders,
             &mut non_answering_parties,
         )
         .await?;
@@ -148,7 +146,7 @@ impl Broadcast for MaliciousBroadcastSender {
         // Communication round 3
         // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
         let mut casted_vote: HashMap<Role, bool> =
-            sender_list.iter().map(|role| (*role, false)).collect();
+            senders.iter().map(|role| (*role, false)).collect();
 
         cast_threshold_vote::<Z, B>(session, &my_role, &registered_votes, 1).await?;
 
@@ -212,22 +210,22 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
         session: &B,
-        sender_list: &[Role],
+        senders: &HashSet<Role>,
         my_message: Option<BroadcastValue<Z>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
-        if sender_list.is_empty() {
+        if senders.is_empty() {
             return Err(anyhow_error_and_log(
                 "We expect at least one party as sender in reliable broadcast".to_string(),
             ));
         }
-        let num_senders = sender_list.len();
+        let num_senders = senders.len();
 
         let my_role = session.my_role();
         let num_parties = session.num_parties();
         // Lie to the "next" party
         let role_to_lie_to = Role::indexed_from_zero(my_role.one_based() % num_parties);
 
-        let is_sender = sender_list.contains(&my_role);
+        let is_sender = senders.contains(&my_role);
         let mut bcast_data = HashMap::with_capacity(num_senders);
 
         let mut non_answering_parties = HashSet::new();
@@ -236,21 +234,20 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
         // As a cheater I send a different message to role_to_lie_to
         // The send calls are followed by receive to get the incoming messages from the others
         let mut round1_data = HashMap::<Role, BroadcastValue<Z>>::new();
-        session.network().increase_round_counter()?;
+        session.network().increase_round_counter().await;
         let mut rng = AesRng::from_random_seed();
         let random_message = BroadcastValue::from(Z::sample(&mut rng));
         match (my_message.clone(), is_sender) {
             (Some(message), true) => {
                 bcast_data.insert(my_role, message.clone());
                 round1_data.insert(my_role, bcast_data[&my_role].clone());
-                for (other_role, other_identity) in session.role_assignments().iter() {
-                    let other_id = other_identity.clone();
-                    if &my_role != other_role && other_role != &role_to_lie_to {
+                for other_role in session.roles().iter() {
+                    if my_role != *other_role && *other_role != role_to_lie_to {
                         let msg = NetworkValue::Send(message.clone());
-                        session.network().send(msg.to_network(), &other_id).await?;
-                    } else if other_role == &role_to_lie_to {
+                        session.network().send(msg.to_network(), other_role).await?;
+                    } else if *other_role == role_to_lie_to {
                         let msg = NetworkValue::Send(random_message.clone());
-                        session.network().send(msg.to_network(), &other_id).await?;
+                        session.network().send(msg.to_network(), other_role).await?;
                     }
                 }
             }
@@ -267,25 +264,24 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
             &mut round1_data,
             session,
             &my_role,
-            sender_list,
+            senders,
             &mut non_answering_parties,
         )
         .await?;
 
         // Communication round 2
         // Parties send Echo to the other parties, lying in the same way as for the original send
-        session.network().increase_round_counter()?;
+        session.network().increase_round_counter().await;
         let mut msg_to_victim = round1_data.clone();
         msg_to_victim.insert(my_role, random_message.clone());
         let msg_to_others = round1_data.clone();
-        for (other_role, other_identity) in session.role_assignments().iter() {
-            let other_id = other_identity.clone();
-            if &my_role != other_role && other_role != &role_to_lie_to {
+        for other_role in session.roles().iter() {
+            if my_role != *other_role && *other_role != role_to_lie_to {
                 let msg = NetworkValue::EchoBatch(msg_to_others.clone());
-                session.network().send(msg.to_network(), &other_id).await?;
-            } else if other_role == &role_to_lie_to {
+                session.network().send(msg.to_network(), other_role).await?;
+            } else if *other_role == role_to_lie_to {
                 let msg = NetworkValue::EchoBatch(msg_to_victim.clone());
-                session.network().send(msg.to_network(), &other_id).await?;
+                session.network().send(msg.to_network(), other_role).await?;
             }
         }
         let msg = msg_to_others;

@@ -269,12 +269,14 @@ spec:
         {{- else }}
         {{- /* Generate init keys for non-enclave kms-core service */}}
         - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
+          imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
           name: kms-core-init-gen-keys
           command:
             - /bin/sh
           args:
             - -c
             - |
+              echo "generating keys"
               kms-gen-keys --cmd signing-keys \
               {{- if .Values.minio.enabled }}
               --aws-s3-endpoint http://minio:9000 \

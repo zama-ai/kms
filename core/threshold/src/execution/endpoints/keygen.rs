@@ -483,7 +483,7 @@ where
 }
 
 ///Generates the lwe private key share and associated public key
-#[instrument(name="Gen Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 async fn generate_lwe_private_public_key_pair<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -515,7 +515,7 @@ where
 /// Generate the modulus switching noise reduction key from the small LWE key.
 /// This key is essentially encryptions of zeros, and it's used as a part of
 /// the bootstrap algorithm if it exists, right before modulus switching.
-#[instrument(name="Gen MSNRK",skip(input_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen MSNRK",skip(input_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 async fn generate_mod_switch_noise_reduction_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -561,7 +561,7 @@ where
 
 ///Generate the Key Switch Key from a Glwe key given in Lwe format,
 ///and an actual Lwe key
-#[instrument(name="Gen KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 async fn generate_key_switch_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -604,7 +604,7 @@ where
 
 ///Generates a Bootstrapping Key given a Glwe key in Glwe format
 ///, a Lwe key and the params for the BK generation
-#[instrument(name="Gen BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 async fn generate_bootstrap_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -655,7 +655,7 @@ where
     Ok(bk)
 }
 
-#[instrument(name="Gen Decompression Key", skip(private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen Decompression Key", skip(private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 async fn generate_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -708,7 +708,7 @@ where
     Ok(decompression_key)
 }
 
-#[instrument(name="Gen Compression and Decompression Key", skip(private_glwe_compute_key_as_lwe, private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen Compression and Decompression Key", skip(private_glwe_compute_key_as_lwe, private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 async fn generate_compression_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -779,7 +779,7 @@ where
 ///
 /// When using the DKGParams::WithSnS variant, the sharing domain must be ResiduePoly<Z128, EXTENSION_DEGREE>.
 /// Note that there is some redundancy of information because we also explicitly ask the [`BaseRing`] as trait parameter
-#[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 async fn distributed_keygen<
     Z: BaseRing,
     S: BaseSessionHandles,
@@ -968,7 +968,7 @@ where
     tracing::info!("(Party {my_role}) Generating KSK...Done");
 
     //Computing and opening BK can take a while, so we increase the timeout
-    session.network().set_timeout_for_bk()?;
+    session.network().set_timeout_for_bk().await;
     //Compute the bootstrapping keys
     let bk = generate_bootstrap_key(
         &glwe_secret_key_share,
@@ -992,7 +992,7 @@ where
             )?;
 
             //Computing and opening BK SNS can take a while, so we increase the timeout
-            session.network().set_timeout_for_bk_sns()?;
+            session.network().set_timeout_for_bk_sns().await;
 
             tracing::info!("(Party {my_role}) Generating SnS GLWE...Done");
             let bk_sns = generate_bootstrap_key(
@@ -1157,7 +1157,7 @@ where
     ))
 }
 
-#[instrument(name="DKG with optional compression SK Z128", skip(existing_compression_sk, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="DKG with optional compression SK Z128", skip(existing_compression_sk, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn distributed_keygen_from_optional_compression_sk_z128<
     S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
@@ -1189,7 +1189,7 @@ where
     ))
 }
 
-#[instrument(name="Gen Decompression Key Z128", skip(private_glwe_compute_key, private_compression_key, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen Decompression Key Z128", skip(private_glwe_compute_key, private_compression_key, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn distributed_decompression_keygen_z128<
     S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
@@ -1330,26 +1330,26 @@ pub mod tests {
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn old_keygen_params32_with_sns_f8() {
-        old_keygen_params32_with_sns::<8>()
+    async fn old_keygen_params32_with_sns_f8() {
+        old_keygen_params32_with_sns::<8>().await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn old_keygen_params32_with_sns_f4() {
-        old_keygen_params32_with_sns::<4>()
+    async fn old_keygen_params32_with_sns_f4() {
+        old_keygen_params32_with_sns::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn old_keygen_params32_with_sns_f3() {
-        old_keygen_params32_with_sns::<3>()
+    async fn old_keygen_params32_with_sns_f3() {
+        old_keygen_params32_with_sns::<3>().await
     }
 
-    fn old_keygen_params32_with_sns<const EXTENSION_DEGREE: usize>()
+    async fn old_keygen_params32_with_sns<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1359,7 +1359,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path()).await;
 
         run_switch_and_squash(
             temp_dir.path(),
@@ -1385,27 +1385,27 @@ pub mod tests {
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_no_sns_fglwe_f8() {
-        keygen_params32_no_sns_fglwe::<8>()
+    async fn keygen_params32_no_sns_fglwe_f8() {
+        keygen_params32_no_sns_fglwe::<8>().await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_no_sns_fglwe_f4() {
-        keygen_params32_no_sns_fglwe::<4>()
+    async fn keygen_params32_no_sns_fglwe_f4() {
+        keygen_params32_no_sns_fglwe::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_no_sns_fglwe_f3() {
-        keygen_params32_no_sns_fglwe::<3>()
+    async fn keygen_params32_no_sns_fglwe_f3() {
+        keygen_params32_no_sns_fglwe::<3>().await
     }
 
     ///Tests related to [`PARAMS_P32_NO_SNS_FGLWE`]
-    fn keygen_params32_no_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params32_no_sns_fglwe<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1415,7 +1415,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path()).await;
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             temp_dir.path(),
@@ -1434,27 +1434,27 @@ pub mod tests {
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_no_sns_fglwe_f8() {
-        keygen_params8_no_sns_fglwe::<8>()
+    async fn keygen_params8_no_sns_fglwe_f8() {
+        keygen_params8_no_sns_fglwe::<8>().await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_no_sns_fglwe_f4() {
-        keygen_params8_no_sns_fglwe::<4>()
+    async fn keygen_params8_no_sns_fglwe_f4() {
+        keygen_params8_no_sns_fglwe::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_no_sns_fglwe_f3() {
-        keygen_params8_no_sns_fglwe::<3>()
+    async fn keygen_params8_no_sns_fglwe_f3() {
+        keygen_params8_no_sns_fglwe::<3>().await
     }
 
     ///Tests related to [`PARAMS_P8_NO_SNS_FGLWE`]
-    fn keygen_params8_no_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params8_no_sns_fglwe<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1464,7 +1464,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path()).await;
 
         //This parameter set isnt big enough to run the fheuint tests
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
@@ -1477,27 +1477,27 @@ pub mod tests {
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_no_sns_lwe_f8() {
-        keygen_params32_no_sns_lwe::<8>()
+    async fn keygen_params32_no_sns_lwe_f8() {
+        keygen_params32_no_sns_lwe::<8>().await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_no_sns_lwe_f4() {
-        keygen_params32_no_sns_lwe::<4>()
+    async fn keygen_params32_no_sns_lwe_f4() {
+        keygen_params32_no_sns_lwe::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_no_sns_lwe_f3() {
-        keygen_params32_no_sns_lwe::<3>()
+    async fn keygen_params32_no_sns_lwe_f3() {
+        keygen_params32_no_sns_lwe::<3>().await
     }
 
     ///Tests related to [`PARAMS_P32_NO_SNS_LWE`]
-    fn keygen_params32_no_sns_lwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params32_no_sns_lwe<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1507,7 +1507,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path()).await;
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             temp_dir.path(),
@@ -1526,27 +1526,27 @@ pub mod tests {
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_no_sns_lwe_f8() {
-        keygen_params8_no_sns_lwe::<8>()
+    async fn keygen_params8_no_sns_lwe_f8() {
+        keygen_params8_no_sns_lwe::<8>().await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_no_sns_lwe_f4() {
-        keygen_params8_no_sns_lwe::<4>()
+    async fn keygen_params8_no_sns_lwe_f4() {
+        keygen_params8_no_sns_lwe::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_no_sns_lwe_f3() {
-        keygen_params8_no_sns_lwe::<3>()
+    async fn keygen_params8_no_sns_lwe_f3() {
+        keygen_params8_no_sns_lwe::<3>().await
     }
 
     ///Tests related to [`PARAMS_P8_NO_SNS_LWE`]
-    fn keygen_params8_no_sns_lwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params8_no_sns_lwe<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1556,7 +1556,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path()).await;
 
         //This parameter set isnt big enough to run the fheuint tests
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
@@ -1569,26 +1569,26 @@ pub mod tests {
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params_bk_sns_f8() {
-        keygen_params_bk_sns::<8>()
+    async fn keygen_params_bk_sns_f8() {
+        keygen_params_bk_sns::<8>().await
     }
 
-    #[test]
-    fn keygen_params_bk_sns_f4() {
-        keygen_params_bk_sns::<4>()
+    #[tokio::test]
+    async fn keygen_params_bk_sns_f4() {
+        keygen_params_bk_sns::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params_bk_sns_f3() {
-        keygen_params_bk_sns::<3>()
+    async fn keygen_params_bk_sns_f3() {
+        keygen_params_bk_sns::<3>().await
     }
 
     ///Tests related to [`PARAMS_TEST_BK_SNS`]
-    fn keygen_params_bk_sns<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params_bk_sns<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1598,7 +1598,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path()).await;
 
         run_switch_and_squash(
             temp_dir.path(),
@@ -1624,33 +1624,34 @@ pub mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    #[test]
-    fn integration_keygen_params_bk_sns_f8() {
-        integration_keygen_params_bk_sns::<8>(KeySetConfig::default())
+    #[tokio::test]
+    async fn integration_keygen_params_bk_sns_f8() {
+        integration_keygen_params_bk_sns::<8>(KeySetConfig::default()).await
     }
 
     #[cfg(feature = "slow_tests")]
-    #[test]
-    fn integration_keygen_params_bk_sns_f4() {
-        integration_keygen_params_bk_sns::<4>(KeySetConfig::default())
+    #[tokio::test]
+    async fn integration_keygen_params_bk_sns_f4() {
+        integration_keygen_params_bk_sns::<4>(KeySetConfig::default()).await
     }
 
     #[cfg(feature = "slow_tests")]
-    #[test]
-    fn integration_keygen_params_bk_sns_f3() {
-        integration_keygen_params_bk_sns::<3>(KeySetConfig::default())
+    #[tokio::test]
+    async fn integration_keygen_params_bk_sns_f3() {
+        integration_keygen_params_bk_sns::<3>(KeySetConfig::default()).await
     }
 
     #[cfg(feature = "slow_tests")]
-    #[test]
-    fn integration_keygen_params_bk_sns_existing_compression_sk_f4() {
-        integration_keygen_params_bk_sns::<4>(KeySetConfig::use_existing_compression_sk())
+    #[tokio::test]
+    async fn integration_keygen_params_bk_sns_existing_compression_sk_f4() {
+        integration_keygen_params_bk_sns::<4>(KeySetConfig::use_existing_compression_sk()).await
     }
 
     #[cfg(feature = "slow_tests")]
     ///Tests related to [`PARAMS_TEST_BK_SNS`] using _less fake_ preprocessing
-    fn integration_keygen_params_bk_sns<const EXTENSION_DEGREE: usize>(keyset_config: KeySetConfig)
-    where
+    async fn integration_keygen_params_bk_sns<const EXTENSION_DEGREE: usize>(
+        keyset_config: KeySetConfig,
+    ) where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
@@ -1665,7 +1666,8 @@ pub mod tests {
             threshold,
             temp_dir.path(),
             keyset_config,
-        );
+        )
+        .await;
 
         run_switch_and_squash(
             temp_dir.path(),
@@ -1691,27 +1693,27 @@ pub mod tests {
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_with_sns_fglwe_f8() {
-        keygen_params32_with_sns_fglwe::<8>()
+    async fn keygen_params32_with_sns_fglwe_f8() {
+        keygen_params32_with_sns_fglwe::<8>().await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_with_sns_fglwe_f4() {
-        keygen_params32_with_sns_fglwe::<4>()
+    async fn keygen_params32_with_sns_fglwe_f4() {
+        keygen_params32_with_sns_fglwe::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params32_with_sns_fglwe_f3() {
-        keygen_params32_with_sns_fglwe::<3>()
+    async fn keygen_params32_with_sns_fglwe_f3() {
+        keygen_params32_with_sns_fglwe::<3>().await
     }
 
     ///Tests related to [`PARAMS_P32_SNS_FGLWE`]
-    fn keygen_params32_with_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params32_with_sns_fglwe<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1721,7 +1723,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path()).await;
 
         run_switch_and_squash(
             temp_dir.path(),
@@ -1747,27 +1749,27 @@ pub mod tests {
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_with_sns_fglwe_f8() {
-        keygen_params8_with_sns_fglwe::<8>()
+    async fn keygen_params8_with_sns_fglwe_f8() {
+        keygen_params8_with_sns_fglwe::<8>().await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_with_sns_fglwe_f4() {
-        keygen_params8_with_sns_fglwe::<4>()
+    async fn keygen_params8_with_sns_fglwe_f4() {
+        keygen_params8_with_sns_fglwe::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params8_with_sns_fglwe_f3() {
-        keygen_params8_with_sns_fglwe::<3>()
+    async fn keygen_params8_with_sns_fglwe_f3() {
+        keygen_params8_with_sns_fglwe::<3>().await
     }
 
     ///Tests related to [`PARAMS_P8_REAL_WITH_SNS`]
-    fn keygen_params8_with_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params8_with_sns_fglwe<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1777,7 +1779,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path()).await;
 
         run_switch_and_squash(
             temp_dir.path(),
@@ -1797,27 +1799,27 @@ pub mod tests {
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params_blockchain_without_sns_f8() {
-        keygen_params_blockchain_without_sns::<8>()
+    async fn keygen_params_blockchain_without_sns_f8() {
+        keygen_params_blockchain_without_sns::<8>().await
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params_blockchain_without_sns_f4() {
-        keygen_params_blockchain_without_sns::<4>()
+    async fn keygen_params_blockchain_without_sns_f4() {
+        keygen_params_blockchain_without_sns::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn keygen_params_blockchain_without_sns_f3() {
-        keygen_params_blockchain_without_sns::<3>()
+    async fn keygen_params_blockchain_without_sns_f3() {
+        keygen_params_blockchain_without_sns::<3>().await
     }
 
     ///Tests related to [`BC_PARAMS_NO_SNS`]
-    fn keygen_params_blockchain_without_sns<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params_blockchain_without_sns<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1827,7 +1829,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path()).await;
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             temp_dir.path(),
@@ -1886,7 +1888,7 @@ pub mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    fn run_real_decompression_dkg_and_save<const EXTENSION_DEGREE: usize>(
+    async fn run_real_decompression_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
@@ -1947,7 +1949,7 @@ pub mod tests {
             session
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(120))
-                .unwrap();
+                .await;
             let batch_size = BatchParams {
                 triples: params
                     .get_params_basics_handle()
@@ -2037,7 +2039,8 @@ pub mod tests {
                 None,
                 &mut task,
                 Some(prefix_path.to_str().unwrap().to_string()),
-            );
+            )
+            .await;
 
         // check that the decompression keys are the same
         let decompression_key = results.pop().unwrap().1;
@@ -2056,17 +2059,18 @@ pub mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    #[test]
-    fn decompression_keygen_f4() {
+    #[tokio::test]
+    async fn decompression_keygen_f4() {
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
         run_real_decompression_dkg_and_save::<4>(params, num_parties, threshold, temp_dir.path())
+            .await
     }
 
     #[cfg(feature = "slow_tests")]
-    fn run_real_dkg_and_save<const EXTENSION_DEGREE: usize>(
+    async fn run_real_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
@@ -2103,7 +2107,7 @@ pub mod tests {
             session
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(120))
-                .unwrap();
+                .await;
             let batch_size = BatchParams {
                 triples: params
                     .get_params_basics_handle()
@@ -2181,7 +2185,8 @@ pub mod tests {
                 None,
                 &mut task,
                 None,
-            );
+            )
+            .await;
 
         let pk_ref = results[0].1.clone();
 
@@ -2199,7 +2204,7 @@ pub mod tests {
 
     ///Runs the DKG protocol with [`DummyPreprocessing`]
     /// and [`FakeBitGenEven`]. Saves the results to file.
-    fn run_dkg_and_save<const EXTENSION_DEGREE: usize>(
+    async fn run_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
@@ -2242,7 +2247,8 @@ pub mod tests {
                 NetworkMode::Async,
                 Some(delay_vec),
                 &mut task,
-            );
+            )
+            .await;
 
         let pk_ref = results[0].1.clone();
 

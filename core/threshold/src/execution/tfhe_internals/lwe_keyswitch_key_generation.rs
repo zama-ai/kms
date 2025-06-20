@@ -169,9 +169,9 @@ mod tests {
 
     use super::allocate_and_generate_new_lwe_keyswitch_key;
 
-    #[test]
+    #[tokio::test]
     #[ignore] //Ignore for now, might be able to run on CI with bigger timeout though
-    fn test_lwe_keyswitch() {
+    async fn test_lwe_keyswitch() {
         //Testing with NIST params P=8
         let lwe_dimension = 1024_usize;
         let polynomial_size = 512_usize;
@@ -276,7 +276,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         let mut lwe_key_shares = HashMap::new();
         let mut glwe_key_shares = HashMap::new();

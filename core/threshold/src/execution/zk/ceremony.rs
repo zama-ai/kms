@@ -16,7 +16,10 @@ use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::ops::{Add, Mul, Neg};
+use std::{
+    collections::HashSet,
+    ops::{Add, Mul, Neg},
+};
 use tfhe::{
     core_crypto::prelude::LweCiphertextCount,
     prelude::CastInto,
@@ -816,7 +819,7 @@ pub struct RealCeremony<BCast: Broadcast> {
 
 #[async_trait]
 impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
-    #[instrument(name = "CRS-Ceremony", skip_all, fields(sid=?session.session_id(),own_identity=?session.own_identity()))]
+    #[instrument(name = "CRS-Ceremony", skip_all, fields(sid=?session.session_id(), my_role=?session.my_role()))]
     async fn execute<Z: Ring, S: BaseSessionHandles>(
         &self,
         session: &mut S,
@@ -826,7 +829,7 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
         // the parties need to execute the protocol in a deterministic order
         // so we sort the roles to fix this order
         // even if the adversary can pick the order, it does not affect the security
-        let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
+        let mut all_roles_sorted = session.roles().iter().cloned().collect_vec();
         all_roles_sorted.sort();
         let my_role = session.my_role();
 
@@ -838,10 +841,7 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
         );
 
         for (round, role) in all_roles_sorted.iter().enumerate() {
-            // we use u64 since the round number is defined by the number of participants
-            // i.e., Role, and internally Role stores u64
-            let round = round as u64 + 1; // round starts at 1, round 0 is the trivial CRS, i.e., pp_0
-            if role == &my_role {
+            if *role == my_role {
                 // We use the rayon's threadpool for handling CPU-intensive tasks
                 // like creating the CRS. This is recommended over tokio::task::spawn_blocking
                 // since the tokio threadpool has a very high default upper limit.
@@ -852,7 +852,8 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
                 rayon::spawn_fifo(move || {
                     // [tau] and [r] are copied into [make_partial_proof_deterministic] since Zp is a Copy
                     // we need to make sure they're zeroized after use inside.
-                    let partial_proof = make_partial_proof_deterministic(&pp, tau, round, r, sid);
+                    let partial_proof =
+                        make_partial_proof_deterministic(&pp, tau, round as u64, r, sid);
                     tau.zeroize();
                     r.zeroize();
                     let _ = send.send(partial_proof);
@@ -872,7 +873,7 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
                 // we're running a robust protocol
                 let _ = self
                     .broadcast
-                    .broadcast_w_corrupt_set_update(session, vec![my_role], Some(vi))
+                    .broadcast_w_corrupt_set_update(session, HashSet::from([my_role]), Some(vi))
                     .await?;
 
                 // update our pp
@@ -886,21 +887,21 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
                 // do the following if it is not my turn to contribute
                 match self
                     .broadcast
-                    .broadcast_w_corrupt_set_update::<Z, _>(session, vec![*role], None)
+                    .broadcast_w_corrupt_set_update::<Z, _>(session, HashSet::from([*role]), None)
                     .await
                 {
                     Ok(res) => {
                         // reliable broadcast finished, we need to check the proof
                         // check that it is from the correct sender
                         for (sender, msg) in res {
-                            if &sender == role {
+                            if sender == *role {
                                 if let BroadcastValue::PartialProof(proof) = msg {
                                     // We move pp and then let the blocking thread return it to pp_tmp
                                     // this will avoid cloning the whole pp which is just two vectors.
                                     // The rayon threadpool is used again (see comment above).
                                     let (send, recv) = tokio::sync::oneshot::channel();
                                     rayon::spawn_fifo(move || {
-                                        let res = verify_proof(&pp, &proof, round, sid);
+                                        let res = verify_proof(&pp, &proof, round as u64, sid);
                                         let _ = send.send((res, pp));
                                     });
                                     let (ver, pp_tmp) = recv.await?;
@@ -951,7 +952,7 @@ mod tests {
         execution::{
             runtime::{
                 session::{LargeSession, ParameterHandles},
-                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+                test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
             tfhe_internals::parameters::BC_PARAMS_NO_SNS,
         },
@@ -1012,12 +1013,12 @@ mod tests {
         let threshold = 1usize;
         let num_parties = 4usize;
         let witness_dim = 10usize;
-        let identities = generate_fixed_identities(num_parties);
+        let roles = generate_fixed_roles(num_parties);
         //CRS generation is round robin, so Sync by nature
         let runtime: DistributedTestRuntime<
             ResiduePolyF4Z64,
             { ResiduePolyF4Z64::EXTENSION_DEGREE },
-        > = DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
+        > = DistributedTestRuntime::new(roles, threshold as u8, NetworkMode::Sync, None);
 
         let session_id = SessionId::from(2);
 
@@ -1025,8 +1026,8 @@ mod tests {
         let _guard = rt.enter();
 
         let mut set = JoinSet::new();
-        for (index_id, _identity) in runtime.identities.clone().into_iter().enumerate() {
-            let mut session = runtime.large_session_for_party(session_id, index_id);
+        for role in &runtime.roles {
+            let mut session = runtime.large_session_for_party(session_id, *role);
             let ceremony = ceremony_f();
             set.spawn(async move {
                 let out = ceremony
@@ -1131,7 +1132,7 @@ mod tests {
             witness_dim: usize,
             max_num_bits: Option<u32>,
         ) -> anyhow::Result<FinalizedInternalPublicParameter> {
-            let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
+            let mut all_roles_sorted = session.roles().iter().cloned().collect_vec();
             all_roles_sorted.sort();
             let my_role = session.my_role();
 
@@ -1151,13 +1152,17 @@ mod tests {
 
                     let _ = self
                         .broadcast
-                        .broadcast_w_corrupt_set_update(session, vec![my_role], Some(vi))
+                        .broadcast_w_corrupt_set_update(session, HashSet::from([my_role]), Some(vi))
                         .await?;
                     pp = proof.new_pp;
                 } else {
                     let hm = self
                         .broadcast
-                        .broadcast_w_corrupt_set_update::<Z, _>(session, vec![*role], None)
+                        .broadcast_w_corrupt_set_update::<Z, _>(
+                            session,
+                            HashSet::from([*role]),
+                            None,
+                        )
                         .await
                         .unwrap();
                     let msg = hm.get(role).unwrap();
@@ -1189,7 +1194,7 @@ mod tests {
             witness_dim: usize,
             _max_num_bits: Option<u32>,
         ) -> anyhow::Result<FinalizedInternalPublicParameter> {
-            let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
+            let mut all_roles_sorted = session.roles().iter().cloned().collect_vec();
             all_roles_sorted.sort();
             let my_role = session.my_role();
 
@@ -1213,13 +1218,17 @@ mod tests {
                 if role == &my_role {
                     let _ = self
                         .broadcast
-                        .broadcast_w_corrupt_set_update(session, vec![my_role], Some(vi))
+                        .broadcast_w_corrupt_set_update(session, HashSet::from([my_role]), Some(vi))
                         .await?;
                 } else {
                     // the message sent by `my_role`, the adversary, should be ignored
                     let _ = self
                         .broadcast
-                        .broadcast_w_corrupt_set_update(session, vec![my_role, *role], Some(vi))
+                        .broadcast_w_corrupt_set_update(
+                            session,
+                            HashSet::from([my_role, *role]),
+                            Some(vi),
+                        )
                         .await?;
                 }
             }
@@ -1231,7 +1240,7 @@ mod tests {
         }
     }
 
-    fn test_ceremony_strategies_large<
+    async fn test_ceremony_strategies_large<
         C: Ceremony + 'static,
         Z: Ring,
         const EXTENSION_DEGREE: usize,
@@ -1243,7 +1252,6 @@ mod tests {
         let mut task_honest = |mut session: LargeSession| async move {
             let real_ceremony = SecureCeremony::default();
             (
-                session.my_role(),
                 real_ceremony
                     .execute::<Z, _>(&mut session, witness_dim, Some(1))
                     .await
@@ -1256,7 +1264,6 @@ mod tests {
             let _ = malicious_party
                 .execute::<Z, _>(&mut session, witness_dim, Some(1))
                 .await;
-            session.my_role()
         };
 
         //CRS generation is round robin, so Sync by nature
@@ -1270,10 +1277,11 @@ mod tests {
                 None,
                 &mut task_honest,
                 &mut task_malicious,
-            );
+            )
+            .await;
 
         // the honest results should be a valid crs and not the initial one
-        let honest_pp = results_honest.iter().map(|(_, pp, _)| pp).collect_vec();
+        let honest_pp = results_honest.values().map(|(pp, _)| pp).collect_vec();
         let pp = honest_pp[0];
         // make sure we're not using the initial pp
         assert_ne!(pp.inner.g1g2list.g1s[0], pp.inner.g1g2list.g1s[1]);
@@ -1286,19 +1294,19 @@ mod tests {
     #[rstest]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
-    fn test_dropping_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
+    async fn test_dropping_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         let malicious_party = DroppingCeremony::default();
         test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
             params.clone(),
             witness_dim,
             malicious_party.clone(),
-        );
+        ).await;
     }
 
     #[rstest]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
-    fn test_bad_proof_ceremony<BCast: Broadcast + 'static>(
+    async fn test_bad_proof_ceremony<BCast: Broadcast + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
@@ -1310,13 +1318,13 @@ mod tests {
             params.clone(),
             witness_dim,
             malicious_party.clone(),
-        );
+        ).await;
     }
 
     #[rstest]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
-    fn test_rushing_ceremony<BCast: Broadcast + 'static>(
+    async fn test_rushing_ceremony<BCast: Broadcast + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
@@ -1328,7 +1336,7 @@ mod tests {
             params.clone(),
             witness_dim,
             malicious_party.clone(),
-        );
+        ).await;
     }
 
     #[test]

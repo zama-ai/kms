@@ -14,7 +14,7 @@ use threshold_fhe::execution::sharing::share::Share;
 use threshold_fhe::{
     execution::{
         endpoints::keygen::distributed_keygen_z64,
-        runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+        runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
         tfhe_internals::parameters::DKGParams,
     },
     session_id::SessionId,
@@ -215,12 +215,12 @@ fn test_dkg_orchestrator_large(
 
     let params_basics_handles = params.get_params_basics_handle();
 
-    let identities = generate_fixed_identities(num_parties);
+    let roles = generate_fixed_roles(num_parties);
     //Executing offline, so require Sync network
     let runtimes = (0..num_sessions)
         .map(|_| {
             DistributedTestRuntime::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>::new(
-                identities.clone(),
+                roles.clone(),
                 threshold,
                 NetworkMode::Sync,
                 None,
@@ -231,26 +231,25 @@ fn test_dkg_orchestrator_large(
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let mut handles = OsThreadGroup::new();
-    for party_id in 0..num_parties {
+    for party in roles {
         let runtimes = runtimes.clone();
         let rt_handle = rt.handle().clone();
         handles.add(thread::spawn(move || {
             let _guard = rt_handle.enter();
-            println!("Thread created for {party_id}");
+            println!("Thread created for party {party}");
 
             //For each party, create num_sessions sessions
             let sessions = runtimes
                 .iter()
                 .zip_eq(0..num_sessions)
                 .map(|(runtime, session_id)| {
-                    runtime.large_session_for_party(SessionId::from(session_id), party_id)
+                    runtime.large_session_for_party(SessionId::from(session_id), party)
                 })
                 .collect_vec();
 
-            let identity = sessions[0].own_identity();
             let redis_conf = RedisConf::default();
             let mut redis_factory =
-                create_redis_factory(format!("LargeOrchestrator_{identity}"), &redis_conf);
+                create_redis_factory(format!("LargeOrchestrator_{party}"), &redis_conf);
             let orchestrator = PreprocessingOrchestrator::<ResiduePolyF4Z64>::new(
                 redis_factory.as_mut(),
                 params,
@@ -273,7 +272,7 @@ fn test_dkg_orchestrator_large(
                     .await
                     .unwrap()
             });
-            (party_id, pk, sk)
+            (party, pk, sk)
         }));
     }
 

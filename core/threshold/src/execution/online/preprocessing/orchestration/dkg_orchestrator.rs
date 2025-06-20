@@ -345,9 +345,9 @@ where
         #[cfg(feature = "choreographer")]
         tracing::Span::current().record("percentage_offline", self.percentage_offline);
 
-        let party_id = sessions[0].own_identity();
+        let party_id = sessions[0].my_role();
         for session in sessions.iter() {
-            assert_eq!(party_id, session.own_identity());
+            assert_eq!(party_id, session.my_role());
         }
 
         let (num_bits, num_triples, num_randomness) = self.num_correlated_randomness_required();

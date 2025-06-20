@@ -283,7 +283,7 @@ impl<
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
             verification_key: server_verf_key,
-            party_id: session_prep.my_id()? as u32,
+            party_id: (session_prep.my_role()?.one_based() - 1) as u32,
             degree: session_prep.threshold()? as u32,
         };
 
@@ -325,7 +325,7 @@ impl<
             .time_operation(OP_USER_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
             .and_then(|b| {
-                b.tag(TAG_PARTY_ID, session_preparer.my_id_string_unchecked())
+                b.tag(TAG_PARTY_ID, session_preparer.my_role_string_unchecked())
                     .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
             })
             .map(|b| b.start())
@@ -382,7 +382,7 @@ impl<
         let dec_mode = self.decryption_mode;
 
         let metric_tags = vec![
-            (TAG_PARTY_ID, prep.my_id_string_unchecked()),
+            (TAG_PARTY_ID, prep.my_role_string_unchecked()),
             (TAG_KEY_ID, key_id.as_str()),
             (
                 TAG_PUBLIC_DECRYPTION_KIND,

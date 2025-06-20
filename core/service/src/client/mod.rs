@@ -821,6 +821,7 @@ impl Client {
                 typed_ciphertexts,
                 key_id: Some((*key_id).into()),
                 domain: Some(domain_msg),
+                context_id: None,
             },
             UnifiedPublicEncKey::MlKem512(enc_pk),
             UnifiedPrivateEncKey::MlKem512(enc_sk),
@@ -2065,7 +2066,7 @@ pub mod test_tools {
                     preproc_redis: None,
                     num_sessions_preproc: None,
                     tls: None,
-                    peers: mpc_conf,
+                    peers: Some(mpc_conf),
                     core_to_core_net: None,
                     decryption_mode,
                 };
@@ -2079,10 +2080,10 @@ pub mod test_tools {
                     mpc_listener,
                     sk,
                     None,
+                    false,
                     run_prss,
                     rl_conf,
                     mpc_core_rx.map(drop),
-                    true,
                 )
                 .await;
                 (i, server, service_config)

@@ -11,7 +11,7 @@ use crate::execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFl
 use crate::execution::online::preprocessing::BitDecPreprocessing;
 use crate::execution::online::preprocessing::InMemoryBitDecPreprocessing;
 use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
-use crate::execution::runtime::party::Identity;
+use crate::execution::runtime::party::Role;
 use crate::execution::runtime::session::BaseSession;
 use crate::execution::runtime::session::ParameterHandles;
 use crate::execution::runtime::session::SessionParameters;
@@ -50,8 +50,6 @@ use rand::SeedableRng;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::num::Wrapping;
-#[cfg(any(test, feature = "testing"))]
-use std::sync::Arc;
 use tfhe::core_crypto::prelude::{keyswitch_lwe_ciphertext, LweCiphertext, LweKeyswitchKey};
 use tfhe::integer::noise_squashing::NoiseSquashingKey;
 use tfhe::integer::ServerKey;
@@ -212,7 +210,7 @@ where
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
 /// * `_mode` - The decryption mode. This is used only for tracing purposes
-/// * `_own_identity` - The identity of the party_keyshare. This is used only for tracing purposes
+/// * `_my_role` - The role of the party_keyshare. This is used only for tracing purposes
 ///
 /// # Returns
 /// * A tuple containing the results of the decryption and the time it took to execute the decryption
@@ -227,7 +225,7 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip_all, fields(sid, own_identity = %_own_identity, mode = %_mode))]
+#[instrument(skip_all, fields(sid, my_role = %_my_role, mode = %_mode))]
 pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, T>(
     noiseflood_session: &mut P,
     server_key: &ServerKey,
@@ -235,7 +233,7 @@ pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, T>(
     ct: LowLevelCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     _mode: DecryptionMode,
-    _own_identity: Identity,
+    _my_role: Role,
 ) -> anyhow::Result<(HashMap<String, T>, Duration)>
 where
     P: NoiseFloodPreparation<EXTENSION_DEGREE>,
@@ -295,7 +293,7 @@ where
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
 /// * `_mode` - The decryption mode. This is used only for tracing purposes
-/// * `_own_identity` - The identity of the party_keyshare. This is used only for tracing purposes
+/// * `_my_role` - The role of the party_keyshare. This is used only for tracing purposes
 ///
 /// # Returns
 /// * A tuple containing the results of the partial decryption and the time it took to execute
@@ -310,7 +308,7 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-#[instrument(skip_all, fields(sid = ?parameters.session_id(), own_identity = %parameters.own_identity(), mode = %_mode))]
+#[instrument(skip_all, fields(sid = ?parameters.session_id(), my_role = %parameters.my_role(), mode = %_mode))]
 pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P>(
     parameters: SessionParameters,
     noiseflood_session: &mut P,
@@ -388,7 +386,7 @@ where
 /// * `secret_key_share` - The secret key share of the party_keyshare
 /// * `ksk` - The public keyswitch key
 /// * `_mode` - The decryption mode. This is used only for tracing purposes
-/// * `_own_identity` - The identity of the party_keyshare. This is used only for tracing purposes
+/// * `_my_role` - The role of the party_keyshare. This is used only for tracing purposes
 ///
 /// # Returns
 /// * A tuple containing the results of the decryption and the time it took to execute the decryption
@@ -402,14 +400,14 @@ where
 /// 3. The results are returned
 ///
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), own_identity = %_own_identity, mode = %_mode))]
+#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), my_role = %_my_role, mode = %_mode))]
 pub async fn secure_decrypt_using_bitdec<const EXTENSION_DEGREE: usize, T>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     ct: &RadixOrBoolCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
     _mode: DecryptionMode,
-    _own_identity: Identity,
+    _my_role: Role,
 ) -> anyhow::Result<(HashMap<String, T>, Duration)>
 where
     T: tfhe::integer::block_decomposition::Recomposable
@@ -454,7 +452,7 @@ where
 /// * `secret_key_share` - The secret key share of the party_keyshare
 /// * `ksk` - The public keyswitch key
 /// * `_mode` - The decryption mode. This is used only for tracing purposes
-/// * `_own_identity` - The identity of the party_keyshare. This is used only for tracing purposes
+/// * `_my_role` - The role of the party_keyshare. This is used only for tracing purposes
 ///
 /// # Returns
 /// * A tuple containing the results of the partial decryption and the time it took to execute
@@ -468,7 +466,7 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity(), mode = %_mode))]
+#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), my_role = ?session.my_role(), mode = %_mode))]
 pub async fn secure_partial_decrypt_using_bitdec<const EXTENSION_DEGREE: usize>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     ct: &RadixOrBoolCiphertext,
@@ -643,19 +641,16 @@ where
 /// NOTE: Trait bounds are a bit odd here because this function does a bit too many things
 /// at once
 #[cfg(any(test, feature = "testing"))]
-pub fn threshold_decrypt64<Z: Ring, const EXTENSION_DEGREE: usize>(
+pub async fn threshold_decrypt64<Z: Ring, const EXTENSION_DEGREE: usize>(
     runtime: &DistributedTestRuntime<Z, EXTENSION_DEGREE>,
     ct: &RadixOrBoolCiphertext,
     mode: DecryptionMode,
-) -> anyhow::Result<HashMap<Identity, Z64>>
+) -> anyhow::Result<HashMap<Role, Z64>>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
 {
     let session_id = SessionId::new(ct)?;
-
-    let rt = tokio::runtime::Runtime::new()?;
-    let _guard = rt.enter();
 
     let mut set = JoinSet::new();
 
@@ -680,16 +675,16 @@ where
         _ => None,
     };
 
-    for (index_id, identity) in runtime.identities.clone().into_iter().enumerate() {
-        let role_assignments = runtime.role_assignments.clone();
-        let net = Arc::clone(&runtime.user_nets[index_id]);
+    for role in runtime.roles.clone().into_iter() {
+        let roles = runtime.roles.clone();
+        let net = runtime.user_nets[&role].clone();
         let threshold = runtime.threshold;
         let ct = ct.clone();
 
         let party_keyshare = runtime
             .keyshares
             .clone()
-            .map(|ks| ks[index_id].clone())
+            .map(|ks| ks[role.one_based() - 1].clone())
             .ok_or_else(|| {
                 anyhow_error_and_log("key share not set during decryption".to_string())
             })?;
@@ -697,14 +692,12 @@ where
         let large_ct = large_ct.clone();
 
         tracing::info!(
-            "{}: starting threshold decrypt with mode {}",
-            identity,
+            "party {}: starting threshold decrypt with mode {}",
+            role,
             mode
         );
 
-        let session_params =
-            SessionParameters::new(threshold, session_id, identity.clone(), role_assignments)
-                .unwrap();
+        let session_params = SessionParameters::new(threshold, session_id, role, roles).unwrap();
         let base_session = BaseSession::new(session_params, net, AesRng::from_entropy()).unwrap();
 
         match mode {
@@ -729,7 +722,7 @@ where
                     .await
                     .unwrap();
 
-                    (identity, out)
+                    (role, out)
                 });
             }
             DecryptionMode::NoiseFloodLarge => {
@@ -750,7 +743,7 @@ where
                     .await
                     .unwrap();
 
-                    (identity, out)
+                    (role, out)
                 });
             }
             DecryptionMode::BitDecLarge => {
@@ -770,7 +763,7 @@ where
                     .await
                     .unwrap();
 
-                    (identity, out)
+                    (role, out)
                 });
             }
             DecryptionMode::BitDecSmall => {
@@ -791,20 +784,18 @@ where
                     )
                     .await
                     .unwrap();
-                    (identity, out)
+                    (role, out)
                 });
             }
         }
     }
 
-    let results = rt.block_on(async {
-        let mut results = HashMap::new();
-        while let Some(v) = set.join_next().await {
-            let (identity, val) = v.unwrap();
-            results.insert(identity, val);
-        }
-        results
-    });
+    let mut results = HashMap::new();
+    while let Some(v) = set.join_next().await {
+        let (role, val) = v.unwrap();
+        results.insert(role, val);
+    }
+
     Ok(results)
 }
 
@@ -1164,8 +1155,8 @@ mod tests {
             constants::SMALL_TEST_KEY_PATH,
             endpoints::decryption::threshold_decrypt64,
             runtime::{
-                party::{Identity, Role},
-                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+                party::Role,
+                test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
             sharing::{shamir::ShamirSharings, share::Share},
         },
@@ -1219,42 +1210,42 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_large_threshold_decrypt_f4() {
-        test_large_threshold_decrypt::<4>()
+    #[tokio::test]
+    async fn test_large_threshold_decrypt_f4() {
+        test_large_threshold_decrypt::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
-    fn test_large_threshold_decrypt_f3() {
-        test_large_threshold_decrypt::<3>()
+    #[tokio::test]
+    async fn test_large_threshold_decrypt_f3() {
+        test_large_threshold_decrypt::<3>().await
     }
 
     #[cfg(feature = "extension_degree_5")]
-    #[test]
-    fn test_large_threshold_decrypt_f5() {
-        test_large_threshold_decrypt::<5>()
+    #[tokio::test]
+    async fn test_large_threshold_decrypt_f5() {
+        test_large_threshold_decrypt::<5>().await
     }
 
     #[cfg(feature = "extension_degree_6")]
-    #[test]
-    fn test_large_threshold_decrypt_f6() {
-        test_large_threshold_decrypt::<6>()
+    #[tokio::test]
+    async fn test_large_threshold_decrypt_f6() {
+        test_large_threshold_decrypt::<6>().await
     }
 
     #[cfg(feature = "extension_degree_7")]
-    #[test]
-    fn test_large_threshold_decrypt_f7() {
-        test_large_threshold_decrypt::<7>()
+    #[tokio::test]
+    async fn test_large_threshold_decrypt_f7() {
+        test_large_threshold_decrypt::<7>().await
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_large_threshold_decrypt_f8() {
-        test_large_threshold_decrypt::<8>()
+    #[tokio::test]
+    async fn test_large_threshold_decrypt_f8() {
+        test_large_threshold_decrypt::<8>().await
     }
 
-    fn test_large_threshold_decrypt<const EXTENSION_DEGREE: usize>()
+    async fn test_large_threshold_decrypt<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -1283,61 +1274,62 @@ mod tests {
         .unwrap();
         let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
-        let identities = generate_fixed_identities(num_parties);
+        let roles = generate_fixed_roles(num_parties);
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
             EXTENSION_DEGREE,
-        >::new(identities, threshold as u8, NetworkMode::Sync, None);
+        >::new(roles, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_server_key(Arc::new(keyset.public_keys.server_key.clone()));
         runtime.setup_sks(key_shares);
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
-        let results_dec =
-            threshold_decrypt64(&runtime, &ct, DecryptionMode::NoiseFloodLarge).unwrap();
-        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
+        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::NoiseFloodLarge)
+            .await
+            .unwrap();
+        let out_dec = &results_dec[&Role::indexed_from_one(1)];
 
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
     }
 
-    #[test]
-    fn test_small_threshold_decrypt_f4() {
-        test_small_threshold_decrypt::<4>()
+    #[tokio::test]
+    async fn test_small_threshold_decrypt_f4() {
+        test_small_threshold_decrypt::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
-    fn test_small_threshold_decrypt_f3() {
-        test_small_threshold_decrypt::<3>()
+    #[tokio::test]
+    async fn test_small_threshold_decrypt_f3() {
+        test_small_threshold_decrypt::<3>().await
     }
 
     #[cfg(feature = "extension_degree_5")]
-    #[test]
-    fn test_small_threshold_decrypt_f5() {
-        test_small_threshold_decrypt::<5>()
+    #[tokio::test]
+    async fn test_small_threshold_decrypt_f5() {
+        test_small_threshold_decrypt::<5>().await
     }
 
     #[cfg(feature = "extension_degree_6")]
-    #[test]
-    fn test_small_threshold_decrypt_f6() {
-        test_small_threshold_decrypt::<6>()
+    #[tokio::test]
+    async fn test_small_threshold_decrypt_f6() {
+        test_small_threshold_decrypt::<6>().await
     }
 
     #[cfg(feature = "extension_degree_7")]
-    #[test]
-    fn test_small_threshold_decrypt_f7() {
-        test_small_threshold_decrypt::<7>()
+    #[tokio::test]
+    async fn test_small_threshold_decrypt_f7() {
+        test_small_threshold_decrypt::<7>().await
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_small_threshold_decrypt_f8() {
-        test_small_threshold_decrypt::<8>()
+    #[tokio::test]
+    async fn test_small_threshold_decrypt_f8() {
+        test_small_threshold_decrypt::<8>().await
     }
 
-    fn test_small_threshold_decrypt<const EXTENSION_DEGREE: usize>()
+    async fn test_small_threshold_decrypt<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -1366,61 +1358,62 @@ mod tests {
         .unwrap();
         let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
-        let identities = generate_fixed_identities(num_parties);
+        let roles = generate_fixed_roles(num_parties);
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
             EXTENSION_DEGREE,
-        >::new(identities, threshold as u8, NetworkMode::Sync, None);
+        >::new(roles, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_sks(key_shares);
         runtime.setup_server_key(Arc::new(keyset.public_keys.server_key.clone()));
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
-        let results_dec =
-            threshold_decrypt64(&runtime, &ct, DecryptionMode::NoiseFloodSmall).unwrap();
-        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
+        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::NoiseFloodSmall)
+            .await
+            .unwrap();
+        let out_dec = &results_dec[&Role::indexed_from_one(1)];
 
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
     }
 
-    #[test]
-    fn test_small_bitdec_threshold_decrypt_f4() {
-        test_small_bitdec_threshold_decrypt::<4>()
+    #[tokio::test]
+    async fn test_small_bitdec_threshold_decrypt_f4() {
+        test_small_bitdec_threshold_decrypt::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
-    fn test_small_bitdec_threshold_decrypt_f3() {
-        test_small_bitdec_threshold_decrypt::<3>()
+    #[tokio::test]
+    async fn test_small_bitdec_threshold_decrypt_f3() {
+        test_small_bitdec_threshold_decrypt::<3>().await
     }
 
     #[cfg(feature = "extension_degree_5")]
-    #[test]
-    fn test_small_bitdec_threshold_decrypt_f5() {
-        test_small_bitdec_threshold_decrypt::<5>()
+    #[tokio::test]
+    async fn test_small_bitdec_threshold_decrypt_f5() {
+        test_small_bitdec_threshold_decrypt::<5>().await
     }
 
     #[cfg(feature = "extension_degree_6")]
-    #[test]
-    fn test_small_bitdec_threshold_decrypt_f6() {
-        test_small_bitdec_threshold_decrypt::<6>()
+    #[tokio::test]
+    async fn test_small_bitdec_threshold_decrypt_f6() {
+        test_small_bitdec_threshold_decrypt::<6>().await
     }
 
     #[cfg(feature = "extension_degree_7")]
-    #[test]
-    fn test_small_bitdec_threshold_decrypt_f7() {
-        test_small_bitdec_threshold_decrypt::<7>()
+    #[tokio::test]
+    async fn test_small_bitdec_threshold_decrypt_f7() {
+        test_small_bitdec_threshold_decrypt::<7>().await
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_small_bitdec_threshold_decrypt_f8() {
-        test_small_bitdec_threshold_decrypt::<8>()
+    #[tokio::test]
+    async fn test_small_bitdec_threshold_decrypt_f8() {
+        test_small_bitdec_threshold_decrypt::<8>().await
     }
 
-    fn test_small_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>()
+    async fn test_small_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -1449,12 +1442,12 @@ mod tests {
         .unwrap();
         let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
-        let identities = generate_fixed_identities(num_parties);
+        let roles = generate_fixed_roles(num_parties);
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
             EXTENSION_DEGREE,
-        >::new(identities, threshold as u8, NetworkMode::Sync, None);
+        >::new(roles, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_sks(key_shares);
         runtime.setup_ks(Arc::new(
@@ -1468,49 +1461,50 @@ mod tests {
         ));
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
-        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmall).unwrap();
-        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
-
+        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmall)
+            .await
+            .unwrap();
+        let out_dec = &results_dec[&Role::indexed_from_one(1)];
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
     }
 
-    #[test]
-    fn test_large_bitdec_threshold_decrypt_f4() {
-        test_large_bitdec_threshold_decrypt::<4>()
+    #[tokio::test]
+    async fn test_large_bitdec_threshold_decrypt_f4() {
+        test_large_bitdec_threshold_decrypt::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[test]
-    fn test_large_bitdec_threshold_decrypt_f3() {
-        test_large_bitdec_threshold_decrypt::<3>()
+    #[tokio::test]
+    async fn test_large_bitdec_threshold_decrypt_f3() {
+        test_large_bitdec_threshold_decrypt::<3>().await
     }
 
     #[cfg(feature = "extension_degree_5")]
-    #[test]
-    fn test_large_bitdec_threshold_decrypt_f5() {
-        test_large_bitdec_threshold_decrypt::<5>()
+    #[tokio::test]
+    async fn test_large_bitdec_threshold_decrypt_f5() {
+        test_large_bitdec_threshold_decrypt::<5>().await
     }
 
     #[cfg(feature = "extension_degree_6")]
-    #[test]
-    fn test_large_bitdec_threshold_decrypt_f6() {
-        test_large_bitdec_threshold_decrypt::<6>()
+    #[tokio::test]
+    async fn test_large_bitdec_threshold_decrypt_f6() {
+        test_large_bitdec_threshold_decrypt::<6>().await
     }
 
     #[cfg(feature = "extension_degree_7")]
-    #[test]
-    fn test_large_bitdec_threshold_decrypt_f7() {
-        test_large_bitdec_threshold_decrypt::<7>()
+    #[tokio::test]
+    async fn test_large_bitdec_threshold_decrypt_f7() {
+        test_large_bitdec_threshold_decrypt::<7>().await
     }
 
     #[cfg(feature = "extension_degree_8")]
-    #[test]
-    fn test_large_bitdec_threshold_decrypt_f8() {
-        test_large_bitdec_threshold_decrypt::<8>()
+    #[tokio::test]
+    async fn test_large_bitdec_threshold_decrypt_f8() {
+        test_large_bitdec_threshold_decrypt::<8>().await
     }
 
-    fn test_large_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>()
+    async fn test_large_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -1539,12 +1533,12 @@ mod tests {
         .unwrap();
         let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
-        let identities = generate_fixed_identities(num_parties);
+        let roles = generate_fixed_roles(num_parties);
         //Assumes Sync because preprocessing is part of the task
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
             EXTENSION_DEGREE,
-        >::new(identities, threshold as u8, NetworkMode::Sync, None);
+        >::new(roles, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_sks(key_shares);
         runtime.setup_ks(Arc::new(
@@ -1558,9 +1552,10 @@ mod tests {
         ));
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
-        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecLarge).unwrap();
-        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
-
+        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecLarge)
+            .await
+            .unwrap();
+        let out_dec = &results_dec[&Role::indexed_from_one(1)];
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
     }

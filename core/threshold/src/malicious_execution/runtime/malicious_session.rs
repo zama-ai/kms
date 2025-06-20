@@ -1,10 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::{
     algebra::structure_traits::{Invert, Ring, RingEmbed},
     execution::{
         runtime::{
-            party::{Identity, Role},
+            party::Role,
             session::{
                 BaseSession, BaseSessionHandles, NetworkingImpl, ParameterHandles,
                 SessionParameters, SmallSession, SmallSessionHandles, ToBaseSession,
@@ -62,16 +62,8 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ParameterHandles
         self.base_session.my_role()
     }
 
-    fn identity_from(&self, role: &Role) -> anyhow::Result<Identity> {
-        self.base_session.identity_from(role)
-    }
-
     fn num_parties(&self) -> usize {
         self.base_session.num_parties()
-    }
-
-    fn role_from(&self, identity: &Identity) -> anyhow::Result<Role> {
-        self.base_session.role_from(identity)
     }
 
     fn threshold(&self) -> u8 {
@@ -82,16 +74,12 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ParameterHandles
         self.base_session.session_id()
     }
 
-    fn own_identity(&self) -> Identity {
-        self.base_session.own_identity()
+    fn roles(&self) -> &HashSet<Role> {
+        self.base_session.roles()
     }
 
-    fn role_assignments(&self) -> &HashMap<Role, Identity> {
-        self.base_session.role_assignments()
-    }
-
-    fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
-        self.base_session.set_role_assignments(role_assignments);
+    fn roles_mut(&mut self) -> &mut HashSet<Role> {
+        self.base_session.roles_mut()
     }
 
     fn to_parameters(&self) -> SessionParameters {

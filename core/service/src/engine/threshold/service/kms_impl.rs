@@ -15,12 +15,9 @@ use threshold_fhe::{
     execution::{
         endpoints::keygen::{FhePubKeySet, PrivateKeySet},
         online::preprocessing::{create_memory_factory, create_redis_factory, DKGPreprocessing},
-        runtime::party::{Role, RoleAssignment},
+        runtime::party::Role,
     },
-    networking::{
-        grpc::{GrpcNetworkingManager, GrpcServer},
-        Networking, NetworkingStrategy,
-    },
+    networking::grpc::{GrpcNetworkingManager, GrpcServer},
 };
 use tokio::{
     net::TcpListener,
@@ -47,7 +44,6 @@ use crate::{
         },
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
-    tonic_some_or_err,
     util::{
         meta_store::MetaStore,
         rate_limiter::{RateLimiter, RateLimiterConfig},
@@ -154,10 +150,18 @@ pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
     RealContextManager<PubS, PrivS, BackS>,
 >;
 
-async fn start_mpc_node<F>(
-    config: &ThresholdPartyConf,
+#[allow(clippy::too_many_arguments)]
+pub async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
+    config: ThresholdPartyConf,
+    public_storage: PubS,
+    private_storage: PrivS,
+    backup_storage: Option<BackS>,
     mpc_listener: TcpListener,
+    sk: PrivateSigKey,
     tls_config: Option<(ServerConfig, ClientConfig)>,
+    peer_tcp_proxy: bool,
+    run_prss: bool,
+    rate_limiter_conf: Option<RateLimiterConfig>,
     shutdown_signal: F,
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS, BackS>,
@@ -165,46 +169,56 @@ async fn start_mpc_node<F>(
     MetaStoreStatusServiceImpl,
 )>
 where
+    PubS: Storage + Send + Sync + 'static,
+    PrivS: Storage + Send + Sync + 'static,
+    BackS: Storage + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
-    let role_assignments: RoleAssignment = config
-        .peers
-        .clone()
-        .into_iter()
-        .map(|peer_config| peer_config.into_role_identity())
-        .collect();
+    // load keys from storage
+    let key_info_versioned: HashMap<RequestId, ThresholdFheKeys> =
+        read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
+    let mut public_key_info = HashMap::new();
+    let mut pk_map = HashMap::new();
+    for (id, info) in key_info_versioned.clone().into_iter() {
+        public_key_info.insert(id, info.pk_meta_data.clone());
 
-    let own_identity = tonic_some_or_err(
-        role_assignments.get(&Role::indexed_from_one(config.my_id)),
-        "Could not find my own identity".to_string(),
-    )?;
-    let mpc_socket_addr = mpc_listener.local_addr()?;
+        let pk = read_pk_at_request_id(&public_storage, &id).await?;
+        pk_map.insert(id, pk);
+    }
 
-    let (threshold_health_reporter, threshold_health_service) =
-        tonic_health::server::health_reporter();
-    // This will setup client TLS if tls_certs is set to Some(...)
+    // load crs_info (roughly hashes of CRS) from storage
+    let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
+        read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+
+    // The mapping from roles to network addresses is dependent on contexts set dynamically, so we put it in a mutable map
+    let role_assignment = Arc::new(RwLock::new(HashMap::new()));
+
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
-        own_identity.to_owned(),
+        Role::indexed_from_one(config.my_id),
         tls_config
             .as_ref()
             .map(|(_, client_config)| client_config.clone()),
         config.core_to_core_net,
+        peer_tcp_proxy,
+        role_assignment.clone(),
     )?));
+
+    // the initial MPC node might not accept any peers because initially there's no context
+    let mpc_socket_addr = mpc_listener.local_addr()?;
+
+    let (threshold_health_reporter, threshold_health_service) =
+        tonic_health::server::health_reporter();
+
     let manager_clone = Arc::clone(&networking_manager);
     let networking_server = networking_manager.write().await.new_server();
-    // we won't be setting TLS configuration through tonic::transport knobs here
-    // since it doesn't permit setting rustls configuration directly, and we
-    // need to supply a custom certificate verifier to enable AWS Nitro
-    // attestation in TLS
-    // TODO this needs to be initiated later when we have context
     let router = Server::builder()
         .http2_adaptive_window(Some(true))
         .add_service(networking_server)
         .add_service(threshold_health_service);
 
     tracing::info!(
-        "Starting core-to-core server for identity {} on address {:?}.",
-        own_identity,
+        "Starting core-to-core server for party {} on address {:?}.",
+        config.my_id,
         mpc_socket_addr
     );
 
@@ -259,51 +273,6 @@ where
         );
         Ok(())
     });
-    Ok((abort_handle, networking_manager))
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
-    config: ThresholdPartyConf,
-    public_storage: PubS,
-    private_storage: PrivS,
-    backup_storage: Option<BackS>,
-    mpc_listener: TcpListener,
-    sk: PrivateSigKey,
-    tls_config: Option<(ServerConfig, ClientConfig)>,
-    run_prss: bool,
-    rate_limiter_conf: Option<RateLimiterConfig>,
-    shutdown_signal: F,
-    add_testing_session_preparer: bool,
-) -> anyhow::Result<(
-    RealThresholdKms<PubS, PrivS, BackS>,
-    HealthServer<impl Health>,
-)>
-where
-    PubS: Storage + Send + Sync + 'static,
-    PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
-    F: std::future::Future<Output = ()> + Send + 'static,
-{
-    // load keys from storage
-    let key_info_versioned: HashMap<RequestId, ThresholdFheKeys> =
-        read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
-    let mut public_key_info = HashMap::new();
-    let mut pk_map = HashMap::new();
-    for (id, info) in key_info_versioned.clone().into_iter() {
-        public_key_info.insert(id, info.pk_meta_data.clone());
-
-        let pk = read_pk_at_request_id(&public_storage, &id).await?;
-        pk_map.insert(id, pk);
-    }
-
-    // load crs_info (roughly hashes of CRS) from storage
-    let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
-        read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-
-    // the initial MPC node might not accept any peers because initially there's no context
-    let (abort_handle, networking_manager) =
-        start_mpc_node(&config, mpc_listener, tls_config, shutdown_signal).await?;
 
     // If no RedisConf is provided, we just use in-memory storage for the
     // preprocessing. Note: This is only allowed for testing.
@@ -348,44 +317,40 @@ where
 
     // Note that the manager is empty, it needs to be filled with session preparers
     // For testing this needs to be done manually.
-    let session_preparer_manager =
-        SessionPreparerManager::empty(config.my_id.to_string(), networking_manager.clone());
+    let session_preparer_manager = SessionPreparerManager::empty(
+        config.my_id.to_string(),
+        networking_manager.clone(),
+        role_assignment.clone(),
+    );
 
     // Optionally add a testing session preparer.
-    if add_testing_session_preparer {
-        let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
-            move |session_id, roles, network_mode| {
-                let nm = networking_manager.clone();
-                Box::pin(async move {
-                    let manager = nm.read().await;
-                    let impl_networking = manager.make_session(session_id, roles, network_mode);
-                    Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
-                })
-            },
-        )));
-
-        let role_assignments: threshold_fhe::execution::runtime::party::RoleAssignment = config
-            .peers
-            .clone()
-            .into_iter()
-            .map(|peer_config| peer_config.into_role_identity())
-            .collect();
-        let session_preparer = SessionPreparer::new(
-            base_kms.new_instance().await,
-            config.threshold,
-            config.my_id,
-            role_assignments,
-            networking_strategy,
-            Arc::clone(&prss_setup_z128),
-            Arc::clone(&prss_setup_z64),
-        );
-        session_preparer_manager
-            .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
-                session_preparer,
-            )
-            .await;
-    }
+    let _ = match config.peers {
+        Some(ref peers) => {
+            let mut role_assignment_write = role_assignment.write().await;
+            role_assignment_write.extend(
+                peers
+                    .iter()
+                    .map(|peer_config| peer_config.into_role_identity()),
+            );
+            let session_preparer = SessionPreparer::new(
+                base_kms.new_instance().await,
+                config.threshold,
+                Role::indexed_from_one(config.my_id),
+                role_assignment.clone(),
+                networking_manager.clone(),
+                Arc::clone(&prss_setup_z128),
+                Arc::clone(&prss_setup_z64),
+            );
+            session_preparer_manager
+                .insert(
+                    RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                    session_preparer,
+                )
+                .await;
+            Some(())
+        }
+        None => None,
+    };
     let session_preparer_getter = session_preparer_manager.make_getter();
 
     let metastore_status_service = MetaStoreStatusServiceImpl::new(

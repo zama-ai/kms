@@ -460,7 +460,7 @@ async fn transfer_network_value<S: BaseSessionHandles>(
     network_value: Option<NetworkValue<Z128>>,
     input_party_id: usize,
 ) -> anyhow::Result<NetworkValue<Z128>> {
-    session.network().increase_round_counter()?;
+    session.network().increase_round_counter().await;
     if session.my_role().one_based() == input_party_id {
         // send the value
         let network_val =
@@ -475,13 +475,13 @@ async fn transfer_network_value<S: BaseSessionHandles>(
         let buf_to_send = network_val.clone().to_network();
         for receiver in 1..=num_parties {
             if receiver != input_party_id {
-                let rcv_identity = session.identity_from(&Role::indexed_from_one(receiver))?;
-
                 let networking = Arc::clone(session.network());
 
                 let cloned_buf = buf_to_send.clone();
                 set.spawn(async move {
-                    let _ = networking.send(cloned_buf, &rcv_identity).await;
+                    let _ = networking
+                        .send(cloned_buf, &Role::indexed_from_one(receiver))
+                        .await;
                 });
             }
         }
@@ -489,15 +489,16 @@ async fn transfer_network_value<S: BaseSessionHandles>(
         Ok(network_val)
     } else {
         // receive the value
-        let sender_identity = session.identity_from(&Role::indexed_from_one(input_party_id))?;
         let networking = Arc::clone(session.network());
-        let timeout = session.network().get_timeout_current_round()?;
+        let timeout = session.network().get_timeout_current_round().await;
         tracing::debug!(
             "Waiting to receive value from input party with timeout {:?}",
             timeout
         );
         let data = tokio::spawn(timeout_at(timeout, async move {
-            networking.receive(&sender_identity).await
+            networking
+                .receive(&Role::indexed_from_one(input_party_id))
+                .await
         }))
         .await??;
 
