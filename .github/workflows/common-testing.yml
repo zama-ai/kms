@@ -244,7 +244,7 @@ jobs:
 
       - name: Setup cargo dylint
         run: |
-          cargo install cargo-dylint dylint-link
+          cargo install cargo-dylint dylint-link --force
 
       - name: Formatting
         run: cargo fmt --all -- --check
