@@ -68,6 +68,10 @@ impl<T: Clone> MetaStore<T> {
         self.storage.contains_key(request_id)
     }
 
+    // The non local effect warning is a false positive here, because we return an error only if the pop_front()
+    // fails, which means that the queue is empty, and thus we do not have any non-local effects.
+    #[allow(unknown_lints)]
+    #[allow(non_local_effect_before_error_return)]
     /// Insert a new element, throwing an exception if the element already exists or if the system is fully loaded.
     ///
     /// Elements can trivially be inserted until the store reaches its [capacity].

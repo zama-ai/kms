@@ -43,7 +43,7 @@ fn check_roles<L: LargeSessionHandles>(
     // Observe that if a party is corrupt it will also be in dispute, hence we have already returned above and only write the log that they are corrupt
     if session
         .disputed_roles()
-        .get(&session.my_role())?
+        .get(&session.my_role())
         .contains(communicating_with)
     {
         tracing::info!(

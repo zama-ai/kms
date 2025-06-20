@@ -632,7 +632,7 @@ pub mod tests {
                 malicious_tasks.spawn(task_malicious(session, malicious_strategy_cloned));
             } else {
                 for (role_a, role_b) in dispute_pairs.iter() {
-                    let _ = session.add_dispute(role_a, role_b);
+                    session.add_dispute(role_a, role_b);
                 }
                 honest_tasks.spawn(task_honest(session));
             }

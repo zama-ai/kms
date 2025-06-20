@@ -743,9 +743,9 @@ mod tests {
             // We have now used the entire batch of values and should thus fail
             assert!(preproc.next_triple().is_err());
             let err = preproc.next_triple().unwrap_err().to_string();
-            assert!(err.contains("Not enough triples to pop 1"));
+            assert!(err.contains("No triples available"));
             let err = preproc.next_random().unwrap_err().to_string();
-            assert!(err.contains("Not enough randomness to pop 1"));
+            assert!(err.contains("No randomness available"));
             (session, triple_res, rand_res)
         }
 

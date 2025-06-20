@@ -119,7 +119,7 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> BaseSessionHandles
         self.base_session.corrupt_roles()
     }
 
-    fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool> {
+    fn add_corrupt(&mut self, role: Role) -> bool {
         self.base_session.add_corrupt(role)
     }
 }

@@ -256,7 +256,7 @@ pub(crate) async fn verify_sharing<
         let mut should_return = false;
         for role_pi in bcast_corrupts {
             secrets_shares_all.insert(role_pi, vec![Z::ZERO; l]);
-            should_return |= session.add_corrupt(role_pi)?;
+            should_return |= session.add_corrupt(role_pi);
         }
 
         tracing::error!("RESTARTING EVERYTHING AS WE DETECTED MALICIOUS BEHAVIOUR");
@@ -340,7 +340,7 @@ pub(crate) fn verify_sender_challenge<Z: Ring + ErrorCorrect, L: LargeSessionHan
 
             //Check parties in dispute with pi have shares = 0  - Step (g)
             //This should never fail, if there is no dispute the set is empty but exists
-            let parties_dispute_pi = session.disputed_roles().get(role_pi)?;
+            let parties_dispute_pi = session.disputed_roles().get(role_pi);
             for pj_dispute_pi in parties_dispute_pi {
                 //Add pi to corrupt if sharing from pi to pj is not zero
                 if sharing_from_sender
@@ -396,7 +396,7 @@ pub(crate) fn look_for_disputes<Z: Ring, L: LargeSessionHandles>(
     for (role_sender, bcast_value) in bcast_data {
         if !session.corrupt_roles().contains(role_sender) {
             //This should never fail, if there is no dispute the set is empty but exists
-            let sender_dispute_set = session.disputed_roles().get(role_sender)?.clone();
+            let sender_dispute_set = session.disputed_roles().get(role_sender).clone();
             //Senders that have wrong type are already in the corrupt set from before, so no need for an else clause
             let sender_vote = &bcast_value.checks_for_mine;
             //Similarly, we know that sender maps all the parties to something from before
@@ -420,7 +420,7 @@ pub(crate) fn look_for_disputes<Z: Ring, L: LargeSessionHandles>(
                         Some(rcv_value) if *rcv_value == sender_value => {}
                         _ => {
                             tracing::warn!("Parties {role_receiver} and Sender {role_sender} disagree on the checking value. Add a dispute");
-                            session.add_dispute(role_receiver, role_sender)?;
+                            session.add_dispute(role_receiver, role_sender);
                             everything_ok = false;
                         }
                     }

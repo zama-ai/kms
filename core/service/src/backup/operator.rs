@@ -277,6 +277,10 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
         self.my_role
     }
 
+    // We allow the following lints because we are fine with mutating the rng even if
+    // the function fails afterwards.
+    #[allow(unknown_lints)]
+    #[allow(non_local_effect_before_error_return)]
     pub fn secret_share_and_encrypt<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
@@ -429,9 +433,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
             let mut shamir_sharing = ShamirSharings::new();
             for blocks in decrypted_buf.iter() {
                 // we should be able to safely add shares since it checks whether the role is repeated
-                shamir_sharing
-                    .add_share(blocks[b])
-                    .map_err(|e| BackupError::AddShareError(e.to_string()))?;
+                shamir_sharing.add_share(blocks[b]);
             }
             all_sharings.push(shamir_sharing);
         }

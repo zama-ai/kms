@@ -259,7 +259,7 @@ where
                             session.my_role().one_based(),
                             cur_role.one_based()
                         );
-                    session.add_corrupt(cur_role)?;
+                    session.add_corrupt(cur_role);
                     continue;
                 }
                 for (i, cur_collect_share) in collected_shares.iter_mut().enumerate() {
@@ -271,7 +271,7 @@ where
                     "Party {:?} did not broadcast the correct type and is thus malicious",
                     cur_role.one_based()
                 );
-                session.add_corrupt(cur_role)?;
+                session.add_corrupt(cur_role);
                 continue;
             }
         };
@@ -423,7 +423,7 @@ async fn check_d<Z: Ring, Ses: SmallSessionHandles<Z>>(
                 "Party {cur_role} did not send correct values during PRSS-init and
                 has been added to the list of corrupt parties"
             );
-            session.add_corrupt(cur_role)?;
+            session.add_corrupt(cur_role);
         }
     }
     Ok(())
@@ -601,18 +601,14 @@ mod test {
         for _ in 0..RANDOM_BATCH_SIZE {
             let mut shares = ShamirSharings::default();
             for honest_preprocessing in honest_preprocessings.iter_mut() {
-                shares
-                    .add_share(honest_preprocessing.next_random().unwrap())
-                    .unwrap();
+                shares.add_share(honest_preprocessing.next_random().unwrap());
             }
             for (role, malicious_preprocessing) in malicious_preprocessings.iter_mut() {
-                shares
-                    .add_share(
-                        malicious_preprocessing
-                            .next_random()
-                            .unwrap_or_else(|_| Share::new(*role, Z::ZERO)),
-                    )
-                    .unwrap();
+                shares.add_share(
+                    malicious_preprocessing
+                        .next_random()
+                        .unwrap_or_else(|_| Share::new(*role, Z::ZERO)),
+                );
             }
             let random = shares.err_reconstruct(params.threshold, num_malicious);
             assert!(random.is_ok(), "Failed to reconstruct random: {:?}", random);
@@ -634,9 +630,9 @@ mod test {
             let mut shares_z = ShamirSharings::default();
             for honest_preprocessing in honest_preprocessings.iter_mut() {
                 let Triple { a: x, b: y, c: z } = honest_preprocessing.next_triple().unwrap();
-                shares_x.add_share(x).unwrap();
-                shares_y.add_share(y).unwrap();
-                shares_z.add_share(z).unwrap();
+                shares_x.add_share(x);
+                shares_y.add_share(y);
+                shares_z.add_share(z);
             }
             for (role, malicious_preprocessing) in malicious_preprocessings.iter_mut() {
                 let Triple { a: x, b: y, c: z } = malicious_preprocessing
@@ -646,9 +642,9 @@ mod test {
                         b: Share::new(*role, Z::ZERO),
                         c: Share::new(*role, Z::ZERO),
                     });
-                shares_x.add_share(x).unwrap();
-                shares_y.add_share(y).unwrap();
-                shares_z.add_share(z).unwrap();
+                shares_x.add_share(x);
+                shares_y.add_share(y);
+                shares_z.add_share(z);
             }
             let (x, y, z) = (
                 shares_x.err_reconstruct(params.threshold, num_malicious),

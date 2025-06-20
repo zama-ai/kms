@@ -242,6 +242,10 @@ jobs:
           mc mb "${MINIO_ALIAS}"/"${MINIO_BUCKET}"
           mc anonymous set public "${MINIO_ALIAS}"/"${MINIO_BUCKET}"
 
+      - name: Setup cargo dylint
+        run: |
+          cargo install cargo-dylint dylint-link
+
       - name: Formatting
         run: cargo fmt --all -- --check
 
@@ -254,6 +258,9 @@ jobs:
         env:
           PACKAGE_NAME: ${{inputs.package-name}}
         run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
+
+      - name: Linting dylint
+        run: cargo dylint --all
 
       # Test execution
       - name: Run Tests

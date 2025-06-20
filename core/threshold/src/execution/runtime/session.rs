@@ -173,7 +173,7 @@ pub trait BaseSessionHandles: ParameterHandles {
     type RngType: Rng + CryptoRng + SeedableRng + Send + Sync;
 
     fn corrupt_roles(&self) -> &HashSet<Role>;
-    fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool>;
+    fn add_corrupt(&mut self, role: Role) -> bool;
     fn rng(&mut self) -> &mut Self::RngType;
     fn network(&self) -> &NetworkingImpl;
 }
@@ -254,14 +254,14 @@ impl BaseSessionHandles for BaseSession {
         &self.corrupt_roles
     }
 
-    fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool> {
+    fn add_corrupt(&mut self, role: Role) -> bool {
         // Observe we never add ourself to the list of corrupt parties to keep the execution going
         // This is logically the attack model we expect and hence make testing malicious behaviour easier
         if role != self.my_role() {
             tracing::warn!("I'm {}, marking {role} as corrupt", self.my_role());
-            Ok(self.corrupt_roles.insert(role))
+            self.corrupt_roles.insert(role)
         } else {
-            Ok(false)
+            false
         }
     }
 }
@@ -374,7 +374,7 @@ impl<Z: Ring> BaseSessionHandles for SmallSession<Z> {
         self.base_session.corrupt_roles()
     }
 
-    fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool> {
+    fn add_corrupt(&mut self, role: Role) -> bool {
         self.base_session.add_corrupt(role)
     }
 }
@@ -409,8 +409,8 @@ pub enum DisputeMsg {
 #[async_trait]
 pub trait LargeSessionHandles: BaseSessionHandles {
     fn disputed_roles(&self) -> &DisputeSet;
-    fn my_disputes(&self) -> anyhow::Result<&BTreeSet<Role>>;
-    fn add_dispute(&mut self, party_a: &Role, party_b: &Role) -> anyhow::Result<()>;
+    fn my_disputes(&self) -> &BTreeSet<Role>;
+    fn add_dispute(&mut self, party_a: &Role, party_b: &Role);
 }
 
 pub struct LargeSession {
@@ -487,11 +487,11 @@ impl BaseSessionHandles for LargeSession {
         self.base_session.corrupt_roles()
     }
 
-    fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool> {
+    fn add_corrupt(&mut self, role: Role) -> bool {
         let res = self.base_session.add_corrupt(role);
         //Make sure we now have this role in dispute with everyone
-        for role_b in self.base_session.role_assignments().keys() {
-            self.disputed_roles.add(&role, role_b)?;
+        for role_b in self.base_session.get_all_sorted_roles() {
+            self.disputed_roles.add(&role, role_b);
         }
         res
     }
@@ -512,30 +512,28 @@ impl LargeSessionHandles for LargeSession {
         &self.disputed_roles
     }
 
-    fn my_disputes(&self) -> anyhow::Result<&BTreeSet<Role>> {
+    fn my_disputes(&self) -> &BTreeSet<Role> {
         self.disputed_roles.get(&self.my_role())
     }
 
-    fn add_dispute(&mut self, party_a: &Role, party_b: &Role) -> anyhow::Result<()> {
-        self.disputed_roles.add(party_a, party_b)?;
+    fn add_dispute(&mut self, party_a: &Role, party_b: &Role) {
+        self.disputed_roles.add(party_a, party_b);
 
         //Now check whether too many dispute w/ either
         //which result in adding that party to corrupt
-        self.sync_dispute_corrupt(party_a)?;
-        self.sync_dispute_corrupt(party_b)?;
-        Ok(())
+        self.sync_dispute_corrupt(party_a);
+        self.sync_dispute_corrupt(party_b);
     }
 }
 
 impl LargeSession {
-    pub fn sync_dispute_corrupt(&mut self, role: &Role) -> anyhow::Result<()> {
-        if self.disputed_roles.get(role)?.len() > self.threshold() as usize {
+    pub fn sync_dispute_corrupt(&mut self, role: &Role) {
+        if self.disputed_roles.get(role).len() > self.threshold() as usize {
             tracing::warn!(
                 "Party {role} is in conflict with too many parties, adding it to the corrupt set"
             );
-            self.add_corrupt(*role)?;
+            self.add_corrupt(*role);
         }
-        Ok(())
     }
 }
 
@@ -554,31 +552,29 @@ impl DisputeSet {
         DisputeSet { disputed_roles }
     }
 
-    pub fn add(&mut self, role_a: &Role, role_b: &Role) -> anyhow::Result<()> {
+    pub fn add(&mut self, role_a: &Role, role_b: &Role) {
         // We don't allow disputes with oneself
         if role_a == role_b {
-            return Ok(());
+            return;
         }
         // Insert the first pair of disputes
         let disputed_roles = &mut self.disputed_roles;
-        let a_disputes = role_a
-            .get_mut_from(disputed_roles)
-            .ok_or_else(|| anyhow_error_and_log("Role does not exist"))?;
+        let a_disputes = role_a.get_mut_from(disputed_roles).unwrap_or_else(|| panic!("Can not access the dispute set of {} when trying to add a dispute with {}, the session was initalized without it.",
+            role_a, role_b));
         let _ = a_disputes.insert(*role_b);
+
         // Insert the second pair of disputes
-        let b_disputes: &mut BTreeSet<Role> = role_b
-            .get_mut_from(disputed_roles)
-            .ok_or_else(|| anyhow_error_and_log("Role does not exist"))?;
+        let b_disputes = role_b.get_mut_from(disputed_roles).unwrap_or_else(|| panic!("Can not access the dispute set of {} when trying to add a dispute with {}, the session was initalized without it.",
+            role_b, role_a));
         let _ = b_disputes.insert(*role_a);
-        Ok(())
     }
 
-    pub fn get(&self, role: &Role) -> anyhow::Result<&BTreeSet<Role>> {
-        if let Some(cur) = role.get_from(&self.disputed_roles) {
-            Ok(cur)
-        } else {
-            Err(anyhow_error_and_log("Role does not exist"))
-        }
+    pub fn get(&self, role: &Role) -> &BTreeSet<Role> {
+        role.get_from(&self.disputed_roles).unwrap_or_else(|| {
+            panic!(
+                "There is no dispute set for role {role}, the session was initalized without it."
+            )
+        })
     }
 }
 
@@ -629,7 +625,7 @@ mod tests {
         //Network mode doesn't matter for this test, Sync by default
         let mut session = get_base_session(NetworkMode::Sync);
         // Check that I cannot add myself to the corruption set directly
-        assert!(!session.add_corrupt(session.my_role()).unwrap());
+        assert!(!session.add_corrupt(session.my_role()));
         assert_eq!(0, session.corrupt_roles().len());
     }
 }

@@ -68,7 +68,7 @@ where
                 encoded,
                 &mut generator,
                 encryption_type,
-            )?;
+            );
         } else {
             return Err(anyhow_error_and_log("zip error"));
         }

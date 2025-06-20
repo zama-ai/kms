@@ -182,7 +182,7 @@ mod tests {
         let mut vec_sharings = vec![ShamirSharings::default(); num_bits];
         for (_, bits) in bits_map {
             for (idx, bit) in bits.iter().enumerate() {
-                let _ = vec_sharings[idx].add_share(*bit);
+                vec_sharings[idx].add_share(*bit);
             }
         }
 

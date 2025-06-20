@@ -184,9 +184,9 @@ mod tests {
         let mut vec_sharings_c = vec![ShamirSharings::default(); num_triples];
         for (_, triples) in triples_map {
             for (idx, triple) in triples.iter().enumerate() {
-                let _ = vec_sharings_a[idx].add_share(triple.a);
-                let _ = vec_sharings_b[idx].add_share(triple.b);
-                let _ = vec_sharings_c[idx].add_share(triple.c);
+                vec_sharings_a[idx].add_share(triple.a);
+                vec_sharings_b[idx].add_share(triple.b);
+                vec_sharings_c[idx].add_share(triple.c);
             }
         }
 

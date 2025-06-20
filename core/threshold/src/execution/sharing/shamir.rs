@@ -1,9 +1,9 @@
 use super::share::Share;
 use crate::algebra::poly::Poly;
+use crate::algebra::structure_traits::Ring;
 use crate::algebra::structure_traits::{ErrorCorrect, RingEmbed};
 use crate::error::error_handler::anyhow_error_and_warn_log;
 use crate::execution::runtime::party::Role;
-use crate::{algebra::structure_traits::Ring, error::error_handler::anyhow_error_and_log};
 use rand::{CryptoRng, Rng};
 use std::ops::{Add, Mul, Sub};
 
@@ -37,19 +37,19 @@ impl<Z: Ring> ShamirSharings<Z> {
         ShamirSharings { shares }
     }
 
-    //Add a single share in the correct spot to keep ordering
-    pub fn add_share(&mut self, share: Share<Z>) -> anyhow::Result<()> {
+    /// Add a single share in the correct spot to keep ordering
+    /// If a share for the same party already exists, we replace it.
+    /// WARNING: When calling this function, be sure that the Role is trusted!
+    pub fn add_share(&mut self, share: Share<Z>) {
         match self
             .shares
             .binary_search_by_key(&share.owner(), |s| s.owner())
         {
-            Ok(_pos) => Err(anyhow_error_and_log(
-                "Trying to insert two shares for the same party".to_string(),
-            )),
-            Err(pos) => {
-                self.shares.insert(pos, share);
-                Ok(())
+            Ok(pos) => {
+                tracing::warn!("Replacing a share for {}", share.owner());
+                self.shares[pos] = share
             }
+            Err(pos) => self.shares.insert(pos, share),
         }
     }
 }
@@ -156,19 +156,23 @@ where
     ) -> anyhow::Result<Self> {
         if threshold >= num_parties {
             anyhow::bail!(
-                "number of parties {num_parties} must be less than the threshold {threshold}"
+                "number of parties {num_parties} must be strictly bigger than the threshold {threshold}"
             );
         }
-        let poly = Poly::sample_random_with_fixed_constant(rng, secret, threshold);
-        let shares: Vec<_> = (1..=num_parties)
-            .map(|xi| {
-                let embedded_xi: Z = Z::embed_exceptional_set(xi)?;
-                Ok(Share::new(
-                    Role::indexed_from_one(xi),
-                    poly.eval(&embedded_xi),
+        let role_with_embeddings = (1..=num_parties)
+            .map(|party_id| {
+                Ok((
+                    Role::indexed_from_one(party_id),
+                    Z::embed_exceptional_set(party_id)?,
                 ))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let poly = Poly::sample_random_with_fixed_constant(rng, secret, threshold);
+        let shares: Vec<_> = role_with_embeddings
+            .into_iter()
+            .map(|(role, embedded_role)| Share::new(role, poly.eval(&embedded_role)))
+            .collect::<Vec<_>>();
 
         Ok(ShamirSharings { shares })
     }
@@ -206,7 +210,7 @@ pub fn fill_indexed_shares<Z: Ring>(
     values
         .into_iter()
         .zip(sharings.iter_mut())
-        .try_for_each(|(v, sharing)| sharing.add_share(Share::new(party_id, v)))?;
+        .for_each(|(v, sharing)| sharing.add_share(Share::new(party_id, v)));
 
     // fill up to num_values with 0s if not enough values were provided
     if values_len < num_values {
@@ -217,7 +221,8 @@ pub fn fill_indexed_shares<Z: Ring>(
             num_values
         );
         for sharing in sharings.iter_mut().skip(values_len) {
-            sharing.add_share(Share::new(party_id, Z::ZERO))?;
+            // We simply log the error and continue triyng to fill with zeros
+            sharing.add_share(Share::new(party_id, Z::ZERO))
         }
     }
     Ok(())
@@ -596,12 +601,9 @@ mod tests {
         for (i, share) in packed_shares.into_iter().enumerate() {
             if add_error && i < threshold {
                 packed_sharmir_shares
-                    .add_share(Share::new(Role::indexed_from_zero(i), share[0] + Z::ONE))
-                    .unwrap();
+                    .add_share(Share::new(Role::indexed_from_zero(i), share[0] + Z::ONE));
             } else {
-                packed_sharmir_shares
-                    .add_share(Share::new(Role::indexed_from_zero(i), share[0]))
-                    .unwrap();
+                packed_sharmir_shares.add_share(Share::new(Role::indexed_from_zero(i), share[0]));
             }
         }
 

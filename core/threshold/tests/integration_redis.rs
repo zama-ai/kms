@@ -322,3 +322,59 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
     let threshold = 1;
     test_dkg_orchestrator_large(num_sessions, num_parties, threshold, params);
 }
+
+#[cfg(feature = "testing")]
+#[test]
+fn test_cast_fail_memory_bit_dec_preprocessing() {
+    use threshold_fhe::{
+        algebra::galois_rings::degree_4::ResiduePolyF4Z64,
+        execution::online::preprocessing::{
+            dummy::DummyPreprocessing, BitDecPreprocessing, BitPreprocessing, TriplePreprocessing,
+        },
+        tests::helper::testing::get_dummy_parameters_for_parties,
+    };
+
+    let redis_conf = RedisConf::default();
+    let mut redis_factory = create_redis_factory(
+        "test_cast_fail_memory_bit_dec_preprocessing".to_owned(),
+        &redis_conf,
+    );
+    let parameters = get_dummy_parameters_for_parties(1, 0, Role::indexed_from_one(1));
+
+    let mut dummy_preprocessing = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &parameters);
+
+    let mut casted_from_dummy = dummy_preprocessing.cast_to_in_memory_impl(1).unwrap();
+
+    let mut redis_bit_dec_preprocessing = redis_factory.create_bit_decryption_preprocessing();
+
+    redis_bit_dec_preprocessing.append_triples(
+        casted_from_dummy
+            .next_triple_vec(casted_from_dummy.triples_len())
+            .unwrap(),
+    );
+
+    assert!(
+        redis_bit_dec_preprocessing
+            .cast_to_in_memory_impl(1)
+            .unwrap_err()
+            .to_string()
+            .contains("Not enough bits available"),
+        "Casting to in memory impl should fail when not enough bits are available"
+    );
+
+    let mut redis_bit_dec_preprocessing = redis_factory.create_bit_decryption_preprocessing();
+    redis_bit_dec_preprocessing.append_bits(
+        casted_from_dummy
+            .next_bit_vec(casted_from_dummy.bits_len())
+            .unwrap(),
+    );
+
+    assert!(
+        redis_bit_dec_preprocessing
+            .cast_to_in_memory_impl(1)
+            .unwrap_err()
+            .to_string()
+            .contains("Not enough triples available"),
+        "Casting to in memory impl should fail when not enough triples are available"
+    );
+}

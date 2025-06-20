@@ -109,6 +109,10 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         })
     }
 
+    // We allow the following lints because we are fine with mutating the rng even if
+    // we end up returning an error when signing the encrypted share.
+    #[allow(unknown_lints)]
+    #[allow(non_local_effect_before_error_return)]
     /// Obtain the operator public key for reencryption,
     /// decrypt the given ciphertext encrypted under the custodian's public key
     /// and then encrypt it under the operator's public key
@@ -166,6 +170,10 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         })
     }
 
+    // We allow the following lints because we are fine with mutating the rng even if
+    // we end up returning an error when signing the encrypted share.
+    #[allow(unknown_lints)]
+    #[allow(non_local_effect_before_error_return)]
     pub fn generate_setup_message<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,

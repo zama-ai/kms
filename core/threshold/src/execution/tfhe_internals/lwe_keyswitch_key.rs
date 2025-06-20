@@ -1,3 +1,5 @@
+use std::slice::IterMut;
+
 use itertools::Itertools;
 use tfhe::{
     core_crypto::{commons::parameters::LweSize, entities::LweKeyswitchKeyOwned},
@@ -28,9 +30,7 @@ pub struct LweKeySwitchKeyShare<Z: BaseRing, const EXTENSION_DEGREE: usize> {
 }
 
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweKeySwitchKeyShare<Z, EXTENSION_DEGREE> {
-    pub fn iter_mut_levels(
-        &mut self,
-    ) -> impl Iterator<Item = &mut Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>> {
+    pub fn iter_mut_levels(&mut self) -> IterMut<Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>> {
         self.data.iter_mut()
     }
 

@@ -147,8 +147,7 @@ pub fn encrypt_lwe_ciphertext<Gen, Z, const EXTENSION_DEGREE: usize>(
     output: &mut LweCiphertextShare<Z, EXTENSION_DEGREE>,
     encoded: ResiduePoly<Z, EXTENSION_DEGREE>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
-) -> anyhow::Result<()>
-where
+) where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
@@ -169,29 +168,28 @@ where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
+    assert_eq!(
+        output.len(),
+        encoded.len(),
+        "Output and encoded must have the same length, got respectively {} and {}",
+        output.len(),
+        encoded.len()
+    );
+
     let gen_iter =
         generator.fork_lwe_list_to_lwe(LweCiphertextCount(output.len()), output[0].lwe_size())?;
 
-    for encoded_plaintext_ciphertext_loop_generator in encoded
-        .iter()
-        .zip_longest(output.iter_mut())
-        .zip_longest(gen_iter)
+    for ((encoded_plaintext, ciphertext), mut loop_generator) in
+        encoded.iter().zip_eq(output.iter_mut()).zip_eq(gen_iter)
     {
-        if let EitherOrBoth::Both(
-            EitherOrBoth::Both(encoded_plaintext, ciphertext),
-            mut loop_generator,
-        ) = encoded_plaintext_ciphertext_loop_generator
-        {
-            encrypt_lwe_ciphertext(
-                lwe_secret_key_share,
-                ciphertext,
-                *encoded_plaintext,
-                &mut loop_generator,
-            )?;
-        } else {
-            return Err(anyhow_error_and_log("zip error".to_string()));
-        }
+        encrypt_lwe_ciphertext(
+            lwe_secret_key_share,
+            ciphertext,
+            *encoded_plaintext,
+            &mut loop_generator,
+        );
     }
+
     Ok(())
 }
 
@@ -201,8 +199,7 @@ fn fill_lwe_mask_and_body_for_encryption<Z, Gen, const EXTENSION_DEGREE: usize>(
     output_body: &mut ResiduePoly<Z, EXTENSION_DEGREE>,
     encoded: ResiduePoly<Z, EXTENSION_DEGREE>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
-) -> anyhow::Result<()>
-where
+) where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
@@ -215,11 +212,10 @@ where
 
     //Compute the multisum betweem sk and mask
     let mask_key_dot_product =
-        slice_wrapping_dot_product(output_mask, &lwe_secret_key_share.data_as_raw_vec())?;
+        slice_wrapping_dot_product(output_mask, &lwe_secret_key_share.data_as_raw_vec());
 
     //Finish computing the body
     *output_body = mask_key_dot_product + noise + encoded;
-    Ok(())
 }
 
 ///Returns a tuple (number_of_triples, number_of_bits) required for mpc lwe encryption
@@ -334,8 +330,7 @@ mod tests {
                 &mut lwe_ctxt,
                 encoded_message,
                 &mut mpc_encryption_rng,
-            )
-            .unwrap();
+            );
             (my_role, lwe_secret_key_share, lwe_ctxt)
         };
 

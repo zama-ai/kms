@@ -787,13 +787,16 @@ impl Client {
             "missing client signing key".to_string(),
         )?;
 
+        let domain_msg = alloy_to_protobuf_domain(domain)?;
+
         let (enc_pk, enc_sk) = ephemeral_encryption_key_generation(&mut self.rng);
 
-        let domain_msg = alloy_to_protobuf_domain(domain)?;
         Ok((
             UserDecryptionRequest {
                 request_id: Some((*request_id).into()),
-                enc_key: bc2wrap::serialize(&enc_pk)?,
+                // The key is freshly generated, so we can safely unwrap the serialization
+                enc_key: bc2wrap::serialize(&enc_pk)
+                    .expect("Failed to serialize ephemeral encryption key"),
                 client_address: self.client_address.to_checksum(None),
                 typed_ciphertexts,
                 key_id: Some((*key_id).into()),

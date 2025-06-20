@@ -8,7 +8,9 @@ use crate::algebra::base_ring::Z128;
 use crate::algebra::base_ring::Z64;
 use crate::algebra::galois_rings::common::ResiduePoly;
 use crate::algebra::structure_traits::ErrorCorrect;
+use crate::algebra::structure_traits::Invert;
 use crate::algebra::structure_traits::RingEmbed;
+use crate::algebra::structure_traits::Solve;
 use crate::execution::constants::LOG_B_SWITCH_SQUASH;
 use crate::execution::constants::STATSEC;
 use crate::execution::keyset_config::KeySetConfig;
@@ -32,6 +34,7 @@ use crate::{
     execution::{runtime::party::Role, runtime::session::ParameterHandles, sharing::share::Share},
 };
 use aes_prng::AesRng;
+use itertools::Itertools;
 use rand::{CryptoRng, Rng, SeedableRng};
 use tonic::async_trait;
 
@@ -71,16 +74,21 @@ where
         secret: Z,
         rng: &mut (impl Rng + CryptoRng),
     ) -> anyhow::Result<Vec<Share<Z>>> {
-        let poly = Poly::sample_random_with_fixed_constant(rng, secret, threshold as usize);
-        (1..=parties)
-            .map(|xi| {
-                let embedded_xi = Z::embed_exceptional_set(xi)?;
-                Ok(Share::new(
-                    Role::indexed_from_one(xi),
-                    poly.eval(&embedded_xi),
+        let role_with_embeddings = (1..=parties)
+            .map(|party_id| {
+                Ok((
+                    Role::indexed_from_one(party_id),
+                    Z::embed_exceptional_set(party_id)?,
                 ))
             })
-            .collect::<anyhow::Result<Vec<_>>>()
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let poly = Poly::sample_random_with_fixed_constant(rng, secret, threshold as usize);
+
+        Ok(role_with_embeddings
+            .into_iter()
+            .map(|(role, embedded_role)| Share::new(role, poly.eval(&embedded_role)))
+            .collect())
     }
 }
 
@@ -94,7 +102,6 @@ where
         const TRIP_FLAG: u64 = 0x47873E027A425DDE;
         // Use a new RNG based on the seed and counter
         let mut rng: AesRng = AesRng::seed_from_u64(self.seed ^ self.trip_ctr ^ TRIP_FLAG);
-        self.trip_ctr += 1;
         let a = Z::sample(&mut rng);
         let a_vec = DummyPreprocessing::<Z>::share(
             self.parameters.num_parties(),
@@ -129,6 +136,7 @@ where
         let c_share = my_role
             .get_from(&c_vec)
             .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
+        self.trip_ctr += 1;
         Ok(Triple::new(*a_share, *b_share, *c_share))
     }
 
@@ -160,7 +168,6 @@ where
         const RAND_FLAG: u64 = 0x818DECF7255EBCE6;
         // Use a new RNG based on the seed and counter
         let mut rng: AesRng = AesRng::seed_from_u64(self.seed ^ self.rnd_ctr ^ RAND_FLAG);
-        self.rnd_ctr += 1;
         let secret = Z::sample(&mut rng);
         let all_parties_shares = Self::share(
             self.parameters.num_parties(),
@@ -173,6 +180,7 @@ where
             .my_role()
             .get_from(&all_parties_shares)
             .ok_or_else(|| anyhow_error_and_log("Party share does not exist".to_string()))?;
+        self.rnd_ctr += 1;
         Ok(*my_share)
     }
 
@@ -257,8 +265,12 @@ where
         &mut self,
         num_ctxts: usize,
     ) -> anyhow::Result<InMemoryBitDecPreprocessing<EXTENSION_DEGREE>> {
-        let bits = self.next_bit_vec(self.num_required_bits(num_ctxts))?;
-        let triples = self.next_triple_vec(self.num_required_bits(num_ctxts))?;
+        let num_bits = self.num_required_bits(num_ctxts);
+        let num_triples = self.num_required_triples(num_ctxts);
+
+        // Safe to use unwraps here because dummy never runs out of correlated randomness
+        let bits = self.next_bit_vec(num_bits).unwrap();
+        let triples = self.next_triple_vec(num_triples).unwrap();
 
         Ok(InMemoryBitDecPreprocessing::<EXTENSION_DEGREE> {
             available_triples: triples,
@@ -271,7 +283,7 @@ where
 impl<const EXTENSION_DEGREE: usize> NoiseFloodPreprocessing<EXTENSION_DEGREE>
     for DummyPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>
 where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
     fn append_masks(&mut self, _masks: Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>) {
         unimplemented!("We do not implement filling for DummyPreprocessing")
@@ -286,23 +298,13 @@ where
         amount: usize,
     ) -> anyhow::Result<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>> {
         let bound_d = (STATSEC + LOG_B_SWITCH_SQUASH) as usize;
-        let mut u_randoms: Vec<_> =
+        Ok(
             RealSecretDistributions::t_uniform(2 * amount, TUniformBound(bound_d), self)?
                 .into_iter()
-                .map(|elem| elem.value())
-                .collect();
-
-        (0..amount)
-            .map(|_| {
-                let (a, b) = (u_randoms.pop(), u_randoms.pop());
-                match (a, b) {
-                    (Some(a), Some(b)) => Ok(a + b),
-                    _ => Err(anyhow_error_and_log(
-                        "Not enough t_uniform generated".to_string(),
-                    )),
-                }
-            })
-            .collect()
+                .tuples()
+                .map(|(a, b)| a.value() + b.value())
+                .collect(),
+        )
     }
 
     /// Fill the masks directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]

@@ -179,7 +179,7 @@ mod tests {
         let mut vec_sharings = vec![ShamirSharings::default(); num_randomness];
         for (_, randomness) in randomness_map {
             for (idx, bit) in randomness.iter().enumerate() {
-                let _ = vec_sharings[idx].add_share(*bit);
+                vec_sharings[idx].add_share(*bit);
             }
         }
 

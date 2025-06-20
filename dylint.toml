@@ -1,0 +1,8 @@
+[workspace.metadata.dylint]
+libraries = [
+    { git = "https://github.com/trailofbits/dylint", pattern = "examples/general/non_local_effect_before_error_return" },
+]
+
+[non_local_effect_before_error_return]
+work_limit = 100000000
+

@@ -488,7 +488,7 @@ pub(crate) async fn round_2<Z: Ring + RingEmbed, S: BaseSessionHandles, BCast: B
     // All parties agree on the result of the bcast, so add corrupt parties as needed
     for (role, result) in casted_bcast_data.iter() {
         if result.is_none() {
-            session.add_corrupt(*role)?;
+            session.add_corrupt(*role);
         }
     }
 
@@ -590,13 +590,13 @@ pub(crate) async fn round_3<Z: Ring + RingEmbed, S: BaseSessionHandles, BCast: B
 
     // Add the parties that have broadcast something obviously wrong
     for malicious_party in malicious_bcast.into_iter() {
-        session.add_corrupt(malicious_party)?;
+        session.add_corrupt(malicious_party);
     }
 
     //Find out if any dealer is corrupt
     for (dealer_idx, unhappy_set) in unhappy_vec.iter().enumerate() {
         if unhappy_set.len() > session.threshold() as usize {
-            session.add_corrupt(Role::indexed_from_zero(dealer_idx))?;
+            session.add_corrupt(Role::indexed_from_zero(dealer_idx));
         }
     }
 
@@ -1122,13 +1122,13 @@ fn round_4_fix_conflicts<Z: Ring + RingEmbed, S: BaseSessionHandles>(
             }
         }
         if votes_for_dealer <= 2 * threshold {
-            session.add_corrupt(dealer_role)?;
+            session.add_corrupt(dealer_role);
         }
     }
 
     // Also add all those who have sent garbage during broadcast
     for role in malicious_bcast.into_iter() {
-        session.add_corrupt(role)?;
+        session.add_corrupt(role);
     }
     Ok(())
 }

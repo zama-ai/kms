@@ -476,10 +476,8 @@ where
     mpc_encryption_rng.fill_noise(vec_tuniform_noise);
 
     //Then actually generate the public key
-    let lwe_public_key_shared = allocate_and_generate_new_lwe_compact_public_key(
-        &lwe_secret_key_share,
-        mpc_encryption_rng,
-    )?;
+    let lwe_public_key_shared =
+        allocate_and_generate_new_lwe_compact_public_key(&lwe_secret_key_share, mpc_encryption_rng);
 
     Ok((lwe_secret_key_share, lwe_public_key_shared))
 }
@@ -743,7 +741,7 @@ where
         params.raw_compression_parameters.packing_ks_base_log,
         params.raw_compression_parameters.packing_ks_level,
         mpc_encryption_rng,
-    )?;
+    );
 
     let packing_key_switching_key = packing_key_switching_key_shares
         .open_to_tfhers_type(session)

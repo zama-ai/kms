@@ -665,7 +665,7 @@ fn sort_votes<Z: Ring, S: BaseSessionHandles>(
             BroadcastValue::PRSSVotes(vec_values) => vec_values,
             // If the party does not broadcast the type as expected they are considered malicious
             _ => {
-                session.add_corrupt(*role)?;
+                session.add_corrupt(*role);
                 tracing::warn!("Party with role {:?} and identity {:?} sent values they shouldn't and is thus malicious",
                      role.one_based(), session.role_assignments().get(role));
                 continue;
@@ -704,7 +704,7 @@ fn add_vote<Z: Ring, S: BaseSessionHandles>(
             if !role_inserted {
                 // If the role was not inserted then it was already present and hence the party is trying to vote multiple times
                 // and they should be marked as corrupt
-                session.add_corrupt(cur_role)?;
+                session.add_corrupt(cur_role);
                 tracing::warn!("Party with role {:?} and identity {:?} is trying to vote for the same prf value more than once and is thus malicious",
                          cur_role.one_based(), session.role_assignments().get(&cur_role));
             }
@@ -748,7 +748,7 @@ fn find_winning_prf_values<'a, Z: Ring, S: BaseSessionHandles>(
             //All parties that voted for this prss_set are malicious
             for voter_set in value_votes.values() {
                 for voter in voter_set {
-                    session.add_corrupt(*voter)?;
+                    session.add_corrupt(*voter);
                 }
             }
         } else {
@@ -778,7 +778,7 @@ fn handle_non_voting_parties<Z: Ring, S: BaseSessionHandles>(
             if prss_set.len() > roles_votes.len() {
                 for cur_role in prss_set.iter() {
                     if !roles_votes.contains(cur_role) {
-                        session.add_corrupt(*cur_role)?;
+                        session.add_corrupt(*cur_role);
                         tracing::warn!("Party with role {:?} and identity {:?} did not vote for the correct prf value and is thus malicious",
                                  cur_role, session.role_assignments().get(cur_role));
                     }

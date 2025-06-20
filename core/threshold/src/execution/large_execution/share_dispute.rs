@@ -75,7 +75,7 @@ pub(crate) fn compute_idx_dispute<L: LargeSessionHandles>(
 ) -> anyhow::Result<Vec<usize>> {
     Ok(session
         .disputed_roles()
-        .get(&session.my_role())?
+        .get(&session.my_role())
         .iter()
         .map(|id| id.one_based())
         .collect())

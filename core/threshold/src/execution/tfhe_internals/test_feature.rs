@@ -614,21 +614,31 @@ where
     let mut vv128: Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> =
         vec![Vec::with_capacity(s_length); num_parties];
 
+    let role_with_embeddings_z64 = (1..=num_parties)
+        .map(|party_id| {
+            Ok((
+                Role::indexed_from_one(party_id),
+                ResiduePoly::<Z64, EXTENSION_DEGREE>::embed_exceptional_set(party_id)?,
+            ))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let role_with_embeddings_z128 = (1..=num_parties)
+        .map(|party_id| {
+            Ok((
+                Role::indexed_from_one(party_id),
+                ResiduePoly::<Z128, EXTENSION_DEGREE>::embed_exceptional_set(party_id)?,
+            ))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
     // for each bit in the secret key generate all parties shares
     for (i, bit) in s_vector.iter().enumerate() {
         let embedded_secret = ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
         let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
 
-        for (party_id, v) in vv128.iter_mut().enumerate().take(num_parties) {
-            v.insert(
-                i,
-                Share::new(
-                    Role::indexed_from_zero(party_id),
-                    poly.eval(&ResiduePoly::<_, EXTENSION_DEGREE>::embed_exceptional_set(
-                        party_id + 1,
-                    )?),
-                ),
-            );
+        for (v, (role, embedding)) in vv128.iter_mut().zip_eq(role_with_embeddings_z128.iter()) {
+            v.insert(i, Share::new(*role, poly.eval(embedding)));
         }
     }
 
@@ -642,16 +652,11 @@ where
         let embedded_secret = ResiduePoly::<Z64, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
         let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
 
-        for (party_id, v) in vv64_lwe_key.iter_mut().enumerate().take(num_parties) {
-            v.insert(
-                i,
-                Share::new(
-                    Role::indexed_from_zero(party_id),
-                    poly.eval(&ResiduePoly::<_, EXTENSION_DEGREE>::embed_exceptional_set(
-                        party_id + 1,
-                    )?),
-                ),
-            );
+        for (v, (role, embedding)) in vv64_lwe_key
+            .iter_mut()
+            .zip_eq(role_with_embeddings_z64.iter())
+        {
+            v.insert(i, Share::new(*role, poly.eval(embedding)));
         }
     }
 
@@ -666,16 +671,11 @@ where
         let embedded_secret = ResiduePoly::<Z64, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
         let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
 
-        for (party_id, v) in vv64_glwe_key.iter_mut().enumerate().take(num_parties) {
-            v.insert(
-                i,
-                Share::new(
-                    Role::indexed_from_zero(party_id),
-                    poly.eval(&ResiduePoly::<_, EXTENSION_DEGREE>::embed_exceptional_set(
-                        party_id + 1,
-                    )?),
-                ),
-            );
+        for (v, (role, embedding)) in vv64_glwe_key
+            .iter_mut()
+            .zip_eq(role_with_embeddings_z64.iter())
+        {
+            v.insert(i, Share::new(*role, poly.eval(embedding)));
         }
     }
 

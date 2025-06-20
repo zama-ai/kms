@@ -202,6 +202,10 @@ impl NestedPublicKey {
     }
 }
 
+// We allow the following lints because we are fine with mutating the rng even if
+// we end up returning an error when serializing the enc_pk.
+#[allow(unknown_lints)]
+#[allow(non_local_effect_before_error_return)]
 pub fn keygen<R: Rng + CryptoRng>(
     rng: &mut R,
 ) -> Result<(NestedPrivateKey, NestedPublicKey), CryptographyError> {

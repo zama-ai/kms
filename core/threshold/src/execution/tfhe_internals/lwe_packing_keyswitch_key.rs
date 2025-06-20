@@ -1,3 +1,5 @@
+use std::slice::IterMut;
+
 use itertools::Itertools;
 use tfhe::{
     boolean::prelude::{
@@ -38,9 +40,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LwePackingKeyswitchKeyShares<Z,
         self.output_polynomial_size
     }
 
-    pub fn iter_mut_levels(
-        &mut self,
-    ) -> impl Iterator<Item = &mut Vec<GlweCiphertextShare<Z, EXTENSION_DEGREE>>> {
+    pub fn iter_mut_levels(&mut self) -> IterMut<Vec<GlweCiphertextShare<Z, EXTENSION_DEGREE>>> {
         self.data.iter_mut()
     }
 

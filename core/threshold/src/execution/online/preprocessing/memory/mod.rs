@@ -209,12 +209,12 @@ mod tests {
                         .next_triple()
                         .unwrap_err()
                         .to_string()
-                        .contains("Not enough triples to pop 1"));
+                        .contains("No triples available"));
                     assert!(preproc
                         .next_random()
                         .unwrap_err()
                         .to_string()
-                        .contains("Not enough randomness to pop 1"));
+                        .contains("No randomness available"));
                 }
             }
         }

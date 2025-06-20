@@ -741,6 +741,10 @@ impl<
         }
     }
 
+    // We allow the following lints because we are fine with mutating the rng even if
+    // the function fails serializing the singcrypted message.
+    #[allow(unknown_lints)]
+    #[allow(non_local_effect_before_error_return)]
     fn user_decrypt(
         keys: &KmsFheKeyHandles,
         sig_key: &PrivateSigKey,
@@ -759,11 +763,12 @@ impl<
             plaintext,
             link: link.to_vec(),
         };
+        let serialized_msg = bc2wrap::serialize(&signcryption_msg)?;
 
         let enc_res = signcrypt(
             rng,
             &DSEP_USER_DECRYPTION,
-            &bc2wrap::serialize(&signcryption_msg)?,
+            &serialized_msg,
             client_enc_key,
             client_address,
             sig_key,

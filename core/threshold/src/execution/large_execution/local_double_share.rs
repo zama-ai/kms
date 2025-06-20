@@ -359,7 +359,7 @@ pub(crate) async fn verify_sharing<
         for role_pi in bcast_corrupts {
             secrets_shares_all_t.insert(role_pi, vec![Z::ZERO; l]);
             secrets_shares_all_2t.insert(role_pi, vec![Z::ZERO; l]);
-            should_return |= session.add_corrupt(role_pi)?;
+            should_return |= session.add_corrupt(role_pi);
         }
         if should_return {
             return Ok(false);

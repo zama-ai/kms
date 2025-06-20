@@ -869,7 +869,7 @@ pub async fn run_decryption_noiseflood<
 where
     T: tfhe::integer::block_decomposition::Recomposable
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
 {
     let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
     for current_ct_block in ciphertext.packed_blocks() {
@@ -899,7 +899,7 @@ pub async fn run_decryption_noiseflood_64<
     ciphertext: &SnsRadixOrBoolCiphertext,
 ) -> anyhow::Result<Z64>
 where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
 {
     let res = run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, u64>(
         session,
