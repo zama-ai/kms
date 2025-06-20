@@ -28,7 +28,7 @@ kmsCore:
   thresholdMode:
     enabled: false
     # If left unset, the chart will generate the list automatically based on pod replicas of the statefulset
-    peersList:
+    peersList: []
     #  - id: 1
     #    host: kms-core-1
     #    port: 50001
