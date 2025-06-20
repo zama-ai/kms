@@ -86,7 +86,7 @@ impl CertificatePaths {
         let key_bytes = std::fs::read_to_string(&self.key)?;
         let key = parse_x509_pem(key_bytes.as_ref())?.1;
         let key_der = PrivateKeyDer::try_from(key.contents.as_slice())
-            .unwrap_or_else(|e| panic!("Could not read TLS private key: {}", e))
+            .unwrap_or_else(|e| panic!("Could not read TLS private key: {e}"))
             .clone_key();
 
         // trust roots

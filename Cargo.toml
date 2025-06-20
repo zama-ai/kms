@@ -89,7 +89,7 @@ tfhe-versionable = "=0.6.1"
 tfhe-zk-pok = "=0.7.1"
 tokio = { version = "=1.46.1", features = ["full"] }
 tokio-rustls = { version = "=0.26.2", default-features = false, features = [
-    "ring",
+    "aws_lc_rs",
 ] }
 tonic = "=0.13.1"
 tonic-build = "=0.13.1"

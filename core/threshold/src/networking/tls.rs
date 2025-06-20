@@ -161,8 +161,10 @@ Crypto provider should exist at this point"
         ),
         Error,
     > {
-        let (context_id, subject) = extract_context_id_and_subject_from_cert(cert)
-            .map_err(|e| Error::General(e.to_string()))?;
+        let context_id =
+            extract_context_id_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
+        let subject = extract_subject_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
+
         let contexts = self.contexts.blocking_read();
         let context = contexts
             .get(&context_id)
@@ -447,13 +449,10 @@ fn validate_wrapped_cert(
     Ok(())
 }
 
-/// Extract the party name from the certificate.
-///
-/// Each party should have its own self-signed certificate.
-/// Each self-signed certificate is loaded into the trust store of all the parties.
-pub fn extract_context_id_and_subject_from_cert(
-    cert: &X509Certificate,
-) -> anyhow::Result<(SessionId, String)> {
+/// Extract the context ID from the certificate. All TLS certificates are signed
+/// by the party CA certificate, so we can see context ID as the serial number
+/// of the certificate.
+pub fn extract_context_id_from_cert(cert: &X509Certificate) -> anyhow::Result<SessionId> {
     // Each TLS certificate is issued in a specific configuration context, we
     // use the context ID as the certificate serial number
     let context_id = SessionId::from(u128::from_le_bytes(
@@ -462,7 +461,14 @@ pub fn extract_context_id_and_subject_from_cert(
             .try_into()
             .or(Err(anyhow!("Invalid context ID length")))?,
     ));
+    Ok(context_id)
+}
 
+/// Extract the party name from the certificate.
+///
+/// Each party should have its own self-signed certificate.
+/// Each self-signed certificate is loaded into the trust store of all the parties.
+pub fn extract_subject_from_cert(cert: &X509Certificate) -> anyhow::Result<String> {
     let Some(sans) = cert
         .subject_alternative_name()
         .map_err(|e| anyhow!("{e}"))?
@@ -502,7 +508,7 @@ pub fn extract_context_id_and_subject_from_cert(
         bail!("Bad certificate: subject CN not found in SAN");
     }
 
-    Ok((context_id, subject_str.to_string()))
+    Ok(subject_str.to_string())
 }
 
 pub fn build_ca_certs_map<I: Iterator<Item = Pem>>(
@@ -513,7 +519,7 @@ pub fn build_ca_certs_map<I: Iterator<Item = Pem>>(
             c.parse_x509()
                 .map_err(|e| anyhow::anyhow!("Could not parse X509 structure: {e}"))
                 .and_then(|ref x509_cert| {
-                    extract_context_id_and_subject_from_cert(x509_cert).map(|(_, s)| (s, c.clone()))
+                    extract_subject_from_cert(x509_cert).map(|s| (s, c.clone()))
                 })
         })
         .collect::<Result<HashMap<String, Pem>, _>>()

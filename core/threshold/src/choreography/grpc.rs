@@ -54,7 +54,7 @@ use crate::execution::online::preprocessing::{
     PreprocessorFactory,
 };
 use crate::execution::online::reshare::{reshare_sk_same_sets, ResharePreprocRequired};
-use crate::execution::runtime::party::{Identity, Role};
+use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
 use crate::execution::runtime::session::ParameterHandles;
 use crate::execution::runtime::session::ToBaseSession;
 use crate::execution::runtime::session::{BaseSession, BaseSessionHandles};
@@ -67,25 +67,30 @@ use crate::execution::tfhe_internals::private_keysets::PrivateKeySet;
 use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
 use crate::malicious_execution::runtime::malicious_session::GenericSmallSessionStruct;
-use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
-use crate::networking::value::BroadcastValue;
-use crate::networking::{NetworkMode, NetworkingStrategy};
+use crate::networking::{
+    constants::MAX_EN_DECODE_MESSAGE_SIZE, grpc::GrpcNetworkingManager, value::BroadcastValue,
+    NetworkMode,
+};
 use crate::{execution::small_execution::prss::PRSSInit, session_id::SessionId};
 use aes_prng::AesRng;
 use async_trait::async_trait;
 use clap::ValueEnum;
 use dashmap::DashMap;
+use futures_util::{
+    future::{join_all, try_join_all},
+    TryFutureExt,
+};
 use gen::{CrsGenRequest, CrsGenResponse};
 use itertools::Itertools;
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::Wrapping;
 use std::sync::{Arc, Mutex};
 use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::ServerKey;
 use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::{sync::RwLock, task::{JoinHandle, JoinSet}};
 use tracing::{instrument, Instrument};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, ValueEnum, Serialize, Deserialize)]
@@ -234,8 +239,8 @@ pub struct GrpcChoreography<
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     PRSSInitStrategy: PRSSInit<ResiduePoly<Z128, EXTENSION_DEGREE>>,
 {
-    own_identity: Identity,
-    networking_strategy: Arc<NetworkingStrategy>,
+    my_role: Role,
+    networking_manager: Arc<GrpcNetworkingManager>,
     factory: Arc<Mutex<Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>>>,
     data: GrpcDataStores<
         EXTENSION_DEGREE,
@@ -314,15 +319,15 @@ where
     LargeOfflineStrategyZ128: Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, LargeSession>,
 {
     pub fn new(
-        own_identity: Identity,
-        networking_strategy: NetworkingStrategy,
+        my_role: Role,
+        networking_manager: Arc<GrpcNetworkingManager>,
         factory: Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>,
     ) -> Self {
-        tracing::debug!("Starting Party with identity: {own_identity}");
+        tracing::debug!("Starting Party with role: {my_role}");
         println!("{}", Self::describe_self());
         GrpcChoreography {
-            own_identity,
-            networking_strategy: Arc::new(networking_strategy),
+            my_role,
+            networking_manager,
             factory: Arc::new(Mutex::new(factory)),
             data: GrpcDataStores::default(),
             _marker_prss_strat: std::marker::PhantomData,
@@ -402,7 +407,7 @@ where
         &self,
         request_sid: SessionId,
         threshold: u8,
-        role_assignments: HashMap<Role, Identity>,
+        role_assignment: Arc<RwLock<RoleAssignment>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<BaseSession> {
@@ -411,7 +416,7 @@ where
                 request_sid,
                 1,
                 threshold,
-                role_assignments,
+                role_assignment,
                 network_mode,
                 seed,
             )
@@ -433,7 +438,7 @@ where
         request_sid: SessionId,
         num_sessions: usize,
         threshold: u8,
-        role_assignments: HashMap<Role, Identity>,
+        role_assignment: Arc<RwLock<RoleAssignment>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<Vec<BaseSession>> {
@@ -442,34 +447,30 @@ where
             .map(|_| gen_random_sid(&mut session_id_generator, request_sid.into()))
             .collect_vec();
 
-        //Fetch my Role for the role_assignment
-        let mut my_role_idx = 0;
-        for (role, identity) in role_assignments.iter() {
-            if *identity == self.own_identity {
-                my_role_idx = role.one_based() as u64;
-            }
-        }
+        let roles = role_assignment
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
+
         let mut base_sessions = Vec::new();
         for (idx, session_id) in sids.into_iter().enumerate() {
-            let params = SessionParameters::new(
-                threshold,
-                session_id,
-                self.own_identity.clone(),
-                role_assignments.clone(),
-            )
-            .unwrap();
             //We are executing offline phase, so requires Sync network
-            let networking =
-                (self.networking_strategy)(session_id, role_assignments.clone(), network_mode)
-                    .await
-                    .map_err(|e| {
-                        tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!("Failed to create networking: {e:?}"),
-                        )
-                    })?;
+            let networking = self
+                .networking_manager
+                .make_session(session_id, role_assignment.clone(), network_mode)
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create networking: {e:?}"),
+                    )
+                })
+                .await?;
+            let params =
+                SessionParameters::new(threshold, session_id, self.my_role, roles.clone()).unwrap();
             let aes_rng = if let Some(seed) = seed {
-                AesRng::seed_from_u64(seed + my_role_idx + (idx as u64))
+                AesRng::seed_from_u64(seed + (self.my_role.one_based() as u64) + (idx as u64))
             } else {
                 AesRng::from_entropy()
             };
@@ -550,13 +551,14 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(role_assignment));
 
         let prss_params: PrssInitParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
@@ -572,7 +574,7 @@ where
             .create_base_session(
                 session_id,
                 threshold,
-                role_assignments.clone(),
+                role_assignment,
                 NetworkMode::Sync,
                 request.seed,
             )
@@ -606,7 +608,7 @@ where
                         SupportedPRSSSetup::ResiduePolyZ128(prss_setup),
                     );
                     tracing::info!("PRSS Setup for ResiduePoly128 Done.");
-                    fill_network_memory_info_single_session(base_session);
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -634,7 +636,7 @@ where
                         SupportedPRSSSetup::ResiduePolyZ64(prss_setup),
                     );
                     tracing::info!("PRSS Setup for ResiduePoly64 Done.");
-                    fill_network_memory_info_single_session(base_session);
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -664,13 +666,14 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(role_assignment));
 
         let preproc_params: PreprocKeyGenParams =
             bc2wrap::deserialize(&request.params).map_err(|e| {
@@ -693,7 +696,7 @@ where
                 start_sid,
                 num_sessions as usize,
                 threshold,
-                role_assignments.clone(),
+                role_assignment,
                 NetworkMode::Sync,
                 request.seed,
             )
@@ -740,7 +743,7 @@ where
                             .await
                             .unwrap()
                     };
-                    fill_network_memory_info_multiple_sessions(sessions);
+                    fill_network_memory_info_multiple_sessions(sessions).await;
                     result_store.insert(start_sid, (dkg_params, preproc));
                 };
                 self.data.status_store.insert(
@@ -771,7 +774,7 @@ where
                             .await
                             .unwrap()
                     };
-                    fill_network_memory_info_multiple_sessions(sessions);
+                    fill_network_memory_info_multiple_sessions(sessions).await;
                     result_store.insert(start_sid, (dkg_params, preproc));
                 };
                 self.data.status_store.insert(
@@ -811,7 +814,7 @@ where
                             .await
                             .unwrap()
                     };
-                    fill_network_memory_info_multiple_sessions(sessions);
+                    fill_network_memory_info_multiple_sessions(sessions).await;
                     result_store.insert(start_sid, (dkg_params, preproc));
                 };
                 self.data.status_store.insert(
@@ -840,7 +843,7 @@ where
                             .await
                             .unwrap()
                     };
-                    fill_network_memory_info_multiple_sessions(sessions);
+                    fill_network_memory_info_multiple_sessions(sessions).await;
                     result_store.insert(start_sid, (dkg_params, preproc));
                 };
                 self.data.status_store.insert(
@@ -881,13 +884,14 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(role_assignment));
 
         let kg_params: ThresholdKeyGenParams =
             bc2wrap::deserialize(&request.params).map_err(|e| {
@@ -905,7 +909,7 @@ where
             .create_base_session(
                 session_id,
                 threshold,
-                role_assignments.clone(),
+                role_assignment,
                 NetworkMode::Async,
                 request.seed,
             )
@@ -944,7 +948,7 @@ where
                     .await
                     .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
-                    fill_network_memory_info_single_session(base_session);
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -967,7 +971,7 @@ where
                     .await
                     .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
-                    fill_network_memory_info_single_session(base_session);
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -999,7 +1003,7 @@ where
                     .await
                     .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
-                    fill_network_memory_info_single_session(base_session);
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1022,7 +1026,7 @@ where
                     .await
                     .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
-                    fill_network_memory_info_single_session(base_session);
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1060,19 +1064,20 @@ where
         let dkg_params = kg_result_params.dkg_params;
 
         if let Some(dkg_params) = dkg_params {
-            let role_assignments: HashMap<Role, Identity> =
+            let role_assignment: HashMap<Role, Identity> =
                 bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
                         format!("Failed to parse role assignment: {e:?}"),
                     )
                 })?;
+            let role_assignment = Arc::new(RwLock::new(role_assignment));
 
             let mut base_session = self
                 .create_base_session(
                     session_id,
                     0,
-                    role_assignments.clone(),
+                    role_assignment,
                     NetworkMode::Sync,
                     request.seed,
                 )
@@ -1144,13 +1149,14 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(role_assignment));
 
         let preproc_params: PreprocDecryptParams =
             bc2wrap::deserialize(&request.params).map_err(|e| {
@@ -1190,7 +1196,7 @@ where
                         session_id,
                         num_sessions,
                         threshold,
-                        role_assignments.clone(),
+                        role_assignment,
                         NetworkMode::Sync,
                         request.seed,
                     )
@@ -1244,7 +1250,7 @@ where
                     let preprocessings = preprocessings.into_iter().map(|p| p.1).collect_vec();
                     let _ = store.insert(session_id, preprocessings);
 
-                    fill_network_memory_info_multiple_sessions(sessions);
+                    fill_network_memory_info_multiple_sessions(sessions).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1259,7 +1265,7 @@ where
                         session_id,
                         num_sessions,
                         threshold,
-                        role_assignments.clone(),
+                        role_assignment,
                         NetworkMode::Sync,
                         request.seed,
                     )
@@ -1327,7 +1333,7 @@ where
                     let preprocessings = preprocessings.into_iter().map(|p| p.1).collect_vec();
                     let _ = store.insert(session_id, preprocessings);
 
-                    fill_network_memory_info_multiple_sessions(sessions);
+                    fill_network_memory_info_multiple_sessions(sessions).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1351,7 +1357,7 @@ where
                     .create_base_session(
                         session_id,
                         threshold,
-                        role_assignments.clone(),
+                        role_assignment,
                         NetworkMode::Sync,
                         request.seed,
                     )
@@ -1387,7 +1393,8 @@ where
                             store.insert(session_id, vec![preproc]);
                         }
                     }
-                    fill_network_memory_info_single_session(small_session.session.into_inner());
+                    fill_network_memory_info_single_session(small_session.session.into_inner())
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1400,7 +1407,7 @@ where
                     .create_base_session(
                         session_id,
                         threshold,
-                        role_assignments.clone(),
+                        role_assignment,
                         NetworkMode::Sync,
                         request.seed,
                     )
@@ -1437,7 +1444,8 @@ where
                         };
                     }
 
-                    fill_network_memory_info_single_session(large_session.session.into_inner());
+                    fill_network_memory_info_single_session(large_session.session.into_inner())
+                        .await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -1478,13 +1486,16 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+
+        let roles = role_assignment.keys().cloned().collect();
+        let role_assignment = Arc::new(RwLock::new(role_assignment));
 
         let decrypt_params: ThresholdDecryptParams = bc2wrap::deserialize(&request.params)
             .map_err(|e| {
@@ -1525,7 +1536,6 @@ where
             let num_sessions = throughput.num_sessions;
             let num_copies = throughput.num_copies;
             let chunk_size = num_copies.div_ceil(num_sessions);
-            let role_assignments = role_assignments.clone();
             let prss_setup = self.data.prss_setup.clone();
             let sns_key = Arc::new(key_ref.0.server_key.noise_squashing_key().unwrap());
             let server_key = Arc::new(key_ref.0.server_key.as_ref());
@@ -1545,7 +1555,7 @@ where
                 .create_base_session(
                     session_id,
                     threshold,
-                    role_assignments.clone(),
+                    role_assignment.clone(),
                     NetworkMode::Sync,
                     None,
                 )
@@ -1565,7 +1575,7 @@ where
                             new_session_id,
                             num_sessions,
                             threshold,
-                            role_assignments.clone(),
+                            role_assignment.clone(),
                             NetworkMode::Async,
                             request.seed,
                         )
@@ -1680,7 +1690,7 @@ where
                         vec_res.push(all_res[0]);
 
                         res_store.insert(session_id, vec_res);
-                        fill_network_memory_info_multiple_sessions(vec_base_sessions);
+                        fill_network_memory_info_multiple_sessions(vec_base_sessions).await;
                     };
                     let throughput_span = tracing::info_span!(
                         "Throughput-NoiseFloodSmall",
@@ -1703,7 +1713,7 @@ where
                             new_session_id,
                             num_sessions * num_blocks,
                             threshold,
-                            role_assignments.clone(),
+                            role_assignment.clone(),
                             NetworkMode::Async,
                             request.seed,
                         )
@@ -1869,7 +1879,7 @@ where
                         vec_res.push(all_res[0]);
 
                         res_store.insert(session_id, vec_res);
-                        fill_network_memory_info_multiple_sessions(vec_base_sessions);
+                        fill_network_memory_info_multiple_sessions(vec_base_sessions).await;
                     };
                     let throughput_span = tracing::info_span!(
                         "Throughput-BitDecSmall",
@@ -1890,26 +1900,19 @@ where
 
             //This is "regular" testing
         } else {
-            let params = SessionParameters::new(
-                threshold,
-                session_id,
-                self.own_identity.clone(),
-                role_assignments.clone(),
-            )
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    format!("Failed to create a base session parameters: {e:?}"),
-                )
-            })?;
+            let params = SessionParameters::new(threshold, session_id, self.my_role, roles)
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create a base session parameters: {e:?}"),
+                    )
+                })?;
             //This is running the online phase of ddec, so can work in Async network
-            let networking = (self.networking_strategy)(
-                session_id,
-                role_assignments.clone(),
-                NetworkMode::Async,
-            )
-            .await
-            .unwrap();
+            let networking = self
+                .networking_manager
+                .make_session(session_id, role_assignment.clone(), NetworkMode::Async)
+                .await
+                .unwrap();
 
             //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
             let mut base_session = BaseSession::new(params, networking, AesRng::from_entropy())
@@ -1962,7 +1965,7 @@ where
                             session_id,
                             num_sessions,
                             threshold,
-                            role_assignments.clone(),
+                            role_assignment.clone(),
                             NetworkMode::Async,
                             request.seed,
                         )
@@ -2063,7 +2066,7 @@ where
                             .collect_vec();
 
                         res_store.insert(session_id, res);
-                        fill_network_memory_info_multiple_sessions(sessions);
+                        fill_network_memory_info_multiple_sessions(sessions).await;
                     };
                     self.data.status_store.insert(
                         session_id,
@@ -2146,7 +2149,7 @@ where
                             )
                         }
                         res_store.insert(session_id, res);
-                        fill_network_memory_info_single_session(base_session);
+                        fill_network_memory_info_single_session(base_session).await;
                     };
                     self.data.status_store.insert(
                         session_id,
@@ -2225,13 +2228,14 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(role_assignment));
 
         let crs_params: CrsGenParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
@@ -2247,7 +2251,7 @@ where
             .create_base_session(
                 session_id,
                 threshold,
-                role_assignments.clone(),
+                role_assignment.clone(),
                 NetworkMode::Sync,
                 request.seed,
             )
@@ -2271,7 +2275,7 @@ where
                 .await
                 .unwrap();
             crs_store.insert(session_id, pp.inner);
-            fill_network_memory_info_single_session(base_session);
+            fill_network_memory_info_single_session(base_session).await;
         };
 
         self.data.status_store.insert(
@@ -2383,7 +2387,7 @@ where
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
@@ -2401,7 +2405,7 @@ where
         let session_type = reshare_params.session_type;
         //We use the new_key_sid as the session_id for the protocol
         let session_id = reshare_params.new_key_sid;
-        let num_parties = role_assignments.len();
+        let num_parties = role_assignment.len();
 
         //Create 3 sessions, 2 for preproc (z64 and z128), 1 for actual reshare
         let mut base_sessions = self
@@ -2409,7 +2413,7 @@ where
                 session_id,
                 3,
                 threshold,
-                role_assignments,
+                Arc::new(RwLock::new(role_assignment)),
                 NetworkMode::Sync,
                 request.seed,
             )
@@ -2549,7 +2553,7 @@ where
             );
             let mut sessions = sessions.into_iter().collect_vec();
             sessions.push(reshare_base_session);
-            fill_network_memory_info_multiple_sessions(sessions);
+            fill_network_memory_info_multiple_sessions(sessions).await;
         };
 
         self.data.status_store.insert(
@@ -2575,37 +2579,48 @@ where
 /// - total number of bytes sent across all sessions
 /// - total number of bytes received across all sessions
 /// - peak memory usage in bytes as given by the custom allocator
-pub(crate) fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(sessions: Vec<B>) {
+pub(crate) async fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
+    sessions: Vec<B>,
+) {
     let span = tracing::Span::current();
     // Take the max number of rounds across all sessions
     // (as they ran in parallel the sum isn't really a good measure)
-    let num_rounds = sessions.iter().fold(0, |cur_max, sess| {
-        cur_max.max(sess.network().get_current_round().unwrap())
-    });
+    let num_rounds_per_session = join_all(
+        sessions
+            .iter()
+            .map(|session| session.network().get_current_round()),
+    )
+    .await;
+    let num_rounds_per_session = sessions
+        .iter()
+        .zip(num_rounds_per_session)
+        .filter(|(_, rounds)| *rounds > 0)
+        .collect_vec();
+    let num_rounds = num_rounds_per_session
+        .iter()
+        .fold(0, |cur_max, (_, rounds)| cur_max.max(*rounds));
 
     span.record("total_num_sessions", sessions.len());
     span.record("network_round", num_rounds);
-    let total_num_byte_sent = sessions
-        .iter()
-        .map(|sess| {
-            if sess.network().get_current_round().unwrap() > 0 {
-                sess.network().get_num_byte_sent().unwrap()
-            } else {
-                0
-            }
-        })
-        .sum::<usize>();
 
-    let total_num_byte_received = sessions
-        .iter()
-        .map(|sess| {
-            if sess.network().get_current_round().unwrap() > 0 {
-                sess.network().get_num_byte_received().unwrap()
-            } else {
-                0
-            }
-        })
-        .sum::<usize>();
+    let total_num_byte_sent = join_all(
+        num_rounds_per_session
+            .iter()
+            .map(|(session, _)| session.network().get_num_byte_sent()),
+    )
+    .await
+    .iter()
+    .sum::<usize>();
+
+    let total_num_byte_received = try_join_all(
+        num_rounds_per_session
+            .iter()
+            .map(|(session, _)| session.network().get_num_byte_received()),
+    )
+    .await
+    .unwrap()
+    .iter()
+    .sum::<usize>();
 
     span.record("network_sent", total_num_byte_sent);
     span.record("network_received", total_num_byte_received);
@@ -2614,8 +2629,8 @@ pub(crate) fn fill_network_memory_info_multiple_sessions<B: BaseSessionHandles>(
     span.record("peak_mem", MEM_ALLOCATOR.get().unwrap().peak_usage());
 }
 
-pub(crate) fn fill_network_memory_info_single_session<B: BaseSessionHandles>(session: B) {
-    fill_network_memory_info_multiple_sessions(vec![session]);
+pub(crate) async fn fill_network_memory_info_single_session<B: BaseSessionHandles>(session: B) {
+    fill_network_memory_info_multiple_sessions(vec![session]).await;
 }
 
 #[cfg(feature = "testing")]

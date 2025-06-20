@@ -112,7 +112,7 @@ pub type SecureLargeSessionTripleProducer<Z> =
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use itertools::Itertools;
 
@@ -131,7 +131,7 @@ mod tests {
                 },
                 TriplePreprocessing,
             },
-            runtime::party::Identity,
+            runtime::party::Role,
             sharing::shamir::{RevealOp, ShamirSharings},
         },
     };
@@ -140,7 +140,7 @@ mod tests {
         all_parties_channels: Vec<
             ReceiverChannelCollectionWithTracker<ResiduePoly<Z64, EXTENSION_DEGREE>>,
         >,
-        identities: &[Identity],
+        roles: &HashSet<Role>,
         num_triples: usize,
         threshold: usize,
     ) where
@@ -167,17 +167,13 @@ mod tests {
 
         //Retrieve triples and try reconstruct them
         let mut triples_map = HashMap::new();
-        for ((party_idx, _party_id), triple_preproc) in identities
-            .iter()
-            .enumerate()
-            .zip_eq(triple_preprocs.iter_mut())
-        {
+        for (party, triple_preproc) in roles.iter().zip(triple_preprocs.iter_mut()) {
             let triple_len = triple_preproc.triples_len();
 
             assert_eq!(triple_len, num_triples);
 
             let triples_shares = triple_preproc.next_triple_vec(num_triples).unwrap();
-            triples_map.insert(party_idx + 1, triples_shares);
+            triples_map.insert(party, triples_shares);
         }
 
         let mut vec_sharings_a = vec![ShamirSharings::default(); num_triples];
@@ -252,7 +248,7 @@ mod tests {
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
         let num_triples = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, all_parties_channels) = test_production_large::<EXTENSION_DEGREE>(
+        let (roles, all_parties_channels) = test_production_large::<EXTENSION_DEGREE>(
             num_sessions as u128,
             num_triples,
             batch_size,
@@ -263,7 +259,7 @@ mod tests {
 
         check_triples_reconstruction(
             all_parties_channels,
-            &identities,
+            &roles,
             num_triples,
             threshold as usize,
         );
@@ -319,7 +315,7 @@ mod tests {
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
         let num_triples = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, all_parties_channels) = test_production_small::<EXTENSION_DEGREE>(
+        let (roles, all_parties_channels) = test_production_small::<EXTENSION_DEGREE>(
             num_sessions as u128,
             num_triples,
             batch_size,
@@ -330,7 +326,7 @@ mod tests {
 
         check_triples_reconstruction(
             all_parties_channels,
-            &identities,
+            &roles,
             num_triples,
             threshold as usize,
         );

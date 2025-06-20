@@ -150,34 +150,30 @@ impl<Z: Eq + Zero> NetworkValue<Z> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{
         algebra::base_ring::Z128,
-        execution::{
-            constants::SMALL_TEST_KEY_PATH, runtime::party::Identity,
-            tfhe_internals::test_feature::KeySet,
-        },
+        execution::{constants::SMALL_TEST_KEY_PATH, tfhe_internals::test_feature::KeySet},
         file_handling::tests::read_element,
         networking::{local::LocalNetworkingProducer, NetworkMode, Networking},
     };
-
-    use super::*;
+    use std::collections::HashSet;
 
     #[tokio::test]
     async fn test_box_sending() {
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
-
-        let alice = Identity("alice".into(), 5001);
-        let bob = Identity("bob".into(), 5002);
-        let identities: Vec<Identity> = vec![alice.clone(), bob.clone()];
-        let net_producer = LocalNetworkingProducer::from_ids(&identities);
+        let alice = Role::indexed_from_one(1);
+        let bob = Role::indexed_from_one(2);
+        let roles = HashSet::from([alice, bob]);
+        let net_producer = LocalNetworkingProducer::from_roles(&roles);
         let pk = keys.public_keys.clone();
         let value = NetworkValue::<Z128>::PubKeySet(Box::new(keys.public_keys));
 
-        let net_alice = net_producer.user_net(alice.clone(), NetworkMode::Sync, None);
-        let net_bob = net_producer.user_net(bob.clone(), NetworkMode::Sync, None);
+        let net_alice = net_producer.user_net(alice, NetworkMode::Sync, None);
+        let net_bob = net_producer.user_net(bob, NetworkMode::Sync, None);
 
         let task1 = tokio::spawn(async move {
-            let recv = net_bob.receive(&alice.clone()).await;
+            let recv = net_bob.receive(&alice).await;
             let received_key = match NetworkValue::<Z128>::from_network(recv) {
                 Ok(NetworkValue::PubKeySet(key)) => key,
                 _ => panic!(),
@@ -185,8 +181,7 @@ mod tests {
             assert_eq!(*received_key, pk);
         });
 
-        let task2 =
-            tokio::spawn(async move { net_alice.send(value.to_network(), &bob.clone()).await });
+        let task2 = tokio::spawn(async move { net_alice.send(value.to_network(), &bob).await });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
     }

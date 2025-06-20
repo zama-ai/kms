@@ -19,6 +19,7 @@ pub enum RoleVersioned {
     Copy,
     Clone,
     Debug,
+    Default,
     PartialEq,
     Eq,
     PartialOrd,

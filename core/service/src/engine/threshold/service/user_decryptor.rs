@@ -344,7 +344,7 @@ impl<
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
             verification_key: server_verf_key,
-            party_id: session_prep.my_id()? as u32,
+            party_id: (session_prep.my_role()?.one_based() - 1) as u32,
             degree: session_prep.threshold()? as u32,
         };
 
@@ -508,7 +508,7 @@ impl<
         let dec_mode = self.decryption_mode;
 
         let metric_tags = vec![
-            (TAG_PARTY_ID, prep.my_id_string_unchecked()),
+            (TAG_PARTY_ID, prep.my_role_string_unchecked()),
             (TAG_KEY_ID, key_id.as_str()),
             (
                 TAG_PUBLIC_DECRYPTION_KIND,

@@ -349,8 +349,8 @@ mod tests {
 
     use super::{encrypt_lwe_ciphertext, LweCiphertextShare, LweSecretKeyShare};
 
-    #[test]
-    fn test_lwe_encryption() {
+    #[tokio::test]
+    async fn test_lwe_encryption() {
         //Testing with NIST params P=8
         let lwe_dimension = 1024_usize;
         let message_log_modulus = 3_usize;
@@ -431,7 +431,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         //Reconstruct everything and decrypt using tfhe-rs
 

@@ -8,9 +8,8 @@ mod gen {
 use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
 use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
-use super::tls::extract_context_id_and_subject_from_cert;
+use super::tls::extract_subject_from_cert;
 use super::NetworkMode;
-use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::networking::constants::{
     DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_ELAPSED_TIME,
     MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL, MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY,
@@ -18,15 +17,21 @@ use crate::networking::constants::{
     NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
     SESSION_CLEANUP_INTERVAL_SECS, SESSION_STATUS_UPDATE_INTERVAL_SECS,
 };
+use crate::error::error_handler::anyhow_error_and_log;
+use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
 use crate::networking::Networking;
 use crate::session_id::SessionId;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, OnceLock, RwLock, Weak};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::sync::Mutex;
+use std::sync::{Arc, OnceLock, Weak};
+
 use tokio::time::{Duration, Instant};
+use tokio::sync::{
+    mpsc::{channel, Receiver, Sender},
+    Mutex, RwLock,
+};
+
 use tonic::transport::server::TcpConnectInfo;
 use tonic::transport::CertificateDer;
 use x509_parser::parse_x509_certificate;
@@ -201,8 +206,8 @@ pub struct GrpcNetworkingManager {
     pub session_store: Arc<SessionStore>,
     // Keeps tracks of how many sessions were opened by each party
     // NOTE: Always lock session_store before opened_sessions_tracker to prevent deadlocks
-    pub opened_sessions_tracker: Arc<DashMap<Identity, u64>>,
-    owner: Identity,
+    pub opened_sessions_tracker: Arc<DashMap<Role, u64>>,
+    owner: Role,
     conf: OptionConfigWrapper,
     pub sending_service: GrpcSendingService,
     #[cfg(feature = "testing")]
@@ -277,9 +282,11 @@ impl GrpcNetworkingManager {
 
     /// Owner should be the external address
     pub fn new(
-        owner: Identity,
+        owner: Role,
         tls_conf: Option<tokio_rustls::rustls::client::ClientConfig>,
         conf: Option<CoreToCoreNetworkConfig>,
+        peer_tcp_proxy: bool,
+        role_assignment: Arc<RwLock<RoleAssignment>>,
     ) -> anyhow::Result<Self> {
         #[cfg(feature = "testing")]
         let force_tls = tls_conf.is_some();
@@ -311,7 +318,8 @@ impl GrpcNetworkingManager {
             opened_sessions_tracker: Arc::new(DashMap::new()),
             owner,
             conf,
-            sending_service: GrpcSendingService::new(tls_conf, conf)?,
+            sending_service: GrpcSendingService::new(tls_conf, conf, peer_tcp_proxy,
+                role_assignment)?,
             #[cfg(feature = "testing")]
             force_tls,
         })
@@ -322,18 +330,25 @@ impl GrpcNetworkingManager {
     /// All the communication are performed using sessions.
     /// There may be multiple session in parallel,
     /// identified by different session IDs.
-    pub fn make_session(
+    pub async fn make_session(
         &self,
         session_id: SessionId,
-        roles: RoleAssignment,
+        role_assignment: Arc<RwLock<RoleAssignment>>,
         network_mode: NetworkMode,
     ) -> anyhow::Result<Arc<impl Networking>> {
-        let party_count = roles.len();
-        let mut others = Vec::with_capacity(party_count.saturating_sub(1));
-        for (_role, identity) in roles {
-            if identity != self.owner {
-                others.push(identity.clone());
-            }
+        let role_assignment = role_assignment.read().await;
+
+        let others = role_assignment
+            .iter()
+            .filter_map(|(role, _identity)| {
+                if *role != self.owner {
+                    Some(role)
+                } else {
+                    None
+                }
+            })
+            .cloned()
+            .collect_vec();
         }
 
         let timeout = match network_mode {
@@ -457,8 +472,9 @@ pub struct NetworkRoundValue {
 }
 
 pub(crate) type MessageQueueStore = DashMap<
-    Identity,
+    Role,
     (
+        Identity,
         Arc<Sender<NetworkRoundValue>>,
         Arc<Mutex<Receiver<NetworkRoundValue>>>,
     ),
@@ -856,6 +872,6 @@ impl Gnetworking for NetworkingImpl {
 #[derive(Serialize, Deserialize, Debug)]
 struct Tag {
     session_id: SessionId,
-    sender: Identity,
+    sender: Role,
     round_counter: usize,
 }

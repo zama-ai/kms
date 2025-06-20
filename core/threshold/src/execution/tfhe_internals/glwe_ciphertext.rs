@@ -239,9 +239,9 @@ mod tests {
     use crate::execution::sharing::shamir::InputOp;
 
     //Test that we can encrypt with our code and decrypt with TFHE-rs
-    #[test]
+    #[tokio::test]
     #[ignore] //Fails on CI due to timeout
-    fn test_glwe_encryption() {
+    async fn test_glwe_encryption() {
         //Testing with NIST params P=8
         let polynomial_size = 512_usize;
         let polynomial_size = PolynomialSize(polynomial_size);
@@ -336,7 +336,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         let mut glwe_ctxt_shares: HashMap<Role, Vec<Share<_>>> = HashMap::new();
         let mut glwe_key_shares: HashMap<Role, Vec<Share<_>>> = HashMap::new();
