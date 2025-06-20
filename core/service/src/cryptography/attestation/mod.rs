@@ -8,7 +8,7 @@ use rcgen::{
     KeyPair, KeyUsagePurpose, PublicKeyData, SerialNumber, PKCS_ECDSA_P256K1_SHA256,
     PKCS_ECDSA_P256_SHA256,
 };
-use threshold_fhe::networking::tls::extract_context_id_and_subject_from_cert;
+use threshold_fhe::networking::tls::extract_subject_from_cert;
 use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
 use x509_parser::pem::{parse_x509_pem, Pem};
 
@@ -43,7 +43,7 @@ pub trait SecurityModule {
         // to each other using DNS addresses in the peer list, and TLS
         // connections would fail if certificates aren't issued for these DNS
         // addresses.
-        let subject = extract_context_id_and_subject_from_cert(&cert)?.1;
+        let subject = extract_subject_from_cert(&cert)?;
 
         let mut cp = CertificateParams::new(vec![subject.clone()])?;
 
@@ -141,7 +141,7 @@ pub trait SecurityModule {
         // to each other using DNS addresses in the peer list, and TLS
         // connections would fail if certificates aren't issued for these DNS
         // addresses.
-        let subject = extract_context_id_and_subject_from_cert(&ca_cert_x509)?.1;
+        let subject = extract_subject_from_cert(&ca_cert_x509)?;
 
         let sk_der = ca_key.sk().to_pkcs8_der()?;
         let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(

@@ -18,7 +18,7 @@ use crate::choreography::grpc::{
 use crate::choreography::requests::Status;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::PreprocessorFactory;
-use crate::execution::runtime::party::{Identity, Role};
+use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
 use crate::execution::runtime::session::BaseSession;
 use crate::execution::runtime::session::ParameterHandles;
 use crate::execution::runtime::session::SessionParameters;
@@ -39,19 +39,22 @@ use crate::experimental::choreography::requests::{PreprocKeyGenParams, Threshold
 use crate::experimental::constants::INPUT_PARTY_ID;
 use crate::experimental::constants::PLAINTEXT_MODULUS;
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
-use crate::networking::NetworkMode;
-use crate::networking::NetworkingStrategy;
+use crate::networking::{grpc::GrpcNetworkingManager, NetworkMode};
 use crate::session_id::SessionId;
 use aes_prng::AesRng;
 use async_trait::async_trait;
 use dashmap::DashMap;
+use futures::TryFutureExt;
 use itertools::Itertools;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::task::{JoinHandle, JoinSet};
-use tokio::time::Duration;
+use tokio::{
+    sync::RwLock,
+    task::{JoinHandle, JoinSet},
+    time::Duration,
+};
 use tracing::{instrument, Instrument};
 
 use super::requests::{
@@ -123,25 +126,25 @@ struct GrpcDataStores {
 }
 
 pub struct ExperimentalGrpcChoreography {
-    own_identity: Identity,
-    networking_strategy: NetworkingStrategy,
+    my_role: Role,
+    networking_manager: Arc<GrpcNetworkingManager>,
     data: GrpcDataStores,
 }
 
 impl ExperimentalGrpcChoreography {
     pub fn new<const EXTENSION_DEGREE: usize>(
-        own_identity: Identity,
-        networking_strategy: NetworkingStrategy,
+        my_role: Role,
+        networking_manager: Arc<GrpcNetworkingManager>,
         //NOTE: Might need the factory when/if we implemented orchestrator with redis for
         //dkg preproc (but we may also decide to always use InMemory preprocessing?)
         //Also, have to put a dummy degree here that's implemented for trait bounds reasons
         //even though it's not used in BGV/BFV implem
         _factory: Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>,
     ) -> Self {
-        tracing::debug!("Starting Party with identity: {own_identity}");
+        tracing::debug!("Starting Party with role: {my_role}");
         ExperimentalGrpcChoreography {
-            own_identity,
-            networking_strategy,
+            my_role,
+            networking_manager,
             data: GrpcDataStores::default(),
         }
     }
@@ -156,7 +159,7 @@ impl ExperimentalGrpcChoreography {
         &self,
         request_sid: SessionId,
         threshold: u8,
-        role_assignments: HashMap<Role, Identity>,
+        role_assignment: Arc<RwLock<RoleAssignment>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<BaseSession> {
@@ -165,7 +168,7 @@ impl ExperimentalGrpcChoreography {
                 request_sid,
                 1,
                 threshold,
-                role_assignments,
+                role_assignment,
                 network_mode,
                 seed,
             )
@@ -187,7 +190,7 @@ impl ExperimentalGrpcChoreography {
         request_sid: SessionId,
         num_sessions: usize,
         threshold: u8,
-        role_assignments: HashMap<Role, Identity>,
+        role_assignment: Arc<RwLock<RoleAssignment>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
     ) -> anyhow::Result<Vec<BaseSession>> {
@@ -197,34 +200,30 @@ impl ExperimentalGrpcChoreography {
             .map(|_| gen_random_sid(&mut session_id_generator, sid_u128))
             .collect_vec();
 
-        //Fetch my Role for the role_assignment
-        let mut my_role_idx = 0;
-        for (role, identity) in role_assignments.iter() {
-            if *identity == self.own_identity {
-                my_role_idx = role.one_based() as u64;
-            }
-        }
+        let roles = role_assignment
+            .read()
+            .await
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
+
         let mut base_sessions = Vec::new();
         for (idx, session_id) in sids.into_iter().enumerate() {
-            let params = SessionParameters::new(
-                threshold,
-                session_id,
-                self.own_identity.clone(),
-                role_assignments.clone(),
-            )
-            .unwrap();
             //We are executing offline phase, so requires Sync network
-            let networking =
-                (self.networking_strategy)(session_id, role_assignments.clone(), network_mode)
-                    .await
-                    .map_err(|e| {
-                        tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!("Failed to create networking: {e:?}"),
-                        )
-                    })?;
+            let networking = self
+                .networking_manager
+                .make_session(session_id, role_assignment.clone(), network_mode)
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create networking: {e:?}"),
+                    )
+                })?;
+            let params =
+                SessionParameters::new(threshold, session_id, self.my_role, roles.clone()).unwrap();
             let aes_rng = if let Some(seed) = seed {
-                AesRng::seed_from_u64(seed + my_role_idx + (idx as u64))
+                AesRng::seed_from_u64(seed + (self.my_role.one_based() as u64) + (idx as u64))
             } else {
                 AesRng::from_entropy()
             };
@@ -258,13 +257,14 @@ impl Choreography for ExperimentalGrpcChoreography {
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(role_assignment));
 
         let prss_params: PrssInitParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
@@ -280,7 +280,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             .create_base_session(
                 session_id,
                 threshold,
-                role_assignments.clone(),
+                role_assignment.clone(),
                 NetworkMode::Sync,
                 request.seed,
             )
@@ -305,7 +305,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                         SupportedPRSSSetup::LevelOne(prss_setup),
                     );
                     tracing::info!("PRSS Setup for LevelOne Done.");
-                    fill_network_memory_info_single_session(base_session);
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -323,7 +323,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                         SupportedPRSSSetup::LevelKsw(prss_setup),
                     );
                     tracing::info!("PRSS Setup for LevelKsw Done.");
-                    fill_network_memory_info_single_session(base_session);
+                    fill_network_memory_info_single_session(base_session).await;
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -353,13 +353,14 @@ impl Choreography for ExperimentalGrpcChoreography {
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(role_assignment));
 
         let preproc_params: PreprocKeyGenParams =
             bc2wrap::deserialize(&request.params).map_err(|e| {
@@ -378,7 +379,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 start_sid,
                 num_sessions as usize,
                 threshold,
-                role_assignments.clone(),
+                role_assignment.clone(),
                 NetworkMode::Sync,
                 request.seed,
             )
@@ -418,7 +419,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 .instrument(tracing::info_span!("orchestrate"))
                 .await
                 .unwrap();
-            fill_network_memory_info_multiple_sessions(sessions);
+            fill_network_memory_info_multiple_sessions(sessions).await;
             store.insert(start_sid, preproc);
         };
         self.data.status_store.insert(
@@ -455,13 +456,14 @@ impl Choreography for ExperimentalGrpcChoreography {
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(role_assignment));
 
         let kg_params: ThresholdKeyGenParams =
             bc2wrap::deserialize(&request.params).map_err(|e| {
@@ -478,7 +480,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             .create_base_session(
                 session_id,
                 threshold,
-                role_assignments.clone(),
+                role_assignment.clone(),
                 NetworkMode::Async,
                 request.seed,
             )
@@ -507,7 +509,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 .await
                 .unwrap();
                 key_store.insert(session_id, Arc::new(keys));
-                fill_network_memory_info_single_session(base_session);
+                fill_network_memory_info_single_session(base_session).await;
             };
             self.data.status_store.insert(
                 session_id,
@@ -540,7 +542,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 .await
                 .unwrap();
                 key_store.insert(session_id, Arc::new(keys));
-                fill_network_memory_info_single_session(small_session);
+                fill_network_memory_info_single_session(small_session).await;
             };
             self.data.status_store.insert(
                 session_id,
@@ -578,35 +580,33 @@ impl Choreography for ExperimentalGrpcChoreography {
         let gen_params = kg_result_params.gen_params;
 
         if gen_params {
-            let role_assignments: HashMap<Role, Identity> =
+            let role_assignment: HashMap<Role, Identity> =
                 bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
                         format!("Failed to parse role assignment: {e:?}"),
                     )
                 })?;
-            let params = SessionParameters::new(
-                0,
-                session_id,
-                self.own_identity.clone(),
-                role_assignments.clone(),
-            )
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    format!("Failed to create a base session parameters: {e:?}"),
-                )
-            })?;
+            let roles = role_assignment.keys().cloned().collect();
+            let role_assignment = Arc::new(RwLock::new(role_assignment));
+            let params =
+                SessionParameters::new(0, session_id, self.my_role, roles).map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create a base session parameters: {e:?}"),
+                    )
+                })?;
 
-            let networking =
-                (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async)
-                    .await
-                    .map_err(|e| {
-                        tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!("Failed to create networking: {e:?}"),
-                        )
-                    })?;
+            let networking = self
+                .networking_manager
+                .make_session(session_id, role_assignment, NetworkMode::Async)
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create networking: {e:?}"),
+                    )
+                })
+                .await?;
 
             //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
             let mut base_session = BaseSession::new(params, networking, AesRng::from_entropy())
@@ -680,13 +680,14 @@ impl Choreography for ExperimentalGrpcChoreography {
             )
         })?;
 
-        let role_assignments: HashMap<Role, Identity> =
+        let role_assignment: HashMap<Role, Identity> =
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
+        let role_assignment = Arc::new(RwLock::new(role_assignment));
 
         let preproc_params: ThresholdDecryptParams = bc2wrap::deserialize(&request.params)
             .map_err(|e| {
@@ -737,7 +738,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 session_id,
                 num_parallel,
                 threshold,
-                role_assignments.clone(),
+                role_assignment.clone(),
                 NetworkMode::Async,
                 request.seed,
             )
@@ -804,7 +805,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             let res = res.into_iter().map(|(_, r)| r).collect();
 
             res_store.insert(session_id, res);
-            fill_network_memory_info_multiple_sessions(small_sessions);
+            fill_network_memory_info_multiple_sessions(small_sessions).await;
         };
         self.data.status_store.insert(
             session_id,

@@ -96,7 +96,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             guarded_meta_store.insert(&request_id)?;
         }
         // Derive a sequence of sessionId from request_id
-        let own_identity = session_preparer.own_identity()?;
+        let own_identity = session_preparer.own_identity().await?;
 
         let sids = (0..self.num_sessions_preproc)
             .map(|ctr| request_id.derive_session_id_with_counter(ctr as u64))

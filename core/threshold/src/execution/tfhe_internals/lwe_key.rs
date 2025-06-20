@@ -421,8 +421,8 @@ mod tests {
 
     use super::{allocate_and_generate_new_lwe_compact_public_key, LweSecretKeyShare};
 
-    #[test]
-    fn test_pk_generation() {
+    #[tokio::test]
+    async fn test_pk_generation() {
         let lwe_dimension = 1024_usize;
         let message_log_modulus = 3_usize;
         let ctxt_log_modulus = 64_usize;
@@ -497,7 +497,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         let mut lwe_key_shares = HashMap::new();
         let opened_pk_ref = results[0].2.clone();

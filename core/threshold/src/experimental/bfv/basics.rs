@@ -127,7 +127,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::execution::runtime::test_runtime::generate_fixed_identities;
+    use crate::execution::runtime::{party::Role, test_runtime::generate_fixed_roles};
     use crate::experimental::algebra::ntt::NTTConstants;
     use crate::experimental::bgv::ddec::keygen_shares;
     use crate::experimental::bgv::endpoints::threshold_decrypt;
@@ -183,16 +183,15 @@ mod tests {
             .iter()
             .map(|k| k.as_ntt_repr(N65536::VALUE, N65536::THETA))
             .collect();
-        let identities = generate_fixed_identities(n);
+        let roles = generate_fixed_roles(n);
         //Delay P1 by 1s every round
         let delay_map = HashMap::from([(
-            identities.first().unwrap().clone(),
+            *roles.get(&Role::indexed_from_one(1)).unwrap(),
             tokio::time::Duration::from_secs(1),
         )]);
-        let runtime =
-            BGVTestRuntime::new(identities.clone(), t, NetworkMode::Async, Some(delay_map));
+        let runtime = BGVTestRuntime::new(roles, t, NetworkMode::Async, Some(delay_map));
         let outputs = threshold_decrypt(&runtime, &ntt_keyshares, &bgv_ct).unwrap();
-        let out_dec = outputs[&identities[0]].clone();
+        let out_dec = outputs[&Role::indexed_from_one(1)].clone();
         assert_eq!(out_dec, plaintext_vec);
     }
 }

@@ -166,7 +166,7 @@ impl<
     {
         tracing::info!(
             "{:?} started inner_decrypt with mode {:?}",
-            session_prep.own_identity(),
+            session_prep.own_identity().await?,
             dec_mode
         );
 
@@ -208,7 +208,7 @@ impl<
                     &low_level_ct.try_get_small_ct()?,
                     &keys.private_keys,
                     keys.get_key_switching_key()?,
-                    session_prep.own_identity()?,
+                    session_prep.my_role()?,
                 )
                 .await
             }
@@ -232,7 +232,7 @@ impl<
                 };
                 tracing::info!(
                     "Decryption completed on {:?}. Inner thread took {:?} ms",
-                    session_prep.own_identity(),
+                    session_prep.own_identity().await?,
                     time.as_millis()
                 );
                 raw_decryption

@@ -5,7 +5,7 @@ use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve, Synd
 use crate::choreography::grpc::GrpcChoreography;
 use crate::conf::party::PartyConf;
 use crate::execution::online::preprocessing::{create_memory_factory, create_redis_factory};
-use crate::execution::runtime::party::{Identity, RoleAssignment};
+use crate::execution::runtime::party::{Role, RoleAssignment};
 #[cfg(feature = "experimental")]
 use crate::experimental::choreography::grpc::ExperimentalGrpcChoreography;
 #[cfg(not(feature = "experimental"))]
@@ -15,6 +15,7 @@ use crate::networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGet
 use crate::networking::Networking;
 use observability::telemetry::make_span;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tonic::transport::{Server, ServerTlsConfig};
 use tower_http::trace::TraceLayer;
 
@@ -28,7 +29,7 @@ where
     // TODO: This part is under discussion. We need to figure out how to handle the networking topology configuration
     // For the moment we are using a provided configuration on `threshold_decrypt` gRPC endpoint,
     // but it is not discarded to use a more dynamic approach.
-    let _docker_static_endpoints: RoleAssignment = settings
+    let docker_static_endpoints: RoleAssignment = settings
         .protocol()
         .peers()
         .as_ref()
@@ -37,7 +38,7 @@ where
         .map(|peer| (peer.into(), peer.into()))
         .collect();
 
-    let own_identity: Identity = settings.protocol().host().into();
+    let my_role: Role = settings.protocol().host().into();
 
     let tls_conf = settings
         .certpaths
@@ -47,15 +48,17 @@ where
 
     // the networking manager is shared between the two services
     let networking = Arc::new(GrpcNetworkingManager::new(
-        own_identity.clone(),
+        my_role,
         tls_conf,
         settings.net_conf,
+        false,
+        Arc::new(RwLock::new(docker_static_endpoints)),
     )?);
     let networking_server = networking.new_server(TlsExtensionGetter::TlsConnectInfo);
 
     let factory = match &settings.redis {
         None => create_memory_factory::<EXTENSION_DEGREE>(),
-        Some(conf) => create_redis_factory::<EXTENSION_DEGREE>(format!("{own_identity}"), conf),
+        Some(conf) => create_redis_factory::<EXTENSION_DEGREE>(format!("{my_role}"), conf),
     };
 
     // create a server that uses TLS
@@ -97,33 +100,12 @@ where
         .add_service(choreo_health_service);
 
     #[cfg(not(feature = "experimental"))]
-    let choreo_router = add_strategy_to_router(
-        choreo_router,
-        own_identity,
-        Box::new(move |session_id, roles, network_mode| {
-            let nm = networking.clone();
-            Box::pin(async move {
-                let impl_networking = nm.make_session(session_id, roles, network_mode)?;
-                Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
-            })
-        }),
-        factory,
-    );
+    let choreo_router = add_strategy_to_router(choreo_router, my_role, networking.clone(), factory);
 
     #[cfg(feature = "experimental")]
     let choreo_router = {
-        let choreography = ExperimentalGrpcChoreography::new(
-            own_identity,
-            Box::new(move |session_id, roles, network_mode| {
-                let nm = networking.clone();
-                Box::pin(async move {
-                    let impl_networking = nm.make_session(session_id, roles, network_mode)?;
-                    Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
-                })
-            }),
-            factory,
-        )
-        .into_server();
+        let choreography =
+            ExperimentalGrpcChoreography::new(my_role, networking.clone(), factory).into_server();
         choreo_router.add_service(choreography)
     };
 

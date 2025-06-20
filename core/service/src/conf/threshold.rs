@@ -8,8 +8,8 @@ use threshold_fhe::execution::online::preprocessing::redis::RedisConf;
 use threshold_fhe::execution::runtime::party::{Identity, Role};
 use threshold_fhe::networking::{
     grpc::CoreToCoreNetworkConfig,
-    tls::{extract_context_id_and_subject_from_cert, ReleasePCRValues},
-    };
+    tls::{extract_subject_from_cert, ReleasePCRValues},
+};
 use validator::{Validate, ValidationError};
 use x509_parser::pem::{parse_x509_pem, Pem};
 
@@ -36,32 +36,33 @@ pub struct ThresholdPartyConf {
     pub num_sessions_preproc: Option<u16>,
     // NOTE: eventually the peer list will be removed in favor of context
     #[validate(nested)]
-    pub peers: Vec<PeerConf>,
+    pub peers: Option<Vec<PeerConf>>,
     pub core_to_core_net: Option<CoreToCoreNetworkConfig>,
     pub decryption_mode: DecryptionMode,
 }
 
 fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), ValidationError> {
-    let num_parties = conf.peers.len();
-    // We assume for now that 3 * threshold + 1 == num_parties.
-    // Note: this might change in the future
-    if 3 * conf.threshold as usize + 1 != num_parties {
-        return Err(ValidationError::new("Incorrect threshold").with_message(format!("3*t+1 must be equal to number of parties. Got t={} but expected t={} for n={} parties", conf.threshold,                     (num_parties - 1) / 3,
+    if let Some(peers) = &conf.peers {
+        let num_parties = peers.len();
+        // We assume for now that 3 * threshold + 1 == num_parties.
+        // Note: this might change in the future
+        if 3 * conf.threshold as usize + 1 != num_parties {
+            return Err(ValidationError::new("Incorrect threshold").with_message(format!("3*t+1 must be equal to number of parties. Got t={} but expected t={} for n={} parties", conf.threshold,                     (num_parties - 1) / 3,
                     num_parties
         ).into() ));
-    }
-    if conf.my_id > num_parties {
-        return Err(ValidationError::new("Incorrect party ID").with_message(
-            format!(
-                "Party ID cannot be greater than the number of parties ({}), but was {}.",
-                num_parties, conf.my_id
-            )
-            .into(),
-        ));
-    }
-    for peer in &conf.peers {
-        if peer.party_id > num_parties {
-            return Err(
+        }
+        if conf.my_id > num_parties {
+            return Err(ValidationError::new("Incorrect party ID").with_message(
+                format!(
+                    "Party ID cannot be greater than the number of parties ({}), but was {}.",
+                    num_parties, conf.my_id
+                )
+                .into(),
+            ));
+        }
+        for peer in peers {
+            if peer.party_id > num_parties {
+                return Err(
                 ValidationError::new("Incorrect peer party ID").with_message(
                     format!(
                         "Peer party ID cannot be greater than the number of parties ({num_parties}).",
@@ -69,6 +70,7 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
                     .into(),
                 ),
             );
+            }
         }
     }
     Ok(())
@@ -122,14 +124,15 @@ impl TlsCert {
         let my_hostname = &peers
             .iter()
             .find(|peer| peer.party_id == my_id)
-            .expect("Peer list does not have an entry for my id")
+            .ok_or_else(|| {
+                anyhow::anyhow!("Peer list {peers:?} does not have an entry for my id {my_id}")
+            })?
             .address;
-        let subject = extract_context_id_and_subject_from_cert(&x509_cert)
-            .map_err(|e| anyhow::anyhow!(e))?
-            .1;
-        if subject != *my_hostname {
-            anyhow::bail!("Certificate subject {subject} does not match hostname {my_hostname}");
-        }
+        let subject = extract_subject_from_cert(&x509_cert).map_err(|e| anyhow::anyhow!(e))?;
+        anyhow::ensure!(
+            subject == *my_hostname,
+            "Certificate subject {subject} does not match hostname {my_hostname}"
+        );
         Ok(cert_pem)
     }
 }
