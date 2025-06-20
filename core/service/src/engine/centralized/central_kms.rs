@@ -373,7 +373,7 @@ pub fn central_public_decrypt<
     cts: &Vec<TypedCiphertext>,
     metric_tags: Vec<(&'static str, String)>,
 ) -> anyhow::Result<Vec<TypedPlaintext>> {
-    use conf_trace::{
+    use observability::{
         metrics,
         metrics_names::{OP_PUBLIC_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
@@ -426,7 +426,7 @@ pub async fn async_user_decrypt<
     domain: &alloy_sol_types::Eip712Domain,
     metric_tags: Vec<(&'static str, String)>,
 ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>)> {
-    use conf_trace::{
+    use observability::{
         metrics,
         metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
     };

@@ -1,6 +1,4 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use conf_trace::conf::TelemetryConfig;
-use conf_trace::telemetry::init_tracing;
 use core::fmt;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
@@ -26,6 +24,8 @@ use kms_lib::{
         Vault,
     },
 };
+use observability::conf::TelemetryConfig;
+use observability::telemetry::init_tracing;
 use serde::{Deserialize, Serialize};
 use url::Url;
 

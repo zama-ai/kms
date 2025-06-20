@@ -19,7 +19,7 @@ bincode.workspace = true
 bc2wrap.workspace = true
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
-conf-trace = { workspace = true, optional = true }
+observability = { workspace = true, optional = true }
 const_format = "=0.2.34"
 crypto-bigint = { version = "=0.6.1", features = [
     "serde",
@@ -211,7 +211,6 @@ malicious_strategies = ["testing"]
 # or uses tokio
 non-wasm = [
     "dep:attestation-doc-validation",
-    "dep:conf-trace",
     "dep:hyper-rustls",
     "dep:tokio",
     "dep:tokio-rustls",
@@ -221,6 +220,7 @@ non-wasm = [
     "dep:backoff",
     "dep:tower",
     "dep:tower-http",
+    "dep:observability",
     "dep:opentelemetry",
     "dep:redis",
     "dep:rcgen",

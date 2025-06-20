@@ -111,8 +111,8 @@ Track instantaneous values that can increase or decrease:
 ### Basic Usage
 
 ```rust
-use conf_trace::metrics::METRICS;
-use conf_trace::metrics_names::{OP_KEYGEN, TAG_OPERATION_TYPE, OP_TYPE_TOTAL};
+use observability::metrics::METRICS;
+use observability::metrics_names::{OP_KEYGEN, TAG_OPERATION_TYPE, OP_TYPE_TOTAL};
 
 // Record operation counter
 METRICS.increment_request_counter(OP_KEYGEN)?;  // kms_operations_total{operation="keygen"}
@@ -135,7 +135,7 @@ METRICS.gauge("worker_count", num_workers)?;  // kms_gauge{operation="worker_cou
 ### Using Custom Prefix
 
 ```rust
-use conf_trace::metrics::{CoreMetrics, MetricsConfig};
+use observability::metrics::{CoreMetrics, MetricsConfig};
 
 // Initialize with custom prefix
 let config = MetricsConfig {
@@ -199,7 +199,7 @@ fn explicit_timing() -> Result<(), Error> {
 ### Error Recording
 
 ```rust
-use conf_trace::metrics::CoreMetrics; // or ::METRICS;
+use observability::metrics::CoreMetrics; // or ::METRICS;
 
 fn handle_request(data: &[u8]) -> Result<(), Error> {
     let metrics = CoreMetrics::new()?;
@@ -276,7 +276,7 @@ When adding new metrics:
 
 2. Use the new constants in your code:
    ```rust
-   use conf_trace::metrics_names::{OP_NEW_OPERATION, TAG_NEW_TAG};
+   use observability::metrics_names::{OP_NEW_OPERATION, TAG_NEW_TAG};
 
    METRICS.observe_duration_with_tags(
        OP_NEW_OPERATION,
@@ -291,4 +291,4 @@ This ensures consistency and maintainability of the metrics system across the co
 
 ```bash
 # Run metrics tests specifically
-cargo test -p conf-trace --features metrics_test
+cargo test -p observability --features metrics_test

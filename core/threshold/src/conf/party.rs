@@ -9,8 +9,8 @@ use crate::{
         tls::{build_ca_certs_map, SendingServiceTLSConfig},
     },
 };
-use conf_trace::conf::TelemetryConfig;
 use itertools::Itertools;
+use observability::conf::TelemetryConfig;
 use serde::{Deserialize, Serialize};
 use x509_parser::pem::parse_x509_pem;
 
@@ -216,7 +216,7 @@ impl PartyConf {
 
 #[cfg(test)]
 mod tests {
-    use conf_trace::conf::Settings;
+    use observability::conf::Settings;
     use std::env;
 
     use super::*;

@@ -1,7 +1,7 @@
 use crate::util::rate_limiter::RateLimiterConfig;
 
 use self::threshold::ThresholdPartyConf;
-use conf_trace::{
+use observability::{
     conf::{Settings, TelemetryConfig},
     telemetry::{init_telemetry, SdkMeterProvider, SdkTracerProvider},
 };

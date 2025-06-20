@@ -1,10 +1,10 @@
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
-use conf_trace::metrics::METRICS;
-use conf_trace::metrics_names::{ERR_KEY_EXISTS, ERR_RATE_LIMIT_EXCEEDED, OP_KEYGEN};
 use kms_grpc::kms::v1::{Empty, KeyGenRequest, KeyGenResult, KeySetAddedInfo};
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, PubDataType};
 use kms_grpc::RequestId;
+use observability::metrics::METRICS;
+use observability::metrics_names::{ERR_KEY_EXISTS, ERR_RATE_LIMIT_EXCEEDED, OP_KEYGEN};
 use std::collections::HashMap;
 use std::sync::Arc;
 use threshold_fhe::execution::keyset_config::KeySetConfig;

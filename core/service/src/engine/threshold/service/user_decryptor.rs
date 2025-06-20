@@ -3,19 +3,19 @@ use std::{collections::HashMap, sync::Arc};
 
 // === External Crates ===
 use anyhow::anyhow;
-use conf_trace::{
-    metrics,
-    metrics_names::{
-        ERR_RATE_LIMIT_EXCEEDED, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID,
-        TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
-    },
-};
 use kms_grpc::{
     kms::v1::{
         self, Empty, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
         UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
     },
     RequestId,
+};
+use observability::{
+    metrics,
+    metrics_names::{
+        ERR_RATE_LIMIT_EXCEEDED, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID,
+        TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+    },
 };
 use rand::{CryptoRng, RngCore};
 use threshold_fhe::{

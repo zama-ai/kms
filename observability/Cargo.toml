@@ -1,5 +1,5 @@
 [package]
-name = "conf-trace"
+name = "observability"
 version.workspace = true
 authors.workspace = true
 publish.workspace = true

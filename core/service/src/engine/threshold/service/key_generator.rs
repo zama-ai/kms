@@ -2,17 +2,17 @@
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 // === External Crates ===
-use conf_trace::{
+use kms_grpc::{
+    kms::v1::{self, Empty, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
+    rpc_types::{protobuf_to_alloy_domain_option, PubDataType},
+    RequestId,
+};
+use observability::{
     metrics,
     metrics_names::{
         OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN, OP_KEYGEN,
         TAG_PARTY_ID,
     },
-};
-use kms_grpc::{
-    kms::v1::{self, Empty, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
-    rpc_types::{protobuf_to_alloy_domain_option, PubDataType},
-    RequestId,
 };
 use tfhe::integer::compression_keys::DecompressionKey;
 use threshold_fhe::{

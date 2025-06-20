@@ -13,7 +13,7 @@ use crate::malicious_execution::malicious_moby::add_strategy_to_router;
 use crate::networking::constants::NETWORK_TIMEOUT_LONG;
 use crate::networking::grpc::{GrpcNetworkingManager, GrpcServer};
 use crate::networking::Networking;
-use conf_trace::telemetry::make_span;
+use observability::telemetry::make_span;
 use std::sync::Arc;
 use tonic::transport::{Server, ServerTlsConfig};
 use tower_http::trace::TraceLayer;

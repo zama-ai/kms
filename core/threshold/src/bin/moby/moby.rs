@@ -1,6 +1,6 @@
 use clap::Parser;
-use conf_trace::conf::{Settings, TelemetryConfig};
-use conf_trace::telemetry::init_tracing;
+use observability::conf::{Settings, TelemetryConfig};
+use observability::telemetry::init_tracing;
 #[cfg(feature = "measure_memory")]
 use peak_alloc::PeakAlloc;
 use threshold_fhe::conf::party::PartyConf;

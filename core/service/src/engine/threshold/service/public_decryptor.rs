@@ -3,13 +3,6 @@ use std::{collections::HashMap, sync::Arc};
 
 // === External Crates ===
 use anyhow::anyhow;
-use conf_trace::{
-    metrics,
-    metrics_names::{
-        ERR_PUBLIC_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
-        TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
-    },
-};
 use itertools::Itertools;
 use kms_grpc::{
     kms::v1::{
@@ -17,6 +10,13 @@ use kms_grpc::{
         PublicDecryptionResponsePayload, TypedPlaintext,
     },
     RequestId,
+};
+use observability::{
+    metrics,
+    metrics_names::{
+        ERR_PUBLIC_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
+        TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+    },
 };
 use tfhe::FheTypes;
 use threshold_fhe::{

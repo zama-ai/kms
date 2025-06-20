@@ -31,7 +31,7 @@ For the rest of this page, we assume the user is working under the `core/thresho
 - `tests`
   - Integration tests.
 <!--
-- `conf-trace`
+- `observability`
   - A small library for configuration and tracing functionality.
 - `docs`
   - Documentation is stored here, notably it contains our preliminary draft NIST main submission document.

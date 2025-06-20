@@ -53,7 +53,7 @@ jobs:
       id: filter
       with:
         # Define paths that trigger specific component workflows
-        # Changes to conf-trace affect multiple components
+        # Changes to observability affect multiple components
         filters: |
           backward-compatibility:
             - 'backward-compatibility/**'
@@ -61,17 +61,17 @@ jobs:
             - '.github/workflows/**'
           core-client:
             - 'core-client/**'
-            - 'conf-trace/**'
+            - 'observability/**'
           core-grpc:
             - 'core/grpc/**'
           core-service:
             - 'core/grpc/**'
             - 'core/service/**'
             - 'core/threshold/**'
-            - 'conf-trace/**'
+            - 'observability/**'
           core-threshold:
             - 'core/threshold/**'
-            - 'conf-trace/**'
+            - 'observability/**'
           docs:
             - 'docs/**'
           helm-chart:
@@ -170,7 +170,7 @@ jobs:
   # Core Client Pipeline
   # Testing triggered by:
   # - Changes to core-client/**
-  # - Changes to conf-trace/**
+  # - Changes to observability/**
   # - Changes to workflow file
   ############################################################################
   prepare-core-client-matrix:
@@ -281,7 +281,7 @@ jobs:
   # - Changes to core/service/**
   # - Changes to core/threshold/**
   # - Changes to core/grpc/**
-  # - Changes to conf-trace/**
+  # - Changes to observability/**
   # - Changes to workflow file
   #
   # This pipeline consists of several stages:
@@ -413,7 +413,7 @@ jobs:
   # Core Threshold Pipeline
   # Testing triggered by:
   # - Changes to core/threshold/**
-  # - Changes to conf-trace/**
+  # - Changes to observability/**
   # - Changes to workflow file
   #
   # This component has three different test configurations:

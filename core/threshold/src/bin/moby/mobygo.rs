@@ -2,11 +2,11 @@
 #![cfg(feature = "choreographer")]
 
 use clap::{Args, Parser, Subcommand};
-use conf_trace::{
+use itertools::Itertools;
+use observability::{
     conf::{Settings, TelemetryConfig},
     telemetry::init_tracing,
 };
-use itertools::Itertools;
 use rand::{distributions::Uniform, random, Rng};
 use tfhe::{
     integer::BooleanBlock, set_server_key, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048,

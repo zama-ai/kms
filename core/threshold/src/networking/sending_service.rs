@@ -9,9 +9,9 @@ use std::{
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
 use backoff::SystemClock;
-use conf_trace::telemetry::ContextPropagator;
 use gen::gnetworking_client::GnetworkingClient;
 use hyper_rustls::{FixedServerNameResolver, HttpsConnectorBuilder};
+use observability::telemetry::ContextPropagator;
 use serde::{Deserialize, Serialize};
 use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},

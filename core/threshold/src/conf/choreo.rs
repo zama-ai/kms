@@ -3,7 +3,7 @@
 //!
 use crate::choreography::choreographer::NetworkTopology;
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
-use conf_trace::conf::TelemetryConfig;
+use observability::conf::TelemetryConfig;
 use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;
 

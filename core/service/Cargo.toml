@@ -54,7 +54,7 @@ bytes.workspace = true
 cbc = { version = "=0.1.2", features = ["alloc"] }
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive"] }
-conf-trace = { workspace = true, optional = true }
+observability = { workspace = true, optional = true }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "extension_degree_4",
 ] }
@@ -124,7 +124,7 @@ threshold-fhe = { workspace = true, default-features = false, features = [
 ] }
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
 proptest = "=1.6.0"
-test-utils = { path = "../../test-utils" }
+tests-utils = { path = "./tests-utils" }
 
 [build-dependencies]
 tonic-build.workspace = true
@@ -145,7 +145,7 @@ non-wasm = [
     "dep:aws-smithy-runtime-api",
     "dep:aws-smithy-types",
     "dep:hyper-rustls",
-    "dep:conf-trace",
+    "dep:observability",
     "dep:rcgen",
     "dep:tokio",
     "dep:tokio-rustls",

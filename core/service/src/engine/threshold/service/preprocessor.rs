@@ -2,14 +2,14 @@
 use std::{collections::HashMap, sync::Arc};
 
 // === External Crates ===
-use conf_trace::{
-    metrics,
-    metrics_names::{OP_KEYGEN_PREPROC, TAG_PARTY_ID},
-};
 use itertools::Itertools;
 use kms_grpc::{
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
     RequestId,
+};
+use observability::{
+    metrics,
+    metrics_names::{OP_KEYGEN_PREPROC, TAG_PARTY_ID},
 };
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},

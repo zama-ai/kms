@@ -25,7 +25,7 @@ bytes.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
-conf-trace.workspace = true
+observability.workspace = true
 hex.workspace = true
 kms = { workspace = true, default-features = false, features = [
     "non-wasm",

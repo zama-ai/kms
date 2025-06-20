@@ -57,7 +57,7 @@ The rest of the communication is defined by existing standards and uses JSON-RPC
     - Code related to Continuous Integration (CI). Observe that specific CI scripts for the Github CI can be found in the `.github` folder.
 - `common`
     - Utility code and macros shared between other source code folders.
-- [`conf-trace`](./conf-trace/README.md)
+- [`observability`](./observability/README.md)
     - Code and documentation related to open telemetry tracing; in particular in the situation where multiple KMS Core nodes are running on separate physical machines.
 - `core`: The KMS Core source code
     - `backup`
@@ -68,18 +68,14 @@ The rest of the communication is defined by existing standards and uses JSON-RPC
         - The code implementing the outward-facing gRPC interface and server implementation along with PKI-related code.
     - [`threshold`](./core/threshold/README.md)
         - The code implementing the MPC protocols executing decryption, CRS and key generation, along with server code used by the MPC protocols to communicate together.
-    - `util`
-        - Util functions shared by the projects in `core`.
     - [`core-client`](./core-client/README.md)
         - Code for the CLI client that can be used to manually interact with the KMS Cores.
     - `docker`
         - Docker files used to containerize the different binaries in the KMS Core, e.g. the Core Service, Threshold Server and KMS Connector.
     - [`docs`](./docs/README.md)
         - High level documentation of the KMS Core system.
-    - `observability`
+    - [`observability`](./observability/README.md)
         - Folder containing code, configurations and scripts for observability, such as through prometheus, grafana and loki.
-    - `test-util`
-        - Utilities used by tests in other crates within the KMS Core.
 
 
 ## Installation

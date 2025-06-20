@@ -2,13 +2,12 @@
 resolver = "2"
 
 members = [
-    "conf-trace",
+    "bc2wrap",
     "core/grpc",
     "core/service",
     "core/threshold",
     "core-client",
-    "test-utils",
-    "bc2wrap",
+    "observability",
 ]
 
 # The backward-compatibility module is excluded from the workspace in order to avoid dependency
@@ -41,7 +40,7 @@ bc2wrap = { path = "./bc2wrap" }
 bytes = "=1.10.1"
 clap = { version = "=4.5.38", features = ["derive"] }
 cfg-if = "=1.0.0"
-conf-trace = { path = "./conf-trace" }
+observability = { path = "./observability" }
 threshold-fhe = { path = "./core/threshold/", default-features = false }
 futures = "=0.3.31"
 hex = "=0.4.3"

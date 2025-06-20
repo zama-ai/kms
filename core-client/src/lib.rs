@@ -8,7 +8,6 @@ use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand};
-use conf_trace::conf::Settings;
 use core::str;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenResult, FheParameter, KeyGenPreprocResult, KeyGenResult,
@@ -29,6 +28,7 @@ use kms_lib::util::key_setup::test_tools::{
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use kms_lib::DecryptionMode;
+use observability::conf::Settings;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

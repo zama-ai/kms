@@ -3,14 +3,14 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 
 // === External Crates ===
 use aes_prng::AesRng;
-use conf_trace::{
-    metrics,
-    metrics_names::{OP_CRS_GEN, OP_INSECURE_CRS_GEN, TAG_PARTY_ID},
-};
 use kms_grpc::{
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
     rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal},
     RequestId,
+};
+use observability::{
+    metrics,
+    metrics_names::{OP_CRS_GEN, OP_INSECURE_CRS_GEN, TAG_PARTY_ID},
 };
 use threshold_fhe::{
     algebra::base_ring::Z64,
