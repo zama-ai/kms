@@ -346,14 +346,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_sync_networking() {
-        let identities: Vec<Identity> = vec!["alice".into(), "bob".into()];
+        let alice = Identity("alice".into(), 5001);
+        let bob = Identity("bob".into(), 5002);
+        let identities: Vec<Identity> = vec![alice.clone(), bob.clone()];
         let net_producer = LocalNetworkingProducer::from_ids(&identities);
 
-        let net_alice = net_producer.user_net("alice".into(), NetworkMode::Sync, None);
-        let net_bob = net_producer.user_net("bob".into(), NetworkMode::Sync, None);
+        let net_alice = net_producer.user_net(alice.clone(), NetworkMode::Sync, None);
+        let net_bob = net_producer.user_net(bob.clone(), NetworkMode::Sync, None);
 
         let task1 = tokio::spawn(async move {
-            let recv = net_bob.receive(&"alice".into()).await;
+            let recv = net_bob.receive(&alice).await;
             assert_eq!(
                 bc2wrap::serialize(&NetworkValue::<Wrapping::<u64>>::from_network(recv).unwrap())
                     .unwrap(),
@@ -363,23 +365,23 @@ mod tests {
 
         let task2 = tokio::spawn(async move {
             let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
-            net_alice.send(value.to_network(), &"bob".into()).await
+            net_alice.send(value.to_network(), &bob).await
         });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
     }
     #[tokio::test]
-    #[should_panic = "Trying to send to bob in round 0 more than once !"]
+    #[should_panic = "Trying to send to bob:5002 in round 0 more than once !"]
     async fn test_sync_networking_panic() {
-        let identities: Vec<Identity> = vec!["alice".into(), "bob".into()];
+        let alice = Identity("alice".into(), 5001);
+        let bob = Identity("bob".into(), 5002);
+        let identities: Vec<Identity> = vec![alice.clone(), bob.clone()];
         let net_producer = LocalNetworkingProducer::from_ids(&identities);
 
-        let net_alice = net_producer.user_net("alice".into(), NetworkMode::Sync, None);
+        let net_alice = net_producer.user_net(alice.clone(), NetworkMode::Sync, None);
 
         let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
-        let _ = net_alice
-            .send(value.clone().to_network(), &"bob".into())
-            .await;
-        let _ = net_alice.send(value.to_network(), &"bob".into()).await;
+        let _ = net_alice.send(value.clone().to_network(), &bob).await;
+        let _ = net_alice.send(value.to_network(), &bob).await;
     }
 }

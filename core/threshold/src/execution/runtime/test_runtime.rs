@@ -43,8 +43,8 @@ pub struct DistributedTestRuntime<Z: Ring, const EXTENSION_DEGREE: usize> {
 pub fn generate_fixed_identities(parties: usize) -> Vec<Identity> {
     let mut res = Vec::with_capacity(parties);
     for i in 1..=parties {
-        let port = 4999 + i;
-        res.push(Identity(format!("localhost:{port}")));
+        let port = 4999 + i as u16;
+        res.push(Identity("localhost".to_string(), port));
     }
     res
 }

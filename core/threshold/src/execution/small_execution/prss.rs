@@ -1188,7 +1188,7 @@ mod tests {
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(&runtime, &raw_ct, DecryptionMode::NoiseFloodSmall)
         .unwrap();
-        let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
+        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
 
@@ -1218,7 +1218,7 @@ mod tests {
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
         >(&runtime, &raw_ct, DecryptionMode::NoiseFloodSmall)
         .unwrap();
-        let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
+        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
     }

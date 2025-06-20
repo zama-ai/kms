@@ -146,11 +146,11 @@ pub(crate) mod tests {
     #[test]
     fn test_dummy_coinflip() {
         let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-            Identity("localhost:5004".to_string()),
+            Identity("localhost".to_string(), 5000),
+            Identity("localhost".to_string(), 5001),
+            Identity("localhost".to_string(), 5002),
+            Identity("localhost".to_string(), 5003),
+            Identity("localhost".to_string(), 5004),
         ];
         let threshold = 1;
         //Coinflip assumes Sync network

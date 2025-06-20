@@ -139,31 +139,32 @@ impl<T> IndexMut<&mut Role> for Vec<T> {
 }
 
 /// Runtime identity of party.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Serialize, Deserialize)]
-pub struct Identity(pub String);
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Serialize, Deserialize, Default)]
+#[display("{}:{}", _0, _1)]
+pub struct Identity(pub String, pub u16);
 
-impl Default for Identity {
-    fn default() -> Self {
-        Identity("test_id".to_string())
-    }
-}
+// impl Default for Identity {
+//     fn default() -> Self {
+//         Identity("test_id".to_string())
+//     }
+// }
 
-impl From<&str> for Identity {
-    fn from(s: &str) -> Self {
-        Identity(s.to_string())
-    }
-}
+// impl From<&str> for Identity {
+//     fn from(s: &str) -> Self {
+//         Identity(s.to_string())
+//     }
+// }
 
-impl From<&String> for Identity {
-    fn from(s: &String) -> Self {
-        Identity(s.clone())
-    }
-}
+// impl From<&String> for Identity {
+//     fn from(s: &String) -> Self {
+//         Identity(s.clone())
+//     }
+// }
 
-impl From<String> for Identity {
-    fn from(s: String) -> Self {
-        Identity(s)
-    }
-}
+// impl From<String> for Identity {
+//     fn from(s: String) -> Self {
+//         Identity(s)
+//     }
+// }
 
 pub type RoleAssignment = HashMap<Role, Identity>;

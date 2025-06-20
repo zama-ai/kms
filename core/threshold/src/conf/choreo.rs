@@ -27,7 +27,7 @@ impl From<&ChoreoParty> for Role {
 
 impl From<&ChoreoParty> for Identity {
     fn from(party: &ChoreoParty) -> Identity {
-        Identity::from(&format!("{}:{}", party.logical_address, party.logical_port))
+        Identity(party.logical_address.clone(), party.logical_port)
     }
 }
 

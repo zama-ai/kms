@@ -216,7 +216,7 @@ pub mod testing {
         for i in 0..amount {
             role_assignment.insert(
                 Role::indexed_from_zero(i),
-                Identity(format!("localhost:{}", 5000 + i)),
+                Identity("localhost".to_string(), 5000 + i as u16),
             );
         }
         SessionParameters::new(
@@ -430,7 +430,7 @@ pub mod tests {
     /// Generates dummy parameters for unit tests with role 1. Parameters contain a single party, session ID = 1 and threshold = 0
     pub fn get_dummy_parameters() -> SessionParameters {
         let mut role_assignment = HashMap::new();
-        let id = Identity("localhost:5000".to_string());
+        let id = Identity("localhost".to_string(), 5000);
         role_assignment.insert(Role::indexed_from_one(1), id.clone());
         SessionParameters::new(0, SessionId::from(1), id, role_assignment).unwrap()
     }

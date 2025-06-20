@@ -87,7 +87,7 @@ pub fn get_dummy_parameters_for_parties(
     for i in 0..amount {
         role_assignment.insert(
             Role::indexed_from_zero(i),
-            Identity(format!("localhost:{}", 5000 + i)),
+            Identity("localhost".to_string(), 5000 + i as u16),
         );
     }
     SessionParameters::new(

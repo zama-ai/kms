@@ -1170,11 +1170,7 @@ pub(crate) mod tests {
         num_secrets: usize,
     ) -> (Vec<Identity>, Vec<Vec<ResiduePolyF4Z128>>) {
         let identities: Vec<Identity> = (0..num_parties)
-            .map(|party_nb| {
-                let mut id_str = "localhost:500".to_owned();
-                id_str.push_str(&party_nb.to_string());
-                Identity(id_str)
-            })
+            .map(|party_nb| Identity("localhost".to_string(), 5000 + party_nb as u16))
             .collect();
 
         let secret_f = |secret: usize| {

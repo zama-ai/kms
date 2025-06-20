@@ -1289,7 +1289,7 @@ mod tests {
         let ct = RadixOrBoolCiphertext::Radix(ct);
         let results_dec =
             threshold_decrypt64(&runtime, &ct, DecryptionMode::NoiseFloodLarge).unwrap();
-        let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
+        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
 
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
@@ -1372,7 +1372,7 @@ mod tests {
         let ct = RadixOrBoolCiphertext::Radix(ct);
         let results_dec =
             threshold_decrypt64(&runtime, &ct, DecryptionMode::NoiseFloodSmall).unwrap();
-        let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
+        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
 
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
@@ -1462,7 +1462,7 @@ mod tests {
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
         let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmall).unwrap();
-        let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
+        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
 
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
@@ -1552,7 +1552,7 @@ mod tests {
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
         let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecLarge).unwrap();
-        let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
+        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
 
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
