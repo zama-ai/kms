@@ -1,23 +1,22 @@
 {{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.thresholdMode.tls.enabled .Values.kmsGenCert.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
-{{- $kmsGenCertName := include "kmsGenCertJobName" . }}
-{{- $kmsWriteCertName := include "kmsWriteCertJobName" . }}
+{{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
 apiVersion: batch/v1
 kind: Job
 metadata:
   labels:
     app: kms-core
-    app.kubernetes.io/name: {{ $kmsGenCertName }}
+    app.kubernetes.io/name: {{ $kmsGenCertAndKeysName }}
   annotations:
     "helm.sh/hook-weight": "-2"
-  name: {{ $kmsGenCertName }}
+  name: {{ $kmsGenCertAndKeysName }}
 spec:
   template:
     metadata:
       labels:
-        app: kms-core-gen-keys-cert
-        app.kubernetes.io/name: {{ $kmsGenCertName }}
+        app: kms-core-gen-cert-and-keys
+        app.kubernetes.io/name: {{ $kmsGenCertAndKeysName }}
     spec:
       serviceAccountName: {{ .Values.kmsCore.serviceAccountName }}
       securityContext:
@@ -136,7 +135,7 @@ spec:
       containers:
         - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
           imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
-          name: kms-core-enclave-gen-signing-key
+          name: kms-core-enclave-gen-cert-and-keys
           command:
             - /bin/sh
           args:
