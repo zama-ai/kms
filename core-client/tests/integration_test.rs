@@ -221,7 +221,7 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<CCCom
         match &command {
             CCCommand::PublicDecrypt(cipher_arguments)
             | CCCommand::UserDecrypt(cipher_arguments) => {
-                let num_expected_results = cipher_arguments.get_load();
+                let num_expected_results = cipher_arguments.get_num_requests();
                 assert_eq!(results.len(), num_expected_results);
             }
             _ => {}

@@ -532,98 +532,114 @@ impl ErrorCorrect for LevelKsw {
         //Doing stuff in reverse order to get ownership with remove,
         //without having to pay for worst case complexity of moving all elements of the vector at every iteration
         for monomial_index in (0..=threshold).rev() {
-            let value_level_one = if res_level_one.coefs.len() - 1 == monomial_index {
-                res_level_one.coefs.remove(monomial_index)
+            let value_level_one = if res_level_one.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_one.pop().unwrap()
             } else {
                 LevelOne::ZERO
             };
 
-            let value_level_two = if res_level_two.coefs.len() - 1 == monomial_index {
-                res_level_two.coefs.remove(monomial_index)
+            let value_level_two = if res_level_two.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_two.pop().unwrap()
             } else {
                 LevelTwo::ZERO
             };
 
-            let value_level_three = if res_level_three.coefs.len() - 1 == monomial_index {
-                res_level_three.coefs.remove(monomial_index)
+            let value_level_three = if res_level_three.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_three.pop().unwrap()
             } else {
                 LevelThree::ZERO
             };
 
-            let value_level_four = if res_level_four.coefs.len() - 1 == monomial_index {
-                res_level_four.coefs.remove(monomial_index)
+            let value_level_four = if res_level_four.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_four.pop().unwrap()
             } else {
                 LevelFour::ZERO
             };
 
-            let value_level_five = if res_level_five.coefs.len() - 1 == monomial_index {
-                res_level_five.coefs.remove(monomial_index)
+            let value_level_five = if res_level_five.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_five.pop().unwrap()
             } else {
                 LevelFive::ZERO
             };
 
-            let value_level_six = if res_level_six.coefs.len() - 1 == monomial_index {
-                res_level_six.coefs.remove(monomial_index)
+            let value_level_six = if res_level_six.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_six.pop().unwrap()
             } else {
                 LevelSix::ZERO
             };
 
-            let value_level_seven = if res_level_seven.coefs.len() - 1 == monomial_index {
-                res_level_seven.coefs.remove(monomial_index)
+            let value_level_seven = if res_level_seven.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_seven.pop().unwrap()
             } else {
                 LevelSeven::ZERO
             };
 
-            let value_level_eight = if res_level_eight.coefs.len() - 1 == monomial_index {
-                res_level_eight.coefs.remove(monomial_index)
+            let value_level_eight = if res_level_eight.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_eight.pop().unwrap()
             } else {
                 LevelEight::ZERO
             };
 
-            let value_level_nine = if res_level_nine.coefs.len() - 1 == monomial_index {
-                res_level_nine.coefs.remove(monomial_index)
+            let value_level_nine = if res_level_nine.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_nine.pop().unwrap()
             } else {
                 LevelNine::ZERO
             };
 
-            let value_level_ten = if res_level_ten.coefs.len() - 1 == monomial_index {
-                res_level_ten.coefs.remove(monomial_index)
+            let value_level_ten = if res_level_ten.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_ten.pop().unwrap()
             } else {
                 LevelTen::ZERO
             };
 
-            let value_level_eleven = if res_level_eleven.coefs.len() - 1 == monomial_index {
-                res_level_eleven.coefs.remove(monomial_index)
+            let value_level_eleven = if res_level_eleven.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_eleven.pop().unwrap()
             } else {
                 LevelEleven::ZERO
             };
 
-            let value_level_twelve = if res_level_twelve.coefs.len() - 1 == monomial_index {
-                res_level_twelve.coefs.remove(monomial_index)
+            let value_level_twelve = if res_level_twelve.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_twelve.pop().unwrap()
             } else {
                 LevelTwelve::ZERO
             };
 
-            let value_level_thirteen = if res_level_thirteen.coefs.len() - 1 == monomial_index {
-                res_level_thirteen.coefs.remove(monomial_index)
+            let value_level_thirteen = if res_level_thirteen.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_thirteen.pop().unwrap()
             } else {
                 LevelThirteen::ZERO
             };
 
-            let value_level_fourteen = if res_level_fourteen.coefs.len() - 1 == monomial_index {
-                res_level_fourteen.coefs.remove(monomial_index)
+            let value_level_fourteen = if res_level_fourteen.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_fourteen.pop().unwrap()
             } else {
                 LevelFourteen::ZERO
             };
 
-            let value_level_fifteen = if res_level_fifteen.coefs.len() - 1 == monomial_index {
-                res_level_fifteen.coefs.remove(monomial_index)
+            let value_level_fifteen = if res_level_fifteen.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_fifteen.pop().unwrap()
             } else {
                 LevelFifteen::ZERO
             };
 
-            let value_level_r = if res_level_r.coefs.len() - 1 == monomial_index {
-                res_level_r.coefs.remove(monomial_index)
+            let value_level_r = if res_level_r.coefs().len() - 1 == monomial_index {
+                // SAFETY: length is checked before popping
+                res_level_r.pop().unwrap()
             } else {
                 LevelR::ZERO
             };
@@ -648,7 +664,7 @@ impl ErrorCorrect for LevelKsw {
             }))
         }
         coefs.reverse();
-        Ok(Poly { coefs })
+        Ok(Poly::from_coefs(coefs))
     }
 }
 
@@ -1089,9 +1105,7 @@ mod tests {
 
     #[test]
     fn test_l1_poly_eval() {
-        let poly = Poly {
-            coefs: vec![LevelOne::from_u128(11), LevelOne::from_u128(1)],
-        };
+        let poly = Poly::from_coefs(vec![LevelOne::from_u128(11), LevelOne::from_u128(1)]);
         let xs = [LevelOne::from_u128(0), LevelOne::from_u128(1)];
         let ys: Vec<_> = xs.iter().map(|x| poly.eval(x)).collect();
         assert_eq!(ys[0], LevelOne::from_u128(11));
@@ -1112,15 +1126,13 @@ mod tests {
 
     #[test]
     fn test_l1_lagrange() {
-        let poly = Poly {
-            coefs: vec![
-                LevelOne::from_u128(11),
-                LevelOne::from_u128(2),
-                LevelOne::from_u128(3),
-                LevelOne::from_u128(22),
-                LevelOne::from_u128(9),
-            ],
-        };
+        let poly = Poly::from_coefs(vec![
+            LevelOne::from_u128(11),
+            LevelOne::from_u128(2),
+            LevelOne::from_u128(3),
+            LevelOne::from_u128(22),
+            LevelOne::from_u128(9),
+        ]);
         let xs = vec![
             LevelOne::from_u128(0),
             LevelOne::from_u128(1),
@@ -1139,16 +1151,14 @@ mod tests {
 
     #[test]
     fn test_field_reconstruct() {
-        let f = ShamirFieldPoly::<LevelOne> {
-            coefs: vec![
-                LevelOne::from_u128(12345),
-                LevelOne::from_u128(1234567),
-                LevelOne::from_u128(12345678910),
-            ],
-        };
+        let f = ShamirFieldPoly::<LevelOne>::from_coefs(vec![
+            LevelOne::from_u128(12345),
+            LevelOne::from_u128(1234567),
+            LevelOne::from_u128(12345678910),
+        ]);
 
         let num_parties = 7;
-        let threshold = f.coefs.len() - 1; // = 2 here
+        let threshold = f.coefs().len() - 1; // = 2 here
         let max_err = (num_parties as usize - threshold) / 2; // = 2 here
 
         let mut shares: Vec<_> = (1..=num_parties)

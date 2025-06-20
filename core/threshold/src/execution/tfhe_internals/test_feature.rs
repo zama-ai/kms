@@ -153,11 +153,7 @@ pub fn gen_key_set<R: Rng + CryptoRng>(params: DKGParams, rng: &mut R) -> KeySet
 }
 
 // TODO we should add a unit test for this
-pub async fn initialize_key_material<
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
-    const EXTENSION_DEGREE: usize,
->(
+pub async fn initialize_key_material<S: BaseSessionHandles, const EXTENSION_DEGREE: usize>(
     session: &mut S,
     params: DKGParams,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
@@ -165,7 +161,7 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
-    let own_role = session.my_role()?;
+    let own_role = session.my_role();
     let params_basic_handle = params.get_params_basics_handle();
 
     let keyset = if own_role.one_based() == INPUT_PARTY_ID {
@@ -412,7 +408,7 @@ where
     Ok((transferred_pub_key, shared_sk))
 }
 
-pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+pub async fn transfer_pub_key<S: BaseSessionHandles>(
     session: &S,
     pubkey: Option<FhePubKeySet>,
     input_party_id: usize,
@@ -428,7 +424,7 @@ pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 }
 
 /// Send the CRS to the other parties, if I am the input party in this session. Else receive the CRS.
-pub async fn transfer_crs<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+pub async fn transfer_crs<S: BaseSessionHandles>(
     session: &S,
     some_crs: Option<CompactPkeCrs>,
     input_party_id: usize,
@@ -443,7 +439,7 @@ pub async fn transfer_crs<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     }
 }
 
-pub async fn transfer_decompression_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+pub async fn transfer_decompression_key<S: BaseSessionHandles>(
     session: &S,
     decompression_key: Option<DecompressionKey>,
     input_party_id: usize,
@@ -459,13 +455,13 @@ pub async fn transfer_decompression_key<R: Rng + CryptoRng, S: BaseSessionHandle
     }
 }
 
-async fn transfer_network_value<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+async fn transfer_network_value<S: BaseSessionHandles>(
     session: &S,
     network_value: Option<NetworkValue<Z128>>,
     input_party_id: usize,
 ) -> anyhow::Result<NetworkValue<Z128>> {
     session.network().increase_round_counter()?;
-    if session.my_role()?.one_based() == input_party_id {
+    if session.my_role().one_based() == input_party_id {
         // send the value
         let network_val =
             network_value.ok_or_else(|| anyhow_error_and_log("I have no value to send!"))?;
@@ -479,7 +475,7 @@ async fn transfer_network_value<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         let buf_to_send = network_val.clone().to_network();
         for receiver in 1..=num_parties {
             if receiver != input_party_id {
-                let rcv_identity = session.identity_from(&Role::indexed_by_one(receiver))?;
+                let rcv_identity = session.identity_from(&Role::indexed_from_one(receiver))?;
 
                 let networking = Arc::clone(session.network());
 
@@ -493,7 +489,7 @@ async fn transfer_network_value<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         Ok(network_val)
     } else {
         // receive the value
-        let sender_identity = session.identity_from(&Role::indexed_by_one(input_party_id))?;
+        let sender_identity = session.identity_from(&Role::indexed_from_one(input_party_id))?;
         let networking = Arc::clone(session.network());
         let timeout = session.network().get_timeout_current_round()?;
         tracing::debug!(
@@ -618,21 +614,31 @@ where
     let mut vv128: Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> =
         vec![Vec::with_capacity(s_length); num_parties];
 
+    let role_with_embeddings_z64 = (1..=num_parties)
+        .map(|party_id| {
+            Ok((
+                Role::indexed_from_one(party_id),
+                ResiduePoly::<Z64, EXTENSION_DEGREE>::embed_exceptional_set(party_id)?,
+            ))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let role_with_embeddings_z128 = (1..=num_parties)
+        .map(|party_id| {
+            Ok((
+                Role::indexed_from_one(party_id),
+                ResiduePoly::<Z128, EXTENSION_DEGREE>::embed_exceptional_set(party_id)?,
+            ))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
     // for each bit in the secret key generate all parties shares
     for (i, bit) in s_vector.iter().enumerate() {
         let embedded_secret = ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
         let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
 
-        for (party_id, v) in vv128.iter_mut().enumerate().take(num_parties) {
-            v.insert(
-                i,
-                Share::new(
-                    Role::indexed_by_zero(party_id),
-                    poly.eval(&ResiduePoly::<_, EXTENSION_DEGREE>::embed_exceptional_set(
-                        party_id + 1,
-                    )?),
-                ),
-            );
+        for (v, (role, embedding)) in vv128.iter_mut().zip_eq(role_with_embeddings_z128.iter()) {
+            v.insert(i, Share::new(*role, poly.eval(embedding)));
         }
     }
 
@@ -646,16 +652,11 @@ where
         let embedded_secret = ResiduePoly::<Z64, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
         let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
 
-        for (party_id, v) in vv64_lwe_key.iter_mut().enumerate().take(num_parties) {
-            v.insert(
-                i,
-                Share::new(
-                    Role::indexed_by_zero(party_id),
-                    poly.eval(&ResiduePoly::<_, EXTENSION_DEGREE>::embed_exceptional_set(
-                        party_id + 1,
-                    )?),
-                ),
-            );
+        for (v, (role, embedding)) in vv64_lwe_key
+            .iter_mut()
+            .zip_eq(role_with_embeddings_z64.iter())
+        {
+            v.insert(i, Share::new(*role, poly.eval(embedding)));
         }
     }
 
@@ -670,16 +671,11 @@ where
         let embedded_secret = ResiduePoly::<Z64, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
         let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
 
-        for (party_id, v) in vv64_glwe_key.iter_mut().enumerate().take(num_parties) {
-            v.insert(
-                i,
-                Share::new(
-                    Role::indexed_by_zero(party_id),
-                    poly.eval(&ResiduePoly::<_, EXTENSION_DEGREE>::embed_exceptional_set(
-                        party_id + 1,
-                    )?),
-                ),
-            );
+        for (v, (role, embedding)) in vv64_glwe_key
+            .iter_mut()
+            .zip_eq(role_with_embeddings_z64.iter())
+        {
+            v.insert(i, Share::new(*role, poly.eval(embedding)));
         }
     }
 

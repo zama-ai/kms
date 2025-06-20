@@ -45,23 +45,23 @@ macro_rules! test_triples {
                 let redis_conf = RedisConf::default();
                 let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
                 let share_one = Share::new(
-                    Role::indexed_by_one(1),
+                    Role::indexed_from_one(1),
                     ResiduePolyF4::<$z>::from_scalar(Wrapping(42)),
                 );
 
                 let share_two = Share::new(
-                    Role::indexed_by_one(2),
+                    Role::indexed_from_one(2),
                     ResiduePolyF4::<$z>::from_scalar(Wrapping(43)),
                 );
 
                 let share_three = Share::new(
-                    Role::indexed_by_one(3),
+                    Role::indexed_from_one(3),
                     ResiduePolyF4::<$z>::from_scalar(Wrapping(42)),
                 );
 
                 let triple = Triple::new(share_one, share_two, share_three);
                 let random = Share::new(
-                    Role::indexed_by_one(4),
+                    Role::indexed_from_one(4),
                     ResiduePolyF4::<$z>::from_scalar(Wrapping(7)),
                 );
                 let mut base_preprocessing = redis_factory.$l();
@@ -91,19 +91,19 @@ fn test_store_fetch_100_triples() {
     let mut cnt = 0;
     for _i in 0..fetch_count {
         let share_one = Share::new(
-            Role::indexed_by_one(1),
+            Role::indexed_from_one(1),
             ResiduePolyF4::<Z64>::from_scalar(Wrapping(cnt)),
         );
         cnt += 1;
 
         let share_two = Share::new(
-            Role::indexed_by_one(2),
+            Role::indexed_from_one(2),
             ResiduePolyF4::<Z64>::from_scalar(Wrapping(cnt)),
         );
         cnt += 1;
 
         let share_three = Share::new(
-            Role::indexed_by_one(3),
+            Role::indexed_from_one(3),
             ResiduePolyF4::<Z64>::from_scalar(Wrapping(cnt)),
         );
         cnt += 1;
@@ -127,7 +127,7 @@ fn test_store_fetch_100_randoms() {
     let mut randoms = Vec::new();
     for i in 0..fetch_count {
         let random = Share::new(
-            Role::indexed_by_one(1),
+            Role::indexed_from_one(1),
             ResiduePolyF4::<Z64>::from_scalar(Wrapping(i)),
         );
         randoms.push(random);
@@ -150,7 +150,7 @@ fn test_store_fetch_100_bits() {
     let mut bits = Vec::new();
     for i in 0..fetch_count {
         let bit = Share::new(
-            Role::indexed_by_one(1),
+            Role::indexed_from_one(1),
             ResiduePolyF4::<Z64>::from_scalar(Wrapping(i)),
         );
         bits.push(bit);
@@ -175,7 +175,7 @@ fn test_fetch_more_than_stored() {
     let mut bits = Vec::new();
     for i in 0..store_count {
         let bit = Share::new(
-            Role::indexed_by_one(1),
+            Role::indexed_from_one(1),
             ResiduePolyF4::<Z64>::from_scalar(Wrapping(i)),
         );
         bits.push(bit);
@@ -260,7 +260,7 @@ fn test_dkg_orchestrator_large(
 
             let (mut sessions, mut preproc) = rt_handle.block_on(async {
                 orchestrator
-                    .orchestrate_large_session_dkg_processing(sessions)
+                    .orchestrate_dkg_processing_secure_large_session(sessions)
                     .await
                     .unwrap()
             });
@@ -321,4 +321,60 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
     let num_parties = 5;
     let threshold = 1;
     test_dkg_orchestrator_large(num_sessions, num_parties, threshold, params);
+}
+
+#[cfg(feature = "testing")]
+#[test]
+fn test_cast_fail_memory_bit_dec_preprocessing() {
+    use threshold_fhe::{
+        algebra::galois_rings::degree_4::ResiduePolyF4Z64,
+        execution::online::preprocessing::{
+            dummy::DummyPreprocessing, BitDecPreprocessing, BitPreprocessing, TriplePreprocessing,
+        },
+        tests::helper::testing::get_dummy_parameters_for_parties,
+    };
+
+    let redis_conf = RedisConf::default();
+    let mut redis_factory = create_redis_factory(
+        "test_cast_fail_memory_bit_dec_preprocessing".to_owned(),
+        &redis_conf,
+    );
+    let parameters = get_dummy_parameters_for_parties(1, 0, Role::indexed_from_one(1));
+
+    let mut dummy_preprocessing = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &parameters);
+
+    let mut casted_from_dummy = dummy_preprocessing.cast_to_in_memory_impl(1).unwrap();
+
+    let mut redis_bit_dec_preprocessing = redis_factory.create_bit_decryption_preprocessing();
+
+    redis_bit_dec_preprocessing.append_triples(
+        casted_from_dummy
+            .next_triple_vec(casted_from_dummy.triples_len())
+            .unwrap(),
+    );
+
+    assert!(
+        redis_bit_dec_preprocessing
+            .cast_to_in_memory_impl(1)
+            .unwrap_err()
+            .to_string()
+            .contains("Not enough bits available"),
+        "Casting to in memory impl should fail when not enough bits are available"
+    );
+
+    let mut redis_bit_dec_preprocessing = redis_factory.create_bit_decryption_preprocessing();
+    redis_bit_dec_preprocessing.append_bits(
+        casted_from_dummy
+            .next_bit_vec(casted_from_dummy.bits_len())
+            .unwrap(),
+    );
+
+    assert!(
+        redis_bit_dec_preprocessing
+            .cast_to_in_memory_impl(1)
+            .unwrap_err()
+            .to_string()
+            .contains("Not enough triples available"),
+        "Casting to in memory impl should fail when not enough triples are available"
+    );
 }

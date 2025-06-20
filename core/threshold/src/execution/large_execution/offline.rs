@@ -13,9 +13,9 @@ use crate::{
             share::Share,
         },
     },
+    ProtocolDescription,
 };
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use tonic::async_trait;
 use tracing::{info_span, instrument, Instrument};
 
@@ -32,6 +32,21 @@ pub struct RealLargePreprocessing<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing
     // both SingleSharing and DoubleSharing
     // rely on it for their definition
     ring_marker: std::marker::PhantomData<Z>,
+}
+
+impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: RobustOpen> ProtocolDescription
+    for RealLargePreprocessing<Z, S, D, RO>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-RealLargePreprocessing:\n{}\n{}\n{}",
+            indent,
+            S::protocol_desc(depth + 1),
+            D::protocol_desc(depth + 1),
+            RO::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: RobustOpen>
@@ -67,12 +82,11 @@ pub type SecureLargePreprocessing<Z> =
 #[async_trait]
 impl<
         Z: ErrorCorrect,
-        Rnd: Rng + CryptoRng + Send + Sync,
-        Ses: LargeSessionHandles<Rnd>,
+        Ses: LargeSessionHandles,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
         RO: RobustOpen,
-    > Preprocessing<Z, Rnd, Ses> for RealLargePreprocessing<Z, S, D, RO>
+    > Preprocessing<Z, Ses> for RealLargePreprocessing<Z, S, D, RO>
 {
     async fn execute(
         &mut self,
@@ -126,8 +140,7 @@ impl<
 #[instrument(name="MPC_Large.GenTriples",skip_all, fields(sid = ?session.session_id(), own_identity = ?session.own_identity(), ?batch_size=amount))]
 async fn next_triple_batch<
     Z: ErrorCorrect,
-    R: Rng + CryptoRng,
-    L: LargeSessionHandles<R>,
+    L: LargeSessionHandles,
     S: SingleSharing<Z>,
     D: DoubleSharing<Z>,
     RO: RobustOpen,
@@ -211,7 +224,7 @@ async fn next_triple_batch<
         .map(|(d, v)| d - v.degree_t)
         .collect_vec();
 
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     let res = vec_share_x
         .into_iter()
         .zip(vec_share_y.into_iter())
@@ -230,12 +243,7 @@ async fn next_triple_batch<
 /// Computes a new batch of random values and appends the new batch to the the existing stash of prepreocessing random values.
 /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
 #[instrument(name="MPC_Large.GenRandom",skip_all, fields(sid = ?session.session_id(), own_identity = ?session.own_identity(), batch_size = ?amount))]
-pub(crate) async fn next_random_batch<
-    Z: Ring,
-    S: SingleSharing<Z>,
-    R: Rng + CryptoRng,
-    L: LargeSessionHandles<R>,
->(
+pub(crate) async fn next_random_batch<Z: Ring, S: SingleSharing<Z>, L: LargeSessionHandles>(
     amount: usize,
     single_sharing: &mut S,
     session: &mut L,
@@ -248,7 +256,7 @@ pub(crate) async fn next_random_batch<
         own_identity = ?session.own_identity(),
         batch_size = amount
     );
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     let mut res = Vec::with_capacity(amount);
     for _ in 0..amount {
         res.push(Share::new(
@@ -319,13 +327,12 @@ mod tests {
             tests_and_benches::execute_protocol_large,
         },
     };
-    use aes_prng::AesRng;
     use rstest::rstest;
 
     fn test_offline_strategies<
         Z: Derive + Invert + ErrorCorrect,
         const EXTENSION_DEGREE: usize,
-        P: Preprocessing<Z, AesRng, LargeSession> + Clone + 'static,
+        P: Preprocessing<Z, LargeSession> + Clone + 'static,
     >(
         params: TestingParameters,
         malicious_offline: P,
@@ -358,7 +365,7 @@ mod tests {
             }
 
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 (res_triples, res_randoms),
                 session.corrupt_roles().clone(),
                 session.disputed_roles().clone(),
@@ -370,7 +377,7 @@ mod tests {
                 let _ = malicious_offline.execute(&mut session, batch_sizes).await;
             }
 
-            session.my_role().unwrap()
+            session.my_role()
         };
 
         //Preprocessing assumes Sync network
@@ -736,9 +743,9 @@ mod tests {
             // We have now used the entire batch of values and should thus fail
             assert!(preproc.next_triple().is_err());
             let err = preproc.next_triple().unwrap_err().to_string();
-            assert!(err.contains("Not enough triples to pop 1"));
+            assert!(err.contains("No triples available"));
             let err = preproc.next_random().unwrap_err().to_string();
-            assert!(err.contains("Not enough randomness to pop 1"));
+            assert!(err.contains("No randomness available"));
             (session, triple_res, rand_res)
         }
 

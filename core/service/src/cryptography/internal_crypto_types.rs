@@ -414,7 +414,7 @@ mod tests {
         let sk_buf = bc2wrap::serialize(&sk).unwrap();
         // there is extra 8 bytes in the serialization to encode the length
         // see https://github.com/bincode-org/bincode/blob/trunk/docs/spec.md#linear-collections-vec-arrays-etc
-        assert_eq!(pk_buf.len(), hybrid_ml_kem::ML_KEM_CT_PK_LENGTH + 8);
+        assert_eq!(pk_buf.len(), hybrid_ml_kem::ML_KEM_PK_LENGTH + 8);
         assert_eq!(sk_buf.len(), hybrid_ml_kem::ML_KEM_SK_LEN + 8);
 
         // deserialize and test if encryption still works.

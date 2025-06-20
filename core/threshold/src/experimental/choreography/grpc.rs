@@ -19,10 +19,10 @@ use crate::choreography::requests::Status;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::PreprocessorFactory;
 use crate::execution::runtime::party::{Identity, Role};
+use crate::execution::runtime::session::BaseSession;
 use crate::execution::runtime::session::ParameterHandles;
 use crate::execution::runtime::session::SessionParameters;
 use crate::execution::runtime::session::SmallSession;
-use crate::execution::runtime::session::{BaseSession, BaseSessionStruct};
 use crate::execution::small_execution::prss::{
     DerivePRSSState, PRSSInit, PRSSSetup, RobustSecurePrssInit,
 };
@@ -159,7 +159,7 @@ impl ExperimentalGrpcChoreography {
         role_assignments: HashMap<Role, Identity>,
         network_mode: NetworkMode,
         seed: Option<u64>,
-    ) -> anyhow::Result<BaseSessionStruct<AesRng, SessionParameters>> {
+    ) -> anyhow::Result<BaseSession> {
         Ok(self
             .create_base_sessions(
                 request_sid,
@@ -190,7 +190,7 @@ impl ExperimentalGrpcChoreography {
         role_assignments: HashMap<Role, Identity>,
         network_mode: NetworkMode,
         seed: Option<u64>,
-    ) -> anyhow::Result<Vec<BaseSessionStruct<AesRng, SessionParameters>>> {
+    ) -> anyhow::Result<Vec<BaseSession>> {
         let sid_u128 = request_sid.into();
         let mut session_id_generator = AesRng::from_seed(request_sid.to_le_bytes());
         let sids = (0..num_sessions)
@@ -229,7 +229,7 @@ impl ExperimentalGrpcChoreography {
                 AesRng::from_entropy()
             };
             base_sessions.push(
-                BaseSessionStruct::new(params.clone(), networking, aes_rng)
+                BaseSession::new(params.clone(), networking, aes_rng)
                     .expect("Failed to create Base Session"),
             );
         }
@@ -406,6 +406,11 @@ impl Choreography for ExperimentalGrpcChoreography {
         let my_future = || async move {
             let small_sessions = create_small_sessions(base_sessions, &prss_setup);
 
+            let small_sessions = small_sessions
+                .into_iter()
+                .map(|s| s.to_secure_small_session())
+                .collect();
+
             let orchestrator = BGVPreprocessingOrchestrator::new(N65536::VALUE);
 
             let (sessions, preproc) = orchestrator
@@ -494,7 +499,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 )
             })?;
             let my_future = || async move {
-                let keys = bgv_distributed_keygen::<N65536, _, _, _>(
+                let keys = bgv_distributed_keygen::<N65536, _, _>(
                     &mut base_session,
                     &mut preproc,
                     PLAINTEXT_MODULUS.get().0,
@@ -525,10 +530,9 @@ impl Choreography for ExperimentalGrpcChoreography {
             let mut small_session =
                 SmallSession::new_from_prss_state(base_session, prss_state).unwrap();
             let sid_u128: u128 = session_id.into();
-            let mut preproc =
-                DummyPreprocessing::<LevelKsw, _, _>::new(sid_u128 as u64, small_session.clone());
+            let mut preproc = DummyPreprocessing::<LevelKsw>::new(sid_u128 as u64, &small_session);
             let my_future = || async move {
-                let keys = bgv_distributed_keygen::<N65536, _, _, _>(
+                let keys = bgv_distributed_keygen::<N65536, _, _>(
                     &mut small_session,
                     &mut preproc,
                     PLAINTEXT_MODULUS.get().0,
@@ -605,15 +609,13 @@ impl Choreography for ExperimentalGrpcChoreography {
                     })?;
 
             //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
-            let mut base_session =
-                BaseSessionStruct::new(params, networking, AesRng::from_entropy()).map_err(
-                    |e| {
-                        tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!("Failed to create Base Session: {:?}", e),
-                        )
-                    },
-                )?;
+            let mut base_session = BaseSession::new(params, networking, AesRng::from_entropy())
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create Base Session: {:?}", e),
+                    )
+                })?;
             let keys = local_initialize_key_material(&mut base_session)
                 .await
                 .map_err(|e| {
@@ -911,7 +913,7 @@ impl Choreography for ExperimentalGrpcChoreography {
 async fn local_initialize_key_material(
     session: &mut BaseSession,
 ) -> anyhow::Result<(PublicBgvKeySet, PrivateBgvKeySet)> {
-    let own_role = session.my_role()?;
+    let own_role = session.my_role();
     let keyset = if own_role.one_based() == INPUT_PARTY_ID {
         tracing::info!("Keyset generated by input party {}", own_role);
         Some(gen_key_set())

@@ -5,12 +5,15 @@ use rand::SeedableRng;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tfhe::{shortint::ClassicPBSParameters, CompactPublicKey, ConfigBuilder, ServerKey};
-use threshold_fhe::execution::{
-    endpoints::keygen::FhePubKeySet,
-    tfhe_internals::{
-        parameters::DKGParams,
-        test_feature::{gen_key_set, keygen_all_party_shares},
+use threshold_fhe::{
+    execution::{
+        endpoints::keygen::FhePubKeySet,
+        tfhe_internals::{
+            parameters::DKGParams,
+            test_feature::{gen_key_set, keygen_all_party_shares},
+        },
     },
+    session_id::SessionId,
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -44,8 +47,9 @@ async fn write_crs() {
     };
 
     let mut rng = AesRng::seed_from_u64(100);
+    let sid = SessionId::from(0);
     let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-    let (pp, crs_info) = async_generate_crs(&sig_sk, rng, TEST_PARAM, Some(1), None)
+    let (pp, crs_info) = async_generate_crs(&sig_sk, TEST_PARAM, Some(1), None, sid, rng)
         .await
         .unwrap();
     let req_id = derive_request_id("write_crs").unwrap();

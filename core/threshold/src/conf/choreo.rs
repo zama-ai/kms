@@ -3,7 +3,7 @@
 //!
 use crate::choreography::choreographer::NetworkTopology;
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
-use conf_trace::conf::TelemetryConfig;
+use observability::conf::TelemetryConfig;
 use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;
 
@@ -21,13 +21,13 @@ pub struct ChoreoParty {
 
 impl From<&ChoreoParty> for Role {
     fn from(party: &ChoreoParty) -> Role {
-        Role::indexed_by_one(party.id)
+        Role::indexed_from_one(party.id)
     }
 }
 
 impl From<&ChoreoParty> for Identity {
     fn from(party: &ChoreoParty) -> Identity {
-        Identity::from(&format!("{}:{}", party.logical_address, party.logical_port))
+        Identity(party.logical_address.clone(), party.logical_port)
     }
 }
 

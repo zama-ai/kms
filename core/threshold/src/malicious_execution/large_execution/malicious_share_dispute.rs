@@ -11,19 +11,26 @@ use crate::{
     },
     networking::value::NetworkValue,
     tests::helper::tests_and_benches::roles_from_idxs,
+    ProtocolDescription,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 
 ///Dropout strategy
 #[derive(Default, Clone)]
 pub struct DroppingShareDispute {}
 
+impl ProtocolDescription for DroppingShareDispute {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-DroppingShareDispute", indent)
+    }
+}
+
 #[async_trait]
 impl ShareDispute for DroppingShareDispute {
-    async fn execute<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<Z: Ring, L: LargeSessionHandles>(
         &self,
         _session: &mut L,
         _secrets: &[Z],
@@ -31,7 +38,7 @@ impl ShareDispute for DroppingShareDispute {
         Ok(ShareDisputeOutput::default())
     }
 
-    async fn execute_double<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute_double<Z: Ring, L: LargeSessionHandles>(
         &self,
         _session: &mut L,
         _secrets: &[Z],
@@ -44,9 +51,16 @@ impl ShareDispute for DroppingShareDispute {
 #[derive(Default, Clone)]
 pub struct WrongShareDisputeRecons {}
 
+impl ProtocolDescription for WrongShareDisputeRecons {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-WrongShareDisputeRecons", indent)
+    }
+}
+
 #[async_trait]
 impl ShareDispute for WrongShareDisputeRecons {
-    async fn execute<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<Z: Ring, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -65,7 +79,7 @@ impl ShareDispute for WrongShareDisputeRecons {
         let mut polypoints_map: HashMap<Role, NetworkValue<Z>> = HashMap::new();
         for polypoints in vec_polypoints.into_iter() {
             for (role_id, polypoint) in polypoints.into_iter().enumerate() {
-                let curr_role = Role::indexed_by_zero(role_id);
+                let curr_role = Role::indexed_from_zero(role_id);
                 match polypoints_map.get_mut(&curr_role) {
                     Some(NetworkValue::VecRingValue(v)) => v.push(polypoint),
                     None => {
@@ -83,7 +97,7 @@ impl ShareDispute for WrongShareDisputeRecons {
         Ok(ShareDisputeOutput::default())
     }
 
-    async fn execute_double<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute_double<Z: Ring, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -102,7 +116,7 @@ impl ShareDispute for WrongShareDisputeRecons {
         let mut polypoints_map: HashMap<Role, NetworkValue<Z>> = HashMap::new();
         for polypoints in vec_polypoints.into_iter() {
             for (role_id, polypoint) in polypoints.into_iter().enumerate() {
-                let curr_role = Role::indexed_by_zero(role_id);
+                let curr_role = Role::indexed_from_zero(role_id);
                 match polypoints_map.get_mut(&curr_role) {
                     Some(NetworkValue::VecPairRingValue(v)) => v.push((polypoint, polypoint)),
                     None => {
@@ -129,6 +143,13 @@ pub struct MaliciousShareDisputeRecons {
     roles_to_lie_to: Vec<Role>,
 }
 
+impl ProtocolDescription for MaliciousShareDisputeRecons {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-MaliciousShareDisputeRecons", indent)
+    }
+}
+
 impl MaliciousShareDisputeRecons {
     pub fn new(roles_from_zero: &[usize]) -> Self {
         Self {
@@ -139,11 +160,7 @@ impl MaliciousShareDisputeRecons {
 
 #[async_trait]
 impl ShareDispute for MaliciousShareDisputeRecons {
-    async fn execute_double<
-        Z: Ring + RingEmbed + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute_double<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -173,7 +190,7 @@ impl ShareDispute for MaliciousShareDisputeRecons {
                 .zip(polypoints_2t.iter_mut())
                 .enumerate()
             {
-                let curr_role = Role::indexed_by_zero(role_id);
+                let curr_role = Role::indexed_from_zero(role_id);
                 //Cheat if we should
                 if self.roles_to_lie_to.contains(&curr_role) {
                     let cheating_poly = Z::sample(session.rng());
@@ -198,11 +215,7 @@ impl ShareDispute for MaliciousShareDisputeRecons {
         send_and_receive_share_dispute_double(session, polypoints_map, secrets.len()).await
     }
 
-    async fn execute<
-        Z: Ring + RingEmbed + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -221,7 +234,7 @@ impl ShareDispute for MaliciousShareDisputeRecons {
         let mut polypoints_map: HashMap<Role, NetworkValue<Z>> = HashMap::new();
         for polypoints in vec_polypoints.iter_mut() {
             for (role_id, polypoint) in polypoints.iter_mut().enumerate() {
-                let curr_role = Role::indexed_by_zero(role_id);
+                let curr_role = Role::indexed_from_zero(role_id);
                 if self.roles_to_lie_to.contains(&curr_role) {
                     let cheating_poly = Z::sample(session.rng());
                     *polypoint += cheating_poly;

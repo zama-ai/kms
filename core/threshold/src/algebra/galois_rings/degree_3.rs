@@ -234,9 +234,9 @@ impl ResiduePolyF3Z64 {
 }
 
 lazy_static! {
-    static ref EXCEPTIONAL_SET_STORE_4_128: RwLock<HashMap<(usize, usize), Vec<ResiduePolyF3Z128>>> =
+    static ref EXCEPTIONAL_SET_STORE_3_128: RwLock<HashMap<(usize, usize), Vec<ResiduePolyF3Z128>>> =
         RwLock::new(HashMap::new());
-    static ref EXCEPTIONAL_SET_STORE_4_64: RwLock<HashMap<(usize, usize), Vec<ResiduePolyF3Z64>>> =
+    static ref EXCEPTIONAL_SET_STORE_3_64: RwLock<HashMap<(usize, usize), Vec<ResiduePolyF3Z64>>> =
         RwLock::new(HashMap::new());
 }
 
@@ -246,7 +246,7 @@ impl MemoizedExceptionals for ResiduePolyF3Z64 {
         Ok(compute_powers(point, degree))
     }
     fn storage() -> &'static RwLock<HashMap<(usize, usize), Vec<Self>>> {
-        &EXCEPTIONAL_SET_STORE_4_64
+        &EXCEPTIONAL_SET_STORE_3_64
     }
 }
 
@@ -256,7 +256,7 @@ impl MemoizedExceptionals for ResiduePolyF3Z128 {
         Ok(compute_powers(point, degree))
     }
     fn storage() -> &'static RwLock<HashMap<(usize, usize), Vec<Self>>> {
-        &EXCEPTIONAL_SET_STORE_4_128
+        &EXCEPTIONAL_SET_STORE_3_128
     }
 }
 
@@ -268,7 +268,7 @@ where
     fn lazy_eval(&self, powers: &[ResiduePolyF3<Z>]) -> ResiduePolyF3<Z> {
         let mut res_coefs = [Z::ZERO; 5];
         // now we go through each
-        for (coef_2, coef_r) in self.coefs.iter().zip(powers) {
+        for (coef_2, coef_r) in self.coefs().iter().zip(powers) {
             for bit_idx in 0..3 {
                 if ((coef_2 >> bit_idx) & 1) == 1 {
                     for (j, cr) in coef_r.coefs.iter().enumerate() {
@@ -378,8 +378,8 @@ mod tests {
                 let mut shares = ShamirSharings::share(&mut rng, secret, n, t).unwrap();
                 // t+1 to reconstruct a degree t polynomial
                 // for each error we need to add in 2 honest shares to reconstruct
-                shares.shares[0] = Share::new(Role::indexed_by_zero(0),ResiduePoly::sample(&mut rng));
-                shares.shares[1] = Share::new(Role::indexed_by_zero(1),ResiduePoly::sample(&mut rng));
+                shares.shares[0] = Share::new(Role::indexed_from_zero(0),ResiduePoly::sample(&mut rng));
+                shares.shares[1] = Share::new(Role::indexed_from_zero(1),ResiduePoly::sample(&mut rng));
 
                 let recon = ResiduePolyF3::<$z>::error_correct(&shares,t, 1);
                 let _ =

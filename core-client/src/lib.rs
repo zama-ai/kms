@@ -8,7 +8,6 @@ use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand};
-use conf_trace::conf::Settings;
 use core::str;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenResult, FheParameter, KeyGenPreprocResult, KeyGenResult,
@@ -18,6 +17,7 @@ use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpoint
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::{KeyId, RequestId};
 use kms_lib::client::{Client, ParsedUserDecryptionRequest};
+use kms_lib::conf::ValidateConfig;
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
 use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
 use kms_lib::util::file_handling::{read_element, write_element};
@@ -28,6 +28,7 @@ use kms_lib::util::key_setup::test_tools::{
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use kms_lib::DecryptionMode;
+use observability::conf::Settings;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -41,6 +42,7 @@ use tokio::task::JoinSet;
 use tonic::transport::Channel;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::fmt::writer::MakeWriterExt;
+use validator::{Validate, ValidationError};
 
 const SLEEP_TIME_BETWEEN_REQUESTS_MS: u64 = 500;
 
@@ -66,18 +68,80 @@ macro_rules! retry {
     };
 }
 
-#[derive(Serialize, Clone, Default, Debug)]
+#[derive(Serialize, Clone, Validate, Default, Debug)]
+#[validate(schema(function = validate_core_client_conf))]
 pub struct CoreClientConfig {
     /// S3 endpoint from which to fetch keys
     /// NOTE: We should probably move away from that and use the key-url
-    pub s3_endpoint: Option<String>,
+    #[validate(length(min = 1))]
+    pub s3_endpoint: String,
     /// Key folder where to store the keys
+    #[validate(length(min = 1))]
     pub object_folder: Vec<String>,
     pub decryption_mode: Option<DecryptionMode>,
     pub num_majority: usize,
     pub num_reconstruct: usize,
+    #[validate(length(min = 1))]
     pub core_addresses: Vec<String>,
     pub fhe_params: Option<FheParameter>,
+}
+
+fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationError> {
+    let num_parties = conf.core_addresses.len();
+
+    if conf.object_folder.len() != conf.core_addresses.len() {
+        return Err(
+            ValidationError::new("Address/Object length mismatch").with_message(
+                format!(
+                    "Number of object folders ({}) must match number of core addresses ({})",
+                    conf.object_folder.len(),
+                    conf.core_addresses.len(),
+                )
+                .into(),
+            ),
+        );
+    }
+
+    if num_parties > 1 {
+        // threshold config
+        let threshold = (num_parties - 1) / 3; // Note that this is floored division. We assumt that 3t+1=n for now.
+
+        // a majority is more than t parties agreeing. But we could also set it to a higher value up to num_parties.
+        if conf.num_majority <= threshold || conf.num_majority > num_parties {
+            return Err(ValidationError::new("Threshold Majority Vote Count Error").with_message(format!("Number for majority votes ({}) must be greater than the threshold ({}) and smaller than the number of parties ({}).", conf.num_majority, threshold, num_parties).into()));
+        }
+
+        // reconstruction needs at least t+2 parties responses. But we could also set it to a higher value up to num_parties.
+        if conf.num_reconstruct < threshold + 2 || conf.num_reconstruct > num_parties {
+            return Err(ValidationError::new("Threshold Reconstruction Count Error").with_message(format!("Number for reconstruction shares ({}) must be at least t+2 ({}) and smaller than the number of parties ({}).", conf.num_reconstruct, threshold + 2, num_parties).into()));
+        }
+    } else {
+        // centralized config, here both values must be 1.
+        if conf.num_majority != 1 {
+            return Err(
+                ValidationError::new("Centralized Majority Vote Count Error").with_message(
+                    format!(
+                    "Number for majority votes ({}) must be equal to 1 for a centralized config.",
+                    conf.num_majority,
+                )
+                    .into(),
+                ),
+            );
+        }
+        if conf.num_reconstruct != 1 {
+            return Err(
+                ValidationError::new("Centralized Reconstruction Count Error").with_message(
+                    format!(
+                    "Number for reconstruction ({}) must be equal to 1 for a centralized config.",
+                    conf.num_reconstruct,
+                )
+                    .into(),
+                ),
+            );
+        }
+    }
+
+    Ok(())
 }
 
 impl<'de> Deserialize<'de> for CoreClientConfig {
@@ -87,7 +151,7 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
     {
         #[derive(Deserialize, Clone, Default, Debug)]
         pub struct CoreClientConfigBuffer {
-            pub s3_endpoint: Option<String>,
+            pub s3_endpoint: String,
             pub object_folder: Vec<String>,
             pub decryption_mode: Option<DecryptionMode>,
             pub num_majority: usize,
@@ -98,7 +162,7 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
 
         let temp = CoreClientConfigBuffer::deserialize(deserializer)?;
 
-        Ok(CoreClientConfig {
+        let conf = CoreClientConfig {
             s3_endpoint: temp.s3_endpoint,
             object_folder: temp.object_folder,
             decryption_mode: temp.decryption_mode,
@@ -106,7 +170,11 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
             num_reconstruct: temp.num_reconstruct,
             core_addresses: temp.core_addresses,
             fhe_params: temp.fhe_params,
-        })
+        };
+
+        conf.validate().map_err(serde::de::Error::custom)?;
+
+        Ok(conf)
     }
 }
 
@@ -296,7 +364,7 @@ impl CipherArguments {
         }
     }
 
-    pub fn get_load(&self) -> usize {
+    pub fn get_num_requests(&self) -> usize {
         match self {
             CipherArguments::FromFile(cipher_file) => cipher_file.num_requests,
             CipherArguments::FromArgs(cipher_parameters) => cipher_parameters.num_requests,
@@ -419,6 +487,18 @@ pub struct CmdConfig {
     /// Should we expect a response from every KMS core or not
     #[clap(long, short = 'a', default_value_t = false)]
     pub expect_all_responses: bool,
+}
+
+impl ValidateConfig for CmdConfig {
+    fn validate(&self) -> anyhow::Result<()> {
+        if self.file_conf.as_ref().is_some_and(|s| s.is_empty()) {
+            return Err(anyhow!("Configuration file path cannot be empty"));
+        }
+        if self.max_iter == 0 {
+            return Err(anyhow!("Max iterations must be greater than 0"));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
@@ -700,10 +780,7 @@ async fn fetch_kms_addresses(
 
     for folder_name in sim_conf.object_folder.iter() {
         let content = fetch_object(
-            &sim_conf
-                .s3_endpoint
-                .clone()
-                .expect("s3 endpoint should be provided"),
+            &sim_conf.s3_endpoint.clone(),
             &format!("{}/{}", folder_name, "VerfAddress"),
             key_id,
         )
@@ -849,11 +926,7 @@ async fn fetch_verf_keys(
     for object_name in ["VerfAddress", "VerfKey"] {
         fetch_local_key_and_write_to_file(
             destination_prefix,
-            cc_conf
-                .s3_endpoint
-                .clone()
-                .expect("S3 endpoint should be provided")
-                .as_str(),
+            cc_conf.s3_endpoint.as_str(),
             &SIGNING_KEY_ID.to_string(),
             object_name,
             &cc_conf.object_folder,
@@ -878,11 +951,7 @@ async fn fetch_key(
     for object_name in object_names {
         fetch_global_pub_object_and_write_to_file(
             destination_prefix,
-            sim_conf
-                .s3_endpoint
-                .clone()
-                .expect("S3 endpoint should be provided")
-                .as_str(),
+            sim_conf.s3_endpoint.as_str(),
             key_id,
             &object_name.to_string(),
             sim_conf.object_folder.first().unwrap(),
@@ -901,11 +970,7 @@ async fn fetch_crs(
     tracing::info!("Fetching CRS with id {crs_id}");
     fetch_global_pub_object_and_write_to_file(
         destination_prefix,
-        cc_conf
-            .s3_endpoint
-            .clone()
-            .expect("S3 endpoint should be provided")
-            .as_str(),
+        cc_conf.s3_endpoint.as_str(),
         crs_id,
         "CRS",
         cc_conf.object_folder.first().unwrap(),
@@ -1126,6 +1191,7 @@ async fn do_preproc(
     Ok(req_id)
 }
 
+/// execute a command based on the provided configuration
 pub async fn execute_cmd(
     cmd_config: &CmdConfig,
     destination_prefix: &Path,
@@ -1157,7 +1223,7 @@ pub async fn execute_cmd(
             if let CipherArguments::FromArgs(cipher_params) = cipher_args {
                 tracing::info!("Fetching tfhe keys. ({command:?})");
                 fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
-                //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.2
+                //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.3
                 if cipher_params.compression && cipher_params.precompute_sns {
                     panic!("Compression on big ciphertexts is not supported yet!");
                 }
@@ -1167,7 +1233,7 @@ pub async fn execute_cmd(
             tracing::info!("Fetching tfhe keys. ({command:?})");
             fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
 
-            //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.2
+            //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.3
             if cipher_params.compression && cipher_params.precompute_sns {
                 panic!("Compression on big ciphertexts is not supported yet!");
             }
@@ -1323,7 +1389,7 @@ pub async fn execute_cmd(
             ];
 
             let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
-            for _ in 0..cipher_args.get_load() {
+            for _ in 0..cipher_args.get_num_requests() {
                 let req_id = RequestId::new_random(&mut rng);
                 let internal_client = internal_client.clone();
                 let ct_batch = ct_batch.clone();
@@ -1417,7 +1483,7 @@ pub async fn execute_cmd(
 
             do_user_decrypt(
                 &mut rng,
-                cipher_args.get_load(),
+                cipher_args.get_num_requests(),
                 internal_client,
                 ct_batch,
                 key_id,
@@ -1696,7 +1762,7 @@ pub async fn execute_cmd(
 #[allow(clippy::too_many_arguments)]
 async fn do_user_decrypt<R: Rng + CryptoRng>(
     rng: &mut R,
-    load: usize,
+    num_requests: usize,
     internal_client: Arc<RwLock<Client>>,
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
@@ -1707,7 +1773,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
     num_expected_responses: usize,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
-    for _ in 0..load {
+    for _ in 0..num_requests {
         let req_id = RequestId::new_random(rng);
         let internal_client = internal_client.clone();
         let ct_batch = ct_batch.clone();
@@ -1738,6 +1804,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 });
             }
 
+            // make sure all requests have been sent
             let mut req_response_vec = Vec::new();
             while let Some(inner) = req_tasks.join_next().await {
                 req_response_vec.push(inner.unwrap().unwrap().into_inner());
@@ -1781,6 +1848,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 });
             }
 
+            // collect responses (at least num_expected_responses)
             let mut resp_response_vec = Vec::new();
             while let Some(resp) = resp_tasks.join_next().await {
                 resp_response_vec.push(resp.unwrap().1);
@@ -1806,12 +1874,17 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 .inspect_err(|e| {
                     tracing::error!("User decryption response is NOT valid! Reason: {}", e)
                 })?;
+
+            // still test that all results are matching this one plaintext
+            for pt in plaintexts.iter() {
+                assert_eq!(
+                    TestingPlaintext::try_from(pt.clone())?,
+                    TestingPlaintext::try_from(original_plaintext.clone())?
+                );
+            }
+
             let decrypted_plaintext = plaintexts[0].clone();
 
-            assert_eq!(
-                TestingPlaintext::try_from(decrypted_plaintext.clone())?,
-                TestingPlaintext::try_from(original_plaintext.clone())?
-            );
             tracing::info!(
                 "User decryption response is ok: {:?} / {:?}",
                 original_plaintext,
@@ -2315,7 +2388,7 @@ mod tests {
         // check that the fhe_params value from the config toml ("Default") is read correctly
         assert_eq!(cc_conf_test.fhe_params, Some(FheParameter::Default));
 
-        // now set the env variable that overwrites fhe_params with "Test"
+        // now set the env variable that overwrites fhe_params with "Test", which should take precedence if it's set
         env::set_var("CORE_CLIENT__FHE_PARAMS", "Test");
 
         let cc_conf_default: CoreClientConfig = Settings::builder()

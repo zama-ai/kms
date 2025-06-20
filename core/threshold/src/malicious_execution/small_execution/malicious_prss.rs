@@ -1,8 +1,7 @@
-use std::collections::HashMap;
-
 use aes_prng::AesRng;
-use rand::{CryptoRng, Rng, SeedableRng};
+use rand::SeedableRng;
 use serde::Serialize;
+use std::collections::HashMap;
 use tonic::async_trait;
 
 use crate::{
@@ -21,6 +20,7 @@ use crate::{
         },
     },
     session_id::SessionId,
+    ProtocolDescription,
 };
 
 /// Malicious implementation of [`PrssInit`], [`DerivePRSSState`] and [`PRSSPrimitives`]
@@ -29,11 +29,18 @@ use crate::{
 #[derive(Clone, Default)]
 pub struct MaliciousPrssDrop {}
 
+impl ProtocolDescription for MaliciousPrssDrop {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-MaliciousPrssDrop", indent)
+    }
+}
+
 #[async_trait]
 impl<Z: Zero> PRSSInit<Z> for MaliciousPrssDrop {
     type OutputType = MaliciousPrssDrop;
     /// Does nothing and returns an empty [`PRSSSetup`]
-    async fn init<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn init<S: BaseSessionHandles>(
         &self,
         _session: &mut S,
     ) -> anyhow::Result<Self::OutputType> {
@@ -66,7 +73,7 @@ impl<Z: Zero> PRSSPrimitives<Z> for MaliciousPrssDrop {
     }
 
     /// Does nothing and returns an empty map
-    async fn prss_check<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn prss_check<S: BaseSessionHandles>(
         &self,
         _session: &mut S,
         _ctr: u128,
@@ -74,7 +81,7 @@ impl<Z: Zero> PRSSPrimitives<Z> for MaliciousPrssDrop {
         Ok(HashMap::new())
     }
     /// Does nothing and returns an empty map
-    async fn przs_check<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn przs_check<S: BaseSessionHandles>(
         &self,
         _session: &mut S,
         _ctr: u128,
@@ -87,6 +94,10 @@ impl<Z: Zero> PRSSPrimitives<Z> for MaliciousPrssDrop {
         PRSSCounters::default()
     }
 }
+
+//TODO: Need to refactor a bit those strategies to avoid having the struct
+//that implements the init be dep. on the underlying ring because moby
+//takes in only a single PRSSInit strategy and not one per ring.
 
 /// Malicious implementation of [`PrssInit`], [`DerivePRSSState`] and [`PRSSPrimitives`]
 /// such that it does the [`PrssInit`] robust version and check honestly BUT lies in all the Next()
@@ -104,6 +115,25 @@ pub struct MaliciousPrssHonestInitRobustThenRandom<
     broadcast: Bcast,
     prss_setup: Option<PRSSSetup<Z>>,
     prss_state: Option<PRSSState<Z, Bcast>>,
+}
+
+impl<
+        A: ProtocolDescription,
+        V: ProtocolDescription,
+        Bcast: Broadcast,
+        Z: Default + Clone + Serialize,
+    > ProtocolDescription for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-MaliciousPrssHonestInitRobustThenRandom:\n{}\n{}\n{}",
+            indent,
+            A::protocol_desc(depth + 1),
+            V::protocol_desc(depth + 1),
+            Bcast::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<A: Default, V: Default, Bcast: Broadcast + Default, Z: Default + Clone + Serialize> Default
@@ -124,15 +154,15 @@ impl<A: Default, V: Default, Bcast: Broadcast + Default, Z: Default + Clone + Se
 
 #[async_trait]
 impl<
-        A: AgreeRandomFromShare,
-        V: Vss,
-        Bcast: Broadcast,
+        A: AgreeRandomFromShare + 'static,
+        V: Vss + 'static,
+        Bcast: Broadcast + 'static,
         Z: ErrorCorrect + Invert + PRSSConversions,
     > PRSSInit<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
     type OutputType = MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>;
 
-    async fn init<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn init<S: BaseSessionHandles>(
         &self,
         session: &mut S,
     ) -> anyhow::Result<Self::OutputType> {
@@ -154,9 +184,9 @@ impl<
 }
 
 impl<
-        A: AgreeRandomFromShare,
-        V: Vss,
-        Bcast: Broadcast,
+        A: AgreeRandomFromShare + 'static,
+        V: Vss + 'static,
+        Bcast: Broadcast + 'static,
         Z: Ring + RingEmbed + Invert + PRSSConversions,
     > DerivePRSSState<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
@@ -211,7 +241,7 @@ impl<
     }
 
     /// Performs prss check honestly from the correctly derived prss state
-    async fn prss_check<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn prss_check<S: BaseSessionHandles>(
         &self,
         session: &mut S,
         ctr: u128,
@@ -223,7 +253,7 @@ impl<
             .await
     }
     /// Performs przs check honestly from the correctly derived prss state
-    async fn przs_check<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn przs_check<S: BaseSessionHandles>(
         &self,
         session: &mut S,
         ctr: u128,
@@ -253,17 +283,36 @@ pub struct MaliciousPrssHonestInitLieAll<A, V, Bcast: Broadcast, Z: Default + Cl
     prss_setup: Option<PRSSSetup<Z>>,
 }
 
+impl<
+        A: ProtocolDescription,
+        V: ProtocolDescription,
+        Bcast: Broadcast,
+        Z: Default + Clone + Serialize,
+    > ProtocolDescription for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-MaliciousPrssHonestInitLieAll:\n{}\n{}\n{}",
+            indent,
+            A::protocol_desc(depth + 1),
+            V::protocol_desc(depth + 1),
+            Bcast::protocol_desc(depth + 1)
+        )
+    }
+}
+
 #[async_trait]
 impl<
-        A: AgreeRandomFromShare,
-        V: Vss,
-        Bcast: Broadcast,
+        A: AgreeRandomFromShare + 'static,
+        V: Vss + 'static,
+        Bcast: Broadcast + 'static,
         Z: ErrorCorrect + Invert + PRSSConversions,
     > PRSSInit<Z> for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
 {
     type OutputType = MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>;
 
-    async fn init<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn init<S: BaseSessionHandles>(
         &self,
         session: &mut S,
     ) -> anyhow::Result<Self::OutputType> {
@@ -284,9 +333,9 @@ impl<
 }
 
 impl<
-        A: AgreeRandomFromShare,
-        V: Vss,
-        Bcast: Broadcast,
+        A: AgreeRandomFromShare + 'static,
+        V: Vss + 'static,
+        Bcast: Broadcast + 'static,
         Z: Ring + RingEmbed + Invert + PRSSConversions,
     > DerivePRSSState<Z> for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
 {

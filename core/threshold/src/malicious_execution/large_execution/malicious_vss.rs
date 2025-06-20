@@ -1,6 +1,6 @@
 use aes_prng::AesRng;
 use itertools::Itertools;
-use rand::{CryptoRng, Rng, SeedableRng};
+use rand::SeedableRng;
 use tonic::async_trait;
 
 use crate::{
@@ -18,16 +18,24 @@ use crate::{
         runtime::{party::Role, session::BaseSessionHandles},
     },
     tests::helper::tests_and_benches::roles_from_idxs,
+    ProtocolDescription,
 };
 
 ///Does nothing, and output an empty Vec
 #[derive(Default, Clone)]
 pub struct DroppingVssFromStart {}
 
+impl ProtocolDescription for DroppingVssFromStart {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-DroppingVssFromStart", indent)
+    }
+}
+
 #[async_trait]
 impl Vss for DroppingVssFromStart {
     //Do nothing, and output an empty Vec
-    async fn execute_many<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring, S: BaseSessionHandles>(
         &self,
         _session: &mut S,
         _secrets: &[Z],
@@ -35,7 +43,7 @@ impl Vss for DroppingVssFromStart {
         Ok(Vec::new())
     }
 
-    async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring, S: BaseSessionHandles>(
         &self,
         _session: &mut S,
         _secret: &Z,
@@ -48,10 +56,17 @@ impl Vss for DroppingVssFromStart {
 #[derive(Default, Clone)]
 pub struct DroppingVssAfterR1 {}
 
+impl ProtocolDescription for DroppingVssAfterR1 {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-DroppingVssAfterR1", indent)
+    }
+}
+
 #[async_trait]
 impl Vss for DroppingVssAfterR1 {
     //Do round1, and output an empty Vec
-    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -61,7 +76,7 @@ impl Vss for DroppingVssAfterR1 {
         Ok(Vec::new())
     }
 
-    async fn execute<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secret: &Z,
@@ -77,6 +92,17 @@ pub struct DroppingVssAfterR2<BCast: Broadcast> {
     broadcast: BCast,
 }
 
+impl<BCast: Broadcast> ProtocolDescription for DroppingVssAfterR2<BCast> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-DroppingVssAfterR2:\n{}",
+            indent,
+            BCast::protocol_desc(depth + 1)
+        )
+    }
+}
+
 impl<BCast: Broadcast> DroppingVssAfterR2<BCast> {
     pub fn new(broadcast_strategy: &BCast) -> Self {
         Self {
@@ -88,7 +114,7 @@ impl<BCast: Broadcast> DroppingVssAfterR2<BCast> {
 #[async_trait]
 impl<BCast: Broadcast> Vss for DroppingVssAfterR2<BCast> {
     //Do round1 and round2, and output an empty Vec
-    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -100,7 +126,7 @@ impl<BCast: Broadcast> Vss for DroppingVssAfterR2<BCast> {
         Ok(Vec::new())
     }
 
-    async fn execute<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secret: &Z,
@@ -111,10 +137,23 @@ impl<BCast: Broadcast> Vss for DroppingVssAfterR2<BCast> {
 }
 
 ///Participate in the protocol, but lies to some parties in the first round
+/// TODO: Make it such that if roles_to_lie_to is empty we lie to everyone
+/// (because we rely on default implem in lots of places)
 #[derive(Default, Clone)]
 pub struct MaliciousVssR1<BCast: Broadcast> {
     broadcast: BCast,
     roles_to_lie_to: Vec<Role>,
+}
+
+impl<BCast: Broadcast> ProtocolDescription for MaliciousVssR1<BCast> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-MaliciousVssR1:\n{}",
+            indent,
+            BCast::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<BCast: Broadcast> MaliciousVssR1<BCast> {
@@ -128,7 +167,7 @@ impl<BCast: Broadcast> MaliciousVssR1<BCast> {
 
 #[async_trait]
 impl<BCast: Broadcast> Vss for MaliciousVssR1<BCast> {
-    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -150,7 +189,7 @@ impl<BCast: Broadcast> Vss for MaliciousVssR1<BCast> {
 }
 
 //This code executes a round1 where the party sends malformed double shares for its VSS to parties in roles_to_lie_to
-async fn malicious_round_1<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+async fn malicious_round_1<Z: Ring + RingEmbed, S: BaseSessionHandles>(
     session: &mut S,
     secrets: &[Z],
     roles_to_lie_to: &[Role],
@@ -207,6 +246,17 @@ pub struct WrongSecretLenVss<BCast: Broadcast> {
     broadcast: BCast,
 }
 
+impl<BCast: Broadcast> ProtocolDescription for WrongSecretLenVss<BCast> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-WrongSecretLenVss:\n{}",
+            indent,
+            BCast::protocol_desc(depth + 1)
+        )
+    }
+}
+
 impl<BCast: Broadcast> WrongSecretLenVss<BCast> {
     pub fn new(broadcast_strategy: &BCast) -> Self {
         Self {
@@ -218,7 +268,7 @@ impl<BCast: Broadcast> WrongSecretLenVss<BCast> {
 #[async_trait]
 impl<BCast: Broadcast> Vss for WrongSecretLenVss<BCast> {
     // The adversary will halve the number of secrets
-    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -256,8 +306,19 @@ impl<BCast: Broadcast> WrongDegreeSharingVss<BCast> {
     }
 }
 
+impl<BCast: Broadcast> ProtocolDescription for WrongDegreeSharingVss<BCast> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-WrongDegreeSharingVss:\n{}",
+            indent,
+            BCast::protocol_desc(depth + 1)
+        )
+    }
+}
+
 impl<BCast: Broadcast> WrongDegreeSharingVss<BCast> {
-    fn sample_secret_polys<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    fn sample_secret_polys<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         session: &mut S,
         secrets: &[Z],
     ) -> anyhow::Result<(Vec<BivariatePoly<Z>>, MapRoleDoublePoly<Z>)> {
@@ -294,7 +355,7 @@ impl<BCast: Broadcast> WrongDegreeSharingVss<BCast> {
 
 #[async_trait]
 impl<BCast: Broadcast> Vss for WrongDegreeSharingVss<BCast> {
-    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],

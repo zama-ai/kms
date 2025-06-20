@@ -3,38 +3,47 @@ use tokio::{sync::mpsc::Sender, task::JoinSet};
 use tracing::instrument;
 
 use crate::{
-    algebra::structure_traits::{Derive, ErrorCorrect, Invert},
+    algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
     execution::{
         config::BatchParams,
         large_execution::offline::SecureLargePreprocessing,
         online::preprocessing::{
-            orchestration::progress_tracker::ProgressTracker, RandomPreprocessing,
+            orchestration::{
+                producer_traits::RandomProducerTrait, progress_tracker::ProgressTracker,
+            },
+            RandomPreprocessing,
         },
-        runtime::session::{LargeSession, ParameterHandles, SmallSession},
+        runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
         sharing::share::Share,
-        small_execution::{
-            offline::{Preprocessing, SecureSmallPreprocessing},
-            prf::PRSSConversions,
-        },
+        small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
     },
 };
 
-use super::common::{execute_preprocessing, ProducerLargeSession, ProducerSmallSession};
+use super::common::{execute_preprocessing, ProducerSession};
 
-/// Produces randomness in all session concurrently
-pub struct SmallSessionRandomProducer<Z: PRSSConversions + ErrorCorrect + Invert> {
+pub struct GenericRandomProducer<Z, S, PreprocStrat>
+where
+    Z: Ring,
+    S: BaseSessionHandles + 'static,
+{
     batch_size: usize,
     total_size: usize,
-    producers: Vec<ProducerSmallSession<Z, Vec<Share<Z>>>>,
+    producers: Vec<ProducerSession<S, Vec<Share<Z>>>>,
     progress_tracker: Option<ProgressTracker>,
+    _marker_strat: std::marker::PhantomData<PreprocStrat>,
 }
 
-impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionRandomProducer<Z> {
-    pub fn new(
+impl<Z, S, PreprocStrat> RandomProducerTrait<Z, S> for GenericRandomProducer<Z, S, PreprocStrat>
+where
+    Z: Ring,
+    S: BaseSessionHandles + 'static,
+    PreprocStrat: Preprocessing<Z, S> + Default,
+{
+    fn new(
         batch_size: usize,
         total_size: usize,
-        mut sessions: Vec<SmallSession<Z>>,
+        mut sessions: Vec<S>,
         channels: Vec<Sender<Vec<Share<Z>>>>,
         progress_tracker: Option<ProgressTracker>,
     ) -> anyhow::Result<Self> {
@@ -48,7 +57,7 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionRandomProducer<Z> {
         let producers = sessions
             .into_iter()
             .zip(channels)
-            .map(|(session, channel)| ProducerSmallSession::new(session, channel))
+            .map(|(session, channel)| ProducerSession::new(session, channel))
             .collect();
 
         Ok(Self {
@@ -56,16 +65,17 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionRandomProducer<Z> {
             total_size,
             producers,
             progress_tracker,
+            _marker_strat: std::marker::PhantomData,
         })
     }
 
     #[instrument(name="Random Factory",skip(self),fields(num_sessions= ?self.producers.len()))]
-    pub fn start_random_production(self) -> JoinSet<Result<SmallSession<Z>, anyhow::Error>> {
+    fn start_random_production(self) -> JoinSet<Result<S, anyhow::Error>> {
         let num_producers = self.producers.len();
         let num_loops = div_ceil(self.total_size, self.batch_size * num_producers);
 
         let batch_size = self.batch_size;
-        let task_gen = |mut session: SmallSession<Z>,
+        let task_gen = |mut session: S,
                         sender_channel: Sender<Vec<Share<Z>>>,
                         progress_tracker: Option<ProgressTracker>| async move {
             let base_batch_size = BatchParams {
@@ -73,7 +83,7 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionRandomProducer<Z> {
                 randoms: batch_size,
             };
 
-            let mut preprocessing = SecureSmallPreprocessing::default();
+            let mut preprocessing = PreprocStrat::default();
             for _ in 0..num_loops {
                 let randoms = preprocessing
                     .execute(&mut session, base_batch_size)
@@ -90,73 +100,11 @@ impl<Z: PRSSConversions + ErrorCorrect + Invert> SmallSessionRandomProducer<Z> {
     }
 }
 
-/// Produces randomness in all session concurrently
-pub struct LargeSessionRandomProducer<Z: ErrorCorrect + Invert + Derive> {
-    batch_size: usize,
-    total_size: usize,
-    producers: Vec<ProducerLargeSession<Vec<Share<Z>>>>,
-    progress_tracker: Option<ProgressTracker>,
-}
+pub type SecureSmallSessionRandomProducer<Z> =
+    GenericRandomProducer<Z, SmallSession<Z>, SecureSmallPreprocessing>;
 
-impl<Z: ErrorCorrect + Invert + Derive> LargeSessionRandomProducer<Z> {
-    pub fn new(
-        batch_size: usize,
-        total_size: usize,
-        mut sessions: Vec<LargeSession>,
-        channels: Vec<Sender<Vec<Share<Z>>>>,
-        progress_tracker: Option<ProgressTracker>,
-    ) -> anyhow::Result<Self> {
-        if sessions.len() != channels.len() {
-            return Err(anyhow_error_and_log(format!("Trying to instantiate a producer with {} sessions and {} channels, but we need as many sessions as channels",sessions.len(), channels.len())));
-        }
-
-        //Always sort the sessions by sid so we are sure it's order the same way for all parties
-        sessions.sort_by_key(|s| s.session_id());
-
-        let producers = sessions
-            .into_iter()
-            .zip(channels)
-            .map(|(session, channel)| ProducerLargeSession::new(session, channel))
-            .collect();
-
-        Ok(Self {
-            batch_size,
-            total_size,
-            producers,
-            progress_tracker,
-        })
-    }
-
-    #[instrument(name="Random Factory",skip(self),fields(num_sessions= ?self.producers.len()))]
-    pub fn start_random_production(self) -> JoinSet<Result<LargeSession, anyhow::Error>> {
-        let num_producers = self.producers.len();
-        let num_loops = div_ceil(self.total_size, self.batch_size * num_producers);
-
-        let batch_size = self.batch_size;
-        let task_gen = |mut session: LargeSession,
-                        sender_channel: Sender<Vec<Share<Z>>>,
-                        progress_tracker: Option<ProgressTracker>| async move {
-            let base_batch_size = BatchParams {
-                triples: 0,
-                randoms: batch_size,
-            };
-
-            let mut preprocessing = SecureLargePreprocessing::default();
-            for _ in 0..num_loops {
-                let randoms = preprocessing
-                    .execute(&mut session, base_batch_size)
-                    .await?
-                    .next_random_vec(batch_size)?;
-
-                //Drop the error on purpose as the receiver end might be closed already if we produced too much
-                let _ = sender_channel.send(randoms).await;
-                progress_tracker.as_ref().map(|p| p.increment(batch_size));
-            }
-            Ok::<_, anyhow::Error>(session)
-        };
-        execute_preprocessing(self.producers, task_gen, self.progress_tracker)
-    }
-}
+pub type SecureLargeSessionRandomProducer<Z> =
+    GenericRandomProducer<Z, LargeSession, SecureLargePreprocessing<Z>>;
 
 #[cfg(test)]
 mod tests {
@@ -231,7 +179,7 @@ mod tests {
         let mut vec_sharings = vec![ShamirSharings::default(); num_randomness];
         for (_, randomness) in randomness_map {
             for (idx, bit) in randomness.iter().enumerate() {
-                let _ = vec_sharings[idx].add_share(*bit);
+                vec_sharings[idx].add_share(*bit);
             }
         }
 

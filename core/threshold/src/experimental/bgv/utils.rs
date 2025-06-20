@@ -14,8 +14,6 @@ use crate::experimental::constants::PLAINTEXT_MODULUS;
 use crate::networking::value::NetworkValue;
 use aes_prng::AesRng;
 use itertools::Itertools;
-use rand::CryptoRng;
-use rand::Rng;
 use rand::SeedableRng;
 use std::sync::Arc;
 use tokio::task::JoinSet;
@@ -30,7 +28,7 @@ pub(crate) fn gen_key_set() -> (PublicBgvKeySet, SecretKey) {
     (pk, sk)
 }
 
-pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+pub async fn transfer_pub_key<S: BaseSessionHandles>(
     session: &S,
     pubkey: Option<PublicBgvKeySet>,
     role: &Role,
@@ -48,7 +46,7 @@ pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         let mut set = JoinSet::new();
         for to_send_role in 1..=num_parties {
             if to_send_role != input_party_id {
-                let identity = session.identity_from(&Role::indexed_by_one(to_send_role))?;
+                let identity = session.identity_from(&Role::indexed_from_one(to_send_role))?;
 
                 let networking = Arc::clone(session.network());
                 let send_pk = pkval.clone();
@@ -61,7 +59,7 @@ pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         while (set.join_next().await).is_some() {}
         Ok(pubkey_raw)
     } else {
-        let receiver = session.identity_from(&Role::indexed_by_one(input_party_id))?;
+        let receiver = session.identity_from(&Role::indexed_from_one(input_party_id))?;
         let networking = Arc::clone(session.network());
         let timeout = session.network().get_timeout_current_round()?;
         tracing::debug!(
@@ -84,7 +82,7 @@ pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     }
 }
 
-pub async fn transfer_secret_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+pub async fn transfer_secret_key<S: BaseSessionHandles>(
     session: &mut S,
     secret_key: Option<SecretKey>,
     role: &Role,
@@ -99,8 +97,8 @@ pub async fn transfer_secret_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 
         let mut set = JoinSet::new();
         for (to_send_role, sk) in ks.iter().enumerate() {
-            if to_send_role != role.zero_based() {
-                let identity = session.identity_from(&Role::indexed_by_zero(to_send_role))?;
+            if &Role::indexed_from_zero(to_send_role) != role {
+                let identity = session.identity_from(&Role::indexed_from_zero(to_send_role))?;
                 let sk_vec = sk.sk.iter().map(|item| item.value()).collect_vec();
                 let network_sk_shares = NetworkValue::<LevelOne>::VecRingValue(sk_vec);
 
@@ -113,14 +111,14 @@ pub async fn transfer_secret_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             }
         }
         while (set.join_next().await).is_some() {}
-        let as_ntt = ks[role.zero_based()].as_ntt_repr(N65536::VALUE, N65536::THETA);
+        let as_ntt = ks[role].as_ntt_repr(N65536::VALUE, N65536::THETA);
         let ntt_shares = as_ntt
             .iter()
             .map(|ntt_val| Share::new(*role, *ntt_val))
             .collect_vec();
         Ok(PrivateBgvKeySet::from_eval_domain(ntt_shares))
     } else {
-        let receiver = session.identity_from(&Role::indexed_by_one(input_party_id))?;
+        let receiver = session.identity_from(&Role::indexed_from_one(input_party_id))?;
         let networking = Arc::clone(session.network());
         let timeout = session.network().get_timeout_current_round()?;
         let data = tokio::spawn(timeout_at(timeout, async move {

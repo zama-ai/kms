@@ -33,13 +33,13 @@ impl Party {
 
 impl From<&Party> for Role {
     fn from(party_conf: &Party) -> Self {
-        Role::indexed_by_one(party_conf.id)
+        Role::indexed_from_one(party_conf.id)
     }
 }
 
 impl From<&Party> for Identity {
     fn from(party_conf: &Party) -> Self {
-        Identity::from(&format!("{}:{}", party_conf.address, party_conf.port))
+        Identity(party_conf.address.clone(), party_conf.port)
     }
 }
 

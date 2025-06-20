@@ -5,7 +5,7 @@ use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use tfhe::{named::Named, Versionize};
 use tfhe_versionable::VersionsDispatch;
-use threshold_fhe::hashing::DomainSep;
+use threshold_fhe::{execution::runtime::party::Role, hashing::DomainSep};
 
 use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
@@ -36,7 +36,7 @@ pub enum InnerCustodianSetupMessageVersioned {
 #[versionize(InnerCustodianSetupMessageVersioned)]
 pub struct InnerCustodianSetupMessage {
     pub header: String,
-    pub custodian_id: usize,
+    pub custodian_role: Role,
     pub random_value: [u8; 32],
     pub timestamp: u64,
     pub public_key: NestedPublicKey,
@@ -74,7 +74,7 @@ impl Named for CustodianSetupMessage {
 }
 
 pub struct Custodian<S: BackupSigner, D: BackupDecryptor> {
-    id: usize,
+    role: Role,
     decryptor: D,
     nested_pk: NestedPublicKey,
     signer: S,
@@ -94,14 +94,14 @@ pub struct Custodian<S: BackupSigner, D: BackupDecryptor> {
 /// supported on AWS KMS at the moment.
 impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
     pub fn new(
-        id: usize,
+        role: Role,
         signer: S,
         verification_key: PublicSigKey,
         decryptor: D,
         nested_pk: NestedPublicKey,
     ) -> Result<Self, BackupError> {
         Ok(Self {
-            id,
+            role,
             decryptor,
             nested_pk,
             signer,
@@ -109,6 +109,10 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         })
     }
 
+    // We allow the following lints because we are fine with mutating the rng even if
+    // we end up returning an error when signing the encrypted share.
+    #[allow(unknown_lints)]
+    #[allow(non_local_effect_before_error_return)]
     /// Obtain the operator public key for reencryption,
     /// decrypt the given ciphertext encrypted under the custodian's public key
     /// and then encrypt it under the operator's public key
@@ -122,7 +126,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         operator_verification_key: &PublicSigKey,
         operator_pk: &NestedPublicKey,
         backup_id: RequestId,
-        operator_id: usize,
+        operator_role: Role,
     ) -> Result<CustodianRecoveryOutput, BackupError> {
         // check the signature
         let signature = Signature {
@@ -149,9 +153,9 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         if !backup_material.matches_expected_metadata(
             backup_id,
             &self.verification_key,
-            self.id,
+            self.role,
             operator_verification_key,
-            operator_id,
+            operator_role,
         ) {
             return Err(BackupError::CustodianRecoveryError);
         }
@@ -166,6 +170,10 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         })
     }
 
+    // We allow the following lints because we are fine with mutating the rng even if
+    // we end up returning an error when signing the encrypted share.
+    #[allow(unknown_lints)]
+    #[allow(non_local_effect_before_error_return)]
     pub fn generate_setup_message<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
@@ -174,7 +182,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         rng.fill_bytes(&mut random_value);
         let msg = InnerCustodianSetupMessage {
             header: HEADER.to_string(),
-            custodian_id: self.id,
+            custodian_role: self.role,
             random_value,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             public_key: self.nested_pk.clone(),
@@ -196,5 +204,9 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
 
     pub fn verification_key(&self) -> &PublicSigKey {
         &self.verification_key
+    }
+
+    pub fn role(&self) -> Role {
+        self.role
     }
 }

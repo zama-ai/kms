@@ -61,8 +61,10 @@ use threshold_fhe::execution::keyset_config::KeySetCompressionConfig;
 use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "non-wasm")]
-use threshold_fhe::execution::zk::ceremony::make_centralized_public_parameters;
+use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
 use threshold_fhe::hashing::DomainSep;
+#[cfg(feature = "non-wasm")]
+use threshold_fhe::session_id::SessionId;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::thread_handles::ThreadHandleGroup;
 use tokio::sync::RwLock;
@@ -165,10 +167,11 @@ where
 #[cfg(feature = "non-wasm")]
 pub(crate) async fn async_generate_crs(
     sk: &PrivateSigKey,
-    rng: AesRng,
     params: DKGParams,
     max_num_bits: Option<u32>,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    sid: SessionId,
+    rng: AesRng,
 ) -> anyhow::Result<(CompactPkeCrs, SignedPubDataHandleInternal)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
@@ -179,8 +182,9 @@ pub(crate) async fn async_generate_crs(
             &sk_copy,
             &params,
             max_num_bits,
-            rng,
             eip712_domain_copy.as_ref(),
+            sid,
+            rng,
         );
         let _ = send.send(out);
     });
@@ -284,20 +288,22 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
     params: &DKGParams,
     max_num_bits: Option<u32>,
-    mut rng: R,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    sid: SessionId,
+    mut rng: R,
 ) -> anyhow::Result<(CompactPkeCrs, SignedPubDataHandleInternal)> {
-    let internal_pp = make_centralized_public_parameters(
+    let internal_pp = public_parameters_by_trusted_setup(
         &params
             .get_params_basics_handle()
             .get_compact_pk_enc_params(),
         max_num_bits.map(|x| x as usize),
+        sid,
         &mut rng,
     )?;
     let pke_params = params
         .get_params_basics_handle()
         .get_compact_pk_enc_params();
-    let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params)?;
+    let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params, sid)?;
     let crs_info = crate::engine::base::compute_info(
         sk,
         &crate::engine::base::DSEP_PUBDATA_CRS,
@@ -367,7 +373,7 @@ pub fn central_public_decrypt<
     cts: &Vec<TypedCiphertext>,
     metric_tags: Vec<(&'static str, String)>,
 ) -> anyhow::Result<Vec<TypedPlaintext>> {
-    use conf_trace::{
+    use observability::{
         metrics,
         metrics_names::{OP_PUBLIC_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
@@ -420,7 +426,7 @@ pub async fn async_user_decrypt<
     domain: &alloy_sol_types::Eip712Domain,
     metric_tags: Vec<(&'static str, String)>,
 ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>)> {
-    use conf_trace::{
+    use observability::{
         metrics,
         metrics_names::{OP_USER_DECRYPT_INNER, TAG_TFHE_TYPE},
     };
@@ -735,6 +741,10 @@ impl<
         }
     }
 
+    // We allow the following lints because we are fine with mutating the rng even if
+    // the function fails serializing the singcrypted message.
+    #[allow(unknown_lints)]
+    #[allow(non_local_effect_before_error_return)]
     fn user_decrypt(
         keys: &KmsFheKeyHandles,
         sig_key: &PrivateSigKey,
@@ -753,11 +763,12 @@ impl<
             plaintext,
             link: link.to_vec(),
         };
+        let serialized_msg = bc2wrap::serialize(&signcryption_msg)?;
 
         let enc_res = signcrypt(
             rng,
             &DSEP_USER_DECRYPTION,
-            &bc2wrap::serialize(&signcryption_msg)?,
+            &serialized_msg,
             client_enc_key,
             client_address,
             sig_key,

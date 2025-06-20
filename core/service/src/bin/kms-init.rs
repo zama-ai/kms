@@ -1,9 +1,9 @@
 use clap::Parser;
-use conf_trace::conf::TelemetryConfig;
-use conf_trace::telemetry::init_tracing;
 use kms_grpc::kms::v1::{InitRequest, RequestId};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_lib::consts::PRSS_INIT_REQ_ID;
+use observability::conf::TelemetryConfig;
+use observability::telemetry::init_tracing;
 
 /// This CLI initializes the threshold KMS core nodes.
 /// After the KMS servers are up and running (using the kms-server)

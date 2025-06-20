@@ -15,11 +15,11 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::runtime::party::Role,
     networking::value::BroadcastValue,
+    ProtocolDescription,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
 use num_integer::div_ceil;
-use rand::{CryptoRng, Rng};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tracing::instrument;
 
@@ -34,12 +34,8 @@ pub struct DoubleShares<Z> {
 }
 
 #[async_trait]
-pub trait LocalDoubleShare: Send + Sync + Clone {
-    async fn execute<
-        Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+pub trait LocalDoubleShare: ProtocolDescription + Send + Sync + Clone {
+    async fn execute<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -60,6 +56,21 @@ pub struct RealLocalDoubleShare<C: Coinflip, S: ShareDispute, BCast: Broadcast> 
     broadcast: BCast,
 }
 
+impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
+    for RealLocalDoubleShare<C, S, BCast>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-RealLocalDoubleShare:\n{}\n{}\n{}",
+            indent,
+            C::protocol_desc(depth + 1),
+            S::protocol_desc(depth + 1),
+            BCast::protocol_desc(depth + 1)
+        )
+    }
+}
+
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> RealLocalDoubleShare<C, S, BCast> {
     pub fn new(coinflip_strategy: C, share_dispute_strategy: S, broadcast_strategy: BCast) -> Self {
         RealLocalDoubleShare {
@@ -77,8 +88,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
     #[instrument(name="LocalDoubleShare",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?secrets.len()))]
     async fn execute<
         Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
+        L: LargeSessionHandles,
     >(
         &self,
         session: &mut L,
@@ -161,14 +171,13 @@ pub(crate) fn format_output<Z>(
     Ok(result)
 }
 
-pub(crate) async fn send_receive_pads_double<Z, R, L, S>(
+pub(crate) async fn send_receive_pads_double<Z, L, S>(
     session: &mut L,
     share_dispute: &S,
 ) -> anyhow::Result<ShareDisputeOutputDouble<Z>>
 where
     Z: Ring + RingEmbed + Derive + Invert,
-    R: Rng + CryptoRng,
-    L: LargeSessionHandles<R>,
+    L: LargeSessionHandles,
     S: ShareDispute,
 {
     let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
@@ -178,8 +187,7 @@ where
 
 pub(crate) async fn verify_sharing<
     Z: Ring + Derive + ErrorCorrect,
-    R: Rng + CryptoRng,
-    L: LargeSessionHandles<R>,
+    L: LargeSessionHandles,
     BCast: Broadcast,
 >(
     session: &mut L,
@@ -210,7 +218,7 @@ pub(crate) async fn verify_sharing<
 
     let roles = session.role_assignments().keys().cloned().collect_vec();
     let m = div_ceil(DISPUTE_STAT_SEC, Z::LOG_SIZE_EXCEPTIONAL_SET);
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
 
     //TODO: Could be done in parallel (to minimize round complexity)
     for g in 0..m {
@@ -351,7 +359,7 @@ pub(crate) async fn verify_sharing<
         for role_pi in bcast_corrupts {
             secrets_shares_all_t.insert(role_pi, vec![Z::ZERO; l]);
             secrets_shares_all_2t.insert(role_pi, vec![Z::ZERO; l]);
-            should_return |= session.add_corrupt(role_pi)?;
+            should_return |= session.add_corrupt(role_pi);
         }
         if should_return {
             return Ok(false);
@@ -373,15 +381,17 @@ pub(crate) async fn verify_sharing<
 pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
-    use crate::execution::communication::broadcast::SyncReliableBroadcast;
-    #[cfg(feature = "slow_tests")]
-    use crate::execution::large_execution::{
-        coinflip::{RealCoinflip, SecureCoinflip},
-        share_dispute::RealShareDispute,
-        vss::{RealVss, SecureVss, Vss},
+    use crate::execution::{
+        communication::broadcast::{Broadcast, SyncReliableBroadcast},
+        large_execution::{
+            coinflip::{Coinflip, RealCoinflip, SecureCoinflip},
+            local_double_share::RealLocalDoubleShare,
+            share_dispute::RealShareDispute,
+            share_dispute::ShareDispute,
+            vss::{RealVss, SecureVss, Vss},
+        },
+        sharing::open::{RobustOpen, SecureRobustOpen},
     };
-    #[cfg(feature = "slow_tests")]
-    use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
     #[cfg(feature = "slow_tests")]
     use crate::malicious_execution::large_execution::{
         malicious_coinflip::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
@@ -401,14 +411,7 @@ pub(crate) mod tests {
     };
     use crate::{
         execution::{
-            communication::broadcast::Broadcast,
-            large_execution::{
-                coinflip::Coinflip,
-                local_double_share::{
-                    LocalDoubleShare, RealLocalDoubleShare, SecureLocalDoubleShare,
-                },
-                share_dispute::ShareDispute,
-            },
+            large_execution::local_double_share::{LocalDoubleShare, SecureLocalDoubleShare},
             runtime::party::Role,
             runtime::session::{
                 BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
@@ -442,7 +445,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 real_ldl.execute(&mut session, &secrets).await.unwrap(),
                 session.corrupt_roles().clone(),
                 session.disputed_roles().clone(),
@@ -454,7 +457,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 malicious_ldl.execute(&mut session, &secrets).await,
             )
         };
@@ -501,8 +504,8 @@ pub(crate) mod tests {
 
         //Check that all secrets reconstruct correctly - for parties in malicious set we expect 0
         //For others we expect the real value for both sharings t and 2t
-        for sender_id in 0..params.num_parties {
-            let sender_role = Role::indexed_by_zero(sender_id);
+        for sender_id in 1..=params.num_parties {
+            let sender_role = Role::indexed_from_one(sender_id);
             let expected_secrets = if ref_malicious_set.contains(&sender_role) {
                 (0..num_secrets).map(|_| Z::ZERO).collect_vec()
             } else {

@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use conf_trace::metrics::METRICS;
-use conf_trace::metrics_names::{
-    ERR_KEY_NOT_FOUND, ERR_PUBLIC_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED,
-    ERR_USER_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID,
-    TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
-};
 use kms_grpc::kms::v1::{
     Empty, PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
     UserDecryptionRequest, UserDecryptionResponse,
+};
+use observability::metrics::METRICS;
+use observability::metrics_names::{
+    ERR_KEY_NOT_FOUND, ERR_PUBLIC_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED,
+    ERR_USER_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID,
+    TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
 };
 use tonic::{Request, Response, Status};
 use tracing::Instrument;

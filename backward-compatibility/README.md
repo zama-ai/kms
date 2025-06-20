@@ -294,3 +294,13 @@ impl Upgrade<PrivateSigKey> for PrivateSigKeyV0 {
 ```
 
 For more in depth scenarios, you can take a look at the [tfhe-rs examples](https://github.com/zama-ai/tfhe-rs/tree/main/utils/tfhe-versionable/examples).
+
+## Updating the test without testing backward compatibility
+
+If you want to update the test data _without_ actually testing for backward compatibility, you can follow the following steps:
+
+1. In the PR (PR1) that contains breaking changes for backward compatibility, disable the related backward test
+1. Once PR1 is merged, create a new PR (PR2) where you update the Cargo.toml of the backward crate with the commit hash that correspond to PR1 being merged to `main`
+1. Then you run `cargo run --features="generate"` as described above to generate new testing objects
+1. Re-enable the backward compatibility tests that were disabled in PR1
+1. Push the changes to PR2 and the tests should pass

@@ -25,10 +25,12 @@ use crate::{
                         triples_aggregator::TriplesAggregator,
                     },
                     dkg_orchestrator::create_channels,
+                    producer_traits::{BitProducerTrait, RandomProducerTrait, TripleProducerTrait},
                     producers::{
-                        bits_producer::SmallSessionBitProducer, common::execute_preprocessing,
-                        randoms_producer::SmallSessionRandomProducer,
-                        triples_producer::SmallSessionTripleProducer,
+                        bits_producer::SecureSmallSessionBitProducer,
+                        common::execute_preprocessing,
+                        randoms_producer::SecureSmallSessionRandomProducer,
+                        triples_producer::SecureSmallSessionTripleProducer,
                     },
                     progress_tracker::ProgressTracker,
                 },
@@ -150,7 +152,7 @@ impl BGVPreprocessingOrchestrator {
         joinset_processors.spawn(bit_processor.run().instrument(current_span.clone()));
 
         //Start the producers
-        let triple_producer = SmallSessionTripleProducer::new(
+        let triple_producer = SecureSmallSessionTripleProducer::new(
             BGV_BATCH_SIZE_TRIPLES,
             num_triples,
             triple_sessions,
@@ -159,7 +161,7 @@ impl BGVPreprocessingOrchestrator {
         )?;
         let mut triple_producer_handles = triple_producer.start_triple_production();
 
-        let randomness_producer = SmallSessionRandomProducer::new(
+        let randomness_producer = SecureSmallSessionRandomProducer::new(
             BGV_BATCH_SIZE_RANDOMS,
             num_randomness,
             randomness_sessions,
@@ -168,7 +170,7 @@ impl BGVPreprocessingOrchestrator {
         )?;
         let mut randomness_producer_handles = randomness_producer.start_random_production();
 
-        let bit_producer = SmallSessionBitProducer::new(
+        let bit_producer = SecureSmallSessionBitProducer::new(
             BGV_BATCH_SIZE_BITS,
             num_bits,
             sessions,
@@ -321,7 +323,7 @@ impl BGVDkgBitProcessor {
     }
 }
 
-impl SmallSessionBitProducer<LevelKsw> {
+impl SecureSmallSessionBitProducer<LevelKsw> {
     #[instrument(name="Bit Odd Factory",skip(self),fields(num_sessions= ?self.producers.len()))]
     pub fn start_bit_gen_odd_production(
         self,

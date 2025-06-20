@@ -28,3 +28,7 @@ pub mod malicious_execution;
 pub mod thread_handles;
 #[cfg(feature = "non-wasm")]
 pub mod tls_certs;
+
+pub trait ProtocolDescription {
+    fn protocol_desc(depth: usize) -> String;
+}

@@ -10,7 +10,10 @@ use tfhe::{named::Named, safe_serialization::safe_serialize, Versionize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
     algebra::galois_rings::degree_4::ResiduePolyF4Z64,
-    execution::sharing::{shamir::ShamirSharings, share::Share},
+    execution::{
+        runtime::party::Role,
+        sharing::{shamir::ShamirSharings, share::Share},
+    },
     hashing::DomainSep,
 };
 
@@ -39,7 +42,7 @@ const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
 pub(crate) const DSEP_BACKUP_OPERATOR: DomainSep = *b"BKUPOPER";
 
 pub struct Operator<S: BackupSigner, D: BackupDecryptor> {
-    my_id: usize,
+    my_role: Role,
     custodian_keys: Vec<(NestedPublicKey, PublicSigKey)>,
     signer: S,
     // the public component of [signer] above
@@ -52,7 +55,7 @@ pub struct Operator<S: BackupSigner, D: BackupDecryptor> {
 impl<S: BackupSigner, D: BackupDecryptor> std::fmt::Debug for Operator<S, D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Operator")
-            .field("my_id", &self.my_id)
+            .field("my_id", &self.my_role)
             .field("custodian_keys", &self.custodian_keys)
             .field("signer", &"ommitted")
             .field("verification_key", &self.verification_key)
@@ -113,9 +116,9 @@ fn checked_decryption_deserialize<D: BackupDecryptor>(
     commitment: &[u8],
     backup_id: RequestId,
     custodian_pk: &PublicSigKey,
-    custodian_id: usize,
+    custodian_role: Role,
     operator_pk: &PublicSigKey,
-    operator_id: usize,
+    operator_role: Role,
 ) -> Result<Vec<Share<ResiduePolyF4Z64>>, BackupError> {
     let pt_buf = sk.decrypt(ct)?;
     let backup_material: BackupMaterial = tfhe::safe_serialization::safe_deserialize(
@@ -128,9 +131,9 @@ fn checked_decryption_deserialize<D: BackupDecryptor>(
     if !backup_material.matches_expected_metadata(
         backup_id,
         custodian_pk,
-        custodian_id,
+        custodian_role,
         operator_pk,
-        operator_id,
+        operator_role,
     ) {
         return Err(BackupError::OperatorError(
             "backup metadata check failure".to_string(),
@@ -161,10 +164,10 @@ pub struct BackupMaterial {
     pub(crate) backup_id: RequestId,
     // receiver
     pub(crate) custodian_pk: PublicSigKey,
-    pub(crate) custodian_id: usize,
+    pub(crate) custodian_role: Role,
     // sender
     pub(crate) operator_pk: PublicSigKey,
-    pub(crate) operator_id: usize,
+    pub(crate) operator_role: Role,
     pub(crate) shares: Vec<Share<ResiduePolyF4Z64>>,
 }
 
@@ -173,17 +176,17 @@ impl BackupMaterial {
         &self,
         backup_id: RequestId,
         custodian_pk: &PublicSigKey,
-        custodian_id: usize,
+        custodian_role: Role,
         operator_pk: &PublicSigKey,
-        operator_id: usize,
+        operator_role: Role,
     ) -> bool {
         if self.backup_id != backup_id {
             return false;
         }
-        if self.custodian_id != custodian_id {
+        if self.custodian_role != custodian_role {
             return false;
         }
-        if self.operator_id != operator_id {
+        if self.operator_role != operator_role {
             return false;
         }
         if &self.custodian_pk != custodian_pk {
@@ -202,7 +205,7 @@ impl Named for BackupMaterial {
 
 impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
     pub fn new(
-        my_id: usize,
+        my_role: Role,
         custodian_messages: Vec<CustodianSetupMessage>,
         signer: S,
         verification_key: PublicSigKey,
@@ -216,7 +219,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
         for (i, msg) in custodian_messages.into_iter().enumerate() {
             let InnerCustodianSetupMessage {
                 header,
-                custodian_id,
+                custodian_role,
                 random_value: _,
                 timestamp,
                 public_key,
@@ -226,7 +229,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
                 return Err(BackupError::CustodianSetupError);
             }
 
-            if custodian_id != i {
+            if custodian_role != Role::indexed_from_zero(i) {
                 return Err(BackupError::CustodianSetupError);
             }
 
@@ -252,7 +255,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
         }
 
         Ok(Self {
-            my_id,
+            my_role,
             custodian_keys,
             signer,
             verification_key,
@@ -270,12 +273,20 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
         &self.public_key
     }
 
+    pub fn role(&self) -> Role {
+        self.my_role
+    }
+
+    // We allow the following lints because we are fine with mutating the rng even if
+    // the function fails afterwards.
+    #[allow(unknown_lints)]
+    #[allow(non_local_effect_before_error_return)]
     pub fn secret_share_and_encrypt<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
         secret: &[u8],
         backup_id: RequestId,
-    ) -> Result<BTreeMap<usize, OperatorBackupOutput>, BackupError> {
+    ) -> Result<BTreeMap<Role, OperatorBackupOutput>, BackupError> {
         let n = self.custodian_keys.len();
         let t = self.threshold;
 
@@ -296,21 +307,21 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
         //
         // This is done by preparing a map, mapping the 0-indexed party-id to their corresponding vector of shares.
         // Observer that the sharing is a vector since a sharing must be constructed for each byte in the secret.
-        let mut plain_ij: BTreeMap<usize, Vec<Share<ResiduePolyF4Z64>>> = BTreeMap::new();
+        let mut plain_ij: BTreeMap<Role, Vec<Share<ResiduePolyF4Z64>>> = BTreeMap::new();
         for share in shares.into_iter() {
             for inner in share.shares {
-                let j = inner.owner().zero_based();
-                if let Some(v) = plain_ij.get_mut(&j) {
+                let role_inner = inner.owner();
+                if let Some(v) = plain_ij.get_mut(&role_inner) {
                     v.push(inner);
                 } else {
-                    plain_ij.insert(j, vec![inner]);
+                    plain_ij.insert(role_inner, vec![inner]);
                 }
             }
         }
 
-        let mut ct_shares: BTreeMap<usize, _> = BTreeMap::new();
+        let mut ct_shares: BTreeMap<Role, _> = BTreeMap::new();
 
-        for ((j, shares), (enc_pk, sig_pk)) in plain_ij.into_iter().zip(&self.custodian_keys) {
+        for ((role_j, shares), (enc_pk, sig_pk)) in plain_ij.into_iter().zip(&self.custodian_keys) {
             // Do a sanity check that we expect enough entropy in the shares
             // s.t. hashing these cannot allow a feasible brute-force attack.
             //
@@ -329,9 +340,9 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
             let backup_material = BackupMaterial {
                 backup_id,
                 custodian_pk: sig_pk.clone(),
-                custodian_id: j,
+                custodian_role: role_j,
                 operator_pk: self.verification_key.clone(),
-                operator_id: self.my_id,
+                operator_role: self.my_role,
                 shares,
             };
 
@@ -349,7 +360,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
                     .map_err(|e| BackupError::OperatorError(e.to_string()))?;
 
             ct_shares.insert(
-                j,
+                role_j,
                 OperatorBackupOutput {
                     ciphertext,
                     signature,
@@ -371,8 +382,8 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
     /// so the are a separate input.
     pub fn verify_and_recover(
         &self,
-        custodian_recovery_output: BTreeMap<usize, CustodianRecoveryOutput>,
-        commitments: BTreeMap<usize, Vec<u8>>,
+        custodian_recovery_output: BTreeMap<Role, CustodianRecoveryOutput>,
+        commitments: BTreeMap<Role, Vec<u8>>,
         backup_id: RequestId,
     ) -> Result<Vec<u8>, BackupError> {
         // the output is ordered by custodian ID, from 0 to n-1
@@ -380,19 +391,18 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
         // decrypted_buf[j][i] where j = jth custodian, i = ith block
         let decrypted_buf = custodian_recovery_output
             .iter()
-            .map(|(j, ct)| {
-                let key = &self
-                    .custodian_keys
-                    .get(*j)
-                    .ok_or(BackupError::OperatorError(format!(
-                        "missing custodian key at index {j}"
-                    )))?;
+            .map(|(custodian_role, ct)| {
+                let key = custodian_role.get_from(&self.custodian_keys).ok_or(
+                    BackupError::OperatorError(format!(
+                        "missing custodian key for {custodian_role}"
+                    )),
+                )?;
                 // sigt_ij
                 let signature = Signature {
                     sig: k256::ecdsa::Signature::from_slice(&ct.signature)?,
                 };
                 let commitment = commitments
-                    .get(j)
+                    .get(custodian_role)
                     .ok_or(BackupError::OperatorError("missing commitment".to_string()))?;
                 internal_verify_sig(&DSEP_BACKUP_CUSTODIAN, &ct.ciphertext, &signature, &key.1)
                     .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
@@ -403,9 +413,9 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
                     commitment,
                     backup_id,
                     &key.1,
-                    *j,
+                    *custodian_role,
                     &self.verification_key,
-                    self.my_id,
+                    self.my_role,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -423,9 +433,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
             let mut shamir_sharing = ShamirSharings::new();
             for blocks in decrypted_buf.iter() {
                 // we should be able to safely add shares since it checks whether the role is repeated
-                shamir_sharing
-                    .add_share(blocks[b])
-                    .map_err(|e| BackupError::AddShareError(e.to_string()))?;
+                shamir_sharing.add_share(blocks[b]);
             }
             all_sharings.push(shamir_sharing);
         }

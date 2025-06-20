@@ -3,13 +3,6 @@ use std::{collections::HashMap, sync::Arc};
 
 // === External Crates ===
 use anyhow::anyhow;
-use conf_trace::{
-    metrics,
-    metrics_names::{
-        ERR_PUBLIC_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
-        TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
-    },
-};
 use itertools::Itertools;
 use kms_grpc::{
     kms::v1::{
@@ -18,10 +11,18 @@ use kms_grpc::{
     },
     RequestId,
 };
+use observability::{
+    metrics,
+    metrics_names::{
+        ERR_PUBLIC_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
+        TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+    },
+};
 use tfhe::FheTypes;
 use threshold_fhe::{
     execution::endpoints::decryption::{
-        decrypt_using_bitdec, decrypt_using_noiseflooding, DecryptionMode, Small,
+        decrypt_using_noiseflooding, secure_decrypt_using_bitdec, DecryptionMode,
+        NoiseFloodSmallSession,
     },
     session_id::SessionId,
 };
@@ -100,17 +101,16 @@ impl<
 
         let dec = match dec_mode {
             DecryptionMode::NoiseFloodSmall => {
-                let mut session = tonic_handle_potential_err(
+                let session = tonic_handle_potential_err(
                     session_prep
                         .prepare_ddec_data_from_sessionid_z128(session_id)
                         .await,
                     "Could not prepare ddec data for noiseflood decryption".to_string(),
                 )?;
-                let mut preparation = Small::new(session.clone());
+                let mut noiseflood_session = NoiseFloodSmallSession::new(session);
 
                 decrypt_using_noiseflooding(
-                    &mut session,
-                    &mut preparation,
+                    &mut noiseflood_session,
                     &keys.integer_server_key,
                     keys.sns_key
                         .as_ref()
@@ -130,7 +130,7 @@ impl<
                     "Could not prepare ddec data for bitdec decryption".to_string(),
                 )?;
 
-                decrypt_using_bitdec(
+                secure_decrypt_using_bitdec(
                     &mut session,
                     &low_level_ct.try_get_small_ct()?,
                     &keys.private_keys,

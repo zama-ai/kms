@@ -53,7 +53,7 @@ jobs:
       id: filter
       with:
         # Define paths that trigger specific component workflows
-        # Changes to conf-trace affect multiple components
+        # Changes to observability affect multiple components
         filters: |
           backward-compatibility:
             - 'backward-compatibility/**'
@@ -61,17 +61,17 @@ jobs:
             - '.github/workflows/**'
           core-client:
             - 'core-client/**'
-            - 'conf-trace/**'
+            - 'observability/**'
           core-grpc:
             - 'core/grpc/**'
           core-service:
             - 'core/grpc/**'
             - 'core/service/**'
             - 'core/threshold/**'
-            - 'conf-trace/**'
+            - 'observability/**'
           core-threshold:
             - 'core/threshold/**'
-            - 'conf-trace/**'
+            - 'observability/**'
           docs:
             - 'docs/**'
           helm-chart:
@@ -170,7 +170,7 @@ jobs:
   # Core Client Pipeline
   # Testing triggered by:
   # - Changes to core-client/**
-  # - Changes to conf-trace/**
+  # - Changes to observability/**
   # - Changes to workflow file
   ############################################################################
   prepare-core-client-matrix:
@@ -240,7 +240,7 @@ jobs:
     if: >-
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@ef9d90453e0d776453026c751fbbd48e410d605a
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3c6b5ecf34d5350a03d1ff5e4d0ddc89607b614e
     with:
       docker-file: "./docker/core-client/Dockerfile"
       working-directory: "./core-client"
@@ -281,7 +281,7 @@ jobs:
   # - Changes to core/service/**
   # - Changes to core/threshold/**
   # - Changes to core/grpc/**
-  # - Changes to conf-trace/**
+  # - Changes to observability/**
   # - Changes to workflow file
   #
   # This pipeline consists of several stages:
@@ -413,7 +413,7 @@ jobs:
   # Core Threshold Pipeline
   # Testing triggered by:
   # - Changes to core/threshold/**
-  # - Changes to conf-trace/**
+  # - Changes to observability/**
   # - Changes to workflow file
   #
   # This component has three different test configurations:
@@ -496,7 +496,7 @@ jobs:
     if: >-
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@ef9d90453e0d776453026c751fbbd48e410d605a
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3c6b5ecf34d5350a03d1ff5e4d0ddc89607b614e
     with:
       docker-file: "./docker/base/Dockerfile"
       working-directory: "./base"
@@ -589,3 +589,4 @@ jobs:
       image-tag: ${{ needs.docker-nitro-enclave.outputs.image_tag }}
     secrets:
       ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+

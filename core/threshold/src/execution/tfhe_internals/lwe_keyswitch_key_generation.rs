@@ -1,9 +1,6 @@
-use crate::{
-    algebra::{
-        galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, Ring, Zero},
-    },
-    error::error_handler::anyhow_error_and_log,
+use crate::algebra::{
+    galois_rings::common::ResiduePoly,
+    structure_traits::{BaseRing, Ring, Zero},
 };
 
 use super::{
@@ -12,12 +9,17 @@ use super::{
     lwe_keyswitch_key::LweKeySwitchKeyShare,
     randomness::MPCEncryptionRandomGenerator,
 };
-use itertools::{EitherOrBoth, Itertools};
+use itertools::Itertools;
 use tfhe::{
     core_crypto::{commons::math::decomposition::DecompositionLevel, prelude::ByteRandomGenerator},
     shortint::parameters::{DecompositionBaseLog, DecompositionLevelCount, LweDimension},
 };
 
+// If for some reason we fail in forking the mask generator, during encryption
+// we will return an error, after having changed some of the state of the lwe_keyswitch_key
+// but it seems hard to prevent it
+#[allow(unknown_lints)]
+#[allow(non_local_effect_before_error_return)]
 pub fn generate_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -32,40 +34,41 @@ where
     let decomp_base_log = lwe_keyswitch_key.decomposition_base_log();
     let decomp_level_count = lwe_keyswitch_key.decomposition_level_count();
 
+    let input_key_it = input_lwe_sk.data_as_raw_vec().into_iter();
+    let key_switch_key_block_it = lwe_keyswitch_key.iter_mut_levels();
+
+    assert_eq!(
+        input_key_it.len(),
+        key_switch_key_block_it.len(),
+        "Input LWE secret key and LWE keyswitch key have different dimensions: {} != {}",
+        input_key_it.len(),
+        key_switch_key_block_it.len(),
+    );
+
     let mut decomposition_plaintexts_buffer =
         vec![ResiduePoly::<Z, EXTENSION_DEGREE>::ZERO; decomp_level_count.0];
 
-    for input_key_element_key_switch_key_block in input_lwe_sk
-        .data_as_raw_vec()
-        .iter()
-        .zip_longest(lwe_keyswitch_key.iter_mut_levels())
-    {
-        if let EitherOrBoth::Both(input_key_element, key_switch_key_block) =
-            input_key_element_key_switch_key_block
+    // zip_eq can panic but we just checked the length above
+    for (input_key_element, key_switch_key_block) in input_key_it.zip_eq(key_switch_key_block_it) {
+        // zip_eq can panic, but we just defined decomposition_plaintexts_buffer with the right size
+        for (level, message) in (1..=decomp_level_count.0)
+            .rev()
+            .map(DecompositionLevel)
+            .zip_eq(decomposition_plaintexts_buffer.iter_mut())
         {
-            for level_message in (1..=decomp_level_count.0)
-                .rev()
-                .map(DecompositionLevel)
-                .zip_longest(decomposition_plaintexts_buffer.iter_mut())
-            {
-                if let EitherOrBoth::Both(level, message) = level_message {
-                    //We only generate KSK in the smaller encryption domain, so we hardcode the 64 value here
-                    let shift = 64 - decomp_base_log.0 * level.0;
-                    *message = (*input_key_element) << shift;
-                } else {
-                    return Err(anyhow_error_and_log("zip error"));
-                }
-            }
-
-            encrypt_lwe_ciphertext_list(
-                output_lwe_sk,
-                key_switch_key_block,
-                &decomposition_plaintexts_buffer,
-                generator,
-            )?;
-        } else {
-            return Err(anyhow_error_and_log("zip error"));
+            //We only generate KSK in the smaller encryption domain, so we hardcode the 64 value here
+            let shift = 64 - decomp_base_log.0 * level.0;
+            *message = input_key_element << shift;
         }
+
+        // NOTE: This causes potential non local effect before error return
+        // but it seems hard to prevent it
+        encrypt_lwe_ciphertext_list(
+            output_lwe_sk,
+            key_switch_key_block,
+            &decomposition_plaintexts_buffer,
+            generator,
+        )?;
     }
     Ok(())
 }
@@ -187,7 +190,7 @@ mod tests {
         let num_key_bits_glwe = glwe_dimension * polynomial_size;
 
         let mut task = |mut session: LargeSession| async move {
-            let mut large_preproc = DummyPreprocessing::new(seed as u64, session.clone());
+            let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             //Generate the Lwe key
             let lwe_secret_key_share = LweSecretKeyShare::<Z64, 4> {
@@ -248,7 +251,7 @@ mod tests {
                 .await
                 .unwrap();
             (
-                session.my_role().unwrap(),
+                session.my_role(),
                 lwe_secret_key_share,
                 glwe_secret_key_share,
                 ksk_opened,

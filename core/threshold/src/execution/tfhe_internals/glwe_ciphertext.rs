@@ -77,8 +77,7 @@ pub fn encrypt_glwe_ciphertext_assign<Gen, Z, const EXTENSION_DEGREE: usize>(
     glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output: &mut GlweCiphertextShare<Z, EXTENSION_DEGREE>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
-) -> anyhow::Result<()>
-where
+) where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
@@ -101,8 +100,7 @@ pub fn encrypt_glwe_ciphertext<Gen, Z, const EXTENSION_DEGREE: usize>(
     input_plaintext_list: &[ResiduePoly<Z, EXTENSION_DEGREE>],
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
-) -> anyhow::Result<()>
-where
+) where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
@@ -116,8 +114,7 @@ where
         body,
         generator,
         encryption_type,
-    )?;
-    Ok(())
+    );
 }
 
 pub fn encrypt_glwe_ciphertext_list<Gen, Z, const EXTENSION_DEGREE: usize>(
@@ -126,8 +123,7 @@ pub fn encrypt_glwe_ciphertext_list<Gen, Z, const EXTENSION_DEGREE: usize>(
     input_plaintext_list: &[ResiduePoly<Z, EXTENSION_DEGREE>],
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
-) -> anyhow::Result<()>
-where
+) where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
@@ -143,9 +139,8 @@ where
             encoded,
             generator,
             encryption_type,
-        )?;
+        );
     }
-    Ok(())
 }
 
 fn fill_glwe_mask_and_body_for_encryption_assign<Z, Gen, const EXTENSION_DEGREE: usize>(
@@ -154,8 +149,7 @@ fn fill_glwe_mask_and_body_for_encryption_assign<Z, Gen, const EXTENSION_DEGREE:
     output_body: &mut [ResiduePoly<Z, EXTENSION_DEGREE>],
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
-) -> anyhow::Result<()>
-where
+) where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
@@ -163,10 +157,10 @@ where
     //Sample the mask
     generator.fill_slice_with_random_mask_custom_mod(output_mask, encryption_type);
     //Put the noise in the body
-    generator.unsigned_torus_slice_wrapping_add_random_noise_custom_mod_assign(output_body)?;
+    generator.unsigned_torus_slice_wrapping_add_random_noise_custom_mod_assign(output_body);
 
     //Do the inner product between mask and key and add it to the body
-    polynomial_wrapping_add_multisum_assign(output_body, output_mask, glwe_secret_key_share)
+    polynomial_wrapping_add_multisum_assign(output_body, output_mask, glwe_secret_key_share);
 }
 
 ///Returns a tuple (number_of_triples,number_of_random) required for mpc glwe encrpytion
@@ -255,7 +249,7 @@ mod tests {
         let num_key_bits = glwe_dimension * polynomial_size.0;
 
         let mut task = |mut session: LargeSession| async move {
-            let my_role = session.my_role().unwrap();
+            let my_role = session.my_role();
             let encoded_message = (0..polynomial_size.0)
                 .map(|idx| {
                     ShamirSharings::share(
@@ -265,14 +259,14 @@ mod tests {
                         session.threshold() as usize,
                     )
                     .unwrap()
-                    .shares[my_role.zero_based()]
-                    .value()
+                    .shares[&my_role]
+                        .value()
                 })
                 .collect_vec();
 
             let t_uniform_amount = polynomial_size.0;
 
-            let mut large_preproc = DummyPreprocessing::new(seed as u64, session.clone());
+            let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             let glwe_secret_key_share = GlweSecretKeyShare {
                 data: RealBitGenEven::gen_bits_even(num_key_bits, &mut large_preproc, &mut session)
@@ -308,10 +302,9 @@ mod tests {
                 &glwe_secret_key_share,
                 &mut glwe_ctxt,
                 &mut mpc_encryption_rng,
-            )
-            .unwrap();
+            );
 
-            (session.my_role().unwrap(), glwe_secret_key_share, glwe_ctxt)
+            (session.my_role(), glwe_secret_key_share, glwe_ctxt)
         };
         let parties = 5;
         let threshold = 1;

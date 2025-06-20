@@ -22,7 +22,7 @@ use crate::{
     networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG},
     session_id::SessionId,
 };
-use conf_trace::telemetry::ContextPropagator;
+use observability::telemetry::ContextPropagator;
 use std::collections::HashMap;
 use tokio::{task::JoinSet, time::Duration};
 use tonic::service::interceptor::InterceptedService;

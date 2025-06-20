@@ -9,7 +9,7 @@ use threshold_fhe::{
         large_execution::vss::DummyVss,
         runtime::{
             party::{Identity, Role},
-            session::{BaseSessionStruct, SessionParameters},
+            session::{BaseSession, ParameterHandles, SessionParameters},
         },
         small_execution::{
             agree_random::DummyAgreeRandomFromShare,
@@ -33,7 +33,7 @@ fn bench_prss(c: &mut Criterion) {
     let mut sess = get_base_session_for_parties(
         num_parties,
         threshold,
-        Role::indexed_by_one(1),
+        Role::indexed_from_one(1),
         NetworkMode::Sync,
     );
 
@@ -53,7 +53,7 @@ fn bench_prss(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("prss_mask_next", size), |b| {
             b.iter(|| {
                 for _ in 0..*size {
-                    let _e_shares = state.mask_next(Role::indexed_by_one(1), 1_u128 << 70);
+                    let _e_shares = state.mask_next(Role::indexed_from_one(1), 1_u128 << 70);
                 }
             });
         });
@@ -65,11 +65,11 @@ pub fn get_base_session_for_parties(
     threshold: u8,
     role: Role,
     network_mode: NetworkMode,
-) -> BaseSessionStruct<AesRng, SessionParameters> {
+) -> BaseSession {
     let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
-    let id = parameters.own_identity.clone();
-    let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
-    BaseSessionStruct::new(
+    let id = parameters.own_identity();
+    let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity()]);
+    BaseSession::new(
         parameters,
         Arc::new(net_producer.user_net(id, network_mode, None)),
         AesRng::seed_from_u64(42),
@@ -86,16 +86,17 @@ pub fn get_dummy_parameters_for_parties(
     let mut role_assignment = HashMap::new();
     for i in 0..amount {
         role_assignment.insert(
-            Role::indexed_by_zero(i),
-            Identity(format!("localhost:{}", 5000 + i)),
+            Role::indexed_from_zero(i),
+            Identity("localhost".to_string(), 5000 + i as u16),
         );
     }
-    SessionParameters {
+    SessionParameters::new(
         threshold,
-        session_id: SessionId::from(1),
-        own_identity: role_assignment.get(&role).unwrap().clone(),
-        role_assignments: role_assignment,
-    }
+        SessionId::from(1),
+        role_assignment.get(&role).unwrap().clone(),
+        role_assignment,
+    )
+    .unwrap()
 }
 
 criterion_group!(prss, bench_prss);

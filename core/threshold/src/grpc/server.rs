@@ -8,10 +8,12 @@ use crate::execution::online::preprocessing::{create_memory_factory, create_redi
 use crate::execution::runtime::party::{Identity, RoleAssignment};
 #[cfg(feature = "experimental")]
 use crate::experimental::choreography::grpc::ExperimentalGrpcChoreography;
+#[cfg(not(feature = "experimental"))]
+use crate::malicious_execution::malicious_moby::add_strategy_to_router;
 use crate::networking::constants::NETWORK_TIMEOUT_LONG;
 use crate::networking::grpc::{GrpcNetworkingManager, GrpcServer};
 use crate::networking::Networking;
-use conf_trace::telemetry::make_span;
+use observability::telemetry::make_span;
 use std::sync::Arc;
 use tonic::transport::{Server, ServerTlsConfig};
 use tower_http::trace::TraceLayer;
@@ -56,34 +58,6 @@ where
         Some(conf) => create_redis_factory::<EXTENSION_DEGREE>(format!("{own_identity}"), conf),
     };
 
-    #[cfg(not(feature = "experimental"))]
-    let choreography = GrpcChoreography::new(
-        own_identity,
-        Box::new(move |session_id, roles, network_mode| {
-            let nm = networking.clone();
-            Box::pin(async move {
-                let impl_networking = nm.make_session(session_id, roles, network_mode);
-                Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
-            })
-        }),
-        factory,
-    )
-    .into_server();
-
-    #[cfg(feature = "experimental")]
-    let choreography = ExperimentalGrpcChoreography::new(
-        own_identity,
-        Box::new(move |session_id, roles, network_mode| {
-            let nm = networking.clone();
-            Box::pin(async move {
-                let impl_networking = nm.make_session(session_id, roles, network_mode);
-                Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
-            })
-        }),
-        factory,
-    )
-    .into_server();
-
     // create a server that uses TLS
     // if [try_use_tls] is true and settings.certpaths is not None
     let make_server = move |try_use_tls: bool| -> anyhow::Result<Server> {
@@ -120,8 +94,38 @@ where
 
     let choreo_router = make_server(false)?
         .layer(choreo_grpc_layer)
-        .add_service(choreo_health_service)
-        .add_service(choreography);
+        .add_service(choreo_health_service);
+
+    #[cfg(not(feature = "experimental"))]
+    let choreo_router = add_strategy_to_router(
+        choreo_router,
+        own_identity,
+        Box::new(move |session_id, roles, network_mode| {
+            let nm = networking.clone();
+            Box::pin(async move {
+                let impl_networking = nm.make_session(session_id, roles, network_mode);
+                Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
+            })
+        }),
+        factory,
+    );
+
+    #[cfg(feature = "experimental")]
+    let choreo_router = {
+        let choreography = ExperimentalGrpcChoreography::new(
+            own_identity,
+            Box::new(move |session_id, roles, network_mode| {
+                let nm = networking.clone();
+                Box::pin(async move {
+                    let impl_networking = nm.make_session(session_id, roles, network_mode);
+                    Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
+                })
+            }),
+            factory,
+        )
+        .into_server();
+        choreo_router.add_service(choreography)
+    };
 
     tracing::info!(
         "Successfully created choreo server with party id {:?} on port {:?}.",
@@ -139,7 +143,6 @@ where
     // so the section below is similar to the "CHOREO" section.
     let (core_health_reporter, core_health_service) = tonic_health::server::health_reporter();
     core_health_reporter.set_serving::<GrpcServer>().await;
-
     let core_grpc_layer = tower::ServiceBuilder::new().timeout(*NETWORK_TIMEOUT_LONG);
 
     let core_router = make_server(true)?
@@ -174,3 +177,16 @@ where
         _ => Ok(()),
     }
 }
+
+#[cfg(not(feature = "experimental"))]
+pub type SecureGrpcChoreography<const EXTENSION_DEGREE: usize> = GrpcChoreography<
+    EXTENSION_DEGREE,
+    crate::execution::small_execution::prss::RobustSecurePrssInit,
+    crate::execution::small_execution::offline::SecureSmallPreprocessing,
+    crate::execution::large_execution::offline::SecureLargePreprocessing<
+        ResiduePoly<Z64, EXTENSION_DEGREE>,
+    >,
+    crate::execution::large_execution::offline::SecureLargePreprocessing<
+        ResiduePoly<Z128, EXTENSION_DEGREE>,
+    >,
+>;

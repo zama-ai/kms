@@ -1,5 +1,4 @@
 use itertools::{EitherOrBoth, Itertools};
-use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use tfhe::{
     core_crypto::{
@@ -74,12 +73,12 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweCompactPublicKeyShare<Z, EXT
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    pub async fn open_to_tfhers_type<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    pub async fn open_to_tfhers_type<S: BaseSessionHandles>(
         self,
         session: &S,
     ) -> anyhow::Result<LweCompactPublicKeyOwned<u64>> {
         let lwe_dimension = LweDimension(self.glwe_ciphertext_share.polynomial_size.0);
-        let my_role = session.my_role()?;
+        let my_role = session.my_role();
         let shared_body = self
             .glwe_ciphertext_share
             .body
@@ -164,7 +163,7 @@ where
 pub fn allocate_and_generate_new_lwe_compact_public_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     lwe_secret_key: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
-) -> anyhow::Result<LweCompactPublicKeyShare<Z, EXTENSION_DEGREE>>
+) -> LweCompactPublicKeyShare<Z, EXTENSION_DEGREE>
 where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
@@ -172,17 +171,16 @@ where
 {
     let mut pk = LweCompactPublicKeyShare::new(lwe_secret_key.lwe_dimension());
 
-    generate_lwe_compact_public_key(lwe_secret_key, &mut pk, generator)?;
+    generate_lwe_compact_public_key(lwe_secret_key, &mut pk, generator);
 
-    Ok(pk)
+    pk
 }
 
 pub fn generate_lwe_compact_public_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output: &mut LweCompactPublicKeyShare<Z, EXTENSION_DEGREE>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
-) -> anyhow::Result<()>
-where
+) where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
     Gen: ByteRandomGenerator,
@@ -191,9 +189,9 @@ where
     let (mask, body) = output.get_mut_mask_and_body();
     generator.fill_slice_with_random_mask_custom_mod(mask, encryption_type);
 
-    slice_semi_reverse_negacyclic_convolution(body, mask, &lwe_secret_key_share.data_as_raw_vec())?;
+    slice_semi_reverse_negacyclic_convolution(body, mask, &lwe_secret_key_share.data_as_raw_vec());
 
-    generator.unsigned_torus_slice_wrapping_add_random_noise_custom_mod_assign(body)
+    generator.unsigned_torus_slice_wrapping_add_random_noise_custom_mod_assign(body);
 }
 
 ///Returns a tuple (number_of_triples, number_of_randomness) required for generating a lwe key
@@ -263,11 +261,11 @@ mod tests {
         let num_key_bits = lwe_dimension;
 
         let mut task = |mut session: LargeSession| async move {
-            let my_role = session.my_role().unwrap();
+            let my_role = session.my_role();
 
             let seed = 0;
 
-            let mut large_preproc = DummyPreprocessing::new(seed as u64, session.clone());
+            let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             let vec_shared_bits =
                 RealBitGenEven::gen_bits_even(num_key_bits, &mut large_preproc, &mut session)
@@ -304,8 +302,7 @@ mod tests {
             let pk = allocate_and_generate_new_lwe_compact_public_key(
                 &lwe_secret_key_share,
                 &mut mpc_encryption_rng,
-            )
-            .unwrap();
+            );
 
             let opened_pk = pk.clone().open_to_tfhers_type(&session).await.unwrap();
 

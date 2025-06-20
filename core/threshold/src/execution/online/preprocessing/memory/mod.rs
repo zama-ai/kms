@@ -186,7 +186,7 @@ mod tests {
                 // Test what happens when no more triples are preset
                 #[test]
                 fn [<test_no_more_elements_ $z:lower>]() {
-                    let share = Share::new(Role::indexed_by_one(1), ResiduePolyF4::<$z>::from_scalar(Wrapping(1)));
+                    let share = Share::new(Role::indexed_from_one(1), ResiduePolyF4::<$z>::from_scalar(Wrapping(1)));
                     let triple = Triple::new(share.clone(), share.clone(), share.clone());
                     const TRIPLE_BATCH_SIZE: usize = 10; // Replace 10 with the desired value
 
@@ -209,12 +209,12 @@ mod tests {
                         .next_triple()
                         .unwrap_err()
                         .to_string()
-                        .contains("Not enough triples to pop 1"));
+                        .contains("No triples available"));
                     assert!(preproc
                         .next_random()
                         .unwrap_err()
                         .to_string()
-                        .contains("Not enough randomness to pop 1"));
+                        .contains("No randomness available"));
                 }
             }
         }
@@ -224,6 +224,6 @@ mod tests {
     test_preprocessing![Z128, u128];
 }
 
-mod bitdec;
-mod dkg;
-mod noiseflood;
+pub(crate) mod bitdec;
+pub(crate) mod dkg;
+pub(crate) mod noiseflood;

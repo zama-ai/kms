@@ -3,11 +3,11 @@ use tokio::time::{self, Duration};
 
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand};
-use conf_trace::{
+use itertools::Itertools;
+use observability::{
     conf::{Settings, TelemetryConfig},
     telemetry::init_tracing,
 };
-use itertools::Itertools;
 use rand::{random, RngCore, SeedableRng};
 use threshold_fhe::{
     choreography::choreographer::ChoreoRuntime,

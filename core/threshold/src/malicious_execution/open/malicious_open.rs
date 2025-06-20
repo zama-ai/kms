@@ -1,5 +1,4 @@
 use aes_prng::AesRng;
-use rand::{CryptoRng, Rng};
 use tonic::async_trait;
 
 use crate::{
@@ -8,6 +7,7 @@ use crate::{
         runtime::session::BaseSessionHandles,
         sharing::open::{OpeningKind, RobustOpen, SecureRobustOpen},
     },
+    ProtocolDescription,
 };
 
 /// Malicious implementation of the [`RobustOpen`] protocol
@@ -15,9 +15,16 @@ use crate::{
 #[derive(Clone, Default)]
 pub struct MaliciousRobustOpenDrop {}
 
+impl ProtocolDescription for MaliciousRobustOpenDrop {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-MaliciousRobustOpenDrop", indent)
+    }
+}
+
 #[async_trait]
 impl RobustOpen for MaliciousRobustOpenDrop {
-    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn execute<Z: ErrorCorrect, B: BaseSessionHandles>(
         &self,
         _session: &B,
         _shares: OpeningKind<Z>,
@@ -32,9 +39,15 @@ impl RobustOpen for MaliciousRobustOpenDrop {
 #[derive(Clone, Default)]
 pub struct MaliciousRobustOpenLie {}
 
+impl ProtocolDescription for MaliciousRobustOpenLie {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-MaliciousRobustOpenLie", indent)
+    }
+}
 #[async_trait]
 impl RobustOpen for MaliciousRobustOpenLie {
-    async fn execute<Z: Ring + ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring + ErrorCorrect, B: BaseSessionHandles>(
         &self,
         session: &B,
         shares: OpeningKind<Z>,

@@ -9,11 +9,11 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{party::Role, session::LargeSessionHandles},
+    ProtocolDescription,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
-use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use tracing::instrument;
 
@@ -27,14 +27,14 @@ pub struct DoubleShare<Z> {
 }
 
 #[async_trait]
-pub trait DoubleSharing<Z: Ring>: Send + Sync + Clone {
-    async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+pub trait DoubleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
+    async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
         l: usize,
     ) -> anyhow::Result<()>;
 
-    async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn next<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<DoubleShare<Z>>;
@@ -48,6 +48,17 @@ pub struct RealDoubleSharing<Z, S: LocalDoubleShare> {
     available_shares: Vec<(Z, Z)>,
     max_num_iterations: usize,
     vdm_matrix: ArrayD<Z>,
+}
+
+impl<Z, S: LocalDoubleShare> ProtocolDescription for RealDoubleSharing<Z, S> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-RealDoubleSharing:\n{}",
+            indent,
+            S::protocol_desc(depth + 1)
+        )
+    }
 }
 
 //Custom implementaiton of Clone to make sure we do not clone
@@ -82,7 +93,7 @@ impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, S: LocalDoubleShare> 
     for RealDoubleSharing<Z, S>
 {
     #[instrument(name="DoubleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),own_identity=?session.own_identity(), batch_size = ?l))]
-    async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
         l: usize,
@@ -116,7 +127,7 @@ impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, S: LocalDoubleShare> 
     }
 
     //NOTE: This is instrumented by the caller function to use the same span for all calls
-    async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn next<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<DoubleShare<Z>> {
@@ -166,7 +177,7 @@ fn format_for_next<Z: Ring>(
         let mut vec_2t = Vec::with_capacity(num_parties);
         for party_idx in 0..num_parties {
             let double_share_j = local_double_shares
-                .get(&Role::indexed_by_zero(party_idx))
+                .get(&Role::indexed_from_zero(party_idx))
                 .ok_or_else(|| {
                     anyhow_error_and_log(format!("Can not find shares for Party {}", party_idx + 1))
                 })?;
@@ -252,7 +263,7 @@ pub(crate) mod tests {
             for _ in 0..num_output {
                 res.push(double_sharing.next(&mut session).await.unwrap());
             }
-            (session.my_role().unwrap(), res)
+            (session.my_role(), res)
         };
 
         // Rounds (only on the happy path here)
@@ -329,7 +340,7 @@ pub(crate) mod tests {
             let extracted_size = session.num_parties() - session.threshold() as usize;
             let num_output = ldl_batch_size * extracted_size + 1;
             let mut res = Vec::new();
-            if session.my_role().unwrap().zero_based() != 1 {
+            if session.my_role().one_based() != 1 {
                 let mut double_sharing = SecureDoubleSharing::<ResiduePolyF4Z128>::default();
                 double_sharing
                     .init(&mut session, ldl_batch_size)
@@ -338,7 +349,7 @@ pub(crate) mod tests {
                 for _ in 0..num_output {
                     res.push(double_sharing.next(&mut session).await.unwrap());
                 }
-                assert!(session.corrupt_roles().contains(&Role::indexed_by_zero(1)));
+                assert!(session.corrupt_roles().contains(&Role::indexed_from_one(1)));
             } else {
                 for _ in 0..num_output {
                     res.push(DoubleShare {
@@ -347,7 +358,7 @@ pub(crate) mod tests {
                     })
                 }
             }
-            (session.my_role().unwrap(), res)
+            (session.my_role(), res)
         }
 
         //DoubleSharing assumes Sync network
@@ -369,7 +380,7 @@ pub(crate) mod tests {
             for (role, res) in result.iter() {
                 res_vec_t.push(Share::new(*role, res[value_idx].degree_t));
                 //Dont take into account corrupt party's share (due to pol. degree)
-                if role.zero_based() != 1 {
+                if role.one_based() != 1 {
                     res_vec_2t.push(Share::new(*role, res[value_idx].degree_2t));
                 }
             }

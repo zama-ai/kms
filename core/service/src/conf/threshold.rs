@@ -115,11 +115,10 @@ pub struct PeerConf {
 }
 
 impl PeerConf {
-    /// Validity of the output is not guaranteed.
     pub fn into_role_identity(&self) -> (Role, Identity) {
         (
-            Role::indexed_by_one(self.party_id),
-            Identity(format!("{}:{}", self.address, self.port)),
+            Role::indexed_from_one(self.party_id),
+            Identity(self.address.clone(), self.port),
         )
     }
 }

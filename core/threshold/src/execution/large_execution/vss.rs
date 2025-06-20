@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use itertools::{EitherOrBoth, Itertools};
-use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tokio::task::JoinError;
@@ -20,6 +19,7 @@ use crate::{
         runtime::{party::Role, session::BaseSessionHandles},
     },
     networking::value::{BroadcastValue, NetworkValue},
+    ProtocolDescription,
 };
 
 /// Secure implementation of VSS as defined in NIST document
@@ -29,7 +29,7 @@ use crate::{
 pub type SecureVss = RealVss<SyncReliableBroadcast>;
 
 #[async_trait]
-pub trait Vss: Send + Sync + Clone {
+pub trait Vss: Send + Sync + Clone + ProtocolDescription {
     /// Executes a Verifiable Secret Sharing
     /// where every party inputs one secret.
     /// The trait provides a default implementation for [execute]
@@ -41,7 +41,7 @@ pub trait Vss: Send + Sync + Clone {
     ///
     /// Returns
     /// - a vector of shares (share at index i is a sharing of the secret of party i)
-    async fn execute<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secret: &Z,
@@ -72,7 +72,7 @@ pub trait Vss: Send + Sync + Clone {
     /// - a vector of shares (shares at index i is a sharing of the secrets of party i)
     /// so in a successful execution shares.len() should be the number of parties
     /// and shares[0].len() should be the number of secrets
-    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -147,14 +147,21 @@ pub struct Round1VSSOutput<Z: Ring> {
 #[derive(Default, Clone)]
 pub struct DummyVss {}
 
+impl ProtocolDescription for DummyVss {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-DummyVss", indent)
+    }
+}
+
 #[async_trait]
 impl Vss for DummyVss {
-    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
     ) -> anyhow::Result<Vec<Vec<Z>>> {
-        let own_role = session.my_role()?;
+        let own_role = session.my_role();
         let num_parties = session.num_parties();
 
         // send all secrets to all parties
@@ -175,12 +182,12 @@ impl Vss for DummyVss {
 
         // index 0: num_parties, index 1: number of shares
         let mut res = vec![vec![Z::ZERO; secrets.len()]; num_parties];
-        res[own_role.zero_based()] = secrets.to_vec();
+        res[&own_role] = secrets.to_vec();
         while let Some(v) = jobs.join_next().await {
             let joined_result = v?;
             match joined_result {
                 Ok((party_id, Ok(data))) => {
-                    res[party_id.zero_based()] = data;
+                    res[&party_id] = data;
                 }
                 //NOTE: received_data was init with default 0 values,
                 //so no need to do anything when p2p fails
@@ -201,16 +208,30 @@ impl Vss for DummyVss {
     }
 }
 
-//TODO: Once ready, add SyncBroadcast via generic and trait bounds
 #[derive(Default, Clone)]
 pub struct RealVss<BCast: Broadcast> {
     broadcast: BCast,
 }
 
+impl<BCast: Broadcast> ProtocolDescription for RealVss<BCast> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-RealVss:\n{}", indent, BCast::protocol_desc(depth + 1))
+    }
+}
+
+impl<BCast: Broadcast> RealVss<BCast> {
+    pub fn new(broadcast_strategy: &BCast) -> Self {
+        Self {
+            broadcast: broadcast_strategy.clone(),
+        }
+    }
+}
+
 #[async_trait]
 impl<BCast: Broadcast> Vss for RealVss<BCast> {
     #[instrument(name="VSS", skip(self,session, secrets),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()), batch_size= ?secrets.len())]
-    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -233,11 +254,7 @@ impl<BCast: Broadcast> Vss for RealVss<BCast> {
 
 pub(crate) type MapRoleDoublePoly<Z> = HashMap<Role, Vec<DoublePoly<Z>>>;
 
-pub(crate) fn sample_secret_polys<
-    Z: Ring + RingEmbed,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
->(
+pub(crate) fn sample_secret_polys<Z: Ring + RingEmbed, S: BaseSessionHandles>(
     session: &mut S,
     secrets: &[Z],
 ) -> anyhow::Result<(Vec<BivariatePoly<Z>>, MapRoleDoublePoly<Z>)> {
@@ -269,13 +286,13 @@ pub(crate) fn sample_secret_polys<
     Ok((bivariate_poly, map_double_shares))
 }
 
-pub(crate) async fn round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+pub(crate) async fn round_1<Z: Ring, S: BaseSessionHandles>(
     session: &mut S,
     num_secrets: usize,
     bivariate_poly: Vec<BivariatePoly<Z>>,
     map_double_shares: MapRoleDoublePoly<Z>,
 ) -> anyhow::Result<Round1VSSOutput<Z>> {
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     let num_parties = session.num_parties();
 
     // Init the received data with all 0s for all roles, will be filled
@@ -286,7 +303,7 @@ pub(crate) async fn round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R
     // Start filling the received data with the info for the VSS where
     // I am the sender.
     // Use direct indexing instead of get as this is all data created locally
-    received_data[my_role.zero_based()]
+    received_data[&my_role]
         .double_poly_list
         .clone_from(&map_double_shares[&my_role]);
 
@@ -315,7 +332,7 @@ pub(crate) async fn round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R
                 *role,
                 NetworkValue::Round1VSS(ExchangedDataRound1 {
                     double_poly_list: poly.clone(),
-                    challenges_list: challenges[role.zero_based()].clone(),
+                    challenges_list: challenges[role].clone(),
                 }),
             )
         })
@@ -383,7 +400,7 @@ fn parse_round_1_received_data<Z: Ring>(
                 if condition_vss_sender && condition_vss_receiver {
                     // Use direct indexing as parsed_received_data is created locally
                     // and of correct size
-                    parsed_received_data[sender_role.zero_based()] = received_data;
+                    parsed_received_data[&sender_role] = received_data;
                 } else {
                     tracing::warn!(
                         "Party {:?} sent inconsistent data in VSS round 1. Either as the VSS sender ({:?}) or the VSS receiver ({:?})",
@@ -413,33 +430,31 @@ fn parse_round_1_received_data<Z: Ring>(
     }
 }
 
-pub(crate) async fn round_2<
-    Z: Ring + RingEmbed,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
-    BCast: Broadcast,
->(
+pub(crate) async fn round_2<Z: Ring + RingEmbed, S: BaseSessionHandles, BCast: Broadcast>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
     broadcast: &BCast,
 ) -> anyhow::Result<HashMap<Role, Option<Vec<VerificationValues<Z>>>>> {
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     let num_parties = session.num_parties();
 
     //For every VSS, compute
     // aij = F_i(\alpha_j) + r_ij
     // bij = G_i(\alpha_j) + r_ji
     //NOTE: aii and bii are not computed, input default there
-    let verification_vector: Vec<VerificationValues<Z>> = (0..num_parties)
-        .map(|dealer_idx| {
-            (0..num_parties)
+    let all_roles = session.get_all_sorted_roles();
+    let verification_vector: Vec<VerificationValues<Z>> = all_roles
+        .iter()
+        .map(|dealer_role| {
+            all_roles
+                .iter()
                 .map(|party_idx| {
                     let verification_values = generate_verification_value(
                         num_secrets,
-                        my_role.zero_based(),
+                        &my_role,
                         party_idx,
-                        dealer_idx,
+                        dealer_role,
                         vss,
                     )?;
                     Ok::<_, anyhow::Error>(verification_values)
@@ -473,7 +488,7 @@ pub(crate) async fn round_2<
     // All parties agree on the result of the bcast, so add corrupt parties as needed
     for (role, result) in casted_bcast_data.iter() {
         if result.is_none() {
-            session.add_corrupt(*role)?;
+            session.add_corrupt(*role);
         }
     }
 
@@ -523,12 +538,7 @@ fn verify_round_2_broadcast<Z: Ring>(
 // Role0 -> Some(v) with v indexed as v[dealer_idx][Pj index][secret_idx]
 // Role1 -> None means somethings wrong happened, consider all values to be 0
 //...
-pub(crate) async fn round_3<
-    Z: Ring + RingEmbed,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
-    BCast: Broadcast,
->(
+pub(crate) async fn round_3<Z: Ring + RingEmbed, S: BaseSessionHandles, BCast: Broadcast>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
@@ -536,12 +546,13 @@ pub(crate) async fn round_3<
     broadcast: &BCast,
 ) -> anyhow::Result<Vec<HashSet<Role>>> {
     let num_parties = session.num_parties();
-    let own_role = session.my_role()?;
+    let own_role = session.my_role();
 
     //First create a HashSet<usize, role, role> that references all the conflicts
     //the usize represents the dealer idx of the conflict.
     //Remember: If there's a conflict for any secret_idx, we consider there's a conflict for the whole batch
-    let potentially_unhappy = find_potential_conflicts_for_all_roles(verification_map, num_parties);
+    let potentially_unhappy =
+        find_potential_conflicts_for_all_roles(verification_map, session.get_all_sorted_roles());
 
     tracing::info!(
         "I am {own_role} and Potentially unhappy with {:?}",
@@ -579,33 +590,28 @@ pub(crate) async fn round_3<
 
     // Add the parties that have broadcast something obviously wrong
     for malicious_party in malicious_bcast.into_iter() {
-        session.add_corrupt(malicious_party)?;
+        session.add_corrupt(malicious_party);
     }
 
     //Find out if any dealer is corrupt
     for (dealer_idx, unhappy_set) in unhappy_vec.iter().enumerate() {
         if unhappy_set.len() > session.threshold() as usize {
-            session.add_corrupt(Role::indexed_by_zero(dealer_idx))?;
+            session.add_corrupt(Role::indexed_from_zero(dealer_idx));
         }
     }
 
     Ok(unhappy_vec)
 }
 
-pub(crate) async fn round_4<
-    Z: Ring + RingEmbed,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
-    BCast: Broadcast,
->(
+pub(crate) async fn round_4<Z: Ring + RingEmbed, S: BaseSessionHandles, BCast: Broadcast>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
     unhappy_vec: Vec<HashSet<Role>>,
     broadcast: &BCast,
 ) -> anyhow::Result<Vec<Vec<Z>>> {
-    let mut msg = BTreeMap::<(u64, Role), ValueOrPoly<Z>>::new();
-    let own_role = session.my_role()?;
+    let mut msg = BTreeMap::<(Role, Role), ValueOrPoly<Z>>::new();
+    let own_role = session.my_role();
 
     //For all dealers
     //For all parties Pi in unhappy, if I'm Sender OR I'm not in unhappy, help solve the conflict
@@ -618,11 +624,12 @@ pub(crate) async fn round_4<
             !unhappy_set.contains(&own_role)
                 && !session
                     .corrupt_roles()
-                    .contains(&Role::indexed_by_zero(*dealer_idx))
+                    .contains(&Role::indexed_from_zero(*dealer_idx))
         })
         .try_for_each(|(dealer_idx, unhappy_set)| {
-            let is_dealer = own_role.zero_based() == dealer_idx;
-            round_4_conflict_resolution(&mut msg, is_dealer, dealer_idx, unhappy_set, vss)?;
+            let dealer_role = Role::indexed_from_zero(dealer_idx);
+            let is_dealer = own_role == dealer_role;
+            round_4_conflict_resolution(&mut msg, is_dealer, dealer_role, unhappy_set, vss)?;
             Ok::<(), anyhow::Error>(())
         })?;
 
@@ -653,11 +660,9 @@ pub(crate) async fn round_4<
         .iter()
         .enumerate()
         .try_for_each(|(dealer_idx, unhappy_set)| {
-            if !session
-                .corrupt_roles()
-                .contains(&Role::indexed_by_zero(dealer_idx))
-            {
-                round_4_fix_conflicts(session, num_secrets, dealer_idx, unhappy_set, &bcast_data)?;
+            let dealer_role = Role::indexed_from_zero(dealer_idx);
+            if !session.corrupt_roles().contains(&dealer_role) {
+                round_4_fix_conflicts(session, num_secrets, dealer_role, unhappy_set, &bcast_data)?;
             }
             Ok::<_, anyhow::Error>(())
         })?;
@@ -671,7 +676,6 @@ pub(crate) async fn round_4<
         .keys()
         .filter(|sender| !session.corrupt_roles().contains(sender))
         .for_each(|role_sender| {
-            let dealer_idx = role_sender.zero_based();
             //If sender is not considered corrupt but had to send my share in round 4, use this value
             let maybe_eval = bcast_data
                 .get(role_sender)
@@ -679,7 +683,7 @@ pub(crate) async fn round_4<
                     BroadcastValue::Round4VSS(v) => Some(v),
                     _ => None,
                 })
-                .and_then(|v| v.get(&(dealer_idx as u64, own_role)))
+                .and_then(|v| v.get(&(*role_sender, own_role)))
                 .and_then(|entry| {
                     if let ValueOrPoly::Poly(p) = entry {
                         Some(p)
@@ -690,10 +694,10 @@ pub(crate) async fn round_4<
                 .map(|p| p.iter().map(|pp| pp.eval(&Z::ZERO)).collect_vec());
 
             if let Some(p) = maybe_eval {
-                result[dealer_idx] = p;
+                result[role_sender] = p;
             //Else, use the value received in the first round
             } else {
-                result[dealer_idx] = vss.received_vss[dealer_idx]
+                result[role_sender] = vss.received_vss[role_sender]
                     .double_poly_list
                     .iter()
                     .map(|poly| poly.share_in_x.eval(&Z::ZERO))
@@ -703,7 +707,7 @@ pub(crate) async fn round_4<
     Ok(result)
 }
 
-fn vss_receive_round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+fn vss_receive_round_1<Z: Ring, S: BaseSessionHandles>(
     session: &S,
     jobs: &mut JoinSet<ResultRound1<Z>>,
     my_role: Role,
@@ -727,9 +731,9 @@ fn vss_receive_round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 /// Pk indexed by dealer_index, for Pj indexed by party_idx
 fn generate_verification_value<Z>(
     num_secrets: usize,
-    my_index: usize,
-    party_idx: usize,
-    dealer_idx: usize,
+    my_role: &Role,
+    party_role: &Role,
+    dealer_role: &Role,
     r1vss: &Round1VSSOutput<Z>,
 ) -> anyhow::Result<Vec<(Z, Z)>>
 where
@@ -737,14 +741,14 @@ where
     Z: RingEmbed,
 {
     // Using direct indexing is fine because we checked all the lengths before
-    let current_vss = &r1vss.received_vss[dealer_idx];
+    let current_vss = &r1vss.received_vss[dealer_role];
     let mut out = Vec::with_capacity(num_secrets);
-    let alpha_other = Z::embed_exceptional_set(party_idx + 1)?;
-    let my_challenges_to_pj = &r1vss.sent_challenges[party_idx][dealer_idx];
-    let pj_challenges_to_me = &r1vss.received_vss[party_idx].challenges_list[dealer_idx];
+    let alpha_other = Z::embed_exceptional_set(party_role.one_based())?;
+    let my_challenges_to_pj = &r1vss.sent_challenges[party_role][dealer_role];
+    let pj_challenges_to_me = &r1vss.received_vss[party_role].challenges_list[dealer_role];
     for i in 0..num_secrets {
         let double_poly = &current_vss.double_poly_list[i];
-        if my_index != party_idx {
+        if my_role != party_role {
             let my_share_in_x_eval = double_poly.share_in_x.eval(&alpha_other);
             let my_share_in_y_eval = double_poly.share_in_y.eval(&alpha_other);
             out.push((
@@ -760,9 +764,9 @@ where
 
 fn find_potential_conflicts_for_all_roles<Z: Ring>(
     verification_map: &HashMap<Role, Option<Vec<VerificationValues<Z>>>>,
-    num_parties: usize,
-) -> HashSet<(usize, Role, Role)> {
-    let mut potentially_unhappy = HashSet::<(usize, Role, Role)>::new();
+    all_roles: &[Role],
+) -> HashSet<(Role, Role, Role)> {
+    let mut potentially_unhappy = HashSet::<(Role, Role, Role)>::new();
     //iter over all claims
     verification_map
         .iter()
@@ -777,10 +781,10 @@ fn find_potential_conflicts_for_all_roles<Z: Ring>(
                 );
             }
             //We do not have claims for pi, it's in conflict with everyone for every vss (except itself)
-            None => (0..num_parties).for_each(|dealer_idx| {
+            None => all_roles.iter().for_each(|dealer_role| {
                 verification_map.keys().for_each(|pj_role| {
                     if pj_role != pi_role {
-                        potentially_unhappy.insert((dealer_idx, *pi_role, *pj_role));
+                        potentially_unhappy.insert((*dealer_role, *pi_role, *pj_role));
                     }
                 })
             }),
@@ -794,7 +798,7 @@ fn find_potential_conflicts_received_challenges<Z: Ring>(
     verification_map: &HashMap<Role, Option<Vec<VerificationValues<Z>>>>,
     pi_role: &Role,
     pi_claims_all_vss: &[VerificationValues<Z>],
-    potentially_unhappy: &mut HashSet<(usize, Role, Role)>,
+    potentially_unhappy: &mut HashSet<(Role, Role, Role)>,
 ) {
     pi_claims_all_vss
         .iter()
@@ -803,11 +807,12 @@ fn find_potential_conflicts_received_challenges<Z: Ring>(
             // For Pi at vss dealer_idx, iter over all P_i claims a_ij
             // add potential conflict for the current vss
             // that is add Pi,Pj when a_ij neq bji
+            let dealer_role = Role::indexed_from_zero(dealer_idx);
             pi_claims_single_vss
                 .iter()
                 .enumerate()
                 .for_each(|(pj_index, aij_bij_list)| {
-                    let pj_role = Role::indexed_by_zero(pj_index);
+                    let pj_role = Role::indexed_from_zero(pj_index);
                     // No need to compare with itself
                     if pi_role != &pj_role {
                         // Retrieve all the claims of Pj and look bji for VSS dealer_idx,
@@ -819,7 +824,7 @@ fn find_potential_conflicts_received_challenges<Z: Ring>(
                                 // add to unhappy
                                 let aji_bji_list = pj_verification_values.get(dealer_idx).and_then(
                                     |pj_values_at_dealer_idx| {
-                                        pj_values_at_dealer_idx.get(pi_role.zero_based())
+                                        pi_role.get_from(pj_values_at_dealer_idx)
                                     },
                                 );
                                 if let Some(aji_bji_list) = aji_bji_list {
@@ -830,23 +835,29 @@ fn find_potential_conflicts_received_challenges<Z: Ring>(
                                             either_or_both_a_b
                                         {
                                             if aij_bij.0 != aji_bji.1 {
-                                                potentially_unhappy
-                                                    .insert((dealer_idx, *pi_role, pj_role));
+                                                potentially_unhappy.insert((
+                                                    dealer_role,
+                                                    *pi_role,
+                                                    pj_role,
+                                                ));
                                                 break;
                                             }
                                         } else {
-                                            potentially_unhappy
-                                                .insert((dealer_idx, *pi_role, pj_role));
+                                            potentially_unhappy.insert((
+                                                dealer_role,
+                                                *pi_role,
+                                                pj_role,
+                                            ));
                                             break;
                                         }
                                     }
                                 } else {
-                                    potentially_unhappy.insert((dealer_idx, *pi_role, pj_role));
+                                    potentially_unhappy.insert((dealer_role, *pi_role, pj_role));
                                 }
                             }
                             //If there is no value for bji, add the pair to potential unhappy
                             _ => {
-                                potentially_unhappy.insert((dealer_idx, *pi_role, pj_role));
+                                potentially_unhappy.insert((dealer_role, *pi_role, pj_role));
                             }
                         }
                     }
@@ -855,25 +866,24 @@ fn find_potential_conflicts_received_challenges<Z: Ring>(
 }
 
 fn answer_to_potential_conflicts<Z>(
-    potentially_unhappy: &HashSet<(usize, Role, Role)>,
+    potentially_unhappy: &HashSet<(Role, Role, Role)>,
     own_role: &Role,
     vss: &Round1VSSOutput<Z>,
-) -> anyhow::Result<BTreeMap<(u64, Role, Role), Vec<Z>>>
+) -> anyhow::Result<BTreeMap<(Role, Role, Role), Vec<Z>>>
 where
     Z: Ring,
     Z: RingEmbed,
 {
-    let mut msg = BTreeMap::<(u64, Role, Role), Vec<Z>>::new();
-    let my_dealer_idx = own_role.zero_based();
+    let mut msg = BTreeMap::<(Role, Role, Role), Vec<Z>>::new();
     //Can now match over the tuples of keys in potentially unhappy
     for key_tuple in potentially_unhappy.iter() {
         match key_tuple {
             //If vss_idx is the one where I'm sender send F(alpha_j, alpha_i)
-            (dealer_idx, pi_role, pj_role) if dealer_idx == &my_dealer_idx => {
+            (dealer_role, pi_role, pj_role) if dealer_role == own_role => {
                 let point_x = Z::embed_exceptional_set(pj_role.one_based())?;
                 let point_y = Z::embed_exceptional_set(pi_role.one_based())?;
                 msg.insert(
-                    (*dealer_idx as u64, *pi_role, *pj_role),
+                    (*own_role, *pi_role, *pj_role),
                     vss.my_poly
                         .iter()
                         .map(|poly| poly.full_evaluation(point_x, point_y))
@@ -881,11 +891,11 @@ where
                 );
             }
             //If im a Pi send Fi(alpha_j)
-            (dealer_idx, pi_role, pj_role) if pi_role == own_role => {
+            (dealer_role, pi_role, pj_role) if pi_role == own_role => {
                 let point = Z::embed_exceptional_set(pj_role.one_based())?;
                 msg.insert(
-                    (*dealer_idx as u64, *pi_role, *pj_role),
-                    vss.received_vss[*dealer_idx]
+                    (*dealer_role, *pi_role, *pj_role),
+                    vss.received_vss[dealer_role]
                         .double_poly_list
                         .iter()
                         .map(|poly| poly.share_in_x.eval(&point))
@@ -893,11 +903,11 @@ where
                 );
             }
             //If im a Pj send Gj(alpha_i)
-            (dealer_idx, pi_role, pj_role) if pj_role == own_role => {
+            (dealer_role, pi_role, pj_role) if pj_role == own_role => {
                 let point = Z::embed_exceptional_set(pi_role.one_based())?;
                 msg.insert(
-                    (*dealer_idx as u64, *pi_role, *pj_role),
-                    vss.received_vss[*dealer_idx]
+                    (*dealer_role, *pi_role, *pj_role),
+                    vss.received_vss[dealer_role]
                         .double_poly_list
                         .iter()
                         .map(|poly| poly.share_in_y.eval(&point))
@@ -917,18 +927,17 @@ where
 /// something unexpected (either wrong type, or wrong length)
 fn find_real_conflicts<Z: Ring>(
     num_secrets: usize,
-    potentially_unhappy: &HashSet<(usize, Role, Role)>,
+    potentially_unhappy: &HashSet<(Role, Role, Role)>,
     bcast_settlements: HashMap<Role, BroadcastValue<Z>>,
     num_parties: usize,
 ) -> (Vec<HashSet<Role>>, HashSet<Role>) {
     let mut unhappy_vec = vec![HashSet::<Role>::new(); num_parties];
     let mut malicious_bcast = HashSet::new();
     let zeros = vec![Z::ZERO; num_secrets];
-    for (dealer_idx, role_pi, role_pj) in potentially_unhappy {
-        let common_key = (*dealer_idx as u64, *role_pi, *role_pj);
-        let dealer_role = Role::indexed_by_zero(*dealer_idx);
+    for (dealer_role, role_pi, role_pj) in potentially_unhappy {
+        let common_key = (*dealer_role, *role_pi, *role_pj);
         let sender_resolve = bcast_settlements
-            .get(&dealer_role)
+            .get(dealer_role)
             .and_then(|bcd| match bcd {
                 BroadcastValue::Round3VSS(v) => Some(v),
                 _ => None,
@@ -936,7 +945,7 @@ fn find_real_conflicts<Z: Ring>(
             .and_then(|v| v.get(&common_key))
             .filter(|resolve_values| resolve_values.len() == num_secrets)
             .unwrap_or_else(|| {
-                malicious_bcast.insert(dealer_role);
+                malicious_bcast.insert(*dealer_role);
                 &zeros
             });
 
@@ -967,20 +976,20 @@ fn find_real_conflicts<Z: Ring>(
             });
 
         if pi_resolve != sender_resolve {
-            unhappy_vec[*dealer_idx].insert(*role_pi);
+            unhappy_vec[dealer_role].insert(*role_pi);
         }
 
         if pj_resolve != sender_resolve {
-            unhappy_vec[*dealer_idx].insert(*role_pj);
+            unhappy_vec[dealer_role].insert(*role_pj);
         }
     }
     (unhappy_vec, malicious_bcast)
 }
 
 fn round_4_conflict_resolution<Z: Ring + RingEmbed>(
-    msg: &mut BTreeMap<(u64, Role), ValueOrPoly<Z>>,
+    msg: &mut BTreeMap<(Role, Role), ValueOrPoly<Z>>,
     is_dealer: bool,
-    dealer_idx: usize,
+    dealer_role: Role,
     unhappy_set: &HashSet<Role>,
     vss: &Round1VSSOutput<Z>,
 ) -> anyhow::Result<()> {
@@ -996,26 +1005,25 @@ fn round_4_conflict_resolution<Z: Ring + RingEmbed>(
             ),
             //As P_j external from the conflict, resolve conflict with P_i by sending F(alpha_j,alpha_i)
             false => ValueOrPoly::Value(
-                vss.received_vss[dealer_idx]
+                vss.received_vss[&dealer_role]
                     .double_poly_list
                     .iter()
                     .map(|poly| poly.share_in_y.eval(&point_pi))
                     .collect_vec(),
             ),
         };
-        msg.insert((dealer_idx as u64, *role_pi), msg_entry);
+        msg.insert((dealer_role, *role_pi), msg_entry);
     }
     Ok(())
 }
 
-fn round_4_fix_conflicts<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+fn round_4_fix_conflicts<Z: Ring + RingEmbed, S: BaseSessionHandles>(
     session: &mut S,
     num_secrets: usize,
-    dealer_idx: usize,
+    dealer_role: Role,
     unhappy_set: &HashSet<Role>,
     bcast_data: &HashMap<Role, BroadcastValue<Z>>,
 ) -> anyhow::Result<()> {
-    let dealer_role = Role::indexed_by_zero(dealer_idx);
     let threshold = session.threshold() as usize;
     let mut malicious_bcast = HashSet::new();
 
@@ -1035,7 +1043,7 @@ fn round_4_fix_conflicts<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSession
                             BroadcastValue::Round4VSS(v) => Some(v),
                             _ => None,
                         })
-                        .and_then(|v| v.get(&(dealer_idx as u64, *role_pi)))
+                        .and_then(|v| v.get(&(dealer_role, *role_pi)))
                         .and_then(|v| match v {
                             ValueOrPoly::Value(vv) => {
                                 // If there are not the expected number of values
@@ -1072,7 +1080,7 @@ fn round_4_fix_conflicts<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSession
                     BroadcastValue::Round4VSS(v) => Some(v),
                     _ => None,
                 })
-                .and_then(|v| v.get(&(dealer_idx as u64, *role_pi)))
+                .and_then(|v| v.get(&(dealer_role, *role_pi)))
                 .and_then(|p| match p {
                     ValueOrPoly::Poly(p) => {
                         // If there are not enough polynomials sent by the dealer
@@ -1114,13 +1122,13 @@ fn round_4_fix_conflicts<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSession
             }
         }
         if votes_for_dealer <= 2 * threshold {
-            session.add_corrupt(dealer_role)?;
+            session.add_corrupt(dealer_role);
         }
     }
 
     // Also add all those who have sent garbage during broadcast
     for role in malicious_bcast.into_iter() {
-        session.add_corrupt(role)?;
+        session.add_corrupt(role);
     }
     Ok(())
 }
@@ -1162,11 +1170,7 @@ pub(crate) mod tests {
         num_secrets: usize,
     ) -> (Vec<Identity>, Vec<Vec<ResiduePolyF4Z128>>) {
         let identities: Vec<Identity> = (0..num_parties)
-            .map(|party_nb| {
-                let mut id_str = "localhost:500".to_owned();
-                id_str.push_str(&party_nb.to_string());
-                Identity(id_str)
-            })
+            .map(|party_nb| Identity("localhost".to_string(), 5000 + party_nb as u16))
             .collect();
 
         let secret_f = |secret: usize| {
@@ -1179,16 +1183,6 @@ pub(crate) mod tests {
         let secrets: Vec<Vec<ResiduePolyF4Z128>> = (0..num_parties).map(secret_f).collect();
 
         (identities, secrets)
-    }
-
-    //TODO: When we actually have malicious strategies implemented for broadcast,
-    //test them in VSS
-    impl<BCast: Broadcast> RealVss<BCast> {
-        pub fn new(broadcast_strategy: &BCast) -> Self {
-            Self {
-                broadcast: broadcast_strategy.clone(),
-            }
-        }
     }
 
     #[test]
@@ -1240,7 +1234,7 @@ pub(crate) mod tests {
                     (0..num_secrets)
                         .map(|i| {
                             Share::new(
-                                Role::indexed_by_zero(*party_id),
+                                Role::indexed_from_zero(*party_id),
                                 vec_shares_party[vss_idx][i],
                             )
                         })
@@ -1367,7 +1361,7 @@ pub(crate) mod tests {
                         (0..num_secrets)
                             .map(|i| {
                                 Share::new(
-                                    Role::indexed_by_zero(*pn),
+                                    Role::indexed_from_zero(*pn),
                                     r.received_vss[*party_nb].double_poly_list[i]
                                         .share_in_x
                                         .eval(&point_pn),
@@ -1379,7 +1373,7 @@ pub(crate) mod tests {
                         (0..num_secrets)
                             .map(|i| {
                                 Share::new(
-                                    Role::indexed_by_zero(*pn),
+                                    Role::indexed_from_zero(*pn),
                                     r.received_vss[*party_nb].double_poly_list[i]
                                         .share_in_y
                                         .eval(&point_pn),
@@ -1412,7 +1406,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
-                session.my_role().unwrap().zero_based(),
+                session.my_role(),
                 real_vss.execute_many(&mut session, &secrets).await.unwrap(),
                 secrets,
                 session.corrupt_roles().clone(),
@@ -1430,16 +1424,16 @@ pub(crate) mod tests {
             None,
         );
         let mut expected_secrets = vec![vec![Z::ZERO; num_secrets]; params.num_parties];
-        for (party_idx, _, s, _) in res.iter() {
-            expected_secrets[*party_idx].clone_from(s);
+        for (party_role, _, s, _) in res.iter() {
+            expected_secrets[party_role].clone_from(s);
         }
 
         for i in 0..num_secrets {
             for vss_idx in 0..params.num_parties {
                 let vec_shares = res
                     .iter()
-                    .map(|(party_id, vec_shares, _, _)| {
-                        Share::new(Role::indexed_by_zero(*party_id), vec_shares[vss_idx][i])
+                    .map(|(party_role, vec_shares, _, _)| {
+                        Share::new(*party_role, vec_shares[vss_idx][i])
                     })
                     .collect_vec();
                 let shamir_sharing = ShamirSharings::create(vec_shares);
@@ -1477,7 +1471,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
-                session.my_role().unwrap().zero_based(),
+                session.my_role(),
                 real_vss.execute_many(&mut session, &secrets).await.unwrap(),
                 secrets,
                 session.corrupt_roles().clone(),
@@ -1489,7 +1483,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             let _ = malicious_vss.execute_many(&mut session, &secrets).await;
-            (session.my_role().unwrap().zero_based(), secrets)
+            (session.my_role(), secrets)
         };
 
         // VSS assumes sync network
@@ -1516,15 +1510,15 @@ pub(crate) mod tests {
 
         //Create a vec of expected secrets
         let mut expected_secrets = vec![vec![Z::ZERO; num_secrets]; params.num_parties];
-        for (party_idx, _, s, _) in results_honest.iter() {
-            expected_secrets[*party_idx].clone_from(s);
+        for (party_role, _, s, _) in results_honest.iter() {
+            expected_secrets[party_role].clone_from(s);
         }
 
         if !params.should_be_detected {
             for result_malicious in results_malicious.iter() {
                 assert!(result_malicious.is_ok());
-                let (party_idx, s) = result_malicious.as_ref().unwrap();
-                expected_secrets[*party_idx].clone_from(s);
+                let (party_role, s) = result_malicious.as_ref().unwrap();
+                expected_secrets[party_role].clone_from(s);
             }
         }
 
@@ -1533,8 +1527,8 @@ pub(crate) mod tests {
             for vss_idx in 0..params.num_parties {
                 let vec_shares = results_honest
                     .iter()
-                    .map(|(party_id, vec_shares, _, _)| {
-                        Share::new(Role::indexed_by_zero(*party_id), vec_shares[vss_idx][i])
+                    .map(|(party_role, vec_shares, _, _)| {
+                        Share::new(*party_role, vec_shares[vss_idx][i])
                     })
                     .collect_vec();
                 let shamir_sharing = ShamirSharings::create(vec_shares);

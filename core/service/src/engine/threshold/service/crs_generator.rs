@@ -3,19 +3,19 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 
 // === External Crates ===
 use aes_prng::AesRng;
-use conf_trace::{
-    metrics,
-    metrics_names::{OP_CRS_GEN, OP_INSECURE_CRS_GEN, TAG_PARTY_ID},
-};
 use kms_grpc::{
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
     rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal},
     RequestId,
 };
+use observability::{
+    metrics,
+    metrics_names::{OP_CRS_GEN, OP_INSECURE_CRS_GEN, TAG_PARTY_ID},
+};
 use threshold_fhe::{
     algebra::base_ring::Z64,
     execution::{
-        runtime::session::{BaseSessionStruct, SessionParameters, ToBaseSession},
+        runtime::session::{BaseSession, ParameterHandles, ToBaseSession},
         tfhe_internals::parameters::DKGParams,
         zk::ceremony::{compute_witness_dim, Ceremony, SecureCeremony},
     },
@@ -48,7 +48,7 @@ use super::session::SessionPreparer;
 cfg_if::cfg_if! {
     if #[cfg(feature = "insecure")] {
         use crate::engine::{centralized::central_kms::async_generate_crs, threshold::traits::InsecureCrsGenerator};
-        use threshold_fhe::execution::{tfhe_internals::test_feature::transfer_crs, runtime::session::ParameterHandles};
+        use threshold_fhe::execution::{tfhe_internals::test_feature::transfer_crs};
     }
 }
 
@@ -173,7 +173,7 @@ impl<
             .session_preparer
             .prepare_ddec_data_from_sessionid_z128(session_id)
             .await?
-            .to_base_session()?;
+            .to_base_session();
 
         let meta_store = Arc::clone(&self.crs_meta_store);
         let meta_store_cancelled = Arc::clone(&self.crs_meta_store);
@@ -237,7 +237,7 @@ impl<
         req_id: &RequestId,
         witness_dim: usize,
         max_num_bits: Option<u32>,
-        mut base_session: BaseSessionStruct<AesRng, SessionParameters>,
+        mut base_session: BaseSession,
         rng: AesRng,
         meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
@@ -264,16 +264,19 @@ impl<
             }
             #[cfg(feature = "insecure")]
             {
-                let my_role = base_session
-                    .my_role()
-                    .map_err(|e| tracing::error!("Error getting role: {e}"))
-                    .expect("No role found in the session");
+                let my_role = base_session.my_role();
                 // We let the first party sample the seed (we are using 1-based party IDs)
                 let input_party_id = 1;
                 if my_role.one_based() == input_party_id {
-                    let crs_res =
-                        async_generate_crs(&sk, rng, params, max_num_bits, eip712_domain.as_ref())
-                            .await;
+                    let crs_res = async_generate_crs(
+                        &sk,
+                        params,
+                        max_num_bits,
+                        eip712_domain.as_ref(),
+                        base_session.session_id(),
+                        rng,
+                    )
+                    .await;
                     let crs = match crs_res {
                         Ok((crs, _)) => crs,
                         Err(e) => {
@@ -291,9 +294,11 @@ impl<
             // secure ceremony (insecure = false)
             let real_ceremony = SecureCeremony::default();
             let internal_pp = real_ceremony
-                .execute::<Z64, _, _>(&mut base_session, witness_dim, max_num_bits)
+                .execute::<Z64, _>(&mut base_session, witness_dim, max_num_bits)
                 .await;
-            internal_pp.and_then(|internal| internal.try_into_tfhe_zk_pok_pp(&pke_params))
+            internal_pp.and_then(|internal| {
+                internal.try_into_tfhe_zk_pok_pp(&pke_params, base_session.session_id())
+            })
         };
         let res_info_pp = pp.and_then(|pp| {
             compute_info(&sk, &DSEP_PUBDATA_CRS, &pp, eip712_domain.as_ref()).map(|info| (pp, info))

@@ -6,27 +6,24 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{party::Role, session::LargeSessionHandles},
+    ProtocolDescription,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
-use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use tracing::instrument;
 
 pub type SecureSingleSharing<Z> = RealSingleSharing<Z, SecureLocalSingleShare>;
 
 #[async_trait]
-pub trait SingleSharing<Z: Ring>: Send + Sync + Clone {
-    async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+pub trait SingleSharing<Z: Ring>: ProtocolDescription + Send + Sync + Clone {
+    async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
         l: usize,
     ) -> anyhow::Result<()>;
-    async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
-        &mut self,
-        session: &mut L,
-    ) -> anyhow::Result<Z>;
+    async fn next<L: LargeSessionHandles>(&mut self, session: &mut L) -> anyhow::Result<Z>;
 }
 
 //Might want to store the dispute set at the output of the lsl call
@@ -37,6 +34,17 @@ pub struct RealSingleSharing<Z, S: LocalSingleShare> {
     available_shares: Vec<Z>,
     max_num_iterations: usize,
     vdm_matrix: ArrayD<Z>,
+}
+
+impl<Z, S: LocalSingleShare> ProtocolDescription for RealSingleSharing<Z, S> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-RealSingleSharing:\n{}",
+            indent,
+            S::protocol_desc(depth + 1)
+        )
+    }
 }
 
 //Custom implementaiton of Clone to make sure we do not clone
@@ -71,7 +79,7 @@ impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, S: LocalSingleShare> 
     for RealSingleSharing<Z, S>
 {
     #[instrument(name="SingleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),own_identity=?session.own_identity(), batch_size = ?l))]
-    async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
         l: usize,
@@ -105,10 +113,7 @@ impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, S: LocalSingleShare> 
     }
 
     //NOTE: This is instrumented by the caller function to use the same span for all calls
-    async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
-        &mut self,
-        session: &mut L,
-    ) -> anyhow::Result<Z> {
+    async fn next<L: LargeSessionHandles>(&mut self, session: &mut L) -> anyhow::Result<Z> {
         //If there's no shares available we recompute a new batch
         if self.available_shares.is_empty() {
             //If there's no more randomness to extract we re init
@@ -164,7 +169,7 @@ fn format_for_next<Z: Ring>(
         for party_idx in 0..num_parties {
             vec.push(
                 local_single_shares
-                    .get(&Role::indexed_by_zero(party_idx))
+                    .get(&Role::indexed_from_zero(party_idx))
                     .ok_or_else(|| {
                         anyhow_error_and_log(format!(
                             "Can not find shares for Party {}",
@@ -238,7 +243,7 @@ pub(crate) mod tests {
             for _ in 0..num_output {
                 res.push(single_sharing.next(&mut session).await.unwrap());
             }
-            (session.my_role().unwrap(), res)
+            (session.my_role(), res)
         };
 
         // Rounds (only on the happy path here)
@@ -310,7 +315,7 @@ pub(crate) mod tests {
             let extracted_size = session.num_parties() - session.threshold() as usize;
             let num_output = lsl_batch_size * extracted_size + 1;
             let mut res = Vec::<ResiduePolyF4Z128>::new();
-            if session.my_role().unwrap().one_based() != 2 {
+            if session.my_role().one_based() != 2 {
                 let mut single_sharing = SecureSingleSharing::<ResiduePolyF4Z128>::default();
                 single_sharing
                     .init(&mut session, lsl_batch_size)
@@ -319,13 +324,13 @@ pub(crate) mod tests {
                 for _ in 0..num_output {
                     res.push(single_sharing.next(&mut session).await.unwrap());
                 }
-                assert!(session.corrupt_roles().contains(&Role::indexed_by_one(2)));
+                assert!(session.corrupt_roles().contains(&Role::indexed_from_one(2)));
             } else {
                 for _ in 0..num_output {
                     res.push(ResiduePolyF4Z128::sample(session.rng()));
                 }
             }
-            (session.my_role().unwrap(), res)
+            (session.my_role(), res)
         }
 
         // SingleSharing assumes Sync network

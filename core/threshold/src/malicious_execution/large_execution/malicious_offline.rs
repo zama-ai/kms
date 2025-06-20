@@ -13,17 +13,15 @@ use crate::{
         runtime::session::LargeSessionHandles,
         sharing::{open::RobustOpen, share::Share},
     },
+    ProtocolDescription,
 };
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use tonic::async_trait;
 
 ///Malicious strategy that introduces an error in the reconstruction of beaver
 #[derive(Clone)]
 pub struct CheatingLargePreprocessing<
     Z: Ring,
-    Rnd: Rng + CryptoRng,
-    Ses: LargeSessionHandles<Rnd>,
     S: SingleSharing<Z>,
     D: DoubleSharing<Z>,
     RO: RobustOpen,
@@ -32,18 +30,25 @@ pub struct CheatingLargePreprocessing<
     double_sharing: D,
     robust_open: RO,
     ring_marker: std::marker::PhantomData<Z>,
-    rnd_marker: std::marker::PhantomData<Rnd>,
-    session_marker: std::marker::PhantomData<Ses>,
 }
 
-impl<
-        Z: Ring,
-        Rnd: Rng + CryptoRng,
-        Ses: LargeSessionHandles<Rnd>,
-        S: SingleSharing<Z>,
-        D: DoubleSharing<Z>,
-        RO: RobustOpen,
-    > CheatingLargePreprocessing<Z, Rnd, Ses, S, D, RO>
+impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: RobustOpen> ProtocolDescription
+    for CheatingLargePreprocessing<Z, S, D, RO>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-CheatingLargePreprocessing:\n{}\n{}\n{}",
+            indent,
+            S::protocol_desc(depth + 1),
+            D::protocol_desc(depth + 1),
+            RO::protocol_desc(depth + 1)
+        )
+    }
+}
+
+impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: RobustOpen>
+    CheatingLargePreprocessing<Z, S, D, RO>
 {
     pub fn new(single_sharing: S, double_sharing: D, robust_open: RO) -> Self {
         Self {
@@ -51,8 +56,6 @@ impl<
             double_sharing,
             robust_open,
             ring_marker: std::marker::PhantomData,
-            rnd_marker: std::marker::PhantomData,
-            session_marker: std::marker::PhantomData,
         }
     }
 }
@@ -60,12 +63,11 @@ impl<
 #[async_trait]
 impl<
         Z: Derive + ErrorCorrect,
-        Rnd: Rng + CryptoRng + Send + Sync,
-        Ses: LargeSessionHandles<Rnd>,
+        Ses: LargeSessionHandles,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
         RO: RobustOpen,
-    > Preprocessing<Z, Rnd, Ses> for CheatingLargePreprocessing<Z, Rnd, Ses, S, D, RO>
+    > Preprocessing<Z, Ses> for CheatingLargePreprocessing<Z, S, D, RO>
 {
     async fn execute(
         &mut self,
@@ -103,17 +105,11 @@ impl<
     }
 }
 
-impl<
-        Z: Derive + ErrorCorrect,
-        Rnd: Rng + CryptoRng,
-        Ses: LargeSessionHandles<Rnd>,
-        S: SingleSharing<Z>,
-        D: DoubleSharing<Z>,
-        RO: RobustOpen,
-    > CheatingLargePreprocessing<Z, Rnd, Ses, S, D, RO>
+impl<Z: Derive + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: RobustOpen>
+    CheatingLargePreprocessing<Z, S, D, RO>
 {
     //Lie to other in reconstructing masked product
-    async fn next_triple_batch(
+    async fn next_triple_batch<Ses: LargeSessionHandles>(
         &mut self,
         amount: usize,
         session: &mut Ses,
@@ -155,7 +151,7 @@ impl<
             .map(|(d, v)| d - v.degree_t)
             .collect_vec();
 
-        let my_role = session.my_role()?;
+        let my_role = session.my_role();
         let res = vec_share_x
             .into_iter()
             .zip(vec_share_y)

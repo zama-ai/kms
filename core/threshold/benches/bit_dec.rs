@@ -7,11 +7,11 @@ use threshold_fhe::algebra::base_ring::Z64;
 use threshold_fhe::algebra::galois_rings::degree_8::ResiduePolyF8Z64;
 use threshold_fhe::algebra::structure_traits::Ring;
 use threshold_fhe::execution::endpoints::decryption::{
-    init_prep_bitdec_large, init_prep_bitdec_small,
+    secure_init_prep_bitdec_large_session, secure_init_prep_bitdec_small_session,
 };
 use threshold_fhe::execution::online::bit_manipulation::bit_dec_batch;
 use threshold_fhe::execution::online::preprocessing::dummy::DummyPreprocessing;
-use threshold_fhe::execution::online::preprocessing::BitDecPreprocessing;
+use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::runtime::session::ParameterHandles;
 use threshold_fhe::execution::runtime::session::{LargeSession, SmallSession};
 use threshold_fhe::execution::sharing::shamir::InputOp;
@@ -45,13 +45,13 @@ impl std::fmt::Display for OneShotConfig {
 /// TODO(Dragos) Add pub types for different prep modes.
 ///
 /// Helper method to get a sharing of a simple u64 value
-fn get_my_share(val: u64, n: usize, threshold: usize, my_id: usize) -> Share<ResiduePolyF8Z64> {
+fn get_my_share(val: u64, n: usize, threshold: usize, my_role: Role) -> Share<ResiduePolyF8Z64> {
     let mut rng = AesRng::seed_from_u64(val);
     let secret = ResiduePolyF8Z64::from_scalar(Wrapping(val));
     let shares = ShamirSharings::share(&mut rng, secret, n, threshold)
         .unwrap()
         .shares;
-    shares[my_id]
+    shares[&my_role]
 }
 
 fn bit_dec_online(c: &mut Criterion) {
@@ -70,20 +70,16 @@ fn bit_dec_online(c: &mut Criterion) {
             |b, &config| {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
-                        let mut prep =
-                            DummyPreprocessing::<ResiduePolyF8Z64, AesRng, LargeSession>::new(
-                                42,
-                                session.clone(),
-                            );
+                        let mut prep = DummyPreprocessing::<ResiduePolyF8Z64>::new(42, &session);
 
                         let input_a = get_my_share(
                             2,
                             session.num_parties(),
                             session.threshold() as usize,
-                            session.my_role().unwrap().zero_based(),
+                            session.my_role(),
                         );
                         let _bits =
-                            bit_dec_batch::<Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _, _>(
+                            bit_dec_batch::<Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _>(
                                 &mut session,
                                 &mut prep,
                                 [input_a].to_vec(),
@@ -132,7 +128,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                 b.iter(|| {
                     let mut computation = |mut session: SmallSession<ResiduePolyF8Z64>, _bot: Option<String>| async move {
                         let mut bitdec_prep =
-                            init_prep_bitdec_small(&mut session, config.batch_size)
+                            secure_init_prep_bitdec_small_session(&mut session, config.batch_size)
                                 .await
                                 .unwrap();
 
@@ -142,7 +138,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                                     i as u64,
                                     session.num_parties(),
                                     session.threshold() as usize,
-                                    session.my_role().unwrap().zero_based(),
+                                    session.my_role(),
                                 )
                             })
                             .collect();
@@ -150,11 +146,11 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                         let _bits = bit_dec_batch::<
                             Z64,
                             { ResiduePolyF8Z64::EXTENSION_DEGREE },
-                            dyn BitDecPreprocessing<{ ResiduePolyF8Z64::EXTENSION_DEGREE }>,
                             _,
-                            _,
+                            _
+
                         >(
-                            &mut session, bitdec_prep.as_mut(), inputs
+                            &mut session, &mut bitdec_prep, inputs
                         )
                         .await
                         .unwrap();
@@ -201,7 +197,7 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
                         let mut bitdec_prep =
-                            init_prep_bitdec_large(&mut session, config.batch_size)
+                            secure_init_prep_bitdec_large_session(&mut session, config.batch_size)
                                 .await
                                 .unwrap();
                         let inputs: Vec<_> = (0..config.batch_size)
@@ -210,22 +206,19 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                                     i as u64,
                                     session.num_parties(),
                                     session.threshold() as usize,
-                                    session.my_role().unwrap().zero_based(),
+                                    session.my_role(),
                                 )
                             })
                             .collect();
 
-                        let _bits = bit_dec_batch::<
-                            Z64,
-                            { ResiduePolyF8Z64::EXTENSION_DEGREE },
-                            dyn BitDecPreprocessing<{ ResiduePolyF8Z64::EXTENSION_DEGREE }>,
-                            _,
-                            _,
-                        >(
-                            &mut session, bitdec_prep.as_mut(), inputs
-                        )
-                        .await
-                        .unwrap();
+                        let _bits =
+                            bit_dec_batch::<Z64, { ResiduePolyF8Z64::EXTENSION_DEGREE }, _, _>(
+                                &mut session,
+                                &mut bitdec_prep,
+                                inputs,
+                            )
+                            .await
+                            .unwrap();
                     };
 
                     //Need Sync network because we execute preprocessing

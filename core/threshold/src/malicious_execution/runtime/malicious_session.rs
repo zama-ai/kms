@@ -1,46 +1,37 @@
 use std::collections::{HashMap, HashSet};
 
-use rand::{CryptoRng, Rng, SeedableRng};
-
 use crate::{
-    algebra::structure_traits::Ring,
+    algebra::structure_traits::{Invert, Ring, RingEmbed},
     execution::{
         runtime::{
             party::{Identity, Role},
             session::{
-                BaseSessionHandles, BaseSessionStruct, NetworkingImpl, ParameterHandles,
-                SmallSessionHandles,
+                BaseSession, BaseSessionHandles, NetworkingImpl, ParameterHandles,
+                SessionParameters, SmallSession, SmallSessionHandles, ToBaseSession,
             },
         },
-        small_execution::prss::{DerivePRSSState, PRSSInit, PRSSPrimitives},
+        small_execution::{
+            prf::PRSSConversions,
+            prss::{DerivePRSSState, PRSSInit, PRSSPrimitives, SecurePRSSState},
+        },
     },
     session_id::SessionId,
 };
 
-/// Defines a malicious small session
+/// Defines a generic small session
 /// that accepts any arbitrary PRSS strategy
 /// (whereas the regular small session only executes the secure PRSS)
-#[derive(Clone)]
-pub struct MaliciousSmallSessionStruct<
-    Z: Ring,
-    R: Rng + CryptoRng + SeedableRng,
-    Prss: PRSSPrimitives<Z>,
-    P: ParameterHandles,
-> {
-    pub base_session: BaseSessionStruct<R, P>,
+/// This is useful for testing purposes
+/// where we want to use a different PRSS strategy
+pub struct GenericSmallSessionStruct<Z: Ring, Prss: PRSSPrimitives<Z>> {
+    pub base_session: BaseSession,
     pub prss_state: Prss,
     ring_marker: std::marker::PhantomData<Z>,
 }
 
-impl<
-        Z: Ring,
-        R: Rng + CryptoRng + SeedableRng + Clone + Send + Sync,
-        Prss: PRSSPrimitives<Z>,
-        P: ParameterHandles,
-    > MaliciousSmallSessionStruct<Z, R, Prss, P>
-{
+impl<Z: Ring, Prss: PRSSPrimitives<Z>> GenericSmallSessionStruct<Z, Prss> {
     pub async fn new_and_init_prss_state<PrssInit: PRSSInit<Z>>(
-        mut base_session: BaseSessionStruct<R, P>,
+        mut base_session: BaseSession,
         prss_init: PrssInit,
     ) -> anyhow::Result<Self>
     where
@@ -53,10 +44,10 @@ impl<
     }
 
     pub fn new_from_prss_state(
-        base_session: BaseSessionStruct<R, P>,
+        base_session: BaseSession,
         prss_state: Prss,
     ) -> anyhow::Result<Self> {
-        Ok(MaliciousSmallSessionStruct {
+        Ok(GenericSmallSessionStruct {
             base_session,
             prss_state,
             ring_marker: std::marker::PhantomData,
@@ -64,14 +55,10 @@ impl<
     }
 }
 
-impl<
-        Z: Ring,
-        R: Rng + CryptoRng + SeedableRng + Send + Sync + Clone,
-        Prss: PRSSPrimitives<Z> + Clone,
-        P: ParameterHandles,
-    > ParameterHandles for MaliciousSmallSessionStruct<Z, R, Prss, P>
+impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ParameterHandles
+    for GenericSmallSessionStruct<Z, Prss>
 {
-    fn my_role(&self) -> anyhow::Result<Role> {
+    fn my_role(&self) -> Role {
         self.base_session.my_role()
     }
 
@@ -102,19 +89,25 @@ impl<
     fn role_assignments(&self) -> &HashMap<Role, Identity> {
         self.base_session.role_assignments()
     }
+
     fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
         self.base_session.set_role_assignments(role_assignments);
     }
+
+    fn to_parameters(&self) -> SessionParameters {
+        self.base_session.to_parameters()
+    }
+
+    fn get_all_sorted_roles(&self) -> &Vec<Role> {
+        self.base_session.get_all_sorted_roles()
+    }
 }
 
-impl<
-        Z: Ring,
-        R: Rng + CryptoRng + SeedableRng + Send + Sync + Clone,
-        Prss: PRSSPrimitives<Z> + Clone,
-        P: ParameterHandles,
-    > BaseSessionHandles<R> for MaliciousSmallSessionStruct<Z, R, Prss, P>
+impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> BaseSessionHandles
+    for GenericSmallSessionStruct<Z, Prss>
 {
-    fn rng(&mut self) -> &mut R {
+    type RngType = aes_prng::AesRng;
+    fn rng(&mut self) -> &mut Self::RngType {
         self.base_session.rng()
     }
 
@@ -126,23 +119,44 @@ impl<
         self.base_session.corrupt_roles()
     }
 
-    fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool> {
+    fn add_corrupt(&mut self, role: Role) -> bool {
         self.base_session.add_corrupt(role)
     }
 }
 
-impl<
-        Z: Ring,
-        R: Rng + CryptoRng + SeedableRng + Send + Sync + Clone,
-        Prss: PRSSPrimitives<Z> + Clone,
-        P: ParameterHandles,
-    > SmallSessionHandles<Z, R, Prss> for MaliciousSmallSessionStruct<Z, R, Prss, P>
+impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> SmallSessionHandles<Z>
+    for GenericSmallSessionStruct<Z, Prss>
 {
+    type PRSSPrimitivesType = Prss;
     fn prss_as_mut(&mut self) -> &mut Prss {
         &mut self.prss_state
     }
 
     fn prss(&self) -> Prss {
         self.prss_state.to_owned()
+    }
+}
+
+impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ToBaseSession
+    for GenericSmallSessionStruct<Z, Prss>
+{
+    fn to_base_session(self) -> BaseSession {
+        self.base_session
+    }
+
+    fn get_mut_base_session(&mut self) -> &mut BaseSession {
+        &mut self.base_session
+    }
+}
+
+// If the generic session uses a secure PRSS state, allow convrersion to a SmallSession
+impl<Z: Ring + RingEmbed + Invert + PRSSConversions>
+    GenericSmallSessionStruct<Z, SecurePRSSState<Z>>
+{
+    pub fn to_secure_small_session(self) -> SmallSession<Z> {
+        SmallSession {
+            base_session: self.base_session,
+            prss_state: self.prss_state,
+        }
     }
 }

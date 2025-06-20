@@ -174,7 +174,7 @@ pub mod tests_and_benches {
     pub fn roles_from_idxs(idx_roles: &[usize]) -> Vec<Role> {
         idx_roles
             .iter()
-            .map(|idx_role| Role::indexed_by_zero(*idx_role))
+            .map(|idx_role| Role::indexed_from_zero(*idx_role))
             .collect()
     }
 }
@@ -186,7 +186,7 @@ pub mod testing {
         execution::{
             runtime::{
                 party::{Identity, Role},
-                session::{BaseSessionStruct, SessionParameters},
+                session::{BaseSession, ParameterHandles, SessionParameters},
             },
             small_execution::{
                 agree_random::DummyAgreeRandom,
@@ -215,16 +215,17 @@ pub mod testing {
         let mut role_assignment = HashMap::new();
         for i in 0..amount {
             role_assignment.insert(
-                Role::indexed_by_zero(i),
-                Identity(format!("localhost:{}", 5000 + i)),
+                Role::indexed_from_zero(i),
+                Identity("localhost".to_string(), 5000 + i as u16),
             );
         }
-        SessionParameters {
+        SessionParameters::new(
             threshold,
-            session_id: SessionId::from(1),
-            own_identity: role_assignment.get(&role).unwrap().clone(),
-            role_assignments: role_assignment,
-        }
+            SessionId::from(1),
+            role_assignment.get(&role).unwrap().clone(),
+            role_assignment,
+        )
+        .unwrap()
     }
 
     /// Returns a base session to be used with multiple parties
@@ -232,20 +233,20 @@ pub mod testing {
         amount: usize,
         threshold: u8,
         role: Role,
-    ) -> BaseSessionStruct<AesRng, SessionParameters> {
+    ) -> BaseSession {
         let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
-        let id = parameters.own_identity.clone();
-        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
-        BaseSessionStruct {
+        let id = parameters.own_identity();
+        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity()]);
+        BaseSession {
             parameters,
             network: Arc::new(net_producer.user_net(id, NetworkMode::Sync, None)),
-            rng: AesRng::seed_from_u64(role.zero_based() as u64),
+            rng: AesRng::seed_from_u64(role.one_based() as u64),
             corrupt_roles: HashSet::new(),
         }
     }
 
     pub fn get_dummy_prss_setup<Z: ErrorCorrect + Invert + PRSSConversions>(
-        mut session: BaseSessionStruct<AesRng, SessionParameters>,
+        mut session: BaseSession,
     ) -> PRSSSetup<Z> {
         let rt = Runtime::new().unwrap();
 
@@ -269,7 +270,7 @@ pub mod tests {
             runtime::{
                 party::{Identity, Role},
                 session::{
-                    BaseSessionStruct, LargeSession, LargeSessionHandles, ParameterHandles,
+                    BaseSession, LargeSession, LargeSessionHandles, ParameterHandles,
                     SessionParameters, SmallSession,
                 },
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
@@ -335,7 +336,10 @@ pub mod tests {
                 dispute_pairs: dispute_pairs
                     .iter()
                     .map(|(idx_a, idx_b)| {
-                        (Role::indexed_by_zero(*idx_a), Role::indexed_by_zero(*idx_b))
+                        (
+                            Role::indexed_from_zero(*idx_a),
+                            Role::indexed_from_zero(*idx_b),
+                        )
                     })
                     .collect_vec(),
                 should_be_detected,
@@ -379,7 +383,10 @@ pub mod tests {
                 dispute_pairs: dispute_pairs
                     .iter()
                     .map(|(idx_a, idx_b)| {
-                        (Role::indexed_by_zero(*idx_a), Role::indexed_by_zero(*idx_b))
+                        (
+                            Role::indexed_from_zero(*idx_a),
+                            Role::indexed_from_zero(*idx_b),
+                        )
                     })
                     .collect_vec(),
                 ..Default::default()
@@ -423,24 +430,17 @@ pub mod tests {
     /// Generates dummy parameters for unit tests with role 1. Parameters contain a single party, session ID = 1 and threshold = 0
     pub fn get_dummy_parameters() -> SessionParameters {
         let mut role_assignment = HashMap::new();
-        let id = Identity("localhost:5000".to_string());
-        role_assignment.insert(Role::indexed_by_one(1), id.clone());
-        SessionParameters {
-            threshold: 0,
-            session_id: SessionId::from(1),
-            own_identity: id,
-            role_assignments: role_assignment,
-        }
+        let id = Identity("localhost".to_string(), 5000);
+        role_assignment.insert(Role::indexed_from_one(1), id.clone());
+        SessionParameters::new(0, SessionId::from(1), id, role_assignment).unwrap()
     }
 
     /// Returns a base session to be used with a single party, with role 1, suitable for testing with dummy constructs
-    pub fn get_base_session(
-        network_mode: NetworkMode,
-    ) -> BaseSessionStruct<AesRng, SessionParameters> {
+    pub fn get_base_session(network_mode: NetworkMode) -> BaseSession {
         let parameters = get_dummy_parameters();
-        let id = parameters.own_identity.clone();
-        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
-        BaseSessionStruct {
+        let id = parameters.own_identity();
+        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity()]);
+        BaseSession {
             parameters,
             network: Arc::new(net_producer.user_net(id, network_mode, None)),
             rng: AesRng::seed_from_u64(42),
@@ -528,7 +528,7 @@ pub mod tests {
         for party_id in 0..parties {
             let session = test_runtime.small_session_for_party(session_id, party_id, None);
 
-            if malicious_roles.contains(&Role::indexed_by_zero(party_id)) {
+            if malicious_roles.contains(&Role::indexed_from_zero(party_id)) {
                 malicious_identities.push(session.own_identity());
                 let malicious_strategy_cloned = malicious_strategy.clone();
                 malicious_tasks.spawn(task_malicious(session, malicious_strategy_cloned));
@@ -626,13 +626,13 @@ pub mod tests {
         for party_id in 0..parties {
             let mut session = test_runtime.large_session_for_party(session_id, party_id);
 
-            if malicious_roles.contains(&Role::indexed_by_zero(party_id)) {
+            if malicious_roles.contains(&Role::indexed_from_zero(party_id)) {
                 malicious_identities.push(session.own_identity());
                 let malicious_strategy_cloned = malicious_strategy.clone();
                 malicious_tasks.spawn(task_malicious(session, malicious_strategy_cloned));
             } else {
                 for (role_a, role_b) in dispute_pairs.iter() {
-                    let _ = session.add_dispute(role_a, role_b);
+                    session.add_dispute(role_a, role_b);
                 }
                 honest_tasks.spawn(task_honest(session));
             }

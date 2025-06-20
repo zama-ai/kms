@@ -41,8 +41,8 @@ pub enum BroadcastValue<Z: Eq + Zero + Sized> {
     RingValue(Z),
     PRSSVotes(Vec<(PartySet, Vec<Z>)>),
     Round2VSS(Vec<VerificationValues<Z>>),
-    Round3VSS(BTreeMap<(u64, Role, Role), Vec<Z>>),
-    Round4VSS(BTreeMap<(u64, Role), ValueOrPoly<Z>>),
+    Round3VSS(BTreeMap<(Role, Role, Role), Vec<Z>>),
+    Round4VSS(BTreeMap<(Role, Role), ValueOrPoly<Z>>),
     LocalSingleShare(MapsSharesChallenges<Z>),
     LocalDoubleShare(MapsDoubleSharesChallenges<Z>),
     PartialProof(ceremony::PartialProof),
@@ -137,16 +137,18 @@ mod tests {
     async fn test_box_sending() {
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
 
-        let identities: Vec<Identity> = vec!["alice".into(), "bob".into()];
+        let alice = Identity("alice".into(), 5001);
+        let bob = Identity("bob".into(), 5002);
+        let identities: Vec<Identity> = vec![alice.clone(), bob.clone()];
         let net_producer = LocalNetworkingProducer::from_ids(&identities);
         let pk = keys.public_keys.clone();
         let value = NetworkValue::<Z128>::PubKeySet(Box::new(keys.public_keys));
 
-        let net_alice = net_producer.user_net("alice".into(), NetworkMode::Sync, None);
-        let net_bob = net_producer.user_net("bob".into(), NetworkMode::Sync, None);
+        let net_alice = net_producer.user_net(alice.clone(), NetworkMode::Sync, None);
+        let net_bob = net_producer.user_net(bob.clone(), NetworkMode::Sync, None);
 
         let task1 = tokio::spawn(async move {
-            let recv = net_bob.receive(&"alice".into()).await;
+            let recv = net_bob.receive(&alice.clone()).await;
             let received_key = match NetworkValue::<Z128>::from_network(recv) {
                 Ok(NetworkValue::PubKeySet(key)) => key,
                 _ => panic!(),
@@ -155,7 +157,7 @@ mod tests {
         });
 
         let task2 =
-            tokio::spawn(async move { net_alice.send(value.to_network(), &"bob".into()).await });
+            tokio::spawn(async move { net_alice.send(value.to_network(), &bob.clone()).await });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
     }

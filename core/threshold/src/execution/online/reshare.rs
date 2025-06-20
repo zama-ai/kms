@@ -28,7 +28,6 @@ use crate::{
     networking::value::BroadcastValue,
 };
 use itertools::{izip, Itertools};
-use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use tracing::instrument;
 use zeroize::Zeroize;
@@ -141,8 +140,7 @@ where
     fields(sid=?session.session_id(),own_identity=?session.own_identity())
 )]
 pub async fn reshare_sk_same_sets<
-    Rnd: Rng + CryptoRng,
-    Ses: BaseSessionHandles<Rnd>,
+    Ses: BaseSessionHandles,
     P128: BasePreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send,
     P64: BasePreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send,
     const EXTENSION_DEGREE: usize,
@@ -246,8 +244,7 @@ where
 }
 
 pub async fn reshare_same_sets<
-    Rnd: Rng + CryptoRng,
-    Ses: BaseSessionHandles<Rnd>,
+    Ses: BaseSessionHandles,
     P: BasePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send,
     Z: BaseRing + Zeroize,
     const EXTENSION_DEGREE: usize,
@@ -277,7 +274,7 @@ where
     }
 
     // open r_{i,j} to party j
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
     //let mut opened = vec![]; // this will be zeroized later
     //for other_role in &all_roles_sorted {
     //    let rs_share = rs_shares
@@ -367,12 +364,12 @@ where
     let mut all_syndrome_poly_shares = Vec::with_capacity(share_count * n1);
     for shares in s_share_vec {
         let shamir_sharing = ShamirSharings::create(shares);
-        let mut syndrome_share = ResiduePoly::<Z, EXTENSION_DEGREE>::syndrome_compute(
+        let syndrome_share = ResiduePoly::<Z, EXTENSION_DEGREE>::syndrome_compute(
             &shamir_sharing,
             session.threshold() as usize,
         )?;
         all_shamir_shares.push(shamir_sharing);
-        all_syndrome_poly_shares.append(&mut syndrome_share.coefs);
+        all_syndrome_poly_shares.append(&mut syndrome_share.into_container());
     }
 
     let all_syndrome_polys = match SecureRobustOpen::default()
@@ -428,7 +425,7 @@ mod tests {
             constants::SMALL_TEST_KEY_PATH,
             online::preprocessing::dummy::DummyPreprocessing,
             runtime::{
-                session::{LargeSession, ParameterHandles},
+                session::ParameterHandles,
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
             sharing::shamir::InputOp,
@@ -464,7 +461,7 @@ mod tests {
             let mut bit_shares = Vec::with_capacity(parties);
             (0..parties).for_each(|i| {
                 bit_shares.push(Share::new(
-                    Role::indexed_by_zero(i),
+                    Role::indexed_from_zero(i),
                     *shares[i].get(j).unwrap(),
                 ));
             });
@@ -641,7 +638,7 @@ mod tests {
                 lwe_compute_secret_key_share: LweSecretKeyShare {
                     data: vec![
                         Share::new(
-                            Role::indexed_by_zero(0),
+                            Role::indexed_from_zero(0),
                             ResiduePoly::<Z64, EXTENSION_DEGREE>::sample(&mut rng)
                         );
                         key_shares[1].lwe_compute_secret_key_share.data.len()
@@ -650,7 +647,7 @@ mod tests {
                 lwe_encryption_secret_key_share: LweSecretKeyShare {
                     data: vec![
                         Share::new(
-                            Role::indexed_by_zero(0),
+                            Role::indexed_from_zero(0),
                             ResiduePoly::<Z64, EXTENSION_DEGREE>::sample(&mut rng)
                         );
                         key_shares[1].lwe_encryption_secret_key_share.data.len()
@@ -659,7 +656,7 @@ mod tests {
                 glwe_secret_key_share: GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
                     data: vec![
                         Share::new(
-                            Role::indexed_by_zero(0),
+                            Role::indexed_from_zero(0),
                             ResiduePoly::<Z64, EXTENSION_DEGREE>::sample(&mut rng)
                         );
                         key_shares[1].glwe_secret_key_share.len()
@@ -669,7 +666,7 @@ mod tests {
                 glwe_secret_key_share_sns_as_lwe: Some(LweSecretKeyShare {
                     data: vec![
                         Share::new(
-                            Role::indexed_by_zero(0),
+                            Role::indexed_from_zero(0),
                             ResiduePoly::<Z128, EXTENSION_DEGREE>::sample(&mut rng)
                         );
                         key_shares[1]
@@ -715,16 +712,10 @@ mod tests {
             let mut session = runtime.large_session_for_party(session_id, index_id);
 
             set.spawn(async move {
-                let mut preproc128 = DummyPreprocessing::<
-                    ResiduePoly<Z128, EXTENSION_DEGREE>,
-                    AesRng,
-                    LargeSession,
-                >::new(42, session.clone());
-                let mut preproc64 = DummyPreprocessing::<
-                    ResiduePoly<Z64, EXTENSION_DEGREE>,
-                    AesRng,
-                    LargeSession,
-                >::new(42, session.clone());
+                let mut preproc128 =
+                    DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(42, &session);
+                let mut preproc64 =
+                    DummyPreprocessing::<ResiduePoly<Z64, EXTENSION_DEGREE>>::new(42, &session);
 
                 //Testing ResharePreprocRequired
                 let preproc_required =
@@ -756,7 +747,7 @@ mod tests {
                 //Making sure ResharPreprocRequired doesn't ask for too much preprocessing
                 assert_eq!(new_preproc_64.available_randoms.len(), 0);
                 assert_eq!(new_preproc_128.available_randoms.len(), 0);
-                (session.my_role().unwrap(), out, party_keyshare)
+                (session.my_role(), out, party_keyshare)
             });
         }
 
@@ -779,7 +770,7 @@ mod tests {
             .collect_vec();
 
         // we need to sort by identities and then reconstruct
-        results.sort_by(|a, b| a.0.zero_based().cmp(&b.0.zero_based()));
+        results.sort_by(|a, b| a.0.cmp(&(b.0)));
         let (new_shares, old_shares): (Vec<_>, Vec<_>) =
             results.into_iter().map(|(_, b)| b).unzip();
         let actual_sk = reconstruct_sk(new_shares, threshold);

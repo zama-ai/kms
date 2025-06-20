@@ -3,6 +3,7 @@ use super::{BasePreprocessing, TriplePreprocessing};
 use crate::algebra::base_ring::Z64;
 use crate::algebra::galois_rings::common::ResiduePoly;
 use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::online::gen_bits::BitGenEven;
 use crate::execution::online::gen_bits::RealBitGenEven;
 use crate::execution::online::preprocessing::BitPreprocessing;
@@ -45,12 +46,28 @@ where
         num_ctxts: usize,
     ) -> anyhow::Result<InMemoryBitDecPreprocessing<EXTENSION_DEGREE>> {
         // Fetch correlated randomness from redis to memory
-        let bits = self.next_bit_vec(self.num_required_bits(num_ctxts))?;
-        let triples = self.next_triple_vec(self.num_required_bits(num_ctxts))?;
+        let num_bits = self.num_required_bits(num_ctxts);
+        let num_triples = self.num_required_triples(num_ctxts);
 
+        if self.bits_len() < num_bits {
+            return Err(anyhow_error_and_log(format!(
+                "Not enough bits available: {} < {}",
+                self.bits_len(),
+                num_bits
+            )));
+        }
+        if self.triples_len() < num_triples {
+            return Err(anyhow_error_and_log(format!(
+                "Not enough triples available: {} < {}",
+                self.triples_len(),
+                num_triples
+            )));
+        }
+
+        // Safe to unwrap as we just checked the lengths
         Ok(InMemoryBitDecPreprocessing::<EXTENSION_DEGREE> {
-            available_triples: triples,
-            available_bits: bits,
+            available_triples: self.next_triple_vec(num_triples).unwrap(),
+            available_bits: self.next_bit_vec(num_bits).unwrap(),
         })
     }
 }

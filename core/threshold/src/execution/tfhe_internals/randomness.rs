@@ -1,7 +1,4 @@
-use crate::{
-    algebra::{galois_rings::common::ResiduePoly, structure_traits::BaseRing},
-    error::error_handler::anyhow_error_and_log,
-};
+use crate::algebra::{galois_rings::common::ResiduePoly, structure_traits::BaseRing};
 
 use itertools::Itertools;
 use tfhe::{
@@ -56,26 +53,26 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
         level: DecompositionLevelCount,
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ) -> impl Iterator<Item = Self> {
         let noise_elements = noise_elements_per_ggsw(level, glwe_size, polynomial_size);
-        self.try_fork(lwe_dimension.0, noise_elements)
+        self.fork(lwe_dimension.0, noise_elements)
     }
 
     pub(crate) fn fork_lwe_list_to_lwe(
         &mut self,
         lwe_count: LweCiphertextCount,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ) -> impl Iterator<Item = Self> {
         let noise_elements = 1_usize;
-        self.try_fork(lwe_count.0, noise_elements)
+        self.fork(lwe_count.0, noise_elements)
     }
 
     pub(crate) fn fork_ggsw_level_to_glwe(
         &mut self,
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ) -> impl Iterator<Item = Self> {
         let noise_elements = noise_elements_per_glwe(polynomial_size);
-        self.try_fork(glwe_size.0, noise_elements)
+        self.fork(glwe_size.0, noise_elements)
     }
 
     pub(crate) fn fork_ggsw_to_ggsw_levels(
@@ -83,18 +80,17 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
         level: DecompositionLevelCount,
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ) -> impl Iterator<Item = Self> {
         let noise_elements = noise_elements_per_ggsw_level(glwe_size, polynomial_size);
-        self.try_fork(level.0, noise_elements)
+        self.fork(level.0, noise_elements)
     }
 
     ///Note here that our noise_rng is really just a vector pre-loaded with shares of the noise
-    ///so to fork we simply split the vector into chunks of correct size
-    pub(crate) fn try_fork(
-        &mut self,
-        n_child: usize,
-        size_child: usize,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ///so to fork we simply split the vector into chunks of correct size.
+    ///
+    /// This panics if [`self`] contains less than n_child * size_child elements
+    pub(crate) fn fork(&mut self, n_child: usize, size_child: usize) -> impl Iterator<Item = Self> {
+        // This can panic if the vector is not large enough
         let noise_vec = self.vec.drain(0..n_child * size_child).collect_vec();
 
         let noise_iter = noise_vec
@@ -104,7 +100,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
             .map(|chunk| chunk.collect())
             .collect_vec();
 
-        Ok(noise_iter.into_iter().map(|vec| Self { vec }))
+        noise_iter.into_iter().map(|vec| Self { vec })
     }
 }
 
@@ -214,15 +210,13 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
     pub fn unsigned_torus_slice_wrapping_add_random_noise_custom_mod_assign(
         &mut self,
         output_body: &mut [ResiduePoly<Z, EXTENSION_DEGREE>],
-    ) -> anyhow::Result<()> {
-        for elem in output_body.iter_mut() {
-            *elem += self
-                .noise
-                .vec
-                .pop()
-                .ok_or_else(|| anyhow_error_and_log("Not enough noise in store"))?;
+    ) {
+        let noise_iter = self.noise.vec.drain(0..output_body.len());
+        // zip_eq can panic but we expect the noise vector to be of the same size as the output body
+        // because we drain exactly the expected amount of noise
+        for (elem, noise) in output_body.iter_mut().zip_eq(noise_iter) {
+            *elem += noise
         }
-        Ok(())
     }
 
     pub fn fork_bsk_to_ggsw(
@@ -237,16 +231,17 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
                 .fork_bsk_to_ggsw::<Z>(lwe_dimension, level, glwe_size, polynomial_size)?;
         let noise_iter =
             self.noise
-                .fork_bsk_to_ggsw(lwe_dimension, level, glwe_size, polynomial_size)?;
+                .fork_bsk_to_ggsw(lwe_dimension, level, glwe_size, polynomial_size);
         Ok(map_to_encryption_generator(mask_iter, noise_iter))
     }
+
     pub fn fork_lwe_list_to_lwe(
         &mut self,
         lwe_count: LweCiphertextCount,
         lwe_size: LweSize,
     ) -> Result<impl Iterator<Item = Self>, ForkError> {
         let mask_iter = self.mask.fork_lwe_list_to_lwe::<Z>(lwe_count, lwe_size)?;
-        let noise_iter = self.noise.fork_lwe_list_to_lwe(lwe_count)?;
+        let noise_iter = self.noise.fork_lwe_list_to_lwe(lwe_count);
         Ok(map_to_encryption_generator(mask_iter, noise_iter))
     }
 
@@ -261,7 +256,7 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
 
         let noise_iter = self
             .noise
-            .fork_ggsw_level_to_glwe(glwe_size, polynomial_size)?;
+            .fork_ggsw_level_to_glwe(glwe_size, polynomial_size);
         Ok(map_to_encryption_generator(mask_iter, noise_iter))
     }
 
@@ -277,7 +272,7 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
 
         let noise_iter = self
             .noise
-            .fork_ggsw_to_ggsw_levels(level, glwe_size, polynomial_size)?;
+            .fork_ggsw_to_ggsw_levels(level, glwe_size, polynomial_size);
         Ok(map_to_encryption_generator(mask_iter, noise_iter))
     }
 }

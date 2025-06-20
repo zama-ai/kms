@@ -3,13 +3,6 @@ use std::{collections::HashMap, sync::Arc};
 
 // === External Crates ===
 use anyhow::anyhow;
-use conf_trace::{
-    metrics,
-    metrics_names::{
-        ERR_RATE_LIMIT_EXCEEDED, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID,
-        TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
-    },
-};
 use kms_grpc::{
     kms::v1::{
         self, Empty, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
@@ -17,11 +10,22 @@ use kms_grpc::{
     },
     RequestId,
 };
+use observability::{
+    metrics,
+    metrics_names::{
+        ERR_RATE_LIMIT_EXCEEDED, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID,
+        TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+    },
+};
 use rand::{CryptoRng, RngCore};
 use threshold_fhe::{
     algebra::galois_rings::common::pack_residue_poly,
-    execution::endpoints::decryption::{
-        partial_decrypt_using_bitdec, partial_decrypt_using_noiseflooding, DecryptionMode, Small,
+    execution::{
+        endpoints::decryption::{
+            partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec,
+            DecryptionMode, NoiseFloodSmallSession,
+        },
+        runtime::session::ParameterHandles,
     },
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
@@ -132,17 +136,18 @@ impl<
 
             let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
-                    let mut session = tonic_handle_potential_err(
+                    let session = tonic_handle_potential_err(
                         session_prep
                             .prepare_ddec_data_from_sessionid_z128(session_id)
                             .await,
                         "Could not prepare ddec data for noiseflood decryption".to_string(),
                     )?;
-                    let mut preparation = Small::new(session.clone());
+                    let session_parameters = session.to_parameters();
+                    let mut noiseflood_session = NoiseFloodSmallSession::new(session);
 
                     let pdec = partial_decrypt_using_noiseflooding(
-                        &mut session,
-                        &mut preparation,
+                        session_parameters,
+                        &mut noiseflood_session,
                         &keys.integer_server_key,
                         keys.sns_key
                             .as_ref()
@@ -185,7 +190,7 @@ impl<
                         "Could not prepare ddec data for bitdec decryption".to_string(),
                     )?;
 
-                    let pdec = partial_decrypt_using_bitdec(
+                    let pdec = secure_partial_decrypt_using_bitdec(
                         &mut session,
                         &low_level_ct.try_get_small_ct()?,
                         &keys.private_keys,

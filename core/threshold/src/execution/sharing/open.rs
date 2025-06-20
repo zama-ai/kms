@@ -1,5 +1,4 @@
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::collections::HashMap;
 use tokio::{task::JoinSet, time::error::Elapsed};
@@ -15,6 +14,7 @@ use crate::{
         runtime::{party::Role, session::BaseSessionHandles},
     },
     networking::value::NetworkValue,
+    ProtocolDescription,
 };
 
 use super::{
@@ -33,7 +33,7 @@ pub enum OpeningKind<Z> {
 }
 
 #[async_trait]
-pub trait RobustOpen: Send + Sync + Clone {
+pub trait RobustOpen: ProtocolDescription + Send + Sync + Clone {
     /// Inputs:
     /// - session
     /// - shares (wrapped inside [`OpeningKind`] to know who to open to) of the secrets to open
@@ -41,7 +41,7 @@ pub trait RobustOpen: Send + Sync + Clone {
     ///
     /// Output:
     /// - The reconstructed secrets if reconstruction for all was possible
-    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn execute<Z: ErrorCorrect, B: BaseSessionHandles>(
         &self,
         session: &B,
         shares: OpeningKind<Z>,
@@ -52,11 +52,7 @@ pub trait RobustOpen: Send + Sync + Clone {
     ///
     /// Opens a batch of secrets to designated parties
     #[instrument(name="RobustOpenTo",skip(self,session,shares),fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),num_receivers = ?shares.len()))]
-    async fn multi_robust_open_list_to<
-        Z: ErrorCorrect,
-        R: Rng + CryptoRng,
-        B: BaseSessionHandles<R>,
-    >(
+    async fn multi_robust_open_list_to<Z: ErrorCorrect, B: BaseSessionHandles>(
         &self,
         session: &B,
         shares: HashMap<Role, Vec<Z>>,
@@ -69,7 +65,7 @@ pub trait RobustOpen: Send + Sync + Clone {
     /// Blanket implementation that relies on [`Self::execute`]
     ///
     /// Opens a batch of secrets to a designated party
-    async fn robust_open_list_to<Z: ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn robust_open_list_to<Z: ErrorCorrect, B: BaseSessionHandles>(
         &self,
         session: &B,
         shares: Vec<Z>,
@@ -84,7 +80,7 @@ pub trait RobustOpen: Send + Sync + Clone {
     /// Blanket implementation that relies on [`Self::execute`]
     ///
     /// Opens a single secret to a designated party
-    async fn robust_open_to<Z: ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn robust_open_to<Z: ErrorCorrect, B: BaseSessionHandles>(
         &self,
         session: &B,
         share: Z,
@@ -113,11 +109,7 @@ pub trait RobustOpen: Send + Sync + Clone {
     /// Output:
     /// - The reconstructed secrets if reconstruction for all was possible
     #[instrument(name="RobustOpen",skip(self,session,shares),fields(sid= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
-    async fn robust_open_list_to_all<
-        Z: ErrorCorrect,
-        R: Rng + CryptoRng,
-        B: BaseSessionHandles<R>,
-    >(
+    async fn robust_open_list_to_all<Z: ErrorCorrect, B: BaseSessionHandles>(
         &self,
         session: &B,
         shares: Vec<Z>,
@@ -147,7 +139,7 @@ pub trait RobustOpen: Send + Sync + Clone {
     /// Blanket implementation that relies on [`Self::execute`]
     ///
     /// Opens a single secret to all the parties
-    async fn robust_open_to_all<Z: ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn robust_open_to_all<Z: ErrorCorrect, B: BaseSessionHandles>(
         &self,
         session: &B,
         share: Z,
@@ -166,16 +158,23 @@ pub trait RobustOpen: Send + Sync + Clone {
 #[derive(Default, Clone)]
 pub struct SecureRobustOpen {}
 
+impl ProtocolDescription for SecureRobustOpen {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-SecureRobustOpen", indent)
+    }
+}
+
 #[async_trait]
 impl RobustOpen for SecureRobustOpen {
-    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+    async fn execute<Z: ErrorCorrect, B: BaseSessionHandles>(
         &self,
         session: &B,
         shares: OpeningKind<Z>,
         degree: usize,
     ) -> anyhow::Result<Option<Vec<Z>>> {
         //Might need to chunk the opening into multiple ones due to network limits
-        let own_role = session.my_role()?;
+        let own_role = session.my_role();
 
         let shares_for_reconstruction = match shares {
             OpeningKind::ToSome(shares_map) => {
@@ -268,11 +267,7 @@ type ReconsFunc<Z> = fn(
 /// - degree as the degree of the secret sharing
 /// - max_num_errors as the max. number of errors we allow (this is session.threshold)
 /// - a set of jobs to receive the shares from the other parties
-async fn try_reconstruct_from_shares<
-    Z: ErrorCorrect,
-    R: Rng + CryptoRng,
-    B: BaseSessionHandles<R>,
->(
+async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
     session: &B,
     sharings: &mut [ShamirSharings<Z>],
     degree: usize,
@@ -380,12 +375,11 @@ pub(crate) mod test {
         let shares = secrets
             .iter()
             .map(|secret| {
-                ShamirSharings::share(&mut rng, *secret, num_parties, threshold)
-                    .unwrap()
-                    .shares
-                    .get(my_role.zero_based())
-                    .unwrap()
-                    .value()
+                let shamir_shares =
+                    ShamirSharings::share(&mut rng, *secret, num_parties, threshold)
+                        .unwrap()
+                        .shares;
+                my_role.get_from(&shamir_shares).unwrap().value()
             })
             .collect_vec();
         (secrets, shares)
@@ -410,7 +404,7 @@ pub(crate) mod test {
             let secure_robust_open = SecureRobustOpen::default();
             let (secrets, shares) = deterministically_compute_my_shares::<Z>(
                 num_secrets,
-                session.my_role().unwrap(),
+                session.my_role(),
                 session.num_parties(),
                 session.threshold() as usize,
                 42,
@@ -419,13 +413,13 @@ pub(crate) mod test {
                 .robust_open_list_to_all(&session, shares, session.threshold() as usize)
                 .await
                 .unwrap();
-            (session.my_role().unwrap(), secrets, result)
+            (session.my_role(), secrets, result)
         };
 
         let mut task_malicious = |session: SmallSession<Z>, malicious_robust_open: RO| async move {
             let (secrets, shares) = deterministically_compute_my_shares::<Z>(
                 num_secrets,
-                session.my_role().unwrap(),
+                session.my_role(),
                 session.num_parties(),
                 session.threshold() as usize,
                 42,
@@ -434,7 +428,7 @@ pub(crate) mod test {
                 .robust_open_list_to_all(&session, shares, session.threshold() as usize)
                 .await
                 .unwrap();
-            (session.my_role().unwrap(), secrets, result)
+            (session.my_role(), secrets, result)
         };
 
         let (results_honest, results_malicious) =

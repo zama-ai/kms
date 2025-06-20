@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::{fs, thread, time::Duration};
 use sysinfo::System;
-use test_utils::integration_test;
-use test_utils::persistent_traces;
+use tests_utils::integration_test;
+use tests_utils::persistent_traces;
 use threshold_fhe::conf::party::CertificatePaths;
 
 const KMS_SERVER: &str = "kms-server";

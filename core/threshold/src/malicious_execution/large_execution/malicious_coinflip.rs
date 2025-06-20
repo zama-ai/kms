@@ -1,4 +1,3 @@
-use rand::{CryptoRng, Rng};
 use tonic::async_trait;
 
 use crate::{
@@ -8,6 +7,7 @@ use crate::{
         runtime::session::LargeSessionHandles,
         sharing::open::RobustOpen,
     },
+    ProtocolDescription,
 };
 
 ///Performs the VSS and does nothing after that (returns its secret)
@@ -22,19 +22,26 @@ impl<V: Vss> DroppingCoinflipAfterVss<V> {
     }
 }
 
+impl<V: Vss> ProtocolDescription for DroppingCoinflipAfterVss<V> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-DroppingCoinflipAfterVss:\n{}",
+            indent,
+            V::protocol_desc(depth + 1)
+        )
+    }
+}
+
 #[async_trait]
 impl<V: Vss> Coinflip for DroppingCoinflipAfterVss<V> {
-    async fn execute<
-        Z: Ring + RingEmbed + ErrorCorrect,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute<Z: Ring + RingEmbed + ErrorCorrect, L: LargeSessionHandles>(
         &self,
         session: &mut L,
     ) -> anyhow::Result<Z> {
         let my_secret = Z::sample(session.rng());
 
-        let _ = self.vss.execute::<Z, R, L>(session, &my_secret).await?;
+        let _ = self.vss.execute::<Z, L>(session, &my_secret).await?;
 
         Ok(my_secret)
     }
@@ -45,6 +52,18 @@ impl<V: Vss> Coinflip for DroppingCoinflipAfterVss<V> {
 pub struct MaliciousCoinflipRecons<V: Vss, RO: RobustOpen> {
     vss: V,
     robust_open: RO,
+}
+
+impl<V: Vss, RO: RobustOpen> ProtocolDescription for MaliciousCoinflipRecons<V, RO> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-MaliciousCoinflipRecons:\n{}\n{}",
+            indent,
+            V::protocol_desc(depth + 1),
+            RO::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<V: Vss, RO: RobustOpen> MaliciousCoinflipRecons<V, RO> {
@@ -58,17 +77,13 @@ impl<V: Vss, RO: RobustOpen> MaliciousCoinflipRecons<V, RO> {
 
 #[async_trait]
 impl<V: Vss, RO: RobustOpen> Coinflip for MaliciousCoinflipRecons<V, RO> {
-    async fn execute<
-        Z: Ring + RingEmbed + ErrorCorrect,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute<Z: Ring + RingEmbed + ErrorCorrect, L: LargeSessionHandles>(
         &self,
         session: &mut L,
     ) -> anyhow::Result<Z> {
         let my_secret = Z::sample(session.rng());
 
-        let shares_of_contributions = self.vss.execute::<Z, R, L>(session, &my_secret).await?;
+        let shares_of_contributions = self.vss.execute::<Z, L>(session, &my_secret).await?;
 
         //Add an error to share_of_coins
         let mut share_of_coins = shares_of_contributions.into_iter().sum();

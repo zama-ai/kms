@@ -1,15 +1,15 @@
-use rand::{CryptoRng, Rng};
 use tonic::async_trait;
 
 use crate::{
     algebra::structure_traits::ErrorCorrect,
     execution::{
-        runtime::session::BaseSessionHandles,
+        runtime::{party::Role, session::BaseSessionHandles},
         small_execution::{
             agree_random::{AgreeRandom, AgreeRandomFromShare},
             prf::PrfKey,
         },
     },
+    ProtocolDescription,
 };
 
 // Malicious implementation of both [`AgreeRandom`] and [`AgreeRandomFromShare`]
@@ -17,9 +17,16 @@ use crate::{
 #[derive(Clone, Default)]
 pub struct MaliciousAgreeRandomDrop {}
 
+impl ProtocolDescription for MaliciousAgreeRandomDrop {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{}-MaliciousAgreeRandomDrop", indent)
+    }
+}
+
 #[async_trait]
 impl AgreeRandom for MaliciousAgreeRandomDrop {
-    async fn execute<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<S: BaseSessionHandles>(
         &self,
         _session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {
@@ -29,11 +36,11 @@ impl AgreeRandom for MaliciousAgreeRandomDrop {
 
 #[async_trait]
 impl AgreeRandomFromShare for MaliciousAgreeRandomDrop {
-    async fn execute<Z: ErrorCorrect, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: ErrorCorrect, S: BaseSessionHandles>(
         &self,
         _session: &mut S,
         _shares: Vec<Z>,
-        _all_party_sets: &[Vec<usize>],
+        _all_party_sets: &[Vec<Role>],
     ) -> anyhow::Result<Vec<PrfKey>> {
         Ok(Vec::new())
     }

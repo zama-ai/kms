@@ -14,9 +14,9 @@ use crate::{
         runtime::{party::Role, session::LargeSessionHandles},
     },
     tests::helper::tests_and_benches::roles_from_idxs,
+    ProtocolDescription,
 };
 use async_trait::async_trait;
-use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 
 /// Lie in broadcast as sender
@@ -26,6 +26,21 @@ pub struct MaliciousSenderLocalDoubleShare<C: Coinflip, S: ShareDispute, BCast: 
     share_dispute: S,
     broadcast: BCast,
     roles_to_lie_to: Vec<Role>,
+}
+
+impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
+    for MaliciousSenderLocalDoubleShare<C, S, BCast>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-MaliciousSenderLocalDoubleShare:\n{}\n{}\n{}",
+            indent,
+            C::protocol_desc(depth + 1),
+            S::protocol_desc(depth + 1),
+            BCast::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> MaliciousSenderLocalDoubleShare<C, S, BCast> {
@@ -53,6 +68,21 @@ pub struct MaliciousReceiverLocalDoubleShare<C: Coinflip, S: ShareDispute, BCast
     roles_to_lie_to: Vec<Role>,
 }
 
+impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
+    for MaliciousReceiverLocalDoubleShare<C, S, BCast>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-MaliciousReceiverLocalDoubleShare:\n{}\n{}\n{}",
+            indent,
+            C::protocol_desc(depth + 1),
+            S::protocol_desc(depth + 1),
+            BCast::protocol_desc(depth + 1)
+        )
+    }
+}
+
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast>
     MaliciousReceiverLocalDoubleShare<C, S, BCast>
 {
@@ -77,8 +107,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
 {
     async fn execute<
         Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
+        L: LargeSessionHandles,
     >(
         &self,
         session: &mut L,
@@ -100,7 +129,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
                 shared_secrets_double = self.share_dispute.execute_double(session, secrets).await?;
 
                 shared_pads =
-                    send_receive_pads_double::<Z, R, L, S>(session, &self.share_dispute).await?;
+                    send_receive_pads_double::<Z, L, S>(session, &self.share_dispute).await?;
 
                 x = self.coinflip.execute(session).await?;
 
@@ -158,8 +187,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
 {
     async fn execute<
         Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
+        L: LargeSessionHandles,
     >(
         &self,
         session: &mut L,
@@ -178,7 +206,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
                 shared_secrets_double = self.share_dispute.execute_double(session, secrets).await?;
 
                 shared_pads =
-                    send_receive_pads_double::<Z, R, L, S>(session, &self.share_dispute).await?;
+                    send_receive_pads_double::<Z, L, S>(session, &self.share_dispute).await?;
 
                 x = self.coinflip.execute(session).await?;
 

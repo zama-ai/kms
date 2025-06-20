@@ -9,9 +9,9 @@ use std::{
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
 use backoff::SystemClock;
-use conf_trace::telemetry::ContextPropagator;
 use gen::gnetworking_client::GnetworkingClient;
 use hyper_rustls::{FixedServerNameResolver, HttpsConnectorBuilder};
+use observability::telemetry::ContextPropagator;
 use serde::{Deserialize, Serialize};
 use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -103,10 +103,7 @@ impl GrpcSendingService {
         };
         tracing::debug!("Creating {} channel to '{}'", proto, receiver);
         let endpoint: Uri = format!("{}://{}", proto, receiver).parse().map_err(|_e| {
-            anyhow_error_and_log(format!(
-                "failed to parse identity as endpoint: {:?}",
-                receiver
-            ))
+            anyhow_error_and_log(format!("failed to parse identity as endpoint: {receiver}"))
         })?;
 
         let channel = match &self.tls_certs {
@@ -123,21 +120,30 @@ impl GrpcSendingService {
                 // This is because we could run the parties with the
                 // same IP address for all parties but using different ports,
                 // but we cannot map the port number to certificates.
-                let domain_name = match endpoint.host() {
-                    Some(host) => {
-                        if IpAddr::from_str(host).is_ok() {
-                            return Err(anyhow_error_and_log(format!(
-                                "{} is an IP address, which is not supported for TLS",
-                                host
-                            )));
-                        }
+                if IpAddr::from_str(&receiver.0).is_ok() {
+                    return Err(anyhow_error_and_log(format!(
+                        "{} is an IP address, which is not supported for TLS",
+                        receiver.0
+                    )));
+                }
+                let domain_name = ServerName::try_from(receiver.0.clone())?.to_owned();
 
-                        ServerName::try_from(host)?.to_owned()
-                    }
-                    None => {
-                        return Err(anyhow_error_and_log("hostname is missing in {endpoint}"));
-                    }
+                // If we have a list of trusted software hashes, we're running
+                // within the AWS Nitro enclave and we have to use vsock proxies
+                // to make TCP connections to peers.
+                let endpoint = if trusted_releases.is_some() {
+                    format!("https://localhost:{}", receiver.1)
+                        .parse::<Uri>()
+                        .map_err(|_e| {
+                            anyhow_error_and_log(format!(
+                                "failed to parse proxy identity with port: {}",
+                                receiver.1
+                            ))
+                        })?
+                } else {
+                    endpoint
                 };
+
                 // We put only one CA certificate into the root store
                 // so there's no risk of connecting to a wrong party.
                 let ca_cert = ca_certs.get(domain_name.to_str().as_ref()).ok_or_else(|| {
@@ -161,7 +167,7 @@ impl GrpcSendingService {
                     Some(trusted_releases) => {
                         tracing::warn!(
                             "Building TLS channel to {:?} with AWS Nitro attestation",
-                            endpoint.host()
+                            domain_name.to_str().as_ref()
                         );
                         let safe_server_cert_verifier =
                             WebPkiServerVerifier::builder(Arc::new(roots)).build()?;
@@ -182,7 +188,7 @@ impl GrpcSendingService {
                     None => {
                         tracing::warn!(
                             "Building TLS channel to {:?} without AWS Nitro attestation",
-                            endpoint.host()
+                            domain_name.to_str().as_ref()
                         );
                         ClientConfig::builder().with_root_certificates(roots)
                     }
@@ -590,10 +596,10 @@ mod tests {
     fn test_network_stack() {
         let sid = SessionId::from(0);
         let mut role_assignment = RoleAssignment::new();
-        let role_1 = Role::indexed_by_one(1);
-        let id_1 = Identity("localhost:6000".to_owned());
-        let role_2 = Role::indexed_by_one(2);
-        let id_2 = Identity("localhost:6001".to_owned());
+        let role_1 = Role::indexed_from_one(1);
+        let id_1 = Identity("localhost".to_string(), 6001);
+        let role_2 = Role::indexed_from_one(2);
+        let id_2 = Identity("localhost".to_string(), 6002);
         role_assignment.insert(role_1, id_1.clone());
         role_assignment.insert(role_2, id_2.clone());
 
@@ -606,7 +612,7 @@ mod tests {
             let role = *role;
             let id_1 = id_1.clone();
             let id_2 = id_2.clone();
-            let port_digit = role.zero_based();
+            let port_digit = role.one_based();
             let role_assignment = role_assignment.clone();
             handles.add(std::thread::spawn(move || {
                 let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -635,7 +641,7 @@ mod tests {
                 );
 
                 let (send, recv) = tokio::sync::oneshot::channel();
-                if role.zero_based() == 0 {
+                if role.one_based() == 1 {
                     tokio::spawn(async move {
                         let msg = vec![1u8; 10];
                         println!("Sending ONCE");
@@ -659,7 +665,7 @@ mod tests {
         }
 
         let id = id_2;
-        let port_digit = 1;
+        let port_digit = 2;
         handles.add(std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(5));
             let runtime = tokio::runtime::Runtime::new().unwrap();

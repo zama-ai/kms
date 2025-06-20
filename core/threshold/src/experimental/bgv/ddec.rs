@@ -61,15 +61,13 @@ fn partial_decrypt<N: Const + NTTConstants<LevelOne>>(
 #[instrument(name = "BGV.Threshold-Dec", skip_all,fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub(crate) async fn noise_flood_decryption<
     N: Clone + Const + NTTConstants<LevelOne>,
-    R: Rng + CryptoRng,
-    Prss: PRSSPrimitives<LevelOne>,
-    S: SmallSessionHandles<LevelOne, R, Prss>,
+    S: SmallSessionHandles<LevelOne>,
 >(
     session: &mut S,
     keyshares: &PrivateBgvKeySet,
     ciphertext: &LevelledCiphertext<LevelEll, N>,
 ) -> anyhow::Result<Vec<u32>> {
-    let own_role = session.my_role()?;
+    let own_role = session.my_role();
     let prss_state = session.prss_as_mut();
 
     let q = LevelOne {
@@ -139,7 +137,7 @@ pub fn keygen_shares<R: Rng + CryptoRng>(
         let mut field_index = LevelOne::ONE;
         for (party_id, shares_per_party) in all_shares.iter_mut().enumerate() {
             shares_per_party.sk.push(Share::new(
-                Role::indexed_by_zero(party_id),
+                Role::indexed_from_zero(party_id),
                 poly.eval(&field_index),
             ));
             field_index += LevelOne::ONE;
@@ -255,7 +253,7 @@ mod tests {
             let ksc = Arc::clone(&ntt_keyshares);
             let ctc = Arc::clone(&ct);
 
-            let own_role = Role::indexed_by_zero(index_id);
+            let own_role = Role::indexed_from_zero(index_id);
             let ntt_shares = ksc.as_ref()[index_id]
                 .iter()
                 .map(|ntt_val| Share::new(own_role, *ntt_val))
@@ -263,7 +261,7 @@ mod tests {
             let private_keyset = Arc::new(PrivateBgvKeySet::from_eval_domain(ntt_shares));
 
             set.spawn(async move {
-                let my_role = session.my_role().unwrap();
+                let my_role = session.my_role();
                 let m = noise_flood_decryption(&mut session, private_keyset.as_ref(), ctc.as_ref())
                     .await
                     .unwrap();

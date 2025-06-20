@@ -11,7 +11,6 @@ use crate::{
 };
 use anyhow::Context;
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
@@ -38,7 +37,7 @@ impl<R: Ring + Sync> Triple<R> {
 ///     [rho]       =[y]+[triple.b]
 ///     Open        [epsilon], [rho]
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
-pub async fn mult<Z: Ring + ErrorCorrect, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
+pub async fn mult<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     x: Share<Z>,
     y: Share<Z>,
     triple: Triple<Z>,
@@ -60,11 +59,7 @@ pub async fn mult<Z: Ring + ErrorCorrect, Rnd: Rng + CryptoRng, Ses: BaseSession
 ///     Open        [epsilon], [rho]
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
 #[instrument(name="MPC.Mult", skip(session,x_vec,y_vec,triples), fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?x_vec.len()))]
-pub async fn mult_list<
-    Z: Ring + ErrorCorrect,
-    Rnd: Rng + CryptoRng,
-    Ses: BaseSessionHandles<Rnd>,
->(
+pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     x_vec: &[Share<Z>],
     y_vec: &[Share<Z>],
     triples: Vec<Triple<Z>>,
@@ -133,7 +128,7 @@ pub async fn mult_list<
 }
 
 /// Opens a single secret
-pub async fn open<Z: Ring + ErrorCorrect, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
+pub async fn open<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     to_open: Share<Z>,
     session: &Ses,
 ) -> anyhow::Result<Z> {
@@ -148,11 +143,7 @@ pub async fn open<Z: Ring + ErrorCorrect, Rnd: Rng + CryptoRng, Ses: BaseSession
 
 /// Opens a list of secrets to all parties
 #[instrument(name="MPC.Open",skip(to_open, session),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?to_open.len()))]
-pub async fn open_list<
-    Z: Ring + ErrorCorrect,
-    Rnd: Rng + CryptoRng,
-    Ses: BaseSessionHandles<Rnd>,
->(
+pub async fn open_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     to_open: &[Share<Z>],
     session: &Ses,
 ) -> anyhow::Result<Vec<Z>> {
@@ -201,7 +192,6 @@ mod tests {
         networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_small,
     };
-    use aes_prng::AesRng;
     use paste::paste;
     use std::num::Wrapping;
 
@@ -214,7 +204,7 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     async fn task(session: SmallSession<$z>, _bot: Option<String>) -> Vec<$z> {
-                        let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
+                        let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
                         let cur_a = preprocessing.next_random().unwrap();
                         let cur_b = preprocessing.next_random().unwrap();
                         let trip = preprocessing.next_triple().unwrap();
@@ -251,7 +241,7 @@ mod tests {
                         Vec<$z>,
                         Vec<$z>,
                     ) {
-                        let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
+                        let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
                         let mut a_vec = Vec::with_capacity(AMOUNT);
                         let mut b_vec = Vec::with_capacity(AMOUNT);
                         let mut trip_vec = Vec::with_capacity(AMOUNT);
@@ -288,20 +278,20 @@ mod tests {
                 fn [<mult_party_drop_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
-                    let bad_role: Role = Role::indexed_by_one(4);
+                    let bad_role: Role = Role::indexed_from_one(4);
                     let mut task = |session: SmallSession<$z>, _bot: Option<String>| async move {
-                        if session.my_role().unwrap() != bad_role {
-                            let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
+                        if session.my_role() != bad_role {
+                            let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
                             let cur_a = preprocessing.next_random().unwrap();
                             let cur_b = preprocessing.next_random().unwrap();
                             let trip = preprocessing.next_triple().unwrap();
                             let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
                             (
-                                session.my_role().unwrap(),
+                                session.my_role(),
                                 open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap(),
                             )
                         } else {
-                            (session.my_role().unwrap(), Vec::new())
+                            (session.my_role(), Vec::new())
                         }
                     };
 
@@ -328,11 +318,11 @@ mod tests {
                 fn [<mult_wrong_value_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
-                    let bad_role: Role = Role::indexed_by_one(4);
+                    let bad_role: Role = Role::indexed_from_one(4);
                     let mut task = |session: SmallSession<$z>, _bot: Option<String>| async move {
-                        let mut preprocessing = DummyPreprocessing::<$z, AesRng, SmallSession<$z>>::new(42, session.clone());
+                        let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
                         let cur_a = preprocessing.next_random().unwrap();
-                        let cur_b = match session.my_role().unwrap() {
+                        let cur_b = match session.my_role() {
                             role if role == bad_role  => Share::new(bad_role, $z::from_scalar(Wrapping(42))),
                             _ => preprocessing.next_random().unwrap(),
                         };

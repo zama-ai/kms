@@ -13,10 +13,10 @@ use crate::{
         runtime::{party::Role, session::LargeSessionHandles},
     },
     tests::helper::tests_and_benches::roles_from_idxs,
+    ProtocolDescription,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 
 /// Lie in broadcast as sender
@@ -26,6 +26,21 @@ pub struct MaliciousSenderLocalSingleShare<C: Coinflip, S: ShareDispute, BCast: 
     share_dispute: S,
     broadcast: BCast,
     roles_to_lie_to: Vec<Role>,
+}
+
+impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
+    for MaliciousSenderLocalSingleShare<C, S, BCast>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-MaliciousSenderLocalSingleShare:\n{}\n{}\n{}",
+            indent,
+            C::protocol_desc(depth + 1),
+            S::protocol_desc(depth + 1),
+            BCast::protocol_desc(depth + 1)
+        )
+    }
 }
 
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> MaliciousSenderLocalSingleShare<C, S, BCast> {
@@ -50,8 +65,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
 {
     async fn execute<
         Z: Ring + RingEmbed + Derive + Invert + ErrorCorrect,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
+        L: LargeSessionHandles,
     >(
         &self,
         session: &mut L,
@@ -71,7 +85,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
                 //ShareDispute will fill shares from disputed parties with 0s
                 shared_secrets = self.share_dispute.execute(session, secrets).await?;
 
-                shared_pads = send_receive_pads::<Z, R, L, S>(session, &self.share_dispute).await?;
+                shared_pads = send_receive_pads::<Z, L, S>(session, &self.share_dispute).await?;
 
                 x = self.coinflip.execute(session).await?;
 
@@ -121,6 +135,21 @@ pub struct MaliciousReceiverLocalSingleShare<C: Coinflip, S: ShareDispute, BCast
     roles_to_lie_to: Vec<Role>,
 }
 
+impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> ProtocolDescription
+    for MaliciousReceiverLocalSingleShare<C, S, BCast>
+{
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!(
+            "{}-MaliciousReceiverLocalSingleShare:\n{}\n{}\n{}",
+            indent,
+            C::protocol_desc(depth + 1),
+            S::protocol_desc(depth + 1),
+            BCast::protocol_desc(depth + 1)
+        )
+    }
+}
+
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast>
     MaliciousReceiverLocalSingleShare<C, S, BCast>
 {
@@ -145,8 +174,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
 {
     async fn execute<
         Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
+        L: LargeSessionHandles,
     >(
         &self,
         session: &mut L,
@@ -166,7 +194,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
                 //ShareDispute will fill shares from disputed parties with 0s
                 shared_secrets = self.share_dispute.execute(session, secrets).await?;
 
-                shared_pads = send_receive_pads::<Z, R, L, S>(session, &self.share_dispute).await?;
+                shared_pads = send_receive_pads::<Z, L, S>(session, &self.share_dispute).await?;
 
                 x = self.coinflip.execute(session).await?;
 

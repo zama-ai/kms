@@ -1,5 +1,4 @@
 use itertools::{EitherOrBoth, Itertools};
-use rand::{CryptoRng, Rng};
 use tfhe::{
     boolean::prelude::LweDimension,
     core_crypto::{
@@ -88,8 +87,7 @@ pub(crate) fn opened_lwe_masks_bodies_to_tfhers_u64<Z: BaseRing>(
 pub(crate) async fn open_to_tfhers_type<
     Z: BaseRing,
     const EXTENSION_DEGREE: usize,
-    R: Rng + CryptoRng,
-    S: BaseSessionHandles<R>,
+    S: BaseSessionHandles,
 >(
     ciphertext_share_list: Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>,
     session: &S,
@@ -97,7 +95,7 @@ pub(crate) async fn open_to_tfhers_type<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let my_role = session.my_role()?;
+    let my_role = session.my_role();
 
     // Split the body and the mask, so that we can open the body which are initially secret shared
     let (masks, shared_bodies): (Vec<Vec<Z>>, Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>>) =
@@ -149,8 +147,7 @@ pub fn encrypt_lwe_ciphertext<Gen, Z, const EXTENSION_DEGREE: usize>(
     output: &mut LweCiphertextShare<Z, EXTENSION_DEGREE>,
     encoded: ResiduePoly<Z, EXTENSION_DEGREE>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
-) -> anyhow::Result<()>
-where
+) where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
@@ -171,29 +168,28 @@ where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
+    assert_eq!(
+        output.len(),
+        encoded.len(),
+        "Output and encoded must have the same length, got respectively {} and {}",
+        output.len(),
+        encoded.len()
+    );
+
     let gen_iter =
         generator.fork_lwe_list_to_lwe(LweCiphertextCount(output.len()), output[0].lwe_size())?;
 
-    for encoded_plaintext_ciphertext_loop_generator in encoded
-        .iter()
-        .zip_longest(output.iter_mut())
-        .zip_longest(gen_iter)
+    for ((encoded_plaintext, ciphertext), mut loop_generator) in
+        encoded.iter().zip_eq(output.iter_mut()).zip_eq(gen_iter)
     {
-        if let EitherOrBoth::Both(
-            EitherOrBoth::Both(encoded_plaintext, ciphertext),
-            mut loop_generator,
-        ) = encoded_plaintext_ciphertext_loop_generator
-        {
-            encrypt_lwe_ciphertext(
-                lwe_secret_key_share,
-                ciphertext,
-                *encoded_plaintext,
-                &mut loop_generator,
-            )?;
-        } else {
-            return Err(anyhow_error_and_log("zip error".to_string()));
-        }
+        encrypt_lwe_ciphertext(
+            lwe_secret_key_share,
+            ciphertext,
+            *encoded_plaintext,
+            &mut loop_generator,
+        );
     }
+
     Ok(())
 }
 
@@ -203,8 +199,7 @@ fn fill_lwe_mask_and_body_for_encryption<Z, Gen, const EXTENSION_DEGREE: usize>(
     output_body: &mut ResiduePoly<Z, EXTENSION_DEGREE>,
     encoded: ResiduePoly<Z, EXTENSION_DEGREE>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
-) -> anyhow::Result<()>
-where
+) where
     Gen: ByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
@@ -217,11 +212,10 @@ where
 
     //Compute the multisum betweem sk and mask
     let mask_key_dot_product =
-        slice_wrapping_dot_product(output_mask, &lwe_secret_key_share.data_as_raw_vec())?;
+        slice_wrapping_dot_product(output_mask, &lwe_secret_key_share.data_as_raw_vec());
 
     //Finish computing the body
     *output_body = mask_key_dot_product + noise + encoded;
-    Ok(())
 }
 
 ///Returns a tuple (number_of_triples, number_of_bits) required for mpc lwe encryption
@@ -294,7 +288,7 @@ mod tests {
         let num_key_bits = lwe_dimension;
 
         let mut task = |mut session: LargeSession| async move {
-            let my_role = session.my_role().unwrap();
+            let my_role = session.my_role();
             let encoded_message = ShamirSharings::share(
                 &mut AesRng::seed_from_u64(0),
                 ResiduePolyF4Z64::from_scalar(Wrapping(msg << scaling)),
@@ -302,10 +296,10 @@ mod tests {
                 session.threshold() as usize,
             )
             .unwrap()
-            .shares[my_role.zero_based()]
-            .value();
+            .shares[&my_role]
+                .value();
 
-            let mut large_preproc = DummyPreprocessing::new(seed as u64, session.clone());
+            let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             let lwe_secret_key_share = LweSecretKeyShare {
                 data: RealBitGenEven::gen_bits_even(num_key_bits, &mut large_preproc, &mut session)
@@ -336,8 +330,7 @@ mod tests {
                 &mut lwe_ctxt,
                 encoded_message,
                 &mut mpc_encryption_rng,
-            )
-            .unwrap();
+            );
             (my_role, lwe_secret_key_share, lwe_ctxt)
         };
 

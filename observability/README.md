@@ -15,7 +15,7 @@ Conf-trace is a library shared by multiple KMS services that provides configurat
 ## Tracing Setup
 
 ```rust
-use conf_trace::{conf::Tracing, telemetry};
+use observability::{conf::Tracing, telemetry};
 
 // Configure tracing with default settings
 let config = Tracing::builder()
@@ -47,7 +47,7 @@ let config = Tracing::builder()
 ### Making gRPC Requests
 
 ```rust
-use conf_trace::grpc::{build_request, RequestConfig};
+use observability::grpc::{build_request, RequestConfig};
 use tracing::{info_span, Instrument};
 
 // Basic request with automatic request ID
@@ -85,7 +85,7 @@ async fn process_request() -> Result<(), Error> {
 ### Environment-based Configuration
 
 ```rust
-use conf_trace::conf::{Settings, ExecutionEnvironment};
+use observability::conf::{Settings, ExecutionEnvironment};
 
 // Load configuration based on environment
 let settings = Settings::new(ExecutionEnvironment::Production);
@@ -134,7 +134,7 @@ match *ENVIRONMENT {
 
 ### Retry Configuration
 ```rust
-use conf_trace::conf::RetryConfig;
+use observability::conf::RetryConfig;
 
 let retry_config = RetryConfig::builder()
     .max_retries(3)
@@ -174,7 +174,7 @@ let retry_config = RetryConfig::builder()
 The library provides comprehensive error handling:
 
 ```rust
-use conf_trace::telemetry;
+use observability::telemetry;
 
 // Handle initialization errors
 if let Err(e) = telemetry::init_tracing(config).await {

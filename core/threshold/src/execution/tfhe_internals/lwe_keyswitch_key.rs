@@ -1,5 +1,6 @@
+use std::slice::IterMut;
+
 use itertools::Itertools;
-use rand::{CryptoRng, Rng};
 use tfhe::{
     core_crypto::{commons::parameters::LweSize, entities::LweKeyswitchKeyOwned},
     shortint::{
@@ -29,9 +30,7 @@ pub struct LweKeySwitchKeyShare<Z: BaseRing, const EXTENSION_DEGREE: usize> {
 }
 
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweKeySwitchKeyShare<Z, EXTENSION_DEGREE> {
-    pub fn iter_mut_levels(
-        &mut self,
-    ) -> impl Iterator<Item = &mut Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>> {
+    pub fn iter_mut_levels(&mut self) -> IterMut<Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>> {
         self.data.iter_mut()
     }
 
@@ -68,11 +67,11 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweKeySwitchKeyShare<Z, EXTENSI
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    pub async fn open_to_tfhers_type<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    pub async fn open_to_tfhers_type<S: BaseSessionHandles>(
         self,
         session: &S,
     ) -> anyhow::Result<LweKeyswitchKeyOwned<u64>> {
-        let my_role = session.my_role()?;
+        let my_role = session.my_role();
         let input_key_lwe_dimension = LweDimension(self.data.len());
 
         let shared_bodies: Vec<_> = self

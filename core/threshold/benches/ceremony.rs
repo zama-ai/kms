@@ -57,10 +57,10 @@ fn bench_ceremony(c: &mut Criterion) {
                         set.spawn(async move {
                             let real_ceremony = SecureCeremony::default();
                             let out = real_ceremony
-                                .execute::<ResiduePolyF8Z64, _, _>(&mut session, dim, None)
+                                .execute::<ResiduePolyF8Z64, _>(&mut session, dim, None)
                                 .await
                                 .unwrap();
-                            (session.my_role().unwrap(), out)
+                            (session.my_role(), out)
                         });
                     }
 
@@ -75,7 +75,7 @@ fn bench_ceremony(c: &mut Criterion) {
                         })
                         .into_iter()
                         .collect_vec();
-                    let buf = bc2wrap::serialize(&results[0].1).unwrap();
+                    let buf = bc2wrap::serialize(&results[0].1.inner).unwrap();
                     tracing::info!("crs bytes: {}", buf.len());
                 });
             },

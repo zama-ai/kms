@@ -26,7 +26,7 @@ impl BGVTestRuntime {
             .clone()
             .into_iter()
             .enumerate()
-            .map(|(role_id, identity)| (Role::indexed_by_zero(role_id), identity))
+            .map(|(role_id, identity)| (Role::indexed_from_zero(role_id), identity))
             .collect();
 
         let net_producer = LocalNetworkingProducer::from_ids(&identities);

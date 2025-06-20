@@ -47,7 +47,7 @@ jobs:
           repository: 'zama-zws/zws-gitops'
           ref: ${{ inputs.branch-name }}
           token: ${{ secrets.ZWS_BOT_TOKEN }}
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Change image tag
         uses: mikefarah/yq@8bf425b4d1344db7cd469a8d10a390876e0c77fd  # v4.45.1
@@ -57,7 +57,8 @@ jobs:
           APPLICATION_IMAGE: ${{ inputs.application-image }}
           DOCKER_TAG: ${{ inputs.image-tag }}
         with:
-          cmd: yq -i '."${APPLICATION_IMAGE}".image.tag = "${DOCKER_TAG}"' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
+          cmd: |
+            pathEnv=".${APPLICATION_IMAGE}.image.tag"  valueEnv="${DOCKER_TAG}" yq -i 'eval(strenv(pathEnv)) = strenv(valueEnv)' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
 
       - name: Add enclave deployment
         if: ${{ inputs.enclave-deployment }}
@@ -70,10 +71,10 @@ jobs:
           ENCLAVE_PCR2: ${{ inputs.enclave-pcr2 }}
         with:
           cmd: |
-            yq -i '.kmsParties.awsKms.recipientAttestationImageSHA384 = $ENCLAVE_PCR0' ./values/${ARGOCD_NAMESPACE}/tkms-infra/values.yaml
-            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr0 = $ENCLAVE_PCR0' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
-            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr1 = $ENCLAVE_PCR1' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
-            yq -i '.kmsCore.thresholdMode.tls.trusted_releases[0].pcr2 = $ENCLAVE_PCR2' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
+            pathEnv=".kmsParties.awsKms.recipientAttestationImageSHA384"  valueEnv="${ENCLAVE_PCR0}" yq -i 'eval(strenv(pathEnv)) = strenv(valueEnv)' ./values/${ARGOCD_NAMESPACE}/tkms-infra/values.yaml
+            pathEnv=".kmsCore.thresholdMode.tls.trustedReleases[0].pcr0"  valueEnv="${ENCLAVE_PCR0}" yq -i 'eval(strenv(pathEnv)) = strenv(valueEnv)' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
+            pathEnv=".kmsCore.thresholdMode.tls.trustedReleases[0].pcr1"  valueEnv="${ENCLAVE_PCR1}" yq -i 'eval(strenv(pathEnv)) = strenv(valueEnv)' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
+            pathEnv=".kmsCore.thresholdMode.tls.trustedReleases[0].pcr2"  valueEnv="${ENCLAVE_PCR2}" yq -i 'eval(strenv(pathEnv)) = strenv(valueEnv)' ./values/${ARGOCD_NAMESPACE}/${ARGOCD_APP_NAME}/values-${ARGOCD_NAMESPACE}.yaml
 
       - name: Commit and push to gitops repository
         env:
