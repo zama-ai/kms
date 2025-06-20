@@ -1,4 +1,7 @@
-use super::{decrypt_under_data_key, encrypt_under_data_key, AppKeyBlob, Keychain};
+use super::{
+    decrypt_under_data_key, encrypt_under_data_key, AppKeyBlob, EnvelopeLoad, EnvelopeStore,
+    Keychain,
+};
 use crate::{
     anyhow_error_and_log, consts::SAFE_SER_SIZE_LIMIT, cryptography::attestation::SecurityModule,
     some_or_err,
@@ -19,6 +22,7 @@ use aws_sdk_kms::{
 };
 use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
 use hyper_rustls::HttpsConnectorBuilder;
+use kms_grpc::RequestId;
 #[cfg(feature = "non-wasm")]
 use rand::rngs::OsRng;
 use rasn::{
@@ -36,9 +40,10 @@ use rsa::{
     Oaep, RsaPrivateKey, RsaPublicKey,
 };
 use serde::{de::DeserializeOwned, Serialize};
+use std::collections::BTreeSet;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
-use tfhe::{named::Named, Unversionize};
-use tfhe_versionable::Versionize;
+use tfhe::{named::Named, Unversionize, Versionize};
+use threshold_fhe::execution::runtime::party::Role;
 use url::Url;
 
 // recipient enclave RSA keypair size
@@ -187,15 +192,20 @@ impl<S: SecurityModule, K: RootKey> AWSKMSKeychain<S, K> {
     }
 }
 
-#[tonic::async_trait]
-impl<S: SecurityModule + Sync> Keychain for AWSKMSKeychain<S, Symm> {
+//#[tonic::async_trait]
+impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Symm> {
+    fn envelope_share_ids(&self) -> Option<BTreeSet<Role>> {
+        None::<BTreeSet<Role>>
+    }
+
     /// Request a data key from AWS KMS and encrypt an application key (such as the FHE private key) on
     /// it. Stores a copy of the data key encrypted on the root key (stored in AWS KMS) together with
     /// the encrypted application key.
     async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
-        &self,
+        &mut self,
+        _payload_id: &RequestId,
         payload: &T,
-    ) -> anyhow::Result<AppKeyBlob> {
+    ) -> anyhow::Result<EnvelopeStore> {
         // request enclave attestation before making an AWS KMS request, so the
         // attestation is fresh and not older than 5 minutes
         let attestation = self
@@ -234,7 +244,7 @@ impl<S: SecurityModule + Sync> Keychain for AWSKMSKeychain<S, Symm> {
         safe_serialize(payload, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
         let iv = self.security_module.get_random(APP_BLOB_NONCE_SIZE).await?;
         let auth_tag = encrypt_under_data_key(&mut blob_bytes, &data_key, &iv)?;
-        Ok(AppKeyBlob {
+        Ok(EnvelopeStore::AppKeyBlob(AppKeyBlob {
             root_key_id: self.root_key.key_id.to_string(),
             data_key_blob: some_or_err(
                 gen_data_key_response.ciphertext_blob,
@@ -245,23 +255,36 @@ impl<S: SecurityModule + Sync> Keychain for AWSKMSKeychain<S, Symm> {
             ciphertext: blob_bytes,
             iv,
             auth_tag,
-        })
+        }))
     }
 
     async fn decrypt<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
-        envelope: &mut AppKeyBlob,
+        _payload_id: &RequestId,
+        envelope: &mut EnvelopeLoad,
     ) -> anyhow::Result<T> {
-        AWSKMSKeychain::<S, Symm>::decrypt(self, envelope).await
+        AWSKMSKeychain::<S, Symm>::decrypt(
+            self,
+            &mut envelope
+                .clone()
+                .try_as_app_key_blob()
+                .ok_or(anyhow_error_and_log("Expected single share encrypted data"))?,
+        )
+        .await
     }
 }
 
-#[tonic::async_trait]
-impl<S: SecurityModule + Sync> Keychain for AWSKMSKeychain<S, Asymm> {
+//#[tonic::async_trait]
+impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Asymm> {
+    fn envelope_share_ids(&self) -> Option<BTreeSet<Role>> {
+        None::<BTreeSet<Role>>
+    }
+
     async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
-        &self,
+        &mut self,
+        _payload_id: &RequestId,
         payload: &T,
-    ) -> anyhow::Result<AppKeyBlob> {
+    ) -> anyhow::Result<EnvelopeStore> {
         // generate a fresh data key
         let data_key = self.security_module.get_random(Aes256::key_size()).await?;
         let enc_data_key = self
@@ -275,20 +298,30 @@ impl<S: SecurityModule + Sync> Keychain for AWSKMSKeychain<S, Asymm> {
         safe_serialize(payload, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
         let iv = self.security_module.get_random(APP_BLOB_NONCE_SIZE).await?;
         let auth_tag = encrypt_under_data_key(&mut blob_bytes, &data_key, &iv)?;
-        Ok(AppKeyBlob {
+        Ok(EnvelopeStore::AppKeyBlob(AppKeyBlob {
             root_key_id: self.root_key.key_id.clone(),
             data_key_blob: enc_data_key,
             ciphertext: blob_bytes,
             iv,
             auth_tag,
-        })
+        }))
     }
 
     async fn decrypt<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
-        envelope: &mut AppKeyBlob,
+        _payload_id: &RequestId,
+        envelope: &mut EnvelopeLoad,
     ) -> anyhow::Result<T> {
-        AWSKMSKeychain::<S, Asymm>::decrypt(self, envelope).await
+        AWSKMSKeychain::<S, Asymm>::decrypt(
+            self,
+            &mut envelope
+                .clone()
+                .try_as_app_key_blob()
+                .ok_or(anyhow_error_and_log(
+                    "Expected single share encrypted value",
+                ))?,
+        )
+        .await
     }
 }
 

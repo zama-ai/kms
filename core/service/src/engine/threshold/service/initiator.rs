@@ -217,6 +217,7 @@ mod tests {
         util::key_setup::test_tools::purge,
         vault::storage::{file::FileStorage, StorageType},
     };
+    use threshold_fhe::execution::runtime::party::Role;
 
     #[tokio::test]
     #[serial_test::serial]
@@ -225,24 +226,26 @@ mod tests {
         let mut pub_storage = Vec::new();
         let mut priv_storage = Vec::new();
         for i in 1..=DEFAULT_AMOUNT_PARTIES {
-            let cur_pub = FileStorage::new(None, StorageType::PUB, Some(i)).unwrap();
+            let cur_pub =
+                FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap();
             pub_storage.push(cur_pub);
-            let cur_priv = FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap();
+            let cur_priv =
+                FileStorage::new(None, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap();
 
             // make sure the store does not contain any PRSS info (currently stored under ID 1)
-            let req_id = &derive_request_id(&format!(
+            let req_id = derive_request_id(&format!(
                 "PRSSSetup_Z128_ID_{}_{}_{}",
                 PRSS_INIT_REQ_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
             ))
             .unwrap();
-            purge(None, None, &req_id.to_string(), DEFAULT_AMOUNT_PARTIES).await;
+            purge(None, None, &req_id, DEFAULT_AMOUNT_PARTIES).await;
 
-            let req_id = &derive_request_id(&format!(
+            let req_id = derive_request_id(&format!(
                 "PRSSSetup_Z64_ID_{}_{}_{}",
                 PRSS_INIT_REQ_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
             ))
             .unwrap();
-            purge(None, None, &req_id.to_string(), DEFAULT_AMOUNT_PARTIES).await;
+            purge(None, None, &req_id, DEFAULT_AMOUNT_PARTIES).await;
 
             priv_storage.push(cur_priv);
         }

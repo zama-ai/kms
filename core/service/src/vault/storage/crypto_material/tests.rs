@@ -29,7 +29,7 @@ use crate::{
             CentralizedCryptoMaterialStorage, CryptoMaterialStorage, ThresholdCryptoMaterialStorage,
         },
         ram::{FailingRamStorage, RamStorage},
-        store_pk_at_request_id, StorageType,
+        store_pk_at_request_id,
     },
 };
 
@@ -38,10 +38,10 @@ use crate::{
 async fn write_crs() {
     // write the CRS, first try with storage that are functional
     // then try to write into a failing storage and expect an error
-    let pub_storage = Arc::new(Mutex::new(FailingRamStorage::new(StorageType::PUB, 100)));
+    let pub_storage = Arc::new(Mutex::new(FailingRamStorage::new(100)));
     let crypto_storage = CryptoMaterialStorage {
         public_storage: pub_storage.clone(),
-        private_storage: Arc::new(Mutex::new(RamStorage::new(StorageType::PRIV))),
+        private_storage: Arc::new(Mutex::new(RamStorage::new())),
         backup_storage: None as Option<Arc<Mutex<RamStorage>>>,
         pk_cache: Arc::new(RwLock::new(HashMap::new())),
     };
@@ -101,8 +101,8 @@ async fn read_public_key() {
     // it doens't matter if we use centralized or threshold
     // the public key reading logic is the same
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
-        FailingRamStorage::new(StorageType::PUB, 100),
-        RamStorage::new(StorageType::PUB),
+        FailingRamStorage::new(100),
+        RamStorage::new(),
         None as Option<RamStorage>,
         HashMap::new(),
         HashMap::new(),
@@ -140,8 +140,8 @@ async fn read_public_key() {
 async fn write_central_keys() {
     let param = TEST_PARAM;
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
-        FailingRamStorage::new(StorageType::PUB, 100),
-        RamStorage::new(StorageType::PUB),
+        FailingRamStorage::new(100),
+        RamStorage::new(),
         None as Option<RamStorage>,
         HashMap::new(),
         HashMap::new(),
@@ -427,8 +427,8 @@ fn setup_threshold_store() -> (
     FhePubKeySet,
 ) {
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
-        FailingRamStorage::new(StorageType::PUB, 100),
-        RamStorage::new(StorageType::PUB),
+        FailingRamStorage::new(100),
+        RamStorage::new(),
         None as Option<RamStorage>,
         HashMap::new(),
         HashMap::new(),

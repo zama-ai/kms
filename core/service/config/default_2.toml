@@ -10,11 +10,15 @@ grpc_max_message_size = 104857600 # 100 MiB
 region = "us-east-1"
 s3_endpoint = "http://dev-s3-mock:9000"
 
-[public_vault]
-storage = "file://./keys"
+[public_vault.storage.file]
+path = "./keys"
 
-[private_vault]
-storage = "file://./keys"
+[private_vault.storage.file]
+path = "./keys"
+
+[private_vault.keychain.aws_kms]
+root_key_id = "root_key_id"
+root_key_spec = "symm"
 
 [threshold]
 listen_address = "0.0.0.0"

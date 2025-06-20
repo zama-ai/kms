@@ -1,38 +1,54 @@
 use crate::util::rate_limiter::RateLimiterConfig;
 
 use self::threshold::ThresholdPartyConf;
+use clap::ValueEnum;
 use observability::{
     conf::{Settings, TelemetryConfig},
     telemetry::{init_telemetry, SdkMeterProvider, SdkTracerProvider},
 };
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use strum_macros::EnumIs;
 use url::Url;
+use validator::{Validate, ValidationErrors};
 
 pub mod threshold;
 
 /// Common configuration parameters that should be set in all scenarios
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct CoreConfig {
+    #[validate(nested)]
     pub service: ServiceEndpoint,
+    #[validate(nested)]
     pub telemetry: Option<TelemetryConfig>,
+    #[validate(nested)]
     pub aws: Option<AWSConfig>,
+    #[validate(nested)]
     pub public_vault: Option<VaultConfig>,
+    #[validate(nested)]
     pub private_vault: Option<VaultConfig>,
+    #[validate(nested)]
     pub backup_vault: Option<VaultConfig>,
+    #[validate(nested)]
     pub rate_limiter_conf: Option<RateLimiterConfig>,
+    #[validate(nested)]
     pub threshold: Option<ThresholdPartyConf>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceEndpoint {
     // gRPC endpoint for incoming client requests
+    #[validate(length(min = 1))]
     pub listen_address: String,
+    #[validate(range(min = 1, max = 65535))]
     pub listen_port: u16,
     // gRPC request timeout
+    #[validate(range(min = 1))]
     pub timeout_secs: u64,
     // maximum gRPC message size in bytes
+    #[validate(range(min = 1, max = 2147483647))]
     pub grpc_max_message_size: usize,
 }
 
@@ -46,265 +62,14 @@ impl ConfigTracing for CoreConfig {
     }
 }
 
-pub trait ValidateConfig {
-    /// Validates the configuration parameters.
-    fn validate(&self) -> anyhow::Result<()>;
-}
-
-impl ValidateConfig for ThresholdPartyConf {
-    fn validate(&self) -> anyhow::Result<()> {
-        let num_parties = self.peers.len(); // I am in the peer list myself, so num_parties is the length of the peers list
-
-        if self.listen_address.is_empty() {
-            return Err(anyhow::anyhow!("Threshold listen address cannot be empty"));
-        }
-        if self.listen_port == 0 {
-            return Err(anyhow::anyhow!("Threshold listen port cannot be zero"));
-        }
-        if self.threshold == 0 {
-            return Err(anyhow::anyhow!("Threshold must be greater than zero"));
-        }
-        // We assume for now that 3 * threshold + 1 == num_parties.
-        // Note: this might change in the future
-        if 3 * self.threshold as usize + 1 != num_parties {
-            return Err(anyhow::anyhow!(
-                    "3*t+1 must be equal to number of parties. Got t={} but expected t={} for n={} parties",
-                    self.threshold,
-                    (num_parties - 1) / 3,
-                    num_parties
-                ));
-        }
-        if self.my_id == 0 || self.my_id > num_parties {
-            return Err(anyhow::anyhow!(
-                "Party ID must be greater than 0 and cannot be greater than the number of parties ({}), but was {}.",
-                num_parties,
-                self.my_id,
-            ));
-        }
-
-        // check peer config
-        for peer in &self.peers {
-            if peer.address.is_empty() {
-                return Err(anyhow::anyhow!("Peer address cannot be empty"));
-            }
-            if peer.port == 0 {
-                return Err(anyhow::anyhow!("Peer port cannot be zero"));
-            }
-            if peer.party_id == 0 || peer.party_id > num_parties {
-                return Err(anyhow::anyhow!(
-                    "Peer party ID must be greater than 0 and cannot be greater than the number of parties ({}), but was {}.",
-                    num_parties,
-                    peer.party_id,
-                ));
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl ValidateConfig for AWSConfig {
-    fn validate(&self) -> anyhow::Result<()> {
-        if self.region.is_empty() {
-            return Err(anyhow::anyhow!("AWS region cannot be empty"));
-        }
-        if self.role_arn.as_ref().is_some_and(|r| r.is_empty()) {
-            return Err(anyhow::anyhow!("AWS role ARN cannot be empty if provided"));
-        }
-        if self
-            .imds_endpoint
-            .as_ref()
-            .is_some_and(|u| u.as_str().is_empty())
-        {
-            return Err(anyhow::anyhow!("IMDS endpoint cannot be empty if provided"));
-        }
-        if self
-            .sts_endpoint
-            .as_ref()
-            .is_some_and(|u| u.as_str().is_empty())
-        {
-            return Err(anyhow::anyhow!("STS endpoint cannot be empty if provided"));
-        }
-        if self
-            .s3_endpoint
-            .as_ref()
-            .is_some_and(|u| u.as_str().is_empty())
-        {
-            return Err(anyhow::anyhow!("S3 endpoint cannot be empty if provided"));
-        }
-        if self
-            .awskms_endpoint
-            .as_ref()
-            .is_some_and(|u| u.as_str().is_empty())
-        {
-            return Err(anyhow::anyhow!(
-                "AWS KMS endpoint cannot be empty if provided"
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl ValidateConfig for TelemetryConfig {
-    fn validate(&self) -> anyhow::Result<()> {
-        if self
-            .tracing_service_name
-            .as_ref()
-            .is_some_and(|s| s.is_empty())
-        {
-            return Err(anyhow::anyhow!(
-                "Tracing service name cannot be empty if provided"
-            ));
-        }
-
-        if self.tracing_endpoint.as_ref().is_some_and(|u| u.is_empty()) {
-            return Err(anyhow::anyhow!(
-                "Tracing endpoint cannot be empty if provided"
-            ));
-        }
-
-        if self
-            .metrics_bind_address
-            .as_ref()
-            .is_some_and(|s| s.is_empty())
-        {
-            return Err(anyhow::anyhow!(
-                "Metrics bind address cannot be empty if provided"
-            ));
-        }
-
-        if self
-            .tracing_otlp_timeout_ms
-            .as_ref()
-            .is_some_and(|t| *t == 0)
-        {
-            return Err(anyhow::anyhow!(
-                "Tracing OTLP timeout cannot be zero if provided"
-            ));
-        }
-
-        Ok(())
-    }
-}
-
-impl ValidateConfig for RateLimiterConfig {
-    fn validate(&self) -> anyhow::Result<()> {
-        if self.bucket_size == 0 {
-            return Err(anyhow::anyhow!("Rate limiter bucket size cannot be zero"));
-        }
-        if self.pub_decrypt == 0 {
-            return Err(anyhow::anyhow!(
-                "Rate limiter: public decryption cost cannot be zero"
-            ));
-        }
-        if self.user_decrypt == 0 {
-            return Err(anyhow::anyhow!(
-                "Rate limiter: user decryption cost cannot be zero"
-            ));
-        }
-        if self.crsgen == 0 {
-            return Err(anyhow::anyhow!(
-                "Rate limiter: CRS generation cost cannot be zero"
-            ));
-        }
-        if self.keygen == 0 {
-            return Err(anyhow::anyhow!(
-                "Rate limiter: key generation cost cannot be zero"
-            ));
-        }
-        if self.preproc == 0 {
-            return Err(anyhow::anyhow!(
-                "Rate limiter: pre-processing cost cannot be zero"
-            ));
-        }
-
-        Ok(())
-    }
-}
-
-impl ValidateConfig for VaultConfig {
-    fn validate(&self) -> anyhow::Result<()> {
-        if self.storage.as_str().is_empty() {
-            return Err(anyhow::anyhow!("Vault storage URL cannot be empty"));
-        }
-        if self.storage_cache_size.is_some_and(|s| s == 0) {
-            return Err(anyhow::anyhow!("Vault storage cache size cannot be zero"));
-        }
-        if self
-            .keychain
-            .as_ref()
-            .is_some_and(|k| k.as_str().is_empty())
-        {
-            return Err(anyhow::anyhow!(
-                "Vault keychain URL cannot be empty if provided"
-            ));
-        }
-
-        Ok(())
-    }
-}
-
-impl ValidateConfig for CoreConfig {
-    fn validate(&self) -> anyhow::Result<()> {
-        if self.service.listen_address.is_empty() {
-            return Err(anyhow::anyhow!("Service listen address cannot be empty"));
-        }
-        if self.service.listen_port == 0 {
-            return Err(anyhow::anyhow!("Service listen port cannot be zero"));
-        }
-        if self.service.timeout_secs == 0 {
-            return Err(anyhow::anyhow!("Service timeout seconds cannot be zero"));
-        }
-        if self.service.grpc_max_message_size == 0 {
-            return Err(anyhow::anyhow!("gRPC max message size cannot be zero"));
-        }
-
-        // if we have a threshold configuration (i.e. not a centralized KMS), validate the threshold config
-        if let Some(threshold_party_config) = &self.threshold {
-            threshold_party_config.validate()?;
-        }
-
-        // Validate rate limiter configuration if provided
-        if let Some(rate_limiter_conf) = &self.rate_limiter_conf {
-            rate_limiter_conf.validate()?;
-        }
-
-        // Validate AWS configuration if provided
-        if let Some(aws_config) = &self.aws {
-            aws_config.validate()?;
-        }
-
-        // Validate telemetry configuration if provided
-        if let Some(telemetry) = &self.telemetry {
-            telemetry.validate()?;
-        }
-
-        // Validate private vault configuration if provided
-        if let Some(private_vault) = &self.private_vault {
-            private_vault.validate()?;
-        }
-
-        // Validate public vault configuration if provided
-        if let Some(public_vault) = &self.public_vault {
-            public_vault.validate()?;
-        }
-
-        // Validate backup vault configuration if provided
-        if let Some(backup_vault) = &self.backup_vault {
-            backup_vault.validate()?;
-        }
-
-        // Config is if we reach this point
-        Ok(())
-    }
-}
-
 /// Override AWS configuration when running in Nitro enclaves or in test
 /// environments
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct AWSConfig {
+    #[validate(length(min = 1))]
     pub region: String,
+    #[validate(length(min = 1))]
     pub role_arn: Option<String>,
     pub imds_endpoint: Option<Url>,
     pub sts_endpoint: Option<Url>,
@@ -313,12 +78,96 @@ pub struct AWSConfig {
 }
 
 /// Where and how to store the key material
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct VaultConfig {
-    pub storage: Url,
+    pub storage: Storage,
+    #[validate(range(min = 1))]
     pub storage_cache_size: Option<usize>,
-    pub keychain: Option<Url>,
+    #[validate(nested)]
+    pub keychain: Option<Keychain>,
+}
+
+/// How to store the key material
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, EnumIs)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub enum Storage {
+    Ram(RamStorage),
+    File(FileStorage),
+    S3(S3Storage),
+}
+
+impl Validate for Storage {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        match self {
+            Storage::Ram(_) => Ok(()),
+            Storage::File(s) => s.validate(),
+            Storage::S3(s) => s.validate(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct RamStorage {}
+
+#[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct FileStorage {
+    pub path: PathBuf,
+}
+
+#[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct S3Storage {
+    #[validate(length(min = 1))]
+    pub bucket: String,
+    #[validate(length(min = 1))]
+    pub prefix: Option<String>,
+}
+
+/// How to encrypt the key material
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, EnumIs)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub enum Keychain {
+    AwsKms(AwsKmsKeychain),
+    SecretSharing(SecretSharingKeychain),
+}
+
+/// derive(Validate) doesn't work on enums because the author of `validator` is
+/// too lazy to implement it, so we have to define a struct for each enum
+/// variant by hand and then write these trivial Validate instances by hand
+/// because `enum_dispatch` doesn't work on imported traits
+impl Validate for Keychain {
+    fn validate(&self) -> Result<(), ValidationErrors> {
+        match self {
+            Keychain::AwsKms(k) => k.validate(),
+            Keychain::SecretSharing(k) => k.validate(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct AwsKmsKeychain {
+    #[validate(length(min = 1))]
+    pub root_key_id: String,
+    pub root_key_spec: AwsKmsKeySpec,
+}
+
+#[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct SecretSharingKeychain {
+    pub custodian_keys: Vec<threshold::TlsKey>,
+    #[validate(range(min = 1))]
+    pub threshold: usize,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, EnumIs, ValueEnum)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub enum AwsKmsKeySpec {
+    Symm,
+    Asymm,
 }
 
 /// Initialize the configuration from the given file.
@@ -334,7 +183,7 @@ pub fn init_conf<'a, T: Deserialize<'a> + std::fmt::Debug>(config_file: &str) ->
 /// Initialize and validate the configuration from the given file and initialize tracing.
 pub async fn init_conf_kms_core_telemetry<
     'a,
-    T: Deserialize<'a> + std::fmt::Debug + ConfigTracing + ValidateConfig,
+    T: Deserialize<'a> + std::fmt::Debug + ConfigTracing + Validate,
 >(
     config_file: &str,
 ) -> anyhow::Result<(T, SdkTracerProvider, SdkMeterProvider)> {
@@ -370,13 +219,13 @@ mod tests {
 
     #[test]
     fn test_threshold_config() {
-        let core_config: CoreConfig = init_conf("config/default_1").unwrap();
+        let core_config: CoreConfig = init_conf("config/default_2").unwrap();
         core_config.validate().unwrap();
         let threshold_config = core_config.threshold.unwrap();
         assert_eq!(core_config.service.listen_address, "0.0.0.0");
-        assert_eq!(core_config.service.listen_port, 50100);
+        assert_eq!(core_config.service.listen_port, 50200);
         assert_eq!(threshold_config.listen_address, "0.0.0.0");
-        assert_eq!(threshold_config.listen_port, 50001);
+        assert_eq!(threshold_config.listen_port, 50002);
         assert_eq!(threshold_config.threshold, 1);
         assert_eq!(threshold_config.num_sessions_preproc, Some(2));
 
@@ -415,18 +264,32 @@ mod tests {
         assert_eq!(
             tls_config,
             TlsConf::Manual {
-                cert: TlsCert::Path(PathBuf::from(r"certs/cert_p1.pem")),
-                key: TlsKey::Path(PathBuf::from(r"certs/key_p1.pem")),
+                cert: TlsCert::Path(PathBuf::from(r"certs/cert_p2.pem")),
+                key: TlsKey::Path(PathBuf::from(r"certs/key_p2.pem")),
             }
         );
 
+        let private_vault = core_config.private_vault.unwrap();
+
         assert_eq!(
-            core_config.private_vault.unwrap().storage,
-            Url::parse("file://./keys").unwrap()
+            private_vault.storage,
+            Storage::File(FileStorage {
+                path: PathBuf::from("./keys")
+            })
         );
         assert_eq!(
+            private_vault.keychain,
+            Some(Keychain::AwsKms(AwsKmsKeychain {
+                root_key_id: "root_key_id".to_string(),
+                root_key_spec: AwsKmsKeySpec::Symm
+            }))
+        );
+
+        assert_eq!(
             core_config.public_vault.unwrap().storage,
-            Url::parse("file://./keys").unwrap()
+            Storage::File(FileStorage {
+                path: PathBuf::from("./keys")
+            })
         );
 
         assert_eq!(
@@ -456,11 +319,18 @@ mod tests {
 
         let private_vault = core_config.private_vault.unwrap();
 
-        assert_eq!(private_vault.storage, Url::parse("file://./keys").unwrap());
+        assert_eq!(
+            private_vault.storage,
+            Storage::File(FileStorage {
+                path: PathBuf::from("./keys"),
+            })
+        );
         assert!(private_vault.keychain.is_none());
         assert_eq!(
             core_config.public_vault.unwrap().storage,
-            Url::parse("file://./keys").unwrap()
+            Storage::File(FileStorage {
+                path: PathBuf::from("./keys"),
+            })
         );
         assert_eq!(
             core_config.rate_limiter_conf.unwrap(),

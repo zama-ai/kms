@@ -17,7 +17,6 @@ use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpoint
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::{KeyId, RequestId};
 use kms_lib::client::{Client, ParsedUserDecryptionRequest};
-use kms_lib::conf::ValidateConfig;
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
 use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
 use kms_lib::util::file_handling::{read_element, write_element};
@@ -37,6 +36,7 @@ use std::sync::{Arc, Once};
 use strum_macros::{Display, EnumString};
 use tfhe::named::Named;
 use tfhe::Versionize;
+use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::RwLock;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
@@ -470,10 +470,11 @@ pub enum CCCommand {
     DoNothing(NoParameters),
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Validate)]
 pub struct CmdConfig {
     /// Path to the configuration file
     #[clap(long, short = 'f')]
+    #[validate(length(min = 1))]
     pub file_conf: Option<String>,
     /// The command to execute
     #[clap(subcommand)]
@@ -483,22 +484,11 @@ pub struct CmdConfig {
     pub logs: bool,
     /// Max number of iterations to query the KMS for a response
     #[clap(long, default_value = "20")]
+    #[validate(range(min = 1))]
     pub max_iter: usize,
     /// Should we expect a response from every KMS core or not
     #[clap(long, short = 'a', default_value_t = false)]
     pub expect_all_responses: bool,
-}
-
-impl ValidateConfig for CmdConfig {
-    fn validate(&self) -> anyhow::Result<()> {
-        if self.file_conf.as_ref().is_some_and(|s| s.is_empty()) {
-            return Err(anyhow!("Configuration file path cannot be empty"));
-        }
-        if self.max_iter == 0 {
-            return Err(anyhow!("Max iterations must be greater than 0"));
-        }
-        Ok(())
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
@@ -606,7 +596,7 @@ pub async fn encrypt(
     let (cipher, ct_format, _) = compute_cipher_from_stored_key(
         Some(keys_folder),
         typed_to_encrypt,
-        &cipher_params.key_id.as_str(),
+        &cipher_params.key_id.into(),
         EncryptionConfig {
             compression: cipher_params.compression,
             precompute_sns: cipher_params.precompute_sns,
@@ -1238,6 +1228,14 @@ pub async fn execute_cmd(
                 panic!("Compression on big ciphertexts is not supported yet!");
             }
         }
+        CCCommand::KeyGen(_)
+        | CCCommand::InsecureKeyGen(_)
+        | CCCommand::CrsGen(_)
+        | CCCommand::InsecureCrsGen(_)
+        | CCCommand::PreprocKeyGen(_) => {
+            tracing::info!("Fetching verification keys. ({command:?})");
+            fetch_verf_keys(&cc_conf, destination_prefix).await?;
+        }
         _ => {
             tracing::info!("No need to fetch key and CRS. ({command:?})");
         }
@@ -1247,10 +1245,11 @@ pub async fn execute_cmd(
 
     let num_parties = cc_conf.core_addresses.len();
 
-    ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+    ensure_client_keys_exist(Some(destination_prefix), &SIGNING_KEY_ID, true).await;
 
     let mut pub_storage: HashMap<u32, FileStorage> = HashMap::with_capacity(num_parties);
-    let client_storage: FileStorage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
+    let client_storage: FileStorage =
+        FileStorage::new(Some(destination_prefix), StorageType::CLIENT, None).unwrap();
     let mut internal_client: Option<Client> = None;
     let mut core_endpoints = Vec::with_capacity(num_parties);
 
@@ -1328,7 +1327,12 @@ pub async fn execute_cmd(
 
             pub_storage.insert(
                 i as u32 + 1,
-                FileStorage::new(Some(destination_prefix), StorageType::PUB, Some(i + 1)).unwrap(),
+                FileStorage::new(
+                    Some(destination_prefix),
+                    StorageType::PUB,
+                    Some(Role::indexed_from_zero(i)),
+                )
+                .unwrap(),
             );
         }
 
@@ -1402,7 +1406,7 @@ pub async fn execute_cmd(
                         ct_batch,
                         &dummy_domain(),
                         &req_id,
-                        &key_id,
+                        &key_id.into(),
                     )?;
 
                     // make parallel requests by calling [decrypt] in a thread
@@ -1786,7 +1790,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 &dummy_domain(),
                 ct_batch,
                 &req_id,
-                &key_id,
+                &key_id.into(),
             )?;
 
             let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;
@@ -2249,21 +2253,18 @@ async fn fetch_and_check_keygen(
         responses.len()
     );
 
-    let req_id = request_id.to_string();
-
     // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
     // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
-    fetch_key(&req_id, cc_conf, destination_prefix).await?;
-    let pk = load_pk_from_storage(Some(destination_prefix), &req_id).await;
-    let sk = load_server_key_from_storage(Some(destination_prefix), &req_id).await;
+    fetch_key(&request_id.to_string(), cc_conf, destination_prefix).await?;
+    let pk = load_pk_from_storage(Some(destination_prefix), &request_id).await;
+    let sk = load_server_key_from_storage(Some(destination_prefix), &request_id).await;
 
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
         tracing::info!("Received KeyGenResult with request ID {}", resp_req_id); //TODO print key digests and signatures?
 
         assert_eq!(
-            req_id,
-            resp_req_id.as_str(),
+            request_id, resp_req_id,
             "Request ID of response does not match the transaction"
         );
 
@@ -2308,20 +2309,17 @@ async fn fetch_and_check_crsgen(
         responses.len()
     );
 
-    let req_id = request_id.to_string();
-
     // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
     // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
-    fetch_crs(&req_id, cc_conf, destination_prefix).await?;
-    let crs = load_crs_from_storage(Some(destination_prefix), &req_id).await;
+    fetch_crs(&request_id.to_string(), cc_conf, destination_prefix).await?;
+    let crs = load_crs_from_storage(Some(destination_prefix), &request_id).await;
 
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
         tracing::info!("Received CrsGenResult with request ID {}", resp_req_id); //TODO print key digests and signatures?
 
         assert_eq!(
-            req_id,
-            resp_req_id.as_str(),
+            request_id, resp_req_id,
             "Request ID of response does not match the transaction"
         );
 
@@ -2404,8 +2402,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_eip712_sigs() {
-        let mut pub_storage = RamStorage::new(StorageType::PUB);
-        let mut priv_storage = RamStorage::new(StorageType::PRIV);
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
 
         // make sure signing keys exist
         ensure_central_server_signing_keys_exist(

@@ -118,8 +118,8 @@ mod tests {
         PublicSigKey,
         CentralizedCryptoMaterialStorage<RamStorage, RamStorage, RamStorage>,
     ) {
-        let priv_storage = RamStorage::new(crate::vault::storage::StorageType::PRIV);
-        let pub_storage = RamStorage::new(crate::vault::storage::StorageType::PUB);
+        let priv_storage = RamStorage::new();
+        let pub_storage = RamStorage::new();
 
         let crypto_storage = CentralizedCryptoMaterialStorage::<_, _, RamStorage>::new(
             priv_storage,

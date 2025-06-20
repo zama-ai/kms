@@ -12,7 +12,7 @@ use crate::vault::storage::crypto_material::{
 };
 use crate::vault::storage::{
     file::FileStorage, read_all_data_versioned, store_pk_at_request_id, store_text_at_request_id,
-    store_versioned_at_request_id, Storage, StorageForText, StorageReader, StorageType,
+    store_versioned_at_request_id, Storage, StorageForBytes, StorageReader, StorageType,
 };
 use futures_util::future;
 use itertools::Itertools;
@@ -157,8 +157,8 @@ pub async fn ensure_central_server_signing_keys_exist<PubS, PrivS>(
     deterministic: bool,
 ) -> bool
 where
-    PubS: StorageForText,
-    PrivS: StorageForText,
+    PubS: StorageForBytes,
+    PrivS: StorageForBytes,
 {
     // Check if keys already exist with error handling
     let temp: HashMap<RequestId, crate::cryptography::internal_crypto_types::PrivateSigKey> =
@@ -578,8 +578,8 @@ pub async fn ensure_threshold_server_signing_keys_exist<PubS, PrivS>(
     config: ThresholdSigningKeyConfig,
 ) -> anyhow::Result<bool>
 where
-    PubS: StorageForText,
-    PrivS: StorageForText,
+    PubS: StorageForBytes,
+    PrivS: StorageForBytes,
 {
     // Validate input parameters
     if pub_storages.len() != priv_storages.len() {

@@ -4,7 +4,6 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::{
     CoreServiceEndpoint, CoreServiceEndpointServer,
 };
 use observability::telemetry::make_span;
-use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -82,11 +81,7 @@ pub async fn run_server<
 ) -> anyhow::Result<()> {
     use crate::consts::DURATION_WAITING_ON_RESULT_SECONDS;
 
-    let socket_addr_str = format!("{}:{}", config.listen_address, config.listen_port);
-    let socket_addr = socket_addr_str
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("failed to parse socket address {}", socket_addr_str))?;
+    let socket_addr = listener.local_addr()?;
 
     // Create shutdown channel
     let (tx, rx): (

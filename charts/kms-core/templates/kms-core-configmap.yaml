@@ -28,16 +28,35 @@ data:
       {{- end }}
     {{- end }}
   vaults.toml: |
-    [public_vault]
-    storage = "${KMS_CORE__PUBLIC_VAULT__STORAGE}"
+    {{- if .Values.kmsCore.publicVault.s3.enabled }}
+    [public_vault.storage.s3]
+    bucket = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}"
+      {{- if .Values.kmsCore.publicVault.s3.path }}
+    prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX}"
+      {{- end }}
+    {{- else }}
+    [public_vault.storage.file]
+    path = "./keys"
+    {{- end }}
 
-    [private_vault]
-    storage = "${KMS_CORE__PRIVATE_VAULT__STORAGE}"
+    {{- if .Values.kmsCore.privateVault.s3.enabled -}}
+    [private_vault.storage.s3]
+    bucket = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET}"
+      {{- if .Values.kmsCore.publicVault.s3.path }}
+    prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX}"
+      {{- end }}
+    {{- else }}
+    [private_vault.storage.file]
+    path = "./keys"
+    {{- end }}
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
-    keychain = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN}"
+    [private_vault.keychain.aws_kms]
+    root_key_id = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID}"
+    root_key_spec = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC}"
     {{- end }}
   kms-gen-keys.toml: |
     [keygen]
+    enabled = true
 
     {{ if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]

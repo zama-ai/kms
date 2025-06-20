@@ -1,5 +1,6 @@
 use super::internal_crypto_types::PrivateSigKey;
 use anyhow::{bail, ensure};
+use enum_dispatch::enum_dispatch;
 use k256::pkcs8::EncodePrivateKey;
 use rcgen::{
     CertificateParams, CustomExtension, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
@@ -10,7 +11,8 @@ use x509_parser::pem::{parse_x509_pem, Pem};
 
 pub mod nitro;
 
-#[tonic::async_trait]
+#[allow(async_fn_in_trait)]
+#[enum_dispatch]
 pub trait SecurityModule {
     /// Get enthropy from the hardware RNG
     async fn get_random(&self, num_bytes: usize) -> anyhow::Result<Vec<u8>>;
@@ -179,42 +181,12 @@ pub trait SecurityModule {
 }
 
 #[derive(Clone)]
+#[enum_dispatch(SecurityModule)]
 pub enum SecurityModuleProxy {
     Nitro(nitro::Nitro),
 }
 
-#[tonic::async_trait]
-impl SecurityModule for SecurityModuleProxy {
-    async fn get_random(&self, num_bytes: usize) -> anyhow::Result<Vec<u8>> {
-        match &self {
-            SecurityModuleProxy::Nitro(sm) => sm.get_random(num_bytes).await,
-        }
-    }
-
-    async fn attest_pk_bytes(&self, pk: Vec<u8>) -> anyhow::Result<Vec<u8>> {
-        match &self {
-            SecurityModuleProxy::Nitro(sm) => sm.attest_pk_bytes(pk).await,
-        }
-    }
-
-    async fn wrap_x509_cert(&self, cert_pem: Pem) -> anyhow::Result<(Pem, Pem)> {
-        match &self {
-            SecurityModuleProxy::Nitro(sm) => sm.wrap_x509_cert(cert_pem).await,
-        }
-    }
-
-    async fn issue_x509_cert(
-        &self,
-        ca_cert_pem: Pem,
-        ca_key: &PrivateSigKey,
-    ) -> anyhow::Result<(Pem, Pem)> {
-        match &self {
-            SecurityModuleProxy::Nitro(sm) => sm.issue_x509_cert(ca_cert_pem, ca_key).await,
-        }
-    }
-}
-
 pub fn make_security_module() -> anyhow::Result<SecurityModuleProxy> {
     let security_module = nitro::Nitro::new()?;
-    Ok(SecurityModuleProxy::Nitro(security_module))
+    Ok(SecurityModuleProxy::from(security_module))
 }

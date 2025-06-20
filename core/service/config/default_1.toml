@@ -28,14 +28,15 @@ s3_endpoint = "http://dev-s3-mock:9000"
 
 # The storage URL. Two URL schemas are supported: file:// and s3://. The paths
 # can be the same for the different storage types and for different parties.
-storage = "file://./keys"
+[public_vault.storage.file]
+path = "./keys"
 
 # This is the storage backend for the private vault.
-[private_vault]
+[private_vault.storage.file]
 
 # The storage URL. Two URL schemas are supported: file:// and s3://. The paths
 # can be the same for the different storage types and for different parties.
-storage = "file://./keys"
+path = "./keys"
 
 # If S3 storage is used for private keys, we recommend to run the Core within
 # the Nitro enclave, so the risk of leaking them is less. Since Nitro enclaves
@@ -47,7 +48,13 @@ storage = "file://./keys"
 # private key import and export to and from the Nitro enclave. The AWS KMS key
 # policy for this root key should have only allow its use to known and attested
 # versions of the Core. (Unset by default)
-# keychain = "awskms://root_key_id"
+#
+# [private_vault.keychain.aws_kms]
+# root_key_id = "root_key_id"
+
+# root_key_spec is an AWS KMS key spec for the root key (valid choices are
+# "symm" and "asymm")
+# root_key_spec = "symm"
 
 # The section below contains the relevant configuration for communicating with
 # other TKMS nodes. This section is not needed when running TKMS in the

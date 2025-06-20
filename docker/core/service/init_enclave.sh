@@ -124,22 +124,36 @@ start_tcp_proxy_out "AWS KMS" "$(get_configured_port "aws.awskms_endpoint")"
 # start if this section is present.
 has_value "keygen" && \
     {
+	AWS_ARGS="--aws-region $(get_value "aws.region") \
+		  --aws-imds-endpoint $(get_value "aws.imds_endpoint") \
+		  --aws-sts-endpoint $(get_value "aws.sts_endpoint") \
+		  --aws-s3-endpoint $(get_value "aws.s3_endpoint") \
+		  --aws-kms-endpoint $(get_value "aws.awskms_endpoint")"
+
+	PUBLIC_S3_PREFIX_ARG=""
+	has_value "public_vault.storage.s3.prefix" && \
+	    PUBLIC_S3_PREFIX_ARG="--public-s3-prefix $(get_value "public_vault.storage.s3.prefix")"
+	PRIVATE_S3_PREFIX_ARG=""
+	has_value "private_vault.storage.s3.prefix" && \
+	    PRIVATE_S3_PREFIX_ARG="--private-s3-prefix $(get_value "private_vault.storage.s3.prefix")"
+
+	VAULT_ARGS="--public-storage s3 \
+		    --public-s3-bucket $(get_value "public_vault.storage.s3.bucket") $PUBLIC_S3_PREFIX_ARG \
+                    --private-storage s3 \
+                    --private-s3-bucket $(get_value "private_vault.storage.s3.bucket") $PRIVATE_S3_PREFIX_ARG \
+                    --root-key-id $(get_value "private_vault.keychain.aws_kms.root_key_id") \
+                    --root-key-spec $(get_value "private_vault.keychain.aws_kms.root_key_spec")"
+
+	KMS_GEN_KEYS_CMD="kms-gen-keys $AWS_ARGS $VAULT_ARGS"
+
 	# ensure that all keys exist if running in centralized mode
 	has_value "threshold" || \
 	    {
 		log "generating keys for centralized KMS"
-		kms-gen-keys \
-		    --pub-url "$(get_value "public_vault.storage")" \
-		    --priv-url "$(get_value "private_vault.storage")" \
-		    --root-key-id "$(get_value "private_vault.keychain")" \
-		    --aws-region "$(get_value "aws.region")" \
-		    --aws-imds-endpoint "$(get_value "aws.imds_endpoint")" \
-		    --aws-sts-endpoint "$(get_value "aws.sts_endpoint")" \
-		    --aws-s3-endpoint "$(get_value "aws.s3_endpoint")" \
-		    --aws-kms-endpoint "$(get_value "aws.awskms_endpoint")" \
-		    centralized --write-privkey \
+		eval "$KMS_GEN_KEYS_CMD centralized --write-privkey" \
 		    |& logger || fail "cannot generate keys"
 	    }
+
 	# Ensure that signing keys exist if running in threshold mode. Note that
 	# the [threshold] section used for kms-gen-keys is not the same as one
 	# used for kms-server. It has three fields only: my_id, num_parties, and
@@ -150,19 +164,10 @@ has_value "keygen" && \
 		PARTY_ID_ARG=""
 		has_value "threshold.my_id" && \
 		    PARTY_ID_ARG="--signing-key-party-id $(get_value "threshold.my_id")"
-		kms-gen-keys \
-		    --pub-url "$(get_value "public_vault.storage")" \
-		    --priv-url "$(get_value "private_vault.storage")" \
-		    --root-key-id "$(get_value "private_vault.keychain")" \
-		    --aws-region "$(get_value "aws.region")" \
-		    --aws-imds-endpoint "$(get_value "aws.imds_endpoint")" \
-		    --aws-sts-endpoint "$(get_value "aws.sts_endpoint")" \
-		    --aws-s3-endpoint "$(get_value "aws.s3_endpoint")" \
-		    --aws-kms-endpoint "$(get_value "aws.awskms_endpoint")" \
-		    --cmd signing-keys \
-		    threshold $PARTY_ID_ARG \
-		    --num-parties "$(get_value "threshold.num_parties")" \
-		    --tls-subject "$(get_value "threshold.tls_subject")" \
+		eval "$KMS_GEN_KEYS_CMD \
+                       --cmd signing-keys threshold $PARTY_ID_ARG \
+                       --num-parties $(get_value "threshold.num_parties") \
+                       --tls-subject $(get_value "threshold.tls_subject")" \
 		    |& logger || fail "cannot generate keys"
 	    }
     }

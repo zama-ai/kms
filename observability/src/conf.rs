@@ -6,6 +6,7 @@ use std::time::Duration;
 use strum_macros::{AsRefStr, Display, EnumString};
 use tracing::{debug, warn};
 use typed_builder::TypedBuilder;
+use validator::Validate;
 
 // Default configuration constants
 const TRACER_MAX_QUEUE_SIZE: usize = 8192;
@@ -21,23 +22,27 @@ lazy_static::lazy_static! {
     static ref TRACER_SCHEDULED_DELAY: Duration = Duration::from_millis(TRACER_DEFAULT_SCHEDULED_DELAY_MS);
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, TypedBuilder, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Validate, Clone, TypedBuilder, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 #[serde(rename = "telemetry")]
 pub struct TelemetryConfig {
     /// Service name for tracing
+    #[validate(length(min = 1))]
     #[builder(default, setter(strip_option))]
     pub tracing_service_name: Option<String>,
 
     /// Endpoint for tracing
+    #[validate(length(min = 1))]
     #[builder(default, setter(strip_option))]
     pub tracing_endpoint: Option<String>,
 
     /// Timeout for OTLP exporter operations (HTTP/gRPC requests) in milliseconds
+    #[validate(range(min = 1))]
     #[builder(default, setter(strip_option))]
     pub tracing_otlp_timeout_ms: Option<u64>,
 
     /// Address to expose metrics on
+    #[validate(length(min = 1))]
     #[builder(default, setter(strip_option))]
     pub metrics_bind_address: Option<String>,
 

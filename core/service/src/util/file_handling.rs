@@ -7,13 +7,13 @@ use tfhe::{Unversionize, Versionize};
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 
-/// Write some text data to a file without serialization.
-pub async fn write_text<P: AsRef<Path>>(file_path: P, text: &str) -> anyhow::Result<()> {
+/// Write some bytes to a file without serialization. Works for ASCII text without extra thought too.
+pub async fn write_bytes<P: AsRef<Path>>(file_path: P, bytes: &[u8]) -> anyhow::Result<()> {
     // Create the parent directories of the file path if they don't exist
     if let Some(p) = file_path.as_ref().parent() {
         tokio::fs::create_dir_all(p).await?
     };
-    tokio::fs::write(file_path, text).await?;
+    tokio::fs::write(file_path, bytes).await?;
     Ok(())
 }
 
@@ -73,7 +73,7 @@ pub async fn read_element<T: DeserializeOwned + Serialize, P: AsRef<Path>>(
 
 #[cfg(test)]
 mod tests {
-    use crate::util::file_handling::{read_element, write_element, write_text};
+    use crate::util::file_handling::{read_element, write_bytes, write_element};
     use tokio::fs::remove_file;
 
     #[tokio::test]
@@ -83,7 +83,7 @@ mod tests {
             .unwrap()
             .path()
             .join("read-write-test.txt");
-        write_text(&file_name, &msg.clone()).await.unwrap();
+        write_bytes(&file_name, msg.as_bytes()).await.unwrap();
         let read_element: String =
             String::from_utf8(tokio::fs::read(&file_name).await.unwrap()).unwrap();
         assert_eq!(read_element, msg);

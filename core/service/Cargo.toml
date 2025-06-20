@@ -58,6 +58,7 @@ observability = { workspace = true, optional = true }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "extension_degree_4",
 ] }
+enum_dispatch.workspace = true
 kms-grpc = { workspace = true, default-features = false }
 hex.workspace = true
 http = "=0.2.12"
@@ -75,6 +76,7 @@ rsa = { version = "=0.9.8", features = ["sha2", "serde"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 signature = "=2.2.0"
 strum.workspace = true
+strum_macros.workspace = true
 # experimental-force_fft_algo_dif4 feature ensure PBS is deterministic
 tfhe = { workspace = true, features = [
     "boolean",
@@ -96,7 +98,9 @@ tonic-tls = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
 tracing = { workspace = true, features = ["log"] }
+trait-variant.workspace = true
 url = { version = "=2.5.4", features = ["serde"] }
+validator.workspace = true
 futures-util = "=0.3.31"
 ordermap = "=0.5.7"
 x509-parser = { workspace = true, optional = true }

@@ -42,13 +42,22 @@ pub struct InnerCustodianSetupMessage {
     pub public_key: NestedPublicKey,
 }
 
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum CustodianRecoveryOutputVersioned {
+    V0(CustodianRecoveryOutput),
+}
+
 /// This is the message that custodian sends to the operators
-/// near the end of the recovery step. It does not need to be persisted
-/// so we do not implement versioning.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// near the end of the recovery step.
+#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[versionize(CustodianRecoveryOutputVersioned)]
 pub struct CustodianRecoveryOutput {
     pub signature: Vec<u8>,  // sigt_i_j
     pub ciphertext: Vec<u8>, // st_i_j
+}
+
+impl Named for CustodianRecoveryOutput {
+    const NAME: &'static str = "backup::CustodianRecoveryOutput";
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]

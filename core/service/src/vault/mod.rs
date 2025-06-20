@@ -1,10 +1,11 @@
+use futures_util::future::try_join;
+use kms_grpc::RequestId;
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashSet};
 use tfhe::{named::Named, Unversionize, Versionize};
-use url::Url;
 
-use keychain::{Keychain, KeychainProxy};
-use storage::{Storage, StorageForText, StorageProxy, StorageReader};
+use keychain::{EnvelopeLoad, EnvelopeStore, Keychain, KeychainProxy};
+use storage::{Storage, StorageForBytes, StorageProxy, StorageReader};
 
 pub mod aws;
 pub mod keychain;
@@ -16,31 +17,51 @@ pub struct Vault {
 }
 
 #[cfg(feature = "non-wasm")]
-#[tonic::async_trait]
 impl StorageReader for Vault {
     async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
-        url: &Url,
+        data_id: &RequestId,
+        data_type: &str,
     ) -> anyhow::Result<T> {
         match self.keychain.as_ref() {
             Some(k) => {
-                let mut encrypted_data = self.storage.read_data(url).await?;
-                k.decrypt(&mut encrypted_data).await
+                let mut envelope = match k.envelope_share_ids() {
+                    Some(ids) => {
+                        let mut rs = BTreeMap::new();
+                        let mut cs = BTreeMap::new();
+                        for id in &ids {
+                            let (recovery, commitment) = try_join(
+                                self.storage.read_data(
+                                    data_id,
+                                    format!("{data_type}-recovery-{id}").as_str(),
+                                ),
+                                self.storage.load_bytes(
+                                    data_id,
+                                    format!("{data_type}-commitment-{id}").as_str(),
+                                ),
+                            )
+                            .await?;
+                            rs.insert(*id, recovery);
+                            cs.insert(*id, commitment);
+                        }
+                        EnvelopeLoad::OperatorRecoveryInput(rs, cs)
+                    }
+                    None => {
+                        EnvelopeLoad::AppKeyBlob(self.storage.read_data(data_id, data_type).await?)
+                    }
+                };
+                k.decrypt(data_id, &mut envelope).await
             }
-            None => self.storage.read_data(url).await,
+            None => self.storage.read_data(data_id, data_type).await,
         }
     }
 
-    async fn data_exists(&self, url: &Url) -> anyhow::Result<bool> {
-        self.storage.data_exists(url).await
+    async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
+        self.storage.data_exists(data_id, data_type).await
     }
 
-    fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
-        self.storage.compute_url(data_id, data_type)
-    }
-
-    async fn all_urls(&self, data_type: &str) -> anyhow::Result<HashMap<String, Url>> {
-        self.storage.all_urls(data_type).await
+    async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
+        self.storage.all_data_ids(data_type).await
     }
 
     fn info(&self) -> String {
@@ -49,34 +70,61 @@ impl StorageReader for Vault {
 }
 
 #[cfg(feature = "non-wasm")]
-#[tonic::async_trait]
 impl Storage for Vault {
     async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
-        url: &Url,
+        data_id: &RequestId,
+        data_type: &str,
     ) -> anyhow::Result<()> {
-        match self.keychain.as_ref() {
+        match self.keychain.as_mut() {
             Some(k) => {
-                let encrypted_data = k.encrypt(data).await?;
-                self.storage.store_data(&encrypted_data, url).await
+                let envelope = k.encrypt(data_id, data).await?;
+                match envelope {
+                    EnvelopeStore::AppKeyBlob(blob) => {
+                        self.storage.store_data(&blob, data_id, data_type).await?
+                    }
+                    EnvelopeStore::OperatorBackupOutput(backup_outputs) => {
+                        for (id, backup_output) in &backup_outputs {
+                            self.storage
+                                .store_data(
+                                    backup_output,
+                                    data_id,
+                                    format!("{data_type}-backup-{id}").as_str(),
+                                )
+                                .await?;
+                            self.storage
+                                .store_bytes(
+                                    backup_output.commitment.as_slice(),
+                                    data_id,
+                                    format!("{data_type}- commitment-{id}").as_str(),
+                                )
+                                .await?;
+                        }
+                    }
+                }
+                Ok(())
             }
-            None => self.storage.store_data(data, url).await,
+            None => self.storage.store_data(data, data_id, data_type).await,
         }
     }
 
-    async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
-        self.storage.delete_data(url).await
+    async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
+        self.storage.delete_data(data_id, data_type).await
     }
 }
 
 #[cfg(feature = "non-wasm")]
-#[tonic::async_trait]
-impl StorageForText for Vault {
-    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
-        self.storage.store_text(text, url).await
+impl StorageForBytes for Vault {
+    async fn store_bytes(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        self.storage.store_bytes(bytes, data_id, data_type).await
     }
-    async fn read_text(&mut self, url: &Url) -> anyhow::Result<String> {
-        self.storage.read_text(url).await
+    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
+        self.storage.load_bytes(data_id, data_type).await
     }
 }

@@ -1,8 +1,12 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use core::fmt;
+use futures_util::future::OptionFuture;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
 use kms_lib::{
+    conf::{
+        AwsKmsKeySpec, AwsKmsKeychain, FileStorage, Keychain, S3Storage, Storage as StorageConf,
+    },
     consts::{
         DEFAULT_CENTRAL_CRS_ID, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM, DEFAULT_THRESHOLD_CRS_ID_4P,
         DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID, SIGNING_KEY_ID, TEST_PARAM,
@@ -18,7 +22,7 @@ use kms_lib::{
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain},
         storage::{
-            delete_at_request_id, make_storage, s3::build_s3_client, Storage, StorageForText,
+            delete_at_request_id, make_storage, s3::build_s3_client, Storage, StorageForBytes,
             StorageType,
         },
         Vault,
@@ -27,6 +31,9 @@ use kms_lib::{
 use observability::conf::TelemetryConfig;
 use observability::telemetry::init_tracing;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use strum::EnumIs;
+use threshold_fhe::execution::runtime::party::Role;
 use url::Url;
 
 #[derive(Parser)]
@@ -64,15 +71,28 @@ struct Args {
     /// Optional AWS KMS API endpoint
     #[clap(long, default_value = None)]
     aws_kms_endpoint: Option<Url>,
-    /// Optional root key ID (must start with awskms://)
+    /// Optional AWS KMS key id that encrypts the private storage
     #[clap(long, default_value = None)]
-    root_key_id: Option<Url>,
-    /// Optional parameter for the private storage URL
+    root_key_id: Option<String>,
+    /// Optional AWS KMS key spec that encrypts the private storage
+    #[clap(long, default_value = None, value_enum)]
+    root_key_spec: Option<AwsKmsKeySpec>,
+    #[clap(long, default_value_t = StorageCommand::File, value_enum)]
+    private_storage: StorageCommand,
     #[clap(long, default_value = None)]
-    priv_url: Option<Url>,
-    /// Optional parameter for the public storage URL
+    private_file_path: Option<PathBuf>,
     #[clap(long, default_value = None)]
-    pub_url: Option<Url>,
+    private_s3_bucket: Option<String>,
+    #[clap(long, default_value = None)]
+    private_s3_prefix: Option<String>,
+    #[clap(long, default_value_t = StorageCommand::File, value_enum)]
+    public_storage: StorageCommand,
+    #[clap(long, default_value = None)]
+    public_file_path: Option<PathBuf>,
+    #[clap(long, default_value = None)]
+    public_s3_bucket: Option<String>,
+    #[clap(long, default_value = None)]
+    public_s3_prefix: Option<String>,
     /// Specify whether to use test parameters or not.
     #[clap(long, default_value_t = false)]
     param_test: bool,
@@ -87,6 +107,13 @@ struct Args {
     /// Only show existing keys, do not generate any
     #[clap(long, default_value_t = false)]
     show_existing: bool,
+}
+
+#[derive(Clone, Subcommand, Default, ValueEnum, EnumIs)]
+enum StorageCommand {
+    #[default]
+    File,
+    S3,
 }
 
 #[derive(Clone, Subcommand, Default, Debug, Serialize, Deserialize, ValueEnum, PartialEq)]
@@ -230,16 +257,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await;
     // AWS S3 client
-    let need_s3_client = args
-        .pub_url
-        .as_ref()
-        .map(|url| url.scheme() == "s3")
-        .unwrap_or(false)
-        || args
-            .priv_url
-            .as_ref()
-            .map(|url| url.scheme() == "s3")
-            .unwrap_or(false);
+    let need_s3_client = args.public_storage.is_s_3() || args.private_storage.is_s_3();
     let s3_client = if need_s3_client {
         Some(build_s3_client(&aws_sdk_config, args.aws_s3_endpoint).await?)
     } else {
@@ -259,11 +277,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // create keychain
-    let root_key_id = args
-        .root_key_id
-        .as_ref()
-        .map(|k| Url::parse(k.as_str()).unwrap());
     // create storages
     let amount_storages = match args.mode {
         Mode::Centralized { write_privkey: _ } => 1,
@@ -276,35 +289,81 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut pub_storages = Vec::with_capacity(amount_storages);
     let mut priv_vaults = Vec::with_capacity(amount_storages);
     for i in 1..=amount_storages {
-        let party_id = match args.mode {
+        let party_role = match args.mode {
             Mode::Centralized { write_privkey: _ } => None,
             Mode::Threshold {
                 signing_key_party_id: _,
                 num_parties: _,
                 tls_subject: _,
-            } => Some(i),
+            } => Some(Role::indexed_from_one(i)),
         };
         pub_storages.push(
             make_storage(
-                args.pub_url.clone(),
+                match args.public_storage {
+                    StorageCommand::File => args.public_file_path.as_ref().map(|path| {
+                        StorageConf::File(FileStorage {
+                            path: path.to_path_buf(),
+                        })
+                    }),
+                    StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
+                        bucket: args
+                            .public_s3_bucket
+                            .as_ref()
+                            .expect("S3 bucket must be set for public storage")
+                            .clone(),
+                        prefix: args.public_s3_prefix.clone(),
+                    })),
+                },
                 StorageType::PUB,
-                party_id,
+                party_role,
                 None,
                 s3_client.clone(),
             )
             .unwrap(),
         );
-        let private_keychain = match root_key_id {
-            Some(ref k) => Some(
-                make_keychain(k.clone(), awskms_client.clone(), security_module.clone()).await?,
-            ),
-            None => None,
-        };
+        let private_keychain = OptionFuture::from(
+            args.root_key_id
+                .as_ref()
+                .zip(args.root_key_spec.as_ref())
+                .map(|(root_key_id, root_key_spec)| {
+                    Keychain::AwsKms(AwsKmsKeychain {
+                        root_key_id: root_key_id.clone(),
+                        root_key_spec: root_key_spec.clone(),
+                    })
+                })
+                .as_ref()
+                .map(|k| {
+                    make_keychain(
+                        k,
+                        awskms_client.clone(),
+                        security_module.clone(),
+                        None,
+                        party_role,
+                        None,
+                    )
+                }),
+        )
+        .await
+        .transpose()?;
         priv_vaults.push(Vault {
             storage: make_storage(
-                args.priv_url.clone(),
+                match args.private_storage {
+                    StorageCommand::File => args.private_file_path.as_ref().map(|path| {
+                        StorageConf::File(FileStorage {
+                            path: path.to_path_buf(),
+                        })
+                    }),
+                    StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
+                        bucket: args
+                            .private_s3_bucket
+                            .as_ref()
+                            .expect("S3 bucket must be set for private storage")
+                            .clone(),
+                        prefix: args.private_s3_prefix.clone(),
+                    })),
+                },
                 StorageType::PRIV,
-                party_id,
+                party_role,
                 None,
                 s3_client.clone(),
             )
@@ -368,7 +427,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn handle_central_cmd<PubS: StorageForText, PrivS: StorageForText>(
+async fn handle_central_cmd<PubS: StorageForBytes, PrivS: StorageForBytes>(
     param_test: bool,
     args: &mut CentralCmdArgs<'_, PubS, PrivS>,
     cmd: ConstructCommand,
@@ -456,7 +515,7 @@ async fn handle_central_cmd<PubS: StorageForText, PrivS: StorageForText>(
     }
 }
 
-async fn handle_threshold_cmd<PubS: StorageForText, PrivS: StorageForText>(
+async fn handle_threshold_cmd<PubS: StorageForBytes, PrivS: StorageForBytes>(
     param_test: bool,
     args: &mut ThresholdCmdArgs<'_, PubS, PrivS>,
     cmd: ConstructCommand,
@@ -675,10 +734,10 @@ async fn process_cmd<S: Storage, D: fmt::Display>(
 }
 
 async fn show_key<S: Storage>(storage: &S, data_type: &str) {
-    let urlmap = storage.all_urls(data_type).await.unwrap();
-    for (k, v) in urlmap {
+    let ids = storage.all_data_ids(data_type).await.unwrap();
+    for id in ids {
         // TODO read the key material and print extra info
-        let exists = storage.data_exists(&v).await.unwrap();
-        println!("{data_type}, {k}, {v}, exists={exists}");
+        let exists = storage.data_exists(&id, data_type).await.unwrap();
+        println!("{data_type}, {id}, exists={exists}");
     }
 }
