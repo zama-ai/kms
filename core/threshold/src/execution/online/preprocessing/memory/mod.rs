@@ -101,14 +101,15 @@ impl<Z: Ring> BitPreprocessing<Z> for InMemoryBitPreprocessing<Z> {
     }
 
     fn next_bit_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
-        if self.available_bits.len() >= amount {
-            Ok(self.available_bits.drain(0..amount).collect())
-        } else {
-            Err(anyhow_error_and_log(format!(
+        if self.available_bits.len() < amount {
+            return Err(anyhow_error_and_log(format!(
                 "Not enough bits to drain, need {amount}, got {}",
                 self.available_bits.len()
-            )))
+            )));
         }
+
+        // Use drain to safely extract exactly 'amount' bits
+        Ok(self.available_bits.drain(0..amount).collect())
     }
 
     fn bits_len(&self) -> usize {

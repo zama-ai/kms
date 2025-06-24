@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     ops::{Index, IndexMut},
+    str::FromStr,
 };
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
@@ -143,28 +144,64 @@ impl<T> IndexMut<&mut Role> for Vec<T> {
 #[display("{}:{}", _0, _1)]
 pub struct Identity(pub String, pub u16);
 
-// impl Default for Identity {
-//     fn default() -> Self {
-//         Identity("test_id".to_string())
-//     }
-// }
+impl Identity {
+    /// Create a new Identity with the given hostname and port.
+    pub fn new(hostname: String, port: u16) -> Self {
+        Identity(hostname, port)
+    }
 
-// impl From<&str> for Identity {
-//     fn from(s: &str) -> Self {
-//         Identity(s.to_string())
-//     }
-// }
+    /// Get the hostname part of the identity.
+    pub fn hostname(&self) -> &str {
+        &self.0
+    }
 
-// impl From<&String> for Identity {
-//     fn from(s: &String) -> Self {
-//         Identity(s.clone())
-//     }
-// }
+    /// Get the port part of the identity.
+    pub fn port(&self) -> u16 {
+        self.1
+    }
 
-// impl From<String> for Identity {
-//     fn from(s: String) -> Self {
-//         Identity(s)
-//     }
-// }
+    /// Convert the identity to a tuple of (hostname, port).
+    pub fn to_tuple(&self) -> (&str, u16) {
+        (&self.0, self.1)
+    }
+
+    /// Convert the identity to an owned tuple of (hostname, port).
+    pub fn into_tuple(self) -> (String, u16) {
+        (self.0, self.1)
+    }
+}
+
+impl From<(String, u16)> for Identity {
+    fn from((hostname, port): (String, u16)) -> Self {
+        Identity(hostname, port)
+    }
+}
+
+impl From<(&str, u16)> for Identity {
+    fn from((hostname, port): (&str, u16)) -> Self {
+        Identity(hostname.to_string(), port)
+    }
+}
+
+impl FromStr for Identity {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() != 2 {
+            return Err(format!(
+                "Invalid identity format '{}'. Expected 'hostname:port'",
+                s
+            ));
+        }
+
+        let hostname = parts[0].to_string();
+        let port = parts[1]
+            .parse::<u16>()
+            .map_err(|_| format!("Invalid port '{}' in identity '{}'", parts[1], s))?;
+
+        Ok(Identity(hostname, port))
+    }
+}
 
 pub type RoleAssignment = HashMap<Role, Identity>;

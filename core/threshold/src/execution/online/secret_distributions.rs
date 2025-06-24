@@ -3,7 +3,6 @@ use tracing::instrument;
 use super::preprocessing::BitPreprocessing;
 use crate::{
     algebra::structure_traits::Ring,
-    error::error_handler::anyhow_error_and_log,
     execution::{
         sharing::share::Share,
         tfhe_internals::parameters::{NoiseInfo, TUniformBound},
@@ -67,17 +66,11 @@ impl SecretDistributions for RealSecretDistributions {
 
         let mut b = preproc.next_bit_vec(required_bits)?;
 
-        // Verify we actually got the expected number of bits
-        if b.len() < required_bits {
-            return Err(anyhow_error_and_log("not enough bits in tuniform"));
-        }
-
         let mut res = Vec::with_capacity(n);
 
         //No need to compute indexes, simply pop the shared bits
         for _ in 1..=n {
             //Start with next_random_bit() - 2^bound
-            // We've already validated we have enough bits, so these pops should never fail
             let first_bit = b.pop().expect("validated sufficient bits");
             let mut ei = first_bit - Z::from_u128(1 << bound);
 
@@ -102,11 +95,6 @@ impl SecretDistributions for RealSecretDistributions {
         let required_bits = 2 * n * bound;
 
         let mut b = preproc.next_bit_vec(required_bits)?;
-
-        // Verify we actually got the expected number of bits
-        if b.len() < required_bits {
-            return Err(anyhow_error_and_log("not enough bits in newhope"));
-        }
 
         let mut res = Vec::with_capacity(n);
 

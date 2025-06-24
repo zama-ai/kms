@@ -132,6 +132,15 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             .await?;
 
         tracing::info!("Starting PRSS for identity {}.", own_identity);
+        tracing::info!(
+            "Session has {} parties with threshold {}",
+            base_session.parameters.num_parties(),
+            base_session.parameters.threshold()
+        );
+        tracing::info!(
+            "Role assignments: {:?}",
+            base_session.parameters.role_assignments()
+        );
         let prss_setup_obj_z128: PRSSSetup<ResiduePolyF4Z128> = RobustSecurePrssInit::default()
             .init(&mut base_session)
             .await?;
