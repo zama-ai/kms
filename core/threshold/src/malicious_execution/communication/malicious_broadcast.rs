@@ -28,7 +28,7 @@ pub struct MaliciousBroadcastDrop {}
 impl ProtocolDescription for MaliciousBroadcastDrop {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-MaliciousBroadcastDrop", indent)
+        format!("{indent}-MaliciousBroadcastDrop")
     }
 }
 
@@ -53,7 +53,7 @@ pub struct MaliciousBroadcastSender {}
 impl ProtocolDescription for MaliciousBroadcastSender {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-MaliciousBroadcastSender", indent)
+        format!("{indent}-MaliciousBroadcastSender")
     }
 }
 
@@ -203,7 +203,7 @@ pub struct MaliciousBroadcastSenderEcho {}
 impl ProtocolDescription for MaliciousBroadcastSenderEcho {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-MaliciousBroadcastSenderEcho", indent)
+        format!("{indent}-MaliciousBroadcastSenderEcho")
     }
 }
 

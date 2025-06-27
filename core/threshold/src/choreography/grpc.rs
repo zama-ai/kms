@@ -336,10 +336,10 @@ where
         // Helper function to format content lines with consistent width
         let format_section = |title: &str, content: &str| {
             let mut result = String::new();
-            result.push_str(&format!("│ {:^width$} │\n", title, width = content_width));
+            result.push_str(&format!("│ {title:^content_width$} │\n"));
 
             for line in content.lines() {
-                result.push_str(&format!("│ {:<width$} │\n", line, width = content_width));
+                result.push_str(&format!("│ {line:<content_width$} │\n"));
             }
             result
         };
@@ -392,7 +392,7 @@ where
                 || {
                     Err(tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("Failed to create session for {:?}", request_sid),
+                        format!("Failed to create session for {request_sid:?}"),
                     ))
                 },
                 Ok,
@@ -436,7 +436,7 @@ where
                     .map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
-                            format!("Failed to create networking: {:?}", e),
+                            format!("Failed to create networking: {e:?}"),
                         )
                     })?;
             let aes_rng = if let Some(seed) = seed {
@@ -525,14 +525,14 @@ where
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse role assignment: {:?}", e),
+                    format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
 
         let prss_params: PrssInitParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                format!("Failed to parse prss params: {:?}", e),
+                format!("Failed to parse prss params: {e:?}"),
             )
         })?;
 
@@ -551,7 +551,7 @@ where
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to create Base Session: {:?}", e),
+                    format!("Failed to create Base Session: {e:?}"),
                 )
             })?;
 
@@ -568,10 +568,7 @@ where
                     let prss_setup = match prss_setup {
                         Ok(prss_setup) => prss_setup,
                         Err(prss_setup) => {
-                            panic!(
-                                "Failed to initialize PRSS for ResiduePolyZ128: {:?}",
-                                prss_setup
-                            );
+                            panic!("Failed to initialize PRSS for ResiduePolyZ128: {prss_setup:?}");
                         }
                     };
 
@@ -599,10 +596,7 @@ where
                     let prss_setup = match prss_setup {
                         Ok(prss_setup) => prss_setup,
                         Err(prss_setup) => {
-                            panic!(
-                                "Failed to initialize PRSS for ResiduePolyZ64: {:?}",
-                                prss_setup
-                            );
+                            panic!("Failed to initialize PRSS for ResiduePolyZ64: {prss_setup:?}");
                         }
                     };
 
@@ -645,7 +639,7 @@ where
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse role assignment: {:?}", e),
+                    format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
 
@@ -653,7 +647,7 @@ where
             bc2wrap::deserialize(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse Preproc KeyGen params: {:?}", e),
+                    format!("Failed to parse Preproc KeyGen params: {e:?}"),
                 )
             })?;
 
@@ -678,7 +672,7 @@ where
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to create Base Session: {:?}", e),
+                    format!("Failed to create Base Session: {e:?}"),
                 )
             })?;
 
@@ -910,7 +904,7 @@ where
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse role assignment: {:?}", e),
+                    format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
 
@@ -918,7 +912,7 @@ where
             bc2wrap::deserialize(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse Threshold KeyGen params: {:?}", e),
+                    format!("Failed to parse Threshold KeyGen params: {e:?}"),
                 )
             })?;
 
@@ -938,7 +932,7 @@ where
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to create Base Session: {:?}", e),
+                    format!("Failed to create Base Session: {e:?}"),
                 )
             })?;
 
@@ -1053,7 +1047,7 @@ where
             .map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                format!("Failed to parse Threshold KeyGen Result params: {:?}", e),
+                format!("Failed to parse Threshold KeyGen Result params: {e:?}"),
             )
         })?;
 
@@ -1065,7 +1059,7 @@ where
                 bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("Failed to parse role assignment: {:?}", e),
+                        format!("Failed to parse role assignment: {e:?}"),
                     )
                 })?;
 
@@ -1081,7 +1075,7 @@ where
                 .map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("Failed to create Base Session: {:?}", e),
+                        format!("Failed to create Base Session: {e:?}"),
                     )
                 })?;
 
@@ -1090,7 +1084,7 @@ where
                 .map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("Failed to do centralised key generation {:?}", e),
+                        format!("Failed to do centralised key generation {e:?}"),
                     )
                 })?;
             self.data
@@ -1100,7 +1094,7 @@ where
                 pub_keyset: bc2wrap::serialize(&keys.0).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("Failed to serialize pubkey: {:?}", e),
+                        format!("Failed to serialize pubkey: {e:?}"),
                     )
                 })?,
             }));
@@ -1111,7 +1105,7 @@ where
                     pub_keyset: bc2wrap::serialize(&keys.0).map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
-                            format!("Failed to serialize pubkey: {:?}", e),
+                            format!("Failed to serialize pubkey: {e:?}"),
                         )
                     })?,
                 }));
@@ -1149,7 +1143,7 @@ where
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse role assignment: {:?}", e),
+                    format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
 
@@ -1157,7 +1151,7 @@ where
             bc2wrap::deserialize(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse Preproc Decrypt params: {:?}", e),
+                    format!("Failed to parse Preproc Decrypt params: {e:?}"),
                 )
             })?;
 
@@ -1199,7 +1193,7 @@ where
                     .map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
-                            format!("Failed to create Base Session: {:?}", e),
+                            format!("Failed to create Base Session: {e:?}"),
                         )
                     })?;
                 let large_sessions = create_large_sessions(base_sessions);
@@ -1268,7 +1262,7 @@ where
                     .map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
-                            format!("Failed to create Base Session: {:?}", e),
+                            format!("Failed to create Base Session: {e:?}"),
                         )
                     })?;
                 let prss_setup = self
@@ -1360,7 +1354,7 @@ where
                     .map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
-                            format!("Failed to create Base Session: {:?}", e),
+                            format!("Failed to create Base Session: {e:?}"),
                         )
                     })?;
                 let mut small_session =
@@ -1407,7 +1401,7 @@ where
                     .map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
-                            format!("Failed to create Base Session: {:?}", e),
+                            format!("Failed to create Base Session: {e:?}"),
                         )
                     })?;
                 let mut large_session = NoiseFloodLargeSession::<LargeOfflineStrategyZ128>::new(
@@ -1480,7 +1474,7 @@ where
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse role assignment: {:?}", e),
+                    format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
 
@@ -1488,7 +1482,7 @@ where
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse Threshold Decrypt params: {:?}", e),
+                    format!("Failed to parse Threshold Decrypt params: {e:?}"),
                 )
             })?;
 
@@ -1554,7 +1548,7 @@ where
                 .map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("Failed to create Base Session: {:?}", e),
+                        format!("Failed to create Base Session: {e:?}"),
                     )
                 })?;
             let new_session_id = bcast_session.session_id();
@@ -1574,7 +1568,7 @@ where
                         .map_err(|e| {
                             tonic::Status::new(
                                 tonic::Code::Aborted,
-                                format!("Failed to create Base Session: {:?}", e),
+                                format!("Failed to create Base Session: {e:?}"),
                             )
                         })?;
                     let ct_large = match ctxt {
@@ -1705,7 +1699,7 @@ where
                         .map_err(|e| {
                             tonic::Status::new(
                                 tonic::Code::Aborted,
-                                format!("Failed to create Base Session: {:?}", e),
+                                format!("Failed to create Base Session: {e:?}"),
                             )
                         })?;
                     //Do bcast to sync parties
@@ -1892,7 +1886,7 @@ where
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to create a base session parameters: {:?}", e),
+                    format!("Failed to create a base session parameters: {e:?}"),
                 )
             })?;
             //This is running the online phase of ddec, so can work in Async network
@@ -1909,7 +1903,7 @@ where
                 .map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("Failed to create Base Session: {:?}", e),
+                        format!("Failed to create Base Session: {e:?}"),
                     )
                 })?;
             match decryption_mode {
@@ -2205,14 +2199,14 @@ where
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse role assignment: {:?}", e),
+                    format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
 
         let crs_params: CrsGenParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                format!("Failed to parse Crs Gen params: {:?}", e),
+                format!("Failed to parse Crs Gen params: {e:?}"),
             )
         })?;
 
@@ -2231,7 +2225,7 @@ where
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to create Base Session: {:?}", e),
+                    format!("Failed to create Base Session: {e:?}"),
                 )
             })?;
 
@@ -2363,14 +2357,14 @@ where
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse role assignment: {:?}", e),
+                    format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
 
         let reshare_params: ReshareParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                format!("Failed to parse Reshare params: {:?}", e),
+                format!("Failed to parse Reshare params: {e:?}"),
             )
         })?;
 
@@ -2393,7 +2387,7 @@ where
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to create Base Session: {:?}", e),
+                    format!("Failed to create Base Session: {e:?}"),
                 )
             })?;
 

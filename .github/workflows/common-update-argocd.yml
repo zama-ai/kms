@@ -39,6 +39,7 @@ permissions: {}
 
 jobs:
   update-argocd-image-tag:
+    name: "Update ArgoCD Image Tag"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Project

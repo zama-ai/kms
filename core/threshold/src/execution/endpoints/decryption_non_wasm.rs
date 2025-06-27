@@ -434,7 +434,7 @@ where
     .await?;
 
     tracing::info!("Bitdec result in session {:?} is ready", sid);
-    results.insert(format!("{}", sid), outputs);
+    results.insert(format!("{sid}"), outputs);
 
     let execution_stop_timer = Instant::now();
     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
@@ -511,7 +511,7 @@ where
     let ptxt_sums: Vec<_> = ptxt_sums.iter().map(|ptxt_sum| ptxt_sum.value()).collect();
 
     tracing::info!("Bitdec result in session {:?} is ready", sid);
-    results.insert(format!("{}", sid), ptxt_sums);
+    results.insert(format!("{sid}"), ptxt_sums);
 
     let execution_stop_timer = Instant::now();
     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);

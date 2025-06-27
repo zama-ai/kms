@@ -156,10 +156,8 @@ pub async fn run_server<
             Ok(())
         }
         Err(e) => {
-            let err = anyhow_error_and_log(format!(
-                "KMS core on {} stopped with error: {}",
-                socket_addr, e
-            ));
+            let err =
+                anyhow_error_and_log(format!("KMS core on {socket_addr} stopped with error: {e}"));
             Err(err)
         }
     }

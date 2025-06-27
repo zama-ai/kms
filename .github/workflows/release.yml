@@ -14,6 +14,7 @@ permissions:
 
 jobs:
   release:
+    name: "Create Release"
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.sem-release.outputs.new_release_version }}

@@ -36,7 +36,7 @@ where
             return Err(anyhow_error_and_log("No element 0 in compressed list."));
         }
         Err(err) => {
-            let msg = format!("Invalid element 0 in compressed list, {}", err);
+            let msg = format!("Invalid element 0 in compressed list, {err}");
             return Err(anyhow_error_and_log(msg));
         }
     };
@@ -259,7 +259,7 @@ mod test {
             tfhe_safe_deserialize_and_uncompress::<T>(&decompression_key.unwrap(), &compressed);
         let result = match result {
             Ok(result) => result,
-            Err(err) => panic!("{:?}", err),
+            Err(err) => panic!("{err:?}"),
         };
         let decrypted: StaticUnsignedBigInt<N> = result.decrypt(&client_key);
         assert_eq!(decrypted, clear_value);
@@ -289,7 +289,7 @@ mod test {
         );
         let result = match result {
             Ok(result) => result,
-            Err(err) => panic!("{:?}", err),
+            Err(err) => panic!("{err:?}"),
         };
         let decrypted: bool = result.decrypt(&client_key);
         assert_eq!(decrypted, clear_value);
@@ -354,7 +354,7 @@ mod test {
         );
         let result = match result {
             Ok(result) => result,
-            Err(err) => panic!("{:?}", err),
+            Err(err) => panic!("{err:?}"),
         };
         let decrypted: u8 = result.decrypt(&client_key);
 

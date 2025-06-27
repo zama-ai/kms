@@ -168,7 +168,7 @@ pub fn encrypt_under_data_key(
     let nonce = Nonce::from_slice(iv);
     let auth_tag = cipher
         .encrypt_in_place_detached(nonce, b"", plaintext)
-        .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt application key: {}", e)))?;
+        .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt application key: {e}")))?;
     Ok(auth_tag.to_vec())
 }
 
@@ -184,6 +184,6 @@ pub fn decrypt_under_data_key(
     let nonce = Nonce::from_slice(iv);
     cipher
         .decrypt_in_place_detached(nonce, b"", ciphertext, auth_tag.as_slice().into())
-        .map_err(|e| anyhow_error_and_log(format!("{}", e)))?;
+        .map_err(|e| anyhow_error_and_log(format!("{e}")))?;
     Ok(())
 }

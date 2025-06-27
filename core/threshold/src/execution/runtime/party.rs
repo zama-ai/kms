@@ -190,8 +190,7 @@ impl FromStr for Identity {
         let parts: Vec<&str> = s.split(':').collect();
         if parts.len() != 2 {
             return Err(format!(
-                "Invalid identity format '{}'. Expected 'hostname:port'",
-                s
+                "Invalid identity format '{s}'. Expected 'hostname:port'"
             ));
         }
 

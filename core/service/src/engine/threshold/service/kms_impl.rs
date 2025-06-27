@@ -330,8 +330,7 @@ where
         }
         .map_err(|e| {
             anyhow_error_and_log(format!(
-                "Failed to launch ddec server on {} with error: {:?}",
-                mpc_socket_addr, e
+                "Failed to launch ddec server on {mpc_socket_addr} with error: {e:?}"
             ))
         })?;
         tracing::info!(

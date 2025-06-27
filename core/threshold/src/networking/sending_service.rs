@@ -102,7 +102,7 @@ impl GrpcSendingService {
             None => "http",
         };
         tracing::debug!("Creating {} channel to '{}'", proto, receiver);
-        let endpoint: Uri = format!("{}://{}", proto, receiver).parse().map_err(|_e| {
+        let endpoint: Uri = format!("{proto}://{receiver}").parse().map_err(|_e| {
             anyhow_error_and_log(format!("failed to parse identity as endpoint: {receiver}"))
         })?;
 
@@ -323,8 +323,7 @@ impl SendingService for GrpcSendingService {
         };
         let mut handles = self.thread_handles.write().map_err(|e| {
             anyhow_error_and_log(format!(
-                "Failed to acquire write lock for thread handles: {}",
-                e
+                "Failed to acquire write lock for thread handles: {e}"
             ))
         })?;
         let handle = tokio::spawn(Self::run_network_task(
@@ -393,7 +392,7 @@ impl Networking for NetworkSession {
         let round_counter = *self
             .round_counter
             .read()
-            .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e)))?;
+            .map_err(|e| anyhow_error_and_log(format!("Locking error: {e:?}")))?;
         let tagged_value = Tag {
             sender: self.owner.clone(),
             session_id: self.session_id,
@@ -401,7 +400,7 @@ impl Networking for NetworkSession {
         };
 
         let tag = bc2wrap::serialize(&tagged_value)
-            .map_err(|e| anyhow_error_and_log(format!("networking error: {:?}", e)))?;
+            .map_err(|e| anyhow_error_and_log(format!("networking error: {e:?}")))?;
 
         #[cfg(feature = "choreographer")]
         {
@@ -417,8 +416,7 @@ impl Networking for NetworkSession {
         match self.sending_channels.get(receiver) {
             Some(channel) => Ok(channel.send(request)?),
             None => Err(anyhow_error_and_log(format!(
-                "Missing local channel for P{:?}",
-                receiver
+                "Missing local channel for P{receiver:?}"
             ))),
         }?;
         Ok(())
@@ -429,12 +427,11 @@ impl Networking for NetworkSession {
         let network_round = *self
             .round_counter
             .read()
-            .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e)))?;
+            .map_err(|e| anyhow_error_and_log(format!("Locking error: {e:?}")))?;
 
         let rx = self.receiving_channels.get(sender).ok_or_else(|| {
             anyhow_error_and_log(format!(
-                "couldn't retrieve receiving channel for P:{:?}",
-                sender
+                "couldn't retrieve receiving channel for P:{sender:?}"
             ))
         })?;
         let mut rx = rx.value().1.lock().await;
@@ -628,7 +625,7 @@ mod tests {
                     .add_service(networking_server);
 
                 let core_future =
-                    core_router.serve(format!("0.0.0.0:600{}", port_digit).parse().unwrap());
+                    core_router.serve(format!("0.0.0.0:600{port_digit}").parse().unwrap());
 
                 tokio::spawn(async move {
                     let _res = futures::join!(core_future);
@@ -656,7 +653,7 @@ mod tests {
                 } else {
                     tokio::spawn(async move {
                         let msg = network_stack.receive(&id_1).await.unwrap();
-                        println!("Received ONCE {:?}", msg);
+                        println!("Received ONCE {msg:?}");
                         send.send(msg).unwrap();
                     });
                 }
@@ -681,7 +678,7 @@ mod tests {
                 .add_service(networking_server);
 
             let core_future =
-                core_router.serve(format!("0.0.0.0:600{}", port_digit).parse().unwrap());
+                core_router.serve(format!("0.0.0.0:600{port_digit}").parse().unwrap());
 
             tokio::spawn(async move {
                 println!("Spinning up second server");
@@ -698,7 +695,7 @@ mod tests {
             tokio::spawn(async move {
                 println!("Ready to receive");
                 let msg = network_stack.receive(&id_1).await.unwrap();
-                println!("Received TWICE {:?}", msg);
+                println!("Received TWICE {msg:?}");
                 send.send(msg).unwrap();
             });
             recv.blocking_recv().unwrap()

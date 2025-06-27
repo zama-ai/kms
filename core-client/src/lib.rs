@@ -342,7 +342,7 @@ pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
 
     // Handle odd-length hex strings by padding with a single leading zero
     let hex_str = if hex_str.len() % 2 == 1 {
-        format!("0{}", hex_str)
+        format!("0{hex_str}")
     } else {
         hex_str.to_string()
     };
@@ -718,7 +718,7 @@ async fn fetch_global_pub_object_and_write_to_file(
     let folder = destination_prefix.join("PUB").join(object_name);
     let content = fetch_object(
         s3_endpoint,
-        &format!("{}/{}", object_folder, object_name),
+        &format!("{object_folder}/{object_name}"),
         object_id,
     )
     .await?;
@@ -751,7 +751,7 @@ async fn fetch_local_key_and_write_to_file(
                 .join(object_name);
             let content = fetch_object(
                 s3_endpoint,
-                &format!("{}/{}", folder_name, object_name),
+                &format!("{folder_name}/{object_name}"),
                 object_id,
             )
             .await?;
@@ -784,11 +784,11 @@ async fn fetch_kms_addresses(
         .map(|x| {
             alloy_primitives::Address::parse_checksummed(
                 str::from_utf8(x).unwrap_or_else(|_| {
-                    panic!("cannot convert address bytes into UTF-8 string: {:?}", x)
+                    panic!("cannot convert address bytes into UTF-8 string: {x:?}")
                 }),
                 None,
             )
-            .unwrap_or_else(|e| panic!("invalid ethereum address: {:?} - {}", x, e))
+            .unwrap_or_else(|e| panic!("invalid ethereum address: {x:?} - {e}"))
         })
         .collect();
 
@@ -1440,7 +1440,7 @@ pub async fn execute_cmd(
                     )
                     .await?;
 
-                    let res = format!("{:x?}", resp_response_vec);
+                    let res = format!("{resp_response_vec:x?}");
                     Ok((Some(req_id), res))
                 });
             }
@@ -1691,7 +1691,7 @@ pub async fn execute_cmd(
                 &kms_addrs,
             )
             .await?;
-            let res = format!("{:x?}", resp_response_vec);
+            let res = format!("{resp_response_vec:x?}");
             vec![(Some(req_id), res)]
         }
         CCCommand::CrsGenResult(result_parameters) => {
@@ -2126,8 +2126,7 @@ async fn get_keygen_responses(
                 .await;
                 if ctr >= max_iter {
                     panic!(
-                        "timeout while waiting for keygen after {} retries (insecure: {insecure})",
-                        max_iter
+                        "timeout while waiting for keygen after {max_iter} retries (insecure: {insecure})"
                     );
                 }
                 ctr += 1;

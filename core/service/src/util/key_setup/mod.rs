@@ -69,7 +69,7 @@ pub async fn ensure_client_keys_exist(
     let mut client_storage = match FileStorage::new(optional_path, StorageType::CLIENT, None) {
         Ok(storage) => storage,
         Err(e) => {
-            panic!("Failed to create client storage: {}", e);
+            panic!("Failed to create client storage: {e}");
         }
     };
 
@@ -108,7 +108,7 @@ pub async fn ensure_client_keys_exist(
     )
     .await
     {
-        panic!("Failed to store private client key: {}", e);
+        panic!("Failed to store private client key: {e}");
     }
     log_storage_success(req_id, client_storage.info(), "client key", false, false);
 
@@ -116,7 +116,7 @@ pub async fn ensure_client_keys_exist(
     let pk_handle = match compute_handle(&client_pk) {
         Ok(handle) => handle,
         Err(e) => {
-            panic!("Failed to compute handle for client public key: {}", e);
+            panic!("Failed to compute handle for client public key: {e}");
         }
     };
 
@@ -129,7 +129,7 @@ pub async fn ensure_client_keys_exist(
     )
     .await
     {
-        panic!("Failed to store public client key: {}", e);
+        panic!("Failed to store public client key: {e}");
     }
     log_storage_success(pk_handle, client_storage.info(), "client key", true, false);
 
@@ -816,13 +816,13 @@ where
         .last()
         .ok_or("No public storage available")
         .unwrap_or_else(|e| {
-            panic!("Failed to access public storage: {}", e);
+            panic!("Failed to access public storage: {e}");
         });
     let last_priv = priv_storages
         .last()
         .ok_or("No private storage available")
         .unwrap_or_else(|e| {
-            panic!("Failed to access private storage: {}", e);
+            panic!("Failed to access private storage: {e}");
         });
 
     match check_data_exists(
@@ -1043,7 +1043,7 @@ where
         }
         Ok(false) => {} // Continue with generation
         Err(e) => {
-            panic!("Failed to check if threshold CRS exists: {}", e);
+            panic!("Failed to check if threshold CRS exists: {e}");
         }
     }
 
@@ -1057,7 +1057,7 @@ where
     .await
     .into_iter()
     .collect::<Result<_, _>>()
-    .unwrap_or_else(|e| panic!("Failed to get signing key: {}", e));
+    .unwrap_or_else(|e| panic!("Failed to get signing key: {e}"));
 
     // Calculate max_num_bits based on DKG parameters
     // PANICS: If parameters are invalid and yield zero bits (security critical)
@@ -1080,8 +1080,7 @@ where
         public_parameters_by_trusted_setup(&pke_params, Some(max_num_bits), sid, &mut rng)
             .unwrap_or_else(|e| {
                 panic!(
-                    "Failed to make centralized public parameters (max_bits: {}): {}",
-                    max_num_bits, e
+                    "Failed to make centralized public parameters (max_bits: {max_num_bits}): {e}"
                 );
             });
 
@@ -1090,7 +1089,7 @@ where
     let pp = internal_pp
         .try_into_tfhe_zk_pok_pp(&pke_params, sid)
         .unwrap_or_else(|e| {
-            panic!("Failed to convert internal_pp to tfhe_zk_pok_pp: {}", e);
+            panic!("Failed to convert internal_pp to tfhe_zk_pok_pp: {e}");
         });
 
     // Store the CRS for each party
@@ -1101,7 +1100,7 @@ where
         // Compute signed metadata for CRS verification
         // PANICS: If signature generation fails - would compromise security model
         let crs_info = compute_info(cur_sk, &DSEP_PUBDATA_CRS, &pp, None).unwrap_or_else(|e| {
-            panic!("Failed to compute CRS info for party: {}", e);
+            panic!("Failed to compute CRS info for party: {e}");
         });
 
         // Store private CRS info with signature - essential for verification chain
@@ -1114,7 +1113,7 @@ where
         )
         .await
         .unwrap_or_else(|e| {
-            panic!("Failed to store private CRS info for party: {}", e);
+            panic!("Failed to store private CRS info for party: {e}");
         });
 
         log_storage_success(crs_handle, cur_priv.info(), "CRS data", false, true);
@@ -1129,7 +1128,7 @@ where
         )
         .await
         .unwrap_or_else(|e| {
-            panic!("Failed to store public CRS for party: {}", e);
+            panic!("Failed to store public CRS for party: {e}");
         });
         log_storage_success(crs_handle, cur_pub.info(), "CRS data", true, true);
     }

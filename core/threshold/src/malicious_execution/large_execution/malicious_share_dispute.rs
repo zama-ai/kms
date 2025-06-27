@@ -24,7 +24,7 @@ pub struct DroppingShareDispute {}
 impl ProtocolDescription for DroppingShareDispute {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-DroppingShareDispute", indent)
+        format!("{indent}-DroppingShareDispute")
     }
 }
 
@@ -54,7 +54,7 @@ pub struct WrongShareDisputeRecons {}
 impl ProtocolDescription for WrongShareDisputeRecons {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-WrongShareDisputeRecons", indent)
+        format!("{indent}-WrongShareDisputeRecons")
     }
 }
 
@@ -146,7 +146,7 @@ pub struct MaliciousShareDisputeRecons {
 impl ProtocolDescription for MaliciousShareDisputeRecons {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-MaliciousShareDisputeRecons", indent)
+        format!("{indent}-MaliciousShareDisputeRecons")
     }
 }
 

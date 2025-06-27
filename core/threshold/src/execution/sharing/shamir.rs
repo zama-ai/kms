@@ -259,8 +259,7 @@ where
         // max_errs = threshold - num_bots
         let max_errs = threshold.checked_sub(num_bots).ok_or_else(|| {
             anyhow_error_and_warn_log(format!(
-                "Underflow in reconstruction computing max_errs:  num_bots ({}) > threshold ({})",
-                num_bots, threshold
+                "Underflow in reconstruction computing max_errs:  num_bots ({num_bots}) > threshold ({threshold})"
             ))
         })?;
 
@@ -307,8 +306,7 @@ where
             // max_errs = threshold - num_bots
             let max_errs = threshold.checked_sub(num_bots).ok_or_else(|| {
                 anyhow_error_and_warn_log(format!(
-                "Underflow in reconstruction computing max_errs:  num_bots ({}) > threshold ({})",
-                num_bots, threshold
+                "Underflow in reconstruction computing max_errs:  num_bots ({num_bots}) > threshold ({threshold})"
             ))
             })?;
             let opened = sharing.err_reconstruct(degree, max_errs)?;

@@ -241,7 +241,7 @@ impl KeyGenPreprocessor for RealPreprocessor {
             tracing::warn!("Request ID {} is not valid!", request_id.to_string());
             return Err(tonic::Status::new(
                 tonic::Code::InvalidArgument,
-                format!("Request ID {} is not valid!", request_id),
+                format!("Request ID {request_id} is not valid!"),
             ));
         }
 
@@ -265,7 +265,7 @@ impl KeyGenPreprocessor for RealPreprocessor {
         //If the entry did not exist before, start the preproc
         if !entry_exists {
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
-            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params))?;
+            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
         } else {
             tracing::warn!(
                 "Tried to generate preproc multiple times for the same Request ID {} -- skipped it!",

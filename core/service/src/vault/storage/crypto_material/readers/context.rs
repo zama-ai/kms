@@ -15,8 +15,7 @@ impl CryptoMaterialReader for ContextInfo {
             .await
             .map_err(|e| {
                 anyhow_error_and_warn_log(format!(
-                    "Failed to read ContextInfo from storage for context ID {}: {}",
-                    request_id, e
+                    "Failed to read ContextInfo from storage for context ID {request_id}: {e}"
                 ))
             })
     }

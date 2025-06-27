@@ -146,7 +146,7 @@ where
     .concat();
 
     let ciphertext = hybrid_ml_kem::enc(rng, &to_encrypt, &client_pub_key.0)
-        .map_err(|e| anyhow_tracked(format!("signcryption encryption failed: {:?}", e)))?;
+        .map_err(|e| anyhow_tracked(format!("signcryption encryption failed: {e:?}")))?;
     Ok(Cipher(ciphertext))
 }
 
@@ -161,7 +161,7 @@ pub fn validate_and_decrypt(
 ) -> anyhow::Result<Vec<u8>> {
     let decrypted_plaintext =
         hybrid_ml_kem::dec(cipher.0.clone(), &client_keys.sk.decryption_key.0)
-            .map_err(|e| anyhow_tracked(format!("signcryption decryption failed: {:?}", e,)))?;
+            .map_err(|e| anyhow_tracked(format!("signcryption decryption failed: {e:?}",)))?;
     let (msg, sig) = parse_msg(decrypted_plaintext, server_verf_key)?;
 
     check_format_and_signature(dsep, msg.clone(), &sig, server_verf_key, &client_keys.pk)?;
@@ -183,8 +183,7 @@ fn parse_msg(
     // Verify verification key digest
     if serialize_hash_element(&DSEP_SIGNCRYPTION, server_verf_key)? != server_ver_key_digest {
         return Err(anyhow_tracked(format!(
-            "unexpected verification key digest {:X?} was part of the decryption",
-            server_ver_key_digest,
+            "unexpected verification key digest {server_ver_key_digest:X?} was part of the decryption",
         )));
     }
     let sig = k256::ecdsa::Signature::from_slice(sig_bytes)?;

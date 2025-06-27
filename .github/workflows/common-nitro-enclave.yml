@@ -59,6 +59,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+    name: "Determine Docker Tag"
     runs-on: ubuntu-latest
     outputs:
       docker_tag: ${{ steps.set-tag.outputs.tag }}
@@ -94,6 +95,7 @@ jobs:
       enclave_pcr0: ${{ steps.eif.outputs.eif_pcr0 }}
       enclave_pcr1: ${{ steps.eif.outputs.eif_pcr1 }}
       enclave_pcr2: ${{ steps.eif.outputs.eif_pcr2 }}
+    name: "Build and Push Enclave Docker Image"
     runs-on: 'ubuntu-latest'
     steps:
       - name: Checkout Project

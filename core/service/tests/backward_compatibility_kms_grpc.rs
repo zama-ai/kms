@@ -28,8 +28,7 @@ fn test_signed_pub_data_handle_internal(
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid signed pub data handle (internal):\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
+                "Invalid signed pub data handle (internal):\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -50,8 +49,7 @@ fn test_public_key_type(
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid signed pub data handle (internal):\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
+                "Invalid signed pub data handle (internal):\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -72,8 +70,7 @@ fn test_pub_data_type(
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid signed pub data handle (internal):\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
+                "Invalid signed pub data handle (internal):\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -117,10 +114,7 @@ fn test_backward_compatibility_kms_grpc() {
 
     for r in results.iter() {
         if r.is_failure() {
-            panic!(
-                "Backward compatibility tests for the KmsGrpc module failed: {:?}",
-                r
-            )
+            panic!("Backward compatibility tests for the KmsGrpc module failed: {r:?}")
         }
     }
 }

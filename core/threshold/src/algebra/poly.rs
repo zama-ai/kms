@@ -701,8 +701,7 @@ pub fn gao_decoding<F: Field>(
 
     if !rem.is_zero() {
         Err(anyhow_error_and_log(format!(
-            "Gao decoding failure: Division remainder is not zero but {:?}.",
-            rem
+            "Gao decoding failure: Division remainder is not zero but {rem:?}."
         )))
     } else if h.deg() >= k {
         Err(anyhow_error_and_log(format!("Gao decoding failure: Division result is of too high degree {}, but should be at most {}.", h.deg(), k-1)))

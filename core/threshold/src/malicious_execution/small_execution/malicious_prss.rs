@@ -32,7 +32,7 @@ pub struct MaliciousPrssDrop {}
 impl ProtocolDescription for MaliciousPrssDrop {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-MaliciousPrssDrop", indent)
+        format!("{indent}-MaliciousPrssDrop")
     }
 }
 

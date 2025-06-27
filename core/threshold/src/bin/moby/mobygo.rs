@@ -619,7 +619,7 @@ async fn threshold_decrypt_command(
         }
     };
 
-    println!("Encrypted the following message : {:?}", messages);
+    println!("Encrypted the following message : {messages:?}");
 
     let session_id = params.session_id.unwrap_or(random());
     let throughput = if let Some(num_copies) = params.throughput_copies {
@@ -648,8 +648,7 @@ async fn threshold_decrypt_command(
         .await?;
 
     println!(
-        "Distributed Decryption started. The resulting plaintexts will be stored under session ID: {:?}",
-        session_id
+        "Distributed Decryption started. The resulting plaintexts will be stored under session ID: {session_id:?}"
     );
 
     Ok(())
@@ -686,10 +685,7 @@ async fn reshare_command(
         )
         .await?;
 
-    println!(
-        "After resharing, new key will be available under {:?}",
-        new_sid
-    );
+    println!("After resharing, new key will be available under {new_sid:?}");
 
     Ok(())
 }
@@ -711,7 +707,7 @@ async fn status_check_command(
     results.sort_by_key(|(role, _)| role.one_based());
     println!("Status Check for Session ID {session_id} -- Finished");
     for (role, status) in results {
-        println!("Role {role}, Status {:?}", status);
+        println!("Role {role}, Status {status:?}");
     }
     Ok(())
 }
@@ -776,7 +772,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Explicitly shut down telemetry to ensure all data is properly exported
     if let Err(e) = tracer_provider.shutdown() {
-        eprintln!("Error shutting down tracer provider: {}", e);
+        eprintln!("Error shutting down tracer provider: {e}");
     }
 
     Ok(())

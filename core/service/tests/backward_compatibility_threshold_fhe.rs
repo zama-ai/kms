@@ -51,8 +51,7 @@ where
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid PRSS setup with residue poly size {:?}:\n Expected :\n{:?}\nGot:\n{:?}",
-                poly_size, original_versionized, new_versionized
+                "Invalid PRSS setup with residue poly size {poly_size:?}:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -92,8 +91,7 @@ fn test_prf_key(
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid prf key:\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
+                "Invalid prf key:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))

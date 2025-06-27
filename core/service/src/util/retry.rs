@@ -97,9 +97,9 @@ pub enum LoopErr<E> {
 impl<E: fmt::Display> fmt::Display for LoopErr<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            LoopErr::Fatal(err) => write!(f, "Fatal error: {}", err),
-            LoopErr::Transient(err) => write!(f, "Transient error: {}", err),
-            LoopErr::Termination(err) => write!(f, "{}", err),
+            LoopErr::Fatal(err) => write!(f, "Fatal error: {err}"),
+            LoopErr::Transient(err) => write!(f, "Transient error: {err}"),
+            LoopErr::Termination(err) => write!(f, "{err}"),
         }
     }
 }

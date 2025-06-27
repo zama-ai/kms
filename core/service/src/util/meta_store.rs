@@ -175,8 +175,7 @@ pub(crate) async fn handle_res_mapping<T: Clone>(
     match handle {
         None => {
             let msg = format!(
-                "Could not retrieve {request_type_info} with request ID {}. It does not exist",
-                req_id
+                "Could not retrieve {request_type_info} with request ID {req_id}. It does not exist"
             );
             tracing::warn!(msg);
             Err(tonic::Status::new(tonic::Code::NotFound, msg))
@@ -193,8 +192,7 @@ pub(crate) async fn handle_res_mapping<T: Clone>(
                     Ok(result) => Ok(result),
                     Err(e) => {
                         let msg = format!(
-                                "Could not retrieve {request_type_info} with request ID {} since it finished with an error: {}",
-                                req_id, e
+                                "Could not retrieve {request_type_info} with request ID {req_id} since it finished with an error: {e}"
                             );
                         tracing::warn!(msg);
                         Err(tonic::Status::new(tonic::Code::Internal, msg))
@@ -202,8 +200,7 @@ pub(crate) async fn handle_res_mapping<T: Clone>(
                 }
             } else {
                 let msg = format!(
-                    "Could not retrieve {request_type_info} with request ID {} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds",
-                    req_id
+                    "Could not retrieve {request_type_info} with request ID {req_id} since it is not completed yet after waiting for {DURATION_WAITING_ON_RESULT_SECONDS} seconds"
                 );
                 tracing::info!(msg);
                 Err(tonic::Status::new(tonic::Code::Unavailable, msg))

@@ -18,6 +18,7 @@ permissions:
 
 jobs:
   dependencies-check:
+    name: "Dependency analysis"
     runs-on: ubuntu-latest
     steps:
 

@@ -566,7 +566,7 @@ impl ChoreoRuntime {
                 println!("Status Check for Session ID {session_id} -- Still have running parties");
                 result.sort_by_key(|(role, _)| role.one_based());
                 for (role, status) in result.drain(..) {
-                    println!("Role {role}, Status {:?}", status);
+                    println!("Role {role}, Status {status:?}");
                 }
                 tokio::time::sleep(interval).await;
             }

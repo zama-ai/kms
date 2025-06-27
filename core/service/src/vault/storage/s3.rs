@@ -271,7 +271,7 @@ pub async fn build_s3_client(
         Some(p) => {
             // Overrides the hostname checked by the AWS API endpoint
             let host_header_interceptor = HostHeaderInterceptor {
-                host: format!("s3.{}.amazonaws.com", region),
+                host: format!("s3.{region}.amazonaws.com"),
             };
             match p.scheme() {
                 "https" => {
@@ -279,7 +279,7 @@ pub async fn build_s3_client(
                         .with_native_roots()
                         .https_only()
                         // Overrides the hostname checked during the TLS handshake
-                        .with_server_name(format!("s3.{}.amazonaws.com", region))
+                        .with_server_name(format!("s3.{region}.amazonaws.com"))
                         .enable_http1()
                         .build();
                     let http_client = HyperClientBuilder::new().build(https_connector);

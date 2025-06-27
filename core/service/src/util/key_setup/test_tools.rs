@@ -668,9 +668,7 @@ pub(crate) mod setup {
             &SIGNING_KEY_ID,
             true,
             ThresholdSigningKeyConfig::AllParties(
-                (1..=amount_parties)
-                    .map(|i| format!("party-{}", i))
-                    .collect(),
+                (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
             ),
         )
         .await;

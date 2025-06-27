@@ -288,11 +288,11 @@ async fn main() -> anyhow::Result<()> {
             )
         });
 
-    println!("KMS Server service socket address: {}", service_socket_addr);
+    println!("KMS Server service socket address: {service_socket_addr}");
 
     let service_listener = TcpListener::bind(service_socket_addr)
         .await
-        .unwrap_or_else(|e| panic!("Could not bind to {} \n {:?}", service_socket_addr, e));
+        .unwrap_or_else(|e| panic!("Could not bind to {service_socket_addr} \n {e:?}"));
 
     match core_config.threshold {
         Some(threshold_config) => {
@@ -317,7 +317,7 @@ async fn main() -> anyhow::Result<()> {
                 });
             let mpc_listener = TcpListener::bind(mpc_socket_addr)
                 .await
-                .unwrap_or_else(|e| panic!("Could not bind to {} \n {:?}", mpc_socket_addr, e));
+                .unwrap_or_else(|e| panic!("Could not bind to {mpc_socket_addr} \n {e:?}"));
 
             tracing::info!(
                 "Starting threshold KMS server v{} for party {}, listening for MPC communication on {:?}...",
@@ -451,11 +451,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Explicitly shut down telemetry to ensure all data is properly exported
     if let Err(e) = tracer_provider.shutdown() {
-        eprintln!("Error shutting down tracer provider: {}", e);
+        eprintln!("Error shutting down tracer provider: {e}");
     }
 
     if let Err(e) = meter_provider.shutdown() {
-        eprintln!("Error shutting down meter provider: {}", e);
+        eprintln!("Error shutting down meter provider: {e}");
     }
 
     Ok(())

@@ -28,7 +28,7 @@ pub struct DroppingVssFromStart {}
 impl ProtocolDescription for DroppingVssFromStart {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-DroppingVssFromStart", indent)
+        format!("{indent}-DroppingVssFromStart")
     }
 }
 
@@ -59,7 +59,7 @@ pub struct DroppingVssAfterR1 {}
 impl ProtocolDescription for DroppingVssAfterR1 {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-DroppingVssAfterR1", indent)
+        format!("{indent}-DroppingVssAfterR1")
     }
 }
 

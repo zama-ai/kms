@@ -719,8 +719,7 @@ impl Client {
 
         if c < min_agree_count as usize {
             return Err(anyhow_error_and_log(format!(
-                "No consensus on CRS digest! {} < {}",
-                c, min_agree_count
+                "No consensus on CRS digest! {c} < {min_agree_count}"
             )));
         }
 
@@ -926,7 +925,7 @@ impl Client {
     ) -> anyhow::Result<Option<S>> {
         let pki = some_or_err(
             key_gen_result.key_results.get(&key_type.to_string()),
-            format!("Could not find key of type {}", key_type),
+            format!("Could not find key of type {key_type}"),
         )?;
         let request_id = some_or_err(
             key_gen_result.request_id.clone(),
@@ -1798,8 +1797,7 @@ pub async fn await_server_ready(service_name: &str, port: u16) {
     {
         if service_tries >= MAX_TRIES {
             panic!(
-                "Failed to get health status on {service_name} on port {port}. Status: {:?}",
-                status
+                "Failed to get health status on {service_name} on port {port}. Status: {status:?}"
             );
         }
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -1810,7 +1808,7 @@ pub async fn await_server_ready(service_name: &str, port: u16) {
 
 #[cfg(feature = "non-wasm")]
 async fn get_health_client(port: u16) -> anyhow::Result<HealthClient<Channel>> {
-    let server_address = &format!("{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{}", port);
+    let server_address = &format!("{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{port}");
     let channel_builder = Channel::from_shared(server_address.to_string())?;
     let channel = channel_builder.connect().await?;
     Ok(HealthClient::new(channel))
@@ -1986,7 +1984,7 @@ pub mod test_tools {
                 Ok((kms_server, health_service)) => {
                     servers.push((i, kms_server, service_config, health_service))
                 }
-                Err(e) => panic!("Failed to start server {i} with error {:?}", e),
+                Err(e) => panic!("Failed to start server {i} with error {e:?}"),
             }
         }
         tracing::info!("Servers initialized. Starting servers...");
@@ -2060,7 +2058,7 @@ pub mod test_tools {
             }
             Err(e) => {
                 tracing::error!("Client unable to connect to {}: Error {:?}", uri, e);
-                panic!("Client unable to connect to {}: Error {:?}", uri, e)
+                panic!("Client unable to connect to {uri}: Error {e:?}")
             }
         }
     }
@@ -2472,8 +2470,7 @@ pub(crate) mod tests {
         assert_eq!(
             status,
             ServingStatus::Serving as i32,
-            "Service is not in SERVING status. Got status: {}",
-            status
+            "Service is not in SERVING status. Got status: {status}"
         );
     }
 
@@ -2488,8 +2485,7 @@ pub(crate) mod tests {
     async fn test_threshold_health_endpoint_availability() {
         // make sure the store does not contain any PRSS info (currently stored under ID PRSS_INIT_REQ_ID)
         let req_id = &derive_request_id(&format!(
-            "PRSSSetup_Z128_ID_{}_{}_{}",
-            PRSS_INIT_REQ_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
+            "PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_{DEFAULT_AMOUNT_PARTIES}_{DEFAULT_THRESHOLD}"
         ))
         .unwrap();
         purge(None, None, req_id, DEFAULT_AMOUNT_PARTIES).await;
@@ -2529,8 +2525,7 @@ pub(crate) mod tests {
         assert_eq!(
             status,
             ServingStatus::NotServing as i32,
-            "Service is not in NOT_SERVING status. Got status: {}",
-            status
+            "Service is not in NOT_SERVING status. Got status: {status}"
         );
         // Get health client for main server 1
         let mut threshold_health_client =
@@ -2545,8 +2540,7 @@ pub(crate) mod tests {
         assert_eq!(
             status,
             ServingStatus::Serving as i32,
-            "Service is not in SERVING status. Got status: {}",
-            status
+            "Service is not in SERVING status. Got status: {status}"
         );
 
         // Now initialize and check that the server is serving
@@ -2571,8 +2565,7 @@ pub(crate) mod tests {
         assert_eq!(
             status,
             ServingStatus::Serving as i32,
-            "Service is not in SERVING status. Got status: {}",
-            status
+            "Service is not in SERVING status. Got status: {status}"
         );
 
         // Shutdown the servers and check that the health endpoint is no longer serving
@@ -2626,8 +2619,7 @@ pub(crate) mod tests {
         assert_eq!(
             status,
             ServingStatus::Serving as i32,
-            "Service is not in SERVING status. Got status: {}",
-            status
+            "Service is not in SERVING status. Got status: {status}"
         );
         let client_map = HashMap::from([(1, kms_client)]);
         // Keep the server occupied so it won't shut down immidiately after dropping the handle
@@ -2642,8 +2634,7 @@ pub(crate) mod tests {
         assert_eq!(
             status,
             ServingStatus::NotServing as i32,
-            "Service is not in NOT SERVING status. Got status: {}",
-            status
+            "Service is not in NOT SERVING status. Got status: {status}"
         );
         // Wait for dec tasks to be done
         let dec_res = tasks.join_all().await;
@@ -2685,8 +2676,7 @@ pub(crate) mod tests {
         assert_eq!(
             status,
             ServingStatus::Serving as i32,
-            "Service is not in SERVING status. Got status: {}",
-            status
+            "Service is not in SERVING status. Got status: {status}"
         );
         let status = get_status(&mut threshold_health_client, threshold_service_name)
             .await
@@ -2694,8 +2684,7 @@ pub(crate) mod tests {
         assert_eq!(
             status,
             ServingStatus::Serving as i32,
-            "Service is not in SERVING status. Got status: {}",
-            status
+            "Service is not in SERVING status. Got status: {status}"
         );
         let res = kms_servers.remove(&1).unwrap();
         // Trigger the shutdown
@@ -2742,8 +2731,7 @@ pub(crate) mod tests {
         assert_eq!(
             status,
             ServingStatus::Serving as i32,
-            "Service is not in SERVING status. Got status: {}",
-            status
+            "Service is not in SERVING status. Got status: {status}"
         );
         // Get health client for main server 1
         let mut threshold_health_client = get_health_client(mpc_port)
@@ -2756,8 +2744,7 @@ pub(crate) mod tests {
         assert_eq!(
             status,
             ServingStatus::Serving as i32,
-            "Service is not in SERVING status. Got status: {}",
-            status
+            "Service is not in SERVING status. Got status: {status}"
         );
         // Keep the server occupied so it won't shut down immidiately after dropping the handle
         let (tasks, _req_id) = send_dec_reqs(
@@ -2784,8 +2771,7 @@ pub(crate) mod tests {
         assert_eq!(
             status,
             ServingStatus::NotServing as i32,
-            "Service is not in NOT SERVING status. Got status: {}",
-            status
+            "Service is not in NOT SERVING status. Got status: {status}"
         );
         let _ = server_handle.server.shutdown().await;
         check_port_is_closed(mpc_port).await;
@@ -3402,8 +3388,7 @@ pub(crate) mod tests {
     ) {
         for i in 0..iterations {
             let req_crs: RequestId = derive_request_id(&format!(
-                "full_crs_{amount_parties}_{:?}_{:?}_{i}_{insecure}",
-                max_bits, parameter
+                "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}_{insecure}"
             ))
             .unwrap();
             purge(None, None, &req_crs, amount_parties).await;
@@ -3422,8 +3407,7 @@ pub(crate) mod tests {
             let mut crs_set = JoinSet::new();
             for i in 0..iterations {
                 let cur_id: RequestId = derive_request_id(&format!(
-                    "full_crs_{amount_parties}_{:?}_{:?}_{i}_{insecure}",
-                    max_bits, parameter
+                    "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}_{insecure}"
                 ))
                 .unwrap();
                 crs_set.spawn({
@@ -3447,8 +3431,7 @@ pub(crate) mod tests {
         } else {
             for i in 0..iterations {
                 let cur_id: RequestId = derive_request_id(&format!(
-                    "full_crs_{amount_parties}_{:?}_{:?}_{i}_{insecure}",
-                    max_bits, parameter
+                    "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}_{insecure}"
                 ))
                 .unwrap();
                 run_crs(
@@ -5514,8 +5497,7 @@ pub(crate) mod tests {
     #[serial]
     async fn test_insecure_dkg(#[case] amount_parties: usize) {
         let key_id: RequestId = derive_request_id(&format!(
-            "test_inscure_dkg_key_{amount_parties}_{:?}",
-            TEST_PARAM
+            "test_inscure_dkg_key_{amount_parties}_{TEST_PARAM:?}"
         ))
         .unwrap();
         purge(None, None, &key_id, amount_parties).await;
@@ -5550,8 +5532,7 @@ pub(crate) mod tests {
         let dkg_param: WrappedDKGParams = param.into();
 
         let key_id: RequestId = derive_request_id(&format!(
-            "default_insecure_dkg_key_{amount_parties}_{:?}",
-            param,
+            "default_insecure_dkg_key_{amount_parties}_{param:?}",
         ))
         .unwrap();
         purge(None, None, &key_id, amount_parties).await;
@@ -5640,15 +5621,13 @@ pub(crate) mod tests {
         } else {
             Some(
                 derive_request_id(&format!(
-                    "decom_dkg_preproc_{amount_parties}_{:?}_1",
-                    parameter
+                    "decom_dkg_preproc_{amount_parties}_{parameter:?}_1"
                 ))
                 .unwrap(),
             )
         };
         let key_id_1: RequestId =
-            derive_request_id(&format!("decom_dkg_key_{amount_parties}_{:?}_1", parameter))
-                .unwrap();
+            derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_1")).unwrap();
         purge(None, None, &key_id_1, amount_parties).await;
 
         let preproc_id_2 = if insecure {
@@ -5656,25 +5635,21 @@ pub(crate) mod tests {
         } else {
             Some(
                 derive_request_id(&format!(
-                    "decom_dkg_preproc_{amount_parties}_{:?}_2",
-                    parameter
+                    "decom_dkg_preproc_{amount_parties}_{parameter:?}_2"
                 ))
                 .unwrap(),
             )
         };
         let key_id_2: RequestId =
-            derive_request_id(&format!("decom_dkg_key_{amount_parties}_{:?}_2", parameter))
-                .unwrap();
+            derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_2")).unwrap();
         purge(None, None, &key_id_2, amount_parties).await;
 
         let preproc_id_3 = derive_request_id(&format!(
-            "decom_dkg_preproc_{amount_parties}_{:?}_3",
-            parameter
+            "decom_dkg_preproc_{amount_parties}_{parameter:?}_3"
         ))
         .unwrap();
         let key_id_3: RequestId =
-            derive_request_id(&format!("decom_dkg_key_{amount_parties}_{:?}_3", parameter))
-                .unwrap();
+            derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_3")).unwrap();
         purge(None, None, &key_id_3, amount_parties).await;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
@@ -5810,16 +5785,13 @@ pub(crate) mod tests {
     ) {
         for i in 0..iterations {
             let req_preproc: RequestId = derive_request_id(&format!(
-                "full_dkg_preproc_{amount_parties}_{:?}_{i}",
-                parameter
+                "full_dkg_preproc_{amount_parties}_{parameter:?}_{i}"
             ))
             .unwrap();
             purge(None, None, &req_preproc, amount_parties).await;
-            let req_key: RequestId = derive_request_id(&format!(
-                "full_dkg_key_{amount_parties}_{:?}_{i}",
-                parameter
-            ))
-            .unwrap();
+            let req_key: RequestId =
+                derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}"))
+                    .unwrap();
             purge(None, None, &req_key, amount_parties).await;
         }
 
@@ -5854,8 +5826,7 @@ pub(crate) mod tests {
             let mut preproc_ids = HashMap::new();
             for i in 0..iterations {
                 let cur_id: RequestId = derive_request_id(&format!(
-                    "full_dkg_preproc_{amount_parties}_{:?}_{i}",
-                    parameter
+                    "full_dkg_preproc_{amount_parties}_{parameter:?}_{i}"
                 ))
                 .unwrap();
                 preproc_ids.insert(i, cur_id);
@@ -5879,11 +5850,9 @@ pub(crate) mod tests {
             preprocset.join_all().await;
             let mut keyset = JoinSet::new();
             for i in 0..iterations {
-                let key_id: RequestId = derive_request_id(&format!(
-                    "full_dkg_key_{amount_parties}_{:?}_{i}",
-                    parameter
-                ))
-                .unwrap();
+                let key_id: RequestId =
+                    derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}"))
+                        .unwrap();
                 let preproc_ids_clone = preproc_ids.get(&i).unwrap().to_owned();
                 keyset.spawn({
                     let clients_clone = Arc::clone(&arc_clients);
@@ -5914,8 +5883,7 @@ pub(crate) mod tests {
             let mut preproc_ids = HashMap::new();
             for i in 0..iterations {
                 let cur_id: RequestId = derive_request_id(&format!(
-                    "full_dkg_preproc_{amount_parties}_{:?}_{i}",
-                    parameter
+                    "full_dkg_preproc_{amount_parties}_{parameter:?}_{i}"
                 ))
                 .unwrap();
                 run_preproc(
@@ -5930,11 +5898,9 @@ pub(crate) mod tests {
                 preproc_ids.insert(i, cur_id);
             }
             for i in 0..iterations {
-                let key_id: RequestId = derive_request_id(&format!(
-                    "full_dkg_key_{amount_parties}_{:?}_{i}",
-                    parameter
-                ))
-                .unwrap();
+                let key_id: RequestId =
+                    derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}"))
+                        .unwrap();
                 let keyset = run_keygen(
                     parameter,
                     &kms_clients,

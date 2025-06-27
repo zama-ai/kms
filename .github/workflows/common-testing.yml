@@ -74,6 +74,7 @@ permissions: {}
 
 jobs:
   compile-rust-unit-tests:
+    name: "Compile Rust & Unit Tests"
     timeout-minutes: 500
     runs-on: ${{ inputs.runs-on }}
     services:

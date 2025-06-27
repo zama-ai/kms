@@ -709,7 +709,7 @@ impl Invert for LevelKsw {
     fn invert(self) -> anyhow::Result<Self> {
         let inverse = self.value.0.inv_odd_mod(&Self::MODULUS);
         if inverse.is_none().into() {
-            Err(anyhow_error_and_log(format!("Could not invert {:?}", self)))
+            Err(anyhow_error_and_log(format!("Could not invert {self:?}")))
         } else {
             Ok(Self {
                 value: GenericModulus(inverse.unwrap()),

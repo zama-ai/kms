@@ -61,8 +61,7 @@ fn test_private_sig_key(
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid private sig key:\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
+                "Invalid private sig key:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -89,8 +88,7 @@ fn test_app_key_blob(
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid app key blob:\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
+                "Invalid app key blob:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -112,8 +110,7 @@ fn test_public_sig_key(
     if original_versionized != new_versionized {
         Err(test.failure(
             format!(
-                "Invalid public sig key:\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized, new_versionized
+                "Invalid public sig key:\n Expected :\n{original_versionized:?}\nGot:\n{new_versionized:?}"
             ),
             format,
         ))
@@ -173,8 +170,7 @@ fn test_kms_fhe_key_handles(
     if new_key_params != original_key_params {
         Err(test.failure(
             format!(
-                "Invalid KMS FHE key handles because of different parameters:\n Expected :\n{:?}\nGot:\n{:?}",
-                original_key_params, new_key_params
+                "Invalid KMS FHE key handles because of different parameters:\n Expected :\n{original_key_params:?}\nGot:\n{new_key_params:?}"
             ),
             format,
         ))
@@ -223,8 +219,7 @@ fn test_threshold_fhe_keys(
     if new_key_params != original_key_params {
         Err(test.failure(
             format!(
-                "Invalid KMS FHE key handles because of different parameters:\n Expected :\n{:?}\nGot:\n{:?}",
-                original_key_params, new_key_params
+                "Invalid KMS FHE key handles because of different parameters:\n Expected :\n{original_key_params:?}\nGot:\n{new_key_params:?}"
             ),
             format,
         ))
@@ -271,8 +266,7 @@ fn test_custodian_setup_message(
     if original_custodian_setup_message != new_custodian_setup_message {
         Err(test.failure(
             format!(
-                "Invalid custodian setup message:\n original:\n{:?},\nactual:\n{:?}",
-                original_custodian_setup_message, new_custodian_setup_message
+                "Invalid custodian setup message:\n original:\n{original_custodian_setup_message:?},\nactual:\n{new_custodian_setup_message:?}"
             ),
             format,
         ))
@@ -336,8 +330,7 @@ fn test_operator_backup_output(
     if original_operator_backup_output != *new_operator_backup_output {
         Err(test.failure(
             format!(
-                "Invalid operator backup output:\n original:\n{:?},\nactual:\n{:?}",
-                original_operator_backup_output, new_operator_backup_output
+                "Invalid operator backup output:\n original:\n{original_operator_backup_output:?},\nactual:\n{new_operator_backup_output:?}"
             ),
             format,
         ))
@@ -365,8 +358,7 @@ fn test_nested_pke(
     if ciphertext != original_ciphertext {
         return Err(test.failure(
             format!(
-                "Invalid nested ciphertext:\n original:\n{:?},\nactual:\n{:?}",
-                original_ciphertext, ciphertext
+                "Invalid nested ciphertext:\n original:\n{original_ciphertext:?},\nactual:\n{ciphertext:?}"
             ),
             format,
         ));
@@ -374,8 +366,7 @@ fn test_nested_pke(
     if public_key != original_public_key {
         return Err(test.failure(
             format!(
-                "Invalid nested public key:\n original:\n{:?},\nactual:\n{:?}",
-                original_public_key, public_key
+                "Invalid nested public key:\n original:\n{original_public_key:?},\nactual:\n{public_key:?}"
             ),
             format,
         ));
@@ -438,10 +429,7 @@ fn test_backward_compatibility_kms() {
 
     for r in results.iter() {
         if r.is_failure() {
-            panic!(
-                "Backward compatibility tests for the KMS module failed: {:?}",
-                r
-            )
+            panic!("Backward compatibility tests for the KMS module failed: {r:?}")
         }
     }
 }

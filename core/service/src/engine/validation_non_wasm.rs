@@ -62,7 +62,7 @@ pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), BoxedSta
         );
         return Err(BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,
-            format!("Invalid request id: {}", request_id),
+            format!("Invalid request id: {request_id}"),
         )));
     }
     Ok(())
@@ -88,10 +88,7 @@ pub fn validate_user_decrypt_req(
 )> {
     let key_id: RequestId = tonic_some_or_err(
         req.key_id.clone(),
-        format!(
-            "{} (Request ID: {:?})",
-            ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID, req
-        ),
+        format!("{ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID} (Request ID: {req:?})"),
     )?
     .into();
 
@@ -102,15 +99,13 @@ pub fn validate_user_decrypt_req(
     .into();
     if !request_id.is_valid() {
         return Err(anyhow_error_and_warn_log(format!(
-            "{} (Request ID: {})",
-            ERR_VALIDATE_USER_DECRYPTION_BAD_REQ_ID, request_id
+            "{ERR_VALIDATE_USER_DECRYPTION_BAD_REQ_ID} (Request ID: {request_id})"
         )));
     }
 
     if req.typed_ciphertexts.is_empty() {
         return Err(anyhow_error_and_warn_log(format!(
-            "{} (Request ID: {})",
-            ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS, request_id
+            "{ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS} (Request ID: {request_id})"
         )));
     }
 
@@ -165,10 +160,7 @@ pub fn validate_public_decrypt_req(
 )> {
     let key_id: RequestId = tonic_some_or_err(
         req.key_id.clone(),
-        format!(
-            "{} (Request ID: {:?})",
-            ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID, req
-        ),
+        format!("{ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID} (Request ID: {req:?})"),
     )?
     .into();
 
@@ -179,25 +171,23 @@ pub fn validate_public_decrypt_req(
     .into();
     if !request_id.is_valid() {
         return Err(anyhow_error_and_warn_log(format!(
-            "{} (Request ID: {})",
-            ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID, request_id
+            "{ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID} (Request ID: {request_id})"
         )));
     }
 
     if req.ciphertexts.is_empty() {
         return Err(anyhow_error_and_warn_log(format!(
-            "{} (Request ID: {})",
-            ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS, request_id
+            "{ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS} (Request ID: {request_id})"
         )));
     }
 
     let serialized_req = tonic_handle_potential_err(
         bc2wrap::serialize(&req),
-        format!("Could not serialize payload {:?}", req),
+        format!("Could not serialize payload {req:?}"),
     )?;
     let req_digest = tonic_handle_potential_err(
         BaseKmsStruct::digest(&DSEP_REQ_RESP, &serialized_req),
-        format!("Could not hash payload {:?}", req),
+        format!("Could not hash payload {req:?}"),
     )?;
 
     let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());

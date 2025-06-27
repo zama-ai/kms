@@ -39,11 +39,11 @@ pub async fn key_gen_impl<
 ) -> Result<Response<Empty>, Status> {
     let _timer = METRICS
         .time_operation(OP_KEYGEN)
-        .map_err(|e| Status::internal(format!("Failed to start metrics: {}", e)))?
+        .map_err(|e| Status::internal(format!("Failed to start metrics: {e}")))?
         .start();
     METRICS
         .increment_request_counter(OP_KEYGEN)
-        .map_err(|e| Status::internal(format!("Failed to increment counter: {}", e)))?;
+        .map_err(|e| Status::internal(format!("Failed to increment counter: {e}")))?;
 
     let permit = service.rate_limiter.start_keygen().await.map_err(|e| {
         if let Err(e) = METRICS.increment_error_counter(OP_KEYGEN, ERR_RATE_LIMIT_EXCEEDED) {

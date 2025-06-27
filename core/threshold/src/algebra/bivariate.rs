@@ -108,8 +108,7 @@ impl<Z: Ring> MatrixMul<Z> for ArrayD<Z> {
                 }
             }
             (l_rank, r_rank) => Err(anyhow_error_and_log(format!(
-                "Matmul not implemented for tensors of rank {:?}, {:?}",
-                l_rank, r_rank,
+                "Matmul not implemented for tensors of rank {l_rank:?}, {r_rank:?}",
             ))),
         }
     }

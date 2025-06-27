@@ -65,7 +65,7 @@ pub struct RealShareDispute {}
 impl ProtocolDescription for RealShareDispute {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-RealShareDispute", indent)
+        format!("{indent}-RealShareDispute")
     }
 }
 
@@ -366,8 +366,7 @@ where
 {
     if threshold < dispute_party_ids.len() {
         return Err(anyhow_error_and_log(format!(
-            "Too many disputes, {:?}, for threshold {}",
-            dispute_party_ids, threshold,
+            "Too many disputes, {dispute_party_ids:?}, for threshold {threshold}",
         )));
     }
     let degree = threshold - dispute_party_ids.len();

@@ -58,7 +58,7 @@ pub struct PassiveSecureAgreeRandom {}
 impl ProtocolDescription for PassiveSecureAgreeRandom {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-PassiveSecureAgreeRandom", indent)
+        format!("{indent}-PassiveSecureAgreeRandom")
     }
 }
 
@@ -69,7 +69,7 @@ pub struct AbortSecureAgreeRandom {}
 impl ProtocolDescription for AbortSecureAgreeRandom {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-AbortSecureAgreeRandom", indent)
+        format!("{indent}-AbortSecureAgreeRandom")
     }
 }
 
@@ -116,7 +116,7 @@ pub struct DummyAgreeRandom {}
 impl ProtocolDescription for DummyAgreeRandom {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-DummyAgreeRandom", indent)
+        format!("{indent}-DummyAgreeRandom")
     }
 }
 
@@ -127,7 +127,7 @@ pub struct DummyAgreeRandomFromShare {}
 impl ProtocolDescription for DummyAgreeRandomFromShare {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-DummyAgreeRandomFromShare", indent)
+        format!("{indent}-DummyAgreeRandomFromShare")
     }
 }
 
@@ -346,8 +346,7 @@ fn check_rcv_len(rcv_len: usize, expect_len: usize, tstr: &str) -> anyhow::Resul
     // check that we have all expected responses
     if rcv_len != expect_len {
         return Err(anyhow_error_and_log(format!(
-            "have received {} {tstr}, but expected {}",
-            rcv_len, expect_len
+            "have received {rcv_len} {tstr}, but expected {expect_len}"
         )));
     }
     Ok(())
@@ -374,14 +373,12 @@ where
                 rcv_values[sender_role] = value.to_vec();
             } else {
                 return Err(anyhow_error_and_log(format!(
-                    "Have not received a {} from role {}!",
-                    type_str, sender_role
+                    "Have not received a {type_str} from role {sender_role}!"
                 )));
             }
         } else {
             return Err(anyhow_error_and_log(format!(
-                "Have not received an AgreeRandomValue from role {}!",
-                sender_role
+                "Have not received an AgreeRandomValue from role {sender_role}!"
             )));
         }
     }

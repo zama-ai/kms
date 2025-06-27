@@ -113,6 +113,6 @@ fn main() {
         let file_name = format!("{}/{}.{}", args.output_folder, args.experiment_name, ty);
         let mut file = File::create(&file_name).unwrap();
         file.write_all(output.as_bytes()).unwrap();
-        println!("Template has been generated. Check ======> {:?}", file_name);
+        println!("Template has been generated. Check ======> {file_name:?}");
     });
 }

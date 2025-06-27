@@ -21,7 +21,7 @@ pub struct MaliciousOfflineDrop {}
 impl ProtocolDescription for MaliciousOfflineDrop {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-MaliciousOfflineDrop", indent)
+        format!("{indent}-MaliciousOfflineDrop")
     }
 }
 

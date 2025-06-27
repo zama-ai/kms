@@ -14,6 +14,7 @@ permissions: {}
 
 jobs:
   cargo-workspaces-release:
+    name: "Cargo Workspaces Release"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Project

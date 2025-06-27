@@ -36,11 +36,11 @@ pub async fn crs_gen_impl<
     tracing::info!("Received CRS generation request");
     let _timer = METRICS
         .time_operation(OP_CRS_GEN)
-        .map_err(|e| Status::internal(format!("Failed to start metrics: {}", e)))?
+        .map_err(|e| Status::internal(format!("Failed to start metrics: {e}")))?
         .start();
     METRICS
         .increment_request_counter(OP_CRS_GEN)
-        .map_err(|e| Status::internal(format!("Failed to increment counter: {}", e)))?;
+        .map_err(|e| Status::internal(format!("Failed to increment counter: {e}")))?;
 
     let permit = service
         .rate_limiter

@@ -276,7 +276,7 @@ impl Settings<'_> {
             self.env_prefix
         );
         if let Some(path) = self.path {
-            println!("Using config file: {}", path);
+            println!("Using config file: {path}");
         }
 
         let mut env_conf = config::Environment::default()

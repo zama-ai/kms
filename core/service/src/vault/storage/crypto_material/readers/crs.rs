@@ -21,8 +21,7 @@ impl CryptoMaterialReader for CompactPkeCrs {
             .await
             .map_err(|e| {
                 anyhow_error_and_warn_log(format!(
-                    "Failed to read CompactPkeCrs from storage for request ID {}: {}",
-                    request_id, e
+                    "Failed to read CompactPkeCrs from storage for request ID {request_id}: {e}"
                 ))
             })
     }

@@ -34,7 +34,7 @@ pub struct DummyCoinflip {}
 impl ProtocolDescription for DummyCoinflip {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-DummyCoinflip", indent)
+        format!("{indent}-DummyCoinflip")
     }
 }
 

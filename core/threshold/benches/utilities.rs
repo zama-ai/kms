@@ -32,7 +32,7 @@ impl Profiler for MemoryProfiler {
 
     fn stop_profiling(&mut self, _: &str, _: &std::path::Path) {
         let size = MEM_ALLOCATOR.get().unwrap().peak_usage();
-        println!("Profiling finished. Allocated {} B", size);
+        println!("Profiling finished. Allocated {size} B");
     }
 }
 

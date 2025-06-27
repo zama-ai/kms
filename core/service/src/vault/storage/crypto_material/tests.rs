@@ -247,16 +247,13 @@ async fn write_threshold_empty_update() {
 
     // Check no errors happened
     assert!(!logs_contain(&format!(
-        "while updating KeyGen meta store for {}",
-        req_id
+        "while updating KeyGen meta store for {req_id}"
     )));
     assert!(!logs_contain(&format!(
-        "PK already exists in pk_cache for {}",
-        req_id
+        "PK already exists in pk_cache for {req_id}"
     )));
     assert!(!logs_contain(&format!(
-        "Failed to ensure existance of threshold key material for {}.",
-        req_id
+        "Failed to ensure existance of threshold key material for {req_id}."
     )));
     // write to an empty meta store should fail
     crypto_storage
@@ -318,16 +315,13 @@ async fn write_threshold_keys_meta_update() {
         .await;
     // Check that no errors were logged
     assert!(!logs_contain(&format!(
-        "while updating KeyGen meta store for {}",
-        req_id
+        "while updating KeyGen meta store for {req_id}"
     )));
     assert!(!logs_contain(&format!(
-        "PK already exists in pk_cache for {}",
-        req_id
+        "PK already exists in pk_cache for {req_id}"
     )));
     assert!(logs_contain(&format!(
-        "Finished DKG for Request Id {}.",
-        req_id
+        "Finished DKG for Request Id {req_id}."
     )));
 
     // check the meta store is correct
@@ -375,16 +369,13 @@ async fn write_threshold_keys_failed_storage() {
         .await;
     // Check that no errors were logged
     assert!(!logs_contain(&format!(
-        "while updating KeyGen meta store for {}",
-        req_id
+        "while updating KeyGen meta store for {req_id}"
     )));
     assert!(!logs_contain(&format!(
-        "PK already exists in pk_cache for {}",
-        req_id
+        "PK already exists in pk_cache for {req_id}"
     )));
     assert!(logs_contain(&format!(
-        "Finished DKG for Request Id {}.",
-        req_id
+        "Finished DKG for Request Id {req_id}."
     )));
 
     // check the meta store is correct

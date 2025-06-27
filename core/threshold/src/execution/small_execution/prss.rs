@@ -289,7 +289,7 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss
 
                 set_key: r
                     .pop()
-                    .with_context(|| log_error_wrapper(format!("Missing key for set {:?}", set)))?,
+                    .with_context(|| log_error_wrapper(format!("Missing key for set {set:?}")))?,
                 f_a_points: f_a_point.clone(),
             };
             party_prss_sets.push(pset);
@@ -2098,9 +2098,7 @@ mod tests {
                 if params.should_be_detected {
                     assert!(
                         session.corrupt_roles().contains(malicious_role),
-                        "Expected malicious set of {:?} to contain {:?} but it does not",
-                        my_role,
-                        malicious_role
+                        "Expected malicious set of {my_role:?} to contain {malicious_role:?} but it does not"
                     );
                 } else {
                     assert!(
@@ -2221,8 +2219,7 @@ mod tests {
             let randomness_test = execute_all_randomness_tests_loose(&raw_shares);
             assert!(
                 randomness_test.is_ok(),
-                "Failed randomnness test of PRSS.Next shares: {:?}",
-                randomness_test
+                "Failed randomnness test of PRSS.Next shares: {randomness_test:?}"
             );
         }
 
@@ -2233,8 +2230,7 @@ mod tests {
         let randomness_test = execute_all_randomness_tests_loose(&results);
         assert!(
             randomness_test.is_ok(),
-            "Failed randomness check of PRSS.Next Outputs: {:?}",
-            randomness_test
+            "Failed randomness check of PRSS.Next Outputs: {randomness_test:?}"
         );
 
         // Make sure the prss_check also reconstructs (with no errors) to the same value
@@ -2257,8 +2253,7 @@ mod tests {
             let randomness_test = execute_all_randomness_tests_loose(&raw_shares);
             assert!(
                 randomness_test.is_ok(),
-                "Failed randomnness test of PRZS.Next Shares : {:?}",
-                randomness_test
+                "Failed randomnness test of PRZS.Next Shares : {randomness_test:?}"
             );
         }
 
@@ -2312,9 +2307,7 @@ mod tests {
                         .err_reconstruct(degree, max_error);
                 assert!(
                     reconstruct.is_ok(),
-                    "Failed to reconstruct at idx {}: {:?}",
-                    idx,
-                    reconstruct
+                    "Failed to reconstruct at idx {idx}: {reconstruct:?}"
                 );
                 reconstruct.unwrap()
             })
@@ -2336,11 +2329,7 @@ mod tests {
                         .collect::<Vec<_>>(),
                 )
                 .reconstruct(degree);
-                assert!(
-                    reconstruct.is_ok(),
-                    "Failed to reconstruct {:?}",
-                    reconstruct
-                );
+                assert!(reconstruct.is_ok(), "Failed to reconstruct {reconstruct:?}");
                 reconstruct.unwrap()
             })
             .all(|reconstruct| reconstruct == expected_result));

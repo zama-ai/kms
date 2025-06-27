@@ -568,8 +568,7 @@ mod test {
                 for role in params.malicious_roles.iter() {
                     assert!(
                         session.corrupt_roles().contains(role),
-                        "Honest party's corrupt set does not contain the expected malicious party with role {:?}",
-                        role
+                        "Honest party's corrupt set does not contain the expected malicious party with role {role:?}"
                     );
                 }
             }
@@ -611,15 +610,14 @@ mod test {
                 );
             }
             let random = shares.err_reconstruct(params.threshold, num_malicious);
-            assert!(random.is_ok(), "Failed to reconstruct random: {:?}", random);
+            assert!(random.is_ok(), "Failed to reconstruct random: {random:?}");
             reconstructed_randoms.push(random.unwrap());
         }
 
         let randomness_test = execute_all_randomness_tests_loose(&reconstructed_randoms);
         assert!(
             randomness_test.is_ok(),
-            "Failed randomness test of random generation: {:?}",
-            randomness_test
+            "Failed randomness test of random generation: {randomness_test:?}"
         );
 
         // Try and reconstruct the triples and perform stat test
@@ -653,18 +651,15 @@ mod test {
             );
             assert!(
                 x.is_ok(),
-                "Failed to reconstruct x component of triple: {:?}",
-                x
+                "Failed to reconstruct x component of triple: {x:?}"
             );
             assert!(
                 y.is_ok(),
-                "Failed to reconstruct y component of triple: {:?}",
-                y
+                "Failed to reconstruct y component of triple: {y:?}"
             );
             assert!(
                 z.is_ok(),
-                "Failed to reconstruct z component of triple: {:?}",
-                z
+                "Failed to reconstruct z component of triple: {z:?}"
             );
             let (x, y, z) = (x.unwrap(), y.unwrap(), z.unwrap());
             assert!(z == (x * y), "Triple does not verifiy z = x*y");
@@ -675,8 +670,7 @@ mod test {
         let randomness_test = execute_all_randomness_tests_loose(&reconstructed_x_y);
         assert!(
             randomness_test.is_ok(),
-            "Failed randomness test of triple generation (x and y components): {:?}",
-            randomness_test
+            "Failed randomness test of triple generation (x and y components): {randomness_test:?}"
         );
     }
 

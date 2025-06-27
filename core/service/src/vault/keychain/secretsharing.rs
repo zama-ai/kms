@@ -68,7 +68,7 @@ impl Keychain for SecretShareKeychain {
         self.operator
             .secret_share_and_encrypt(&mut OsRng, &payload_bytes, *payload_id)
             .map(EnvelopeStore::OperatorBackupOutput)
-            .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt backup: {}", e)))
+            .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt backup: {e}")))
     }
 
     async fn decrypt<T: DeserializeOwned + Unversionize + Named + Send>(
@@ -84,6 +84,6 @@ impl Keychain for SecretShareKeychain {
                 .verify_and_recover(rs.clone(), cs.clone(), *payload_id)?;
         let mut buf = std::io::Cursor::new(&payload_bytes);
         safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT)
-            .map_err(|e| anyhow_error_and_log(format!("Cannot decrypt backup: {}", e)))
+            .map_err(|e| anyhow_error_and_log(format!("Cannot decrypt backup: {e}")))
     }
 }

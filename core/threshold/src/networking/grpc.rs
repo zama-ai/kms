@@ -303,7 +303,7 @@ impl Gnetworking for NetworkingImpl {
             if sender != *host {
                 return Err(tonic::Status::new(
                     tonic::Code::Unauthenticated,
-                    format!("wrong sender: expected {:?} to be in {:?}", host, sender),
+                    format!("wrong sender: expected {host:?} to be in {sender:?}"),
                 ));
             }
         } else {

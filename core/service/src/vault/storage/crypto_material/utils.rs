@@ -68,7 +68,7 @@ pub async fn data_exists<S: Storage>(
     storage
         .data_exists(req_id, data_type)
         .await
-        .map_err(|e| anyhow_error_and_warn_log(format!("Failed to check if data exists: {}", e)))
+        .map_err(|e| anyhow_error_and_warn_log(format!("Failed to check if data exists: {e}")))
 }
 
 /// Checks if both public and private data exist in their respective storages.
@@ -240,7 +240,7 @@ async fn get_unique<
         read_all_data_versioned(storage, &storage_type.to_string())
             .await
             .map_err(|e| {
-                anyhow_error_and_warn_log(format!("Failed to read signing key data: {}", e))
+                anyhow_error_and_warn_log(format!("Failed to read signing key data: {e}"))
             })?;
 
     if sk_map.values().len() != 1 {

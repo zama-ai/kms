@@ -646,8 +646,7 @@ where
         let meta_update_result = guarded_meta_store.update(
             req_id,
             Err(format!(
-                "Failed to store CRS data to public storage for ID {}",
-                req_id
+                "Failed to store CRS data to public storage for ID {req_id}"
             )),
         );
         let r3 = if let Err(e) = &meta_update_result {
@@ -784,8 +783,7 @@ where
         let guard = fhe_keys.read_owned().await;
         OwnedRwLockReadGuard::try_map(guard, |m| m.get(req_id)).map_err(|_| {
             anyhow_error_and_warn_log(format!(
-                "Failed to find crypto material in cache for request ID {}",
-                req_id
+                "Failed to find crypto material in cache for request ID {req_id}"
             ))
         })
     }
@@ -799,10 +797,7 @@ where
             guard.get(req_id).cloned()
         };
         out.ok_or_else(|| {
-            anyhow_error_and_warn_log(format!(
-                "Key handles are not in the cache for ID {}",
-                req_id
-            ))
+            anyhow_error_and_warn_log(format!("Key handles are not in the cache for ID {req_id}"))
         })
     }
 
@@ -832,8 +827,7 @@ where
                 }
                 Err(e) => {
                     return Err(anyhow_error_and_warn_log(format!(
-                        "Failed to read crypto material from storage for request ID {}: {}",
-                        req_id, e
+                        "Failed to read crypto material from storage for request ID {req_id}: {e}"
                     )));
                 }
             }

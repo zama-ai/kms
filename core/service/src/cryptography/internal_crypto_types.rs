@@ -229,8 +229,7 @@ impl Visitor<'_> for PublicSigKeyVisitor {
         match VerifyingKey::from_sec1_bytes(v) {
             Ok(pk) => Ok(WrappedVerifyingKey(pk)),
             Err(e) => Err(E::custom(format!(
-                "Could not decode verification key: {:?}",
-                e
+                "Could not decode verification key: {e:?}"
             ))),
         }
     }
@@ -301,7 +300,7 @@ impl Visitor<'_> for PrivateSigKeyVisitor {
     {
         match k256::ecdsa::SigningKey::from_bytes(v.into()) {
             Ok(sk) => Ok(WrappedSigningKey(sk)),
-            Err(e) => Err(E::custom(format!("Could not decode signing key: {:?}", e))),
+            Err(e) => Err(E::custom(format!("Could not decode signing key: {e:?}"))),
         }
     }
 }
@@ -370,7 +369,7 @@ impl Visitor<'_> for SignatureVisitor {
     {
         let sig = match k256::ecdsa::Signature::from_slice(&v[0..SIG_SIZE]) {
             Ok(sig) => sig,
-            Err(e) => Err(E::custom(format!("Could not decode signature: {:?}", e)))?,
+            Err(e) => Err(E::custom(format!("Could not decode signature: {e:?}")))?,
         };
         Ok(Signature { sig })
     }

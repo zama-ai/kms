@@ -291,7 +291,7 @@ impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Asymm> {
             .root_key
             .pk
             .encrypt(&mut OsRng, Oaep::new::<Sha256>(), data_key.as_ref())
-            .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt data key: {}", e)))?;
+            .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt data key: {e}")))?;
 
         // encrypt the app key under the data key
         let mut blob_bytes = Vec::new();
@@ -338,7 +338,7 @@ pub async fn build_aws_kms_client(
                 .with_native_roots()
                 .https_only()
                 // Overrides the hostname checked during the TLS handshake
-                .with_server_name(format!("kms.{}.amazonaws.com", region))
+                .with_server_name(format!("kms.{region}.amazonaws.com"))
                 .enable_http1()
                 .build();
             let http_client = HyperClientBuilder::new().build(https_connector);
@@ -427,7 +427,7 @@ pub fn decrypt_ciphertext_for_recipient(
     let session_key = recipient_sk
         .decrypt(Oaep::new::<Sha256>(), enc_session_key)
         .map_err(|e| {
-            anyhow_error_and_log(format!("Cannot decrypt PKCS7 envelope session key: {}", e))
+            anyhow_error_and_log(format!("Cannot decrypt PKCS7 envelope session key: {e}"))
         })?;
     ensure!(
         session_key.len() == Aes256::key_size(),
@@ -450,7 +450,7 @@ pub fn decrypt_ciphertext_for_recipient(
     let plaintext = cbc::Decryptor::<Aes256>::new_from_slices(session_key.as_slice(), iv.as_ref())?
         .decrypt_padded_vec_mut::<Pkcs7>(enc_payload.as_ref())
         .map_err(|e| {
-            anyhow_error_and_log(format!("Cannot decrypt ciphertext for recipient: {}", e))
+            anyhow_error_and_log(format!("Cannot decrypt ciphertext for recipient: {e}"))
         })?;
     Ok(plaintext)
 }

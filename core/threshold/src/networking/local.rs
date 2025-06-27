@@ -173,10 +173,7 @@ impl Networking for LocalNetworking {
         match self.already_sent.lock() {
             Ok(mut already_sent) => {
                 if already_sent.contains(&(receiver.clone(), net_round)) {
-                    panic!(
-                        "Trying to send to {} in round {} more than once !",
-                        receiver, net_round
-                    )
+                    panic!("Trying to send to {receiver} in round {net_round} more than once !")
                 } else {
                     already_sent.insert((receiver.clone(), net_round));
                 }
@@ -212,7 +209,7 @@ impl Networking for LocalNetworking {
         let network_round: usize = *self
             .network_round
             .lock()
-            .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e)))?;
+            .map_err(|e| anyhow_error_and_log(format!("Locking error: {e:?}")))?;
 
         while tagged_value.send_counter < network_round {
             tracing::debug!(

@@ -156,7 +156,7 @@ fn create_core_certs(
 ) -> anyhow::Result<HashMap<usize, (KeyPair, Certificate)>> {
     let core_cert_bundle: HashMap<usize, (KeyPair, Certificate)> = (1..=num_cores)
         .map(|i: usize| {
-            let core_name = format!("core{}.{}", i, ca_name);
+            let core_name = format!("core{i}.{ca_name}");
             let core_keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
             let mut cp = CertificateParams::new(vec![
                 core_name.clone(),
@@ -272,7 +272,7 @@ pub async fn entry_point() -> anyhow::Result<()> {
             for (core_id, (core_keypair, core_cert)) in core_certs.iter() {
                 write_certs_and_keys(
                     &args.output_dir,
-                    format!("{}-core{}", ca_name, core_id).as_str(),
+                    format!("{ca_name}-core{core_id}").as_str(),
                     core_cert,
                     core_keypair,
                     args.output_file_type,

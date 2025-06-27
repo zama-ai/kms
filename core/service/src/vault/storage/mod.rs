@@ -106,8 +106,7 @@ where
         .await
         .map_err(|e| {
             anyhow_error_and_log(format!(
-                "Could not store data with ID {} and type {}: {}",
-                request_id, data_type, e
+                "Could not store data with ID {request_id} and type {data_type}: {e}"
             ))
         })
 }
@@ -125,8 +124,7 @@ pub async fn store_text_at_request_id<S: StorageForBytes>(
         .await
         .map_err(|e| {
             anyhow_error_and_log(format!(
-                "Could not store data with ID {} and type {}: {}",
-                request_id, data_type, e
+                "Could not store data with ID {request_id} and type {data_type}: {e}"
             ))
         })
 }
@@ -144,8 +142,7 @@ pub async fn read_text_at_request_id<S: StorageForBytes>(
             .await
             .map_err(|e| {
                 anyhow_error_and_log(format!(
-                    "Could not read data with ID {} and type {}: {}",
-                    request_id, data_type, e
+                    "Could not read data with ID {request_id} and type {data_type}: {e}"
                 ))
             })?,
     )
@@ -319,8 +316,7 @@ pub async fn read_all_data_versioned<
     for data_id in id_set.iter() {
         if !data_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
-                "Request ID {} is not valid",
-                data_id
+                "Request ID {data_id} is not valid"
             )));
         }
         let data: T = storage
@@ -341,7 +337,7 @@ pub enum StorageType {
 }
 impl fmt::Display for StorageType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 

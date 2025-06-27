@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Explicitly shut down telemetry
     if let Err(e) = tracer_provider.shutdown() {
-        eprintln!("Error shutting down tracer provider: {}", e);
+        eprintln!("Error shutting down tracer provider: {e}");
     }
 
     result

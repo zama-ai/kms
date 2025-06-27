@@ -210,7 +210,7 @@ impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> 
         self.init_prss(&request_id).await.map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
-                format!("PRSS initialization failed with error {}", e),
+                format!("PRSS initialization failed with error {e}"),
             )
         })?;
         Ok(Response::new(Empty {}))
@@ -243,15 +243,13 @@ mod tests {
 
             // make sure the store does not contain any PRSS info (currently stored under ID 1)
             let req_id = derive_request_id(&format!(
-                "PRSSSetup_Z128_ID_{}_{}_{}",
-                PRSS_INIT_REQ_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
+                "PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_{DEFAULT_AMOUNT_PARTIES}_{DEFAULT_THRESHOLD}"
             ))
             .unwrap();
             purge(None, None, &req_id, DEFAULT_AMOUNT_PARTIES).await;
 
             let req_id = derive_request_id(&format!(
-                "PRSSSetup_Z64_ID_{}_{}_{}",
-                PRSS_INIT_REQ_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
+                "PRSSSetup_Z64_ID_{PRSS_INIT_REQ_ID}_{DEFAULT_AMOUNT_PARTIES}_{DEFAULT_THRESHOLD}"
             ))
             .unwrap();
             purge(None, None, &req_id, DEFAULT_AMOUNT_PARTIES).await;

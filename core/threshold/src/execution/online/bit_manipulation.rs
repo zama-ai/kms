@@ -789,8 +789,7 @@ mod tests {
             assert_eq!(
                 xor1[i],
                 ResiduePolyF4Z64::from_scalar(Wrapping(bits_a[i] ^ bits_b[i])),
-                "failed xor at index {}",
-                i
+                "failed xor at index {i}"
             );
         }
 
@@ -800,8 +799,7 @@ mod tests {
             assert_eq!(
                 and1[i],
                 ResiduePolyF4Z64::from_scalar(Wrapping(bits_c[i] & bits_d[i])),
-                "failed and at index {}",
-                i
+                "failed and at index {i}"
             );
         }
     }

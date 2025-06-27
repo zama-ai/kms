@@ -119,7 +119,7 @@ pub(crate) mod tests {
                 Typeproduction::Randoms => "Randoms",
                 Typeproduction::Bits => "Bits",
             };
-            write!(f, "{}", s)
+            write!(f, "{s}")
         }
     }
 

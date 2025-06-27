@@ -369,8 +369,8 @@ mod kms_gen_keys_binary_test {
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
             .arg("--param-test")
-            .arg(format!("--aws-region={}", AWS_REGION))
-            .arg(format!("--aws-s3-endpoint={}", AWS_S3_ENDPOINT))
+            .arg(format!("--aws-region={AWS_REGION}"))
+            .arg(format!("--aws-s3-endpoint={AWS_S3_ENDPOINT}"))
             .arg("--public-storage=s3")
             .arg("--public-s3-bucket")
             .arg(BUCKET_NAME)
@@ -387,8 +387,8 @@ mod kms_gen_keys_binary_test {
             .unwrap();
         let log = String::from_utf8_lossy(&output.stdout);
         let err_log = String::from_utf8_lossy(&output.stderr);
-        println!("Command output: {}", log);
-        println!("Command error output: {}", err_log);
+        println!("Command output: {log}");
+        println!("Command error output: {err_log}");
         assert!(output.status.success());
         assert!(log.contains("Successfully stored public server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"S3 storage with"));
         assert!(log.contains("Successfully stored private central server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with"));
@@ -429,7 +429,7 @@ mod kms_server_binary_test {
                 .arg(config_file)
                 .output();
             // Debug output of failing tests
-            println!("Command output: {:?}", out);
+            println!("Command output: {out:?}");
         });
 
         thread::sleep(Duration::from_secs(5));

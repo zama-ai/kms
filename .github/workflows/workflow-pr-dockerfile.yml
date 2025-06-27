@@ -14,6 +14,7 @@ permissions:
 
 jobs:
     prepare-batch:
+        name: "Prepare Batch of Changed Dockerfiles"
         runs-on: ubuntu-latest
         outputs:
           DOCKERFILE_CHANGED: ${{ steps.list_dockerfile.outputs.DOCKERFILE_CHANGED }}
@@ -49,6 +50,7 @@ jobs:
                 echo "DOCKERFILE_CHANGED=${ANY_CHANGED}" >> "$GITHUB_OUTPUT"
 
     lint-dockerfile:
+        name: "Lint Dockerfiles"
         needs: prepare-batch
         runs-on: ubuntu-latest
         steps:

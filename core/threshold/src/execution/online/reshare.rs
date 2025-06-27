@@ -335,7 +335,7 @@ where
         if let BroadcastValue::RingVector(vs) = msg {
             let rs_share_iter = rs_shares
                 .remove(&sender)
-                .ok_or_else(|| anyhow_error_and_log(format!("missing share for {:?}", sender)))?;
+                .ok_or_else(|| anyhow_error_and_log(format!("missing share for {sender:?}")))?;
             let s_share = vs
                 .into_iter()
                 .zip(rs_share_iter.into_iter())
