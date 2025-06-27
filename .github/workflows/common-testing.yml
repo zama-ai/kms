@@ -247,6 +247,10 @@ jobs:
         run: |
           cargo install cargo-dylint dylint-link --force
 
+      - name: clippy and rustfmt versions
+        run: |
+          cargo clippy -V && cargo fmt --version
+
       - name: Formatting
         run: cargo fmt --all -- --check
 
