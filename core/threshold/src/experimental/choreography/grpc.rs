@@ -752,9 +752,19 @@ impl Choreography for ExperimentalGrpcChoreography {
             small_sessions.len()
         );
         let res_store = self.data.ddec_result_store.clone();
+        if vec_ctxts.len() != small_sessions.len() {
+            return Err(tonic::Status::new(
+                tonic::Code::Aborted,
+                format!(
+                    "Number of ctxts ({}) does not match number of sessions ({})",
+                    vec_ctxts.len(),
+                    small_sessions.len()
+                ),
+            ));
+        }
         let my_future = || async move {
             let mut join_set = JoinSet::new();
-            for (ctxts, mut session) in vec_ctxts.into_iter().zip(small_sessions.into_iter()) {
+            for (ctxts, mut session) in vec_ctxts.into_iter().zip_eq(small_sessions.into_iter()) {
                 let key_ref = key_ref.clone();
                 join_set.spawn(
                     async move {

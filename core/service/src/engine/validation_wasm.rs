@@ -357,11 +357,22 @@ fn validate_user_decrypt_responses(
             continue;
         }
 
+        if pivot_payload.signcrypted_ciphertexts.len() != cur_payload.signcrypted_ciphertexts.len()
+        {
+            tracing::warn!(
+                "Server who gave ID {} has different number of ciphertexts than the pivot response {} ",
+                cur_payload.party_id, pivot_payload.party_id
+            );
+            continue;
+        }
+        // Check that the packing factor is consistent across all ciphertexts
+        // Observe that we have already validated the amount of ciphertexts is equal in both the pivot and current payloads.
+        // Hence we can use `zip_eq` to compare the packing factors.
         if !pivot_payload
             .signcrypted_ciphertexts
             .iter()
             .map(|ct| ct.packing_factor)
-            .zip(
+            .zip_eq(
                 cur_payload
                     .signcrypted_ciphertexts
                     .iter()

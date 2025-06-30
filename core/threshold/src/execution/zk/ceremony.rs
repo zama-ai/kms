@@ -502,12 +502,13 @@ fn make_partial_proof_deterministic(
     let new_pp = InternalPublicParameter {
         round,
         max_num_bits: current_pp.max_num_bits,
+        // Observe that `zip_eq` may panic, but this would imply a bug since `tau_powers` has been constructed based on `current_pp`
         g1g2list: WrappedG1G2s::new(
             current_pp
                 .g1g2list
                 .g1s
                 .par_iter()
-                .zip(&tau_powers)
+                .zip_eq(&tau_powers)
                 .enumerate()
                 .map(|(i, (g, t))| {
                     if i == b1 {
@@ -523,7 +524,7 @@ fn make_partial_proof_deterministic(
                 .g1g2list
                 .g2s
                 .par_iter()
-                .zip(&tau_powers)
+                .zip_eq(&tau_powers[..tau_powers.len() / 2])
                 .map(|(g, t)| {
                     // TODO(#2483) Dereferencing t could create a copy that is not zeroized
                     // this will be resolved when tfhe-rs implements the ZeroizeOnDrop trait for Zp

@@ -1030,7 +1030,14 @@ where
     let role = session.my_role();
     // This vec will be joined on "main" task and all results recombined there
     let mut vec_partial_decryptions = Vec::new();
-    for (block, preprocessing) in ciphertexts.iter().zip(preprocessings.iter_mut()) {
+    if ciphertexts.len() != preprocessings.len() {
+        return Err(anyhow_error_and_log(format!(
+            "Expected {} preprocessings, got {}",
+            ciphertexts.len(),
+            preprocessings.len()
+        )));
+    }
+    for (block, preprocessing) in ciphertexts.iter().zip_eq(preprocessings.iter_mut()) {
         //We create a batch of size 1
         let partial_decrypt = vec![Share::new(
             role,

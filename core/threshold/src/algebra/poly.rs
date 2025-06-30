@@ -3,6 +3,7 @@ use super::{
     structure_traits::{Field, Invert, One, Ring, RingEmbed, Sample, Zero},
 };
 use crate::error::error_handler::anyhow_error_and_log;
+use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Div, Mul, Sub, SubAssign};
@@ -601,9 +602,14 @@ pub fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
 /// interpolate a polynomial through coordinates where points holds the x-coordinates and values holds the y-coordinates
 pub fn lagrange_interpolation<F: Field>(points: &[F], values: &[F]) -> anyhow::Result<Poly<F>> {
     let ls = F::memoize_lagrange(points)?;
-    assert_eq!(ls.len(), values.len());
+    if ls.len() != values.len() {
+        return Err(anyhow_error_and_log(
+            "Lagrange interpolation failure: mismatch between number of points and values"
+                .to_string(),
+        ));
+    }
     let mut res = Poly::zero();
-    for (li, vi) in ls.into_iter().zip(values.iter()) {
+    for (li, vi) in ls.into_iter().zip_eq(values.iter()) {
         let term = li * vi;
         res = res + term;
     }

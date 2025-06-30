@@ -142,11 +142,13 @@ impl ShareDispute for RealShareDispute {
         let mut polypoints_map = HashMap::new();
         for (polypoints_t, polypoints_2t) in vec_polypoints_t
             .into_iter()
-            .zip(vec_polypoints_2t.into_iter())
+            // May panic, but would imply a bug in `share_secrets`
+            .zip_eq(vec_polypoints_2t.into_iter())
         {
             for (role_id, (polypoint_t, polypoint_2t)) in polypoints_t
                 .into_iter()
-                .zip(polypoints_2t.into_iter())
+                // May panic, but would imply a bug in `share_secrets`
+                .zip_eq(polypoints_2t.into_iter())
                 .enumerate()
             {
                 let curr_role = Role::indexed_from_zero(role_id);

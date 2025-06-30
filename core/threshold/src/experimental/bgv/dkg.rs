@@ -116,10 +116,16 @@ where
 
     //Continue computing pk_b_prime now that we have sk \odot sk
     ntt_inv::<_, N>(&mut pk_b_prime, N::VALUE);
+    if pk_b_prime.len() != e_pk_prime_times_p.len() || pk_b_prime.len() != sk_odot_sk_times_r.len()
+    {
+        return Err(anyhow::anyhow!(
+            "Public key vectors must have the same length"
+        ));
+    }
     let pk_b_prime = pk_b_prime
         .into_iter()
-        .zip(e_pk_prime_times_p)
-        .zip(sk_odot_sk_times_r)
+        .zip_eq(e_pk_prime_times_p)
+        .zip_eq(sk_odot_sk_times_r)
         .map(|((x, y), z)| y + x - z)
         .collect_vec();
 

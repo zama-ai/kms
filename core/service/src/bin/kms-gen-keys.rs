@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use core::fmt;
 use futures_util::future::OptionFuture;
+use itertools::Itertools;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
 use kms_lib::{
@@ -529,10 +530,11 @@ async fn handle_threshold_cmd<PubS: StorageForBytes, PrivS: StorageForBytes>(
     match cmd {
         ConstructCommand::All => panic!("\"All\" command must be handled in an outer call"),
         ConstructCommand::SigningKeys => {
+            // Will panic if the number of public and private storages is not equal
             for (pub_storage, priv_storage) in args
                 .pub_storages
                 .iter_mut()
-                .zip(args.priv_storages.iter_mut())
+                .zip_eq(args.priv_storages.iter_mut())
             {
                 process_signing_key_cmds(
                     pub_storage,
@@ -567,10 +569,11 @@ async fn handle_threshold_cmd<PubS: StorageForBytes, PrivS: StorageForBytes>(
             }
         }
         ConstructCommand::FheKeys => {
+            // Will panic if the number of public and private storages is not equal
             for (pub_storage, priv_storage) in args
                 .pub_storages
                 .iter_mut()
-                .zip(args.priv_storages.iter_mut())
+                .zip_eq(args.priv_storages.iter_mut())
             {
                 process_fhe_cmds(
                     pub_storage,
@@ -597,10 +600,11 @@ async fn handle_threshold_cmd<PubS: StorageForBytes, PrivS: StorageForBytes>(
             }
         }
         ConstructCommand::Crs => {
+            // Will panic if the number of public and private storages is not equal
             for (pub_storage, priv_storage) in args
                 .pub_storages
                 .iter_mut()
-                .zip(args.priv_storages.iter_mut())
+                .zip_eq(args.priv_storages.iter_mut())
             {
                 process_crs_cmds(
                     pub_storage,

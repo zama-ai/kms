@@ -7,6 +7,10 @@ use crate::experimental::algebra::ntt::NTTConstants;
 use crate::experimental::algebra::ntt::{ntt_inv, ntt_iter2};
 use crate::experimental::random::approximate_gaussian;
 use crypto_bigint::Limb;
+use itertools::{
+    EitherOrBoth::{Both, Left, Right},
+    Itertools,
+};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
@@ -356,7 +360,7 @@ impl Div<&IntQ> for &RingElement<IntQ> {
 
 impl<T> Sub<RingElement<T>> for RingElement<T>
 where
-    T: Sub<T, Output = T>,
+    T: Sub<T, Output = T> + std::ops::Neg<Output = T>,
     T: Copy,
 {
     type Output = RingElement<T>;
@@ -365,8 +369,13 @@ where
         let data = self
             .data
             .iter()
-            .zip(rhs.data)
-            .map(|(x, y)| *x - y)
+            .zip_longest(rhs.data)
+            .map(|pair| match pair {
+                Both(x, y) => *x - y,
+                // If one side is shorter, we assume the missing values are zero.
+                Left(x) => *x,
+                Right(y) => -y,
+            })
             .collect();
         RingElement { data }
     }
@@ -374,7 +383,7 @@ where
 
 impl<'l, 'r, T> Sub<&'r RingElement<T>> for &'l RingElement<T>
 where
-    T: Sub<T, Output = T>,
+    T: Sub<T, Output = T> + std::ops::Neg<Output = T>,
     T: Copy,
 {
     type Output = RingElement<T>;
@@ -383,8 +392,13 @@ where
         let data: Vec<_> = self
             .data
             .iter()
-            .zip(&rhs.data)
-            .map(|(x, y)| *x - *y)
+            .zip_longest(&rhs.data)
+            .map(|pair| match pair {
+                Both(x, y) => *x - *y,
+                // If one side is shorter, we assume the missing values are zero.
+                Left(x) => *x,
+                Right(y) => -*y,
+            })
             .collect();
         RingElement { data }
     }
@@ -393,6 +407,8 @@ where
 impl<'l, 'r, T> Add<&'r RingElement<T>> for &'l RingElement<T>
 where
     &'l T: Add<&'r T, Output = T>,
+    T: std::ops::Add<Output = T>,
+    T: Copy,
 {
     type Output = RingElement<T>;
 
@@ -400,8 +416,13 @@ where
         let data: Vec<_> = self
             .data
             .iter()
-            .zip(&rhs.data)
-            .map(|(x, y)| x + y)
+            .zip_longest(&rhs.data)
+            .map(|pair| match pair {
+                Both(x, y) => *x + *y,
+                // If one side is shorter, we assume the missing values are zero.
+                Left(x) => *x,
+                Right(y) => *y,
+            })
             .collect();
         RingElement { data }
     }
@@ -453,8 +474,13 @@ impl Add<RingElement<IntQ>> for RingElement<IntQ> {
         let data = self
             .data
             .iter()
-            .zip(rhs.data)
-            .map(|(x, y)| *x + y)
+            .zip_longest(rhs.data)
+            .map(|pair| match pair {
+                Both(x, y) => *x + y,
+                // If one side is shorter, we assume the missing values are zero.
+                Left(x) => *x,
+                Right(y) => y,
+            })
             .collect();
         RingElement { data }
     }
@@ -487,7 +513,7 @@ mod tests {
         let a = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5].to_vec();
         let b = [-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5].to_vec();
 
-        let c: Vec<_> = a.iter().zip(b.iter()).map(|(aa, bb)| aa + bb).collect();
+        let c: Vec<_> = a.iter().zip_eq(b.iter()).map(|(aa, bb)| aa + bb).collect();
 
         let ai: Vec<IntQ> = a.iter().map(|x| IntQ::from_i64(*x)).collect();
         let bi: Vec<IntQ> = b.iter().map(|x| IntQ::from_i64(*x)).collect();

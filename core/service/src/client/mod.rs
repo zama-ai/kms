@@ -623,9 +623,7 @@ impl Client {
         })
     }
 
-    /// Process a set of CRS generation results.
-    /// We need a vector of storage readers also, one for each
-    /// party that contributed to the result.
+    /// Process a vector of CRS generation results along with a storage reader for each result.
     ///
     /// In the ideal scenario, the generated CRS should be the same
     /// for all parties. But if there are adversaries, this might not
@@ -637,8 +635,7 @@ impl Client {
     pub async fn process_distributed_crs_result<S: StorageReader>(
         &self,
         request_id: &RequestId,
-        results: Vec<CrsGenResult>,
-        storage_readers: &[S],
+        res_storage: Vec<(CrsGenResult, S)>,
         min_agree_count: u32,
     ) -> anyhow::Result<CompactPkeCrs> {
         let mut verifying_pks = std::collections::HashSet::new();
@@ -653,8 +650,8 @@ impl Client {
             )));
         }
 
-        let res_len = results.len();
-        for (result, storage) in results.into_iter().zip(storage_readers) {
+        let res_len = res_storage.len();
+        for (result, storage) in res_storage {
             let (pp_w_id, info) = if let Some(info) = result.crs_results {
                 let pp: CompactPkeCrs = storage
                     .read_data(request_id, &PubDataType::CRS.to_string())
@@ -1922,7 +1919,7 @@ pub mod test_tools {
         // a vector of sender that will trigger shutdown of core/threshold servers
         let mut mpc_shutdown_txs = Vec::new();
 
-        for (i, (mpc_listener, _mpc_port)) in (1..=num_parties).zip(mpc_listeners.into_iter()) {
+        for (i, (mpc_listener, _mpc_port)) in (1..=num_parties).zip_eq(mpc_listeners.into_iter()) {
             let cur_pub_storage = pub_storage[i - 1].to_owned();
             let cur_priv_storage = priv_storage[i - 1].to_owned();
             let service_config = ServiceEndpoint {
@@ -1994,8 +1991,8 @@ pub mod test_tools {
             (service_listener, _service_port),
         ) in servers
             .into_iter()
-            .zip(mpc_shutdown_txs)
-            .zip(service_listeners.into_iter())
+            .zip_eq(mpc_shutdown_txs)
+            .zip_eq(service_listeners.into_iter())
         {
             let cur_arc_server = Arc::new(cur_server);
             let arc_server_clone = Arc::clone(&cur_arc_server);
@@ -3523,6 +3520,8 @@ pub(crate) mod tests {
         // first check the happy path
         // the public parameter is checked in ddec tests, so we don't specifically check _pp
         for req in reqs {
+            use itertools::Itertools;
+
             let req_id: RequestId = req.clone().request_id.unwrap().into();
             let joined_responses: Vec<_> = joined_responses
                 .iter()
@@ -3538,33 +3537,25 @@ pub(crate) mod tests {
 
             // we need to setup the storage devices in the right order
             // so that the client can read the CRS
-            let (storage_readers, final_responses): (Vec<_>, Vec<_>) = joined_responses
+            let res_storage = joined_responses
                 .into_iter()
                 .map(|(i, res)| {
-                    (
-                        {
-                            FileStorage::new(
-                                None,
-                                StorageType::PUB,
-                                Some(Role::indexed_from_one(i as usize)),
-                            )
-                            .unwrap()
-                        },
-                        res,
-                    )
+                    (res, {
+                        FileStorage::new(
+                            None,
+                            StorageType::PUB,
+                            Some(Role::indexed_from_one(i as usize)),
+                        )
+                        .unwrap()
+                    })
                 })
-                .unzip();
+                .collect_vec();
             // Compute threshold < amount_parties/3
             let threshold = max_threshold(amount_parties);
             let min_count_agree = (threshold + 1) as u32;
 
             let pp = internal_client
-                .process_distributed_crs_result(
-                    &req_id,
-                    final_responses.clone(),
-                    &storage_readers,
-                    min_count_agree,
-                )
+                .process_distributed_crs_result(&req_id, res_storage.clone(), min_count_agree)
                 .await
                 .unwrap();
             verify_pp(param, &pp).await;
@@ -3573,8 +3564,7 @@ pub(crate) mod tests {
             let _pp = internal_client
                 .process_distributed_crs_result(
                     &req_id,
-                    final_responses[0..final_responses.len() - threshold].to_vec(),
-                    &storage_readers,
+                    res_storage[0..res_storage.len() - threshold].to_vec(),
                     min_count_agree,
                 )
                 .await
@@ -3584,8 +3574,7 @@ pub(crate) mod tests {
             assert!(internal_client
                 .process_distributed_crs_result(
                     &req_id,
-                    final_responses[0..threshold].to_vec(),
-                    &storage_readers,
+                    res_storage[0..threshold].to_vec(),
                     min_count_agree
                 )
                 .await
@@ -3596,15 +3585,14 @@ pub(crate) mod tests {
             assert!(internal_client
                 .process_distributed_crs_result(
                     &bad_request_id,
-                    final_responses.clone(),
-                    &storage_readers,
+                    res_storage.clone(),
                     min_count_agree
                 )
                 .await
                 .is_err());
 
             // test that having [THRESHOLD] wrong signatures still works
-            let mut final_responses_with_bad_sig = final_responses.clone();
+            let mut final_responses_with_bad_sig = res_storage.clone();
             let client_sk = internal_client.client_sk.clone().unwrap();
             let bad_sig = bc2wrap::serialize(
                 &crate::cryptography::signcryption::internal_sign(
@@ -3621,14 +3609,13 @@ pub(crate) mod tests {
                 .process_distributed_crs_result(
                     &req_id,
                     final_responses_with_bad_sig,
-                    &storage_readers,
                     min_count_agree,
                 )
                 .await
                 .unwrap();
 
             // having [amount_parties-threshold] wrong signatures won't work
-            let mut final_responses_with_bad_sig = final_responses.clone();
+            let mut final_responses_with_bad_sig = res_storage.clone();
             set_signatures(
                 &mut final_responses_with_bad_sig,
                 amount_parties - threshold,
@@ -3638,14 +3625,13 @@ pub(crate) mod tests {
                 .process_distributed_crs_result(
                     &req_id,
                     final_responses_with_bad_sig,
-                    &storage_readers,
                     min_count_agree
                 )
                 .await
                 .is_err());
 
             // having [amount_parties-(threshold+1)] wrong digests still works
-            let mut final_responses_with_bad_digest = final_responses.clone();
+            let mut final_responses_with_bad_digest = res_storage.clone();
             set_digests(
                 &mut final_responses_with_bad_digest,
                 amount_parties - (threshold + 1),
@@ -3655,14 +3641,13 @@ pub(crate) mod tests {
                 .process_distributed_crs_result(
                     &req_id,
                     final_responses_with_bad_digest,
-                    &storage_readers,
                     min_count_agree,
                 )
                 .await
                 .unwrap();
 
             // having [amount_parties-threshold] wrong digests will fail
-            let mut final_responses_with_bad_digest = final_responses.clone();
+            let mut final_responses_with_bad_digest = res_storage.clone();
             set_digests(
                 &mut final_responses_with_bad_digest,
                 amount_parties - threshold,
@@ -3672,7 +3657,6 @@ pub(crate) mod tests {
                 .process_distributed_crs_result(
                     &req_id,
                     final_responses_with_bad_digest,
-                    &storage_readers,
                     min_count_agree
                 )
                 .await
@@ -3682,11 +3666,11 @@ pub(crate) mod tests {
 
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     fn set_signatures(
-        crs_gen_results: &mut [crate::client::CrsGenResult],
+        crs_res_storage: &mut [(crate::client::CrsGenResult, FileStorage)],
         count: usize,
         sig: &[u8],
     ) {
-        for crs_gen_result in crs_gen_results.iter_mut().take(count) {
+        for (crs_gen_result, _) in crs_res_storage.iter_mut().take(count) {
             match &mut crs_gen_result.crs_results {
                 Some(info) => {
                     info.signature = sig.to_vec();
@@ -3698,11 +3682,11 @@ pub(crate) mod tests {
 
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     fn set_digests(
-        crs_gen_results: &mut [crate::client::CrsGenResult],
+        crs_res_storage: &mut [(crate::client::CrsGenResult, FileStorage)],
         count: usize,
         digest: &str,
     ) {
-        for crs_gen_result in crs_gen_results.iter_mut().take(count) {
+        for (crs_gen_result, _) in crs_res_storage.iter_mut().take(count) {
             match &mut crs_gen_result.crs_results {
                 Some(info) => {
                     // each hex-digit is 4 bits, 256 bits is 64 characters

@@ -1619,7 +1619,8 @@ where
                         // Spawn a tokio task for each session
                         let mut decryption_tasks = JoinSet::new();
                         for (mut small_session, ctxts) in
-                            small_sessions.into_iter().zip(ctxt_chunked.into_iter())
+                            small_sessions.into_iter().zip_eq(ctxt_chunked.into_iter())
+                        // May panic
                         {
                             let decrypt_span = tracing::info_span!("Online-NoiseFloodSmall");
                             let key_ref = key_ref.clone();
@@ -1733,7 +1734,8 @@ where
                         // Spawn a tokio task for each session
                         let mut decryption_tasks = JoinSet::new();
                         for (small_session_chunk, ctxts) in
-                            small_sessions.into_iter().zip(ctxt_chunked.into_iter())
+                            small_sessions.into_iter().zip_eq(ctxt_chunked.into_iter())
+                        // May panic
                         {
                             let key_ref = key_ref.clone();
                             let ks = ks.clone();
@@ -1746,7 +1748,7 @@ where
                                     ctxts.into_iter().for_each(|ctxt| {
                                         ctxt.owned_blocks()
                                             .into_iter()
-                                            .zip(ctxts_w_session_layout.iter_mut())
+                                            .zip_eq(ctxts_w_session_layout.iter_mut()) // This may panic, but would imply a bug in the current method
                                             .for_each(|(block, ctxts)| ctxts.push(block));
                                     });
 
@@ -1755,7 +1757,7 @@ where
                                     for (block_idx, (mut small_session, inner_blocks_ctxt)) in
                                         small_session_chunk
                                             .into_iter()
-                                            .zip(ctxts_w_session_layout.into_iter())
+                                            .zip_eq(ctxts_w_session_layout.into_iter()) // This may panic, but would imply a bug in the current method
                                             .enumerate()
                                     {
                                         let key_ref = Arc::clone(&key_ref);
@@ -1961,10 +1963,19 @@ where
 
                     //First, rework the ctxt layout to match sessions'
                     let mut ctxts_w_session_layout = vec![Vec::new(); num_sessions];
+                    if ctxts.len() != ctxts_w_session_layout.len() {
+                        return Err(tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!(
+                                "Error in decryption parameters; number of sessions; {:?}, does not match number of ciphertext chunks; {:?}",
+                                ctxts_w_session_layout.len(), ctxts.len()
+                            ),
+                        ));
+                    }
                     ctxts.into_iter().for_each(|ctxt| {
                         ctxt.owned_blocks()
                             .into_iter()
-                            .zip(ctxts_w_session_layout.iter_mut())
+                            .zip_eq(ctxts_w_session_layout.iter_mut())
                             .for_each(|(block, ctxts)| ctxts.push(block));
                     });
 
@@ -1982,7 +1993,10 @@ where
                         for (block_idx, (ctxts_blocks, (mut session, mut inner_preprocessings))) in
                             ctxts_w_session_layout
                                 .into_iter()
-                                .zip(base_sessions.into_iter().zip(preprocessings.into_iter()))
+                                // May panic, but would imply a bug in the current method
+                                .zip_eq(
+                                    base_sessions.into_iter().zip_eq(preprocessings.into_iter()),
+                                )
                                 .enumerate()
                         {
                             let ksk = ks.clone();
@@ -2077,7 +2091,8 @@ where
                         let mut res = Vec::new();
                         let sns_key = key_ref.0.server_key.noise_squashing_key();
                         for (ctxt, mut preprocessing) in
-                            ctxts.into_iter().zip(preprocessings.into_iter())
+                            ctxts.into_iter().zip_eq(preprocessings.into_iter())
+                        // May panic
                         {
                             let ct_large = if let Some(sns_key) = sns_key {
                                 match ctxt {

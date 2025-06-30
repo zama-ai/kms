@@ -591,11 +591,10 @@ where
         tracing::error!(msg);
         panic!("{}", msg);
     }
-
     let parties = match config {
-        ThresholdSigningKeyConfig::AllParties(parties) => {
-            (1..=parties.len()).zip(parties.into_iter()).collect_vec()
-        }
+        ThresholdSigningKeyConfig::AllParties(parties) => (1..=parties.len())
+            .zip_eq(parties.into_iter())
+            .collect_vec(),
         ThresholdSigningKeyConfig::OneParty(i, subject) => {
             std::iter::once((i, subject)).collect_vec()
         }
@@ -1093,9 +1092,10 @@ where
         });
 
     // Store the CRS for each party
+    // PANICS: if the private and public storage and signing keys are not of equal length
     for (cur_pub, (cur_priv, cur_sk)) in pub_storages
         .iter_mut()
-        .zip(priv_storages.iter_mut().zip(signing_keys.iter()))
+        .zip_eq(priv_storages.iter_mut().zip_eq(signing_keys.iter()))
     {
         // Compute signed metadata for CRS verification
         // PANICS: If signature generation fails - would compromise security model

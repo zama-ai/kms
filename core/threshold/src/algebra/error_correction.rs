@@ -119,7 +119,7 @@ where
             >,
         > = parties
             .iter()
-            .zip(y.iter())
+            .zip_eq(y.iter()) // This may panic, but cannot happen unless there is a bug in this method
             .filter_map(|(party_id, (sh, is_valid))| {
                 if *is_valid {
                     Some(ShamirSharing::<

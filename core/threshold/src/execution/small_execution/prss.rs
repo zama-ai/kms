@@ -279,7 +279,8 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss
         r.reverse();
         //Populate the prss sets for setup
         let mut party_prss_sets: Vec<PrssSet<Z>> = Vec::new();
-        for (set, f_a_point) in party_sets.iter().zip(f_a_points) {
+        // `zip_eq` may panic but it would imply a bug in this method
+        for (set, f_a_point) in party_sets.iter().zip_eq(f_a_points) {
             // Skip sets which the current party is not part of
             if !set.contains(&my_role) {
                 continue;

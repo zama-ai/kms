@@ -210,8 +210,12 @@ fn compute_next_batch<Z: Ring>(
         .matmul(vdm)?
         .into_raw_vec_and_offset()
         .0;
-    let res = res_t.into_iter().zip(res_2t).collect_vec();
-    Ok(res)
+    if res_t.len() != res_2t.len() {
+        return Err(anyhow_error_and_log(
+            "The size of the degree t and 2t vectors are not equal",
+        ));
+    }
+    Ok(res_t.into_iter().zip_eq(res_2t).collect_vec())
 }
 
 #[cfg(test)]

@@ -299,12 +299,17 @@ pub(crate) fn compute_check_values<Z: Ring>(
             let vec_secret_shares = map_secret_shares.get(role).ok_or_else(|| {
                 anyhow_error_and_log("Can not retrieve secret shares".to_string())
             })?;
+            if vec_challenges.len() != vec_secret_shares.len() {
+                return Err(anyhow_error_and_log(
+                    "Inconsistent vector lengths".to_string(),
+                ));
+            }
             Ok((
                 *role,
                 pads_shares[g]
                     + vec_challenges
                         .iter()
-                        .zip(vec_secret_shares.iter())
+                        .zip_eq(vec_secret_shares.iter())
                         .fold(Z::ZERO, |acc, (x, s)| acc + *x * *s),
             ))
         })
@@ -433,6 +438,8 @@ pub(crate) fn look_for_disputes<Z: Ring, L: LargeSessionHandles>(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[cfg(feature = "slow_tests")]
+    use super::RealLocalSingleShare;
     use super::{Derive, LocalSingleShare, SecureLocalSingleShare};
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
@@ -443,7 +450,6 @@ pub(crate) mod tests {
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
         large_execution::{
             coinflip::{Coinflip, RealCoinflip, SecureCoinflip},
-            local_single_share::RealLocalSingleShare,
             share_dispute::{RealShareDispute, ShareDispute},
             vss::{RealVss, SecureVss, Vss},
         },

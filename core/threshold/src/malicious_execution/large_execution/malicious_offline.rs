@@ -126,8 +126,8 @@ impl<Z: Derive + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: Rob
         //Add random error to every d and remove one
         let mut network_vec_share_d = vec_share_x
             .iter()
-            .zip(vec_share_y.iter())
-            .zip(vec_double_share_v.iter())
+            .zip_eq(vec_share_y.iter())
+            .zip_eq(vec_double_share_v.iter())
             .map(|((x, y), v)| {
                 let res = *x * *y + v.degree_2t + Z::sample(session.rng());
                 res
@@ -147,15 +147,15 @@ impl<Z: Derive + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>, RO: Rob
 
         let vec_share_z: Vec<_> = recons_vec_share_d
             .into_iter()
-            .zip(vec_double_share_v.iter())
+            .zip_eq(vec_double_share_v.iter())
             .map(|(d, v)| d - v.degree_t)
             .collect_vec();
 
         let my_role = session.my_role();
         let res = vec_share_x
             .into_iter()
-            .zip(vec_share_y)
-            .zip(vec_share_z)
+            .zip_eq(vec_share_y)
+            .zip_eq(vec_share_z)
             .map(|((x, y), z)| {
                 Triple::new(
                     Share::new(my_role, x),

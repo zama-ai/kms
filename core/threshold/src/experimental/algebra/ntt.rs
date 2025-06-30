@@ -184,11 +184,12 @@ where
     }
 }
 
+// Note that the inputs MUST have the same dimentions, otherwise the method will panic.
 pub fn hadamard_product<L, R, O>(lhs: &[L], rhs: Vec<R>) -> Vec<O>
 where
     R: for<'a> Mul<&'a L, Output = O>,
 {
-    lhs.iter().zip(rhs).map(|(x, y)| y * x).collect_vec()
+    lhs.iter().zip_eq(rhs).map(|(x, y)| y * x).collect_vec()
 }
 
 #[cfg(test)]
@@ -238,7 +239,7 @@ mod tests {
         let c = naive_mul(&a, &b, N65536::VALUE);
         ntt_iter2(&mut a, N65536::VALUE, N65536::THETA);
         ntt_iter2(&mut b, N65536::VALUE, N65536::THETA);
-        let mut c_fft: Vec<LevelOne> = hadamard_product(&a, b); //a.iter().zip(b).map(|(x, y)| *x * y).collect();
+        let mut c_fft: Vec<LevelOne> = hadamard_product(&a, b);
 
         ntt_inv::<LevelOne, N65536>(&mut c_fft, N65536::VALUE);
         assert_eq!(c, c_fft);
@@ -257,7 +258,7 @@ mod tests {
         let c = naive_mul(&a, &b, N65536::VALUE);
         ntt_iter2(&mut a, N65536::VALUE, N65536::THETA);
         ntt_iter2(&mut b, N65536::VALUE, N65536::THETA);
-        let mut c_fft: Vec<LevelEll> = a.iter().zip(b).map(|(x, y)| *x * y).collect();
+        let mut c_fft: Vec<LevelEll> = a.iter().zip_eq(b).map(|(x, y)| *x * y).collect();
 
         ntt_inv::<LevelEll, N65536>(&mut c_fft, N65536::VALUE);
         assert_eq!(c, c_fft);

@@ -1,5 +1,6 @@
 use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use itertools::Itertools;
 use pprof::criterion::Output;
 use pprof::criterion::PProfProfiler;
 use rand::SeedableRng;
@@ -51,7 +52,7 @@ fn bench_lagrange_poly(c: &mut Criterion) {
             b.iter(|| {
                 let ls = lagrange_polynomials(&xs);
                 let mut res = Poly::zero();
-                for (li, vi) in ls.into_iter().zip(ys.iter()) {
+                for (li, vi) in ls.into_iter().zip_eq(ys.iter()) {
                     let term = li * vi;
                     res = res + term;
                 }

@@ -10,6 +10,7 @@ use crate::engine::threshold::traits::{
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::util::random_free_port::get_listeners_random_free_ports;
 use futures_util::FutureExt;
+use itertools::Itertools;
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
     KeyGenRequest, KeyGenResult, PublicDecryptionRequest, PublicDecryptionResponse,
@@ -33,7 +34,7 @@ pub async fn setup_mock_kms(n: usize) -> HashMap<u32, ServerHandle> {
     let ip_addr = DEFAULT_URL.parse().unwrap();
     let service_listeners = get_listeners_random_free_ports(&ip_addr, n).await.unwrap();
     let mut ports = Vec::new();
-    for (i, (service_listener, service_port)) in (1..=n).zip(service_listeners.into_iter()) {
+    for (i, (service_listener, service_port)) in (1..=n).zip_eq(service_listeners.into_iter()) {
         ports.push(service_port);
         let (tx, rx) = tokio::sync::oneshot::channel();
         let (kms, health_service) = new_dummy_threshold_kms().await;

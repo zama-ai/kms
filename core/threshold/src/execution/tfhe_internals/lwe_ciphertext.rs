@@ -396,7 +396,7 @@ mod tests {
         let mut lwe_ctxt_mut_mask = lwe_ctxt.get_mut_mask();
         let underlying_container = lwe_ctxt_mut_mask.as_mut();
         assert_eq!(underlying_container.len(), mask_ref.len());
-        for (c, m) in underlying_container.iter_mut().zip(mask_ref) {
+        for (c, m) in underlying_container.iter_mut().zip_eq(mask_ref) {
             *c = m.0;
         }
 

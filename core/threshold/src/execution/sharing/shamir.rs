@@ -1,9 +1,11 @@
 use super::share::Share;
 use crate::algebra::poly::Poly;
-use crate::algebra::structure_traits::Ring;
-use crate::algebra::structure_traits::{ErrorCorrect, RingEmbed};
+use crate::algebra::structure_traits::{ErrorCorrect, Ring, RingEmbed};
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::error::error_handler::anyhow_error_and_warn_log;
 use crate::execution::runtime::party::Role;
+use itertools::EitherOrBoth::{Both, Left, Right};
+use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use std::ops::{Add, Mul, Sub};
 
@@ -57,13 +59,18 @@ impl<Z: Ring> ShamirSharings<Z> {
 impl<Z: Ring> Add<ShamirSharings<Z>> for ShamirSharings<Z> {
     type Output = ShamirSharings<Z>;
     fn add(self, rhs: ShamirSharings<Z>) -> Self::Output {
+        let pair = self.shares.into_iter().zip_longest(rhs.shares);
         ShamirSharings {
-            shares: self
-                .shares
-                .into_iter()
-                .zip(rhs.shares)
-                .map(|(a, b)| a + b)
-                .collect(),
+            shares: pair
+                .map(|cur| {
+                    match cur {
+                        Both(a, b) => a + b,
+                        // If only one side has a share, we interpret the other side as zero
+                        Left(a) => a,
+                        Right(b) => b,
+                    }
+                })
+                .collect_vec(),
         }
     }
 }
@@ -71,16 +78,21 @@ impl<Z: Ring> Add<ShamirSharings<Z>> for ShamirSharings<Z> {
 impl<Z: Ring> Add<&ShamirSharings<Z>> for &ShamirSharings<Z> {
     type Output = ShamirSharings<Z>;
     fn add(self, rhs: &ShamirSharings<Z>) -> Self::Output {
+        let pair = self.shares.iter().zip_longest(rhs.shares.iter());
         ShamirSharings {
-            shares: self
-                .shares
-                .iter()
-                .zip(rhs.shares.iter())
-                .map(|(a, b)| {
-                    assert_eq!(a.owner(), b.owner());
-                    Share::new(a.owner(), a.value() + b.value())
+            shares: pair
+                .map(|cur| {
+                    match cur {
+                        Both(a, b) => {
+                            assert_eq!(a.owner(), b.owner());
+                            Share::new(a.owner(), a.value() + b.value())
+                        }
+                        // If only one side has a share, we interpret the other side as zero
+                        Left(a) => Share::new(a.owner(), a.value()),
+                        Right(b) => Share::new(b.owner(), b.value()),
+                    }
                 })
-                .collect(),
+                .collect_vec(),
         }
     }
 }
@@ -88,16 +100,21 @@ impl<Z: Ring> Add<&ShamirSharings<Z>> for &ShamirSharings<Z> {
 impl<Z: Ring> Sub<&ShamirSharings<Z>> for &ShamirSharings<Z> {
     type Output = ShamirSharings<Z>;
     fn sub(self, rhs: &ShamirSharings<Z>) -> Self::Output {
+        let pair = self.shares.iter().zip_longest(rhs.shares.iter());
         ShamirSharings {
-            shares: self
-                .shares
-                .iter()
-                .zip(rhs.shares.iter())
-                .map(|(a, b)| {
-                    assert_eq!(a.owner(), b.owner());
-                    Share::new(a.owner(), a.value() - b.value())
+            shares: pair
+                .map(|cur| {
+                    match cur {
+                        Both(a, b) => {
+                            assert_eq!(a.owner(), b.owner());
+                            Share::new(a.owner(), a.value() - b.value())
+                        }
+                        // If only one side has a share, we interpret the other side as zero
+                        Left(a) => Share::new(a.owner(), a.value()),
+                        Right(b) => Share::new(b.owner(), b.value()),
+                    }
                 })
-                .collect(),
+                .collect_vec(),
         }
     }
 }
@@ -196,8 +213,9 @@ where
     }
 }
 
-/// Maps `values` into [ShamirSharings]s by appending these to `sharings`.
-/// Furthermore, ensure that at least `num_values` shares are added to `sharings`.
+/// Maps `values` into [ShamirSharings]s by pairwise adding each of these to each of the `sharings`.
+/// Furthermore, adds a zero-share for each share in `sharings` if there is not supplied enough `values`.
+/// This in turn means that there will be `num_values` shares in `sharings`.
 /// The function is useful to ensure that an indexable vector of Shamir shares exist.
 pub fn fill_indexed_shares<Z: Ring>(
     sharings: &mut [ShamirSharings<Z>],
@@ -205,24 +223,46 @@ pub fn fill_indexed_shares<Z: Ring>(
     num_values: usize,
     party_id: Role,
 ) -> anyhow::Result<()> {
+    if sharings.len() != num_values {
+        return Err(anyhow_error_and_log(format!(
+            "Number of sharings {} is not the expected amount {} from party {}",
+            sharings.len(),
+            num_values,
+            party_id
+        )));
+    }
+    if sharings.len() < values.len() {
+        return Err(anyhow_error_and_log(format!(
+            "Number of sharings {} is not {} as expected from party {}.",
+            sharings.len(),
+            values.len(),
+            party_id
+        )));
+    }
+    let sharing_len = sharings.len();
     let values_len = values.len();
-
-    values
-        .into_iter()
-        .zip(sharings.iter_mut())
-        .for_each(|(v, sharing)| sharing.add_share(Share::new(party_id, v)));
-
-    // fill up to num_values with 0s if not enough values were provided
-    if values_len < num_values {
-        tracing::warn!(
-            "Received {} shares from party {} but expected {}. Filling with 0s",
-            values_len,
-            party_id,
-            num_values
-        );
-        for sharing in sharings.iter_mut().skip(values_len) {
-            // We simply log the error and continue triyng to fill with zeros
-            sharing.add_share(Share::new(party_id, Z::ZERO))
+    let pair = values.into_iter().zip_longest(sharings.iter_mut());
+    for cur in pair {
+        match cur {
+            Both(v, sharing) => {
+                sharing.add_share(Share::new(party_id, v));
+            }
+            Left(_v) => {
+                // If a share is missing, we panic since we already checked the lengths in the start of the method
+                panic!(
+                    "There are {sharing_len} shares, but {values_len} values. There should not be more values than shares from party {party_id}." 
+                );
+            }
+            Right(sharing) => {
+                // If a value is missing, then add a zero-share in liu of the value
+                tracing::warn!(
+                    "Received {} shares from {} but expected {}. Filling with 0s",
+                    values_len,
+                    party_id,
+                    num_values
+                );
+                sharing.add_share(Share::new(party_id, Z::ZERO));
+            }
         }
     }
     Ok(())
@@ -633,7 +673,8 @@ mod tests {
                     )
                     .unwrap();
 
-                    for (share, all_share) in sharings.shares.into_iter().zip(all_shares.iter_mut())
+                    for (share, all_share) in
+                        sharings.shares.into_iter().zip_eq(all_shares.iter_mut())
                     {
                         let share_buf_bincode = bc2wrap::serialize(&share.value()).unwrap();
                         let share_buf = share.value().to_byte_vec();

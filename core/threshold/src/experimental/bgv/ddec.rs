@@ -91,9 +91,14 @@ pub(crate) async fn noise_flood_decryption<
         .map(|x| x * dist_shift)
         .collect_vec();
 
+    if p_share.len() != shifted_t_vec.len() {
+        return Err(anyhow::anyhow!(
+            "Partial decryption shares and masks do not match in length"
+        ));
+    }
     let c_vec = p_share
         .into_iter()
-        .zip(shifted_t_vec)
+        .zip_eq(shifted_t_vec)
         .map(|(p_entry, shifted_t_entry)| p_entry + shifted_t_entry)
         .collect_vec();
     let partial_decrypted = open_list(&c_vec, session).await?;

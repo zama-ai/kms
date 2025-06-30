@@ -49,14 +49,14 @@ impl BitGenEven for RealBitGenEven {
         let s = mult_list(&a, &a, triples, session).await?;
         let v = a
             .iter()
-            .zip(s)
+            .zip_eq(s) // May panic but would imply a bug in `mult_list`
             .map(|(cur_a, cur_s)| (*cur_a) + cur_s)
             .collect_vec();
         let opened_v_vec = open_list(&v, session).await?;
 
         opened_v_vec
             .iter()
-            .zip(a)
+            .zip_eq(a) // May panic but would imply a bug in `open_list`
             .map(|(cur_v, cur_a)| {
                 let cur_r = Z::solve(cur_v)?;
                 let cur_d = Z::ZERO - (Z::ONE + Z::TWO * cur_r);

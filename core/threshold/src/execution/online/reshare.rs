@@ -308,9 +308,16 @@ where
     };
 
     // opened[0] is r_j
+    if opened.len() != input_share.len() {
+        return Err(anyhow_error_and_log(format!(
+            "Expected the amount of input shares; {}, and openings; {}, to be equal",
+            input_share.len(),
+            opened.len()
+        )));
+    }
     let vj = opened
         .iter()
-        .zip(input_share.clone())
+        .zip_eq(input_share.clone())
         .map(|(r, s)| *r + s.value())
         .collect_vec();
 
@@ -336,15 +343,23 @@ where
             let rs_share_iter = rs_shares
                 .remove(&sender)
                 .ok_or_else(|| anyhow_error_and_log(format!("missing share for {sender:?}")))?;
+            if vs.len() != rs_share_iter.len() {
+                return Err(anyhow_error_and_log(format!(
+                    "Expected the amount of vs values; {}, and rs shares; {} to be equal",
+                    vs.len(),
+                    rs_share_iter.len()
+                )));
+            }
             let s_share = vs
                 .into_iter()
-                .zip(rs_share_iter.into_iter())
+                .zip_eq(rs_share_iter.into_iter())
                 .map(|(v, r)| v - r);
 
             // usually we'd do `s_vec.push((sender, s_share))`
             // but we want to transpose the result so we insert s_share
             // in a "tranposed way"
-            for (v, s) in s_share_vec.iter_mut().zip(s_share) {
+            // Note that `zip_eq` may panic, but it would imply a bug in this method
+            for (v, s) in s_share_vec.iter_mut().zip_eq(s_share) {
                 v.push(Share::new(sender, s));
             }
         }
@@ -391,7 +406,14 @@ where
     let mut new_sk_share = Vec::with_capacity(share_count);
     let syndrome_length = n1 - (session.threshold() as usize + 1);
     let chunks = all_syndrome_polys.chunks_exact(syndrome_length);
-    for (s, shamir_sharing) in chunks.zip(all_shamir_shares) {
+    if chunks.len() != all_shamir_shares.len() {
+        return Err(anyhow_error_and_log(format!(
+            "Expected the amount of syndrome chunks; {}, and shamir shares; {}, to be equal",
+            chunks.len(),
+            all_shamir_shares.len()
+        )));
+    }
+    for (s, shamir_sharing) in chunks.zip_eq(all_shamir_shares) {
         let syndrome_poly = Poly::from_coefs(s.iter().copied().collect_vec());
         let opened_syndrome = ResiduePoly::<Z, EXTENSION_DEGREE>::syndrome_decode(
             syndrome_poly,

@@ -14,11 +14,14 @@ use super::{
     parameters::EncryptionType, randomness::MPCEncryptionRandomGenerator,
 };
 
+// Warning: This function will panic if the amount of elements in `input_lwe_sk` is different
+// from the amount of elements in `lwe_packing_keyswitch_key`
+//
 // As with other key gen primitives,
 // we expect the generator to already be filled with
 // the correct noise from the caller
 // as the noise is sampled via the MPC protocol
-pub fn generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
+fn generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output_glwe_sk: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     lwe_packing_keyswitch_key: &mut LwePackingKeyswitchKeyShares<Z, EXTENSION_DEGREE>,
@@ -35,19 +38,11 @@ pub fn generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>
     let input_key_it = input_lwe_sk.data_as_raw_vec().into_iter();
     let packing_key_switch_key_block_it = lwe_packing_keyswitch_key.iter_mut_levels();
 
-    assert_eq!(
-        input_key_it.len(),
-        packing_key_switch_key_block_it.len(),
-        "Input LWE secret key and LWE keyswitch key have different dimensions: {} != {}",
-        input_key_it.len(),
-        packing_key_switch_key_block_it.len(),
-    );
-
     let mut decomposition_plaintexts_buffer =
         vec![ResiduePoly::<Z, EXTENSION_DEGREE>::ZERO; decomp_level_count.0 * polynomial_size.0];
 
     // Iterate over the input key elements and the destination lwe_packing_keyswitch_key memory
-    // zip_eq can panic but we just checked the length above
+    // zip_eq and `encrypt_glwe_ciphertext_list` can panic but we just checked the length above to ensure this does not occur
     for (input_key_element, packing_keyswitch_key_block) in
         input_key_it.zip_eq(packing_key_switch_key_block_it)
     {
@@ -88,6 +83,7 @@ where
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
     Gen: ByteRandomGenerator,
 {
+    // Ensure the input key and output key have the same number of elements to avoid a panic in `generate_lwe_packing_keyswitch_key`
     let mut new_ksk = LwePackingKeyswitchKeyShares::new(
         decomp_base_log,
         decomp_level_count,
@@ -97,6 +93,5 @@ where
     );
 
     generate_lwe_packing_keyswitch_key(input_lwe_sk, output_glwe_sk, &mut new_ksk, generator);
-
     new_ksk
 }

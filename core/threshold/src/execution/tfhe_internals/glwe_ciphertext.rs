@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use tfhe::{
     core_crypto::commons::traits::ByteRandomGenerator, shortint::parameters::PolynomialSize,
 };
@@ -117,7 +118,8 @@ pub fn encrypt_glwe_ciphertext<Gen, Z, const EXTENSION_DEGREE: usize>(
     );
 }
 
-pub fn encrypt_glwe_ciphertext_list<Gen, Z, const EXTENSION_DEGREE: usize>(
+/// Warning: this function panics if number of chunks in `input_plaintext_list` does not match the length of the `output_glwe_ciphertext_list`.
+pub(crate) fn encrypt_glwe_ciphertext_list<Gen, Z, const EXTENSION_DEGREE: usize>(
     glwe_secret_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output_glwe_ciphertext_list: &mut [GlweCiphertextShare<Z, EXTENSION_DEGREE>],
     input_plaintext_list: &[ResiduePoly<Z, EXTENSION_DEGREE>],
@@ -129,10 +131,15 @@ pub fn encrypt_glwe_ciphertext_list<Gen, Z, const EXTENSION_DEGREE: usize>(
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     let polynomial_size = glwe_secret_key.polynomial_size();
-    for (ciphertext, encoded) in output_glwe_ciphertext_list
-        .iter_mut()
-        .zip(input_plaintext_list.chunks_exact(polynomial_size.0))
-    {
+    let chunks = input_plaintext_list.chunks_exact(polynomial_size.0);
+    if output_glwe_ciphertext_list.len() != chunks.len() {
+        panic!(
+            "Number of ciphertexts {} does not match number of plaintexts {}",
+            output_glwe_ciphertext_list.len(),
+            chunks.len()
+        );
+    }
+    for (ciphertext, encoded) in output_glwe_ciphertext_list.iter_mut().zip_eq(chunks) {
         encrypt_glwe_ciphertext(
             glwe_secret_key,
             ciphertext,
@@ -365,14 +372,14 @@ mod tests {
         let mut glwe_ctxt_mut_mask = glwe_ctxt.get_mut_mask();
         let underlying_container = glwe_ctxt_mut_mask.as_mut();
         assert_eq!(underlying_container.len(), mask_ref.len());
-        for (c, m) in underlying_container.iter_mut().zip(mask_ref) {
+        for (c, m) in underlying_container.iter_mut().zip_eq(mask_ref) {
             *c = m.0;
         }
 
         let mut glwe_ctxt_mut_body = glwe_ctxt.get_mut_body();
         let underlying_container = glwe_ctxt_mut_body.as_mut();
         assert_eq!(underlying_container.len(), body.len());
-        for (c, m) in underlying_container.iter_mut().zip(body) {
+        for (c, m) in underlying_container.iter_mut().zip_eq(body) {
             *c = m.0;
         }
 

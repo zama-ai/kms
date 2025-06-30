@@ -241,7 +241,7 @@ fn test_dkg_orchestrator_large(
             //For each party, create num_sessions sessions
             let sessions = runtimes
                 .iter()
-                .zip(0..num_sessions)
+                .zip_eq(0..num_sessions)
                 .map(|(runtime, session_id)| {
                     runtime.large_session_for_party(SessionId::from(session_id), party_id)
                 })

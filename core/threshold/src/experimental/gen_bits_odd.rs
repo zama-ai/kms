@@ -71,7 +71,7 @@ impl BitGenOdd for RealBitGenOdd {
             let tmp_s_vec = open_list(&tmp_s_vec, session).await?;
             tmp_s_vec
                 .into_iter()
-                .zip(tmp_a_vec.into_iter())
+                .zip_eq(tmp_a_vec.into_iter()) // May panic, but would imply a bug in `mult_list`
                 .filter(|(s, _)| Z::largest_prime_factor_non_zero(s))
                 .for_each(|(s, a)| {
                     s_vec.push(s);
@@ -84,7 +84,7 @@ impl BitGenOdd for RealBitGenOdd {
 
         let v_vec: Vec<Share<Z>> = a_vec
             .into_iter()
-            .zip(c_vec.iter())
+            .zip_eq(c_vec.iter()) // May panic, but would imply a bug in this method`
             .map(|(a, c)| match c.invert() {
                 Ok(c_inv) => Ok(a * c_inv),
                 Err(e) => Err(e),
@@ -111,7 +111,7 @@ impl BitGenOdd for RealBitGenOdd {
 
         let c_vec = b_vec
             .iter()
-            .zip(r_vec.iter())
+            .zip_eq(r_vec.iter()) // May panic, but would imply a bug in this method
             .map(|(b, r)| b + r)
             .collect_vec();
 
@@ -120,7 +120,7 @@ impl BitGenOdd for RealBitGenOdd {
 
         let result = t_vec
             .into_iter()
-            .zip(r_vec)
+            .zip_eq(r_vec) // May panic, but would imply a bug in this method
             .map(|(t, r)| Share::new(own_role, t - r))
             .collect();
 

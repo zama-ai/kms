@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use num_integer::div_ceil;
 use tokio::{sync::mpsc::Sender, task::JoinSet};
 use tracing::instrument;
@@ -59,7 +60,7 @@ where
 
         let producers = sessions
             .into_iter()
-            .zip(channels)
+            .zip_eq(channels)
             .map(|(session, channel)| ProducerSession::new(session, channel))
             .collect();
 
@@ -169,7 +170,7 @@ mod tests {
         for ((party_idx, _party_id), triple_preproc) in identities
             .iter()
             .enumerate()
-            .zip(triple_preprocs.iter_mut())
+            .zip_eq(triple_preprocs.iter_mut())
         {
             let triple_len = triple_preproc.triples_len();
 
@@ -192,7 +193,7 @@ mod tests {
 
         for (a, (b, c)) in vec_sharings_a
             .iter()
-            .zip(vec_sharings_b.iter().zip(vec_sharings_c.iter()))
+            .zip_eq(vec_sharings_b.iter().zip_eq(vec_sharings_c.iter()))
         {
             let aa = a.reconstruct(threshold).unwrap();
             let bb = b.reconstruct(threshold).unwrap();

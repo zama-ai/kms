@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use itertools::Itertools;
 use kms_grpc::RequestId;
 use proptest::prelude::*;
 use rand::rngs::OsRng;
@@ -88,7 +89,7 @@ fn full_flow() {
         // cts[i][j] should go to custodian j, for all i
         let cts = operators
             .iter()
-            .zip(&secrets)
+            .zip_eq(&secrets)
             .map(|(operator, secret)| {
                 operator
                     .secret_share_and_encrypt(&mut rng, secret, backup_id)
@@ -103,7 +104,7 @@ fn full_flow() {
         // 2. reencrypt and sign the shares
         let reencrypted_cts = operators
             .iter()
-            .zip(&cts)
+            .zip_eq(&cts)
             .map(|(operator, ct)| {
                 // reencrypted ciphertexts ciphertexts for one operator
                 (
@@ -142,7 +143,7 @@ fn full_flow() {
         // 3. the parties do reconstruction
         let recovered_secrets: Vec<Vec<u8>> = operators
             .iter()
-            .zip(reencrypted_cts)
+            .zip_eq(reencrypted_cts)
             .map(|(operator, (mut reencrypted_ct, commitments))| {
                 // optionally remove elements during recovery
                 // we need to keep t + 1 shares, so remove n - (t + 1)
@@ -362,7 +363,7 @@ fn custodian_reencrypt() {
     // cts[i][j] should go to custodian j, for all i
     let cts = operators
         .iter()
-        .zip(&secrets)
+        .zip_eq(&secrets)
         .map(|(operator, secret)| {
             operator
                 .secret_share_and_encrypt(&mut rng, secret, backup_id)
