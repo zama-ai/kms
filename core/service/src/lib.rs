@@ -37,6 +37,8 @@ pub mod backup;
 pub mod conf;
 pub mod engine;
 #[cfg(feature = "non-wasm")]
+pub mod grpc;
+#[cfg(feature = "non-wasm")]
 pub mod vault;
 
 #[cfg(feature = "non-wasm")]

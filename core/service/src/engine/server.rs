@@ -3,6 +3,9 @@ use crate::{anyhow_error_and_log, conf::ServiceEndpoint};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::{
     CoreServiceEndpoint, CoreServiceEndpointServer,
 };
+use kms_grpc::metastore_status::v1::meta_store_status_service_server::{
+    MetaStoreStatusService, MetaStoreStatusServiceServer,
+};
 use observability::telemetry::make_span;
 use std::sync::Arc;
 use std::time::Duration;
@@ -71,11 +74,13 @@ pub async fn prepare_shutdown_signals<F: std::future::Future<Output = ()> + Send
 ///   be the pending future.
 pub async fn run_server<
     S: CoreServiceEndpoint + Shutdown,
+    M: MetaStoreStatusService,
     F: std::future::Future<Output = ()> + Send + 'static,
 >(
     config: ServiceEndpoint,
     listener: TcpListener,
     kms_service: Arc<S>,
+    meta_store_status_service: Arc<M>,
     health_service: HealthServer<impl Health>,
     shutdown_signal: F,
 ) -> anyhow::Result<()> {
@@ -121,7 +126,10 @@ pub async fn run_server<
             CoreServiceEndpointServer::from_arc(Arc::clone(&kms_service))
                 .max_decoding_message_size(config.grpc_max_message_size)
                 .max_encoding_message_size(config.grpc_max_message_size),
-        );
+        )
+        .add_service(MetaStoreStatusServiceServer::from_arc(
+            meta_store_status_service,
+        ));
 
     tracing::info!("Starting KMS core on socket {socket_addr}");
 

@@ -1978,7 +1978,7 @@ pub mod test_tools {
             let (i, kms_server_res, service_config) =
                 cur_handle.await.expect("Server {i} failed to start");
             match kms_server_res {
-                Ok((kms_server, health_service)) => {
+                Ok((kms_server, health_service, _metastore_status_service)) => {
                     servers.push((i, kms_server, service_config, health_service))
                 }
                 Err(e) => panic!("Failed to start server {i} with error {e:?}"),
@@ -2002,6 +2002,9 @@ pub mod test_tools {
                     service_config,
                     service_listener,
                     cur_arc_server,
+                    Arc::new(crate::grpc::MetaStoreStatusServiceImpl::new(
+                        None, None, None, None, None,
+                    )),
                     cur_health_service,
                     server_shutdown_rx.map(drop),
                 )
@@ -2243,9 +2246,18 @@ pub mod test_tools {
                 grpc_max_message_size: GRPC_MAX_MESSAGE_SIZE,
             };
 
-            run_server(config, listener, arc_kms, health_service, rx.map(drop))
-                .await
-                .expect("Could not start server");
+            run_server(
+                config,
+                listener,
+                arc_kms,
+                Arc::new(crate::grpc::MetaStoreStatusServiceImpl::new(
+                    None, None, None, None, None,
+                )),
+                health_service,
+                rx.map(drop),
+            )
+            .await
+            .expect("Could not start server");
         });
         let service_name = <CoreServiceEndpointServer<
             RealCentralizedKms<FileStorage, FileStorage, FileStorage>,

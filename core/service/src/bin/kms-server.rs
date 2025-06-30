@@ -10,6 +10,7 @@ use kms_lib::{
         centralized::central_kms::RealCentralizedKms, run_server,
         threshold::service::new_real_threshold_kms,
     },
+    grpc::MetaStoreStatusServiceImpl,
     vault::{
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain},
@@ -400,7 +401,7 @@ async fn main() -> anyhow::Result<()> {
                     None
                 }
             };
-            let (kms, health_service) = new_real_threshold_kms(
+            let (kms, health_service, metastore_status_service) = new_real_threshold_kms(
                 threshold_config,
                 public_vault,
                 private_vault,
@@ -413,10 +414,12 @@ async fn main() -> anyhow::Result<()> {
                 std::future::pending(),
             )
             .await?;
+            let meta_store_status_service = Arc::new(metastore_status_service);
             run_server(
                 core_config.service,
                 service_listener,
                 Arc::new(kms),
+                meta_store_status_service,
                 health_service,
                 std::future::pending(),
             )
@@ -435,10 +438,18 @@ async fn main() -> anyhow::Result<()> {
                 core_config.rate_limiter_conf,
             )
             .await?;
+            let meta_store_status_service = Arc::new(MetaStoreStatusServiceImpl::new(
+                None, // key_gen_store
+                None, // pub_dec_store
+                None, // user_dec_store
+                None, // crs_store
+                None, // preproc_store
+            ));
             run_server(
                 core_config.service,
                 service_listener,
                 Arc::new(kms),
+                meta_store_status_service,
                 health_service,
                 std::future::pending(),
             )

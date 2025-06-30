@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 use tonic::Status;
+use tracing;
 
 /// Data structure that stores elements that are being processed and their status (Started, Done, Error).
 /// It holds elements up to a given capacity, and once it is full, it will remove old elements that have status [Done]/[Error], if there are sufficiently many.
@@ -68,6 +69,27 @@ impl<T: Clone> MetaStore<T> {
         self.storage.contains_key(request_id)
     }
 
+    /// Get cell reference for status checking without cloning Arc
+    /// Returns borrowed reference to avoid Arc::clone() overhead
+    pub fn get_cell(&self, request_id: &RequestId) -> Option<&Arc<AsyncCell<Result<T, String>>>> {
+        self.storage.get(request_id)
+    }
+
+    /// Verify the invariant that storage.len() >= complete_queue.len()
+    /// This is critical for preventing underflow in get_processing_count()
+    /// Logs error if invariant is violated but does not panic
+    fn verify_invariant(&self) -> bool {
+        let is_valid = self.storage.len() >= self.complete_queue.len();
+        if !is_valid {
+            tracing::error!(
+                "INVARIANT VIOLATION: storage.len() ({}) < complete_queue.len() ({})",
+                self.storage.len(),
+                self.complete_queue.len()
+            );
+        }
+        is_valid
+    }
+
     // The non local effect warning is a false positive here, because we return an error only if the pop_front()
     // fails, which means that the queue is empty, and thus we do not have any non-local effects.
     #[allow(unknown_lints)]
@@ -98,12 +120,19 @@ impl<T: Clone> MetaStore<T> {
                     "Could not remove an old request from the cache".to_string(),
                 )?;
                 // and also remove it from the storage map
-                let _ = self.storage.remove(&old_request_id);
+                // If storage removal fails, we need to restore the complete_queue to maintain invariant
+                if self.storage.remove(&old_request_id).is_none() {
+                    self.complete_queue.push_front(old_request_id);
+                    return Err(anyhow_error_and_log(format!(
+                        "Failed to remove old element {old_request_id} from storage, invariant preserved"
+                    )));
+                }
             }
         }
         // Ignore the result since we have already checked that the element does not exist
         let cell = AsyncCell::shared();
         let _ = self.storage.insert(request_id.to_owned(), cell);
+
         Ok(())
     }
 
@@ -150,17 +179,94 @@ impl<T: Clone> MetaStore<T> {
                 // If the cell is set, it means the task has been processed
                 // and thus added to the complete queue
                 if handle.is_set() {
-                    for i in 0..self.complete_queue.len() {
-                        if request_id == &self.complete_queue[i] {
-                            let _ = self.complete_queue.remove(i);
-                            break;
+                    let mut found = false;
+                    self.complete_queue.retain(|id| {
+                        if id == request_id {
+                            found = true;
+                            false // Remove this item
+                        } else {
+                            true // Keep this item
                         }
+                    });
+
+                    // If we couldn't find it in complete_queue but it was completed,
+                    // this indicates a potential invariant violation that we should log
+                    if !found {
+                        tracing::error!("INVARIANT VIOLATION: Completed item {request_id} not found in complete_queue during delete - data corruption detected");
                     }
                 }
+
                 Some(handle)
             }
             None => None,
         }
+    }
+
+    /// Get the maximum capacity of this MetaStore
+    pub fn get_capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Get the current number of items in the store
+    pub fn get_current_count(&self) -> usize {
+        self.storage.len()
+    }
+
+    /// Get the number of completed items
+    pub fn get_completed_count(&self) -> usize {
+        self.complete_queue.len()
+    }
+
+    /// Get the number of items currently being processed
+    pub fn get_processing_count(&self) -> usize {
+        // Non-fallible invariant check that logs errors but doesn't panic
+        self.verify_invariant();
+
+        // Ensure invariant: storage.len() >= complete_queue.len() to prevent underflow
+        self.storage.len().saturating_sub(self.complete_queue.len())
+    }
+
+    /// Get all request IDs in the store
+    pub fn get_all_request_ids(&self) -> Vec<RequestId> {
+        self.storage.keys().cloned().collect()
+    }
+
+    /// Get completed request IDs
+    pub fn get_completed_request_ids(&self) -> Vec<RequestId> {
+        self.complete_queue.iter().cloned().collect()
+    }
+
+    /// Get processing request IDs (not yet completed)
+    pub fn get_processing_request_ids(&self) -> Vec<RequestId> {
+        self.storage
+            .keys()
+            .filter(|id| !self.complete_queue.contains(id))
+            .cloned()
+            .collect()
+    }
+
+    /// Get failed request IDs (completed with errors)
+    pub fn get_failed_request_ids(&self) -> Vec<RequestId> {
+        self.complete_queue
+            .iter()
+            .filter_map(|id| {
+                // Direct HashMap access - items in complete_queue should exist in storage
+                match self.storage.get(id) {
+                    Some(cell) => {
+                        if let Some(Err(_)) = cell.try_get() {
+                            Some(*id)
+                        } else {
+                            None
+                        }
+                    }
+                    None => {
+                        // This should never happen - indicates invariant violation
+                        tracing::error!("INVARIANT VIOLATION: Completed item {id} not found in storage - data corruption detected");
+                        None
+                    }
+                }
+            })
+            .collect()
     }
 }
 
