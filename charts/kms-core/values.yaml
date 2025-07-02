@@ -181,7 +181,7 @@ kmsInit:
   affinity:
   tolerations:
 
-kmsGenCert:
+kmsGenCertAndKeys:
   enabled: false
   nameOverride:
 
