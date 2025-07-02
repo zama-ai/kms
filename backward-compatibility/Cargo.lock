@@ -1623,7 +1623,7 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 [[package]]
 name = "bc2wrap"
 version = "2.0.1"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=c8b0230ad24c74083a4fd99f317ae86b636a48c6#c8b0230ad24c74083a4fd99f317ae86b636a48c6"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=v0.11.0-rc17#3844e4e3f8f0606ab69a00506c81e10013506177"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -1976,7 +1976,7 @@ dependencies = [
 [[package]]
 name = "conf-trace"
 version = "0.11.0-rc17"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=c8b0230ad24c74083a4fd99f317ae86b636a48c6#c8b0230ad24c74083a4fd99f317ae86b636a48c6"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=v0.11.0-rc17#3844e4e3f8f0606ab69a00506c81e10013506177"
 dependencies = [
  "anyhow",
  "axum",
@@ -3624,7 +3624,7 @@ dependencies = [
 [[package]]
 name = "kms"
 version = "0.11.0-rc17"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=c8b0230ad24c74083a4fd99f317ae86b636a48c6#c8b0230ad24c74083a4fd99f317ae86b636a48c6"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=v0.11.0-rc17#3844e4e3f8f0606ab69a00506c81e10013506177"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3695,7 +3695,7 @@ dependencies = [
 [[package]]
 name = "kms-grpc"
 version = "0.11.0-rc17"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=c8b0230ad24c74083a4fd99f317ae86b636a48c6#c8b0230ad24c74083a4fd99f317ae86b636a48c6"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=v0.11.0-rc17#3844e4e3f8f0606ab69a00506c81e10013506177"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -6390,7 +6390,7 @@ dependencies = [
 [[package]]
 name = "threshold-fhe"
 version = "0.11.0-rc17"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=c8b0230ad24c74083a4fd99f317ae86b636a48c6#c8b0230ad24c74083a4fd99f317ae86b636a48c6"
+source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=v0.11.0-rc17#3844e4e3f8f0606ab69a00506c81e10013506177"
 dependencies = [
  "aes",
  "aes-prng",

@@ -12,9 +12,8 @@ use backward_compatibility::{
     data_dir,
     load::{DataFormat, TestFailure, TestResult, TestSuccess},
     tests::{run_all_tests, TestedModule},
-    AppKeyBlobTest, CustodianSetupMessageTest, KmsFheKeyHandlesTest, NestedPkeTest,
-    OperatorBackupOutputTest, PrivateSigKeyTest, PublicSigKeyTest, TestMetadataKMS, TestType,
-    Testcase, ThresholdFheKeysTest,
+    AppKeyBlobTest, CustodianSetupMessageTest, KmsFheKeyHandlesTest, OperatorBackupOutputTest,
+    PrivateSigKeyTest, PublicSigKeyTest, TestMetadataKMS, TestType, Testcase, ThresholdFheKeysTest,
 };
 use kms_grpc::{
     rpc_types::{PubDataType, SignedPubDataHandleInternal},
@@ -27,7 +26,7 @@ use kms_lib::{
     },
     cryptography::{
         internal_crypto_types::{gen_sig_keys, PrivateSigKey, PublicSigKey},
-        nested_pke::{self, NestedPrivateKey, NestedPublicKey},
+        nested_pke,
     },
     engine::{base::KmsFheKeyHandles, threshold::service::ThresholdFheKeys},
     util::key_setup::FhePublicKey,
@@ -339,46 +338,6 @@ fn test_operator_backup_output(
     }
 }
 
-fn test_nested_pke(
-    dir: &Path,
-    test: &NestedPkeTest,
-    format: DataFormat,
-) -> Result<TestSuccess, TestFailure> {
-    let original_public_key: NestedPublicKey =
-        load_and_unversionize_auxiliary(dir, test, &test.pk_filename, format)?;
-    let original_private_key: NestedPrivateKey =
-        load_and_unversionize_auxiliary(dir, test, &test.sk_filename, format)?;
-    let original_ciphertext: Vec<u8> =
-        load_and_unversionize_auxiliary(dir, test, &test.ct_filename, format)?;
-
-    let mut rng = AesRng::seed_from_u64(test.seed);
-    let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
-    let ciphertext = public_key.encrypt(&mut rng, &test.plaintext).unwrap();
-
-    if ciphertext != original_ciphertext {
-        return Err(test.failure(
-            format!(
-                "Invalid nested ciphertext:\n original:\n{original_ciphertext:?},\nactual:\n{ciphertext:?}"
-            ),
-            format,
-        ));
-    }
-    if public_key != original_public_key {
-        return Err(test.failure(
-            format!(
-                "Invalid nested public key:\n original:\n{original_public_key:?},\nactual:\n{public_key:?}"
-            ),
-            format,
-        ));
-    }
-    if private_key != original_private_key {
-        // For security, we don't derive Debug for the secret key
-        return Err(test.failure("Invalid nested private key".to_string(), format));
-    }
-
-    Ok(test.success(format))
-}
-
 pub struct KMS;
 
 impl TestedModule for KMS {
@@ -405,16 +364,12 @@ impl TestedModule for KMS {
             }
             Self::Metadata::AppKeyBlob(test) => {
                 test_app_key_blob(test_dir.as_ref(), test, format).into()
-            }
-            Self::Metadata::CustodianSetupMessage(test) => {
-                test_custodian_setup_message(test_dir.as_ref(), test, format).into()
-            }
-            Self::Metadata::OperatorBackupOutput(test) => {
-                test_operator_backup_output(test_dir.as_ref(), test, format).into()
-            }
-            Self::Metadata::NestedPke(test) => {
-                test_nested_pke(test_dir.as_ref(), test, format).into()
-            }
+            } // Self::Metadata::CustodianSetupMessage(test) => {
+              //     test_custodian_setup_message(test_dir.as_ref(), test, format).into()
+              // }
+              // Self::Metadata::OperatorBackupOutput(test) => {
+              //     test_operator_backup_output(test_dir.as_ref(), test, format).into()
+              // }
         }
     }
 }

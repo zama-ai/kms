@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
 use tfhe::named::Named;
-use tfhe_versionable::{Versionize, VersionsDispatch};
+use tfhe_versionable::{Upgrade, Version, Versionize, VersionsDispatch};
 use tonic::async_trait;
 use tracing::instrument;
 
@@ -312,7 +312,8 @@ pub(crate) struct PrfAes {
 
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum PrssSetVersioned<Z> {
-    V0(PrssSet<Z>),
+    V0(PrssSetV0<Z>),
+    V1(PrssSet<Z>),
 }
 
 /// structure for holding values for each subset of n-t parties
@@ -324,6 +325,29 @@ pub struct PrssSet<Z> {
     f_a_points: Vec<Z>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Version)]
+pub struct PrssSetV0<Z> {
+    parties: PartySetV0,
+    set_key: PrfKey,
+    f_a_points: Vec<Z>,
+}
+
+impl<Z> Upgrade<PrssSet<Z>> for PrssSetV0<Z> {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<PrssSet<Z>, Self::Error> {
+        Ok(PrssSet {
+            parties: self
+                .parties
+                .into_iter()
+                .map(Role::indexed_from_one)
+                .collect(),
+            set_key: self.set_key,
+            f_a_points: self.f_a_points,
+        })
+    }
+}
+
 enum ComputeShareMode {
     Prss,
     Przs,
@@ -332,6 +356,7 @@ enum ComputeShareMode {
 /// Structure to hold a n-t sized structure of party IDs
 /// Assumed to be stored in increasing order, with party IDs starting from 1
 pub type PartySet = Vec<Role>;
+pub type PartySetV0 = Vec<usize>;
 
 /// Structure holding the votes (in the HashSet) for different vectors of values, where each party votes for one vector
 /// Note that for PRSS each vector is of length 1, while for PRZS the vectors are of length t
