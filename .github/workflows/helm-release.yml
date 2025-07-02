@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   helm-release:
+    name: "Helm Chart Release"
     permissions:
       actions: 'read'
       contents: 'read'

@@ -5,6 +5,7 @@ use super::structure_traits::Sample;
 use super::structure_traits::Zero;
 use crate::error::error_handler::anyhow_error_and_log;
 use anyhow::Result;
+use itertools::Itertools;
 use ndarray::Array;
 use ndarray::ArrayD;
 use ndarray::IxDyn;
@@ -68,14 +69,20 @@ impl<Z: Ring> MatrixMul<Z> for ArrayD<Z> {
         match (self.ndim(), rhs.ndim()) {
             (1, 1) => {
                 if self.dim() != rhs.dim() {
-                    Err(anyhow_error_and_log(format!("Cannot compute multiplication between rank 1 tensor where dimension of lhs {:?} and rhs {:?}", self.dim(), rhs.dim())))
-                } else {
-                    let res = self
-                        .iter()
-                        .zip(rhs)
-                        .fold(Z::ZERO, |acc, (a, b)| acc + *a * *b);
-                    Ok(Array::from_elem(IxDyn(&[1]), res).into_dyn())
+                    return  Err(anyhow_error_and_log(format!("Cannot compute multiplication between rank 1 tensor where dimension of lhs {:?} and rhs {:?}", self.dim(), rhs.dim())));
                 }
+                if self.len() != rhs.len() {
+                    return Err(anyhow_error_and_log(format!(
+                        "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 1 tensors",
+                        self.len(),
+                        rhs.len()
+                    )));
+                }
+                let res = self
+                    .iter()
+                    .zip_eq(rhs)
+                    .fold(Z::ZERO, |acc, (a, b)| acc + *a * *b);
+                Ok(Array::from_elem(IxDyn(&[1]), res).into_dyn())
             }
             (1, 2) => {
                 if self.dim()[0] != rhs.dim()[0] {
@@ -83,9 +90,16 @@ impl<Z: Ring> MatrixMul<Z> for ArrayD<Z> {
                 } else {
                     let mut res = Vec::new();
                     for col in rhs.columns() {
+                        if col.len() != self.len() {
+                            return Err(anyhow_error_and_log(format!(
+                                "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 1 tensors and rank 2 tensors",
+                                self.len(),
+                                rhs.len()
+                            )));
+                        }
                         let s = col
                             .iter()
-                            .zip(self)
+                            .zip_eq(self)
                             .fold(Z::ZERO, |acc, (a, b)| acc + *b * *a);
                         res.push(s);
                     }
@@ -98,9 +112,16 @@ impl<Z: Ring> MatrixMul<Z> for ArrayD<Z> {
                 } else {
                     let mut res = Vec::new();
                     for row in self.rows() {
+                        if row.len() != rhs.len() {
+                            return Err(anyhow_error_and_log(format!(
+                                "Cannot multiply lhs of {:?} elements and rhs of {:?} elements for rank 2 tensors and rank 1 tensors",
+                                self.len(),
+                                rhs.len()
+                            )));
+                        }
                         let s = row
                             .iter()
-                            .zip(rhs)
+                            .zip_eq(rhs)
                             .fold(Z::ZERO, |acc, (a, b)| acc + *b * *a);
                         res.push(s);
                     }
@@ -108,8 +129,7 @@ impl<Z: Ring> MatrixMul<Z> for ArrayD<Z> {
                 }
             }
             (l_rank, r_rank) => Err(anyhow_error_and_log(format!(
-                "Matmul not implemented for tensors of rank {:?}, {:?}",
-                l_rank, r_rank,
+                "Matmul not implemented for tensors of rank {l_rank:?}, {r_rank:?}",
             ))),
         }
     }

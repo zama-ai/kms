@@ -241,7 +241,7 @@ fn test_dkg_orchestrator_large(
             //For each party, create num_sessions sessions
             let sessions = runtimes
                 .iter()
-                .zip(0..num_sessions)
+                .zip_eq(0..num_sessions)
                 .map(|(runtime, session_id)| {
                     runtime.large_session_for_party(SessionId::from(session_id), party_id)
                 })
@@ -250,7 +250,7 @@ fn test_dkg_orchestrator_large(
             let identity = sessions[0].own_identity();
             let redis_conf = RedisConf::default();
             let mut redis_factory =
-                create_redis_factory(format!("LargeOrchestrator_{}", identity), &redis_conf);
+                create_redis_factory(format!("LargeOrchestrator_{identity}"), &redis_conf);
             let orchestrator = PreprocessingOrchestrator::<ResiduePolyF4Z64>::new(
                 redis_factory.as_mut(),
                 params,
@@ -287,7 +287,7 @@ fn test_dkg_orchestrator_large(
             params_basics_handles
                 .get_prefix_path()
                 .join("ORCHESTRATOR")
-                .join(format!("sk_p{}.der", party_id)),
+                .join(format!("sk_p{party_id}.der")),
             &sk,
         )
         .unwrap();

@@ -5,12 +5,12 @@ import "kms.v1.proto";
 
 // Enum representing different types of meta-stores in the system
 enum MetaStoreType {
-  KEY_GENERATION = 0;
-  PUBLIC_DECRYPTION = 1;
-  USER_DECRYPTION = 2;
-  CRS_GENERATION = 3;
-  PREPROCESSING = 4;
-  ALL = 5;  // Special value to query across all meta-store types
+  ALL = 0;               // Special value to query across all meta-store types (default)
+  KEY_GENERATION = 1;
+  PUBLIC_DECRYPTION = 2;
+  USER_DECRYPTION = 3;
+  CRS_GENERATION = 4;
+  PREPROCESSING = 5;
 }
 
 // Enum representing the processing status of a request
@@ -23,8 +23,8 @@ enum RequestProcessingStatus {
 
 // Information about the status of a specific request
 message RequestStatusInfo {
-  // The request ID
-  kms.v1.RequestId request_id = 1;
+  // The request ID (flattened for efficiency)
+  string request_id = 1;
   // The type of meta-store this request belongs to
   MetaStoreType meta_store_type = 2;
   // The current processing status
@@ -36,7 +36,7 @@ message RequestStatusInfo {
 // Request to get the status of specific request IDs
 message GetRequestStatusesRequest {
   // List of request IDs to get status for
-  repeated kms.v1.RequestId request_ids = 1;
+  repeated string request_ids = 1;
   // Optional filter by meta-store type
   optional MetaStoreType meta_store_type = 2;
 }

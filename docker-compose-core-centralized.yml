@@ -36,7 +36,7 @@ services:
       export AWS_ACCESS_KEY_ID=$$(cat /minio_secrets/access_key) &&
       export AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       echo 'Generating signing keys' &&
-      kms-gen-keys --pub-url s3://kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --priv-url file://./keys --cmd signing-keys centralized &&
+      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys centralized &&
       echo 'Starting kms service' &&
       kms-server --config-file config/compose_centralized.toml
       "

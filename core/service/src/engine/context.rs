@@ -351,7 +351,7 @@ mod tests {
         cryptography::{
             internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
         },
-        vault::storage::{ram::RamStorage, store_versioned_at_request_id, StorageType},
+        vault::storage::{ram::RamStorage, store_versioned_at_request_id},
     };
 
     use super::*;
@@ -509,7 +509,7 @@ mod tests {
             threshold: 1,
         };
 
-        let mut storage = RamStorage::new(StorageType::PRIV);
+        let mut storage = RamStorage::new();
         store_versioned_at_request_id(
             &mut storage,
             &RequestId::from_bytes([1u8; 32]),

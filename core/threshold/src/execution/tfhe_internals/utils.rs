@@ -325,7 +325,7 @@ pub mod tests {
             sk_shares.insert(
                 Role::indexed_from_one(party),
                 read_element::<PrivateKeySet<EXTENSION_DEGREE>, _>(
-                    prefix_path.join(format!("sk_p{}.der", party)).as_path(),
+                    prefix_path.join(format!("sk_p{party}.der")).as_path(),
                 )
                 .unwrap(),
             );
@@ -362,7 +362,7 @@ pub mod tests {
             sk_shares.insert(
                 Role::indexed_from_one(party),
                 read_element::<PrivateKeySet<EXTENSION_DEGREE>, _>(
-                    prefix_path.join(format!("sk_p{}.der", party)).as_path(),
+                    prefix_path.join(format!("sk_p{party}.der")).as_path(),
                 )
                 .unwrap(),
             );

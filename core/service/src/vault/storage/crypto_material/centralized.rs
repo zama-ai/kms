@@ -278,8 +278,7 @@ impl<
         let mut key_info = self.fhe_keys.write().await;
         let x = key_info.get_mut(key_handle).ok_or_else(|| {
             anyhow_error_and_warn_log(format!(
-                "Cannot find key handle {} in cache to set wrong client key",
-                key_handle
+                "Cannot find key handle {key_handle} in cache to set wrong client key"
             ))
         })?;
 

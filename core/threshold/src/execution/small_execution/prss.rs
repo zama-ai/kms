@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
 use tfhe::named::Named;
-use tfhe_versionable::{Versionize, VersionsDispatch};
+use tfhe_versionable::{Upgrade, Version, Versionize, VersionsDispatch};
 use tonic::async_trait;
 use tracing::instrument;
 
@@ -279,7 +279,8 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss
         r.reverse();
         //Populate the prss sets for setup
         let mut party_prss_sets: Vec<PrssSet<Z>> = Vec::new();
-        for (set, f_a_point) in party_sets.iter().zip(f_a_points) {
+        // `zip_eq` may panic but it would imply a bug in this method
+        for (set, f_a_point) in party_sets.iter().zip_eq(f_a_points) {
             // Skip sets which the current party is not part of
             if !set.contains(&my_role) {
                 continue;
@@ -289,7 +290,7 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss
 
                 set_key: r
                     .pop()
-                    .with_context(|| log_error_wrapper(format!("Missing key for set {:?}", set)))?,
+                    .with_context(|| log_error_wrapper(format!("Missing key for set {set:?}")))?,
                 f_a_points: f_a_point.clone(),
             };
             party_prss_sets.push(pset);
@@ -311,7 +312,8 @@ pub(crate) struct PrfAes {
 
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum PrssSetVersioned<Z> {
-    V0(PrssSet<Z>),
+    V0(PrssSetV0<Z>),
+    V1(PrssSet<Z>),
 }
 
 /// structure for holding values for each subset of n-t parties
@@ -323,6 +325,29 @@ pub struct PrssSet<Z> {
     f_a_points: Vec<Z>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Version)]
+pub struct PrssSetV0<Z> {
+    parties: PartySetV0,
+    set_key: PrfKey,
+    f_a_points: Vec<Z>,
+}
+
+impl<Z> Upgrade<PrssSet<Z>> for PrssSetV0<Z> {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<PrssSet<Z>, Self::Error> {
+        Ok(PrssSet {
+            parties: self
+                .parties
+                .into_iter()
+                .map(Role::indexed_from_one)
+                .collect(),
+            set_key: self.set_key,
+            f_a_points: self.f_a_points,
+        })
+    }
+}
+
 enum ComputeShareMode {
     Prss,
     Przs,
@@ -331,6 +356,7 @@ enum ComputeShareMode {
 /// Structure to hold a n-t sized structure of party IDs
 /// Assumed to be stored in increasing order, with party IDs starting from 1
 pub type PartySet = Vec<Role>;
+pub type PartySetV0 = Vec<usize>;
 
 /// Structure holding the votes (in the HashSet) for different vectors of values, where each party votes for one vector
 /// Note that for PRSS each vector is of length 1, while for PRZS the vectors are of length t
@@ -2098,9 +2124,7 @@ mod tests {
                 if params.should_be_detected {
                     assert!(
                         session.corrupt_roles().contains(malicious_role),
-                        "Expected malicious set of {:?} to contain {:?} but it does not",
-                        my_role,
-                        malicious_role
+                        "Expected malicious set of {my_role:?} to contain {malicious_role:?} but it does not"
                     );
                 } else {
                     assert!(
@@ -2221,8 +2245,7 @@ mod tests {
             let randomness_test = execute_all_randomness_tests_loose(&raw_shares);
             assert!(
                 randomness_test.is_ok(),
-                "Failed randomnness test of PRSS.Next shares: {:?}",
-                randomness_test
+                "Failed randomnness test of PRSS.Next shares: {randomness_test:?}"
             );
         }
 
@@ -2233,8 +2256,7 @@ mod tests {
         let randomness_test = execute_all_randomness_tests_loose(&results);
         assert!(
             randomness_test.is_ok(),
-            "Failed randomness check of PRSS.Next Outputs: {:?}",
-            randomness_test
+            "Failed randomness check of PRSS.Next Outputs: {randomness_test:?}"
         );
 
         // Make sure the prss_check also reconstructs (with no errors) to the same value
@@ -2257,8 +2279,7 @@ mod tests {
             let randomness_test = execute_all_randomness_tests_loose(&raw_shares);
             assert!(
                 randomness_test.is_ok(),
-                "Failed randomnness test of PRZS.Next Shares : {:?}",
-                randomness_test
+                "Failed randomnness test of PRZS.Next Shares : {randomness_test:?}"
             );
         }
 
@@ -2312,9 +2333,7 @@ mod tests {
                         .err_reconstruct(degree, max_error);
                 assert!(
                     reconstruct.is_ok(),
-                    "Failed to reconstruct at idx {}: {:?}",
-                    idx,
-                    reconstruct
+                    "Failed to reconstruct at idx {idx}: {reconstruct:?}"
                 );
                 reconstruct.unwrap()
             })
@@ -2336,11 +2355,7 @@ mod tests {
                         .collect::<Vec<_>>(),
                 )
                 .reconstruct(degree);
-                assert!(
-                    reconstruct.is_ok(),
-                    "Failed to reconstruct {:?}",
-                    reconstruct
-                );
+                assert!(reconstruct.is_ok(), "Failed to reconstruct {reconstruct:?}");
                 reconstruct.unwrap()
             })
             .all(|reconstruct| reconstruct == expected_result));

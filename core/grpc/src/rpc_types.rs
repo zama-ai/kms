@@ -245,7 +245,8 @@ pub enum PubDataType {
     VerfKey,     // Type for the servers public verification keys
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
-    CACert, // Certificate that signs TLS certificates used by MPC nodes
+    CACert,                // Certificate that signs TLS certificates used by MPC nodes
+    CustodianSetupMessage, // Backup custodian public keys (self-signed)
 }
 
 impl fmt::Display for PubDataType {
@@ -259,6 +260,7 @@ impl fmt::Display for PubDataType {
             PubDataType::VerfAddress => write!(f, "VerfAddress"),
             PubDataType::DecompressionKey => write!(f, "DecompressionKey"),
             PubDataType::CACert => write!(f, "CACert"),
+            PubDataType::CustodianSetupMessage => write!(f, "CustodianSetupMessage"),
         }
     }
 }

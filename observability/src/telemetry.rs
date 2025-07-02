@@ -205,8 +205,7 @@ pub async fn init_tracing(settings: &TelemetryConfig) -> Result<SdkTracerProvide
         // Use absolute path to ensure logs are created in a consistent location
         let sep = std::path::MAIN_SEPARATOR.to_string();
         let log_path = format!(
-            "{}{}{}{}{}{}{}_{}_pid{}.log",
-            root_dir, sep, job_name, sep, module_path, sep, test_fn_name, timestamp, process_id
+            "{root_dir}{sep}{job_name}{sep}{module_path}{sep}{test_fn_name}_{timestamp}_pid{process_id}.log"
         );
 
         // Create directory if it doesn't exist

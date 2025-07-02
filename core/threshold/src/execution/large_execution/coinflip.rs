@@ -34,7 +34,7 @@ pub struct DummyCoinflip {}
 impl ProtocolDescription for DummyCoinflip {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-DummyCoinflip", indent)
+        format!("{indent}-DummyCoinflip")
     }
 }
 
@@ -106,17 +106,13 @@ impl<V: Vss, RO: RobustOpen> Coinflip for RealCoinflip<V, RO> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-
     use super::{Coinflip, DummyCoinflip, SecureCoinflip};
     #[cfg(feature = "slow_tests")]
-    use crate::execution::{
-        communication::broadcast::SyncReliableBroadcast,
-        large_execution::{
-            coinflip::RealCoinflip,
-            vss::{SecureVss, Vss},
-        },
-        sharing::open::{RobustOpen, SecureRobustOpen},
-    };
+    use crate::execution::communication::broadcast::SyncReliableBroadcast;
+    #[cfg(feature = "slow_tests")]
+    use crate::execution::large_execution::{coinflip::RealCoinflip, vss::SecureVss, vss::Vss};
+    #[cfg(feature = "slow_tests")]
+    use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
     #[cfg(feature = "slow_tests")]
     use crate::malicious_execution::large_execution::malicious_vss::{
         DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,

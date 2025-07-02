@@ -175,7 +175,7 @@ impl ExperimentalGrpcChoreography {
                 || {
                     Err(tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("Failed to create session for {:?}", request_sid),
+                        format!("Failed to create session for {request_sid:?}"),
                     ))
                 },
                 Ok,
@@ -220,7 +220,7 @@ impl ExperimentalGrpcChoreography {
                     .map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
-                            format!("Failed to create networking: {:?}", e),
+                            format!("Failed to create networking: {e:?}"),
                         )
                     })?;
             let aes_rng = if let Some(seed) = seed {
@@ -262,14 +262,14 @@ impl Choreography for ExperimentalGrpcChoreography {
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse role assignment: {:?}", e),
+                    format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
 
         let prss_params: PrssInitParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                format!("Failed to parse prss params: {:?}", e),
+                format!("Failed to parse prss params: {e:?}"),
             )
         })?;
 
@@ -288,7 +288,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to create Base Session: {:?}", e),
+                    format!("Failed to create Base Session: {e:?}"),
                 )
             })?;
 
@@ -357,7 +357,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse role assignment: {:?}", e),
+                    format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
 
@@ -365,7 +365,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             bc2wrap::deserialize(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse Preproc KeyGen params: {:?}", e),
+                    format!("Failed to parse Preproc KeyGen params: {e:?}"),
                 )
             })?;
 
@@ -386,7 +386,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to create Base Session: {:?}", e),
+                    format!("Failed to create Base Session: {e:?}"),
                 )
             })?;
 
@@ -459,7 +459,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse role assignment: {:?}", e),
+                    format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
 
@@ -467,7 +467,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             bc2wrap::deserialize(&request.params).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse Threshold KeyGen params: {:?}", e),
+                    format!("Failed to parse Threshold KeyGen params: {e:?}"),
                 )
             })?;
 
@@ -486,7 +486,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to create Base Session: {:?}", e),
+                    format!("Failed to create Base Session: {e:?}"),
                 )
             })?;
 
@@ -570,7 +570,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             .map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                format!("Failed to parse Threshold KeyGen Result params: {:?}", e),
+                format!("Failed to parse Threshold KeyGen Result params: {e:?}"),
             )
         })?;
 
@@ -582,7 +582,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("Failed to parse role assignment: {:?}", e),
+                        format!("Failed to parse role assignment: {e:?}"),
                     )
                 })?;
             let params = SessionParameters::new(
@@ -594,7 +594,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to create a base session parameters: {:?}", e),
+                    format!("Failed to create a base session parameters: {e:?}"),
                 )
             })?;
 
@@ -604,7 +604,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                     .map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
-                            format!("Failed to create networking: {:?}", e),
+                            format!("Failed to create networking: {e:?}"),
                         )
                     })?;
 
@@ -613,7 +613,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 .map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("Failed to create Base Session: {:?}", e),
+                        format!("Failed to create Base Session: {e:?}"),
                     )
                 })?;
             let keys = local_initialize_key_material(&mut base_session)
@@ -621,7 +621,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 .map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("Failed to do centralised key generation {:?}", e),
+                        format!("Failed to do centralised key generation {e:?}"),
                     )
                 })?;
             self.data
@@ -631,7 +631,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                 pub_keyset: bc2wrap::serialize(&keys.0).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("Failed to serialize pubkey: {:?}", e),
+                        format!("Failed to serialize pubkey: {e:?}"),
                     )
                 })?,
             }));
@@ -642,7 +642,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                     pub_keyset: bc2wrap::serialize(&keys.0).map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
-                            format!("Failed to serialize pubkey: {:?}", e),
+                            format!("Failed to serialize pubkey: {e:?}"),
                         )
                     })?,
                 }));
@@ -684,7 +684,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             bc2wrap::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse role assignment: {:?}", e),
+                    format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
 
@@ -692,7 +692,7 @@ impl Choreography for ExperimentalGrpcChoreography {
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    format!("Failed to parse preproc params: {:?}", e),
+                    format!("Failed to parse preproc params: {e:?}"),
                 )
             })?;
 
@@ -752,9 +752,19 @@ impl Choreography for ExperimentalGrpcChoreography {
             small_sessions.len()
         );
         let res_store = self.data.ddec_result_store.clone();
+        if vec_ctxts.len() != small_sessions.len() {
+            return Err(tonic::Status::new(
+                tonic::Code::Aborted,
+                format!(
+                    "Number of ctxts ({}) does not match number of sessions ({})",
+                    vec_ctxts.len(),
+                    small_sessions.len()
+                ),
+            ));
+        }
         let my_future = || async move {
             let mut join_set = JoinSet::new();
-            for (ctxts, mut session) in vec_ctxts.into_iter().zip(small_sessions.into_iter()) {
+            for (ctxts, mut session) in vec_ctxts.into_iter().zip_eq(small_sessions.into_iter()) {
                 let key_ref = key_ref.clone();
                 join_set.spawn(
                     async move {

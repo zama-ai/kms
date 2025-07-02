@@ -132,6 +132,15 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             .await?;
 
         tracing::info!("Starting PRSS for identity {}.", own_identity);
+        tracing::info!(
+            "Session has {} parties with threshold {}",
+            base_session.parameters.num_parties(),
+            base_session.parameters.threshold()
+        );
+        tracing::info!(
+            "Role assignments: {:?}",
+            base_session.parameters.role_assignments()
+        );
         let prss_setup_obj_z128: PRSSSetup<ResiduePolyF4Z128> = RobustSecurePrssInit::default()
             .init(&mut base_session)
             .await?;
@@ -201,7 +210,7 @@ impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> 
         self.init_prss(&request_id).await.map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
-                format!("PRSS initialization failed with error {}", e),
+                format!("PRSS initialization failed with error {e}"),
             )
         })?;
         Ok(Response::new(Empty {}))
@@ -217,6 +226,7 @@ mod tests {
         util::key_setup::test_tools::purge,
         vault::storage::{file::FileStorage, StorageType},
     };
+    use threshold_fhe::execution::runtime::party::Role;
 
     #[tokio::test]
     #[serial_test::serial]
@@ -225,24 +235,24 @@ mod tests {
         let mut pub_storage = Vec::new();
         let mut priv_storage = Vec::new();
         for i in 1..=DEFAULT_AMOUNT_PARTIES {
-            let cur_pub = FileStorage::new(None, StorageType::PUB, Some(i)).unwrap();
+            let cur_pub =
+                FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap();
             pub_storage.push(cur_pub);
-            let cur_priv = FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap();
+            let cur_priv =
+                FileStorage::new(None, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap();
 
             // make sure the store does not contain any PRSS info (currently stored under ID 1)
-            let req_id = &derive_request_id(&format!(
-                "PRSSSetup_Z128_ID_{}_{}_{}",
-                PRSS_INIT_REQ_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
+            let req_id = derive_request_id(&format!(
+                "PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_{DEFAULT_AMOUNT_PARTIES}_{DEFAULT_THRESHOLD}"
             ))
             .unwrap();
-            purge(None, None, &req_id.to_string(), DEFAULT_AMOUNT_PARTIES).await;
+            purge(None, None, &req_id, DEFAULT_AMOUNT_PARTIES).await;
 
-            let req_id = &derive_request_id(&format!(
-                "PRSSSetup_Z64_ID_{}_{}_{}",
-                PRSS_INIT_REQ_ID, DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD
+            let req_id = derive_request_id(&format!(
+                "PRSSSetup_Z64_ID_{PRSS_INIT_REQ_ID}_{DEFAULT_AMOUNT_PARTIES}_{DEFAULT_THRESHOLD}"
             ))
             .unwrap();
-            purge(None, None, &req_id.to_string(), DEFAULT_AMOUNT_PARTIES).await;
+            purge(None, None, &req_id, DEFAULT_AMOUNT_PARTIES).await;
 
             priv_storage.push(cur_priv);
         }

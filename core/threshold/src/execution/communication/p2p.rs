@@ -193,8 +193,7 @@ fn internal_receive_from_parties<Z: Ring, B: BaseSessionHandles>(
                     .await
                     .unwrap_or_else(|e| {
                         Err(anyhow_error_and_log(format!(
-                            "Timed out with deadline {:?} from {:?} : {:?}",
-                            deadline, role_to_receive_from, e
+                            "Timed out with deadline {deadline:?} from {role_to_receive_from:?} : {e:?}"
                         )))
                     });
                 match NetworkValue::<Z>::from_network(received) {

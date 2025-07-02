@@ -65,8 +65,7 @@ fn role_from_role_assignments(
     match role.len() {
         1 => Ok(*role[0]),
         _ => Err(anyhow_error_and_log(format!(
-            "Unknown or ambiguous role for identity {:?}, retrieved {:?}",
-            identity, role_assignments
+            "Unknown or ambiguous role for identity {identity:?}, retrieved {role_assignments:?}"
         ))),
     }
 }
@@ -559,13 +558,11 @@ impl DisputeSet {
         }
         // Insert the first pair of disputes
         let disputed_roles = &mut self.disputed_roles;
-        let a_disputes = role_a.get_mut_from(disputed_roles).unwrap_or_else(|| panic!("Can not access the dispute set of {} when trying to add a dispute with {}, the session was initalized without it.",
-            role_a, role_b));
+        let a_disputes = role_a.get_mut_from(disputed_roles).unwrap_or_else(|| panic!("Can not access the dispute set of {role_a} when trying to add a dispute with {role_b}, the session was initalized without it."));
         let _ = a_disputes.insert(*role_b);
 
         // Insert the second pair of disputes
-        let b_disputes = role_b.get_mut_from(disputed_roles).unwrap_or_else(|| panic!("Can not access the dispute set of {} when trying to add a dispute with {}, the session was initalized without it.",
-            role_b, role_a));
+        let b_disputes = role_b.get_mut_from(disputed_roles).unwrap_or_else(|| panic!("Can not access the dispute set of {role_b} when trying to add a dispute with {role_a}, the session was initalized without it."));
         let _ = b_disputes.insert(*role_a);
     }
 

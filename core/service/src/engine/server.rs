@@ -3,8 +3,10 @@ use crate::{anyhow_error_and_log, conf::ServiceEndpoint};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::{
     CoreServiceEndpoint, CoreServiceEndpointServer,
 };
+use kms_grpc::metastore_status::v1::meta_store_status_service_server::{
+    MetaStoreStatusService, MetaStoreStatusServiceServer,
+};
 use observability::telemetry::make_span;
-use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -72,21 +74,19 @@ pub async fn prepare_shutdown_signals<F: std::future::Future<Output = ()> + Send
 ///   be the pending future.
 pub async fn run_server<
     S: CoreServiceEndpoint + Shutdown,
+    M: MetaStoreStatusService,
     F: std::future::Future<Output = ()> + Send + 'static,
 >(
     config: ServiceEndpoint,
     listener: TcpListener,
     kms_service: Arc<S>,
+    meta_store_status_service: Arc<M>,
     health_service: HealthServer<impl Health>,
     shutdown_signal: F,
 ) -> anyhow::Result<()> {
     use crate::consts::DURATION_WAITING_ON_RESULT_SECONDS;
 
-    let socket_addr_str = format!("{}:{}", config.listen_address, config.listen_port);
-    let socket_addr = socket_addr_str
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("failed to parse socket address {}", socket_addr_str))?;
+    let socket_addr = listener.local_addr()?;
 
     // Create shutdown channel
     let (tx, rx): (
@@ -126,7 +126,10 @@ pub async fn run_server<
             CoreServiceEndpointServer::from_arc(Arc::clone(&kms_service))
                 .max_decoding_message_size(config.grpc_max_message_size)
                 .max_encoding_message_size(config.grpc_max_message_size),
-        );
+        )
+        .add_service(MetaStoreStatusServiceServer::from_arc(
+            meta_store_status_service,
+        ));
 
     tracing::info!("Starting KMS core on socket {socket_addr}");
 
@@ -161,10 +164,8 @@ pub async fn run_server<
             Ok(())
         }
         Err(e) => {
-            let err = anyhow_error_and_log(format!(
-                "KMS core on {} stopped with error: {}",
-                socket_addr, e
-            ));
+            let err =
+                anyhow_error_and_log(format!("KMS core on {socket_addr} stopped with error: {e}"));
             Err(err)
         }
     }

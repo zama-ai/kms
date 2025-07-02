@@ -1,33 +1,76 @@
+use crate::engine::base::derive_request_id;
+use kms_grpc::RequestId;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use strum_macros::EnumIs;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::online::preprocessing::redis::RedisConf;
 use threshold_fhe::execution::runtime::party::{Identity, Role};
 use threshold_fhe::networking::{grpc::CoreToCoreNetworkConfig, tls::ReleasePCRValues};
+use validator::{Validate, ValidationError};
 use x509_parser::pem::{parse_x509_pem, Pem};
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
+#[validate(schema(function = validate_threshold_party_conf))]
 pub struct ThresholdPartyConf {
     // network interface for MPC communication
+    #[validate(length(min = 1))]
     pub listen_address: String,
     // port for MPC communication
+    #[validate(range(min = 1, max = 65535))]
     pub listen_port: u16,
     // TLS identity if MPC communication should use TLS
     pub tls: Option<TlsConf>,
 
+    #[validate(range(min = 1))]
     pub threshold: u8,
+    #[validate(range(min = 1))]
     pub my_id: usize,
     pub dec_capacity: usize,
     pub min_dec_cache: usize,
     pub preproc_redis: Option<RedisConf>,
     pub num_sessions_preproc: Option<u16>,
+    #[validate(nested)]
     pub peers: Vec<PeerConf>,
     pub core_to_core_net: Option<CoreToCoreNetworkConfig>,
     pub decryption_mode: DecryptionMode,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), ValidationError> {
+    let num_parties = conf.peers.len();
+    // We assume for now that 3 * threshold + 1 == num_parties.
+    // Note: this might change in the future
+    if 3 * conf.threshold as usize + 1 != num_parties {
+        return Err(ValidationError::new("Incorrect threshold").with_message(format!("3*t+1 must be equal to number of parties. Got t={} but expected t={} for n={} parties", conf.threshold,                     (num_parties - 1) / 3,
+                    num_parties
+        ).into() ));
+    }
+    if conf.my_id > num_parties {
+        return Err(ValidationError::new("Incorrect party ID").with_message(
+            format!(
+                "Party ID cannot be greater than the number of parties ({}), but was {}.",
+                num_parties, conf.my_id
+            )
+            .into(),
+        ));
+    }
+    for peer in &conf.peers {
+        if peer.party_id > num_parties {
+            return Err(
+                ValidationError::new("Incorrect peer party ID").with_message(
+                    format!(
+                        "Peer party ID cannot be greater than the number of parties ({num_parties}).",
+                    )
+                    .into(),
+                ),
+            );
+        }
+    }
+    Ok(())
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, EnumIs)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub enum TlsConf {
     // Both public key certificate and private key are provided externally. If
@@ -95,21 +138,33 @@ pub enum TlsKey {
 
 impl TlsKey {
     pub fn into_pem(&self) -> anyhow::Result<Pem> {
-        let key_bytes = match self {
-            TlsKey::Path(ref key_path) => std::fs::read_to_string(key_path).map_err(|e| {
-                anyhow::anyhow!("Failed to open file {}: {}", key_path.display(), e)
-            })?,
-            TlsKey::Pem(ref key_bytes) => key_bytes.to_string(),
-        };
+        let key_bytes = self.to_string()?;
         Ok(parse_x509_pem(key_bytes.as_ref())?.1)
+    }
+
+    pub fn into_request_id(&self) -> anyhow::Result<RequestId> {
+        let key_bytes = self.to_string()?;
+        derive_request_id(key_bytes.as_ref())
+            .map_err(|e| anyhow::anyhow!("Failed to derive request ID from key: {}", e))
+    }
+
+    fn to_string(&self) -> anyhow::Result<String> {
+        match self {
+            TlsKey::Path(ref key_path) => std::fs::read_to_string(key_path)
+                .map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", key_path.display(), e)),
+            TlsKey::Pem(ref key_bytes) => Ok(key_bytes.to_string()),
+        }
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Validate, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct PeerConf {
+    #[validate(range(min = 1))]
     pub party_id: usize,
+    #[validate(length(min = 1))]
     pub address: String,
+    #[validate(range(min = 1, max = 65535))]
     pub port: u16,
     pub tls_cert: Option<TlsCert>,
 }

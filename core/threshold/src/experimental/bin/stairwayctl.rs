@@ -288,7 +288,7 @@ async fn threshold_decrypt_command(
         .map(|i| bgv_pk_encrypt(&mut rng, &ms[i], &pk))
         .collect_vec();
 
-    println!("Encrypted the following messages : {:?}", ms);
+    println!("Encrypted the following messages : {ms:?}");
 
     let session_id = params.session_id.unwrap_or(random());
     let session_id = runtime
@@ -303,8 +303,7 @@ async fn threshold_decrypt_command(
         .await?;
 
     println!(
-        "Distributed Decryption started. The resulting plaintexts will be stored under session ID: {:?}",
-        session_id
+        "Distributed Decryption started. The resulting plaintexts will be stored under session ID: {session_id:?}"
     );
     Ok(())
 }
@@ -340,7 +339,7 @@ async fn status_check_command(
     results.sort_by_key(|(role, _)| role.one_based());
     println!("Status Check for Session ID {session_id} -- Finished");
     for (role, status) in results {
-        println!("Role {role}, Status {:?}", status);
+        println!("Role {role}, Status {status:?}");
     }
     Ok(())
 }
@@ -393,7 +392,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Explicitly shut down telemetry to ensure all data is properly exported
     if let Err(e) = tracer_provider.shutdown() {
-        eprintln!("Error shutting down tracer provider: {}", e);
+        eprintln!("Error shutting down tracer provider: {e}");
     }
 
     Ok(())

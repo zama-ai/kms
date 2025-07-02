@@ -3,6 +3,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use itertools::Itertools;
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -21,8 +22,8 @@ use crate::{
     backup::custodian::DSEP_BACKUP_SETUP,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
+        backup_pke::BackupPublicKey,
         internal_crypto_types::{PublicSigKey, Signature},
-        nested_pke::NestedPublicKey,
         signcryption::internal_verify_sig,
     },
     engine::base::safe_serialize_hash_element_versioned,
@@ -43,12 +44,12 @@ pub(crate) const DSEP_BACKUP_OPERATOR: DomainSep = *b"BKUPOPER";
 
 pub struct Operator<S: BackupSigner, D: BackupDecryptor> {
     my_role: Role,
-    custodian_keys: Vec<(NestedPublicKey, PublicSigKey)>,
+    custodian_keys: Vec<(BackupPublicKey, PublicSigKey)>,
     signer: S,
     // the public component of [signer] above
     verification_key: PublicSigKey,
     decryptor: D,
-    public_key: NestedPublicKey,
+    public_key: BackupPublicKey,
     threshold: usize,
 }
 
@@ -210,7 +211,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
         signer: S,
         verification_key: PublicSigKey,
         decryptor: D,
-        public_key: NestedPublicKey,
+        public_key: BackupPublicKey,
         threshold: usize,
     ) -> Result<Self, BackupError> {
         verify_n_t(custodian_messages.len(), threshold)?;
@@ -269,7 +270,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
         &self.verification_key
     }
 
-    pub fn public_key(&self) -> &NestedPublicKey {
+    pub fn public_key(&self) -> &BackupPublicKey {
         &self.public_key
     }
 
@@ -321,7 +322,11 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
 
         let mut ct_shares: BTreeMap<Role, _> = BTreeMap::new();
 
-        for ((role_j, shares), (enc_pk, sig_pk)) in plain_ij.into_iter().zip(&self.custodian_keys) {
+        // Zip_eq will panic in case the two iterators are not of the same length.
+        // Since `plain_ij` is created in this method from `shares` such a panic can only happen in case of a bug in this method
+        for ((role_j, shares), (enc_pk, sig_pk)) in
+            plain_ij.into_iter().zip_eq(&self.custodian_keys)
+        {
             // Do a sanity check that we expect enough entropy in the shares
             // s.t. hashing these cannot allow a feasible brute-force attack.
             //

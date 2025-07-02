@@ -31,22 +31,6 @@ centralized
 {{- end -}}
 {{- end -}}
 
-{{- define "kmsPublicVaultStorage" -}}
-{{- if .Values.kmsCore.publicVault.s3.enabled -}}
-s3://{{ .Values.kmsCore.publicVault.s3.bucket }}/{{ .Values.kmsCore.publicVault.s3.path }}
-{{- else -}}
-file:///keys
-{{- end -}}
-{{- end -}}
-
-{{- define "kmsPrivateVaultStorage" -}}
-{{- if .Values.kmsCore.privateVault.s3.enabled -}}
-s3://{{ .Values.kmsCore.privateVault.s3.bucket }}/{{ .Values.kmsCore.privateVault.s3.path }}
-{{- else -}}
-file:///keys
-{{- end -}}
-{{- end -}}
-
 {{- define "kmsPeersStartID" -}}
 {{ default 1 .Values.kmsPeers.id }}
 {{- end -}}

@@ -9,7 +9,6 @@ use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
 use kms_grpc::RequestId;
 use serde::de::DeserializeOwned;
 use std::path::Path;
-use std::str::FromStr;
 use tfhe::core_crypto::prelude::Numeric;
 use tfhe::named::Named;
 use tfhe::prelude::SquashNoise;
@@ -21,7 +20,7 @@ use tfhe::{
     FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, FheUint80, HlCompactable, HlCompressible,
     HlExpandable, ServerKey, Unversionize, Versionize,
 };
-use threshold_fhe::execution::tfhe_internals::utils::expanded_encrypt;
+use threshold_fhe::execution::{runtime::party::Role, tfhe_internals::utils::expanded_encrypt};
 
 fn enc_and_serialize_ctxt<M, T>(
     msg: M,
@@ -353,15 +352,15 @@ impl From<tfhe::integer::bigint::U256> for TestingPlaintext {
     }
 }
 
-async fn get_storage(pub_path: Option<&Path>, data_id: &str, data_type: &str) -> FileStorage {
+async fn get_storage(pub_path: Option<&Path>, data_id: &RequestId, data_type: &str) -> FileStorage {
     // Try first with centralized storage
     let mut storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-    let url = storage.compute_url(data_id, data_type).unwrap();
-    if storage.data_exists(&url).await.unwrap() {
-        tracing::info!("Using centralized storage at url {}", url);
+    if storage.data_exists(data_id, data_type).await.unwrap() {
+        tracing::info!("Using centralized storage at {}/{}", data_id, data_type);
     } else {
         // Try with the threshold storage
-        storage = FileStorage::new(pub_path, StorageType::PUB, Some(1)).unwrap();
+        storage =
+            FileStorage::new(pub_path, StorageType::PUB, Some(Role::indexed_from_one(1))).unwrap();
         tracing::info!(
             "Fallback to threshold file storage with path {:?}",
             storage.root_dir()
@@ -372,7 +371,7 @@ async fn get_storage(pub_path: Option<&Path>, data_id: &str, data_type: &str) ->
 
 async fn load_material_from_storage<T>(
     pub_path: Option<&Path>,
-    key_id: &str,
+    key_id: &RequestId,
     data_type: PubDataType,
 ) -> T
 where
@@ -380,70 +379,75 @@ where
     <T as tfhe_versionable::VersionizeOwned>::VersionedOwned: Send,
 {
     let storage = get_storage(pub_path, key_id, &data_type.to_string()).await;
-    let material: T = read_versioned_at_request_id(
-        &storage,
-        &RequestId::from_str(key_id).unwrap(),
-        &data_type.to_string(),
-    )
-    .await
-    .unwrap();
+    let material: T = read_versioned_at_request_id(&storage, key_id, &data_type.to_string())
+        .await
+        .unwrap();
     material
 }
 
 pub async fn load_server_key_from_storage(
     pub_path: Option<&Path>,
-    key_id: &str,
+    key_id: &RequestId,
 ) -> tfhe::ServerKey {
     load_material_from_storage(pub_path, key_id, PubDataType::ServerKey).await
 }
 
-pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FhePublicKey {
+pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &RequestId) -> FhePublicKey {
     let storage = get_storage(pub_path, key_id, &PubDataType::PublicKey.to_string()).await;
-    let wrapped_pk = read_pk_at_request_id(
-        &storage,
-        &RequestId::from_str(key_id).expect("key_id not converted"),
-    )
-    .await
-    .expect("load_pk_from_storage failed");
+    let wrapped_pk = read_pk_at_request_id(&storage, key_id)
+        .await
+        .expect("load_pk_from_storage failed");
     let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
     pk
 }
 
-pub async fn load_crs_from_storage(pub_path: Option<&Path>, crs_id: &str) -> CompactPkeCrs {
+pub async fn load_crs_from_storage(pub_path: Option<&Path>, crs_id: &RequestId) -> CompactPkeCrs {
     load_material_from_storage(pub_path, crs_id, PubDataType::CRS).await
 }
 
 async fn load_material_from_any_pub_storage<T>(
     pub_path: Option<&Path>,
-    key_id: &str,
+    key_id: &RequestId,
     data_type: PubDataType,
 ) -> T
 where
     T: DeserializeOwned + Unversionize + Named + Send,
 {
     let storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-    let url = storage.compute_url(key_id, &data_type.to_string()).unwrap();
-    if storage.data_exists(&url).await.unwrap() {
+    if storage
+        .data_exists(key_id, &data_type.to_string())
+        .await
+        .unwrap()
+    {
         tracing::info!(
             "Server key exists at {} for type {}",
-            url,
+            key_id,
             data_type.to_string()
         );
-        storage.read_data(&url).await.unwrap()
+        storage
+            .read_data(key_id, &data_type.to_string())
+            .await
+            .unwrap()
     } else {
         // Try with the threshold storage
-        let storage = FileStorage::new(pub_path, StorageType::PUB, Some(1)).unwrap();
-        let url = storage.compute_url(key_id, &data_type.to_string()).unwrap();
+        let storage =
+            FileStorage::new(pub_path, StorageType::PUB, Some(Role::indexed_from_one(1))).unwrap();
         tracing::info!(
             "Fallback to threshold file storage for server key at {} for data type {}",
-            url,
+            key_id,
             data_type.to_string()
         );
-        storage.read_data(&url).await.unwrap()
+        storage
+            .read_data(key_id, &data_type.to_string())
+            .await
+            .unwrap()
     }
 }
 
-async fn load_server_key_from_any_pub_storage(pub_path: Option<&Path>, key_id: &str) -> ServerKey {
+async fn load_server_key_from_any_pub_storage(
+    pub_path: Option<&Path>,
+    key_id: &RequestId,
+) -> ServerKey {
     load_material_from_any_pub_storage(pub_path, key_id, PubDataType::ServerKey).await
 }
 
@@ -451,7 +455,7 @@ async fn load_server_key_from_any_pub_storage(pub_path: Option<&Path>, key_id: &
 pub async fn compute_cipher_from_stored_key(
     pub_path: Option<&Path>,
     msg: TestingPlaintext,
-    key_id: &str,
+    key_id: &RequestId,
     enc_config: EncryptionConfig,
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
     let pk = load_pk_from_storage(pub_path, key_id).await;
@@ -472,20 +476,25 @@ pub async fn compute_cipher_from_stored_key(
 pub async fn purge(
     pub_path: Option<&Path>,
     priv_path: Option<&Path>,
-    id: &str,
+    id: &RequestId,
     amount_parties: usize,
 ) {
-    let req_id: RequestId = RequestId::from_str(id).unwrap();
     let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-    delete_all_at_request_id(&mut pub_storage, &req_id).await;
+    delete_all_at_request_id(&mut pub_storage, id).await;
     let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
-    delete_all_at_request_id(&mut priv_storage, &req_id).await;
+    delete_all_at_request_id(&mut priv_storage, id).await;
 
     for i in 1..=amount_parties {
-        let mut threshold_pub = FileStorage::new(pub_path, StorageType::PUB, Some(i)).unwrap();
-        let mut threshold_priv = FileStorage::new(priv_path, StorageType::PRIV, Some(i)).unwrap();
-        delete_all_at_request_id(&mut threshold_pub, &req_id).await;
-        delete_all_at_request_id(&mut threshold_priv, &req_id).await;
+        let mut threshold_pub =
+            FileStorage::new(pub_path, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap();
+        let mut threshold_priv = FileStorage::new(
+            priv_path,
+            StorageType::PRIV,
+            Some(Role::indexed_from_one(i)),
+        )
+        .unwrap();
+        delete_all_at_request_id(&mut threshold_pub, id).await;
+        delete_all_at_request_id(&mut threshold_priv, id).await;
     }
 }
 
@@ -514,7 +523,7 @@ pub(crate) mod setup {
         vault::storage::{file::FileStorage, StorageType},
     };
     use kms_grpc::RequestId;
-    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+    use threshold_fhe::execution::{runtime::party::Role, tfhe_internals::parameters::DKGParams};
 
     pub async fn ensure_dir_exist() {
         tokio::fs::create_dir_all(TMP_PATH_PREFIX).await.unwrap();
@@ -642,12 +651,15 @@ pub(crate) mod setup {
     ) {
         let mut threshold_pub_storages = Vec::with_capacity(amount_parties);
         for i in 1..=amount_parties {
-            threshold_pub_storages.push(FileStorage::new(None, StorageType::PUB, Some(i)).unwrap());
+            threshold_pub_storages.push(
+                FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap(),
+            );
         }
         let mut threshold_priv_storages = Vec::with_capacity(amount_parties);
         for i in 1..=amount_parties {
-            threshold_priv_storages
-                .push(FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap());
+            threshold_priv_storages.push(
+                FileStorage::new(None, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap(),
+            );
         }
 
         let _ = ensure_threshold_server_signing_keys_exist(
@@ -656,9 +668,7 @@ pub(crate) mod setup {
             &SIGNING_KEY_ID,
             true,
             ThresholdSigningKeyConfig::AllParties(
-                (1..=amount_parties)
-                    .map(|i| format!("party-{}", i))
-                    .collect(),
+                (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
             ),
         )
         .await;
@@ -691,7 +701,6 @@ pub(crate) mod setup {
 #[tokio::test]
 async fn test_purge() {
     use crate::consts::SIGNING_KEY_ID;
-    use itertools::Itertools;
     use kms_grpc::rpc_types::PrivDataType;
 
     let temp_dir = tempfile::tempdir().unwrap();
@@ -700,12 +709,12 @@ async fn test_purge() {
     let mut central_priv_storage = FileStorage::new(test_prefix, StorageType::PRIV, None).unwrap();
     // Check no keys exist
     assert!(central_pub_storage
-        .all_urls(&PubDataType::VerfKey.to_string())
+        .all_data_ids(&PubDataType::VerfKey.to_string())
         .await
         .unwrap()
         .is_empty());
     assert!(central_priv_storage
-        .all_urls(&PrivDataType::SigningKey.to_string())
+        .all_data_ids(&PrivDataType::SigningKey.to_string())
         .await
         .unwrap()
         .is_empty());
@@ -720,31 +729,31 @@ async fn test_purge() {
         .await
     );
     // Validate the keys were made
-    let pub_urls = central_pub_storage
-        .all_urls(&PubDataType::VerfKey.to_string())
+    let pub_ids = central_pub_storage
+        .all_data_ids(&PubDataType::VerfKey.to_string())
         .await
         .unwrap();
-    assert_eq!(pub_urls.len(), 1);
-    let priv_urls = central_priv_storage
-        .all_urls(&PrivDataType::SigningKey.to_string())
+    assert_eq!(pub_ids.len(), 1);
+    let priv_ids = central_priv_storage
+        .all_data_ids(&PrivDataType::SigningKey.to_string())
         .await
         .unwrap();
-    assert_eq!(priv_urls.len(), 1);
+    assert_eq!(priv_ids.len(), 1);
     purge(
         test_prefix,
         test_prefix,
-        pub_urls.keys().collect_vec()[0],
+        &pub_ids.into_iter().next().unwrap(),
         1,
     )
     .await;
     // Check the keys were deleted
     assert!(central_pub_storage
-        .all_urls(&PubDataType::VerfKey.to_string())
+        .all_data_ids(&PubDataType::VerfKey.to_string())
         .await
         .unwrap()
         .is_empty());
     assert!(central_priv_storage
-        .all_urls(&PrivDataType::SigningKey.to_string())
+        .all_data_ids(&PrivDataType::SigningKey.to_string())
         .await
         .unwrap()
         .is_empty());

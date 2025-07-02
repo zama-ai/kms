@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use std::marker::PhantomData;
 use tracing::instrument;
 
@@ -93,13 +94,15 @@ where
         let mut res = Vec::with_capacity(lhs.len());
         let prods: Vec<_> = lhs
             .iter()
-            .zip(rhs)
-            .map(|(x, y)| x.iter().zip(y).map(|(xx, yy)| xx * *yy).collect())
+            .zip_eq(rhs)
+            .map(|(x, y)| x.iter().zip_eq(y).map(|(xx, yy)| xx * *yy).collect())
             .collect::<Vec<SecretBitArray<Z>>>();
 
-        for ((cur_left, cur_right), cur_prod) in lhs.iter().zip(rhs).zip(&prods) {
+        for ((cur_left, cur_right), cur_prod) in lhs.iter().zip_eq(rhs).zip_eq(&prods) {
             let mut entry = Vec::with_capacity(Z::CHAR_LOG2);
-            for ((l_entry, r_entry), prod_entry) in cur_left.iter().zip(cur_right).zip(cur_prod) {
+            for ((l_entry, r_entry), prod_entry) in
+                cur_left.iter().zip_eq(cur_right).zip_eq(cur_prod)
+            {
                 entry.push((l_entry + r_entry) - (prod_entry * ZConsts::TWO));
             }
             res.push(entry);
@@ -170,8 +173,8 @@ where
         }
         let prods: Vec<_> = lhs
             .iter()
-            .zip(rhs)
-            .map(|(x, y)| x.iter().zip(y).map(|(xx, yy)| xx * *yy).collect())
+            .zip_eq(rhs)
+            .map(|(x, y)| x.iter().zip_eq(y).map(|(xx, yy)| xx * *yy).collect())
             .collect::<Vec<SecretBitArray<Z>>>();
         Ok(prods)
     }
@@ -324,8 +327,15 @@ where
         rhs: &SecretVec<Z>,
         prods: &SecretVec<Z>,
     ) -> SecretVec<Z> {
+        if lhs.len() != rhs.len() {
+            anyhow_error_and_log(format!(
+                "Inputs to XOR product function are of different length. LHS is {:?} and RHS is {:?}",
+                lhs.len(),
+                rhs.len()
+            ));
+        }
         let mut res = Vec::with_capacity(lhs.len());
-        for ((cur_left, cur_right), cur_prod) in lhs.iter().zip(rhs).zip(prods) {
+        for ((cur_left, cur_right), cur_prod) in lhs.iter().zip_eq(rhs).zip_eq(prods) {
             res.push((cur_left + cur_right) - (cur_prod * ZConsts::TWO));
         }
         res
@@ -433,9 +443,16 @@ where
 
     // Mask the secrets with the masks we've just computed
     // (BitDec Step 3: <t> = <a> - <r>)
+    if inputs.len() != masks.len() {
+        return Err(anyhow_error_and_log(format!(
+            "Inputs and masks are of different length. Inputs: {:?}, Masks: {:?}",
+            inputs.len(),
+            masks.len()
+        )));
+    }
     let masked_secrets: Vec<_> = inputs
         .iter()
-        .zip(masks.iter())
+        .zip_eq(masks.iter())
         .map(|(secret, mask)| secret - mask)
         .collect();
 
@@ -789,8 +806,7 @@ mod tests {
             assert_eq!(
                 xor1[i],
                 ResiduePolyF4Z64::from_scalar(Wrapping(bits_a[i] ^ bits_b[i])),
-                "failed xor at index {}",
-                i
+                "failed xor at index {i}"
             );
         }
 
@@ -800,8 +816,7 @@ mod tests {
             assert_eq!(
                 and1[i],
                 ResiduePolyF4Z64::from_scalar(Wrapping(bits_c[i] & bits_d[i])),
-                "failed and at index {}",
-                i
+                "failed and at index {i}"
             );
         }
     }

@@ -1,4 +1,5 @@
 use clap::Parser;
+use futures_util::future::OptionFuture;
 use k256::ecdsa::SigningKey;
 use kms_grpc::rpc_types::PubDataType;
 use kms_lib::{
@@ -9,6 +10,7 @@ use kms_lib::{
         centralized::central_kms::RealCentralizedKms, run_server,
         threshold::service::new_real_threshold_kms,
     },
+    grpc::MetaStoreStatusServiceImpl,
     vault::{
         aws::build_aws_sdk_config,
         keychain::{awskms::build_aws_kms_client, make_keychain},
@@ -20,7 +22,7 @@ use kms_lib::{
     },
 };
 use std::{net::ToSocketAddrs, sync::Arc};
-use threshold_fhe::networking::tls::BasicTLSConfig;
+use threshold_fhe::{execution::runtime::party::Role, networking::tls::BasicTLSConfig};
 use tokio::net::TcpListener;
 
 #[derive(Parser)]
@@ -64,7 +66,10 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting KMS Server with core config: {:?}", &core_config);
 
-    let party_id = core_config.threshold.as_ref().map(|t| t.my_id);
+    let party_role = core_config
+        .threshold
+        .as_ref()
+        .map(|t| Role::indexed_from_one(t.my_id));
 
     // common AWS configuration
     let aws_sdk_config = match core_config.aws {
@@ -83,12 +88,17 @@ async fn main() -> anyhow::Result<()> {
     let need_s3_client = core_config
         .public_vault
         .as_ref()
-        .map(|v| v.storage.scheme() == "s3")
+        .map(|v| v.storage.is_s_3())
         .unwrap_or(false)
         || core_config
             .private_vault
             .as_ref()
-            .map(|v| v.storage.scheme() == "s3")
+            .map(|v| v.storage.is_s_3())
+            .unwrap_or(false)
+        || core_config
+            .backup_vault
+            .as_ref()
+            .map(|v| v.storage.is_s_3())
             .unwrap_or(false);
     let s3_client = if need_s3_client {
         Some(
@@ -111,12 +121,12 @@ async fn main() -> anyhow::Result<()> {
     let need_awskms_client = core_config
         .private_vault
         .as_ref()
-        .and_then(|v| v.keychain.as_ref().map(|k| k.scheme() == "awskms"))
+        .and_then(|v| v.keychain.as_ref().map(|k| k.is_aws_kms()))
         .unwrap_or(false)
         || core_config
             .backup_vault
             .as_ref()
-            .and_then(|v| v.keychain.as_ref().map(|k| k.scheme() == "awskms"))
+            .and_then(|v| v.keychain.as_ref().map(|k| k.is_aws_kms()))
             .unwrap_or(false);
     let awskms_client = if need_awskms_client {
         Some(
@@ -143,76 +153,70 @@ async fn main() -> anyhow::Result<()> {
         .as_ref()
         .and_then(|v| v.storage_cache_size.and_then(|s| StorageCache::new(s).ok()));
 
-    // security module (used for remote attestation with AWS KMS only so far)
-    let security_module = if need_awskms_client {
-        Some(make_security_module()?)
-    } else {
-        None
-    };
+    // security module (used for remote attestation with AWS KMS or mTLS)
+    let need_security_module = need_awskms_client
+        || core_config
+            .threshold
+            .as_ref()
+            .and_then(|t| t.tls.as_ref())
+            .map(|tls| tls.is_semi_auto() || tls.is_full_auto())
+            .unwrap_or(false);
+    let security_module = need_security_module
+        .then(make_security_module)
+        .transpose()
+        .inspect_err(|e| tracing::warn!("Could not initialize security module: {e}"))?;
 
     // public vault
-    let mut public_vault = Vault {
-        storage: make_storage(
-            core_config.public_vault.map(|v| v.storage),
-            StorageType::PUB,
-            party_id,
-            public_storage_cache,
-            s3_client.clone(),
-        )?,
+    let public_storage = make_storage(
+        core_config.public_vault.map(|v| v.storage),
+        StorageType::PUB,
+        party_role,
+        public_storage_cache,
+        s3_client.clone(),
+    )
+    .inspect_err(|e| tracing::warn!("Could not initialize public storage: {e}"))?;
+    let public_vault = Vault {
+        storage: public_storage,
         keychain: None,
     };
+
     // private vault
-    let private_keychain_url = core_config
-        .private_vault
-        .as_ref()
-        .and_then(|v| v.keychain.clone());
-    let private_keychain = match private_keychain_url {
-        Some(k) => Some(make_keychain(k, awskms_client.clone(), security_module.clone()).await?),
-        None => None,
-    };
+    let private_storage = make_storage(
+        core_config
+            .private_vault
+            .as_ref()
+            .map(|v| v.storage.clone()),
+        StorageType::PRIV,
+        party_role,
+        private_storage_cache,
+        s3_client.clone(),
+    )
+    .inspect_err(|e| tracing::warn!("Could not private storage: {e}"))?;
+    let private_keychain = OptionFuture::from(
+        core_config
+            .private_vault
+            .as_ref()
+            .and_then(|v| v.keychain.as_ref())
+            .map(|k| {
+                make_keychain(
+                    k,
+                    awskms_client.clone(),
+                    security_module.clone(),
+                    None,
+                    None,
+                    None,
+                )
+            }),
+    )
+    .await
+    .transpose()
+    .inspect_err(|e| tracing::warn!("Could not initialize private keychain: {e}"))?;
     let private_vault = Vault {
-        storage: make_storage(
-            core_config
-                .private_vault
-                .as_ref()
-                .map(|v| v.storage.clone()),
-            StorageType::PRIV,
-            party_id,
-            private_storage_cache,
-            s3_client.clone(),
-        )?,
+        storage: private_storage,
         keychain: private_keychain,
     };
-    // backup vault (unlike for private/public storage, there cannot be a
-    // default location for backup storage, so there has to be
-    // Some(storage_url))
-    let backup_keychain_url = core_config
-        .backup_vault
-        .as_ref()
-        .and_then(|v| v.keychain.clone());
-    let backup_keychain = match backup_keychain_url {
-        Some(k) => Some(make_keychain(k, awskms_client, security_module.clone()).await?),
-        None => None,
-    };
-    let backup_vault = core_config
-        .backup_vault
-        .as_ref()
-        .map(|v| {
-            make_storage(
-                Some(v.storage.clone()),
-                StorageType::BACKUP,
-                party_id,
-                None,
-                s3_client,
-            )
-            .map(|storage| Vault {
-                storage,
-                keychain: backup_keychain,
-            })
-        })
-        .transpose()?;
 
-    // initialize KMS core
+    // load signing key
     let sk = get_core_signing_key(&private_vault).await?;
 
     // compute corresponding public key and derive address from private sig key
@@ -221,6 +225,49 @@ async fn main() -> anyhow::Result<()> {
         "Public ethereum address is {}",
         alloy_signer::utils::public_key_to_address(pk)
     );
+
+    // backup vault (unlike for private/public storage, there cannot be a
+    // default location for backup storage, so there has to be
+    // Some(storage_url))
+    let backup_storage = core_config
+        .backup_vault
+        .as_ref()
+        .map(|v| {
+            make_storage(
+                Some(v.storage.clone()),
+                StorageType::BACKUP,
+                party_role,
+                None,
+                s3_client,
+            )
+        })
+        .transpose()
+        .inspect_err(|e| tracing::warn!("Could not initialize backup storage: {e}"))?;
+    let backup_keychain = OptionFuture::from(
+        core_config
+            .backup_vault
+            .as_ref()
+            .and_then(|v| v.keychain.as_ref())
+            .map(|k| {
+                make_keychain(
+                    k,
+                    awskms_client.clone(),
+                    security_module.clone(),
+                    Some(&public_vault),
+                    party_role,
+                    Some(sk.clone()),
+                )
+            }),
+    )
+    .await
+    .transpose()
+    .inspect_err(|e| tracing::warn!("Could not initialize backup keychain: {e}"))?;
+    let backup_vault = backup_storage.map(|storage| Vault {
+        storage,
+        keychain: backup_keychain,
+    });
+
+    // initialize KMS core
 
     let service_socket_addr_str = format!(
         "{}:{}",
@@ -242,11 +289,11 @@ async fn main() -> anyhow::Result<()> {
             )
         });
 
-    println!("KMS Server service socket address: {}", service_socket_addr);
+    println!("KMS Server service socket address: {service_socket_addr}");
 
     let service_listener = TcpListener::bind(service_socket_addr)
         .await
-        .unwrap_or_else(|e| panic!("Could not bind to {} \n {:?}", service_socket_addr, e));
+        .unwrap_or_else(|e| panic!("Could not bind to {service_socket_addr} \n {e:?}"));
 
     match core_config.threshold {
         Some(threshold_config) => {
@@ -271,7 +318,7 @@ async fn main() -> anyhow::Result<()> {
                 });
             let mpc_listener = TcpListener::bind(mpc_socket_addr)
                 .await
-                .unwrap_or_else(|e| panic!("Could not bind to {} \n {:?}", mpc_socket_addr, e));
+                .unwrap_or_else(|e| panic!("Could not bind to {mpc_socket_addr} \n {e:?}"));
 
             tracing::info!(
                 "Starting threshold KMS server v{} for party {}, listening for MPC communication on {:?}...",
@@ -334,7 +381,7 @@ async fn main() -> anyhow::Result<()> {
                         "Using TLS certificate with Nitro remote attestation signed by onboard CA"
                     );
                     let ca_cert_bytes = read_text_at_request_id(
-                        &mut public_vault,
+                        &public_vault,
                         &SIGNING_KEY_ID,
                         &PubDataType::CACert.to_string(),
                     )
@@ -354,7 +401,7 @@ async fn main() -> anyhow::Result<()> {
                     None
                 }
             };
-            let (kms, health_service) = new_real_threshold_kms(
+            let (kms, health_service, metastore_status_service) = new_real_threshold_kms(
                 threshold_config,
                 public_vault,
                 private_vault,
@@ -367,10 +414,12 @@ async fn main() -> anyhow::Result<()> {
                 std::future::pending(),
             )
             .await?;
+            let meta_store_status_service = Arc::new(metastore_status_service);
             run_server(
                 core_config.service,
                 service_listener,
                 Arc::new(kms),
+                meta_store_status_service,
                 health_service,
                 std::future::pending(),
             )
@@ -389,10 +438,18 @@ async fn main() -> anyhow::Result<()> {
                 core_config.rate_limiter_conf,
             )
             .await?;
+            let meta_store_status_service = Arc::new(MetaStoreStatusServiceImpl::new(
+                None, // key_gen_store
+                None, // pub_dec_store
+                None, // user_dec_store
+                None, // crs_store
+                None, // preproc_store
+            ));
             run_server(
                 core_config.service,
                 service_listener,
                 Arc::new(kms),
+                meta_store_status_service,
                 health_service,
                 std::future::pending(),
             )
@@ -405,11 +462,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Explicitly shut down telemetry to ensure all data is properly exported
     if let Err(e) = tracer_provider.shutdown() {
-        eprintln!("Error shutting down tracer provider: {}", e);
+        eprintln!("Error shutting down tracer provider: {e}");
     }
 
     if let Err(e) = meter_provider.shutdown() {
-        eprintln!("Error shutting down meter provider: {}", e);
+        eprintln!("Error shutting down meter provider: {e}");
     }
 
     Ok(())

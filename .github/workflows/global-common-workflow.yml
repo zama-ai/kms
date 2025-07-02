@@ -29,6 +29,7 @@ jobs:
   # Initial job that determines which components have changed
   # Used by subsequent jobs to decide whether they need to run
   check-changes:
+    name: "Check for Component Changes"
     permissions:
       actions: 'read'
       contents: 'read'
@@ -125,6 +126,7 @@ jobs:
       pull-requests: 'read'
     needs: check-changes
     if: needs.check-changes.outputs.changes-docs == 'true' || github.ref == 'refs/heads/main'
+    name: "Check Documentation Links"
     runs-on: ubuntu-latest
     container:
       image: python:3.10.17-bullseye@sha256:0b9be13617fed7d883b30e31a47371a8bdd60a4bb5e45fcda63cb4a3846f6d98
@@ -174,6 +176,7 @@ jobs:
   # - Changes to workflow file
   ############################################################################
   prepare-core-client-matrix:
+    name: "Prepare Core Client Test Matrix"
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-core-client == 'true' ||
@@ -240,7 +243,7 @@ jobs:
     if: >-
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3c6b5ecf34d5350a03d1ff5e4d0ddc89607b614e
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6323a1e8e260961562b66a9f33a608f86cd6c831
     with:
       docker-file: "./docker/core-client/Dockerfile"
       working-directory: "./core-client"
@@ -295,6 +298,7 @@ jobs:
   # - For scheduled runs: Runs comprehensive nightly tests in release mode
   # - For other events: Runs multiple test suites in parallel with specific features
   prepare-matrix:
+    name: "Prepare Core Service Test Matrix"
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-core-service == 'true' ||
@@ -496,7 +500,7 @@ jobs:
     if: >-
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3c6b5ecf34d5350a03d1ff5e4d0ddc89607b614e
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6323a1e8e260961562b66a9f33a608f86cd6c831
     with:
       docker-file: "./docker/base/Dockerfile"
       working-directory: "./base"
@@ -521,72 +525,72 @@ jobs:
   # Only runs during scheduled workflow (nightly builds)
   # Deploys to kms-threshold-staging namespace
   ############################################################################
-  update-kms-core-client-argocd-staging:
-    if: github.event_name == 'schedule'
-    needs:
-      - test-core-client
-      - docker-core-client
-    uses: ./.github/workflows/common-update-argocd.yml
-    with:
-      branch-name: 'kms-staging'
-      argocd-namespace: 'tkms-staging'
-      argocd-app-name: 'kms-service'
-      application-image: 'kmsCoreClient'
-      image-tag: ${{ needs.docker-core-client.outputs.image_tag }}
-    secrets:
-      ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+  # update-kms-core-client-argocd-staging:
+  #   if: github.event_name == 'schedule'
+  #   needs:
+  #     - test-core-client
+  #     - docker-core-client
+  #   uses: ./.github/workflows/common-update-argocd.yml
+  #   with:
+  #     branch-name: 'kms-staging'
+  #     argocd-namespace: 'tkms-staging'
+  #     argocd-app-name: 'kms-service'
+  #     application-image: 'kmsCoreClient'
+  #     image-tag: ${{ needs.docker-core-client.outputs.image_tag }}
+  #   secrets:
+  #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
-  update-kms-core-argocd-staging:
-    if: github.event_name == 'schedule'
-    needs:
-      - test-core-service
-      - docker-core-service
-      - docker-nitro-enclave
-      - update-kms-core-client-argocd-staging-with-enclave
-    uses: ./.github/workflows/common-update-argocd.yml
-    with:
-      branch-name: 'kms-staging'
-      argocd-namespace: 'tkms-staging'
-      argocd-app-name: 'kms-service'
-      application-image: 'kmsCore'
-      image-tag: ${{ needs.docker-core-service.outputs.image_tag }}
-    secrets:
-      ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+  # update-kms-core-argocd-staging:
+  #   if: github.event_name == 'schedule'
+  #   needs:
+  #     - test-core-service
+  #     - docker-core-service
+  #     - docker-nitro-enclave
+  #     - update-kms-core-client-argocd-staging-with-enclave
+  #   uses: ./.github/workflows/common-update-argocd.yml
+  #   with:
+  #     branch-name: 'kms-staging'
+  #     argocd-namespace: 'tkms-staging'
+  #     argocd-app-name: 'kms-service'
+  #     application-image: 'kmsCore'
+  #     image-tag: ${{ needs.docker-core-service.outputs.image_tag }}
+  #   secrets:
+  #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
-  update-kms-core-client-argocd-staging-with-enclave:
-    if: github.event_name == 'schedule'
-    needs:
-      - test-core-client
-      - docker-core-client
-      - update-kms-core-client-argocd-staging
-    uses: ./.github/workflows/common-update-argocd.yml
-    with:
-      branch-name: 'kms-staging'
-      argocd-namespace: 'tkms-enclave-staging'
-      argocd-app-name: 'kms-service'
-      application-image: 'kmsCoreClient'
-      image-tag: ${{ needs.docker-core-client.outputs.image_tag }}
-    secrets:
-      ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+  # update-kms-core-client-argocd-staging-with-enclave:
+  #   if: github.event_name == 'schedule'
+  #   needs:
+  #     - test-core-client
+  #     - docker-core-client
+  #     - update-kms-core-client-argocd-staging
+  #   uses: ./.github/workflows/common-update-argocd.yml
+  #   with:
+  #     branch-name: 'kms-staging'
+  #     argocd-namespace: 'tkms-enclave-staging'
+  #     argocd-app-name: 'kms-service'
+  #     application-image: 'kmsCoreClient'
+  #     image-tag: ${{ needs.docker-core-client.outputs.image_tag }}
+  #   secrets:
+  #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
-  update-kms-core-argocd-staging-with-enclave:
-    if: github.event_name == 'schedule'
-    needs:
-      - test-core-service
-      - docker-core-service
-      - docker-nitro-enclave
-      - update-kms-core-argocd-staging
-    uses: ./.github/workflows/common-update-argocd.yml
-    with:
-      branch-name: 'kms-staging'
-      argocd-namespace: 'tkms-enclave-staging'
-      argocd-app-name: 'kms-service'
-      application-image: 'kmsCore'
-      enclave-deployment: true
-      enclave-pcr0: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr0 }}
-      enclave-pcr1: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr1 }}
-      enclave-pcr2: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr2 }}
-      image-tag: ${{ needs.docker-nitro-enclave.outputs.image_tag }}
-    secrets:
-      ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
+  # update-kms-core-argocd-staging-with-enclave:
+  #   if: github.event_name == 'schedule'
+  #   needs:
+  #     - test-core-service
+  #     - docker-core-service
+  #     - docker-nitro-enclave
+  #     - update-kms-core-argocd-staging
+  #   uses: ./.github/workflows/common-update-argocd.yml
+  #   with:
+  #     branch-name: 'kms-staging'
+  #     argocd-namespace: 'tkms-enclave-staging'
+  #     argocd-app-name: 'kms-service'
+  #     application-image: 'kmsCore'
+  #     enclave-deployment: true
+  #     enclave-pcr0: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr0 }}
+  #     enclave-pcr1: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr1 }}
+  #     enclave-pcr2: ${{ needs.docker-nitro-enclave.outputs.enclave_pcr2 }}
+  #     image-tag: ${{ needs.docker-nitro-enclave.outputs.image_tag }}
+  #   secrets:
+  #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 

@@ -1,15 +1,15 @@
-use super::{Storage, StorageForText, StorageReader, StorageType};
+use super::{Storage, StorageForBytes, StorageReader};
 use crate::anyhow_error_and_log;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use anyhow::anyhow;
+use kms_grpc::RequestId;
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tfhe::{
     named::Named,
     safe_serialization::{safe_deserialize, safe_serialize},
     Unversionize, Versionize,
 };
-use url::Url;
 
 /// This is a storage that fails after a predetermined number of writes.
 ///
@@ -23,10 +23,10 @@ pub struct FailingRamStorage {
 
 #[cfg(test)]
 impl FailingRamStorage {
-    pub fn new(storage_type: StorageType, writes_before_failure: usize) -> Self {
+    pub fn new(writes_before_failure: usize) -> Self {
         Self {
             available_writes: writes_before_failure,
-            inner: RamStorage::new(storage_type),
+            inner: RamStorage::new(),
         }
     }
 
@@ -36,25 +36,21 @@ impl FailingRamStorage {
 }
 
 #[cfg(test)]
-#[tonic::async_trait]
 impl StorageReader for FailingRamStorage {
-    async fn data_exists(&self, url: &Url) -> anyhow::Result<bool> {
-        self.inner.data_exists(url).await
+    async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
+        self.inner.data_exists(data_id, data_type).await
     }
 
     async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
-        url: &Url,
+        data_id: &RequestId,
+        data_type: &str,
     ) -> anyhow::Result<T> {
-        self.inner.read_data(url).await
+        self.inner.read_data(data_id, data_type).await
     }
 
-    fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
-        self.inner.compute_url(data_id, data_type)
-    }
-
-    async fn all_urls(&self, data_type: &str) -> anyhow::Result<HashMap<String, Url>> {
-        self.inner.all_urls(data_type).await
+    async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
+        self.inner.all_data_ids(data_type).await
     }
 
     fn info(&self) -> String {
@@ -63,92 +59,91 @@ impl StorageReader for FailingRamStorage {
 }
 
 #[cfg(test)]
-#[tonic::async_trait]
-impl StorageForText for FailingRamStorage {
-    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
-        self.inner.store_text(text, url).await
+impl StorageForBytes for FailingRamStorage {
+    async fn store_bytes(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        self.inner.store_bytes(bytes, data_id, data_type).await
     }
 
-    async fn read_text(&mut self, url: &Url) -> anyhow::Result<String> {
-        self.inner.read_text(url).await
+    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
+        self.inner.load_bytes(data_id, data_type).await
     }
 }
 
 #[cfg(test)]
-#[tonic::async_trait]
 impl Storage for FailingRamStorage {
     async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
-        url: &Url,
+        data_id: &RequestId,
+        data_type: &str,
     ) -> anyhow::Result<()> {
         if self.available_writes < 1 {
             anyhow::bail!("storage failed!")
         } else {
             self.available_writes -= 1;
-            self.inner.store_data(data, url).await
+            self.inner.store_data(data, data_id, data_type).await
         }
     }
 
-    async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
-        self.inner.delete_data(url).await
+    async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
+        self.inner.delete_data(data_id, data_type).await
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RamStorage {
-    extra_prefix: String,
-    // Store Url to data_id, data_type, serialized data
-    internal_storage: HashMap<Url, (String, String, Vec<u8>)>,
+    // Store data_id, data_type to serialized data
+    internal_storage: HashMap<(RequestId, String), Vec<u8>>,
 }
 
 impl RamStorage {
     // Aggregate with devstorage to make an object that loads from files but don't store
-    pub fn new(storage_type: StorageType) -> Self {
+    pub fn new() -> Self {
         Self {
-            extra_prefix: storage_type.to_string(),
             internal_storage: HashMap::new(),
         }
     }
 }
 
-#[tonic::async_trait]
 impl StorageReader for RamStorage {
-    async fn data_exists(&self, url: &Url) -> anyhow::Result<bool> {
-        Ok(self.internal_storage.contains_key(url))
+    async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
+        Ok(self
+            .internal_storage
+            .contains_key(&(*data_id, data_type.to_string())))
     }
 
     async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
-        url: &Url,
+        data_id: &RequestId,
+        data_type: &str,
     ) -> anyhow::Result<T> {
-        let raw_data = match self.internal_storage.get(url) {
-            Some((_data_id, _data_type, raw_data)) => raw_data,
-            None => return Err(anyhow!("Could not decode data at url {}", url)),
+        let raw_data = match self
+            .internal_storage
+            .get(&(*data_id, data_type.to_string()))
+        {
+            Some(raw_data) => raw_data,
+            None => {
+                return Err(anyhow!(
+                    "Could not decode data at ({}, {})",
+                    data_type,
+                    data_id
+                ))
+            }
         };
         let mut buf = std::io::Cursor::new(raw_data);
         safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
     }
 
-    fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
-        if data_id.contains('/') || data_type.contains('/') {
-            return Err(anyhow_error_and_log(
-                "Could not store data, data_id or data_type contains '/'".to_string(),
-            ));
-        }
-
-        Ok(Url::parse(
-            format!("ram://{}/{}/{}", self.extra_prefix, data_type, data_id).as_str(),
-        )?)
-    }
-
-    async fn all_urls(&self, data_type: &str) -> anyhow::Result<HashMap<String, Url>> {
-        let mut res = HashMap::new();
-        for key in self.internal_storage.keys() {
-            let (cur_data_id, cur_data_type, _cur_raw_data) =
-                self.internal_storage.get(key).unwrap();
+    async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
+        let mut res = HashSet::new();
+        for (cur_data_id, cur_data_type) in self.internal_storage.keys() {
             if cur_data_type == data_type {
-                res.insert(cur_data_id.to_string(), key.clone());
+                res.insert(*cur_data_id);
             }
         }
         Ok(res)
@@ -159,61 +154,55 @@ impl StorageReader for RamStorage {
     }
 }
 
-#[tonic::async_trait]
-impl StorageForText for RamStorage {
-    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
-        let url_string = url.to_owned().to_string();
-        let components: Vec<&str> = url_string.split('/').collect();
-        let data_type = components
-            .get(components.len() - 2)
-            .ok_or_else(|| anyhow_error_and_log("URL does not contain data id"))?
-            .to_string();
-        let data_id = components
-            .last()
-            .ok_or_else(|| anyhow_error_and_log("URL does not contain data type"))?
-            .to_string();
-        let serialized = text.as_bytes().to_vec();
+impl StorageForBytes for RamStorage {
+    async fn store_bytes(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
         self.internal_storage
-            .insert(url.to_owned(), (data_id, data_type, serialized));
+            .insert((*data_id, data_type.to_string()), bytes.to_vec());
         Ok(())
     }
 
-    async fn read_text(&mut self, url: &Url) -> anyhow::Result<String> {
-        let raw_data = match self.internal_storage.get(url) {
-            Some((_data_id, _data_type, raw_data)) => raw_data,
-            None => return Err(anyhow!("Could not decode data at url {}", url)),
+    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
+        let raw_data = match self
+            .internal_storage
+            .get(&(*data_id, data_type.to_string()))
+        {
+            Some(raw_data) => raw_data,
+            None => {
+                return Err(anyhow!(
+                    "Could not decode data at ({}, {})",
+                    data_id,
+                    data_type
+                ))
+            }
         };
-        String::from_utf8(raw_data.clone())
-            .map_err(|e| anyhow_error_and_log(e.utf8_error().to_string()))
+        Ok(raw_data.clone())
     }
 }
 
-#[tonic::async_trait]
 impl Storage for RamStorage {
     async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
-        url: &Url,
+        data_id: &RequestId,
+        data_type: &str,
     ) -> anyhow::Result<()> {
-        let url_string = url.to_owned().to_string();
-        let components: Vec<&str> = url_string.split('/').collect();
-        let data_type = components
-            .get(components.len() - 2)
-            .ok_or_else(|| anyhow_error_and_log("URL does not contain data id"))?
-            .to_string();
-        let data_id = components
-            .last()
-            .ok_or_else(|| anyhow_error_and_log("URL does not contain data type"))?
-            .to_string();
         let mut serialized = Vec::new();
         safe_serialize(data, &mut serialized, SAFE_SER_SIZE_LIMIT)?;
         self.internal_storage
-            .insert(url.to_owned(), (data_id, data_type, serialized));
+            .insert((*data_id, data_type.to_string()), serialized);
         Ok(())
     }
 
-    async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
-        match self.internal_storage.remove(url) {
+    async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
+        match self
+            .internal_storage
+            .remove(&(*data_id, data_type.to_string()))
+        {
             Some(_) => Ok(()),
             None => Err(anyhow_error_and_log("Could not delete data")),
         }
@@ -227,19 +216,8 @@ pub mod tests {
 
     #[tokio::test]
     async fn storage_helper_methods() {
-        let mut storage = RamStorage::new(StorageType::PUB);
+        let mut storage = RamStorage::new();
         test_storage_read_store_methods(&mut storage).await;
         test_batch_helper_methods(&mut storage).await;
-    }
-
-    #[ignore]
-    #[tokio::test]
-    async fn ram_storage_url() {
-        let storage = RamStorage::new(StorageType::PUB);
-        let url = storage.compute_url("id", "type").unwrap();
-        assert_eq!(url, Url::parse("ram://PUB/type/id").unwrap());
-
-        assert!(storage.compute_url("as/df", "type").is_err());
-        assert!(storage.compute_url("id", "as/df").is_err());
     }
 }

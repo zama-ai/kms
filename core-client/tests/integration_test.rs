@@ -177,7 +177,7 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
     let mut preproc_result = execute_cmd(&config, keys_folder).await.unwrap();
     assert_eq!(preproc_result.len(), 1);
     let (preproc_id, _) = preproc_result.pop().unwrap();
-    println!("Preprocessing done with ID {:?}", preproc_id);
+    println!("Preprocessing done with ID {preproc_id:?}");
 
     let config = CmdConfig {
         file_conf: Some(config_path.to_string()),

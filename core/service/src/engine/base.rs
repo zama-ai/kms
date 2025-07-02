@@ -492,8 +492,7 @@ pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
         }
         e => {
             return Err(anyhow_error_and_log(format!(
-                "Cannot compute EIP-712 signature on type {}. Expected one of: zk::CompactPkeCrs, high_level_api::CompactPublicKey, high_level_api::ServerKey.",
-                e
+                "Cannot compute EIP-712 signature on type {e}. Expected one of: zk::CompactPkeCrs, high_level_api::CompactPublicKey, high_level_api::ServerKey."
             )))
         }
     };

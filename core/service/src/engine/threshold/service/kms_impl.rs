@@ -49,6 +49,7 @@ use crate::{
         prepare_shutdown_signals,
         threshold::generic::GenericKms,
     },
+    grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     tonic_some_or_err,
     util::{
         meta_store::MetaStore,
@@ -172,6 +173,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
 ) -> anyhow::Result<(
     RealThresholdKms<PubS, PrivS, BackS>,
     HealthServer<impl Health>,
+    MetaStoreStatusServiceImpl,
 )>
 where
     PubS: Storage + Send + Sync + 'static,
@@ -330,8 +332,7 @@ where
         }
         .map_err(|e| {
             anyhow_error_and_log(format!(
-                "Failed to launch ddec server on {} with error: {:?}",
-                mpc_socket_addr, e
+                "Failed to launch ddec server on {mpc_socket_addr} with error: {e:?}"
             ))
         })?;
         tracing::info!(
@@ -391,6 +392,14 @@ where
         prss_setup_z128: Arc::clone(&prss_setup_z128),
         prss_setup_z64: Arc::clone(&prss_setup_z64),
     };
+
+    let metastore_status_service = MetaStoreStatusServiceImpl::new(
+        Some(dkg_pubinfo_meta_store.clone()),  // key_gen_store
+        Some(pub_dec_meta_store.clone()),      // pub_dec_store
+        Some(user_decrypt_meta_store.clone()), // user_dec_store
+        Some(crs_meta_store.clone()),          // crs_store
+        Some(preproc_buckets.clone()),         // preproc_store
+    );
 
     let (core_service_health_reporter, core_service_health_service) =
         tonic_health::server::health_reporter();
@@ -516,7 +525,7 @@ where
         abort_handle,
     );
 
-    Ok((kms, core_service_health_service))
+    Ok((kms, core_service_health_service, metastore_status_service))
 }
 
 /// Helper function to extract the TLS certificates from the peer configurations and TLS configuration.

@@ -103,7 +103,7 @@ fn bench_transfer_throughput<FheType, F>(
             b.iter(|| {
                 from_amounts
                     .par_iter()
-                    .zip(to_amounts.par_iter().zip(amounts.par_iter()))
+                    .zip_eq(to_amounts.par_iter().zip_eq(amounts.par_iter()))
                     .for_each(|(from_amount, (to_amount, amount))| {
                         let (_, _) = transfer_func(from_amount, to_amount, amount);
                     })

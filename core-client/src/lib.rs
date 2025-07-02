@@ -17,7 +17,6 @@ use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpoint
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::{KeyId, RequestId};
 use kms_lib::client::{Client, ParsedUserDecryptionRequest};
-use kms_lib::conf::ValidateConfig;
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
 use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
 use kms_lib::util::file_handling::{read_element, write_element};
@@ -33,10 +32,12 @@ use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::{Arc, Once};
 use strum_macros::{Display, EnumString};
 use tfhe::named::Named;
 use tfhe::Versionize;
+use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::RwLock;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
@@ -56,10 +57,9 @@ macro_rules! retry {
                 break result;
             } else if retries > $count {
                 break result;
-            } else {
-                retries += 1;
-                tokio::time::sleep(tokio::time::Duration::from_millis($interval)).await;
             }
+            retries += 1;
+            tokio::time::sleep(tokio::time::Duration::from_millis($interval)).await;
         };
         result
     }};
@@ -214,7 +214,7 @@ pub enum FheType {
 impl FheType {
     // We don't use it for now, but useful to have
     #[allow(dead_code)]
-    fn as_str_name(&self) -> &'static str {
+    fn as_str_name(self) -> &'static str {
         match self {
             FheType::Ebool => "Ebool",
             FheType::Euint4 => "Euint4",
@@ -342,7 +342,7 @@ pub fn parse_hex(arg: &str) -> anyhow::Result<Vec<u8>> {
 
     // Handle odd-length hex strings by padding with a single leading zero
     let hex_str = if hex_str.len() % 2 == 1 {
-        format!("0{}", hex_str)
+        format!("0{hex_str}")
     } else {
         hex_str.to_string()
     };
@@ -470,10 +470,11 @@ pub enum CCCommand {
     DoNothing(NoParameters),
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Parser, Validate)]
 pub struct CmdConfig {
     /// Path to the configuration file
     #[clap(long, short = 'f')]
+    #[validate(length(min = 1))]
     pub file_conf: Option<String>,
     /// The command to execute
     #[clap(subcommand)]
@@ -483,22 +484,11 @@ pub struct CmdConfig {
     pub logs: bool,
     /// Max number of iterations to query the KMS for a response
     #[clap(long, default_value = "20")]
+    #[validate(range(min = 1))]
     pub max_iter: usize,
     /// Should we expect a response from every KMS core or not
     #[clap(long, short = 'a', default_value_t = false)]
     pub expect_all_responses: bool,
-}
-
-impl ValidateConfig for CmdConfig {
-    fn validate(&self) -> anyhow::Result<()> {
-        if self.file_conf.as_ref().is_some_and(|s| s.is_empty()) {
-            return Err(anyhow!("Configuration file path cannot be empty"));
-        }
-        if self.max_iter == 0 {
-            return Err(anyhow!("Max iterations must be greater than 0"));
-        }
-        Ok(())
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
@@ -606,7 +596,7 @@ pub async fn encrypt(
     let (cipher, ct_format, _) = compute_cipher_from_stored_key(
         Some(keys_folder),
         typed_to_encrypt,
-        &cipher_params.key_id.as_str(),
+        &cipher_params.key_id.into(),
         EncryptionConfig {
             compression: cipher_params.compression,
             precompute_sns: cipher_params.precompute_sns,
@@ -634,7 +624,7 @@ pub async fn encrypt(
 fn join_vars(args: &[&str]) -> String {
     args.iter()
         .filter(|&s| !s.is_empty())
-        .cloned()
+        .copied()
         .collect::<Vec<&str>>()
         .join("/")
 }
@@ -687,8 +677,8 @@ async fn write_bytes_to_file(
     let path = folder_path.join(filename);
     // Create the parent directories of the file path if they don't exist
     if let Some(p) = path.parent() {
-        tokio::fs::create_dir_all(p).await?
-    };
+        tokio::fs::create_dir_all(p).await?;
+    }
     tokio::fs::write(&path, data).await.map_err(|e| {
         anyhow!(
             "Failed to write bytes to file at {:?} with error: {e}",
@@ -707,9 +697,15 @@ pub fn init_testing() {
 pub fn setup_logging() {
     let file_appender = RollingFileAppender::new(Rotation::DAILY, "logs", "core-client.log");
     let file_and_stdout = file_appender.and(std::io::stdout);
+
+    // read the RUST_LOG environment variable to set the logging level, or set to INFO as default
+    let log_level_str = std::env::var("RUST_LOG").unwrap_or_else(|_| "INFO".to_string());
+    let log_level = tracing::Level::from_str(&log_level_str).unwrap_or(tracing::Level::INFO);
+
     let subscriber = tracing_subscriber::fmt()
         .with_writer(file_and_stdout)
         .with_ansi(false)
+        .with_max_level(log_level)
         .json()
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set logging subscriber");
@@ -728,7 +724,7 @@ async fn fetch_global_pub_object_and_write_to_file(
     let folder = destination_prefix.join("PUB").join(object_name);
     let content = fetch_object(
         s3_endpoint,
-        &format!("{}/{}", object_folder, object_name),
+        &format!("{object_folder}/{object_name}"),
         object_id,
     )
     .await?;
@@ -761,11 +757,11 @@ async fn fetch_local_key_and_write_to_file(
                 .join(object_name);
             let content = fetch_object(
                 s3_endpoint,
-                &format!("{}/{}", folder_name, object_name),
+                &format!("{folder_name}/{object_name}"),
                 object_id,
             )
             .await?;
-            write_bytes_to_file(&folder, object_id, content.as_ref()).await?
+            write_bytes_to_file(&folder, object_id, content.as_ref()).await?;
         }
         Ok(())
     }
@@ -778,7 +774,7 @@ async fn fetch_kms_addresses(
     let key_id = &SIGNING_KEY_ID.to_string();
     let mut addr_bytes = Vec::with_capacity(sim_conf.object_folder.len());
 
-    for folder_name in sim_conf.object_folder.iter() {
+    for folder_name in &sim_conf.object_folder {
         let content = fetch_object(
             &sim_conf.s3_endpoint.clone(),
             &format!("{}/{}", folder_name, "VerfAddress"),
@@ -794,11 +790,11 @@ async fn fetch_kms_addresses(
         .map(|x| {
             alloy_primitives::Address::parse_checksummed(
                 str::from_utf8(x).unwrap_or_else(|_| {
-                    panic!("cannot convert address bytes into UTF-8 string: {:?}", x)
+                    panic!("cannot convert address bytes into UTF-8 string: {x:?}")
                 }),
                 None,
             )
-            .unwrap_or_else(|e| panic!("invalid ethereum address: {:?} - {}", x, e))
+            .unwrap_or_else(|e| panic!("invalid ethereum address: {x:?} - {e}"))
         })
         .collect();
 
@@ -881,17 +877,17 @@ fn check_ext_pt_signature(
 fn check_external_decryption_signature(
     responses: &[PublicDecryptionResponse], // one response per party
     expected_answer: TypedPlaintext,
-    external_handles: Vec<Vec<u8>>,
-    domain: Eip712Domain,
+    external_handles: &[Vec<u8>],
+    domain: &Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
 ) -> anyhow::Result<()> {
     let mut results = Vec::new();
-    for response in responses.iter() {
+    for response in responses {
         let payload = response.payload.as_ref().unwrap();
         check_ext_pt_signature(
             payload.external_signature(),
             &payload.plaintexts,
-            external_handles.clone(),
+            external_handles.to_owned(),
             domain.clone(),
             kms_addrs,
         )?;
@@ -1196,7 +1192,7 @@ pub async fn execute_cmd(
     cmd_config: &CmdConfig,
     destination_prefix: &Path,
 ) -> Result<Vec<(Option<RequestId>, String)>, Box<dyn std::error::Error + 'static>> {
-    let cmd_timer_start = tokio::time::Instant::now();
+    let client_timer_start = tokio::time::Instant::now();
 
     let path_to_config = cmd_config.file_conf.clone().unwrap();
     let command = &cmd_config.command;
@@ -1238,6 +1234,14 @@ pub async fn execute_cmd(
                 panic!("Compression on big ciphertexts is not supported yet!");
             }
         }
+        CCCommand::KeyGen(_)
+        | CCCommand::InsecureKeyGen(_)
+        | CCCommand::CrsGen(_)
+        | CCCommand::InsecureCrsGen(_)
+        | CCCommand::PreprocKeyGen(_) => {
+            tracing::info!("Fetching verification keys. ({command:?})");
+            fetch_verf_keys(&cc_conf, destination_prefix).await?;
+        }
         _ => {
             tracing::info!("No need to fetch key and CRS. ({command:?})");
         }
@@ -1247,10 +1251,11 @@ pub async fn execute_cmd(
 
     let num_parties = cc_conf.core_addresses.len();
 
-    ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+    ensure_client_keys_exist(Some(destination_prefix), &SIGNING_KEY_ID, true).await;
 
     let mut pub_storage: HashMap<u32, FileStorage> = HashMap::with_capacity(num_parties);
-    let client_storage: FileStorage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
+    let client_storage: FileStorage =
+        FileStorage::new(Some(destination_prefix), StorageType::CLIENT, None).unwrap();
     let mut internal_client: Option<Client> = None;
     let mut core_endpoints = Vec::with_capacity(num_parties);
 
@@ -1281,7 +1286,7 @@ pub async fn execute_cmd(
         };
 
         let core_endpoint = retry!(
-            CoreServiceEndpointClient::connect(url.to_owned()).await,
+            CoreServiceEndpointClient::connect(url.clone()).await,
             5,
             100
         )?;
@@ -1320,7 +1325,7 @@ pub async fn execute_cmd(
             tracing::info!("Connecting to {:?}", url);
 
             let core_endpoint = retry!(
-                CoreServiceEndpointClient::connect(url.to_owned()).await,
+                CoreServiceEndpointClient::connect(url.clone()).await,
                 5,
                 100
             )?;
@@ -1328,7 +1333,12 @@ pub async fn execute_cmd(
 
             pub_storage.insert(
                 i as u32 + 1,
-                FileStorage::new(Some(destination_prefix), StorageType::PUB, Some(i + 1)).unwrap(),
+                FileStorage::new(
+                    Some(destination_prefix),
+                    StorageType::PUB,
+                    Some(Role::indexed_from_zero(i)),
+                )
+                .unwrap(),
             );
         }
 
@@ -1353,6 +1363,8 @@ pub async fn execute_cmd(
     );
 
     let kms_addrs = Arc::new(fetch_kms_addresses(&cc_conf).await?);
+
+    let command_timer_start = tokio::time::Instant::now();
 
     // Execute the command
     let res = match command {
@@ -1388,6 +1400,9 @@ pub async fn execute_cmd(
                 cipher_args.get_batch_size()
             ];
 
+            let mut timings_start = HashMap::new();
+            let mut durations = Vec::new();
+
             let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
             for _ in 0..cipher_args.get_num_requests() {
                 let req_id = RequestId::new_random(&mut rng);
@@ -1396,13 +1411,17 @@ pub async fn execute_cmd(
                 let mut core_endpoints = core_endpoints.clone();
                 let ptxt = ptxt.clone();
                 let kms_addrs = kms_addrs.clone();
+
+                // start timing measurement for this request
+                timings_start.insert(req_id, tokio::time::Instant::now()); // start timing for this request
+
                 join_set.spawn(async move {
                     // DECRYPTION REQUEST
                     let dec_req = internal_client.write().await.public_decryption_request(
                         ct_batch,
                         &dummy_domain(),
                         &req_id,
-                        &key_id,
+                        &key_id.into(),
                     )?;
 
                     // make parallel requests by calling [decrypt] in a thread
@@ -1424,7 +1443,7 @@ pub async fn execute_cmd(
                     }
                     assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
-                    let resp_response_vec = get_decrypt_responses(
+                    let resp_response_vec = get_public_decrypt_responses(
                         &mut core_endpoints,
                         Some(dec_req),
                         Some(ptxt),
@@ -1436,15 +1455,22 @@ pub async fn execute_cmd(
                     )
                     .await?;
 
-                    let res = format!("{:x?}", resp_response_vec);
+                    let res = format!("{resp_response_vec:x?}");
                     Ok((Some(req_id), res))
                 });
             }
 
             let mut result_vec = Vec::new();
             while let Some(result) = join_set.join_next().await {
-                result_vec.push(result??);
+                let res = result??;
+                let req_id = res.0.unwrap();
+                let elapsed = timings_start.remove(&req_id).unwrap().elapsed();
+                durations.push(elapsed);
+                result_vec.push(res);
             }
+
+            print_timings("public decrypt", &mut durations, command_timer_start);
+
             result_vec
         }
         CCCommand::UserDecrypt(cipher_args) => {
@@ -1598,7 +1624,7 @@ pub async fn execute_cmd(
         }
         CCCommand::DoNothing(NoParameters {}) => {
             tracing::info!("Nothing to do.");
-            vec![(None, "".to_string())]
+            vec![(None, String::new())]
         }
         CCCommand::Encrypt(cipher_parameters) => {
             encrypt(destination_prefix, cipher_parameters.clone()).await?;
@@ -1607,7 +1633,7 @@ pub async fn execute_cmd(
         CCCommand::PreprocKeyGenResult(result_parameters) => {
             let req_id: RequestId = result_parameters.request_id;
             let _ = get_preproc_keygen_responses(&mut core_endpoints, req_id, max_iter).await?;
-            vec![(Some(req_id), "preproc done".to_string())]
+            vec![(Some(req_id), "preproc result queried".to_string())]
         }
         CCCommand::KeyGenResult(result_parameters) => {
             let num_expected_responses = if expect_all_responses {
@@ -1637,7 +1663,7 @@ pub async fn execute_cmd(
                 resp_response_vec,
             )
             .await?;
-            vec![(Some(req_id), "keygen done".to_string())]
+            vec![(Some(req_id), "keygen result queried".to_string())]
         }
         CCCommand::InsecureKeyGenResult(result_parameters) => {
             let num_expected_responses = if expect_all_responses {
@@ -1667,7 +1693,7 @@ pub async fn execute_cmd(
                 resp_response_vec,
             )
             .await?;
-            vec![(Some(req_id), "insecure keygen done".to_string())]
+            vec![(Some(req_id), "insecure keygen result queried".to_string())]
         }
         CCCommand::PublicDecryptResult(result_parameters) => {
             let num_expected_responses = if expect_all_responses {
@@ -1676,7 +1702,7 @@ pub async fn execute_cmd(
                 cc_conf.num_majority
             };
             let req_id: RequestId = result_parameters.request_id;
-            let resp_response_vec = get_decrypt_responses(
+            let resp_response_vec = get_public_decrypt_responses(
                 &mut core_endpoints,
                 None,
                 None,
@@ -1687,7 +1713,7 @@ pub async fn execute_cmd(
                 &kms_addrs,
             )
             .await?;
-            let res = format!("{:x?}", resp_response_vec);
+            let res = format!("{resp_response_vec:x?}");
             vec![(Some(req_id), res)]
         }
         CCCommand::CrsGenResult(result_parameters) => {
@@ -1718,7 +1744,7 @@ pub async fn execute_cmd(
                 resp_response_vec,
             )
             .await?;
-            vec![(Some(req_id), "crs gen done".to_string())]
+            vec![(Some(req_id), "crs gen result queried".to_string())]
         }
         CCCommand::InsecureCrsGenResult(result_parameters) => {
             let num_expected_responses = if expect_all_responses {
@@ -1748,15 +1774,47 @@ pub async fn execute_cmd(
                 resp_response_vec,
             )
             .await?;
-            vec![(Some(req_id), "insecure crs gen done".to_string())]
+            vec![(Some(req_id), "insecure crs gen result queried".to_string())]
         }
     };
 
     tracing::info!("Core Client terminated successfully.");
-    let duration = cmd_timer_start.elapsed();
-    tracing::info!("Core Client command {command:?} took {duration:?}.");
+
+    let total_duration = client_timer_start.elapsed();
+    let command_duration = command_timer_start.elapsed();
+    tracing::info!("Core Client command {command:?} took {total_duration:?} in total (including setup), and {command_duration:?} for the command only.");
 
     Ok(res)
+}
+
+// Prints the timings for the command execution, showing latency and throughput based on the measured durations.
+fn print_timings(cmd: &str, durations: &mut [tokio::time::Duration], start: tokio::time::Instant) {
+    // compute total time that is elapsed since we send the first request
+    let total_elapsed = start.elapsed();
+
+    // compute latency values
+    let avg = durations.iter().sum::<tokio::time::Duration>() / durations.len() as u32;
+    durations.sort();
+    let median = if durations.len() % 2 == 0 {
+        (durations[durations.len() / 2 - 1] + durations[durations.len() / 2]) / 2
+    } else {
+        durations[durations.len() / 2]
+    };
+    let min = durations[0];
+    let max = durations[durations.len() - 1];
+
+    tracing::info!(
+        "Latency for {cmd}: Avg: {avg:?}, Median: {median:?}, Min: {min:?}, Max: {max:?}"
+    );
+
+    tracing::info!(
+        "Total elapsed time for {cmd} with {} collected results: {total_elapsed:?}. Throughput: {} requests/s",
+        durations.len(),
+        durations.len() as f64 / total_elapsed.as_secs_f64()
+    );
+
+    // For debugging, print all collected durations
+    tracing::debug!("All durations: {:?}", durations);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1773,6 +1831,10 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
     num_expected_responses: usize,
 ) -> anyhow::Result<Vec<(Option<RequestId>, String)>> {
     let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
+    let mut timings_start = HashMap::new();
+    let mut durations = Vec::new();
+    let start = tokio::time::Instant::now();
+
     for _ in 0..num_requests {
         let req_id = RequestId::new_random(rng);
         let internal_client = internal_client.clone();
@@ -1780,13 +1842,16 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
         let mut core_endpoints = core_endpoints.clone();
         let original_plaintext = ptxt.clone();
 
+        // start timing measurement for this request
+        timings_start.insert(req_id, tokio::time::Instant::now()); // start timing for this request
+
         // USER_DECRYPTION REQUEST
         join_set.spawn(async move {
             let user_decrypt_req_tuple = internal_client.write().await.user_decryption_request(
                 &dummy_domain(),
                 ct_batch,
                 &req_id,
-                &key_id,
+                &key_id.into(),
             )?;
 
             let (user_decrypt_req, enc_pk, enc_sk) = user_decrypt_req_tuple;
@@ -1794,7 +1859,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
             // make parallel requests by calling user decryption in a thread
             let mut req_tasks = JoinSet::new();
 
-            for ce in core_endpoints.iter_mut() {
+            for ce in &mut core_endpoints {
                 let req_cloned = user_decrypt_req.clone();
                 let mut cur_client = ce.clone();
                 req_tasks.spawn(async move {
@@ -1813,7 +1878,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
 
             // get all responses
             let mut resp_tasks = JoinSet::new();
-            for ce in core_endpoints.iter_mut() {
+            for ce in &mut core_endpoints {
                 let mut cur_client = ce.clone();
                 let req_id_clone = user_decrypt_req.request_id.as_ref().unwrap().clone();
 
@@ -1835,10 +1900,11 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                             SLEEP_TIME_BETWEEN_REQUESTS_MS,
                         ))
                         .await;
-                        // do at most max_iter retries (stop after max. 50 secs)
-                        if ctr >= max_iter {
-                            panic!("timeout while waiting for decryption after {max_iter} retries");
-                        }
+                        // do at most max_iter retries
+                        assert!(
+                            ctr < max_iter,
+                            "timeout while waiting for user decryption after {max_iter} retries."
+                        );
                         ctr += 1;
                         response = cur_client
                             .get_user_decryption_result(tonic::Request::new(req_id_clone.clone()))
@@ -1872,11 +1938,14 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                     &enc_sk,
                 )
                 .inspect_err(|e| {
-                    tracing::error!("User decryption response is NOT valid! Reason: {}", e)
+                    tracing::error!(
+                        "Error: User decryption response is NOT valid! Reason: {}",
+                        e
+                    )
                 })?;
 
-            // still test that all results are matching this one plaintext
-            for pt in plaintexts.iter() {
+            // test that all results are matching the original plaintext
+            for pt in &plaintexts {
                 assert_eq!(
                     TestingPlaintext::try_from(pt.clone())?,
                     TestingPlaintext::try_from(original_plaintext.clone())?
@@ -1900,13 +1969,20 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
     }
     let mut result_vec = Vec::new();
     while let Some(result) = join_set.join_next().await {
-        result_vec.push(result??);
+        let res = result??;
+        let req_id = res.0.unwrap();
+        let elapsed = timings_start.remove(&req_id).unwrap().elapsed();
+        durations.push(elapsed);
+        result_vec.push(res);
     }
+
+    print_timings("user decrypt", &mut durations, start);
+
     Ok(result_vec)
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn get_decrypt_responses(
+async fn get_public_decrypt_responses(
     core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
     dec_req: Option<PublicDecryptionRequest>,
     expected_answer: Option<TypedPlaintext>,
@@ -1940,10 +2016,11 @@ async fn get_decrypt_responses(
                     SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
-                // do at most max_iter retries (stop after max. 50 secs)
-                if ctr >= max_iter {
-                    panic!("timeout while waiting for decryption after {max_iter} retries");
-                }
+                // do at most max_iter retries
+                assert!(
+                    ctr < max_iter,
+                    "timeout while waiting for public decryption after {max_iter} retries."
+                );
                 ctr += 1;
                 response = cur_client
                     .get_public_decryption_result(tonic::Request::new(request_id.into()))
@@ -2017,8 +2094,8 @@ async fn get_decrypt_responses(
     check_external_decryption_signature(
         &resp_response_vec,
         ptxt,
-        external_handles,
-        domain,
+        &external_handles,
+        &domain,
         kms_addrs,
     )
     .unwrap();
@@ -2053,10 +2130,11 @@ async fn get_preproc_keygen_responses(
                     SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
-                // do at most max_iter retries (stop after max. 50 secs)
-                if ctr >= max_iter {
-                    panic!("timeout while waiting for preprocessing after {max_iter} retries");
-                }
+                // do at most max_iter retries
+                assert!(
+                    ctr < max_iter,
+                    "timeout while waiting for preprocessing after {max_iter} retries."
+                );
                 ctr += 1;
                 response = client
                     .get_key_gen_preproc_result(tonic::Request::new(request_id.into()))
@@ -2120,12 +2198,7 @@ async fn get_keygen_responses(
                     SLEEP_TIME_BETWEEN_REQUESTS_MS,
                 ))
                 .await;
-                if ctr >= max_iter {
-                    panic!(
-                        "timeout while waiting for keygen after {} retries (insecure: {insecure})",
-                        max_iter
-                    );
-                }
+                assert!(ctr < max_iter, "timeout while waiting for keygen after {max_iter} retries (insecure: {insecure})");
                 ctr += 1;
                 response = if insecure {
                     cur_client
@@ -2196,9 +2269,7 @@ async fn get_crsgen_responses(
             {
                 tokio::time::sleep(tokio::time::Duration::from_millis(SLEEP_TIME_BETWEEN_REQUESTS_MS)).await;
                 // do at most max_iter retries
-                if ctr >= max_iter {
-                    panic!("timeout while waiting for crsgen after {max_iter} retries (insecure: {insecure})");
-                }
+                assert!(ctr < max_iter, "timeout while waiting for crsgen after {max_iter} retries (insecure: {insecure})");
                 ctr += 1;
                 response = if insecure {
                     cur_client
@@ -2249,21 +2320,18 @@ async fn fetch_and_check_keygen(
         responses.len()
     );
 
-    let req_id = request_id.to_string();
-
     // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
     // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
-    fetch_key(&req_id, cc_conf, destination_prefix).await?;
-    let pk = load_pk_from_storage(Some(destination_prefix), &req_id).await;
-    let sk = load_server_key_from_storage(Some(destination_prefix), &req_id).await;
+    fetch_key(&request_id.to_string(), cc_conf, destination_prefix).await?;
+    let pk = load_pk_from_storage(Some(destination_prefix), &request_id).await;
+    let sk = load_server_key_from_storage(Some(destination_prefix), &request_id).await;
 
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
         tracing::info!("Received KeyGenResult with request ID {}", resp_req_id); //TODO print key digests and signatures?
 
         assert_eq!(
-            req_id,
-            resp_req_id.as_str(),
+            request_id, resp_req_id,
             "Request ID of response does not match the transaction"
         );
 
@@ -2308,20 +2376,17 @@ async fn fetch_and_check_crsgen(
         responses.len()
     );
 
-    let req_id = request_id.to_string();
-
     // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
     // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
-    fetch_crs(&req_id, cc_conf, destination_prefix).await?;
-    let crs = load_crs_from_storage(Some(destination_prefix), &req_id).await;
+    fetch_crs(&request_id.to_string(), cc_conf, destination_prefix).await?;
+    let crs = load_crs_from_storage(Some(destination_prefix), &request_id).await;
 
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
         tracing::info!("Received CrsGenResult with request ID {}", resp_req_id); //TODO print key digests and signatures?
 
         assert_eq!(
-            req_id,
-            resp_req_id.as_str(),
+            request_id, resp_req_id,
             "Request ID of response does not match the transaction"
         );
 
@@ -2404,8 +2469,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_eip712_sigs() {
-        let mut pub_storage = RamStorage::new(StorageType::PUB);
-        let mut priv_storage = RamStorage::new(StorageType::PRIV);
+        let mut pub_storage = RamStorage::new();
+        let mut priv_storage = RamStorage::new();
 
         // make sure signing keys exist
         ensure_central_server_signing_keys_exist(

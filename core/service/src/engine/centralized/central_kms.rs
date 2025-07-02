@@ -911,9 +911,7 @@ pub(crate) mod tests {
     use crate::util::file_handling::{read_element, write_element};
     use crate::util::key_setup::test_tools::{compute_cipher, EncryptionConfig};
     use crate::vault::storage::{file::FileStorage, ram::RamStorage};
-    use crate::vault::storage::{
-        store_pk_at_request_id, store_versioned_at_request_id, StorageReader, StorageType,
-    };
+    use crate::vault::storage::{store_pk_at_request_id, store_versioned_at_request_id};
     use aes_prng::AesRng;
     use kms_grpc::rpc_types::{PrivDataType, WrappedPublicKey};
     use kms_grpc::RequestId;
@@ -921,6 +919,7 @@ pub(crate) mod tests {
     use serde::{Deserialize, Serialize};
     use serial_test::serial;
     use std::collections::HashMap;
+    use std::str::FromStr;
     use std::{path::Path, sync::Arc};
     use tfhe::named::Named;
     use tfhe::Versionize;
@@ -951,7 +950,7 @@ pub(crate) mod tests {
     pub(crate) async fn new_priv_ram_storage_from_existing_keys(
         keys: &CentralizedKmsKeys,
     ) -> anyhow::Result<RamStorage> {
-        let mut ram_storage = RamStorage::new(StorageType::PRIV);
+        let mut ram_storage = RamStorage::new();
         for (cur_req_id, cur_keys) in &keys.key_info {
             store_versioned_at_request_id(
                 &mut ram_storage,
@@ -965,7 +964,8 @@ pub(crate) mod tests {
         ram_storage
             .store_data(
                 &keys.sig_sk,
-                &ram_storage.compute_url(&sk_handle, &PrivDataType::SigningKey.to_string())?,
+                &RequestId::from_str(&sk_handle)?,
+                &PrivDataType::SigningKey.to_string(),
             )
             .await?;
         Ok(ram_storage)
@@ -974,7 +974,7 @@ pub(crate) mod tests {
     pub(crate) async fn new_pub_ram_storage_from_existing_keys(
         keys: &HashMap<RequestId, threshold_fhe::execution::endpoints::keygen::FhePubKeySet>,
     ) -> anyhow::Result<RamStorage> {
-        let mut ram_storage = RamStorage::new(StorageType::PUB);
+        let mut ram_storage = RamStorage::new();
         for (cur_req_id, cur_keys) in keys {
             let wrapped_pk = WrappedPublicKey::Compact(&cur_keys.public_key);
             store_pk_at_request_id(&mut ram_storage, cur_req_id, wrapped_pk).await?;

@@ -44,7 +44,7 @@ impl DockerComposeCmd {
             .parent()
             .expect(err_parent_msg)
             .to_path_buf();
-        println!("Root path: {:?}", root_path);
+        println!("Root path: {root_path:?}");
         DockerComposeCmd { root_path, mode }
     }
 
@@ -81,27 +81,26 @@ impl DockerComposeCmd {
         }
 
         build.arg("--wait");
-        println!("{:?}", build);
+        println!("{build:?}");
 
         match build.spawn() {
             Err(error) => {
                 self.down();
-                panic!("Failed to execute docker compose up command: {}", error);
+                panic!("Failed to execute docker compose up command: {error}");
             }
             Ok(mut p) => match p.wait() {
                 Err(error) => {
                     self.down();
-                    panic!("Failed to execute docker compose up command: {}", error);
+                    panic!("Failed to execute docker compose up command: {error}");
                 }
                 Ok(status) => {
                     if !status.success() {
                         self.down();
                         panic!(
-                            "Docker compose failed to start. Command: {:?}\nStatus: {:?}\nSee output above.\n",
-                            build, status
+                            "Docker compose failed to start. Command: {build:?}\nStatus: {status:?}\nSee output above.\n"
                         );
                     } else {
-                        println!("Successfully launched command: {:?}", build);
+                        println!("Successfully launched command: {build:?}");
                     }
                 }
             },

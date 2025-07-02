@@ -1,20 +1,27 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use validator::Validate;
 
 /// Rate limiter configuration.
 ///
 /// The bucket size is the maximum number of tokens in the bucket.
 /// The other fields are the number of tokens consumed for the
 /// different operations.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Validate)]
 pub struct RateLimiterConfig {
+    #[validate(range(min = 1))]
     pub bucket_size: usize,
     // Everything else is u32 because semaphore works with u32
+    #[validate(range(min = 1))]
     pub pub_decrypt: u32,
+    #[validate(range(min = 1))]
     pub user_decrypt: u32,
+    #[validate(range(min = 1))]
     pub crsgen: u32,
+    #[validate(range(min = 1))]
     pub preproc: u32,
+    #[validate(range(min = 1))]
     pub keygen: u32,
 }
 

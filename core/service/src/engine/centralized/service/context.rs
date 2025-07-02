@@ -30,7 +30,7 @@ pub async fn new_kms_context_impl<
     let new_context =
         new_context.ok_or_else(|| Status::invalid_argument("new_context is required"))?;
     let new_context = ContextInfo::try_from(new_context)
-        .map_err(|e| Status::invalid_argument(format!("Invalid context info: {}", e)))?;
+        .map_err(|e| Status::invalid_argument(format!("Invalid context info: {e}")))?;
 
     // verify new context
     {
@@ -46,9 +46,7 @@ pub async fn new_kms_context_impl<
                     .as_ref(),
             )
             .await
-            .map_err(|e| {
-                Status::invalid_argument(format!("Failed to verify new context: {}", e))
-            })?;
+            .map_err(|e| Status::invalid_argument(format!("Failed to verify new context: {e}")))?;
     }
 
     // store the new context
@@ -87,7 +85,7 @@ pub async fn delete_kms_context_impl<
     let kms_context_id = context_id.into();
     delete_context_at_request_id(&mut *guarded_priv_storage, &kms_context_id)
         .await
-        .map_err(|e| Status::internal(format!("Failed to delete context: {}", e)))?;
+        .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
     Ok(Response::new(Empty {}))
 }
 
@@ -118,8 +116,8 @@ mod tests {
         PublicSigKey,
         CentralizedCryptoMaterialStorage<RamStorage, RamStorage, RamStorage>,
     ) {
-        let priv_storage = RamStorage::new(crate::vault::storage::StorageType::PRIV);
-        let pub_storage = RamStorage::new(crate::vault::storage::StorageType::PUB);
+        let priv_storage = RamStorage::new();
+        let pub_storage = RamStorage::new();
 
         let crypto_storage = CentralizedCryptoMaterialStorage::<_, _, RamStorage>::new(
             priv_storage,

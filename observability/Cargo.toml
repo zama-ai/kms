@@ -33,6 +33,7 @@ tracing-appender = "=0.2.3"
 tracing-test = "0.2"
 typed-builder = "=0.21.0"
 uuid = { version = "=1.16.0", features = ["v4", "fast-rng"] }
+validator.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["strum"]

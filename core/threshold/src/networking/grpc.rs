@@ -297,23 +297,13 @@ impl Gnetworking for NetworkingImpl {
         }
 
         if let Some(sender) = valid_tls_sender {
-            // tag.sender has the form hostname:port
-            // we remove the port component since the tls_sender does not have it
-            let host_and_port: Vec<_> = tag.sender.0.split(':').collect();
-            if host_and_port.len() != 2 {
-                return Err(tonic::Status::new(
-                    tonic::Code::Unknown,
-                    format!(
-                        "wrong sender tag (could not split at ':'): {:?}",
-                        tag.sender,
-                    ),
-                ));
-            }
-            let host = host_and_port[0];
-            if sender != host {
+            // tag.sender is an Identity(hostname, port) struct, so we can directly access the hostname
+            // We only need the hostname component since the tls_sender does not include the port
+            let host = &tag.sender.hostname();
+            if sender != *host {
                 return Err(tonic::Status::new(
                     tonic::Code::Unauthenticated,
-                    format!("wrong sender: expected {:?} to be in {:?}", host, sender),
+                    format!("wrong sender: expected {host:?} to be in {sender:?}"),
                 ));
             }
         } else {

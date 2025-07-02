@@ -342,8 +342,8 @@ mod tests {
         );
         for ((ggsw_1, ggsw_2), &input_key_bit) in bk_ref
             .iter()
-            .zip(bk_tfhers.iter())
-            .zip(lwe_secret_key.as_ref())
+            .zip_eq(bk_tfhers.iter())
+            .zip_eq(lwe_secret_key.as_ref())
         {
             //Here ggsw is a ggsw encryption of the keybit input_key_bit
             let decrypted_ggsw_1 = decrypt_constant_ggsw_ciphertext(&glwe_secret_key, &ggsw_1);
@@ -353,14 +353,14 @@ mod tests {
 
             //A GGSW ciphertext is a list of GgswLevelMatrix (one GgswLevelMatrix for each level)
             for (level_idx, (ggsw_matrix_1, ggsw_matrix_2)) in
-                ggsw_1.iter().zip(ggsw_2.iter()).enumerate()
+                ggsw_1.iter().zip_eq(ggsw_2.iter()).enumerate()
             {
                 //A GgswLevelMatrix is a list of GlweCiphertext (one GlweCiphertext for each glwe key bit-poly)
                 //Except the last row which is the plain message
                 for (glwe_ctxt_1, glwe_ctxt_2) in ggsw_matrix_1
                     .as_glwe_list()
                     .iter()
-                    .zip(ggsw_matrix_2.as_glwe_list().iter())
+                    .zip_eq(ggsw_matrix_2.as_glwe_list().iter())
                 {
                     let mut decrypted_plaintext_list_1 =
                         PlaintextList::new(0_u128, PlaintextCount(polynomial_size));

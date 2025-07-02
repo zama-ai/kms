@@ -1,9 +1,9 @@
 use clap::Parser;
-use kms_core_client::*;
-use kms_lib::conf::ValidateConfig;
+use kms_core_client::{execute_cmd, setup_logging, CmdConfig};
 use kms_lib::consts::SIGNING_KEY_ID;
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use std::path::Path;
+use validator::Validate;
 
 // CLI
 #[tokio::main]
@@ -27,11 +27,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
 
     match res {
         Ok(vec_res) => {
-            for (opt_req_id, msg) in vec_res.into_iter() {
+            for (opt_req_id, msg) in vec_res {
                 match opt_req_id {
                     Some(req_id) => {
                         // WARNING: This format MUST not be changed since the current deployment configuration runs a grep on "request_id"
-                        println!("{msg} - \"request_id\": \"{}\"", req_id);
+                        println!("{msg} - \"request_id\": \"{req_id}\"");
                     }
                     None => {
                         println!("{msg} - no request_id returned");

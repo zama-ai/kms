@@ -1,7 +1,7 @@
 use threshold_fhe::hashing::DomainSep;
 
 use crate::cryptography::{
-    internal_crypto_types::PrivateSigKey, nested_pke::NestedPrivateKey, signcryption,
+    backup_pke::BackupPrivateKey, internal_crypto_types::PrivateSigKey, signcryption,
 };
 
 use super::error::BackupError;
@@ -22,8 +22,8 @@ pub trait BackupDecryptor {
     fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, BackupError>;
 }
 
-impl BackupDecryptor for NestedPrivateKey {
+impl BackupDecryptor for BackupPrivateKey {
     fn decrypt(&self, ciphertext: &[u8]) -> Result<Vec<u8>, BackupError> {
-        NestedPrivateKey::decrypt(self, ciphertext).map_err(|e| e.into())
+        BackupPrivateKey::decrypt(self, ciphertext).map_err(|e| e.into())
     }
 }

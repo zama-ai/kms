@@ -150,7 +150,7 @@ pub struct DummyVss {}
 impl ProtocolDescription for DummyVss {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-DummyVss", indent)
+        format!("{indent}-DummyVss")
     }
 }
 
@@ -1535,9 +1535,7 @@ pub(crate) mod tests {
                 let reconstructed_secret = shamir_sharing.reconstruct(params.threshold);
                 assert!(
                     reconstructed_secret.is_ok(),
-                    "Failed to reconstruct secret coming from P {} with error {:?}",
-                    vss_idx,
-                    reconstructed_secret
+                    "Failed to reconstruct secret coming from P {vss_idx} with error {reconstructed_secret:?}"
                 );
                 assert_eq!(expected_secrets[vss_idx][i], reconstructed_secret.unwrap());
             }

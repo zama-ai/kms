@@ -65,7 +65,7 @@ pub struct RealShareDispute {}
 impl ProtocolDescription for RealShareDispute {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-RealShareDispute", indent)
+        format!("{indent}-RealShareDispute")
     }
 }
 
@@ -142,11 +142,13 @@ impl ShareDispute for RealShareDispute {
         let mut polypoints_map = HashMap::new();
         for (polypoints_t, polypoints_2t) in vec_polypoints_t
             .into_iter()
-            .zip(vec_polypoints_2t.into_iter())
+            // May panic, but would imply a bug in `share_secrets`
+            .zip_eq(vec_polypoints_2t.into_iter())
         {
             for (role_id, (polypoint_t, polypoint_2t)) in polypoints_t
                 .into_iter()
-                .zip(polypoints_2t.into_iter())
+                // May panic, but would imply a bug in `share_secrets`
+                .zip_eq(polypoints_2t.into_iter())
                 .enumerate()
             {
                 let curr_role = Role::indexed_from_zero(role_id);
@@ -366,8 +368,7 @@ where
 {
     if threshold < dispute_party_ids.len() {
         return Err(anyhow_error_and_log(format!(
-            "Too many disputes, {:?}, for threshold {}",
-            dispute_party_ids, threshold,
+            "Too many disputes, {dispute_party_ids:?}, for threshold {threshold}",
         )));
     }
     let degree = threshold - dispute_party_ids.len();

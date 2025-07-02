@@ -162,8 +162,7 @@ pub(crate) fn format_output<Z>(
             } else {
                 //This should never happen as ShareDispute fills all missing values with default 0
                 Err(anyhow_error_and_log(format!(
-                    "Missing 2t share from party {}",
-                    role_pi
+                    "Missing 2t share from party {role_pi}"
                 )))
             }
         })
@@ -379,19 +378,18 @@ pub(crate) async fn verify_sharing<
 
 #[cfg(test)]
 pub(crate) mod tests {
-
     #[cfg(feature = "slow_tests")]
-    use crate::execution::{
-        communication::broadcast::{Broadcast, SyncReliableBroadcast},
-        large_execution::{
-            coinflip::{Coinflip, RealCoinflip, SecureCoinflip},
-            local_double_share::RealLocalDoubleShare,
-            share_dispute::RealShareDispute,
-            share_dispute::ShareDispute,
-            vss::{RealVss, SecureVss, Vss},
-        },
-        sharing::open::{RobustOpen, SecureRobustOpen},
+    use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
+    #[cfg(feature = "slow_tests")]
+    use crate::execution::large_execution::{
+        coinflip::{Coinflip, RealCoinflip, SecureCoinflip},
+        local_double_share::RealLocalDoubleShare,
+        share_dispute::RealShareDispute,
+        share_dispute::ShareDispute,
+        vss::{RealVss, SecureVss, Vss},
     };
+    #[cfg(feature = "slow_tests")]
+    use crate::execution::sharing::open::{RobustOpen, SecureRobustOpen};
     #[cfg(feature = "slow_tests")]
     use crate::malicious_execution::large_execution::{
         malicious_coinflip::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},

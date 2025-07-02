@@ -20,7 +20,7 @@ pub struct MaliciousAgreeRandomDrop {}
 impl ProtocolDescription for MaliciousAgreeRandomDrop {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-MaliciousAgreeRandomDrop", indent)
+        format!("{indent}-MaliciousAgreeRandomDrop")
     }
 }
 

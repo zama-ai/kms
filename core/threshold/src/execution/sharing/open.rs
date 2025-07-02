@@ -161,7 +161,7 @@ pub struct SecureRobustOpen {}
 impl ProtocolDescription for SecureRobustOpen {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-SecureRobustOpen", indent)
+        format!("{indent}-SecureRobustOpen")
     }
 }
 
@@ -450,8 +450,7 @@ pub(crate) mod test {
         for (role, secrets, openings) in results_honest.into_iter() {
             assert!(
                 openings.is_some(),
-                "Honest Party {} failed to open correctly, expected Some got None ",
-                role
+                "Honest Party {role} failed to open correctly, expected Some got None "
             );
             let openings = openings.unwrap();
             assert_eq!(secrets, pivot.1);
@@ -463,8 +462,7 @@ pub(crate) mod test {
                 let (role, secrets, openings) = result_malicious.unwrap();
                 assert!(
                     openings.is_some(),
-                    "Malicious Party {} failed to open correctly, expected Some got None ",
-                    role
+                    "Malicious Party {role} failed to open correctly, expected Some got None "
                 );
                 let openings = openings.unwrap();
                 assert_eq!(secrets, pivot.1);

@@ -58,17 +58,15 @@ impl<const EXTENSION_DEGREE: usize> BitPreprocessing<ResiduePoly<Z64, EXTENSION_
         &mut self,
         amount: usize,
     ) -> anyhow::Result<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>> {
-        if self.available_bits.len() >= amount {
-            let mut res = Vec::with_capacity(amount);
-            for _ in 0..amount {
-                res.push(self.next_bit()?);
-            }
-            Ok(res)
-        } else {
-            Err(anyhow_error_and_log(format!(
-                "Not enough bits to pop {amount}"
-            )))
+        if self.available_bits.len() < amount {
+            return Err(anyhow_error_and_log(format!(
+                "Not enough bits to pop {amount}, have {}",
+                self.available_bits.len()
+            )));
         }
+
+        // Use drain to safely extract exactly 'amount' bits
+        Ok(self.available_bits.drain(0..amount).collect())
     }
 
     fn bits_len(&self) -> usize {

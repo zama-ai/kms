@@ -142,8 +142,7 @@ impl<
             }
             mode => {
                 return Err(anyhow_error_and_log(format!(
-                    "Unsupported Decryption Mode: {}",
-                    mode
+                    "Unsupported Decryption Mode: {mode}"
                 )));
             }
         };
@@ -217,7 +216,7 @@ impl<
 
         let (ciphertexts, req_digest, key_id, req_id, eip712_domain) = tonic_handle_potential_err(
             validate_public_decrypt_req(&inner),
-            format!("Failed to validate decrypt request {:?}", inner),
+            format!("Failed to validate decrypt request {inner:?}"),
         )
         .map_err(|e| {
             tracing::error!(
@@ -425,8 +424,7 @@ impl<
                 match res_plaintext {
                     Ok(plaintext) => Ok((ctr, plaintext)),
                     Result::Err(e) => Err(anyhow_error_and_log(format!(
-                        "Threshold decryption failed:{}",
-                        e
+                        "Threshold decryption failed:{e}"
                     ))),
                 }
             };
@@ -451,7 +449,7 @@ impl<
                         decs.insert(idx, plaintext);
                     }
                     Ok(Err(e)) => {
-                        let msg = format!("Failed decryption with err: {:?}", e);
+                        let msg = format!("Failed decryption with err: {e:?}");
                         tracing::error!(msg);
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(&req_id, Err(msg));
@@ -459,7 +457,7 @@ impl<
                         return;
                     }
                     Err(e) => {
-                        let msg = format!("Failed decryption with JoinError: {:?}", e);
+                        let msg = format!("Failed decryption with JoinError: {e:?}");
                         tracing::error!(msg);
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(&req_id, Err(msg));
@@ -515,13 +513,13 @@ impl<
 
         let sig_payload_vec = tonic_handle_potential_err(
             bc2wrap::serialize(&sig_payload),
-            format!("Could not convert payload to bytes {:?}", sig_payload),
+            format!("Could not convert payload to bytes {sig_payload:?}"),
         )?;
 
         let sig = tonic_handle_potential_err(
             self.base_kms
                 .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec),
-            format!("Could not sign payload {:?}", sig_payload),
+            format!("Could not sign payload {sig_payload:?}"),
         )?;
         Ok(Response::new(PublicDecryptionResponse {
             signature: sig.sig.to_vec(),

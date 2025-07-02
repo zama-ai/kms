@@ -73,12 +73,12 @@ sequenceDiagram
 
 ### Getting Status for Specific Request IDs
 
-```protobuf
+```json
 // Request
 {
   "request_ids": [
-    { "id": "request_id_1" },
-    { "id": "request_id_2" }
+    "bc0cbac18cb2b4a03c3fd2ebc0865dca421424a5b1ca9d2a42037a1f90109938",
+    "8366a89bc317c29ecacffe1585414f515cc3786fa99f1b6225153947f75a20a1"
   ],
   "meta_store_type": "KEY_GENERATION"
 }
@@ -87,84 +87,82 @@ sequenceDiagram
 {
   "statuses": [
     {
-      "request_id": { "id": "request_id_1" },
-      "meta_store_type": "KEY_GENERATION",
+      "requestId": "bc0cbac18cb2b4a03c3fd2ebc0865dca421424a5b1ca9d2a42037a1f90109938",
+      "metaStoreType": "KEY_GENERATION",
       "status": "COMPLETED"
     },
     {
-      "request_id": { "id": "request_id_2" },
-      "meta_store_type": "KEY_GENERATION",
-      "status": "PROCESSING"
+      "requestId": "8366a89bc317c29ecacffe1585414f515cc3786fa99f1b6225153947f75a20a1",
+      "metaStoreType": "KEY_GENERATION"
     }
   ]
 }
 ```
 
+**Note**: In protobuf3 JSON serialization, fields with default values are omitted. The `status` field is omitted when the value is `PROCESSING` (the default/zero value), and `metaStoreType` is omitted when the value is `ALL` (the default). Missing status field indicates `PROCESSING` state.
+
 ### Listing Requests with Filtering
 
-```protobuf
+```json
 // Request
 {
-  "meta_store_type": "ALL",
-  "status_filter": "PROCESSING",
-  "limit": 100
+  "meta_store_type": "KEY_GENERATION",
+  "status_filter": "ANY",
+  "max_results": 100
 }
 
 // Response
 {
   "requests": [
     {
-      "request_id": { "id": "request_id_1" },
-      "meta_store_type": "KEY_GENERATION",
-      "status": "PROCESSING"
+      "requestId": "bc0cbac18cb2b4a03c3fd2ebc0865dca421424a5b1ca9d2a42037a1f90109938",
+      "metaStoreType": "KEY_GENERATION",
+      "status": "COMPLETED"
     },
     {
-      "request_id": { "id": "request_id_2" },
-      "meta_store_type": "PUBLIC_DECRYPTION",
-      "status": "PROCESSING"
+      "requestId": "8366a89bc317c29ecacffe1585414f515cc3786fa99f1b6225153947f75a20a1",
+      "metaStoreType": "KEY_GENERATION"
     }
-  ],
-  "next_page_token": "token123"
+  ]
 }
 ```
 
 ### Getting Meta-Store Information
 
-```protobuf
+```json
 // Request
 {}
 
 // Response
 {
-  "meta_stores": [
+  "metaStores": [
     {
       "type": "KEY_GENERATION",
-      "capacity": 1000,
-      "current_count": 42
+      "capacity": -1,
+      "currentCount": 2
     },
     {
       "type": "PUBLIC_DECRYPTION",
-      "capacity": 1000,
-      "current_count": 17
+      "capacity": 10000
     },
     {
       "type": "USER_DECRYPTION",
-      "capacity": 1000,
-      "current_count": 8
+      "capacity": 10000
     },
     {
       "type": "CRS_GENERATION",
-      "capacity": 100,
-      "current_count": 3
+      "capacity": -1
     },
     {
       "type": "PREPROCESSING",
-      "capacity": 500,
-      "current_count": 25
+      "capacity": -1,
+      "currentCount": 1
     }
   ]
 }
 ```
+
+**Note**: `capacity: -1` indicates unlimited capacity. The `currentCount` field is only present when there are active requests in the meta-store.
 
 ## Implementation Considerations
 

@@ -148,7 +148,7 @@ pub struct SyncReliableBroadcast {}
 impl ProtocolDescription for SyncReliableBroadcast {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-SyncReliableBroadcast", indent)
+        format!("{indent}-SyncReliableBroadcast")
     }
 }
 
@@ -178,12 +178,10 @@ pub(crate) async fn receive_contribution_from_all_senders<Z: Ring, B: BaseSessio
         |msg, id| match msg {
             NetworkValue::Send(v) => Ok(v),
             NetworkValue::EchoBatch(_) => Err(anyhow_error_and_log(format!(
-                "I have received an Echo batch instead of a Send message on party: {:?}",
-                id
+                "I have received an Echo batch instead of a Send message on party: {id:?}"
             ))),
             _ => Err(anyhow_error_and_log(format!(
-                "I am {:?} have received sth different from Send message \n Received {:?}",
-                id, msg
+                "I am {id:?} have received sth different from Send message \n Received {msg:?}"
             ))),
         },
     )?;
@@ -244,8 +242,7 @@ pub(crate) async fn receive_echos_from_all_batched<Z: Ring, B: BaseSessionHandle
             NetworkValue::EchoBatch(v) => Ok(v),
             NetworkValue::Empty => Ok(RoleValueMap::new()),
             _ => Err(anyhow_error_and_log(format!(
-                "I have received sth different from an Echo Batch message on party: {:?}",
-                id,
+                "I have received sth different from an Echo Batch message on party: {id:?}",
             ))),
         },
     )?;
@@ -286,8 +283,7 @@ fn receive_from_all_votes<Z: Ring, B: BaseSessionHandles>(
             NetworkValue::VoteBatch(v) => Ok(v),
             NetworkValue::Empty => Ok(HashMap::new()),
             _ => Err(anyhow_error_and_log(format!(
-                "I have received sth different from an Vote Batch message on party: {:?}",
-                id
+                "I have received sth different from an Vote Batch message on party: {id:?}"
             ))),
         },
     )
@@ -847,8 +843,7 @@ mod tests {
         for (role, _, protocol_result, _) in results_honest.into_iter() {
             assert_eq!(
                 collected_results, protocol_result,
-                "Party {} doesnt agree with the collected results. Output {:?} expected {:?}",
-                role, protocol_result, collected_results
+                "Party {role} doesnt agree with the collected results. Output {protocol_result:?} expected {collected_results:?}"
             );
         }
 
@@ -856,8 +851,7 @@ mod tests {
             for malicious_res in results_malicious.into_iter() {
                 let (role, _, result, _) = malicious_res.unwrap();
                 let result = result.unwrap();
-                assert_eq!(result, collected_results, "Malicious but undetected party {} doesnt agree with the collected results. Output {:?} expected {:?}",
-                role, result, collected_results)
+                assert_eq!(result, collected_results, "Malicious but undetected party {role} doesnt agree with the collected results. Output {result:?} expected {collected_results:?}")
             }
         }
     }

@@ -1,19 +1,25 @@
-use crate::anyhow_error_and_log;
-use crate::engine::context;
+use crate::{
+    anyhow_error_and_log,
+    conf::{FileStorage, RamStorage, S3Storage, Storage as StorageConf},
+    engine::context,
+};
 use anyhow::anyhow;
 use aws_sdk_s3::Client as S3Client;
-use kms_grpc::rpc_types::{
-    PrivDataType, PubDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned,
+use enum_dispatch::enum_dispatch;
+use kms_grpc::{
+    rpc_types::{
+        PrivDataType, PubDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned,
+    },
+    RequestId,
 };
-use kms_grpc::RequestId;
 use ordermap::OrderMap;
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{self};
 use strum::{EnumIter, IntoEnumIterator};
 use tfhe::{named::Named, Unversionize, Versionize};
+use threshold_fhe::execution::runtime::party::Role;
 use tracing;
-use url::Url;
 
 pub mod crypto_material;
 pub mod file;
@@ -23,29 +29,22 @@ pub mod s3;
 // TODO add a wrapper struct for both public and private storage.
 
 /// Trait for public KMS storage reading
-#[tonic::async_trait]
+#[enum_dispatch]
+#[trait_variant::make(Send)]
 pub trait StorageReader {
     /// Validate if data exists at a given `url`.
-    async fn data_exists(&self, url: &Url) -> anyhow::Result<bool>;
+    async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool>;
 
-    /// Read some data from a given `url`.
+    /// Read some data with the given `data_id` and of the given `data_type`.
     /// On return, the data is unversioned.
     async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
-        url: &Url,
+        data_id: &RequestId,
+        data_type: &str,
     ) -> anyhow::Result<T>;
 
-    /// Compute an URL for some specific data given its `data_id` and of a given `data_type`.
-    /// Depending on how the underlying functionality is realized one of these parameters might not
-    /// be used.
-    ///
-    /// The implementation should prefix the URL with the storage backend type. For example,
-    /// file-based storage should start with file://, S3 based storage should start with s3://, etc.
-    /// Further, in the URL, the type should come before the ID, i.e., file://<metadata>/<type>/<id>.
-    fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url>;
-
     /// Return all URLs stored of a specific data type
-    async fn all_urls(&self, data_type: &str) -> anyhow::Result<HashMap<String, Url>>;
+    async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>>;
 
     /// Output some information on the storage instance.
     fn info(&self) -> String;
@@ -53,26 +52,38 @@ pub trait StorageReader {
 
 // Trait for KMS public storage reading and writing
 // Warning: There is no compiler validation that the data being stored are of a versioned type!
-#[tonic::async_trait]
+#[enum_dispatch]
+#[trait_variant::make(Send)]
 pub trait Storage: StorageReader {
-    /// Store the given `data` at the given `url`
+    /// Store the given `data` with the given `data_id` of the given `data_type`
     /// Under the hood, the versioned data is stored.
     async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
-        url: &Url,
+        data_id: &RequestId,
+        data_type: &str,
     ) -> anyhow::Result<()>;
 
-    /// Delete the given `data` stored at `url`.
-    async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()>;
+    /// Delete the given `data_id` with the given `data_type`.
+    async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()>;
 }
 
-#[tonic::async_trait]
-pub trait StorageForText: Storage {
-    /// Store the given `text` at the given `url`
-    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()>;
-    /// Read the given `text` from the given `url`
-    async fn read_text(&mut self, url: &Url) -> anyhow::Result<String>;
+/// Sometimes we want to store bytes directly, without the need for versioning
+/// and serialization. This trait was created initially to work with ASCII text,
+/// such as Ethereum addresses and PEM-formatted X.509 certificates but we also
+/// have to work with raw bytes, for example, cryptographic commitments.
+#[enum_dispatch]
+#[trait_variant::make(Send)]
+pub trait StorageForBytes: Storage {
+    /// Store the given `bytes` with the given `data_id` and `data_type`.
+    async fn store_bytes(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<()>;
+    /// Load some bytes from the given `data_id` and `data_type`.
+    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>>;
 }
 
 /// Store some data at a location defined by `request_id` and `data_type`.
@@ -90,46 +101,52 @@ pub async fn store_versioned_at_request_id<
 where
     <T as Versionize>::Versioned<'a>: Send + Sync,
 {
-    let url = storage.compute_url(&request_id.to_string(), data_type)?;
-    storage.store_data(data, &url).await.map_err(|e| {
-        anyhow_error_and_log(format!(
-            "Could not store data with ID {} and type {}: {}",
-            request_id, data_type, e
-        ))
-    })
+    storage
+        .store_data(data, request_id, data_type)
+        .await
+        .map_err(|e| {
+            anyhow_error_and_log(format!(
+                "Could not store data with ID {request_id} and type {data_type}: {e}"
+            ))
+        })
 }
 
 // Helper method for storing text under a request ID.
 // An error will be returned if the data already exists.
-pub async fn store_text_at_request_id<S: StorageForText>(
+pub async fn store_text_at_request_id<S: StorageForBytes>(
     storage: &mut S,
     request_id: &RequestId,
     data: &str,
     data_type: &str,
 ) -> anyhow::Result<()> {
-    let url = storage.compute_url(&request_id.to_string(), data_type)?;
-    storage.store_text(data, &url).await.map_err(|e| {
-        anyhow_error_and_log(format!(
-            "Could not store data with ID {} and type {}: {}",
-            request_id, data_type, e
-        ))
-    })
+    storage
+        .store_bytes(data.as_bytes(), request_id, data_type)
+        .await
+        .map_err(|e| {
+            anyhow_error_and_log(format!(
+                "Could not store data with ID {request_id} and type {data_type}: {e}"
+            ))
+        })
 }
 
 // Helper method for reading text under a request ID.
 // An error will be returned if the data already exists.
-pub async fn read_text_at_request_id<S: StorageForText>(
-    storage: &mut S,
+pub async fn read_text_at_request_id<S: StorageForBytes>(
+    storage: &S,
     request_id: &RequestId,
     data_type: &str,
 ) -> anyhow::Result<String> {
-    let url = storage.compute_url(&request_id.to_string(), data_type)?;
-    storage.read_text(&url).await.map_err(|e| {
-        anyhow_error_and_log(format!(
-            "Could not read data with ID {} and type {}: {}",
-            request_id, data_type, e
-        ))
-    })
+    String::from_utf8(
+        storage
+            .load_bytes(request_id, data_type)
+            .await
+            .map_err(|e| {
+                anyhow_error_and_log(format!(
+                    "Could not read data with ID {request_id} and type {data_type}: {e}"
+                ))
+            })?,
+    )
+    .map_err(|e| anyhow_error_and_log(e.utf8_error().to_string()))
 }
 
 /// Delete ALL data under a given `request_id`.
@@ -153,14 +170,16 @@ pub async fn delete_at_request_id<S: Storage>(
     request_id: &RequestId,
     data_type: &str,
 ) -> anyhow::Result<()> {
-    let url = storage.compute_url(&request_id.to_string(), data_type)?;
-    if storage.data_exists(&url).await? {
-        storage.delete_data(&url).await.map_err(|e| {
-            anyhow::anyhow!(format!(
-                "Could not delete data with ID {} and type {}: {}",
-                request_id, data_type, e
-            ))
-        })
+    if storage.data_exists(request_id, data_type).await? {
+        storage
+            .delete_data(request_id, data_type)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(format!(
+                    "Could not delete data with ID {} and type {}: {}",
+                    request_id, data_type, e
+                ))
+            })
     } else {
         tracing::info!(
             "Tried to delete data with ID {} and type {}, but did not exist",
@@ -200,8 +219,7 @@ pub async fn read_versioned_at_request_id<
 where
     <T as tfhe_versionable::VersionizeOwned>::VersionedOwned: Send,
 {
-    let url = storage.compute_url(&request_id.to_string(), data_type)?;
-    storage.read_data(&url).await
+    storage.read_data(request_id, data_type).await
 }
 
 /// This function will perform verionize on the type.
@@ -293,21 +311,19 @@ pub async fn read_all_data_versioned<
     storage: &S,
     data_type: &str,
 ) -> anyhow::Result<HashMap<RequestId, T>> {
-    let url_map = storage.all_urls(data_type).await?;
-    let mut res = HashMap::with_capacity(url_map.len());
-    for (data_ptr, url) in url_map.iter() {
-        let req_id: RequestId = data_ptr.try_into()?;
-        if !req_id.is_valid() {
+    let id_set = storage.all_data_ids(data_type).await?;
+    let mut res = HashMap::with_capacity(id_set.len());
+    for data_id in id_set.iter() {
+        if !data_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
-                "Request ID {} is not valid",
-                data_ptr
+                "Request ID {data_id} is not valid"
             )));
         }
         let data: T = storage
-            .read_data(url)
+            .read_data(data_id, data_type)
             .await
-            .map_err(|e| anyhow!("reading failed on url {url}: {e}"))?;
-        res.insert(req_id, data);
+            .map_err(|e| anyhow!("reading failed on data id {data_id}: {e}"))?;
+        res.insert(*data_id, data);
     }
     Ok(res)
 }
@@ -321,26 +337,15 @@ pub enum StorageType {
 }
 impl fmt::Display for StorageType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
-#[allow(dead_code)]
-pub enum StorageVersion {
-    Dev,
-    Ram,
-}
-
-/// Represents all storage types as variants of one concrete type. This
-/// monstrosity is required to work around the Rust's inability to create trait
-/// objects if the trait has methods with generic parameters. Without it, the
-/// code in `main()` that creates storage objects and passes them to the server
-/// startup functions will blow up quadratically in the number of available
-/// storage backends, as one would have to create both public and private
-/// storage object at the same time as passing them to the server startup
-/// function.
+/// Represents all storage types as variants of one concrete type. This is
+/// required to enable multiple dispatch on non-dyn compatible Storage* traits.
 #[cfg(feature = "non-wasm")]
 #[allow(clippy::large_enum_variant)]
+#[enum_dispatch(StorageReader, Storage, StorageForBytes)]
 pub enum StorageProxy {
     File(file::FileStorage),
     #[allow(dead_code)]
@@ -348,130 +353,34 @@ pub enum StorageProxy {
     S3(s3::S3Storage),
 }
 
-/// Neither `delegate` nor `ambassador` crates can work with
-/// `tonic::async_trait` because Rust doesn't support eager macro instantiation,
-/// or something. So, more monstrosity.
-#[cfg(feature = "non-wasm")]
-#[tonic::async_trait]
-impl StorageReader for StorageProxy {
-    async fn data_exists(&self, url: &Url) -> anyhow::Result<bool> {
-        match &self {
-            StorageProxy::File(s) => s.data_exists(url).await,
-            StorageProxy::Ram(s) => s.data_exists(url).await,
-            StorageProxy::S3(s) => s.data_exists(url).await,
-        }
-    }
-
-    async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
-        &self,
-        url: &Url,
-    ) -> anyhow::Result<T> {
-        match &self {
-            StorageProxy::File(s) => s.read_data(url).await,
-            StorageProxy::Ram(s) => s.read_data(url).await,
-            StorageProxy::S3(s) => s.read_data(url).await,
-        }
-    }
-
-    fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
-        match &self {
-            StorageProxy::File(s) => s.compute_url(data_id, data_type),
-            StorageProxy::Ram(s) => s.compute_url(data_id, data_type),
-            StorageProxy::S3(s) => s.compute_url(data_id, data_type),
-        }
-    }
-
-    async fn all_urls(&self, data_type: &str) -> anyhow::Result<HashMap<String, Url>> {
-        match &self {
-            StorageProxy::File(s) => s.all_urls(data_type).await,
-            StorageProxy::Ram(s) => s.all_urls(data_type).await,
-            StorageProxy::S3(s) => s.all_urls(data_type).await,
-        }
-    }
-
-    fn info(&self) -> String {
-        match &self {
-            StorageProxy::File(s) => s.info(),
-            StorageProxy::Ram(s) => s.info(),
-            StorageProxy::S3(s) => s.info(),
-        }
-    }
-}
-
-#[cfg(feature = "non-wasm")]
-#[tonic::async_trait]
-impl Storage for StorageProxy {
-    async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
-        &mut self,
-        data: &T,
-        url: &Url,
-    ) -> anyhow::Result<()> {
-        match &mut self {
-            StorageProxy::File(s) => s.store_data(data, url).await,
-            StorageProxy::Ram(s) => s.store_data(data, url).await,
-            StorageProxy::S3(s) => s.store_data(data, url).await,
-        }
-    }
-
-    async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
-        match &mut self {
-            StorageProxy::File(s) => s.delete_data(url).await,
-            StorageProxy::Ram(s) => s.delete_data(url).await,
-            StorageProxy::S3(s) => s.delete_data(url).await,
-        }
-    }
-}
-
-#[cfg(feature = "non-wasm")]
-#[tonic::async_trait]
-impl StorageForText for StorageProxy {
-    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
-        match &mut self {
-            StorageProxy::File(s) => s.store_text(text, url).await,
-            StorageProxy::Ram(s) => s.store_text(text, url).await,
-            StorageProxy::S3(s) => s.store_text(text, url).await,
-        }
-    }
-
-    async fn read_text(&mut self, url: &Url) -> anyhow::Result<String> {
-        match &mut self {
-            StorageProxy::File(s) => s.read_text(url).await,
-            StorageProxy::Ram(s) => s.read_text(url).await,
-            StorageProxy::S3(s) => s.read_text(url).await,
-        }
-    }
-}
-
 pub fn make_storage(
-    storage: Option<Url>,
+    storage_conf: Option<StorageConf>,
     storage_type: StorageType,
-    party_id: Option<usize>,
+    party_role: Option<Role>,
     storage_cache: Option<StorageCache>,
     s3_client: Option<S3Client>,
 ) -> anyhow::Result<StorageProxy> {
-    let storage = match storage {
-        Some(ref storage_url) => match storage_url.scheme() {
-            "s3" => {
-                let s3_client = s3_client.expect("AWS S3 client must be configured");
-                let (bucket, path) = s3::S3Storage::parse_url(storage_url)?;
-                StorageProxy::S3(s3::S3Storage::new(
-                    s3_client,
-                    bucket,
-                    path,
-                    storage_type,
-                    party_id,
-                    storage_cache,
-                )?)
-            }
-            "file" => StorageProxy::File(file::FileStorage::new(
-                Some(file::url_to_pathbuf(storage_url).as_path()),
-                storage_type,
-                party_id,
-            )?),
-            _ => panic!("Unknown storage type"),
-        },
-        None => StorageProxy::File(file::FileStorage::new(None, storage_type, party_id)?),
-    };
+    let storage =
+        match storage_conf {
+            Some(storage_conf) => match storage_conf {
+                StorageConf::S3(S3Storage { bucket, prefix }) => {
+                    let s3_client = s3_client.expect("AWS S3 client must be configured");
+                    StorageProxy::from(s3::S3Storage::new(
+                        s3_client,
+                        bucket,
+                        prefix,
+                        storage_type,
+                        party_role,
+                        storage_cache,
+                    )?)
+                }
+                StorageConf::File(FileStorage { path }) => StorageProxy::from(
+                    file::FileStorage::new(Some(&path), storage_type, party_role)?,
+                ),
+                StorageConf::Ram(RamStorage {}) => StorageProxy::from(ram::RamStorage::new()),
+            },
+            None => StorageProxy::from(file::FileStorage::new(None, storage_type, party_role)?),
+        };
     Ok(storage)
 }
 
@@ -563,15 +472,6 @@ pub mod tests {
         let data_1_vk = TestType { i: 2 };
         let req_id_2 = derive_request_id("2").unwrap();
         let data_2_pk = TestType { i: 3 };
-        let url_1_pk = storage
-            .compute_url(&req_id_1.to_string(), &PubDataType::PublicKey.to_string())
-            .unwrap();
-        let url_1_vk = storage
-            .compute_url(&req_id_1.to_string(), &PubDataType::VerfKey.to_string())
-            .unwrap();
-        let url_2_pk = storage
-            .compute_url(&req_id_2.to_string(), &PubDataType::PublicKey.to_string())
-            .unwrap();
 
         // Ensure no old test data is present
         println!("deleting..");
@@ -580,9 +480,18 @@ pub mod tests {
 
         // Store data
         println!("storing..");
-        storage.store_data(&data_1_pk, &url_1_pk).await.unwrap();
-        storage.store_data(&data_1_vk, &url_1_vk).await.unwrap();
-        storage.store_data(&data_2_pk, &url_2_pk).await.unwrap();
+        storage
+            .store_data(&data_1_pk, &req_id_1, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap();
+        storage
+            .store_data(&data_1_vk, &req_id_1, &PubDataType::VerfKey.to_string())
+            .await
+            .unwrap();
+        storage
+            .store_data(&data_2_pk, &req_id_2, &PubDataType::PublicKey.to_string())
+            .await
+            .unwrap();
 
         // Check data retrieval
         println!("retrieving.. {}", storage.info());

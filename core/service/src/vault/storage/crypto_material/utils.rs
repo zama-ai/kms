@@ -12,7 +12,7 @@ use crate::{
     vault::storage::{read_all_data_versioned, Storage},
 };
 use aes_prng::AesRng;
-use kms_grpc::rpc_types::PrivDataType;
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
 use rand::SeedableRng;
 use serde::de::DeserializeOwned;
@@ -65,14 +65,10 @@ pub async fn data_exists<S: Storage>(
     req_id: &RequestId,
     data_type: &str,
 ) -> anyhow::Result<bool> {
-    let url = storage
-        .compute_url(&req_id.to_string(), data_type)
-        .map_err(|e| anyhow_error_and_warn_log(format!("Failed to compute URL: {}", e)))?;
-
     storage
-        .data_exists(&url)
+        .data_exists(req_id, data_type)
         .await
-        .map_err(|e| anyhow_error_and_warn_log(format!("Failed to check if data exists: {}", e)))
+        .map_err(|e| anyhow_error_and_warn_log(format!("Failed to check if data exists: {e}")))
 }
 
 /// Checks if both public and private data exist in their respective storages.
@@ -244,13 +240,13 @@ async fn get_unique<
         read_all_data_versioned(storage, &storage_type.to_string())
             .await
             .map_err(|e| {
-                anyhow_error_and_warn_log(format!("Failed to read signing key data: {}", e))
+                anyhow_error_and_warn_log(format!("Failed to read signing key data: {e}"))
             })?;
 
     if sk_map.values().len() != 1 {
         return Err(anyhow_error_and_warn_log(format!(
-            "Server signing key map should contain exactly one entry, but contains {} entries for storage \"{}\"",
-            sk_map.values().len(), storage.info()
+            "{} key map should contain exactly one entry, but contains {} entries for storage \"{}\"",
+            storage_type, sk_map.values().len(), storage.info()
         )));
     }
 
@@ -264,14 +260,20 @@ async fn get_unique<
         .ok_or_else(|| anyhow_error_and_warn_log("Failed to remove key from map".to_string()))
 }
 
-pub async fn get_core_signing_key<S: StorageReader>(
-    priv_storage: &S,
-) -> anyhow::Result<PrivateSigKey> {
-    get_unique::<S, PrivateSigKey, PrivDataType>(priv_storage, PrivDataType::SigningKey).await
+pub async fn get_core_signing_key<S: StorageReader>(storage: &S) -> anyhow::Result<PrivateSigKey> {
+    get_unique::<S, PrivateSigKey, PrivDataType>(storage, PrivDataType::SigningKey).await
 }
 
-pub async fn get_client_verification_key<S: Storage>(
-    priv_storage: &S,
+pub async fn get_core_verification_key<S: StorageReader>(
+    storage: &S,
 ) -> anyhow::Result<PublicSigKey> {
-    get_unique::<S, PublicSigKey, ClientDataType>(priv_storage, ClientDataType::VerfKey).await
+    get_unique::<S, PublicSigKey, PubDataType>(storage, PubDataType::VerfKey).await
+}
+
+pub async fn get_client_signing_key<S: Storage>(storage: &S) -> anyhow::Result<PrivateSigKey> {
+    get_unique::<S, PrivateSigKey, ClientDataType>(storage, ClientDataType::SigningKey).await
+}
+
+pub async fn get_client_verification_key<S: Storage>(storage: &S) -> anyhow::Result<PublicSigKey> {
+    get_unique::<S, PublicSigKey, ClientDataType>(storage, ClientDataType::VerfKey).await
 }

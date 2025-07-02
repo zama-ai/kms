@@ -116,10 +116,8 @@ fn bench_decode_par_z64(c: &mut Criterion) {
     for p in &params {
         for chunk_size in chunk_sizes {
             let (num_parties, threshold, max_err) = *p;
-            let p_str = format!(
-                "n:{num_parties} t:{threshold} e:{max_err} chunk_size:{:?}",
-                chunk_size
-            );
+            let p_str =
+                format!("n:{num_parties} t:{threshold} e:{max_err} chunk_size:{chunk_size:?}");
             assert!(num_parties >= (threshold + 1) + 2 * max_err);
 
             group.bench_function(BenchmarkId::new("decode", p_str), |b| {

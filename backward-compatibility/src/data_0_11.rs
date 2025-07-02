@@ -3,15 +3,11 @@
 //! for kms-core v0.11.
 
 use aes_prng::AesRng;
-use kms_0_11::backup::custodian::Custodian;
-use kms_0_11::backup::operator::Operator;
 use kms_0_11::cryptography::internal_crypto_types::gen_sig_keys;
-use kms_0_11::cryptography::nested_pke;
 use kms_0_11::engine::base::KmsFheKeyHandles;
 use kms_0_11::engine::centralized::central_kms::generate_client_fhe_key;
 use kms_0_11::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
 use kms_0_11::util::key_setup::FhePublicKey;
-use kms_grpc_0_11::RequestId;
 use std::{borrow::Cow, fs::create_dir_all, path::PathBuf};
 use tfhe_1_1::shortint::parameters::NoiseSquashingParameters;
 use threshold_fhe_0_11::algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64};
@@ -62,8 +58,8 @@ use crate::{
     DISTRIBUTED_DECRYPTION_MODULE_NAME, KMS_MODULE_NAME,
 };
 use crate::{
-    AppKeyBlobTest, CustodianSetupMessageTest, NestedPkeTest, OperatorBackupOutputTest, PrfKeyTest,
-    PubDataTypeTest, PublicKeyTypeTest, TestMetadataKmsGrpc, KMS_GRPC_MODULE_NAME,
+    AppKeyBlobTest, PrfKeyTest, PubDataTypeTest, PublicKeyTypeTest, TestMetadataKmsGrpc,
+    KMS_GRPC_MODULE_NAME,
 };
 
 // Macro to store a versioned test
@@ -249,6 +245,8 @@ const APP_KEY_BLOB_TEST: AppKeyBlobTest = AppKeyBlobTest {
 };
 
 // KMS test
+// NOTE: this is not used in v0.11 yet, so we avoid doing these extra tests
+/*
 const CUSTODIAN_SETUP_MESSAGE_TEST: CustodianSetupMessageTest = CustodianSetupMessageTest {
     test_filename: Cow::Borrowed("custodian_setup_message"),
     seed: 42,
@@ -263,16 +261,7 @@ const OPERATOR_BACKUP_OUTPUT_TEST: OperatorBackupOutputTest = OperatorBackupOutp
     backup_id: [1u8; 32],
     seed: 42,
 };
-
-// KMS test
-const NESTED_PKE_TEST: NestedPkeTest = NestedPkeTest {
-    test_filename: Cow::Borrowed("nested_pke"),
-    pk_filename: Cow::Borrowed("nested_pke_pk"),
-    sk_filename: Cow::Borrowed("nested_pke_sk"),
-    ct_filename: Cow::Borrowed("nested_pke_ct"),
-    plaintext: [1u8; 32],
-    seed: 42,
-};
+*/
 
 fn dummy_domain() -> alloy_sol_types_1_1_2::Eip712Domain {
     alloy_sol_types_1_1_2::eip712_domain!(
@@ -405,7 +394,7 @@ impl KmsV0_11 {
     }
 
     fn gen_threshold_fhe_keys(dir: &PathBuf) -> TestMetadataKMS {
-        let role = Role::indexed_from_one(THRESHOLD_FHE_KEYS_TEST.role_i);
+        let role = Role::indexed_by_one(THRESHOLD_FHE_KEYS_TEST.role_i);
         let mut base_session = get_networkless_base_session_for_parties(
             THRESHOLD_FHE_KEYS_TEST.amount,
             THRESHOLD_FHE_KEYS_TEST.threshold,
@@ -480,12 +469,15 @@ impl KmsV0_11 {
         TestMetadataKMS::ThresholdFheKeys(THRESHOLD_FHE_KEYS_TEST)
     }
 
+    // NOTE: below is commented out because backup is not used in v0.11 yet
+    // so we avoid doing these extra tests since the structs might change
+    /*
     fn gen_custodian_setup_message(dir: &PathBuf) -> TestMetadataKMS {
         let mut rng = AesRng::seed_from_u64(CUSTODIAN_SETUP_MESSAGE_TEST.seed);
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
         let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
         let custodian = Custodian::new(
-            Role::indexed_from_zero(0),
+            0,
             signing_key,
             verification_key,
             private_key,
@@ -509,7 +501,7 @@ impl KmsV0_11 {
                 let (verification_key, signing_key) = gen_sig_keys(&mut rng);
                 let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
                 Custodian::new(
-                    Role::indexed_from_zero(i),
+                    i,
                     signing_key,
                     verification_key,
                     private_key,
@@ -527,7 +519,7 @@ impl KmsV0_11 {
             let (verification_key, signing_key) = gen_sig_keys(&mut rng);
             let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
             Operator::new(
-                Role::indexed_from_zero(0),
+                0,
                 custodian_messages,
                 signing_key,
                 verification_key,
@@ -543,7 +535,7 @@ impl KmsV0_11 {
                 &OPERATOR_BACKUP_OUTPUT_TEST.plaintext,
                 RequestId::from_bytes(OPERATOR_BACKUP_OUTPUT_TEST.backup_id),
             )
-            .unwrap()[&Role::indexed_from_zero(0)];
+            .unwrap()[&0];
 
         store_versioned_test!(
             operator_backup_output,
@@ -552,40 +544,14 @@ impl KmsV0_11 {
         );
         TestMetadataKMS::OperatorBackupOutput(OPERATOR_BACKUP_OUTPUT_TEST)
     }
-
-    fn gen_nested_pke(dir: &PathBuf) -> TestMetadataKMS {
-        let mut rng = AesRng::seed_from_u64(NESTED_PKE_TEST.seed);
-        let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
-        let ct = public_key
-            .encrypt(&mut rng, &NESTED_PKE_TEST.plaintext)
-            .unwrap();
-        store_versioned_auxiliary!(
-            &ct,
-            dir,
-            &NESTED_PKE_TEST.test_filename,
-            &NESTED_PKE_TEST.ct_filename
-        );
-        store_versioned_auxiliary!(
-            &private_key,
-            dir,
-            &NESTED_PKE_TEST.test_filename,
-            &NESTED_PKE_TEST.sk_filename
-        );
-        store_versioned_auxiliary!(
-            &public_key,
-            dir,
-            &NESTED_PKE_TEST.test_filename,
-            &NESTED_PKE_TEST.pk_filename
-        );
-        TestMetadataKMS::NestedPke(NESTED_PKE_TEST)
-    }
+    */
 }
 
 struct DistributedDecryptionV0_11;
 
 impl DistributedDecryptionV0_11 {
     fn gen_prss_setup_rpoly_64(dir: &PathBuf) -> TestMetadataDD {
-        let role = Role::indexed_from_one(PRSS_SETUP_RPOLY_64_TEST.role_i);
+        let role = Role::indexed_by_one(PRSS_SETUP_RPOLY_64_TEST.role_i);
         let base_session = get_networkless_base_session_for_parties(
             PRSS_SETUP_RPOLY_64_TEST.amount,
             PRSS_SETUP_RPOLY_64_TEST.threshold,
@@ -599,7 +565,7 @@ impl DistributedDecryptionV0_11 {
     }
 
     fn gen_prss_setup_rpoly_128(dir: &PathBuf) -> TestMetadataDD {
-        let role = Role::indexed_from_one(PRSS_SETUP_RPOLY_128_TEST.role_i);
+        let role = Role::indexed_by_one(PRSS_SETUP_RPOLY_128_TEST.role_i);
         let base_session = get_networkless_base_session_for_parties(
             PRSS_SETUP_RPOLY_128_TEST.amount,
             PRSS_SETUP_RPOLY_128_TEST.threshold,
@@ -683,9 +649,8 @@ impl KMSCoreVersion for V0_11 {
             KmsV0_11::gen_kms_fhe_key_handles(&dir),
             KmsV0_11::gen_threshold_fhe_keys(&dir),
             KmsV0_11::gen_app_key_blob(&dir),
-            KmsV0_11::gen_custodian_setup_message(&dir),
-            KmsV0_11::gen_operator_backup_output(&dir),
-            KmsV0_11::gen_nested_pke(&dir),
+            // KmsV0_11::gen_custodian_setup_message(&dir),
+            // KmsV0_11::gen_operator_backup_output(&dir),
         ]
     }
 

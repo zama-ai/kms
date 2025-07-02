@@ -24,7 +24,6 @@ impl Nitro {
     }
 }
 
-#[tonic::async_trait]
 impl SecurityModule for Nitro {
     /// Request the attestation document from the Nitro security module. Attestation
     /// documents are used in AWS KMS requests to receive responses where the

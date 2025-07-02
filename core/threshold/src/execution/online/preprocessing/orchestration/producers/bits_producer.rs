@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use num_integer::div_ceil;
 use tokio::{sync::mpsc::Sender, task::JoinSet};
 use tracing::instrument;
@@ -56,7 +57,7 @@ where
 
         let producers = sessions
             .into_iter()
-            .zip(channels)
+            .zip_eq(channels)
             .map(|(session, channel)| ProducerSession::new(session, channel))
             .collect();
 
@@ -169,8 +170,10 @@ mod tests {
 
         //Retrieve bits and try reconstruct them
         let mut bits_map = HashMap::new();
-        for ((party_idx, _party_id), bit_preproc) in
-            identities.iter().enumerate().zip(bit_preprocs.iter_mut())
+        for ((party_idx, _party_id), bit_preproc) in identities
+            .iter()
+            .enumerate()
+            .zip_eq(bit_preprocs.iter_mut())
         {
             let bit_len = bit_preproc.bits_len();
             assert_eq!(bit_len, num_bits);

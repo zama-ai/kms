@@ -631,7 +631,8 @@ where
                 .collect::<anyhow::Result<Vec<_>>>()?;
 
             // add the lifted e^(j) to e
-            for (e_res_e, lifted_e_e) in e_res.iter_mut().zip(lifted_e.iter()) {
+            // May panic, but would imply a bug in `syndrome_decoding_z2`
+            for (e_res_e, lifted_e_e) in e_res.iter_mut().zip_eq(lifted_e.iter()) {
                 *e_res_e += *lifted_e_e;
             }
             // correction term in the ring (inside parenthesis in syndrome update)
@@ -845,11 +846,12 @@ where
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     let monomials = ResiduePoly::<Z, EXTENSION_DEGREE>::monomials();
-
     polys
         .chunks(EXTENSION_DEGREE)
         .map(|chunk| {
             let mut out = ResiduePoly::ZERO;
+            // Observe that if there is a difference in length between the chunk and the monomials it means the upper parts are implicitely 0
+            // thus it is fine to zip them together
             for (p, monomial) in chunk.iter().zip(monomials.iter()) {
                 out += (*p) * (*monomial);
             }

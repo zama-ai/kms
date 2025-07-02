@@ -562,17 +562,16 @@ mod tests {
             assert_eq!(underlying_container.len(), ref_masks[glwe_idx].len());
             for (c, m) in underlying_container
                 .iter_mut()
-                .zip(ref_masks[glwe_idx].clone())
+                .zip_eq(ref_masks[glwe_idx].clone())
             {
                 *c = m.0;
             }
 
             let mut glwe_ctxt_mut_body = glwe_ctxt.get_mut_body();
             let underlying_container = glwe_ctxt_mut_body.as_mut();
-            assert_eq!(underlying_container.len(), bodies[glwe_idx].len());
             for (c, m) in underlying_container
                 .iter_mut()
-                .zip(bodies[glwe_idx].clone())
+                .zip_eq(bodies[glwe_idx].clone())
             {
                 *c = m.0;
             }

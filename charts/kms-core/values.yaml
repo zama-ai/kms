@@ -114,7 +114,8 @@ kmsCore:
       path: kms
     awskms:
       enabled: false
-      keychain: awskms://symm/00000000-0000-0000-0000-000000000000
+      root_key_id: 00000000-0000-0000-0000-000000000000
+      root_key_spec: symm
   aws:
     roleArn:
     region: eu-west-1

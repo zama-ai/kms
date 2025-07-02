@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   helm-test:
+    name: "Test Helm Chart"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

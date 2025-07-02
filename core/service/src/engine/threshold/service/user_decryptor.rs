@@ -225,8 +225,7 @@ impl<
                 }
                 mode => {
                     return Err(anyhow_error_and_log(format!(
-                        "Unsupported Decryption Mode for user_decrypt: {}",
-                        mode
+                        "Unsupported Decryption Mode for user_decrypt: {mode}"
                     )));
                 }
             };
@@ -322,7 +321,7 @@ impl<
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) =
             tonic_handle_potential_err(
                 validate_user_decrypt_req(&inner),
-                format!("Failed to validate user decryption request: {:?}", inner),
+                format!("Failed to validate user decryption request: {inner:?}"),
             )?;
 
         if let Some(b) = timer.as_mut() {
@@ -433,7 +432,7 @@ impl<
             );
             return Err(tonic::Status::new(
                 tonic::Code::InvalidArgument,
-                format!("The value {} is not a valid request ID!", request_id),
+                format!("The value {request_id} is not a valid request ID!"),
             ));
         }
 
@@ -447,12 +446,12 @@ impl<
 
         let sig_payload_vec = tonic_handle_potential_err(
             bc2wrap::serialize(&payload),
-            format!("Could not convert payload to bytes {:?}", payload),
+            format!("Could not convert payload to bytes {payload:?}"),
         )?;
 
         let sig = tonic_handle_potential_err(
             self.base_kms.sign(&DSEP_USER_DECRYPTION, &sig_payload_vec),
-            format!("Could not sign payload {:?}", payload),
+            format!("Could not sign payload {payload:?}"),
         )?;
         Ok(Response::new(UserDecryptionResponse {
             signature: sig.sig.to_vec(),

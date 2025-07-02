@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use num_integer::div_ceil;
 use tokio::{sync::mpsc::Sender, task::JoinSet};
 use tracing::instrument;
@@ -56,7 +57,7 @@ where
 
         let producers = sessions
             .into_iter()
-            .zip(channels)
+            .zip_eq(channels)
             .map(|(session, channel)| ProducerSession::new(session, channel))
             .collect();
 
@@ -166,7 +167,7 @@ mod tests {
         for ((party_idx, _party_id), random_preproc) in identities
             .iter()
             .enumerate()
-            .zip(random_preprocs.iter_mut())
+            .zip_eq(random_preprocs.iter_mut())
         {
             let randomness_len = random_preproc.randoms_len();
             assert_eq!(randomness_len, num_randomness);

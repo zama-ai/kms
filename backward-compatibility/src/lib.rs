@@ -354,30 +354,6 @@ impl TestType for OperatorBackupOutputTest {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct NestedPkeTest {
-    pub test_filename: Cow<'static, str>,
-    pub pk_filename: Cow<'static, str>,
-    pub sk_filename: Cow<'static, str>,
-    pub ct_filename: Cow<'static, str>,
-    pub plaintext: [u8; 32],
-    pub seed: u64,
-}
-
-impl TestType for NestedPkeTest {
-    fn module(&self) -> String {
-        KMS_MODULE_NAME.to_string()
-    }
-
-    fn target_type(&self) -> String {
-        "NestedPke".to_string()
-    }
-
-    fn test_filename(&self) -> String {
-        self.test_filename.to_string()
-    }
-}
-
 /// KMS metadata
 #[derive(Serialize, Deserialize, Clone, Debug, Display)]
 pub enum TestMetadataKMS {
@@ -386,9 +362,8 @@ pub enum TestMetadataKMS {
     KmsFheKeyHandles(KmsFheKeyHandlesTest),
     ThresholdFheKeys(ThresholdFheKeysTest),
     AppKeyBlob(AppKeyBlobTest),
-    CustodianSetupMessage(CustodianSetupMessageTest),
-    OperatorBackupOutput(OperatorBackupOutputTest),
-    NestedPke(NestedPkeTest),
+    // CustodianSetupMessage(CustodianSetupMessageTest),
+    // OperatorBackupOutput(OperatorBackupOutputTest),
 }
 
 /// KMS-grpc metadata

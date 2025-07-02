@@ -8,7 +8,7 @@ use std::{fs, thread, time::Duration};
 use sysinfo::System;
 use tests_utils::integration_test;
 use tests_utils::persistent_traces;
-use threshold_fhe::conf::party::CertificatePaths;
+use threshold_fhe::{conf::party::CertificatePaths, execution::runtime::party::Role};
 
 const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
@@ -52,9 +52,9 @@ fn purge_all() {
     purge_file_storage(&priv_storage);
     purge_file_storage(&pub_storage);
 
-    let i = 1usize;
-    let priv_storage = FileStorage::new(None, StorageType::PRIV, Some(i)).unwrap();
-    let pub_storage = FileStorage::new(None, StorageType::PUB, Some(i)).unwrap();
+    let role = Some(Role::indexed_from_one(1));
+    let priv_storage = FileStorage::new(None, StorageType::PRIV, role).unwrap();
+    let pub_storage = FileStorage::new(None, StorageType::PUB, role).unwrap();
     purge_file_storage(&priv_storage);
     purge_file_storage(&pub_storage);
 
@@ -166,10 +166,12 @@ mod kms_gen_keys_binary_test {
         Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
             .arg("--param-test")
-            .arg("--priv-url")
-            .arg(format!("file://{}", temp_dir_priv.path().display()))
-            .arg("--pub-url")
-            .arg(format!("file://{}", temp_dir_pub.path().display()))
+            .arg("--private-storage=file")
+            .arg("--private-file-path")
+            .arg(temp_dir_priv.path())
+            .arg("--public-storage=file")
+            .arg("--public-file-path")
+            .arg(temp_dir_pub.path())
             .arg(arg)
             .output()
             .unwrap()
@@ -239,10 +241,12 @@ mod kms_gen_keys_binary_test {
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
             .arg("--param-test")
-            .arg("--priv-url")
-            .arg(format!("file://{}", temp_dir_priv.path().display()))
-            .arg("--pub-url")
-            .arg(format!("file://{}", temp_dir_pub.path().display()))
+            .arg("--private-storage=file")
+            .arg("--private-file-path")
+            .arg(temp_dir_priv.path())
+            .arg("--public-storage=file")
+            .arg("--public-file-path")
+            .arg(temp_dir_pub.path())
             .arg("--cmd=signing-keys")
             .arg("centralized")
             .output()
@@ -280,10 +284,12 @@ mod kms_gen_keys_binary_test {
         // greater or equal to 2
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg("--priv-url")
-            .arg(format!("file://{}", temp_dir_priv.path().display()))
-            .arg("--pub-url")
-            .arg(format!("file://{}", temp_dir_pub.path().display()))
+            .arg("--private-storage=file")
+            .arg("--private-file-path")
+            .arg(temp_dir_priv.path())
+            .arg("--public-storage=file")
+            .arg("--public-file-path")
+            .arg(temp_dir_pub.path())
             .arg("threshold")
             .arg("--num-parties=1")
             .output()
@@ -305,10 +311,12 @@ mod kms_gen_keys_binary_test {
         // but we're asking the CLI to generate a key for party 5
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg("--priv-url")
-            .arg(format!("file://{}", temp_dir_priv.path().display()))
-            .arg("--pub-url")
-            .arg(format!("file://{}", temp_dir_pub.path().display()))
+            .arg("--private-storage=file")
+            .arg("--private-file-path")
+            .arg(temp_dir_priv.path())
+            .arg("--public-storage=file")
+            .arg("--public-file-path")
+            .arg(temp_dir_pub.path())
             .arg("--cmd=signing-keys")
             .arg("threshold")
             .arg("--signing-key-party-id=5")
@@ -331,10 +339,12 @@ mod kms_gen_keys_binary_test {
         // finally we run the command with the right args
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg("--priv-url")
-            .arg(format!("file://{}", temp_dir_priv.path().display()))
-            .arg("--pub-url")
-            .arg(format!("file://{}", temp_dir_pub.path().display()))
+            .arg("--private-storage=file")
+            .arg("--private-file-path")
+            .arg(temp_dir_priv.path())
+            .arg("--public-storage=file")
+            .arg("--public-file-path")
+            .arg(temp_dir_pub.path())
             .arg("--cmd=signing-keys")
             .arg("threshold")
             .arg("--signing-key-party-id=5")
@@ -354,17 +364,21 @@ mod kms_gen_keys_binary_test {
     fn central_s3() {
         use kms_lib::vault::storage::s3::{AWS_REGION, AWS_S3_ENDPOINT, BUCKET_NAME};
 
-        let s3_url = format!("s3://{}/central_s3/", BUCKET_NAME);
-        let file_url = "file://temp/keys/";
         // Test the following command:
-        // cargo run --features testing  --bin kms-gen-keys -- --param-test --aws-region eu-north-1 --pub-url=s3://ci-kms-key-test/central_s3/ --priv-url=file://temp/keys/ --cmd=signing-keys --overwrite --deterministic
+        // cargo run --features testing  --bin kms-gen-keys -- --param-test --aws-region eu-north-1 --public-storage=s3 --public-s3-bucket ci-kms-key-test --public-s3-prefix=central_s3 --private-storage=file --private-file-path=./temp/keys/ --cmd=signing-keys --overwrite --deterministic
         let output = Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
             .arg("--param-test")
-            .arg(format!("--aws-region={}", AWS_REGION))
-            .arg(format!("--aws-s3-endpoint={}", AWS_S3_ENDPOINT))
-            .arg(format!("--pub-url={}", s3_url))
-            .arg(format!("--priv-url={}", file_url))
+            .arg(format!("--aws-region={AWS_REGION}"))
+            .arg(format!("--aws-s3-endpoint={AWS_S3_ENDPOINT}"))
+            .arg("--public-storage=s3")
+            .arg("--public-s3-bucket")
+            .arg(BUCKET_NAME)
+            .arg("--public-s3-prefix")
+            .arg("central_s3")
+            .arg("--private-storage=file")
+            .arg("--private-file-path")
+            .arg("./temp/keys/")
             .arg("--cmd=signing-keys")
             .arg("--overwrite")
             .arg("--deterministic")
@@ -373,8 +387,8 @@ mod kms_gen_keys_binary_test {
             .unwrap();
         let log = String::from_utf8_lossy(&output.stdout);
         let err_log = String::from_utf8_lossy(&output.stderr);
-        println!("Command output: {}", log);
-        println!("Command error output: {}", err_log);
+        println!("Command output: {log}");
+        println!("Command error output: {err_log}");
         assert!(output.status.success());
         assert!(log.contains("Successfully stored public server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"S3 storage with"));
         assert!(log.contains("Successfully stored private central server signing key under the handle 60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee in storage \"file storage with"));
@@ -415,7 +429,7 @@ mod kms_server_binary_test {
                 .arg(config_file)
                 .output();
             // Debug output of failing tests
-            println!("Command output: {:?}", out);
+            println!("Command output: {out:?}");
         });
 
         thread::sleep(Duration::from_secs(5));

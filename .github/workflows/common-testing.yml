@@ -74,6 +74,7 @@ permissions: {}
 
 jobs:
   compile-rust-unit-tests:
+    name: "Compile Rust & Unit Tests"
     timeout-minutes: 500
     runs-on: ${{ inputs.runs-on }}
     services:
@@ -198,7 +199,6 @@ jobs:
             }
           skip-extraction: ${{ steps.cache.outputs.cache-hit }}
 
-
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
@@ -244,7 +244,11 @@ jobs:
 
       - name: Setup cargo dylint
         run: |
-          cargo install cargo-dylint dylint-link
+          cargo install cargo-dylint dylint-link --force
+
+      - name: clippy and rustfmt versions
+        run: |
+          cargo clippy -V && cargo fmt --version
 
       - name: Formatting
         run: cargo fmt --all -- --check

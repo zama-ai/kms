@@ -1,7 +1,5 @@
-use super::{Storage, StorageCache, StorageForText, StorageReader, StorageType};
+use super::{Storage, StorageCache, StorageForBytes, StorageReader, StorageType};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::{anyhow_error_and_log, some_or_err};
-use anyhow::ensure;
 use aws_config::SdkConfig;
 use aws_sdk_s3::{error::ProvideErrorMetadata, primitives::ByteStream, Client as S3Client};
 use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
@@ -15,14 +13,16 @@ use aws_smithy_runtime_api::{
 use aws_smithy_types::config_bag::ConfigBag;
 use http::{header::HOST, HeaderValue};
 use hyper_rustls::HttpsConnectorBuilder;
+use kms_grpc::RequestId;
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
+use std::{collections::HashSet, str::FromStr};
 use tfhe::{
     named::Named,
     safe_serialization::{safe_deserialize, safe_serialize},
     Unversionize, Versionize,
 };
+use threshold_fhe::execution::runtime::party::Role;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use url::Url;
@@ -31,66 +31,55 @@ const PREALLOCATED_BLOB_SIZE: usize = 32768;
 
 pub struct S3Storage {
     pub s3_client: S3Client,
-    pub blob_bucket: String,
-    pub blob_path: String,
+    pub bucket: String,
+    pub prefix: String,
     cache: Option<Arc<Mutex<StorageCache>>>,
 }
 
 impl S3Storage {
     pub fn new(
         s3_client: S3Client,
-        blob_bucket: String,
-        path: String,
+        bucket: String,
+        prefix: Option<String>,
         storage_type: StorageType,
-        party_id: Option<usize>,
+        party_role: Option<Role>,
         cache: Option<StorageCache>,
     ) -> anyhow::Result<Self> {
-        let extra_prefix = match party_id {
-            Some(party_id) => format!("{storage_type}-p{party_id}"),
+        let extra_prefix = match party_role {
+            Some(party_role) => format!("{storage_type}-p{party_role}"),
             None => format!("{storage_type}"),
         };
-        let blob_path = if path.is_empty() {
-            extra_prefix
-        } else {
-            format!("{}/{extra_prefix}", path)
+        let prefix = match prefix {
+            Some(p) => format!("{p}/{extra_prefix}"),
+            None => extra_prefix,
         };
         Ok(S3Storage {
             s3_client,
-            blob_bucket,
-            blob_path,
+            bucket,
+            prefix,
             cache: cache.map(|x| Arc::new(Mutex::new(x))),
         })
     }
 
-    /// Validates and parses an S3 URL into a bucket and path.
-    pub fn parse_url(url: &Url) -> anyhow::Result<(String, String)> {
-        ensure!(url.scheme() == "s3", "Storage URL is not an S3 URL");
-        let bucket =
-            some_or_err(url.host(), "No host present in URL {url}".to_string())?.to_string();
-        let path = url
-            .path()
-            .trim_start_matches('/')
-            .trim_end_matches('/')
-            .to_string();
-        Ok((bucket, path))
+    fn item_key(&self, data_id: &RequestId, data_type: &str) -> String {
+        format!("{}/{}/{}", self.prefix, data_type, data_id)
     }
 }
 
-#[tonic::async_trait]
 impl StorageReader for S3Storage {
-    async fn data_exists(&self, url: &Url) -> anyhow::Result<bool> {
-        let (bucket, key) = S3Storage::parse_url(url)?;
+    async fn data_exists(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<bool> {
+        let key = &self.item_key(data_id, data_type);
 
         tracing::info!(
             "Checking if object exists in bucket {} under key {}",
-            bucket,
+            self.bucket,
             key
         );
 
         let result = self
             .s3_client
             .head_object()
-            .bucket(bucket)
+            .bucket(self.bucket.clone())
             .key(key)
             .send()
             .await;
@@ -105,56 +94,51 @@ impl StorageReader for S3Storage {
 
     async fn read_data<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
-        url: &Url,
+        data_id: &RequestId,
+        data_type: &str,
     ) -> anyhow::Result<T> {
-        let (bucket, key) = S3Storage::parse_url(url)?;
+        let key = &self.item_key(data_id, data_type);
 
-        tracing::info!("Reading object from bucket {} under key {}", bucket, key);
+        tracing::info!(
+            "Reading object from bucket {} under key {}",
+            self.bucket,
+            key
+        );
+
         let buf = match &self.cache {
             Some(cache) => {
                 let cache = Arc::clone(cache);
                 let mut guarded_cache = cache.lock().await;
-                match guarded_cache.get(&bucket, &key) {
+                match guarded_cache.get(&self.bucket, key) {
                     Some(buf) => {
-                        tracing::info!("found bucket={bucket}, path={key} in storage cache");
+                        tracing::info!(
+                            "found bucket={}, path={} in storage cache",
+                            &self.bucket,
+                            key
+                        );
                         buf.clone()
                     }
                     None => {
-                        let data = s3_get_blob(&self.s3_client, &bucket, &key).await?;
-                        guarded_cache.insert(&bucket, &key, &data);
+                        let data = s3_get_blob(&self.s3_client, &self.bucket, key).await?;
+                        guarded_cache.insert(&self.bucket, key, &data);
                         data
                     }
                 }
             }
-            None => s3_get_blob(&self.s3_client, &bucket, &key).await?,
+            None => s3_get_blob(&self.s3_client, &self.bucket, key).await?,
         };
         safe_deserialize(&mut std::io::Cursor::new(buf), SAFE_SER_SIZE_LIMIT)
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
-        if data_id.contains('/') || data_type.contains('/') {
-            return Err(anyhow_error_and_log(
-                "Could not store data, data_id or data_type contains '/'".to_string(),
-            ));
-        }
-        Ok(Url::parse(
-            format!(
-                "s3://{}/{}/{}/{}",
-                self.blob_bucket, self.blob_path, data_type, data_id
-            )
-            .as_str(),
-        )?)
-    }
-
-    async fn all_urls(&self, data_type: &str) -> anyhow::Result<HashMap<String, Url>> {
-        let mut urls = HashMap::new();
+    async fn all_data_ids(&self, data_type: &str) -> anyhow::Result<HashSet<RequestId>> {
+        let mut ids = HashSet::new();
         let result = self
             .s3_client
             .list_objects_v2()
-            .bucket(&self.blob_bucket)
+            .bucket(&self.bucket)
             .delimiter("/")
-            .prefix(format!("{}/{}/", &self.blob_path, data_type))
+            .prefix(format!("{}/{}/", &self.prefix, data_type))
             .send()
             .await?;
         for cur_res in result.contents() {
@@ -163,19 +147,18 @@ impl StorageReader for S3Storage {
                 // Find the elements with the right prefix
                 // Find the id of file which is always the last segment when splitting on "/"
                 if let Some(cur_id) = trimmed_key.split('/').next_back() {
-                    urls.insert(cur_id.to_string(), self.compute_url(cur_id, data_type)?);
+                    ids.insert(RequestId::from_str(cur_id)?);
                 }
             }
         }
-        Ok(urls)
+        Ok(ids)
     }
 
     fn info(&self) -> String {
-        format!("S3 storage with bucket {}", self.blob_bucket)
+        format!("S3 storage with bucket {}", self.bucket)
     }
 }
 
-#[tonic::async_trait]
 impl Storage for S3Storage {
     /// If one reads "public" not as in "public key" but as in "not a secret", it makes sense to
     /// implement storage of encrypted private keys in the `PublicStorage` trait. Encrypted secrets
@@ -183,28 +166,40 @@ impl Storage for S3Storage {
     async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
-        url: &Url,
+        data_id: &RequestId,
+        data_type: &str,
     ) -> anyhow::Result<()> {
-        let (bucket, key) = S3Storage::parse_url(url)?;
+        let key = &self.item_key(data_id, data_type);
 
-        tracing::info!("Storing object in bucket {} under key {}", bucket, key);
+        tracing::info!(
+            "Storing object in bucket {} under key {}",
+            &self.bucket,
+            key
+        );
         let mut buf = Vec::new();
         safe_serialize(data, &mut buf, SAFE_SER_SIZE_LIMIT)?;
         self.cache.as_ref().map(|cache| async {
-            Arc::clone(cache).lock().await.insert(&bucket, &key, &buf);
+            Arc::clone(cache)
+                .lock()
+                .await
+                .insert(&self.bucket, key, &buf);
         });
-        s3_put_blob(&self.s3_client, &bucket, &key, buf).await
+        s3_put_blob(&self.s3_client, &self.bucket, key, buf).await
     }
 
-    async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
-        let (bucket, key) = S3Storage::parse_url(url)?;
+    async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
+        let key = &self.item_key(data_id, data_type);
 
-        tracing::info!("Deleting object from bucket {} under key {}", bucket, key);
+        tracing::info!(
+            "Deleting object from bucket {} under key {}",
+            &self.bucket,
+            key
+        );
 
         let _ = self
             .s3_client
             .delete_object()
-            .bucket(bucket)
+            .bucket(&self.bucket)
             .key(key)
             .send()
             .await;
@@ -212,23 +207,30 @@ impl Storage for S3Storage {
     }
 }
 
-#[tonic::async_trait]
-impl StorageForText for S3Storage {
-    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
-        let (bucket, key) = S3Storage::parse_url(url)?;
+impl StorageForBytes for S3Storage {
+    async fn store_bytes(
+        &mut self,
+        bytes: &[u8],
+        data_id: &RequestId,
+        data_type: &str,
+    ) -> anyhow::Result<()> {
+        let key = &self.item_key(data_id, data_type);
 
-        tracing::info!("Storing text in bucket {} under key {}", bucket, key);
+        tracing::info!("Storing text in bucket {} under key {}", &self.bucket, key);
 
-        s3_put_blob(&self.s3_client, &bucket, &key, text.as_bytes().to_vec()).await
+        s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await
     }
 
-    async fn read_text(&mut self, url: &Url) -> anyhow::Result<String> {
-        let (bucket, key) = S3Storage::parse_url(url)?;
+    async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
+        let key = &self.item_key(data_id, data_type);
 
-        tracing::info!("Reading text from bucket {} under key {}", bucket, key);
+        tracing::info!(
+            "Reading text from bucket {} under key {}",
+            &self.bucket,
+            key
+        );
 
-        String::from_utf8(s3_get_blob(&self.s3_client, &bucket, &key).await?)
-            .map_err(|e| anyhow_error_and_log(e.utf8_error().to_string()))
+        s3_get_blob(&self.s3_client, &self.bucket, key).await
     }
 }
 
@@ -269,7 +271,7 @@ pub async fn build_s3_client(
         Some(p) => {
             // Overrides the hostname checked by the AWS API endpoint
             let host_header_interceptor = HostHeaderInterceptor {
-                host: format!("s3.{}.amazonaws.com", region),
+                host: format!("s3.{region}.amazonaws.com"),
             };
             match p.scheme() {
                 "https" => {
@@ -277,7 +279,7 @@ pub async fn build_s3_client(
                         .with_native_roots()
                         .https_only()
                         // Overrides the hostname checked during the TLS handshake
-                        .with_server_name(format!("s3.{}.amazonaws.com", region))
+                        .with_server_name(format!("s3.{region}.amazonaws.com"))
                         .enable_http1()
                         .build();
                     let http_client = HyperClientBuilder::new().build(https_connector);
@@ -381,35 +383,11 @@ cfg_if::cfg_if! {
 ///    cargo test --lib -F s3_tests s3_
 #[cfg(test)]
 pub mod tests {
+    #[cfg(feature = "s3_tests")]
     use super::*;
-    use url::Url;
 
     #[cfg(feature = "s3_tests")]
     use crate::vault::storage::tests::*;
-
-    #[tokio::test]
-    async fn aws_storage_url() {
-        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        let s3_client = S3Client::new(&config);
-        let storage = S3Storage::new(
-            s3_client,
-            "blob_bucket".to_string(),
-            "blob_key_prefix".to_string(),
-            StorageType::PUB,
-            None,
-            None,
-        )
-        .unwrap();
-
-        let url = storage.compute_url("id", "type").unwrap();
-        assert_eq!(
-            url,
-            Url::parse("s3://blob_bucket/blob_key_prefix/PUB/type/id").unwrap()
-        );
-
-        assert!(storage.compute_url("as/df", "type").is_err());
-        assert!(storage.compute_url("id", "as/df").is_err());
-    }
 
     #[cfg(feature = "s3_tests")]
     #[tokio::test]
@@ -422,13 +400,15 @@ pub mod tests {
         let mut pub_storage = S3Storage::new(
             s3_client,
             BUCKET_NAME.to_string(),
-            temp_dir
-                .path()
-                .to_str()
-                .unwrap()
-                .trim_start_matches('/')
-                .trim_end_matches('/')
-                .to_string(),
+            Some(
+                temp_dir
+                    .path()
+                    .to_str()
+                    .unwrap()
+                    .trim_start_matches('/')
+                    .trim_end_matches('/')
+                    .to_string(),
+            ),
             StorageType::PUB,
             None,
             None,

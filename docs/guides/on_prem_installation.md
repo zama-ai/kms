@@ -50,8 +50,8 @@ metadata:
   namespace: kms-threshold-staging
 data:
   CORE_CLIENT__S3_ENDPOINT: https://zama-public-bucket.s3.eu-west-1.amazonaws.com
-  KMS_CORE__PRIVATE_VAULT__STORAGE: s3://zama-private-bucket
-  KMS_CORE__PUBLIC_VAULT__STORAGE: s3://zama-public-bucket
+  KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET: zama-private-bucket
+  KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET: zama-public-bucket
 ```
 
 Example of a service account for one party:

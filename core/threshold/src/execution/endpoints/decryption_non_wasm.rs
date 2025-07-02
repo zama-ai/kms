@@ -434,7 +434,7 @@ where
     .await?;
 
     tracing::info!("Bitdec result in session {:?} is ready", sid);
-    results.insert(format!("{}", sid), outputs);
+    results.insert(format!("{sid}"), outputs);
 
     let execution_stop_timer = Instant::now();
     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
@@ -511,7 +511,7 @@ where
     let ptxt_sums: Vec<_> = ptxt_sums.iter().map(|ptxt_sum| ptxt_sum.value()).collect();
 
     tracing::info!("Bitdec result in session {:?} is ready", sid);
-    results.insert(format!("{}", sid), ptxt_sums);
+    results.insert(format!("{sid}"), ptxt_sums);
 
     let execution_stop_timer = Instant::now();
     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
@@ -1030,7 +1030,14 @@ where
     let role = session.my_role();
     // This vec will be joined on "main" task and all results recombined there
     let mut vec_partial_decryptions = Vec::new();
-    for (block, preprocessing) in ciphertexts.iter().zip(preprocessings.iter_mut()) {
+    if ciphertexts.len() != preprocessings.len() {
+        return Err(anyhow_error_and_log(format!(
+            "Expected {} preprocessings, got {}",
+            ciphertexts.len(),
+            preprocessings.len()
+        )));
+    }
+    for (block, preprocessing) in ciphertexts.iter().zip_eq(preprocessings.iter_mut()) {
         //We create a batch of size 1
         let partial_decrypt = vec![Share::new(
             role,

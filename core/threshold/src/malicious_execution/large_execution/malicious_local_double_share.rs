@@ -17,6 +17,7 @@ use crate::{
     ProtocolDescription,
 };
 use async_trait::async_trait;
+use itertools::Itertools;
 use std::collections::HashMap;
 
 /// Lie in broadcast as sender
@@ -154,7 +155,9 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
                     .get_mut(role)
                     .unwrap();
 
-                for (share_t, share_2t) in sent_shares_t.iter_mut().zip(sent_shares_2t.iter_mut()) {
+                for (share_t, share_2t) in
+                    sent_shares_t.iter_mut().zip_eq(sent_shares_2t.iter_mut())
+                {
                     *share_t += Z::ONE;
                     *share_2t += Z::ONE;
                 }
@@ -230,7 +233,9 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
                     .get_mut(role)
                     .unwrap();
 
-                for (share_t, share_2t) in sent_shares_t.iter_mut().zip(sent_shares_2t.iter_mut()) {
+                for (share_t, share_2t) in
+                    sent_shares_t.iter_mut().zip_eq(sent_shares_2t.iter_mut())
+                {
                     *share_t += Z::ONE;
                     *share_2t += Z::ONE;
                 }

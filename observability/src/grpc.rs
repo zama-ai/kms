@@ -102,7 +102,7 @@ pub fn build_request<T: std::fmt::Debug>(
         let trace_id = span_context.trace_id();
         let span_id = span_context.span_id();
         let trace_flags = span_context.trace_flags().to_u8();
-        let traceparent = format!("00-{:032x}-{:016x}-{:02x}", trace_id, span_id, trace_flags);
+        let traceparent = format!("00-{trace_id:032x}-{span_id:016x}-{trace_flags:02x}");
         metadata.insert("traceparent", traceparent.parse()?);
     }
 

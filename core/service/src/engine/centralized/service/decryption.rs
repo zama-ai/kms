@@ -70,7 +70,7 @@ pub async fn user_decrypt_impl<
     let (typed_ciphertexts, link, client_enc_key, client_address, key_id, request_id, domain) =
         tonic_handle_potential_err(
             validate_user_decrypt_req(&inner),
-            format!("Failed to validate user decryption request: {:?}", inner),
+            format!("Failed to validate user decryption request: {inner:?}"),
         )?;
 
     if let Some(b) = timer.as_mut() {
@@ -198,12 +198,12 @@ pub async fn get_user_decryption_result_impl<
     // sign the response
     let sig_payload_vec = tonic_handle_potential_err(
         bc2wrap::serialize(&payload),
-        format!("Could not convert payload to bytes {:?}", payload),
+        format!("Could not convert payload to bytes {payload:?}"),
     )?;
 
     let sig = tonic_handle_potential_err(
         service.sign(&DSEP_USER_DECRYPTION, &sig_payload_vec),
-        format!("Could not sign payload {:?}", payload),
+        format!("Could not sign payload {payload:?}"),
     )?;
 
     Ok(Response::new(UserDecryptionResponse {
@@ -257,7 +257,7 @@ pub async fn public_decrypt_impl<
 
     let (ciphertexts, req_digest, key_id, request_id, eip712_domain) = tonic_handle_potential_err(
         validate_public_decrypt_req(&inner),
-        format!("Failed to validate decrypt request {:?}", inner),
+        format!("Failed to validate decrypt request {inner:?}"),
     )?;
 
     if let Some(b) = timer.as_mut() {
@@ -364,7 +364,7 @@ pub async fn public_decrypt_impl<
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
                         &request_id,
-                        Err(format!("Error collecting decrypt result: {:?}", e)),
+                        Err(format!("Error collecting decrypt result: {e:?}")),
                     );
                 }
                 Ok(Err(e)) => {
@@ -377,7 +377,7 @@ pub async fn public_decrypt_impl<
                     }
                     let _ = guarded_meta_store.update(
                         &request_id,
-                        Err(format!("Error during decryption computation: {}", e)),
+                        Err(format!("Error during decryption computation: {e}")),
                     );
                 }
             }
@@ -427,13 +427,13 @@ pub async fn get_public_decryption_result_impl<
 
     let kms_sig_payload_vec = tonic_handle_potential_err(
         bc2wrap::serialize(&kms_sig_payload),
-        format!("Could not convert payload to bytes {:?}", kms_sig_payload),
+        format!("Could not convert payload to bytes {kms_sig_payload:?}"),
     )?;
 
     // sign the decryption result with the central KMS key
     let sig = tonic_handle_potential_err(
         service.sign(&DSEP_PUBLIC_DECRYPTION, &kms_sig_payload_vec),
-        format!("Could not sign payload {:?}", kms_sig_payload),
+        format!("Could not sign payload {kms_sig_payload:?}"),
     )?;
     Ok(Response::new(PublicDecryptionResponse {
         signature: sig.sig.to_vec(),

@@ -76,7 +76,7 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     }
     let mut to_open = Vec::with_capacity(2 * amount);
     // Compute the shares of epsilon and rho and merge them together into a single list
-    for ((cur_x, cur_y), cur_trip) in x_vec.iter().zip(y_vec).zip(&triples) {
+    for ((cur_x, cur_y), cur_trip) in x_vec.iter().zip_eq(y_vec).zip_eq(&triples) {
         if cur_x.owner() != cur_y.owner()
             || cur_trip.a.owner() != cur_x.owner()
             || cur_trip.b.owner() != cur_x.owner()

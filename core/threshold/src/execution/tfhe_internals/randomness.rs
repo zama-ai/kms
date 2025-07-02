@@ -278,6 +278,7 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
 }
 
 /// Forks both generators into an iterator
+/// `mask_iter` and `noise_iter` MUST have the same length
 fn map_to_encryption_generator<
     Z: BaseRing,
     Gen: ByteRandomGenerator,
@@ -286,9 +287,9 @@ fn map_to_encryption_generator<
     mask_iter: impl Iterator<Item = MPCMaskRandomGenerator<Gen>>,
     noise_iter: impl Iterator<Item = MPCNoiseRandomGenerator<Z, EXTENSION_DEGREE>>,
 ) -> impl Iterator<Item = MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>> {
-    // We return a proper iterator.
+    // `zip_eq` may panic but this only occurs if preconditions are not met, which would be a bug in this file
     mask_iter
-        .zip(noise_iter)
+        .zip_eq(noise_iter)
         .map(|(mask, noise)| MPCEncryptionRandomGenerator { mask, noise })
 }
 

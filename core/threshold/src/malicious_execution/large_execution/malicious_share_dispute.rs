@@ -24,7 +24,7 @@ pub struct DroppingShareDispute {}
 impl ProtocolDescription for DroppingShareDispute {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-DroppingShareDispute", indent)
+        format!("{indent}-DroppingShareDispute")
     }
 }
 
@@ -54,7 +54,7 @@ pub struct WrongShareDisputeRecons {}
 impl ProtocolDescription for WrongShareDisputeRecons {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-WrongShareDisputeRecons", indent)
+        format!("{indent}-WrongShareDisputeRecons")
     }
 }
 
@@ -146,7 +146,7 @@ pub struct MaliciousShareDisputeRecons {
 impl ProtocolDescription for MaliciousShareDisputeRecons {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{}-MaliciousShareDisputeRecons", indent)
+        format!("{indent}-MaliciousShareDisputeRecons")
     }
 }
 
@@ -183,11 +183,11 @@ impl ShareDispute for MaliciousShareDisputeRecons {
         let mut polypoints_map: HashMap<Role, NetworkValue<Z>> = HashMap::new();
         for (mut polypoints_t, mut polypoints_2t) in vec_polypoints_t
             .into_iter()
-            .zip(vec_polypoints_2t.into_iter())
+            .zip_eq(vec_polypoints_2t.into_iter())
         {
             for (role_id, (polypoint_t, polypoint_2t)) in polypoints_t
                 .iter_mut()
-                .zip(polypoints_2t.iter_mut())
+                .zip_eq(polypoints_2t.iter_mut())
                 .enumerate()
             {
                 let curr_role = Role::indexed_from_zero(role_id);

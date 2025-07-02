@@ -318,7 +318,7 @@ impl<
             tracing::warn!("Request ID {} is not valid!", request_id.to_string());
             return Err(tonic::Status::new(
                 tonic::Code::InvalidArgument,
-                format!("Request ID {} is not valid!", request_id),
+                format!("Request ID {request_id} is not valid!"),
             ));
         }
 

@@ -16,11 +16,11 @@ max_queue_size = 8192
 max_export_batch_size = 2048
 scheduled_delay_ms = 500
 
-[public_vault]
-storage = "file://./keys"
+[public_vault.storage.file]
+path = "./keys"
 
-[private_vault]
-storage = "file://./keys"
+[private_vault.storage.file]
+path = "./keys"
 
 [rate_limiter_conf]
 bucket_size = 50000

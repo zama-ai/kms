@@ -200,8 +200,8 @@ async fn next_triple_batch<
     //Compute <d>_i^{2t} = <x>_i * <y>_i + <v>^{2t}
     let network_vec_share_d = vec_share_x
         .iter()
-        .zip(vec_share_y.iter())
-        .zip(vec_double_share_v.iter())
+        .zip_eq(vec_share_y.iter()) // May panic, but would imply a bug in this method
+        .zip_eq(vec_double_share_v.iter())
         .map(|((x, y), v)| *x * *y + v.degree_2t)
         .collect_vec();
 
@@ -220,15 +220,15 @@ async fn next_triple_batch<
     //Remove the mask from the opened value
     let vec_shares_z: Vec<_> = recons_vec_share_d
         .into_iter()
-        .zip(vec_double_share_v.iter())
+        .zip_eq(vec_double_share_v.iter()) // May panic, but would imply a bug in this method
         .map(|(d, v)| d - v.degree_t)
         .collect_vec();
 
     let my_role = session.my_role();
     let res = vec_share_x
         .into_iter()
-        .zip(vec_share_y.into_iter())
-        .zip(vec_shares_z.into_iter())
+        .zip_eq(vec_share_y.into_iter()) // May panic, but would imply a bug in this method
+        .zip_eq(vec_shares_z.into_iter())
         .map(|((x, y), z)| {
             Triple::new(
                 Share::new(my_role, x),

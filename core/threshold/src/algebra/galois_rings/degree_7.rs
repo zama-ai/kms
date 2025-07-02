@@ -1,4 +1,6 @@
 use anyhow::anyhow;
+use itertools::EitherOrBoth::{Both, Left, Right};
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use std::{
     collections::HashMap,
@@ -287,12 +289,23 @@ where
     fn lazy_eval(&self, powers: &[ResiduePolyF7<Z>]) -> ResiduePolyF7<Z> {
         let mut res_coefs = [Z::ZERO; 13];
         // now we go through each
-        for (coef_2, coef_r) in self.coefs().iter().zip(powers) {
-            for bit_idx in 0..7 {
-                if ((coef_2 >> bit_idx) & 1) == 1 {
-                    for (j, cr) in coef_r.coefs.iter().enumerate() {
-                        res_coefs[j + bit_idx] += cr;
+        for pair in self.coefs().iter().zip_longest(powers) {
+            match pair {
+                Both(coef_2, coef_r) => {
+                    for bit_idx in 0..7 {
+                        if ((coef_2 >> bit_idx) & 1) == 1 {
+                            for (j, cr) in coef_r.coefs.iter().enumerate() {
+                                res_coefs[j + bit_idx] += cr;
+                            }
+                        }
                     }
+                }
+                Right(_coef_r) => {
+                    // The coefficient is 0 so the result will not change
+                }
+                Left(_coef_2) => {
+                    // There are not enough powers supplied in the call, this can only happen in case of a bug
+                    panic!("Not enough powers supplied for bitwise evaluation. Only {:?} are supplied but {:?} are needed.", powers.len(), self.coefs().len());
                 }
             }
         }
