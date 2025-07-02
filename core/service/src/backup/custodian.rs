@@ -10,8 +10,8 @@ use threshold_fhe::{execution::runtime::party::Role, hashing::DomainSep};
 use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
+        backup_pke::BackupPublicKey,
         internal_crypto_types::{PublicSigKey, Signature},
-        nested_pke::NestedPublicKey,
         signcryption::internal_verify_sig,
     },
 };
@@ -39,7 +39,7 @@ pub struct InnerCustodianSetupMessage {
     pub custodian_role: Role,
     pub random_value: [u8; 32],
     pub timestamp: u64,
-    pub public_key: NestedPublicKey,
+    pub public_key: BackupPublicKey,
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -85,7 +85,7 @@ impl Named for CustodianSetupMessage {
 pub struct Custodian<S: BackupSigner, D: BackupDecryptor> {
     role: Role,
     decryptor: D,
-    nested_pk: NestedPublicKey,
+    nested_pk: BackupPublicKey,
     signer: S,
     verification_key: PublicSigKey,
 }
@@ -107,7 +107,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         signer: S,
         verification_key: PublicSigKey,
         decryptor: D,
-        nested_pk: NestedPublicKey,
+        nested_pk: BackupPublicKey,
     ) -> Result<Self, BackupError> {
         Ok(Self {
             role,
@@ -133,7 +133,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         rng: &mut R,
         backup: &OperatorBackupOutput,
         operator_verification_key: &PublicSigKey,
-        operator_pk: &NestedPublicKey,
+        operator_pk: &BackupPublicKey,
         backup_id: RequestId,
         operator_role: Role,
     ) -> Result<CustodianRecoveryOutput, BackupError> {
@@ -207,7 +207,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         })
     }
 
-    pub fn public_key(&self) -> &NestedPublicKey {
+    pub fn public_key(&self) -> &BackupPublicKey {
         &self.nested_pk
     }
 

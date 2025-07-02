@@ -7,8 +7,8 @@ use rand::rngs::OsRng;
 use threshold_fhe::execution::runtime::party::Role;
 
 use crate::cryptography::{
+    backup_pke,
     internal_crypto_types::{gen_sig_keys, PublicSigKey},
-    nested_pke,
 };
 
 use super::{custodian, error::BackupError, operator::Operator};
@@ -44,7 +44,7 @@ fn full_flow() {
             .map(|i| {
                 let custodian_role = Role::indexed_from_zero(i);
                 let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-                let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+                let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
                 custodian::Custodian::new(
                     custodian_role,
                     signing_key,
@@ -63,7 +63,7 @@ fn full_flow() {
             .map(|i| {
                 let operator_role = Role::indexed_from_zero(i);
                 let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-                let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+                let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
                 Operator::new(
                     operator_role,
                     custodian_messages.clone(),
@@ -180,7 +180,7 @@ fn operator_setup() {
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
             let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+            let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
             custodian::Custodian::new(
                 custodian_role,
                 signing_key,
@@ -201,7 +201,7 @@ fn operator_setup() {
         let mut wrong_custodian_messages = custodian_messages.clone();
         wrong_custodian_messages[0].msg.custodian_role = Role::indexed_from_zero(1);
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+        let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
         let operator = Operator::new(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
@@ -227,7 +227,7 @@ fn operator_setup() {
         wrong_custodian_messages[0].verification_key = wrong_verification_key;
 
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+        let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
         let operator = Operator::new(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
@@ -249,7 +249,7 @@ fn operator_setup() {
         wrong_custodian_messages[0].msg.header.push('z');
 
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+        let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
         let operator = Operator::new(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
@@ -271,7 +271,7 @@ fn operator_setup() {
         wrong_custodian_messages[0].msg.timestamp += 3700;
 
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+        let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
         let operator = Operator::new(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
@@ -290,7 +290,7 @@ fn operator_setup() {
     // no tweaks, all should pass
     {
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+        let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
         let _ = Operator::new(
             Role::indexed_from_zero(0),
             custodian_messages,
@@ -318,7 +318,7 @@ fn custodian_reencrypt() {
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
             let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+            let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
             custodian::Custodian::new(
                 custodian_role,
                 signing_key,
@@ -337,7 +337,7 @@ fn custodian_reencrypt() {
         .map(|i| {
             let operator_role = Role::indexed_from_zero(i);
             let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (private_key, public_key) = nested_pke::keygen(&mut rng).unwrap();
+            let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
             Operator::new(
                 operator_role,
                 custodian_messages.clone(),

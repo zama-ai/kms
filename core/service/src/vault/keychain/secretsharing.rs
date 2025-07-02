@@ -4,8 +4,8 @@ use crate::{
     backup::{custodian::CustodianSetupMessage, operator::Operator},
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
+        backup_pke::{self, BackupPrivateKey},
         internal_crypto_types::{PrivateSigKey, PublicSigKey},
-        nested_pke::{self, NestedPrivateKey},
     },
 };
 use k256::ecdsa::SigningKey;
@@ -21,7 +21,7 @@ use tfhe::{
 use threshold_fhe::execution::runtime::party::Role;
 
 pub struct SecretShareKeychain {
-    operator: Operator<PrivateSigKey, NestedPrivateKey>,
+    operator: Operator<PrivateSigKey, BackupPrivateKey>,
     num_shares: usize,
 }
 
@@ -32,7 +32,7 @@ impl SecretShareKeychain {
         signer: PrivateSigKey,
         threshold: usize,
     ) -> anyhow::Result<Self> {
-        let (decryptor, public_key) = nested_pke::keygen(&mut OsRng).unwrap();
+        let (decryptor, public_key) = backup_pke::keygen(&mut OsRng).unwrap();
         let verification_key = PublicSigKey::new(*SigningKey::verifying_key(signer.sk()));
         let num_shares = custodian_messages.len();
         let operator = Operator::new(

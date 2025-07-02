@@ -22,8 +22,8 @@ use crate::{
     backup::custodian::DSEP_BACKUP_SETUP,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
+        backup_pke::BackupPublicKey,
         internal_crypto_types::{PublicSigKey, Signature},
-        nested_pke::NestedPublicKey,
         signcryption::internal_verify_sig,
     },
     engine::base::safe_serialize_hash_element_versioned,
@@ -44,12 +44,12 @@ pub(crate) const DSEP_BACKUP_OPERATOR: DomainSep = *b"BKUPOPER";
 
 pub struct Operator<S: BackupSigner, D: BackupDecryptor> {
     my_role: Role,
-    custodian_keys: Vec<(NestedPublicKey, PublicSigKey)>,
+    custodian_keys: Vec<(BackupPublicKey, PublicSigKey)>,
     signer: S,
     // the public component of [signer] above
     verification_key: PublicSigKey,
     decryptor: D,
-    public_key: NestedPublicKey,
+    public_key: BackupPublicKey,
     threshold: usize,
 }
 
@@ -211,7 +211,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
         signer: S,
         verification_key: PublicSigKey,
         decryptor: D,
-        public_key: NestedPublicKey,
+        public_key: BackupPublicKey,
         threshold: usize,
     ) -> Result<Self, BackupError> {
         verify_n_t(custodian_messages.len(), threshold)?;
@@ -270,7 +270,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
         &self.verification_key
     }
 
-    pub fn public_key(&self) -> &NestedPublicKey {
+    pub fn public_key(&self) -> &BackupPublicKey {
         &self.public_key
     }
 
