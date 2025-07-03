@@ -185,7 +185,7 @@ data:
     {{- end }}
 
     [rate_limiter_conf]
-    bucket_size = 50000
+    bucket_size = {{ .Values.kmsCore.rateLimiter.bucketSize }}
     pub_decrypt = 1
     user_decrypt = 1
     crsgen = 100

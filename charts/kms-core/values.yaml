@@ -24,6 +24,8 @@ kmsCore:
   envFrom:
     configmap:
       name:
+  rateLimiter:
+    bucketSize: 50000
   # Add the following to enable threshold mode:
   thresholdMode:
     enabled: false
