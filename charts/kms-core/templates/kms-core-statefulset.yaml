@@ -245,7 +245,7 @@ spec:
               --aws-region {{ .Values.kmsCore.aws.region }} \
               {{- if .Values.kmsCore.publicVault.s3.enabled -}}
               --public-storage s3 \
-              --public-s3-bucket "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.publicVault.s3.bucket }}}" \
+              --public-s3-bucket "$(echo ${KMS_CORE__PRIVATE_VAULT__STORAGE}  | cut -d"/" -f3)" \
                 {{- if .Values.kmsCore.publicVault.s3.path }}
               --public-s3-prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:=={{ .Values.kmsCore.publicVault.s3.path }}}" \
                 {{- end }}
@@ -255,7 +255,7 @@ spec:
               {{- end }}
               {{- if .Values.kmsCore.privateVault.s3.enabled -}}
               --private-storage s3 \
-              --private-s3-bucket "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.privateVault.s3.bucket }}}" \
+              --private-s3-bucket "$(echo ${KMS_CORE__PRIVATE_VAULT__STORAGE}  | cut -d"/" -f3)" \
                 {{- if .Values.kmsCore.privateVault.s3.path }}
               --private-s3-prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:=={{ .Values.kmsCore.privateVault.s3.path }}}" \
                 {{- end }}
