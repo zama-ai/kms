@@ -33,23 +33,23 @@ spec:
             - |
               export AWS_REGION="${AWS_REGION:={{ .Values.kmsCore.aws.region }}}"
               export AWS_ROLE_ARN="${AWS_ROLE_ARN:={{ .Values.kmsCore.aws.roleArn }}}"
-              {{- if .Values.kmsCore.publicVault.s3.enabled -}}
+              {{ if .Values.kmsCore.publicVault.s3.enabled }}
               export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET="$(echo ${KMS_CORE__PUBLIC_VAULT__STORAGE}  | cut -d"/" -f3)"
-              {{- if .Values.kmsCore.publicVault.s3.path }}
+              {{ if .Values.kmsCore.publicVault.s3.path }}
               export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.path }}}"
-              {{- end }}
-              {{- end }}
-              {{- if .Values.kmsCore.privateVault.s3.enabled -}}
+              {{ end }}
+              {{ end }}
+              {{ if .Values.kmsCore.privateVault.s3.enabled }}
               export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET="$(echo ${KMS_CORE__PRIVATE_VAULT__STORAGE}  | cut -d"/" -f3)"
-              {{- if .Values.kmsCore.privateVault.s3.path }}
+              {{ if .Values.kmsCore.privateVault.s3.path }}
               export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.privateVault.s3.path }}}"
-              {{- end }}
-              {{- end }}
+              {{ end }}
+              {{ end }}
               export KMS_CORE__THRESHOLD__MY_ID="${KMS_CORE__THRESHOLD__MY_ID:={{ .Values.kmsPeers.id }}}"
-              {{- if .Values.kmsCore.nitroEnclave.enabled }}
+              {{ if .Values.kmsCore.nitroEnclave.enabled }}
               export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID:={{ .Values.kmsCore.privateVault.awskms.root_key_id }}}"
               export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC:={{ .Values.kmsCore.privateVault.awskms.root_key_spec }}}"
-              {{- end }}
+              {{ end }}
               envsubst < /var/lib/kms-core/config/aws.toml > aws.toml
               envsubst < /var/lib/kms-core/config/vaults.toml > vaults.toml
               envsubst < /var/lib/kms-core/config/kms-gen-keys.toml > kms-gen-keys.toml
