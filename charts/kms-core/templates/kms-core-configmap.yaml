@@ -15,64 +15,64 @@ data:
     [aws]
     region = "${AWS_REGION}"
     role_arn = "${AWS_ROLE_ARN}"
-    {{- if .Values.minio.enabled }}
+    {{ if .Values.minio.enabled }}
     s3_endpoint = "http://minio:9000"
-    {{- else }}
-      {{- if .Values.kmsCore.nitroEnclave.enabled }}
-        {{- if .Values.kmsCore.nitroEnclave.ports.imds }}
+    {{ else }}
+      {{ if .Values.kmsCore.nitroEnclave.enabled }}
+        {{ if .Values.kmsCore.nitroEnclave.ports.imds }}
     imds_endpoint = "http://localhost:{{ .Values.kmsCore.nitroEnclave.ports.imds }}"
-        {{- end }}
-        {{- if .Values.kmsCore.nitroEnclave.ports.sts }}
+        {{ end }}
+        {{ if .Values.kmsCore.nitroEnclave.ports.sts }}
     sts_endpoint = "https://localhost:{{ .Values.kmsCore.nitroEnclave.ports.sts }}"
-        {{- end }}
+        {{ end }}
     s3_endpoint = "https://localhost:{{ .Values.kmsCore.nitroEnclave.ports.s3 }}"
     awskms_endpoint = "https://localhost:{{ .Values.kmsCore.nitroEnclave.ports.awskms }}"
-      {{- end }}
-    {{- end }}
+      {{ end }}
+    {{ end }}
   vaults.toml: |
-    {{- if .Values.kmsCore.publicVault.s3.enabled }}
+    {{ if .Values.kmsCore.publicVault.s3.enabled }}
     [public_vault.storage.s3]
     bucket = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}"
-      {{- if .Values.kmsCore.publicVault.s3.path }}
+      {{ if .Values.kmsCore.publicVault.s3.path }}
     prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX}"
-      {{- end }}
-    {{- else }}
+      {{ end }}
+    {{ else }}
     [public_vault.storage.file]
     path = "./keys"
-    {{- end }}
+    {{ end }}
 
-    {{- if .Values.kmsCore.privateVault.s3.enabled -}}
+    {{ if .Values.kmsCore.privateVault.s3.enabled }}
     [private_vault.storage.s3]
     bucket = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET}"
-      {{- if .Values.kmsCore.publicVault.s3.path }}
+      {{ if .Values.kmsCore.publicVault.s3.path }}
     prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX}"
-      {{- end }}
-    {{- else }}
+      {{ end }}
+    {{ else }}
     [private_vault.storage.file]
     path = "./keys"
-    {{- end }}
-    {{- if .Values.kmsCore.nitroEnclave.enabled }}
+    {{ end }}
+    {{ if .Values.kmsCore.nitroEnclave.enabled }}
     [private_vault.keychain.aws_kms]
     root_key_id = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID}"
     root_key_spec = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC}"
-    {{- end }}
+    {{ end }}
   kms-gen-keys.toml: |
     [keygen]
     enabled = true
     {{ if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
     my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
-      {{- if .Values.kmsCore.thresholdMode.peersList }}
+      {{ if .Values.kmsCore.thresholdMode.peersList }}
     num_parties = {{ len .Values.kmsCore.thresholdMode.peersList }}
-      {{- else }}
+      {{ else }}
     num_parties = {{ int .Values.kmsPeers.count }}
-      {{- end }}
+      {{ end }}
       {{ if .Values.kmsCore.addressOverride }}
     tls_subject = "{{ .Values.kmsCore.addressOverride }}-{{ .Values.kmsPeers.id}}"
-      {{- else }}
+      {{ else }}
     tls_subject = "{{ include "kmsCoreName" . }}-{{ .Values.kmsPeers.id}}"
-      {{- end }}
-    {{- end }}
+      {{ end }}
+    {{ end }}
   kms-server.toml: |
     [service]
     listen_address = "0.0.0.0"
