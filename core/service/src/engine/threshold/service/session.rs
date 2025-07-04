@@ -30,6 +30,9 @@ pub struct SessionPreparer {
     pub networking_strategy: Arc<RwLock<NetworkingStrategy>>,
     pub prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>, // TODO make generic?
     pub prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,   // TODO make generic?
+    // This is a workaround to delete sessions, later we'll remove networking_strategy.
+    pub(crate) networking_manager:
+        Arc<RwLock<threshold_fhe::networking::grpc::GrpcNetworkingManager>>,
 }
 
 impl SessionPreparer {
@@ -71,6 +74,8 @@ impl SessionPreparer {
         Ok(base_session)
     }
 
+    // TODO we should return something here with a drop implementation that
+    // destroys the session when dropped.
     pub async fn prepare_ddec_data_from_sessionid_z128(
         &self,
         session_id: SessionId,
@@ -123,6 +128,22 @@ impl SessionPreparer {
             networking_strategy: self.networking_strategy.clone(),
             prss_setup_z128: self.prss_setup_z128.clone(),
             prss_setup_z64: self.prss_setup_z64.clone(),
+            networking_manager: self.networking_manager.clone(),
         }
+    }
+
+    pub async fn destroy_session(&self, session_id: SessionId) {
+        // consider using something like `tokio_util::time::delay_queue::DelayQueue` for session management
+        // https://docs.rs/tokio-util/latest/tokio_util/time/delay_queue/struct.DelayQueue.html
+        // so inserting completed sessions to a queue and then have a task that periodically checks the queue
+        // and deletes sessions that are ready to be deleted.
+
+        let networking_manager = self.networking_manager.clone();
+        tokio::spawn(async move {
+            // wait for 60 seconds before deleting
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            let nm = networking_manager.read().await;
+            nm.delete_session(session_id)
+        });
     }
 }

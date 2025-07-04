@@ -185,6 +185,12 @@ impl GrpcNetworkingManager {
         let message_store = Arc::new(message_store);
         self.message_queues
             .insert(session_id, message_store.clone());
+        tracing::info!(
+            "{} creating new session {}, queue size {}",
+            self.owner,
+            session_id,
+            self.message_queues.len(),
+        );
 
         let timeout = match network_mode {
             NetworkMode::Async => *NETWORK_TIMEOUT_ASYNC,
@@ -205,6 +211,14 @@ impl GrpcNetworkingManager {
             #[cfg(feature = "choreographer")]
             num_byte_sent: RwLock::new(0),
         })
+    }
+
+    pub fn delete_session(&self, session_id: SessionId) {
+        if self.message_queues.remove(&session_id).is_some() {
+            // TODO: double check if we should empty the channels here
+        } else {
+            tracing::error!("Session ID {:?} not found in message queues", session_id);
+        }
     }
 }
 

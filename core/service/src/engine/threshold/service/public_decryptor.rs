@@ -109,7 +109,7 @@ impl<
                 )?;
                 let mut noiseflood_session = NoiseFloodSmallSession::new(session);
 
-                decrypt_using_noiseflooding(
+                let res = decrypt_using_noiseflooding(
                     &mut noiseflood_session,
                     &keys.integer_server_key,
                     keys.sns_key
@@ -120,7 +120,9 @@ impl<
                     dec_mode,
                     session_prep.own_identity()?,
                 )
-                .await
+                .await;
+                session_prep.destroy_session(session_id).await;
+                res
             }
             DecryptionMode::BitDecSmall => {
                 let mut session = tonic_handle_potential_err(
@@ -130,7 +132,7 @@ impl<
                     "Could not prepare ddec data for bitdec decryption".to_string(),
                 )?;
 
-                secure_decrypt_using_bitdec(
+                let res = secure_decrypt_using_bitdec(
                     &mut session,
                     &low_level_ct.try_get_small_ct()?,
                     &keys.private_keys,
@@ -138,7 +140,9 @@ impl<
                     dec_mode,
                     session_prep.own_identity()?,
                 )
-                .await
+                .await;
+                session_prep.destroy_session(session_id).await;
+                res
             }
             mode => {
                 return Err(anyhow_error_and_log(format!(

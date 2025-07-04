@@ -157,6 +157,7 @@ impl<
                         DecryptionMode::NoiseFloodSmall,
                     )
                     .await;
+                    session_prep.destroy_session(session_id).await;
 
                     let res = match pdec {
                         Ok((partial_dec_map, packing_factor, time)) => {
@@ -198,6 +199,7 @@ impl<
                         DecryptionMode::BitDecSmall,
                     )
                     .await;
+                    session_prep.destroy_session(session_id).await;
 
                     let res = match pdec {
                         Ok((partial_dec_map, time)) => {
