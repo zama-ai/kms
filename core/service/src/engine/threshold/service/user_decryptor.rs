@@ -37,7 +37,7 @@ use tracing::Instrument;
 use crate::{
     anyhow_error_and_log,
     cryptography::{
-        internal_crypto_types::{PrivateSigKey, PublicEncKey},
+        internal_crypto_types::{PrivateSigKey, UnifiedPublicEncKey},
         signcryption::{signcrypt, SigncryptionPayload},
     },
     engine::{
@@ -92,7 +92,7 @@ impl<
         rng: &mut (impl CryptoRng + RngCore),
         typed_ciphertexts: &[TypedCiphertext],
         link: Vec<u8>,
-        client_enc_key: &PublicEncKey,
+        client_enc_key: &UnifiedPublicEncKey,
         client_address: &alloy_primitives::Address,
         sig_key: Arc<PrivateSigKey>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,

@@ -78,7 +78,7 @@ pub struct NodeInfo {
     pub name: String,
     pub party_id: u32,
     pub verification_key: PublicSigKey,
-    pub backup_encryption_public_key: PublicEncKey,
+    pub backup_encryption_public_key: PublicEncKey<ml_kem::MlKem512>,
 
     pub external_url: String,
 

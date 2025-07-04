@@ -2,7 +2,8 @@ use super::traits::BaseKms;
 use crate::consts::ID_LENGTH;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::decompression;
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
+use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signcryption::internal_verify_sig;
 use crate::util::key_setup::FhePrivateKey;
 use crate::{anyhow_error_and_log, compute_user_decrypt_message_hash};
@@ -421,7 +422,7 @@ pub(crate) fn compute_external_user_decrypt_signature(
     server_sk: &PrivateSigKey,
     payload: &UserDecryptionResponsePayload,
     eip712_domain: &Eip712Domain,
-    user_pk: &PublicEncKey,
+    user_pk: &UnifiedPublicEncKey,
 ) -> anyhow::Result<Vec<u8>> {
     let message_hash = compute_user_decrypt_message_hash(payload, eip712_domain, user_pk)?;
 

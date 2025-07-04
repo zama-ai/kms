@@ -2,7 +2,9 @@ use crate::anyhow_error_and_log;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::decompression;
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signcryption::{signcrypt, SigncryptionPayload};
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenCallValues, PubDecCallValues, UserDecryptCallValues};
@@ -420,7 +422,7 @@ pub async fn async_user_decrypt<
     rng: &mut (impl CryptoRng + RngCore),
     typed_ciphertexts: &[TypedCiphertext],
     req_digest: &[u8],
-    client_enc_key: &PublicEncKey,
+    client_enc_key: &UnifiedPublicEncKey,
     client_address: &alloy_primitives::Address,
     server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
@@ -753,7 +755,7 @@ impl<
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
         link: &[u8],
-        client_enc_key: &PublicEncKey,
+        client_enc_key: &UnifiedPublicEncKey,
         client_address: &alloy_primitives::Address,
     ) -> anyhow::Result<Vec<u8>> {
         let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
@@ -901,7 +903,9 @@ pub(crate) mod tests {
     };
     use crate::consts::{DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
-    use crate::cryptography::internal_crypto_types::{gen_sig_keys, PrivateSigKey};
+    use crate::cryptography::internal_crypto_types::{
+        gen_sig_keys, PrivateSigKey, UnifiedPublicEncKey,
+    };
     use crate::cryptography::signcryption::{
         decrypt_signcryption_with_link, ephemeral_signcryption_key_generation,
     };
@@ -1375,14 +1379,18 @@ pub(crate) mod tests {
         };
         let link = vec![42_u8, 42, 42];
         let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
-        let client_keys = {
-            let mut keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
+        let client_key_pair = {
+            let mut keys = ephemeral_signcryption_key_generation::<ml_kem::MlKem512>(
+                &mut rng,
+                &client_sig_key,
+            );
             if sim_type == SimulationType::BadEphemeralKey {
                 let bad_keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
                 keys.sk = bad_keys.sk;
             }
             keys
         };
+        let unified_client_keys = UnifiedPublicEncKey::MlKem512(client_key_pair.pk.enc_key.clone());
         let mut rng = kms.base_kms.new_rng().await;
         let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage
@@ -1395,8 +1403,8 @@ pub(crate) mod tests {
             fhe_type,
             ct_format,
             &link,
-            &client_keys.pk.enc_key,
-            &client_keys.pk.client_address,
+            &unified_client_keys,
+            &client_key_pair.pk.client_address,
         );
         // if bad FHE key is used, then it *might* panic
         let raw_cipher = if sim_type == SimulationType::BadFheKey {
@@ -1414,7 +1422,7 @@ pub(crate) mod tests {
             &DSEP_USER_DECRYPTION,
             &raw_cipher,
             &link,
-            &client_keys,
+            &client_key_pair.to_unified(),
             &keys.centralized_kms_keys.sig_pk,
         );
         if sim_type == SimulationType::BadEphemeralKey {

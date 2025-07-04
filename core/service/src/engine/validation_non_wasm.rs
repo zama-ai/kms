@@ -13,6 +13,7 @@ use kms_grpc::{
 };
 use threshold_fhe::hashing::DomainSep;
 
+use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 use crate::{
     anyhow_error_and_log, anyhow_error_and_warn_log,
     cryptography::{
@@ -80,7 +81,7 @@ pub fn validate_user_decrypt_req(
 ) -> anyhow::Result<(
     Vec<TypedCiphertext>,
     Vec<u8>,
-    PublicEncKey,
+    UnifiedPublicEncKey,
     alloy_primitives::Address,
     RequestId,
     RequestId,
@@ -130,7 +131,24 @@ pub fn validate_user_decrypt_req(
     };
 
     let (link, _) = req.compute_link_checked()?;
-    let client_enc_key: PublicEncKey = bc2wrap::deserialize(&req.enc_key)?;
+    // NOTE: we need to do some backward compatibility support here so
+    // first try to deserialize it using the old format
+    let client_enc_key = match bc2wrap::deserialize::<PublicEncKey<ml_kem::MlKem1024>>(&req.enc_key)
+    {
+        Ok(inner) => {
+            tracing::warn!("🔒 Using MlKem1024 public encryption key");
+            UnifiedPublicEncKey::MlKem1024(inner)
+        }
+        Err(_) => tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
+            std::io::Cursor::new(&req.enc_key),
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
+            )
+        })?,
+    };
     Ok((
         req.typed_ciphertexts.clone(),
         link,
@@ -420,7 +438,8 @@ mod tests {
 
     use crate::{
         cryptography::{
-            internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
+            internal_crypto_types::{gen_sig_keys, UnifiedPublicEncKey},
+            signcryption::ephemeral_encryption_key_generation,
         },
         engine::{
             base::derive_request_id,
@@ -550,8 +569,16 @@ mod tests {
         let key_id = derive_request_id("key_id").unwrap();
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let mut rng = AesRng::from_random_seed();
-        let (enc_pk, _enc_sk) = ephemeral_encryption_key_generation(&mut rng);
-        let enc_pk_buf = bc2wrap::serialize(&enc_pk).unwrap();
+        let (enc_pk, _enc_sk) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
+        let unified_enc_pk = UnifiedPublicEncKey::MlKem512(enc_pk.clone());
+
+        let mut enc_pk_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &unified_enc_pk,
+            &mut enc_pk_buf,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
 
         // ciphertexts are not directly verified except the length
         let ciphertexts = vec![TypedCiphertext {
@@ -646,8 +673,8 @@ mod tests {
 
         // bad public key
         {
-            let mut bad_enc_pk_buf = enc_pk_buf.clone();
-            bad_enc_pk_buf[0] ^= 1;
+            // note that we're serializing the mlkem512 public key, which is not supported
+            let bad_enc_pk_buf = bc2wrap::serialize(&enc_pk).unwrap();
             let req = UserDecryptionRequest {
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
@@ -659,7 +686,7 @@ mod tests {
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains("UnexpectedEnd")); // the error message that is returned from trying to decode the bad encoding
+                .contains("Error deserializing")); // the error message that is returned from trying to decode the bad encoding
         }
 
         // finally everything is ok
@@ -702,7 +729,7 @@ mod tests {
         let (client_pk, _client_sk) = gen_sig_keys(&mut rng);
         let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
         let ciphertext = vec![1, 2, 3];
-        let (enc_pk, _) = ephemeral_encryption_key_generation(&mut rng);
+        let (enc_pk, _) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
         let key_id = derive_request_id("key_id").unwrap();
 
         let typed_ciphertext = TypedCiphertext {
