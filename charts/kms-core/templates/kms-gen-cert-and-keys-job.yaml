@@ -47,8 +47,8 @@ spec:
               {{ end }}
               export KMS_CORE__THRESHOLD__MY_ID="${KMS_CORE__THRESHOLD__MY_ID:={{ .Values.kmsPeers.id }}}"
               {{ if .Values.kmsCore.nitroEnclave.enabled }}
-              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID:={{ .Values.kmsCore.privateVault.awskms.root_key_id }}}"
-              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC:={{ .Values.kmsCore.privateVault.awskms.root_key_spec }}}"
+              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID="$(echo $KMS_CORE__PRIVATE_VAULT__KEYCHAIN | cut -d"/" -f4)"
+              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="$(echo $KMS_CORE__PRIVATE_VAULT__KEYCHAIN | cut -d"/" -f3)"
               {{ end }}
               envsubst < /var/lib/kms-core/config/aws.toml > aws.toml
               envsubst < /var/lib/kms-core/config/vaults.toml > vaults.toml

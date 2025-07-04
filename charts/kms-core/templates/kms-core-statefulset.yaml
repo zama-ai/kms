@@ -68,8 +68,8 @@ spec:
               {{ end }}
               {{ end }}
               {{ if .Values.kmsCore.nitroEnclave.enabled }}
-              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID:={{ .Values.kmsCore.privateVault.awskms.root_key_id }}}"
-              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC:={{ .Values.kmsCore.privateVault.awskms.root_key_spec }}}"
+              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID="$(echo $KMS_CORE__PRIVATE_VAULT__KEYCHAIN | cut -d"/" -f4)"
+              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="$(echo $KMS_CORE__PRIVATE_VAULT__KEYCHAIN | cut -d"/" -f3)"
               {{ end }}
               for i in $(seq 1 {{ len .Values.kmsCore.thresholdMode.peersList }}); do
                 BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/?list-type=2&prefix=PUB-p${i}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
