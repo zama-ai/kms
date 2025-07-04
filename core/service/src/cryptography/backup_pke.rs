@@ -19,12 +19,12 @@ struct InnerBackupPrivateKey {
     decapsulation_key: DecapsulationKey<KemParam>,
 }
 
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum BackupPrivateKeyVersioned {
     V0(BackupPrivateKey),
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(BackupPrivateKeyVersioned)]
 pub struct BackupPrivateKey {
     decapsulation_key: Vec<u8>,
@@ -80,12 +80,12 @@ impl InnerBackupPrivateKey {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum BackupPublicKeyVersioned {
     V0(BackupPublicKey),
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(BackupPublicKeyVersioned)]
 pub struct BackupPublicKey {
     encapsulation_key: Vec<u8>,
@@ -166,6 +166,7 @@ impl BackupPublicKey {
 #[allow(unknown_lints)]
 #[allow(non_local_effect_before_error_return)]
 pub fn keygen<R: Rng + CryptoRng>(
+    //todo change order
     rng: &mut R,
 ) -> Result<(BackupPrivateKey, BackupPublicKey), CryptographyError> {
     let (decapsulation_key, encapsulation_key) = hybrid_ml_kem::keygen(rng);

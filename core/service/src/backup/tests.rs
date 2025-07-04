@@ -1,14 +1,18 @@
 use std::collections::BTreeMap;
 
+use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::RequestId;
 use proptest::prelude::*;
-use rand::rngs::OsRng;
+use rand::{rngs::OsRng, SeedableRng};
 use threshold_fhe::execution::runtime::party::Role;
 
-use crate::cryptography::{
-    backup_pke,
-    internal_crypto_types::{gen_sig_keys, PublicSigKey},
+use crate::{
+    backup::seed_phrase::generate_keys_from_rng,
+    cryptography::{
+        backup_pke,
+        internal_crypto_types::{gen_sig_keys, PublicSigKey},
+    },
 };
 
 use super::{custodian, error::BackupError, operator::Operator};
@@ -35,22 +39,20 @@ fn full_flow() {
         let secret_len = 32usize;
         let backup_id = RequestId::from_bytes([8u8; crate::consts::ID_LENGTH]);
 
-        let mut rng = OsRng;
-
+        let mut rng = AesRng::seed_from_u64(1337);
         // *setup*
         // custodians generate signing keys and encryption keys
         // those are sent to the operators
         let custodians: Vec<_> = (0..custodian_count)
             .map(|i| {
                 let custodian_role = Role::indexed_from_zero(i);
-                let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-                let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
+                let (keys, _mnemonic) = generate_keys_from_rng(&mut rng).unwrap();
                 custodian::Custodian::new(
                     custodian_role,
-                    signing_key,
-                    verification_key,
-                    private_key,
-                    public_key,
+                    keys.sig_key,
+                    keys.verf_key,
+                    keys.nested_dec_key,
+                    keys.nested_enc_key,
                 )
                 .unwrap()
             })

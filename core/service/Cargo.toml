@@ -49,6 +49,9 @@ aws-smithy-runtime = { version = "=1.7.3", features = [
 aws-smithy-runtime-api = { version = "=1.7.3", optional = true }
 aws-smithy-types = { version = "=1.2.9", optional = true }
 bincode.workspace = true
+# Needed for seed phrase generation for custodian backup. Project by "rust-bitcoin" that also make package `secp256k1` we use. 
+# Package used by 6k+ projects, and project itself has 10+ developers, has CI enabled, but no statements regarding security. 
+bip39 = { version = "=2.2.0", features = ["alloc"] }
 bc2wrap.workspace = true
 bytes.workspace = true
 cbc = { version = "=0.1.2", features = ["alloc"] }
