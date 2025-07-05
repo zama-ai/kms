@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use crate::{
     consts::RND_SIZE,
     cryptography::{
@@ -23,7 +25,7 @@ pub(crate) struct CustodianKeySet {
 }
 
 #[allow(dead_code)]
-pub(crate) fn generate_keys_from_rng<R>(rng: &mut R) -> anyhow::Result<(CustodianKeySet, Mnemonic)>
+pub(crate) fn generate_keys_from_rng<R>(rng: &mut R) -> anyhow::Result<(CustodianKeySet, String)>
 where
     R: Rng + CryptoRng,
 {
@@ -32,14 +34,13 @@ where
     let mnemonic = Mnemonic::from_entropy(&entropy)?;
 
     let custodian_keys = custodian_keys_from_entropy(&entropy)?;
-    Ok((custodian_keys, mnemonic))
+    Ok((custodian_keys, mnemonic.to_string()))
 }
 
 #[allow(dead_code)]
-pub(crate) fn generate_keys_from_seed_phrase(
-    seed_phrase: &Mnemonic,
-) -> anyhow::Result<CustodianKeySet> {
-    let entropy = seed_phrase.to_entropy();
+pub(crate) fn generate_keys_from_seed_phrase(seed_phrase: &str) -> anyhow::Result<CustodianKeySet> {
+    let mnemonic = Mnemonic::from_str(&seed_phrase.trim().to_lowercase())?;
+    let entropy = mnemonic.to_entropy();
     assert!(
         entropy.len() >= RND_SIZE,
         "Seed phrase entropy must be at least {} bytes long",
@@ -86,15 +87,12 @@ fn custodian_keys_from_entropy(entropy: &[u8; RND_SIZE]) -> anyhow::Result<Custo
 mod tests {
     use crate::backup::seed_phrase::{generate_keys_from_rng, generate_keys_from_seed_phrase};
     use aes_prng::AesRng;
-    use bip39::Mnemonic;
     use rand::SeedableRng;
-    use std::str::FromStr;
 
     #[test]
     fn sunshine() {
         let mut rng = AesRng::seed_from_u64(42);
         let (custodian_keys, mnemonic) = generate_keys_from_rng(&mut rng).unwrap();
-        let mnemonic = Mnemonic::from_str(&mnemonic.to_string()).unwrap();
         let regenerated_custodian_keys = generate_keys_from_seed_phrase(&mnemonic).unwrap();
         assert_eq!(custodian_keys, regenerated_custodian_keys)
     }
@@ -106,5 +104,17 @@ mod tests {
         let mut rng2 = AesRng::seed_from_u64(43);
         let (_custodian_keys, mnemonic2) = generate_keys_from_rng(&mut rng2).unwrap();
         assert_ne!(mnemonic, mnemonic2);
+    }
+
+    #[test]
+    fn mnemonic_robustness() {
+        // Observe the whitespace and mixed cases
+        // let weird_mnemonic =
+        //     "   fun office shop caught frown special wave razor crunch ahead nuclear  another  ";
+        // let mut rng = AesRng::seed_from_u64(42);
+        // let (custodian_keys, mnemonic) = generate_keys_from_rng(&mut rng).unwrap();
+        // let regenerated_custodian_keys = generate_keys_from_seed_phrase(&mnemonic).unwrap();
+        // println!("Mnemonic: {}", mnemonic);
+        // assert_eq!(custodian_keys, regenerated_custodian_keys);
     }
 }

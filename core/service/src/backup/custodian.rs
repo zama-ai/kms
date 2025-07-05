@@ -118,6 +118,10 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         })
     }
 
+    // pub fn from_seed_phrase(seed_phrase: &str) -> Result<Self, BackupError> {
+
+    // }
+
     // We allow the following lints because we are fine with mutating the rng even if
     // we end up returning an error when signing the encrypted share.
     #[allow(unknown_lints)]
