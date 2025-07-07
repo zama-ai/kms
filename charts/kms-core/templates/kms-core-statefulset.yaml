@@ -356,15 +356,6 @@ spec:
               echo 'aws_access_key_id = ${AWS_ACCESS_KEY_ID}' >> ~/.aws/credentials
               echo 'aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}' >> ~/.aws/credentials
               {{- end }}
-              export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET="$(echo ${KMS_CORE__PUBLIC_VAULT__STORAGE}  | cut -d"/" -f3)"
-              {{ if .Values.kmsCore.publicVault.s3.path }}
-              export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.path }}}"
-              {{ end }}
-              export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET="$(echo ${KMS_CORE__PRIVATE_VAULT__STORAGE}  | cut -d"/" -f3)"
-              {{ if .Values.kmsCore.privateVault.s3.path }}
-              export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.privateVault.s3.path }}}"
-              {{ end }}
-              env | grep KMS_CORE__
               kms-server --config-file=kms-server.toml
           {{- end }}
           env:
