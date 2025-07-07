@@ -299,6 +299,16 @@ impl<
                 req_id.derive_session_id_with_counter(ctr as u64),
                 "failed to derive session ID from counter".to_string(),
             )?;
+
+            let hex_req_id = hex::encode(req_id.as_bytes());
+            let decimal_req_id: u128 = req_id.try_into().unwrap_or(0);
+            tracing::info!(
+                request_id = hex_req_id,
+                request_id_decimal = decimal_req_id,
+                "Public Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {internal_sid}. Handle: {}",
+                hex::encode(&typed_ciphertext.external_handle)
+            );
+
             let crypto_storage = self.crypto_storage.clone();
             let prep = Arc::clone(&self.session_preparer);
 

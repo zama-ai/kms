@@ -131,6 +131,15 @@ impl<
             let external_handle = typed_ciphertext.external_handle.clone();
             let session_id = req_id.derive_session_id_with_counter(ctr as u64)?;
 
+            let hex_req_id = hex::encode(req_id.as_bytes());
+            let decimal_req_id: u128 = (*req_id).try_into().unwrap_or(0);
+            tracing::info!(
+                request_id = hex_req_id,
+                request_id_decimal = decimal_req_id,
+                "User Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {session_id}. Handle: {}",
+                hex::encode(&typed_ciphertext.external_handle)
+            );
+
             let low_level_ct =
                 deserialize_to_low_level(fhe_type, ct_format, ct, &keys.decompression_key)?;
 
