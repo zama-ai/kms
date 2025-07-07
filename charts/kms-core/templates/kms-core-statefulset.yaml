@@ -364,6 +364,7 @@ spec:
               {{ if .Values.kmsCore.privateVault.s3.path }}
               export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.privateVault.s3.path }}}"
               {{ end }}
+              env | grep KMS_CORE__
               kms-server --config-file=kms-server.toml
           {{- end }}
           env:
