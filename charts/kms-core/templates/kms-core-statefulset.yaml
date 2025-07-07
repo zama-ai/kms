@@ -272,9 +272,9 @@ spec:
               --signing-key-party-id ${KMS_CORE__THRESHOLD__MY_ID} \
               --num-parties {{ .Values.kmsPeers.count }} \
               {{ if .Values.kmsCore.addressOverride }}
-              --tls-subject {{ .Values.kmsCore.addressOverride | quote }}
+              --tls-subject {{ .Values.kmsCore.addressOverride | quote }} \
               {{- else }}
-              --tls-subject "{{ include "kmsCoreName" . }}-${KMS_CORE__THRESHOLD__MY_ID}"
+              --tls-subject "{{ include "kmsCoreName" . }}-${KMS_CORE__THRESHOLD__MY_ID}" \
               {{- end }}
               {{- else }}
               --write-privkey
