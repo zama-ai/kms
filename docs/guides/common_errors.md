@@ -12,6 +12,19 @@
 
 ---
 
+### Server crash with code 137
+
+**Error message**: 
+```bash
+dev-kms-core-1-1 exited with code 137
+```
+
+**Cause**: Docker does not have enough memory.
+
+**Possible solutions**: Your local Docker instance is not setup to use enough memory. This typically happens if you have not manually changed the settings to ensure it has 24 GB available. 
+
+---
+
 ### No space left on device
 
 **Error message**: No space left on device
