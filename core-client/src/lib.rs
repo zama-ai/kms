@@ -1404,6 +1404,7 @@ pub async fn execute_cmd(
             let mut durations = Vec::new();
 
             let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
+            let start = tokio::time::Instant::now();
             for _ in 0..cipher_args.get_num_requests() {
                 let req_id = RequestId::new_random(&mut rng);
                 let internal_client = internal_client.clone();
@@ -1469,7 +1470,7 @@ pub async fn execute_cmd(
                 result_vec.push(res);
             }
 
-            print_timings("public decrypt", &mut durations, command_timer_start);
+            print_timings("public decrypt", &mut durations, start);
 
             result_vec
         }
