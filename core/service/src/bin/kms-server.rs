@@ -144,12 +144,17 @@ async fn build_tls_config(
         .collect::<anyhow::Result<Vec<_>>>()?;
     let ca_certs = build_ca_certs_map(ca_certs_list.into_iter())?;
 
-    let (cert, key, trusted_releases, pcr8_expected) = match tls_config {
+    let tls_identity = match tls_config {
         TlsConf::Manual { ref cert, ref key } => {
             tracing::info!("Using third-party TLS certificate without Nitro remote attestation");
             let cert = cert.into_pem(my_id, peers)?;
             let key = key.into_pem()?;
-            (cert, key, None, false)
+            BasicTLSConfig {
+                cert,
+                key,
+                trusted_releases: None,
+                pcr8_expected: false,
+            }
         }
         // When remote attestation is used, the enclave generates a
         // self-signed TLS certificate for a private key that never
@@ -170,7 +175,12 @@ async fn build_tls_config(
             let (cert, key) = security_module
                 .wrap_x509_cert(context_id, eif_signing_cert_pem)
                 .await?;
-            (cert, key, Some(Arc::new(trusted_releases.clone())), true)
+            BasicTLSConfig {
+                cert,
+                key,
+                trusted_releases: Some(Arc::new(trusted_releases.clone())),
+                pcr8_expected: true,
+            }
         }
         TlsConf::FullAuto {
             ref trusted_releases,
@@ -192,7 +202,12 @@ async fn build_tls_config(
             let (cert, key) = security_module
                 .issue_x509_cert(context_id, ca_cert, sk)
                 .await?;
-            (cert, key, Some(Arc::new(trusted_releases.clone())), false)
+            BasicTLSConfig {
+                cert,
+                key,
+                trusted_releases: Some(Arc::new(trusted_releases.clone())),
+                pcr8_expected: false,
+            }
         }
     };
 
@@ -469,6 +484,7 @@ async fn main() -> anyhow::Result<()> {
     match core_config.threshold {
         Some(threshold_config) => {
             let mpc_listener = make_mpc_listener(&threshold_config).await;
+
             let tls_identity = match &threshold_config.tls {
                 Some(tls_config) => Some(match &threshold_config.peers {
                     Some(peers) => {
