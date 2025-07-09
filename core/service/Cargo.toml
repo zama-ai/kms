@@ -28,6 +28,10 @@ path = "src/bin/kms-server.rs"
 name = "kms-init"
 path = "src/bin/kms-init.rs"
 
+[[bin]] # Bin for the custodians to generate keys and help in recovery
+name = "kms-custodian"
+path = "src/bin/kms-custodian.rs"
+
 [dependencies]
 aes.workspace = true
 aes-gcm-siv = "=0.11.1"

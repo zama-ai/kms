@@ -17,15 +17,14 @@ pub const DSEP_MNEMONIC_SIG: DomainSep = *b"MNEM_SIG";
 
 #[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct CustodianKeySet {
-    pub(crate) sig_key: PrivateSigKey,
-    pub(crate) verf_key: PublicSigKey,
-    pub(crate) nested_dec_key: backup_pke::BackupPrivateKey,
-    pub(crate) nested_enc_key: backup_pke::BackupPublicKey,
+pub struct CustodianKeySet {
+    pub sig_key: PrivateSigKey,
+    pub verf_key: PublicSigKey,
+    pub nested_dec_key: backup_pke::BackupPrivateKey,
+    pub nested_enc_key: backup_pke::BackupPublicKey,
 }
 
-#[allow(dead_code)]
-pub(crate) fn generate_keys_from_rng<R>(rng: &mut R) -> anyhow::Result<(CustodianKeySet, String)>
+pub fn generate_keys_from_rng<R>(rng: &mut R) -> anyhow::Result<(CustodianKeySet, String)>
 where
     R: Rng + CryptoRng,
 {
@@ -37,14 +36,12 @@ where
     Ok((custodian_keys, mnemonic.to_string()))
 }
 
-#[allow(dead_code)]
-pub(crate) fn generate_keys_from_seed_phrase(seed_phrase: &str) -> anyhow::Result<CustodianKeySet> {
+pub fn generate_keys_from_seed_phrase(seed_phrase: &str) -> anyhow::Result<CustodianKeySet> {
     let mnemonic = Mnemonic::from_str(&seed_phrase.trim().to_lowercase())?;
     let entropy = mnemonic.to_entropy();
     assert!(
         entropy.len() >= RND_SIZE,
-        "Seed phrase entropy must be at least {} bytes long",
-        RND_SIZE
+        "Seed phrase entropy must be at least {RND_SIZE} bytes long",
     );
     let mut entropy_arr = [0u8; RND_SIZE];
     entropy_arr.copy_from_slice(&entropy[..RND_SIZE]);
@@ -59,8 +56,7 @@ where
     let dsep_entropy: Vec<u8> = hash_element(dsep, entropy);
     assert!(
         dsep_entropy.len() >= RND_SIZE,
-        "DSEP entropy must be at least {} bytes long",
-        RND_SIZE
+        "DSEP entropy must be at least {RND_SIZE} bytes long",
     );
     // Observe that the [`AesRng`] requires a 16-byte seed which is `RND_SIZE` in our case.
     let mut rng_entropy = [0u8; RND_SIZE];
@@ -109,12 +105,11 @@ mod tests {
     #[test]
     fn mnemonic_robustness() {
         // Observe the whitespace and mixed cases
-        // let weird_mnemonic =
-        //     "   fun office shop caught frown special wave razor crunch ahead nuclear  another  ";
-        // let mut rng = AesRng::seed_from_u64(42);
-        // let (custodian_keys, mnemonic) = generate_keys_from_rng(&mut rng).unwrap();
-        // let regenerated_custodian_keys = generate_keys_from_seed_phrase(&mnemonic).unwrap();
-        // println!("Mnemonic: {}", mnemonic);
-        // assert_eq!(custodian_keys, regenerated_custodian_keys);
+        let weird_mnemonic =
+            "   fun OFFICE sHop caught frown special wave razor crunch ahead nuclear  another  ";
+        let regenerated_custodian_keys = generate_keys_from_seed_phrase(weird_mnemonic).unwrap();
+        let pruned_custodian_keys =
+            generate_keys_from_seed_phrase(weird_mnemonic.to_lowercase().trim()).unwrap();
+        assert_eq!(pruned_custodian_keys, regenerated_custodian_keys);
     }
 }

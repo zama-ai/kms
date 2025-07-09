@@ -55,6 +55,10 @@ impl Serialize for PublicEncKey {
     }
 }
 
+impl Named for PublicEncKey {
+    const NAME: &'static str = "PublicEncKey";
+}
+
 impl_generic_versionize!(PublicEncKey);
 
 impl<'de> Deserialize<'de> for PublicEncKey {
