@@ -24,6 +24,7 @@ use kms_lib::{
 use std::{net::ToSocketAddrs, sync::Arc};
 use threshold_fhe::{execution::runtime::party::Role, networking::tls::BasicTLSConfig};
 use tokio::net::TcpListener;
+use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider as aws_lc_rs_default_provider;
 
 #[derive(Parser)]
 #[clap(name = "KMS server")]
@@ -325,66 +326,84 @@ async fn main() -> anyhow::Result<()> {
             // with mTLS which requires a TLS certificate valid both for server
             // and client authentication.
             let tls_identity = match threshold_config.tls {
-                Some(TlsConf::Manual { ref cert, ref key }) => {
-                    let cert =
-                        cert.into_pem(threshold_config.my_id, threshold_config.peers.as_slice())?;
-                    let key = key.into_pem()?;
-                    Some(BasicTLSConfig {
-                        cert,
-                        key,
-                        trusted_releases: None,
-                        pcr8_expected: false,
-                    })
-                }
-                // When remote attestation is used, the enclave generates a
-                // self-signed TLS certificate for a private key that never
-                // leaves its memory. This certificate includes the AWS
-                // Nitro attestation document and the certificate used
-                // by the MPC party to sign the enclave image it is
-                // running. The private key is not supplied, since it needs
-                // to be generated inside an AWS Nitro enclave.
-                Some(TlsConf::SemiAuto {
-                    ref cert,
-                    ref trusted_releases,
-                }) => {
-                    let security_module = security_module.as_ref().unwrap_or_else(|| {
+                Some(ref tls_config) => {
+                    aws_lc_rs_default_provider()
+                        .install_default()
+                        .unwrap_or_else(|_| {
+                            panic!("Failed to load default crypto provider");
+                        });
+                    let tls_identity = match tls_config {
+                        TlsConf::Manual { ref cert, ref key } => {
+                            let cert = cert.into_pem(
+                                threshold_config.my_id,
+                                threshold_config.peers.as_slice(),
+                            )?;
+                            let key = key.into_pem()?;
+                            BasicTLSConfig {
+                                cert,
+                                key,
+                                trusted_releases: None,
+                                pcr8_expected: false,
+                            }
+                        }
+                        // When remote attestation is used, the enclave generates a
+                        // self-signed TLS certificate for a private key that never
+                        // leaves its memory. This certificate includes the AWS
+                        // Nitro attestation document and the certificate used
+                        // by the MPC party to sign the enclave image it is
+                        // running. The private key is not supplied, since it needs
+                        // to be generated inside an AWS Nitro enclave.
+                        TlsConf::SemiAuto {
+                            ref cert,
+                            ref trusted_releases,
+                        } => {
+                            let security_module = security_module.unwrap_or_else(|| {
                             panic!("EIF signing certificate present but not security module, unable to construct TLS identity")
                         });
-                    tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
-                    let eif_signing_cert_pem =
-                        cert.into_pem(threshold_config.my_id, threshold_config.peers.as_slice())?;
-                    let (cert, key) = security_module.wrap_x509_cert(eif_signing_cert_pem).await?;
-                    Some(BasicTLSConfig {
-                        cert,
-                        key,
-                        trusted_releases: Some(Arc::new(trusted_releases.clone())),
-                        pcr8_expected: true,
-                    })
-                }
-                Some(TlsConf::FullAuto {
-                    ref trusted_releases,
-                }) => {
-                    let security_module = security_module
-                        .as_ref()
-                        .unwrap_or_else(|| panic!("TLS identity and security module not present"));
-                    tracing::info!(
+                            tracing::info!(
+                                "Using wrapped TLS certificate with Nitro remote attestation"
+                            );
+                            let eif_signing_cert_pem = cert.into_pem(
+                                threshold_config.my_id,
+                                threshold_config.peers.as_slice(),
+                            )?;
+                            let (cert, key) =
+                                security_module.wrap_x509_cert(eif_signing_cert_pem).await?;
+                            BasicTLSConfig {
+                                cert,
+                                key,
+                                trusted_releases: Some(Arc::new(trusted_releases.clone())),
+                                pcr8_expected: true,
+                            }
+                        }
+                        TlsConf::FullAuto {
+                            ref trusted_releases,
+                        } => {
+                            let security_module = security_module.unwrap_or_else(|| {
+                                panic!("TLS identity and security module not present")
+                            });
+                            tracing::info!(
                         "Using TLS certificate with Nitro remote attestation signed by onboard CA"
                     );
-                    let ca_cert_bytes = read_text_at_request_id(
-                        &public_vault,
-                        &SIGNING_KEY_ID,
-                        &PubDataType::CACert.to_string(),
-                    )
-                    .await?;
-                    let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
+                            let ca_cert_bytes = read_text_at_request_id(
+                                &public_vault,
+                                &SIGNING_KEY_ID,
+                                &PubDataType::CACert.to_string(),
+                            )
+                            .await?;
+                            let ca_cert =
+                                x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
 
-                    let (cert, key) = security_module.issue_x509_cert(ca_cert, &sk).await?;
-                    Some(BasicTLSConfig {
-                        cert,
-                        key,
-                        trusted_releases: Some(Arc::new(trusted_releases.clone())),
-                        pcr8_expected: false,
-                    })
+                            let (cert, key) = security_module.issue_x509_cert(ca_cert, &sk).await?;
+                            BasicTLSConfig {
+                                cert,
+                                key,
+                                trusted_releases: Some(Arc::new(trusted_releases.clone())),
+                                pcr8_expected: false,
+                            }
+                        }
+                    };
+                    Some(tls_identity)
                 }
                 None => {
                     tracing::warn!("No TLS identity - using plaintext communication");
