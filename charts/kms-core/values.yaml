@@ -24,6 +24,8 @@ kmsCore:
   envFrom:
     configmap:
       name:
+      privateVaultStorageKey:
+      publicVaultStorageKey:
   rateLimiter:
     bucketSize: 50000
   # Add the following to enable threshold mode:
@@ -159,6 +161,8 @@ kmsCoreClient:
   envFrom:
     configmap:
       name:
+      privateVaultStorageKey:
+      publicVaultStorageKey:
   num_majority: 2
   num_reconstruct: 3
   decryption_mode: "NoiseFloodSmall"
