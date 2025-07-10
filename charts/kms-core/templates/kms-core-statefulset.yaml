@@ -99,16 +99,21 @@ spec:
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
             {{- if .Values.kmsCore.envFrom.configmap.name }}
-            - name: {{ .Values.kmsCore.envFrom.configmap.publicVaultStorageKey}}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.publicVaultStorageKey}}
-            - name: {{ .Values.kmsCore.envFrom.configmap.privateVaultStorageKey }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.privateVaultStorageKey }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
             {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
@@ -197,16 +202,21 @@ spec:
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
             {{- if .Values.kmsCore.envFrom.configmap.name }}
-            - name: {{ .Values.kmsCore.envFrom.configmap.publicVaultStorageKey}}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.publicVaultStorageKey}}
-            - name: {{ .Values.kmsCore.envFrom.configmap.privateVaultStorageKey }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.privateVaultStorageKey }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
             {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
@@ -348,16 +358,21 @@ spec:
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
             {{- if .Values.kmsCore.envFrom.configmap.name }}
-            - name: {{ .Values.kmsCore.envFrom.configmap.publicVaultStorageKey}}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.publicVaultStorageKey}}
-            - name: {{ .Values.kmsCore.envFrom.configmap.privateVaultStorageKey }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.privateVaultStorageKey }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
             {{- end }}
           {{- if not .Values.kmsCore.privateVault.s3.enabled }}
           volumeMounts:
@@ -437,16 +452,21 @@ spec:
               value: {{ (index .Values.minio.provisioning.users 0).password}}
             {{- end }}
             {{- if .Values.kmsCore.envFrom.configmap.name }}
-            - name: {{ .Values.kmsCore.envFrom.configmap.publicVaultStorageKey}}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.publicVaultStorageKey}}
-            - name: {{ .Values.kmsCore.envFrom.configmap.privateVaultStorageKey }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.privateVaultStorageKey }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
             {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
