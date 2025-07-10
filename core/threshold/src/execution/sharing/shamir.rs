@@ -1,6 +1,6 @@
 use super::share::Share;
 use crate::algebra::poly::Poly;
-use crate::algebra::structure_traits::{ErrorCorrect, Ring, RingEmbed};
+use crate::algebra::structure_traits::{ErrorCorrect, Ring, RingWithExceptionalSequence};
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::error::error_handler::anyhow_error_and_warn_log;
 use crate::execution::runtime::party::Role;
@@ -17,12 +17,6 @@ pub trait HenselLiftInverse: Sized {
 #[derive(Clone, Default, PartialEq, Debug)]
 pub struct ShamirSharings<Z: Ring> {
     pub shares: Vec<Share<Z>>,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct ShamirSharing<T> {
-    pub share: T,
-    pub party_id: u8,
 }
 
 pub type ShamirFieldPoly<F> = Poly<F>;
@@ -161,8 +155,7 @@ pub trait InputOp<T> {
 
 impl<Z> InputOp<Z> for ShamirSharings<Z>
 where
-    Z: Ring,
-    Z: RingEmbed,
+    Z: RingWithExceptionalSequence,
 {
     //NIST: Level Zero Operation
     fn share<R: Rng + CryptoRng>(
@@ -178,10 +171,9 @@ where
         }
         let role_with_embeddings = (1..=num_parties)
             .map(|party_id| {
-                Ok((
-                    Role::indexed_from_one(party_id),
-                    Z::embed_exceptional_set(party_id)?,
-                ))
+                let party = Role::indexed_from_one(party_id);
+                let embedding = Z::embed_role_to_exceptional_sequence(&party)?;
+                Ok((party, embedding))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
@@ -250,7 +242,7 @@ pub fn fill_indexed_shares<Z: Ring>(
             Left(_v) => {
                 // If a share is missing, we panic since we already checked the lengths in the start of the method
                 panic!(
-                    "There are {sharing_len} shares, but {values_len} values. There should not be more values than shares from party {party_id}." 
+                    "There are {sharing_len} shares, but {values_len} values. There should not be more values than shares from party {party_id}."
                 );
             }
             Right(sharing) => {
@@ -369,7 +361,7 @@ where
                     for share in sharing.shares.iter() {
                         if share.value()
                             == opened_poly
-                                .eval(&Z::embed_exceptional_set(share.owner().one_based())?)
+                                .eval(&Z::embed_role_to_exceptional_sequence(&share.owner())?)
                         {
                             num_shares_on_poly += 1;
                         }

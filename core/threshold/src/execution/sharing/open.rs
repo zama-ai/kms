@@ -340,7 +340,9 @@ pub(crate) mod test {
     use itertools::Itertools;
     use rand::SeedableRng;
 
-    use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed};
+    use crate::algebra::structure_traits::{
+        ErrorCorrect, Invert, Ring, RingWithExceptionalSequence,
+    };
     use crate::execution::runtime::party::Role;
     use crate::execution::runtime::session::SmallSession;
     use crate::execution::sharing::shamir::InputOp;
@@ -363,7 +365,7 @@ pub(crate) mod test {
     /// they end up with a well-formed sharing of the same secrets
     ///
     /// Returns both the secrets and the shares
-    pub(crate) fn deterministically_compute_my_shares<Z: Ring + RingEmbed>(
+    pub(crate) fn deterministically_compute_my_shares<Z: RingWithExceptionalSequence>(
         num_secrets: usize,
         my_role: Role,
         num_parties: usize,

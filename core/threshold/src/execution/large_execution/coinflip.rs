@@ -131,7 +131,7 @@ pub(crate) mod tests {
         },
     };
     use crate::{
-        algebra::structure_traits::{ErrorCorrect, Ring, RingEmbed},
+        algebra::structure_traits::{ErrorCorrect, Ring},
         networking::NetworkMode,
     };
     use aes_prng::AesRng;
@@ -194,7 +194,7 @@ pub(crate) mod tests {
 
     //Helper function to plug malicious coinflip strategies
     fn test_coinflip_strategies<
-        Z: Ring + RingEmbed + ErrorCorrect,
+        Z: ErrorCorrect,
         const EXTENSION_DEGREE: usize,
         C: Coinflip + 'static,
     >(

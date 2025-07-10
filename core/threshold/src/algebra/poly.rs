@@ -1,6 +1,6 @@
 use super::{
     galois_rings::common::{LutMulReduction, ResiduePoly},
-    structure_traits::{Field, Invert, One, Ring, RingEmbed, Sample, Zero},
+    structure_traits::{Field, Invert, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
 use crate::error::error_handler::anyhow_error_and_log;
 use itertools::Itertools;
@@ -155,8 +155,7 @@ impl BitwisePoly {
 
 impl<Z> Poly<Z>
 where
-    Z: Ring,
-    Z: RingEmbed,
+    Z: RingWithExceptionalSequence,
     Z: Invert,
 {
     ///Outputs a vector of the monomials (X - embed(party_id))/(party_id)
@@ -169,7 +168,7 @@ where
         //TODO: This could be memoized
         let mut inv_coefs = (1..=num_parties)
             .map(|idx| {
-                let gamma = Z::embed_exceptional_set(idx)?;
+                let gamma = Z::get_from_exceptional_sequence(idx)?;
                 Z::invert(Z::ZERO - gamma)
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -178,7 +177,7 @@ where
         // embed party IDs as invertible x-points on the polynomial
         //TODO: This could be memoized
         let x_coords: Vec<_> = (0..=num_parties)
-            .map(Z::embed_exceptional_set)
+            .map(Z::get_from_exceptional_sequence)
             .collect::<Result<Vec<_>, _>>()?;
 
         // compute additive inverse of embedded party IDs
@@ -884,7 +883,7 @@ mod tests {
         let ring_evals: Vec<ResiduePolyF4Z128> = party_ids
             .iter()
             .map(|id| {
-                let embedded_xi = ResiduePolyF4Z128::embed_exceptional_set(*id)?;
+                let embedded_xi = ResiduePolyF4Z128::get_from_exceptional_sequence(*id)?;
                 Ok(lifted_f.eval(&embedded_xi))
             })
             .collect::<anyhow::Result<Vec<_>>>()

@@ -3,7 +3,7 @@ use super::{
     triple::{mult_list, open_list},
 };
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, Solve},
+    algebra::structure_traits::{ErrorCorrect, Invert, Solve},
     execution::{runtime::session::BaseSessionHandles, sharing::share::Share},
 };
 use async_trait::async_trait;
@@ -13,7 +13,7 @@ use tracing::instrument;
 #[async_trait]
 pub trait BitGenEven {
     async fn gen_bits_even<
-        Z: Ring + RingEmbed + Solve + Invert + ErrorCorrect,
+        Z: Solve + Invert + ErrorCorrect,
         Ses: BaseSessionHandles,
         P: BasePreprocessing<Z> + Send + ?Sized,
     >(

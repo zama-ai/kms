@@ -2,7 +2,7 @@ use super::party::{Identity, Role};
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
-        structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
+        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
     },
     error::error_handler::anyhow_error_and_log,
     execution::small_execution::{
@@ -378,7 +378,9 @@ impl<Z: Ring> BaseSessionHandles for SmallSession<Z> {
     }
 }
 
-impl<Z: Ring + RingEmbed + Invert + PRSSConversions> SmallSessionHandles<Z> for SmallSession<Z> {
+impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions> SmallSessionHandles<Z>
+    for SmallSession<Z>
+{
     type PRSSPrimitivesType = SecurePRSSState<Z>;
 
     fn prss_as_mut(&mut self) -> &mut SecurePRSSState<Z> {

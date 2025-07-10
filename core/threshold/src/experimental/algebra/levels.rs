@@ -5,11 +5,10 @@ use crate::algebra::structure_traits::ErrorCorrect;
 use crate::algebra::structure_traits::FromU128;
 use crate::algebra::structure_traits::Invert;
 use crate::algebra::structure_traits::Ring;
-use crate::algebra::structure_traits::RingEmbed;
+use crate::algebra::structure_traits::RingWithExceptionalSequence;
 use crate::algebra::structure_traits::ZConsts;
 use crate::algebra::structure_traits::{Field, One, Sample, Zero};
 use crate::error::error_handler::anyhow_error_and_log;
-use crate::execution::sharing::shamir::ShamirSharing;
 use crate::execution::sharing::shamir::ShamirSharings;
 use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::prf::PRSSConversions;
@@ -343,9 +342,22 @@ macro_rules! impl_field_level {
                 }
             }
 
-            impl RingEmbed for $name {
-                fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self> {
-                    Ok(Self::from_u128(idx as u128))
+            impl RingWithExceptionalSequence for $name {
+                fn get_from_exceptional_sequence(idx: usize) -> anyhow::Result<Self> {
+                    let max_value : u128 = if Self::BIT_LENGTH < 128 {
+                        1 << Self::BIT_LENGTH
+                    }  else {
+                        u128::MAX // For larger bit lengths, we use a max value that fits in u128
+                    };
+
+                    let idx = idx as u128;
+                     if idx >= max_value {
+                        return Err(anyhow_error_and_log(
+                            format!("Index out of bounds for {} exceptional sequence", stringify!($name)),
+                        ));
+                    }
+
+                    Ok(Self::from_u128(idx))
                 }
             }
 
@@ -355,25 +367,16 @@ macro_rules! impl_field_level {
                     threshold: usize,
                     max_errs: usize,
                 ) -> anyhow::Result<Poly<$name>> {
-                    let shares: Vec<_> = sharing
-                        .shares
-                        .iter()
-                        .map(|share| ShamirSharing {
-                            share: share.value(),
-                            party_id: share.owner().one_based() as u8,
-                        })
-                        .collect();
-                    let res = error_correction(shares.as_slice(), threshold, max_errs)?;
-
-                    Ok(res)
+                    error_correction(sharing.shares.clone(), threshold, max_errs)
                 }
             }
             }
     };
 }
 
-impl RingEmbed for LevelKsw {
-    fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self> {
+impl RingWithExceptionalSequence for LevelKsw {
+    // Field is big enough that we can use usize as index without any check
+    fn get_from_exceptional_sequence(idx: usize) -> anyhow::Result<Self> {
         Ok(Self::from_u128(idx as u128))
     }
 }
@@ -1069,6 +1072,7 @@ mod tests {
     use crate::algebra::poly::lagrange_interpolation;
     use crate::execution::config::BatchParams;
     use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
+    use crate::execution::runtime::party::Role;
     use crate::execution::runtime::session::SmallSession;
     use crate::execution::sharing::shamir::{InputOp, RevealOp};
     use crate::execution::sharing::shamir::{ShamirFieldPoly, ShamirSharings};
@@ -1159,20 +1163,21 @@ mod tests {
 
         let num_parties = 7;
         let threshold = f.coefs().len() - 1; // = 2 here
-        let max_err = (num_parties as usize - threshold) / 2; // = 2 here
+        let max_err = (num_parties - threshold) / 2; // = 2 here
 
         let mut shares: Vec<_> = (1..=num_parties)
-            .map(|x| ShamirSharing::<LevelOne> {
-                share: f.eval(&LevelOne::from_u128(x as u128)),
-                party_id: x,
+            .map(|x| {
+                let party = Role::indexed_from_one(x);
+                let point = f.eval(&LevelOne::embed_role_to_exceptional_sequence(&party).unwrap());
+                Share::<LevelOne>::new(party, point)
             })
             .collect();
 
         // modify shares of parties 1 and 2
-        shares[1].share += LevelOne::from_u128(10);
-        shares[2].share += LevelOne::from_u128(254);
+        shares[1] += LevelOne::from_u128(10);
+        shares[2] += LevelOne::from_u128(254);
 
-        let secret_poly = error_correction(&shares, threshold, max_err).unwrap();
+        let secret_poly = error_correction(shares, threshold, max_err).unwrap();
         assert_eq!(secret_poly, f);
     }
 

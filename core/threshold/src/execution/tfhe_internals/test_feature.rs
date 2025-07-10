@@ -22,7 +22,7 @@ use crate::{
         base_ring::{Z128, Z64},
         galois_rings::common::ResiduePoly,
         poly::Poly,
-        structure_traits::{Ring, RingEmbed},
+        structure_traits::{Ring, RingWithExceptionalSequence},
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
@@ -606,8 +606,8 @@ pub fn keygen_all_party_shares<R: Rng + CryptoRng, const EXTENSION_DEGREE: usize
     threshold: usize,
 ) -> anyhow::Result<Vec<PrivateKeySet<EXTENSION_DEGREE>>>
 where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: RingWithExceptionalSequence,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: RingWithExceptionalSequence,
 {
     let s_vector = glwe_secret_key_sns_as_lwe.into_container();
     let s_length = s_vector.len();
@@ -618,7 +618,7 @@ where
         .map(|party_id| {
             Ok((
                 Role::indexed_from_one(party_id),
-                ResiduePoly::<Z64, EXTENSION_DEGREE>::embed_exceptional_set(party_id)?,
+                ResiduePoly::<Z64, EXTENSION_DEGREE>::get_from_exceptional_sequence(party_id)?,
             ))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
@@ -627,7 +627,7 @@ where
         .map(|party_id| {
             Ok((
                 Role::indexed_from_one(party_id),
-                ResiduePoly::<Z128, EXTENSION_DEGREE>::embed_exceptional_set(party_id)?,
+                ResiduePoly::<Z128, EXTENSION_DEGREE>::get_from_exceptional_sequence(party_id)?,
             ))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;

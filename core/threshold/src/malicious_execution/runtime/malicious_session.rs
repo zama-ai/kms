@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    algebra::structure_traits::{Invert, Ring, RingEmbed},
+    algebra::structure_traits::{Invert, Ring, RingWithExceptionalSequence},
     execution::{
         runtime::{
             party::{Identity, Role},
@@ -150,7 +150,7 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ToBaseSession
 }
 
 // If the generic session uses a secure PRSS state, allow convrersion to a SmallSession
-impl<Z: Ring + RingEmbed + Invert + PRSSConversions>
+impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions>
     GenericSmallSessionStruct<Z, SecurePRSSState<Z>>
 {
     pub fn to_secure_small_session(self) -> SmallSession<Z> {

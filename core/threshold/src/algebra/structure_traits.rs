@@ -83,12 +83,14 @@ pub trait BaseRing:
 
 pub trait Field
 where
-    Self: Ring + Div<Self, Output = Self> + DivAssign<Self>,
+    Self: RingWithExceptionalSequence + Div<Self, Output = Self> + DivAssign<Self>,
 {
     fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>>;
 
     /// computes the multiplicative inverse of the field element
-    fn invert(&self) -> Self;
+    fn invert(&self) -> Self {
+        Self::ONE / *self
+    }
 }
 
 pub trait QuotientMaximalIdeal: Ring {
@@ -101,7 +103,7 @@ pub trait QuotientMaximalIdeal: Ring {
 
     fn bit_lift_from_idx(idx: usize, pos: usize) -> anyhow::Result<Self>;
 
-    fn embed_quotient_exceptional_set(x: Self::QuotientOutput) -> anyhow::Result<Self>;
+    fn embed_quotient_exceptional_sequence(x: Self::QuotientOutput) -> anyhow::Result<Self>;
 }
 
 ///Trait required to be able to reconstruct a shamir sharing
@@ -121,11 +123,19 @@ pub trait Invert: Sized {
     fn invert(self) -> anyhow::Result<Self>;
 }
 
-pub trait RingEmbed: Sized {
-    fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self>;
+pub trait RingWithExceptionalSequence: Ring + Sized {
+    /// Get the element from the exceptional sequence by its index.
+    /// NOTE: We really want to index into the sequence and not do a modular operation
+    /// here to prevent any bug.
+    fn get_from_exceptional_sequence(idx: usize) -> anyhow::Result<Self>;
+
+    /// Embed the Role (starting at index 1) from the exceptional sequence into the ring.
+    fn embed_role_to_exceptional_sequence(role: &Role) -> anyhow::Result<Self> {
+        Self::get_from_exceptional_sequence(role.one_based())
+    }
 }
 
-pub trait ErrorCorrect: Ring + RingEmbed {
+pub trait ErrorCorrect: RingWithExceptionalSequence {
     ///Perform error correction.
     /// degree is the degree of the sharing polynomial (either threshold or 2*threshold)
     /// max_errs is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is 2*threshold)

@@ -16,7 +16,8 @@ use crate::algebra::{
     galois_fields::gf256::{two_powers, GF256, GF256_FROM_GENERATOR, GF256_NEWTON_INNER_LOOP},
     poly::{BitWiseEval, BitwisePoly},
     structure_traits::{
-        BaseRing, One, QuotientMaximalIdeal, Ring, RingEmbed, Solve1, ZConsts, Zero,
+        BaseRing, One, QuotientMaximalIdeal, Ring, RingWithExceptionalSequence, Solve1, ZConsts,
+        Zero,
     },
 };
 
@@ -285,8 +286,8 @@ impl<Z: BaseRing> QuotientMaximalIdeal for ResiduePolyF8<Z> {
             .ok_or_else(|| anyhow!("Unexpected index {} for GF256", idx))?;
         Self::bit_lift(*x, pos)
     }
-    fn embed_quotient_exceptional_set(x: GF256) -> anyhow::Result<Self> {
-        Self::embed_exceptional_set(x.0 as usize)
+    fn embed_quotient_exceptional_sequence(x: GF256) -> anyhow::Result<Self> {
+        Self::get_from_exceptional_sequence(x.0 as usize)
     }
 }
 
@@ -298,7 +299,7 @@ impl<Z: BaseRing> Solve1 for ResiduePolyF8<Z> {
         for i in 0..7 {
             res += GF256_NEWTON_INNER_LOOP[i] * v_powers[i];
         }
-        Self::embed_exceptional_set(res.0 as usize)
+        Self::get_from_exceptional_sequence(res.0 as usize)
     }
 }
 
@@ -339,7 +340,7 @@ lazy_static! {
 
 impl MemoizedExceptionals for ResiduePolyF8Z64 {
     fn calculate_powers(index: usize, degree: usize) -> anyhow::Result<Vec<Self>> {
-        let point = Self::embed_exceptional_set(index)?;
+        let point = Self::get_from_exceptional_sequence(index)?;
         Ok(compute_powers(point, degree))
     }
     fn storage() -> &'static RwLock<HashMap<(usize, usize), Vec<Self>>> {
@@ -349,7 +350,7 @@ impl MemoizedExceptionals for ResiduePolyF8Z64 {
 
 impl MemoizedExceptionals for ResiduePolyF8Z128 {
     fn calculate_powers(index: usize, degree: usize) -> anyhow::Result<Vec<Self>> {
-        let point = Self::embed_exceptional_set(index)?;
+        let point = Self::get_from_exceptional_sequence(index)?;
         Ok(compute_powers(point, degree))
     }
     fn storage() -> &'static RwLock<HashMap<(usize, usize), Vec<Self>>> {
@@ -941,8 +942,8 @@ mod tests {
             #[test]
             fn [<test_shift_ $z:lower>]() {
                 assert_eq!(
-                    ResiduePolyF8::<$z>::embed_exceptional_set(42).unwrap(),
-                    ResiduePolyF8::<$z>::embed_exceptional_set(42).unwrap() << 0
+                    ResiduePolyF8::<$z>::get_from_exceptional_sequence(42).unwrap(),
+                    ResiduePolyF8::<$z>::get_from_exceptional_sequence(42).unwrap() << 0
                 );
                 assert_eq!(
                     ResiduePolyF8::<$z>::from_scalar(Wrapping(152)),
@@ -965,7 +966,7 @@ mod tests {
                         $z::ZERO
                     ])
                     .unwrap(),
-                    ResiduePolyF8::<$z>::embed_exceptional_set(2).unwrap() << 1
+                    ResiduePolyF8::<$z>::get_from_exceptional_sequence(2).unwrap() << 1
                 );
             }
             }
@@ -984,7 +985,7 @@ mod tests {
         input = 3;
         reference.coefs[0] = Wrapping(1);
         reference.coefs[1] = Wrapping(1);
-        res = ResiduePolyF8::embed_exceptional_set(input).unwrap();
+        res = ResiduePolyF8::get_from_exceptional_sequence(input).unwrap();
         assert_eq!(reference, res);
 
         // Set the polynomial to x^2+x^5+x^6, i.e. 0b01100100 = 100
@@ -998,14 +999,14 @@ mod tests {
         reference.coefs[5] = Wrapping(1);
         reference.coefs[6] = Wrapping(1);
         reference.coefs[7] = Wrapping(0);
-        res = ResiduePolyF8::embed_exceptional_set(input).unwrap();
+        res = ResiduePolyF8::get_from_exceptional_sequence(input).unwrap();
         assert_eq!(reference, res);
 
         // Set the polynomial to x^7, i.e. 0b10000000 = 128
         input = 128;
         reference = ResiduePolyF8::ZERO;
         reference.coefs[7] = Wrapping(1);
-        res = ResiduePolyF8::embed_exceptional_set(input).unwrap();
+        res = ResiduePolyF8::get_from_exceptional_sequence(input).unwrap();
         assert_eq!(reference, res);
     }
 

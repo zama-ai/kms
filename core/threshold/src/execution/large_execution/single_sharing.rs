@@ -2,7 +2,7 @@ use super::local_single_share::{LocalSingleShare, SecureLocalSingleShare};
 use crate::{
     algebra::{
         bivariate::{compute_powers, MatrixMul},
-        structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed},
+        structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
     },
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{party::Role, session::LargeSessionHandles},
@@ -75,7 +75,7 @@ impl<Z: Default, S: LocalSingleShare + Default> Default for RealSingleSharing<Z,
 }
 
 #[async_trait]
-impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
+impl<Z: Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
     for RealSingleSharing<Z, S>
 {
     #[instrument(name="SingleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),own_identity=?session.own_identity(), batch_size = ?l))]
@@ -133,11 +133,14 @@ impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, S: LocalSingleShare> 
 
 ///Create the VDM matrix of dimension (height, width) such that
 /// VDM_{i,j} = alpha_i^j, with alpha_i the ith element of the exceptional set
-pub fn init_vdm<Z: Ring + RingEmbed>(height: usize, width: usize) -> anyhow::Result<ArrayD<Z>> {
+pub fn init_vdm<Z: RingWithExceptionalSequence>(
+    height: usize,
+    width: usize,
+) -> anyhow::Result<ArrayD<Z>> {
     // We could actually probably take 0 in the VDM matrix, but to match the alpha indexing with the one we use for parties,
     //we skip it
     let exceptional_sequence: Vec<Z> = (0..height)
-        .map(|idx| Z::embed_exceptional_set(idx + 1))
+        .map(|idx| Z::get_from_exceptional_sequence(idx + 1))
         .try_collect()?;
 
     let powers_of_exceptional_sequence: Vec<Z> = exceptional_sequence
@@ -207,7 +210,7 @@ pub(crate) mod tests {
     use crate::execution::sharing::shamir::RevealOp;
     use crate::networking::NetworkMode;
     use crate::{
-        algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed, Sample},
+        algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, Sample},
         execution::{
             large_execution::{single_sharing::SecureSingleSharing, single_sharing::SingleSharing},
             runtime::party::Role,
@@ -223,10 +226,7 @@ pub(crate) mod tests {
     #[cfg(feature = "extension_degree_8")]
     use std::num::Wrapping;
 
-    fn test_singlesharing<
-        Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-        const EXTENSION_DEGREE: usize,
-    >(
+    fn test_singlesharing<Z: Derive + ErrorCorrect + Invert, const EXTENSION_DEGREE: usize>(
         parties: usize,
         threshold: usize,
     ) {

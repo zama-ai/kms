@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use tonic::async_trait;
 
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, Zero},
+    algebra::structure_traits::{ErrorCorrect, Invert, RingWithExceptionalSequence, Zero},
     execution::{
         communication::broadcast::Broadcast,
         large_execution::vss::Vss,
@@ -187,7 +187,7 @@ impl<
         A: AgreeRandomFromShare + 'static,
         V: Vss + 'static,
         Bcast: Broadcast + 'static,
-        Z: Ring + RingEmbed + Invert + PRSSConversions,
+        Z: RingWithExceptionalSequence + Invert + PRSSConversions,
     > DerivePRSSState<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
     type OutputType = MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>;
@@ -222,7 +222,7 @@ impl<
         A: AgreeRandomFromShare,
         V: Vss,
         Bcast: Broadcast,
-        Z: Ring + RingEmbed + Invert + PRSSConversions,
+        Z: RingWithExceptionalSequence + Invert + PRSSConversions,
     > PRSSPrimitives<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
     /// Always return some random value
@@ -336,7 +336,7 @@ impl<
         A: AgreeRandomFromShare + 'static,
         V: Vss + 'static,
         Bcast: Broadcast + 'static,
-        Z: Ring + RingEmbed + Invert + PRSSConversions,
+        Z: RingWithExceptionalSequence + Invert + PRSSConversions,
     > DerivePRSSState<Z> for MaliciousPrssHonestInitLieAll<A, V, Bcast, Z>
 {
     type OutputType = MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>;

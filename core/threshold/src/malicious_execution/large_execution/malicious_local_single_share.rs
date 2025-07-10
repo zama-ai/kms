@@ -1,5 +1,5 @@
 use crate::{
-    algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed},
+    algebra::structure_traits::{Derive, ErrorCorrect, Invert},
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::Broadcast,
@@ -63,10 +63,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> MaliciousSenderLocalSingleS
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
     for MaliciousSenderLocalSingleShare<C, S, BCast>
 {
-    async fn execute<
-        Z: Ring + RingEmbed + Derive + Invert + ErrorCorrect,
-        L: LargeSessionHandles,
-    >(
+    async fn execute<Z: Derive + Invert + ErrorCorrect, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -172,10 +169,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast>
 impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
     for MaliciousReceiverLocalSingleShare<C, S, BCast>
 {
-    async fn execute<
-        Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-        L: LargeSessionHandles,
-    >(
+    async fn execute<Z: Derive + ErrorCorrect + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],

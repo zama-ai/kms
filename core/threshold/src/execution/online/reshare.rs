@@ -3,7 +3,9 @@ use crate::{
         base_ring::{Z128, Z64},
         galois_rings::common::ResiduePoly,
         poly::Poly,
-        structure_traits::{BaseRing, ErrorCorrect, Invert, Ring, RingEmbed, Syndrome},
+        structure_traits::{
+            BaseRing, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence, Syndrome,
+        },
         syndrome::lagrange_numerators,
     },
     error::error_handler::anyhow_error_and_log,
@@ -109,7 +111,7 @@ where
     // embed party IDs into the ring
     let parties: Vec<_> = sorted_roles
         .iter()
-        .map(|role| ResiduePoly::<Z, EXTENSION_DEGREE>::embed_exceptional_set(role.one_based()))
+        .map(ResiduePoly::<Z, EXTENSION_DEGREE>::embed_role_to_exceptional_sequence)
         .collect::<Result<Vec<_>, _>>()?;
 
     // lagrange numerators from Eq.15
@@ -122,16 +124,17 @@ where
 // This function evaluates delta_i(0)
 fn delta0i<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     lagrange_numerators: &[Poly<ResiduePoly<Z, EXTENSION_DEGREE>>],
-    one_based: usize,
+    party_role: &Role,
 ) -> anyhow::Result<ResiduePoly<Z, EXTENSION_DEGREE>>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring + Invert,
 {
-    let zero = ResiduePoly::<Z, EXTENSION_DEGREE>::embed_exceptional_set(0)?;
-    let alphai = ResiduePoly::<Z, EXTENSION_DEGREE>::embed_exceptional_set(one_based)?;
-    let denom = lagrange_numerators[one_based - 1].eval(&alphai);
+    let zero = ResiduePoly::<Z, EXTENSION_DEGREE>::get_from_exceptional_sequence(0)?;
+    let alphai =
+        ResiduePoly::<Z, EXTENSION_DEGREE>::embed_role_to_exceptional_sequence(party_role)?;
+    let denom = lagrange_numerators[party_role].eval(&alphai);
     let inv_denom = denom.invert()?;
-    Ok(inv_denom * lagrange_numerators[one_based - 1].eval(&zero))
+    Ok(inv_denom * lagrange_numerators[party_role].eval(&zero))
 }
 
 #[instrument(
@@ -368,7 +371,7 @@ where
     let lagrange_numerators = make_lagrange_numerators(&all_roles_sorted)?;
     let deltas = all_roles_sorted
         .iter()
-        .map(|role| delta0i(&lagrange_numerators, role.one_based()))
+        .map(|role| delta0i(&lagrange_numerators, role))
         .collect::<Result<Vec<_>, _>>()?;
 
     // To avoid calling robust open many times sequentially,
