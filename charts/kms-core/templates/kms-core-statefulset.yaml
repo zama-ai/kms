@@ -105,9 +105,26 @@ spec:
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
           {{- if .Values.kmsCore.envFrom.configmap.name }}
-          envFrom:
-            - configMapRef:
-                name: {{ .Values.kmsCore.envFrom.configmap.name }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
           {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
@@ -297,9 +314,26 @@ spec:
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
           {{- if .Values.kmsCore.envFrom.configmap.name }}
-          envFrom:
-            - configMapRef:
-                name: {{ .Values.kmsCore.envFrom.configmap.name }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
           {{- end }}
           {{- if not .Values.kmsCore.privateVault.s3.enabled }}
           volumeMounts:
@@ -378,9 +412,26 @@ spec:
               value: {{ (index .Values.minio.provisioning.users 0).password}}
             {{- end }}
           {{- if .Values.kmsCore.envFrom.configmap.name }}
-          envFrom:
-            - configMapRef:
-                name: {{ .Values.kmsCore.envFrom.configmap.name }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
           {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
