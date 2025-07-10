@@ -7,25 +7,26 @@ mod gen {
 
 use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
-use super::constants::{
-    MAX_ELAPSED_TIME, MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL, MESSAGE_LIMIT, MULTIPLIER,
-    NETWORK_TIMEOUT_ASYNC, NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
-};
 use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
 use super::tls::{extract_subject_from_cert, SendingServiceTLSConfig};
 use super::NetworkMode;
-use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::{Identity, RoleAssignment};
+use crate::networking::constants::{
+    DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_ELAPSED_TIME,
+    MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL, MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY,
+    MAX_WAITING_TIME_MESSAGE_QUEUE, MESSAGE_LIMIT, MULTIPLIER, NETWORK_TIMEOUT_ASYNC,
+    NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
+    SESSION_CLEANUP_INTERVAL_SECS, SESSION_STATUS_UPDATE_INTERVAL_SECS,
+};
 use crate::networking::Networking;
 use crate::session_id::SessionId;
 use async_trait::async_trait;
 use dashmap::DashMap;
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock, RwLock, Weak};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
-use tokio::time::Duration;
+use tokio::time::{Duration, Instant};
 use tonic::transport::server::TcpConnectInfo;
 use x509_parser::parse_x509_certificate;
 
@@ -36,13 +37,25 @@ pub struct CoreToCoreNetworkConfig {
     pub multiplier: f64,
     pub max_interval: u64,
     pub max_elapsed_time: Option<u64>,
+    /// Initial interval for exponential backoff in milliseconds (default: 1000ms)
+    pub initial_interval_ms: Option<u64>,
     pub network_timeout: u64,
     pub network_timeout_bk: u64,
     pub network_timeout_bk_sns: u64,
     pub max_en_decode_message_size: u64,
+    /// Background interval for updating session status (default: 60)
+    pub session_update_interval_secs: Option<u64>,
+    /// Background interval for cleaning up completed sessions (default: 3600)
+    pub session_cleanup_interval_secs: Option<u64>,
+    /// Background interval for discarding inactive sessions (default: 900)
+    pub discard_inactive_sessions_interval: Option<u64>,
+    /// Maximum waiting time for trying to push the message in the queue (default: 60 seconds)
+    pub max_waiting_time_for_message_queue: Option<u64>,
+    /// Maximum number of "Inactive" sessions a party can open before I refuse to open more (default: 100)
+    pub max_opened_inactive_sessions_per_party: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct OptionConfigWrapper {
     pub conf: Option<CoreToCoreNetworkConfig>,
 }
@@ -111,6 +124,71 @@ impl OptionConfigWrapper {
             *MAX_EN_DECODE_MESSAGE_SIZE
         }
     }
+
+    pub fn get_initial_interval(&self) -> Duration {
+        if let Some(conf) = self.conf {
+            if let Some(initial_interval_ms) = conf.initial_interval_ms {
+                Duration::from_millis(initial_interval_ms)
+            } else {
+                Duration::from_millis(INITIAL_INTERVAL_MS)
+            }
+        } else {
+            Duration::from_millis(INITIAL_INTERVAL_MS)
+        }
+    }
+
+    pub fn get_session_update_interval(&self) -> Duration {
+        if let Some(conf) = self.conf {
+            Duration::from_secs(
+                conf.session_update_interval_secs
+                    .unwrap_or(SESSION_STATUS_UPDATE_INTERVAL_SECS),
+            )
+        } else {
+            Duration::from_secs(SESSION_STATUS_UPDATE_INTERVAL_SECS)
+        }
+    }
+
+    pub fn get_session_cleanup_interval(&self) -> Duration {
+        if let Some(conf) = self.conf {
+            Duration::from_secs(
+                conf.session_cleanup_interval_secs
+                    .unwrap_or(SESSION_CLEANUP_INTERVAL_SECS),
+            )
+        } else {
+            Duration::from_secs(SESSION_CLEANUP_INTERVAL_SECS)
+        }
+    }
+
+    pub fn get_discard_inactive_sessions_interval(&self) -> Duration {
+        if let Some(conf) = self.conf {
+            Duration::from_secs(
+                conf.discard_inactive_sessions_interval
+                    .unwrap_or(DISCARD_INACTIVE_SESSION_INTERVAL_SECS),
+            )
+        } else {
+            Duration::from_secs(DISCARD_INACTIVE_SESSION_INTERVAL_SECS)
+        }
+    }
+
+    pub fn get_max_opened_inactive_sessions_per_party(&self) -> u64 {
+        if let Some(conf) = self.conf {
+            conf.max_opened_inactive_sessions_per_party
+                .unwrap_or(MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY)
+        } else {
+            MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY
+        }
+    }
+
+    pub fn get_max_waiting_time_for_message_queue(&self) -> Duration {
+        if let Some(conf) = self.conf {
+            Duration::from_secs(
+                conf.max_waiting_time_for_message_queue
+                    .unwrap_or(MAX_WAITING_TIME_MESSAGE_QUEUE),
+            )
+        } else {
+            Duration::from_secs(MAX_WAITING_TIME_MESSAGE_QUEUE) // Default to 60 seconds if not specified
+        }
+    }
 }
 
 //TODO: Most likely need this to create NetworkStack instead of GrpcNetworking
@@ -118,7 +196,11 @@ impl OptionConfigWrapper {
 /// channels and message queues between MPC parties.
 #[derive(Debug, Clone)]
 pub struct GrpcNetworkingManager {
-    pub message_queues: Arc<MessageQueueStores>,
+    // Session reference storage to prevent premature cleanup under high concurrency
+    pub session_store: Arc<SessionStore>,
+    // Keeps tracks of how many sessions were opened by each party
+    // NOTE: Always lock session_store before opened_sessions_tracker to prevent deadlocks
+    pub opened_sessions_tracker: Arc<DashMap<Identity, u64>>,
     owner: Identity,
     conf: OptionConfigWrapper,
     pub sending_service: GrpcSendingService,
@@ -130,11 +212,58 @@ impl GrpcNetworkingManager {
     /// Create a new server from the networking manager.
     /// The server can be used as a tower Service.
     pub fn new_server(&self) -> GnetworkingServer<impl Gnetworking> {
-        GnetworkingServer::new(NetworkingImpl {
-            message_queues: Arc::clone(&self.message_queues),
-        })
+        GnetworkingServer::new(NetworkingImpl::new(
+            Arc::clone(&self.session_store),
+            Arc::clone(&self.opened_sessions_tracker),
+            self.conf.get_message_limit(),
+            self.conf.get_max_opened_inactive_sessions_per_party(),
+            self.conf.get_max_waiting_time_for_message_queue(),
+        ))
         .max_decoding_message_size(self.conf.get_max_en_decode_message_size())
         .max_encoding_message_size(self.conf.get_max_en_decode_message_size())
+    }
+
+    /// Starts a background task that periodically cleans up the session store, it wakes up at every update_interval.
+    ///
+    /// The task discards sessions that have been completed for longer than the cleanup interval
+    /// and inactive session that have been inactive for longer than the discard_inactive_interval.
+    ///
+    /// It also updates the status of active sessions by checking if their weak references are still valid,
+    /// and if not, marks them as completed.
+    fn start_background_cleaning_task(
+        session_store: Arc<SessionStore>,
+        update_interval: Duration,
+        cleanup_interval: Duration,
+        discard_inactive_interval: Duration,
+    ) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(update_interval);
+            loop {
+                interval.tick().await;
+
+                session_store.retain(|session_id, status| match status {
+                    SessionStatus::Completed(started) => started.elapsed() < cleanup_interval,
+                    SessionStatus::Inactive((_, started)) => {
+                        if started.elapsed() > discard_inactive_interval {
+                            tracing::warn!(
+                                "Discarding Inactive session {:?} after {:?} seconds. We never heard about such session.",
+                                session_id,
+                                started.elapsed().as_secs()
+                            );
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                    SessionStatus::Active(session) => {
+                        if session.upgrade().is_none() {
+                            *status = SessionStatus::Completed(Instant::now());
+                        }
+                        true
+                    }
+                });
+            }
+        });
     }
 
     /// Owner should be the external address
@@ -143,10 +272,26 @@ impl GrpcNetworkingManager {
         tls_conf: Option<SendingServiceTLSConfig>,
         conf: Option<CoreToCoreNetworkConfig>,
     ) -> anyhow::Result<Self> {
+        let conf = OptionConfigWrapper { conf };
+        let session_store = Arc::new(SessionStore::default());
+
+        // We need to spawn background cleanup task to remove dead weak references from session_store, otherwise they accumulate and eat RAM + perf
+        let cleanup_session_store = Arc::clone(&session_store);
+        let update_interval = conf.get_session_update_interval();
+        let cleanup_interval = conf.get_session_cleanup_interval();
+        let discard_inactive_interval = conf.get_discard_inactive_sessions_interval();
+        Self::start_background_cleaning_task(
+            cleanup_session_store,
+            update_interval,
+            cleanup_interval,
+            discard_inactive_interval,
+        );
+
         Ok(GrpcNetworkingManager {
-            message_queues: Default::default(),
+            session_store,
+            opened_sessions_tracker: Arc::new(DashMap::new()),
             owner,
-            conf: OptionConfigWrapper { conf },
+            conf,
             sending_service: GrpcSendingService::new(tls_conf, conf)?,
         })
     }
@@ -161,64 +306,124 @@ impl GrpcNetworkingManager {
         session_id: SessionId,
         roles: RoleAssignment,
         network_mode: NetworkMode,
-    ) -> Arc<impl Networking> {
-        let others = roles
-            .iter()
-            .filter_map(|(_role, identity)| {
-                if identity != &self.owner {
-                    Some(identity.clone())
-                } else {
-                    None
-                }
-            })
-            .collect_vec();
-
-        // Tell the sending service to spawns network threads to communicate wit the others
-        let connection_channel = self.sending_service.add_connections(others).unwrap();
-
-        // Create the message queue for this session id (this queue will be written to by the grpc server and read by the NetworkSession)
-        let message_store = DashMap::new();
+    ) -> anyhow::Result<Arc<impl Networking>> {
+        let party_count = roles.len();
+        let mut others = Vec::with_capacity(party_count.saturating_sub(1));
         for (_role, identity) in roles {
-            let (tx, rx) = channel::<NetworkRoundValue>(self.conf.get_message_limit());
-            message_store.insert(identity, (Arc::new(tx), Arc::new(Mutex::new(rx))));
+            if identity != self.owner {
+                others.push(identity.clone());
+            }
         }
-        let message_store = Arc::new(message_store);
-        self.message_queues
-            .insert(session_id, message_store.clone());
-        tracing::info!(
-            "{} creating new session {}, queue size {}",
-            self.owner,
-            session_id,
-            self.message_queues.len(),
-        );
 
         let timeout = match network_mode {
             NetworkMode::Async => *NETWORK_TIMEOUT_ASYNC,
             NetworkMode::Sync => self.conf.get_network_timeout(),
         };
-        Arc::new(NetworkSession {
-            owner: self.owner.clone(),
-            session_id,
-            sending_channels: connection_channel,
-            receiving_channels: message_store,
-            round_counter: RwLock::new(0),
-            network_mode,
-            conf: self.conf.clone(),
-            init_time: OnceLock::new(),
-            current_network_timeout: RwLock::new(timeout),
-            next_network_timeout: RwLock::new(timeout),
-            max_elapsed_time: RwLock::new(Duration::ZERO),
-            #[cfg(feature = "choreographer")]
-            num_byte_sent: RwLock::new(0),
-        })
-    }
 
-    pub fn delete_session(&self, session_id: SessionId) {
-        if self.message_queues.remove(&session_id).is_some() {
-            // TODO: double check if we should empty the channels here
-        } else {
-            tracing::error!("Session ID {:?} not found in message queues", session_id);
-        }
+        let session = match self.session_store.entry(session_id) {
+            // Turn an inactive session into an active one
+            dashmap::Entry::Occupied(mut status) => {
+                let mutable_status = status.get_mut();
+
+                let message_store = if let SessionStatus::Inactive(message_store) = mutable_status {
+                    message_store.clone()
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Session {:?} already exists and is not inactive for {}",
+                        session_id,
+                        self.owner
+                    ));
+                };
+
+                message_store.0.retain(|other_identity,_| {
+                    if !others.contains(other_identity) {
+                        tracing::warn!(
+                            "Session {:?} already has a message queue for {:?}, but it is not in the roles list.",
+                            session_id,
+                            other_identity
+                        );
+                        false
+                    } else {
+                        //NOTE: I hold the session store write lock here, so this is safe
+                        self.opened_sessions_tracker
+                            .entry(other_identity.clone())
+                            .and_modify(|count| {*count = count.saturating_sub(1);})
+                            .or_insert(0);
+                        true
+                    }
+                });
+
+                for identity in others.iter() {
+                    if !message_store.0.contains_key(identity) {
+                        let (tx, rx) = channel::<NetworkRoundValue>(self.conf.get_message_limit());
+                        message_store
+                            .0
+                            .insert(identity.clone(), (Arc::new(tx), Arc::new(Mutex::new(rx))));
+                    }
+                }
+
+                let connection_channel = self.sending_service.add_connections(others)?;
+
+                let session = Arc::new(NetworkSession {
+                    owner: self.owner.clone(),
+                    session_id,
+                    sending_channels: connection_channel,
+                    receiving_channels: message_store.0,
+                    round_counter: RwLock::new(0),
+                    network_mode,
+                    conf: self.conf,
+                    init_time: OnceLock::new(),
+                    current_network_timeout: RwLock::new(timeout),
+                    next_network_timeout: RwLock::new(timeout),
+                    max_elapsed_time: RwLock::new(Duration::ZERO),
+                    #[cfg(feature = "choreographer")]
+                    num_byte_sent: RwLock::new(0),
+                });
+
+                *mutable_status = SessionStatus::Active(Arc::downgrade(&session));
+
+                session
+            }
+            dashmap::Entry::Vacant(vacant) => {
+                let message_store = DashMap::with_capacity(party_count);
+                for identity in others.iter() {
+                    let (tx, rx) = channel::<NetworkRoundValue>(self.conf.get_message_limit());
+                    message_store
+                        .insert(identity.clone(), (Arc::new(tx), Arc::new(Mutex::new(rx))));
+                }
+
+                let connection_channel = self.sending_service.add_connections(others)?;
+
+                let session = Arc::new(NetworkSession {
+                    owner: self.owner.clone(),
+                    session_id,
+                    sending_channels: connection_channel,
+                    receiving_channels: message_store,
+                    round_counter: RwLock::new(0),
+                    network_mode,
+                    conf: self.conf,
+                    init_time: OnceLock::new(),
+                    current_network_timeout: RwLock::new(timeout),
+                    next_network_timeout: RwLock::new(timeout),
+                    max_elapsed_time: RwLock::new(Duration::ZERO),
+                    #[cfg(feature = "choreographer")]
+                    num_byte_sent: RwLock::new(0),
+                });
+
+                vacant.insert(SessionStatus::Active(Arc::downgrade(&session)));
+
+                session
+            }
+        };
+
+        tracing::info!(
+            "[SESSION_CREATION] Starting session {:?} with {} parties. (Owner: {:?})",
+            session_id,
+            party_count,
+            self.owner
+        );
+
+        Ok(session)
     }
 }
 
@@ -237,11 +442,151 @@ pub(crate) type MessageQueueStore = DashMap<
         Arc<Mutex<Receiver<NetworkRoundValue>>>,
     ),
 >;
-type MessageQueueStores = DashMap<SessionId, Arc<MessageQueueStore>>;
+
+pub(crate) type SessionStore = DashMap<SessionId, SessionStatus>;
+
+#[derive(Debug)]
+/// Represents the status of a session in the session store.
+/// It can be:
+/// - Completed: The session has been completed and the timestamp of completion is stored.
+/// - Inactive: The session is inactive (I haven't yet heard about the request) and has a message queue store for senders.
+/// - Active: The session is active (I know about the request) and holds a weak reference to the `NetworkSession`.
+pub enum SessionStatus {
+    Completed(Instant),
+    Inactive((MessageQueueStore, Instant)),
+    Active(Weak<NetworkSession>),
+}
 
 #[derive(Default)]
 pub struct NetworkingImpl {
-    message_queues: Arc<MessageQueueStores>,
+    session_store: Arc<SessionStore>,
+    opened_sessions_tracker: Arc<DashMap<Identity, u64>>,
+    channel_size_limit: usize,
+    max_opened_inactive_sessions: u64,
+    max_waiting_time_for_message_queue: Duration,
+}
+
+impl NetworkingImpl {
+    pub fn new(
+        session_store: Arc<SessionStore>,
+        opened_sessions_tracker: Arc<DashMap<Identity, u64>>,
+        channel_size_limit: usize,
+        max_opened_inactive_sessions: u64,
+        max_waiting_time_for_message_queue: Duration,
+    ) -> Self {
+        Self {
+            session_store: session_store.clone(),
+            opened_sessions_tracker: opened_sessions_tracker.clone(),
+            channel_size_limit,
+            max_opened_inactive_sessions,
+            max_waiting_time_for_message_queue,
+        }
+    }
+
+    // Did not find a better soluton yet.
+    // See https://github.com/hyperium/tonic/issues/2253
+    #[allow(clippy::result_large_err)]
+    /// Fetches the channel for the given session and tag.
+    /// - If the session is inactive, it creates a new channel for the sender (assuming the sender hasn't opened too many channels for inactive sessions yet).
+    /// - If the session is active, it returns the existing channel (assuming the sender is part of the session).
+    /// - If the session is completed, it returns None
+    ///   to indicate that the message can be accepted but will not be processed.
+    fn fetch_tx_channel(
+        &self,
+        session_status: &SessionStatus,
+        tag: &Tag,
+    ) -> Result<Option<Arc<Sender<NetworkRoundValue>>>, tonic::Status> {
+        match session_status {
+            SessionStatus::Completed(_) => {
+                tracing::debug!(
+                        "Session {:?} found in session_store but is completed. Will be removed by background cleanup.",
+                        tag.session_id
+                    );
+                // We accept the message even if we won't do anything with it
+                // to avoid blocking the sender
+                Ok(None)
+            }
+
+            SessionStatus::Inactive(message_queue) => {
+                tracing::debug!(
+                    "Session {:?} found in session_store but is inactive.",
+                    tag.session_id
+                );
+                match message_queue.0.entry(tag.sender.clone()) {
+                    dashmap::Entry::Occupied(occupied_entry) => {
+                        Ok(Some(occupied_entry.get().0.clone()))
+                    }
+                    dashmap::Entry::Vacant(vacant_entry) => {
+                        let mut opened_session_tracker_entry = self
+                            .opened_sessions_tracker
+                            .entry(tag.sender.clone())
+                            .or_insert(0);
+                        if *opened_session_tracker_entry >= self.max_opened_inactive_sessions {
+                            tracing::warn!(
+                                "Too many inactive sessions opened by {:?}. Have {}, Max allowed: {}",
+                                tag.sender,
+                                *opened_session_tracker_entry,
+                                self.max_opened_inactive_sessions
+                            );
+                            return Err(tonic::Status::new(
+                                tonic::Code::ResourceExhausted,
+                                format!(
+                                    "Too many inactive sessions opened by {:?}. Have {}, Max allowed: {}",
+                                    tag.sender, *opened_session_tracker_entry, self.max_opened_inactive_sessions
+                                ),
+                            ));
+                        }
+                        // Create a new channel for the sender
+                        let (tx, rx) = channel::<NetworkRoundValue>(self.channel_size_limit);
+                        let tx = Arc::new(tx);
+                        vacant_entry.insert((Arc::clone(&tx), Arc::new(Mutex::new(rx))));
+
+                        // Update the opened sessions tracker
+                        *opened_session_tracker_entry += 1;
+                        Ok(Some(tx))
+                    }
+                }
+            }
+            // Session is active, we can proceed with sending the message
+            SessionStatus::Active(weak_session) => {
+                tracing::debug!(
+                    "Session {:?} found in session_store and is active.",
+                    tag.session_id
+                );
+                // Attempt to upgrade weak reference to strong reference
+                if let Some(session) = weak_session.upgrade() {
+                    // Get the message queue from the session's receiving channels
+                    if let Some(session_store) = session.receiving_channels.get(&tag.sender) {
+                        Ok(Some(session_store.value().0.clone()))
+                    } else {
+                        let available_senders: Vec<_> = session
+                            .receiving_channels
+                            .iter()
+                            .map(|entry| entry.key().clone())
+                            .collect();
+
+                        tracing::warn!(
+                            "Sender {:?} not found in session {:?}. Available senders: {:?}",
+                            tag.sender,
+                            tag.session_id,
+                            available_senders
+                        );
+
+                        Err(tonic::Status::new(
+                            tonic::Code::NotFound,
+                            format!(
+                                "Sender {:?} not found in session {:?}",
+                                tag.sender, tag.session_id
+                            ),
+                        ))
+                    }
+                } else {
+                    // Session has been dropped, accept the message even if we won't do anything with it
+                    Ok(None)
+                }
+            }
+        }
+    }
 }
 
 // We do the measurement of received bytes here because
@@ -253,7 +598,6 @@ lazy_static::lazy_static! {
         DashMap::new();
 }
 
-const NUM_RETRIES_FETCH_MESSAGE_QUEUE: usize = 50;
 #[async_trait]
 impl Gnetworking for NetworkingImpl {
     async fn send_value(
@@ -325,43 +669,105 @@ impl Gnetworking for NetworkingImpl {
         }
         tracing::debug!("passed sender verification, tag is {:?}", tag);
 
-        for _ in 0..NUM_RETRIES_FETCH_MESSAGE_QUEUE {
-            if self.message_queues.contains_key(&tag.session_id) {
-                let tx = self
-                    .message_queues
-                    .get(&tag.session_id)
-                    .ok_or_else(|| {
-                        anyhow_error_and_log("couldn't retrieve session store from message stores")
-                    })
-                    .map(|s| {
-                        s.get(&tag.sender)
-                            .ok_or_else(|| {
-                                anyhow_error_and_log(
-                                    "couldn't retrieve channels from session store",
-                                )
-                            })
-                            .map(|s| s.value().0.clone())
-                            .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))
-                    })
-                    .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))??;
+        tracing::debug!(
+            "Starting session lookup for session_id={:?}, sender={:?}, round={}",
+            tag.session_id,
+            tag.sender,
+            tag.round_counter
+        );
 
-                let _ = tx
-                    .send(NetworkRoundValue {
-                        value: request.value,
-                        round_counter: tag.round_counter,
-                    })
-                    .await;
-                return Ok(tonic::Response::new(SendValueResponse::default()));
+        // First try with only read lock to avoid blocking
+        let tx = if let Some(session_status) = self.session_store.get(&tag.session_id) {
+            match self.fetch_tx_channel(session_status.value(), &tag)? {
+                Some(tx) => tx,
+                None => {
+                    // If the session is completed or inactive, we return early
+                    return Ok(tonic::Response::new(SendValueResponse::default()));
+                }
             }
-            tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+        } else {
+            // We write lock the session store to create a new one
+            match self.session_store.entry(tag.session_id) {
+                dashmap::Entry::Occupied(occupied_entry) => {
+                    // Can be occupied if ever state has changed by the time we reach this branch of the if statement
+                    match self.fetch_tx_channel(occupied_entry.get(), &tag)? {
+                        Some(tx) => tx,
+                        None => {
+                            // If the session is completed or inactive, we return early
+                            return Ok(tonic::Response::new(SendValueResponse::default()));
+                        }
+                    }
+                }
+                dashmap::Entry::Vacant(vacant_entry) => {
+                    tracing::debug!(
+                        "Session {:?} not found in session_store, creating a new inactive one.",
+                        tag.session_id
+                    );
+                    let mut opened_session_tracker_entry = self
+                        .opened_sessions_tracker
+                        .entry(tag.sender.clone())
+                        .or_insert(0);
+                    if *opened_session_tracker_entry >= self.max_opened_inactive_sessions {
+                        tracing::warn!(
+                            "Too many inactive sessions opened by {:?}. Got {}, Max allowed: {}",
+                            tag.sender,
+                            *opened_session_tracker_entry,
+                            self.max_opened_inactive_sessions
+                        );
+                        return Err(tonic::Status::new(
+                            tonic::Code::ResourceExhausted,
+                            format!(
+                                "Too many inactive sessions opened by {:?}. Got {}, Max allowed: {}",
+                                tag.sender,*opened_session_tracker_entry, self.max_opened_inactive_sessions
+                            ),
+                        ));
+                    }
+                    // Create a new session with an inactive status
+                    let message_store = DashMap::new();
+                    let (tx, rx) = channel::<NetworkRoundValue>(self.channel_size_limit);
+                    let tx = Arc::new(tx);
+                    message_store.insert(
+                        tag.sender.clone(),
+                        (Arc::clone(&tx), Arc::new(Mutex::new(rx))),
+                    );
+
+                    // Insert the new session into the store
+                    vacant_entry.insert(SessionStatus::Inactive((message_store, Instant::now())));
+                    *opened_session_tracker_entry += 1;
+                    tx
+                }
+            }
+        };
+
+        // Send message - ignore send errors as receiver may have dropped
+        let send_result = tokio::time::timeout(
+            self.max_waiting_time_for_message_queue,
+            tx.send(NetworkRoundValue {
+                value: request.value,
+                round_counter: tag.round_counter,
+            }),
+        )
+        .await;
+
+        if let Err(e) = send_result {
+            tracing::warn!(
+            "Failed to process value for session {:?}, sender {:?}, round {}. Queue has been full for {} seconds.",
+            tag.session_id,
+            tag.sender,
+            tag.round_counter,
+            self.max_waiting_time_for_message_queue.as_secs()
+        );
+
+            return Err(tonic::Status::new(
+                tonic::Code::ResourceExhausted,
+                format!(
+                    "Failed to process value for session {:?}, sender {:?}, round {}: {:?}",
+                    tag.session_id, tag.sender, tag.round_counter, e
+                ),
+            ));
         }
 
-        let msg = format!(
-            "unknown session id {:?} for from sender {:?} (round {})",
-            tag.session_id, tag.sender, tag.round_counter
-        );
-        tracing::error!(msg);
-        Err(tonic::Status::new(tonic::Code::NotFound, msg))
+        Ok(tonic::Response::new(SendValueResponse::default()))
     }
 }
 

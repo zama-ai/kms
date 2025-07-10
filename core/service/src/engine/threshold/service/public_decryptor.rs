@@ -109,7 +109,7 @@ impl<
                 )?;
                 let mut noiseflood_session = NoiseFloodSmallSession::new(session);
 
-                let res = decrypt_using_noiseflooding(
+                decrypt_using_noiseflooding(
                     &mut noiseflood_session,
                     &keys.integer_server_key,
                     keys.sns_key
@@ -120,9 +120,7 @@ impl<
                     dec_mode,
                     session_prep.own_identity()?,
                 )
-                .await;
-                session_prep.destroy_session(session_id).await;
-                res
+                .await
             }
             DecryptionMode::BitDecSmall => {
                 let mut session = tonic_handle_potential_err(
@@ -132,7 +130,7 @@ impl<
                     "Could not prepare ddec data for bitdec decryption".to_string(),
                 )?;
 
-                let res = secure_decrypt_using_bitdec(
+                secure_decrypt_using_bitdec(
                     &mut session,
                     &low_level_ct.try_get_small_ct()?,
                     &keys.private_keys,
@@ -140,9 +138,7 @@ impl<
                     dec_mode,
                     session_prep.own_identity()?,
                 )
-                .await;
-                session_prep.destroy_session(session_id).await;
-                res
+                .await
             }
             mode => {
                 return Err(anyhow_error_and_log(format!(
@@ -233,6 +229,14 @@ impl<
             e
         })?;
 
+        // CRITICAL FIX: Release permit immediately after validation
+        // Don't hold permits during expensive multi-party coordination
+        drop(permit);
+        tracing::debug!(
+            request_id = ?req_id,
+            "Rate limiter permit released after validation - proceeding with async coordination"
+        );
+
         if let Some(b) = timer.as_mut() {
             //We log but we don't want to return early because timer failed
             let _ = b
@@ -251,13 +255,23 @@ impl<
         // So we need to update it everytime something bad happens,
         // or put all the code that may error before the first write to the meta-store,
         // otherwise it'll be in the "Started" state forever.
-        {
+        // Optimize lock hold time by minimizing operations under lock
+        let (lock_acquired_time, total_lock_time) = {
+            let lock_start = std::time::Instant::now();
             let mut guarded_meta_store = self.pub_dec_meta_store.write().await;
+            let lock_acquired_time = lock_start.elapsed();
             tonic_handle_potential_err(
                 guarded_meta_store.insert(&req_id),
                 "Could not insert decryption into meta store".to_string(),
             )?;
-        }
+            let total_lock_time = lock_start.elapsed();
+            (lock_acquired_time, total_lock_time)
+        };
+        // Log after lock is released
+        tracing::info!(
+            "MetaStore INITIAL insert - req_id={}, key_id={}, party_id={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}", 
+            req_id, key_id, self.session_preparer.my_id, ciphertexts.len(), lock_acquired_time, total_lock_time
+        );
 
         tonic_handle_potential_err(
             self.crypto_storage
@@ -451,12 +465,16 @@ impl<
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
-        let dec_sig_future = |_permit| async move {
+        let party_id = self.session_preparer.my_id;
+        let dec_sig_future = || async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
             let _timer = timer;
-            // NOTE: _permit should be dropped at the end of this function
+            // NOTE: Rate limiter permit was already released after validation
             let mut decs = HashMap::new();
+            let error_msg: Option<String> = None;
+
+            // Collect all results first, without holding any locks
             while let Some(resp) = dec_tasks.pop() {
                 match resp.await {
                     Ok(Ok((idx, plaintext))) => {
@@ -481,13 +499,32 @@ impl<
                 }
             }
 
+            // Handle error case with single lock acquisition
+            if let Some(msg) = error_msg {
+                let (lock_acquired_time, total_lock_time) = {
+                    let lock_start = std::time::Instant::now();
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let lock_acquired_time = lock_start.elapsed();
+                    let _ = guarded_meta_store.update(&req_id, Err(msg));
+                    let total_lock_time = lock_start.elapsed();
+                    (lock_acquired_time, total_lock_time)
+                };
+                // Log after lock is released
+                tracing::warn!(
+                    "MetaStore ERROR update - req_id={}, lock_acquired_in={:?}, total_lock_held={:?}", 
+                    req_id, lock_acquired_time, total_lock_time
+                );
+                return;
+            }
+
+            // Prepare success data outside of lock
             let pts: Vec<_> = decs
                 .keys()
                 .sorted()
                 .map(|idx| decs.get(idx).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
                 .collect();
 
-            // sign the plaintexts and handles for external verification (in fhevm)
+            // Compute expensive signature OUTSIDE the lock
             let external_sig = if let Some(domain) = eip712_domain {
                 compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, domain)
             } else {
@@ -495,11 +532,24 @@ impl<
                 vec![]
             };
 
-            let mut guarded_meta_store = meta_store.write().await;
-            let _ = guarded_meta_store.update(&req_id, Ok((req_digest.clone(), pts, external_sig)));
+            // Single success update with minimal lock hold time
+            let success_result = Ok((req_digest.clone(), pts.clone(), external_sig));
+            let (lock_acquired_time, total_lock_time) = {
+                let lock_start = std::time::Instant::now();
+                let mut guarded_meta_store = meta_store.write().await;
+                let lock_acquired_time = lock_start.elapsed();
+                let _ = guarded_meta_store.update(&req_id, success_result);
+                let total_lock_time = lock_start.elapsed();
+                (lock_acquired_time, total_lock_time)
+            };
+            // Log after lock is released
+            tracing::info!(
+                "MetaStore SUCCESS update - req_id={}, key_id={}, party_id={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}", 
+                req_id, key_id, party_id, pts.len(), lock_acquired_time, total_lock_time
+            );
         };
         self.tracker
-            .spawn(dec_sig_future(permit).instrument(tracing::Span::current()));
+            .spawn(dec_sig_future().instrument(tracing::Span::current()));
 
         Ok(Response::new(Empty {}))
     }

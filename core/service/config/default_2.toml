@@ -63,13 +63,19 @@ tls_cert.path = "certs/cert_p4.pem"
 
 [threshold.core_to_core_net]
 message_limit = 70
-multiplier = 1.1
-max_interval = 5
+multiplier = 2.0
+max_interval = 60
+initial_interval_ms = 100
 max_elapsed_time = 300
-network_timeout = 10
+network_timeout = 20
 network_timeout_bk = 300
 network_timeout_bk_sns = 1200
 max_en_decode_message_size = 2147483648
+session_update_interval_secs = 60
+session_cleanup_interval_secs = 3600
+discard_inactive_sessions_interval = 900
+max_waiting_time_for_message_queue = 60
+max_opened_inactive_sessions_per_party = 100
 
 # [threshold.preproc_redis]
 # host = "redis://127.0.0.1"

@@ -301,13 +301,28 @@ mod tests {
         assert!(core_to_core_net.is_some());
         let core_to_core_net = core_to_core_net.unwrap();
         assert_eq!(core_to_core_net.message_limit, 70);
-        assert_eq!(core_to_core_net.multiplier, 1.1);
-        assert_eq!(core_to_core_net.max_interval, 5);
+        assert_eq!(core_to_core_net.multiplier, 2.0);
+        assert_eq!(core_to_core_net.max_interval, 60);
+        assert_eq!(core_to_core_net.initial_interval_ms, Some(100));
         assert_eq!(core_to_core_net.max_elapsed_time, Some(300));
-        assert_eq!(core_to_core_net.network_timeout, 10);
+        assert_eq!(core_to_core_net.network_timeout, 20);
         assert_eq!(core_to_core_net.network_timeout_bk, 300);
         assert_eq!(core_to_core_net.network_timeout_bk_sns, 1200);
         assert_eq!(core_to_core_net.max_en_decode_message_size, 2147483648);
+        assert_eq!(core_to_core_net.session_update_interval_secs, Some(60));
+        assert_eq!(core_to_core_net.session_cleanup_interval_secs, Some(3600));
+        assert_eq!(
+            core_to_core_net.discard_inactive_sessions_interval,
+            Some(900)
+        );
+        assert_eq!(
+            core_to_core_net.max_waiting_time_for_message_queue,
+            Some(60)
+        );
+        assert_eq!(
+            core_to_core_net.max_opened_inactive_sessions_per_party,
+            Some(100)
+        );
     }
 
     #[test]

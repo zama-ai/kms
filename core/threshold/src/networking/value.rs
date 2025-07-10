@@ -49,14 +49,14 @@ pub enum BroadcastValue<Z: Eq + Zero + Sized> {
 }
 
 impl<Z: Eq + Zero + Serialize> BroadcastValue<Z> {
-    pub fn to_bcast_hash(&self) -> BcastHash {
+    pub fn to_bcast_hash(&self) -> Result<BcastHash, anyhow::Error> {
         // Note that we are implicitly assuming that the serialization of a broadcast value ensure uniqueness
         let digest = serialize_hash_element(&DSEP_BRACH, &self)
-            .expect("Could not serialize and hash message");
+            .map_err(|e| anyhow::anyhow!("Could not serialize and hash message: {}", e))?;
         digest
             .as_slice()
             .try_into()
-            .expect("wrong length in broadcast hash")
+            .map_err(|_| anyhow::anyhow!("Invalid hash length for broadcast hash"))
     }
 }
 

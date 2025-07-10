@@ -46,17 +46,16 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
     pub async fn init_prss_from_disk(&self, req_id: &RequestId) -> anyhow::Result<()> {
         let prss_setup_z128_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
-            let base_session = self
+            let parameters = self
                 .session_preparer
-                .make_base_session(req_id.derive_session_id()?, NetworkMode::Sync)
-                .await?;
+                .get_session_parameters(req_id.derive_session_id()?)?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
                 &derive_request_id(&format!(
                     "PRSSSetup_Z128_ID_{}_{}_{}",
                     req_id,
-                    base_session.parameters.num_parties(),
-                    base_session.parameters.threshold()
+                    parameters.num_parties(),
+                    parameters.threshold()
                 ))?,
                 &PrivDataType::PrssSetup.to_string(),
             )
@@ -78,17 +77,16 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 
         let prss_setup_z64_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
-            let base_session = self
+            let parameters = self
                 .session_preparer
-                .make_base_session(req_id.derive_session_id()?, NetworkMode::Sync)
-                .await?;
+                .get_session_parameters(req_id.derive_session_id()?)?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
                 &derive_request_id(&format!(
                     "PRSSSetup_Z64_ID_{}_{}_{}",
                     req_id,
-                    base_session.parameters.num_parties(),
-                    base_session.parameters.threshold()
+                    parameters.num_parties(),
+                    parameters.threshold()
                 ))?,
                 &PrivDataType::PrssSetup.to_string(),
             )

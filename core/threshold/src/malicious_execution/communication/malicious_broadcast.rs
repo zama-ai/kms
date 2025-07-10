@@ -142,8 +142,13 @@ impl Broadcast for MaliciousBroadcastSender {
 
         let mut map_hash_to_value: HashMap<(Role, BcastHash), BroadcastValue<Z>> = echos_count
             .into_iter()
-            .map(|((role, value), _)| ((role, value.to_bcast_hash()), value))
-            .collect();
+            .map(|((role, value), _)| {
+                let hash = value.to_bcast_hash().map_err(|e| {
+                    anyhow::anyhow!("Failed to compute broadcast hash for role {}: {}", role, e)
+                })?;
+                Ok(((role, hash), value))
+            })
+            .collect::<anyhow::Result<HashMap<_, _>>>()?;
 
         // Communication round 3
         // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)

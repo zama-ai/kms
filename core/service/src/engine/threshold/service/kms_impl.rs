@@ -279,13 +279,12 @@ where
         mpc_socket_addr
     );
 
-    let nm_networking_strategy = networking_manager.clone();
     let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
         move |session_id, roles, network_mode| {
-            let nm = nm_networking_strategy.clone();
+            let nm = networking_manager.clone();
             Box::pin(async move {
                 let manager = nm.read().await;
-                let impl_networking = manager.make_session(session_id, roles, network_mode);
+                let impl_networking = manager.make_session(session_id, roles, network_mode)?;
                 Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
             })
         },
@@ -392,7 +391,6 @@ where
         networking_strategy,
         prss_setup_z128: Arc::clone(&prss_setup_z128),
         prss_setup_z64: Arc::clone(&prss_setup_z64),
-        networking_manager: Arc::clone(&networking_manager),
     };
 
     let metastore_status_service = MetaStoreStatusServiceImpl::new(

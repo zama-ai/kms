@@ -63,8 +63,8 @@ pub struct LocalNetworkingProducer {
 impl LocalNetworkingProducer {
     pub fn from_ids(identities: &[Identity]) -> Self {
         let pairwise_channels = DashMap::new();
-        for v1 in identities.to_owned().iter() {
-            for v2 in identities.to_owned().iter() {
+        for v1 in identities.iter() {
+            for v2 in identities.iter() {
                 if v1 != v2 {
                     let (tx, rx) = unbounded_channel::<LocalTaggedValue>();
                     pairwise_channels.insert(
@@ -111,8 +111,8 @@ impl LocalNetworking {
     }
     pub fn from_ids(owner: Identity, identities: &[Identity]) -> Self {
         let pairwise_channels = DashMap::new();
-        for v1 in identities.to_owned().iter() {
-            for v2 in identities.to_owned().iter() {
+        for v1 in identities.iter() {
+            for v2 in identities.iter() {
                 if v1 != v2 {
                     let (tx, rx) = unbounded_channel::<LocalTaggedValue>();
                     pairwise_channels.insert(
@@ -158,10 +158,11 @@ impl Networking for LocalNetworking {
         let net_round = {
             match self.network_round.lock() {
                 Ok(net_round) => *net_round,
-                _ => panic!(
-                    "Another user of the {:?} mutex panicked",
-                    self.network_round
-                ),
+                Err(_) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to acquire lock on network_round - mutex poisoned"
+                    ));
+                }
             }
         };
 
@@ -173,15 +174,19 @@ impl Networking for LocalNetworking {
         match self.already_sent.lock() {
             Ok(mut already_sent) => {
                 if already_sent.contains(&(receiver.clone(), net_round)) {
-                    panic!("Trying to send to {receiver} in round {net_round} more than once !")
+                    return Err(anyhow::anyhow!(
+                        "Duplicate send attempted to {} in round {} - this violates protocol safety",
+                        receiver, net_round
+                    ));
                 } else {
                     already_sent.insert((receiver.clone(), net_round));
                 }
             }
-            _ => panic!(
-                "Another user of the {:?} mutex panicked.",
-                self.already_sent
-            ),
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to acquire lock on already_sent - mutex poisoned"
+                ));
+            }
         }
 
         tx.send(tagged_value).map_err(|e| e.into())
@@ -367,9 +372,9 @@ mod tests {
 
         let _ = tokio::try_join!(task1, task2).unwrap();
     }
+
     #[tokio::test]
-    #[should_panic = "Trying to send to bob:5002 in round 0 more than once !"]
-    async fn test_sync_networking_panic() {
+    async fn test_sync_networking_duplicate_send_error() {
         let alice = Identity("alice".into(), 5001);
         let bob = Identity("bob".into(), 5002);
         let identities: Vec<Identity> = vec![alice.clone(), bob.clone()];
@@ -378,7 +383,15 @@ mod tests {
         let net_alice = net_producer.user_net(alice.clone(), NetworkMode::Sync, None);
 
         let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
-        let _ = net_alice.send(value.clone().to_network(), &bob).await;
-        let _ = net_alice.send(value.to_network(), &bob).await;
+        // First send should succeed
+        let result1 = net_alice.send(value.clone().to_network(), &bob).await;
+        assert!(result1.is_ok());
+
+        // Second send to same receiver in same round should fail
+        let result2 = net_alice.send(value.to_network(), &bob).await;
+        assert!(result2.is_err());
+        let error_msg = result2.unwrap_err().to_string();
+        assert!(error_msg
+            .contains(&format!("Duplicate send attempted to {bob} in round 0").to_string()));
     }
 }

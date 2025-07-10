@@ -359,7 +359,10 @@ async fn process_echos<Z: Ring>(
     //Any entry with at least N-t times is good for a vote
     for ((role, m), num_entries) in echoed_data.iter() {
         if num_entries >= &((num_parties - threshold) as u32) {
-            registered_votes.insert((*role, m.to_bcast_hash()), 1);
+            let hash = m.to_bcast_hash().map_err(|e| {
+                anyhow::anyhow!("Failed to compute broadcast hash for role {}: {}", role, e)
+            })?;
+            registered_votes.insert((*role, hash), 1);
         }
     }
     Ok(registered_votes)
@@ -553,8 +556,13 @@ impl Broadcast for SyncReliableBroadcast {
 
         let mut map_hash_to_value: HashMap<(Role, BcastHash), BroadcastValue<Z>> = echos_count
             .into_iter()
-            .map(|((role, value), _)| ((role, value.to_bcast_hash()), value))
-            .collect();
+            .map(|((role, value), _)| {
+                let hash = value.to_bcast_hash().map_err(|e| {
+                    anyhow::anyhow!("Failed to compute broadcast hash for role {}: {}", role, e)
+                })?;
+                Ok(((role, hash), value))
+            })
+            .collect::<anyhow::Result<HashMap<_, _>>>()?;
         // Communication round 3 onward
         // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
         // Here propagate error if my own casted hashmap does not contain the expected party's id

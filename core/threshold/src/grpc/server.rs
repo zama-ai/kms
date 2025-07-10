@@ -103,7 +103,7 @@ where
         Box::new(move |session_id, roles, network_mode| {
             let nm = networking.clone();
             Box::pin(async move {
-                let impl_networking = nm.make_session(session_id, roles, network_mode);
+                let impl_networking = nm.make_session(session_id, roles, network_mode)?;
                 Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
             })
         }),
@@ -117,7 +117,7 @@ where
             Box::new(move |session_id, roles, network_mode| {
                 let nm = networking.clone();
                 Box::pin(async move {
-                    let impl_networking = nm.make_session(session_id, roles, network_mode);
+                    let impl_networking = nm.make_session(session_id, roles, network_mode)?;
                     Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
                 })
             }),
