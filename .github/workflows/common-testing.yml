@@ -70,7 +70,8 @@ env:
   DOCKER_BUILDKIT: 1
   NPM_TAG: ""
 
-permissions: {}
+permissions:
+  packages: read
 
 jobs:
   compile-rust-unit-tests:

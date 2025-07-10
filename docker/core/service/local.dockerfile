@@ -2,7 +2,7 @@
 
 ################################################################
 # First stage based on the golden image
-FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms-golden-image:latest AS kms-server
+FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS kms-server
 
 WORKDIR /app/kms
 COPY . .

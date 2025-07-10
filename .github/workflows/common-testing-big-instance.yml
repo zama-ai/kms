@@ -70,7 +70,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-permissions: {}
+permissions:
+  packages: read
 
 jobs:
   start-runner:
