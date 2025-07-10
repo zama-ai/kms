@@ -847,6 +847,34 @@ impl<
     }
 }
 
+#[cfg(feature = "non-wasm")]
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
+    > RealCentralizedKms<PubS, PrivS, BackS>
+{
+    /// Get a reference to the key generation MetaStore
+    pub fn get_key_gen_meta_store(&self) -> &Arc<RwLock<MetaStore<KeyGenCallValues>>> {
+        &self.key_meta_map
+    }
+
+    /// Get a reference to the public decryption MetaStore
+    pub fn get_pub_dec_meta_store(&self) -> &Arc<RwLock<MetaStore<PubDecCallValues>>> {
+        &self.pub_dec_meta_store
+    }
+
+    /// Get a reference to the user decryption MetaStore
+    pub fn get_user_dec_meta_store(&self) -> &Arc<RwLock<MetaStore<UserDecryptCallValues>>> {
+        &self.user_decrypt_meta_map
+    }
+
+    /// Get a reference to the CRS generation MetaStore
+    pub fn get_crs_meta_store(&self) -> &Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>> {
+        &self.crs_meta_map
+    }
+}
+
 #[tonic::async_trait]
 impl<
         PubS: Storage + Sync + Send + 'static,

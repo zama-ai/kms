@@ -439,11 +439,11 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
             let meta_store_status_service = Arc::new(MetaStoreStatusServiceImpl::new(
-                None, // key_gen_store
-                None, // pub_dec_store
-                None, // user_dec_store
-                None, // crs_store
-                None, // preproc_store
+                Some(Arc::clone(kms.get_key_gen_meta_store())), // key_gen_store
+                Some(Arc::clone(kms.get_pub_dec_meta_store())), // pub_dec_store
+                Some(Arc::clone(kms.get_user_dec_meta_store())), // user_dec_store
+                Some(Arc::clone(kms.get_crs_meta_store())),     // crs_store
+                None, // preproc_store - not available in centralized mode
             ));
             run_server(
                 core_config.service,
