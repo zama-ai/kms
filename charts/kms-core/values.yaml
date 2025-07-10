@@ -25,6 +25,7 @@ kmsCore:
     configmap:
       name:
       key:
+        coreClientS3Endpoint: CORE_CLIENT__S3_ENDPOINT
         privateVaultStorageBucket: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
         publicVaultStorageBucket: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
         privateVaultKeychainAWSKMSRootKeySpec: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
@@ -120,8 +121,8 @@ kmsCore:
       path: kms
     awskms:
       enabled: false
-      root_key_id: 00000000-0000-0000-0000-000000000000
-      root_key_spec: symm
+      rootKeyId: 00000000-0000-0000-0000-000000000000
+      rootKeySpec: symm
   aws:
     roleArn:
     region: eu-west-1

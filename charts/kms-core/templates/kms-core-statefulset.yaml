@@ -56,20 +56,20 @@ spec:
               export AWS_REGION="${AWS_REGION:={{ .Values.kmsCore.aws.region }}}"
               export AWS_ROLE_ARN="${AWS_ROLE_ARN:={{ .Values.kmsCore.aws.roleArn }}}"
               {{ if .Values.kmsCore.publicVault.s3.enabled }}
-              export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET="$(echo ${KMS_CORE__PUBLIC_VAULT__STORAGE}  | cut -d"/" -f3)"
+              export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET="${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.publicVault.s3.bucket }}}"
               {{ if .Values.kmsCore.publicVault.s3.path }}
               export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.path }}}"
               {{ end }}
               {{ end }}
               {{ if .Values.kmsCore.privateVault.s3.enabled }}
-              export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET="$(echo ${KMS_CORE__PRIVATE_VAULT__STORAGE}  | cut -d"/" -f3)"
+              export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.privateVault.s3.bucket }}}"
               {{ if .Values.kmsCore.privateVault.s3.path }}
               export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.privateVault.s3.path }}}"
               {{ end }}
               {{ end }}
               {{ if .Values.kmsCore.nitroEnclave.enabled }}
-              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID="$(echo $KMS_CORE__PRIVATE_VAULT__KEYCHAIN | cut -d"/" -f4)"
-              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="$(echo $KMS_CORE__PRIVATE_VAULT__KEYCHAIN | cut -d"/" -f3)"
+              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID:={{ .Values.kmsCore.privateVault.awskms.rootKeyId }}}"
+              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC:={{ .Values.kmsCore.privateVault.awskms.rootKeySpec }}}"
               {{ end }}
               for i in $(seq 1 {{ len .Values.kmsCore.thresholdMode.peersList }}); do
                 BUCKET_PATH=$(curl -s "${CORE_CLIENT__S3_ENDPOINT}/?list-type=2&prefix=PUB-p${i}/CACert/" | grep -o "<Key>[^<]*</Key>" | sed "s/<Key>//;s/<\/Key>//")
@@ -105,6 +105,11 @@ spec:
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
           {{- if .Values.kmsCore.envFrom.configmap.name }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.coreClientS3Endpoint }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.coreClientS3Endpoint }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
               valueFrom:
                 configMapKeyRef:
@@ -262,7 +267,7 @@ spec:
               --aws-region {{ .Values.kmsCore.aws.region }} \
               {{- if .Values.kmsCore.publicVault.s3.enabled -}}
               --public-storage s3 \
-              --public-s3-bucket "$(echo ${KMS_CORE__PUBLIC_VAULT__STORAGE}  | cut -d"/" -f3)" \
+              --public-s3-bucket "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.publicVault.s3.bucket }}}" \
                 {{- if .Values.kmsCore.publicVault.s3.path }}
               --public-s3-prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:=={{ .Values.kmsCore.publicVault.s3.path }}}" \
                 {{- end }}
@@ -272,7 +277,7 @@ spec:
               {{- end }}
               {{- if .Values.kmsCore.privateVault.s3.enabled -}}
               --private-storage s3 \
-              --private-s3-bucket "$(echo ${KMS_CORE__PRIVATE_VAULT__STORAGE}  | cut -d"/" -f3)" \
+              --private-s3-bucket "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.privateVault.s3.bucket }}}" \
                 {{- if .Values.kmsCore.privateVault.s3.path }}
               --private-s3-prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:=={{ .Values.kmsCore.privateVault.s3.path }}}" \
                 {{- end }}
@@ -281,8 +286,8 @@ spec:
               --private-file-path "./keys" \
               {{- end }}
               {{- if .Values.kmsCore.privateVault.awskms.enabled }}
-              --root-key-id "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID:={{ .Values.kmsCore.privateVault.awskms.root_key_id }}}" \
-              --root-key-spec "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC:={{ .Values.kmsCore.privateVault.awskms.root_key_spec }}}" \
+              --root-key-id "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID:={{ .Values.kmsCore.privateVault.awskms.rootKeyId }}}" \
+              --root-key-spec "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC:={{ .Values.kmsCore.privateVault.awskms.rootKeySpec }}}" \
               {{- end }}
               {{ include "kmsCoreMode" . }} \
               {{- if .Values.kmsCore.thresholdMode.enabled }}
