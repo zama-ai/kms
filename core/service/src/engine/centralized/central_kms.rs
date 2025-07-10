@@ -23,8 +23,6 @@ use crate::vault::storage::{
 };
 use aes_prng::AesRng;
 #[cfg(feature = "non-wasm")]
-use kms_grpc::kms::v1::KeySetAddedInfo;
-#[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::UserDecryptionResponsePayload;
@@ -81,7 +79,7 @@ pub(crate) async fn async_generate_fhe_keys<PubS, PrivS, BackS>(
     storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
     params: DKGParams,
     keyset_config: StandardKeySetConfig,
-    keyset_added_info: Option<KeySetAddedInfo>,
+    compression_key_id: Option<RequestId>,
     seed: Option<Seed>,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
@@ -94,19 +92,16 @@ where
     let sk_copy = sk.to_owned();
     let eip712_domain_copy = eip712_domain.cloned();
 
-    let existing_key_handle = match keyset_added_info {
-        Some(added_info) => match added_info.compression_keyset_id {
-            Some(key_id) => {
-                let key_id = key_id.into();
-                storage.refresh_centralized_fhe_keys(&key_id).await?;
-                Some(
-                    storage
-                        .read_cloned_centralized_fhe_keys_from_cache(&key_id)
-                        .await?,
-                )
-            }
-            None => None,
-        },
+    let existing_key_handle = match compression_key_id {
+        Some(compression_key_id_inner) => {
+            storage
+                .refresh_centralized_fhe_keys(&compression_key_id_inner)
+                .await?;
+            let existing_key_handle = storage
+                .read_cloned_centralized_fhe_keys_from_cache(&compression_key_id_inner)
+                .await?;
+            Some(existing_key_handle)
+        }
         None => None,
     };
 

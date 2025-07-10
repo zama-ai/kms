@@ -1,7 +1,7 @@
 use crate::client::await_server_ready;
 use crate::client::test_tools::ServerHandle;
 use crate::consts::DEFAULT_URL;
-use crate::engine::threshold::generic::GenericKms;
+use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
     ContextManager, CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor,
     UserDecryptor,
@@ -63,7 +63,7 @@ pub async fn setup_mock_kms(n: usize) -> HashMap<u32, ServerHandle> {
 /// This is a mock threshold KMS that doesn't do anything and only
 /// returns dummy values on grpc calls.
 #[cfg(not(feature = "insecure"))]
-type DummyThresholdKms = GenericKms<
+type DummyThresholdKms = ThresholdKms<
     DummyInitiator,
     DummyUserDecryptor,
     DummyPublicDecryptor,
@@ -74,7 +74,7 @@ type DummyThresholdKms = GenericKms<
 >;
 
 #[cfg(feature = "insecure")]
-type DummyThresholdKms = GenericKms<
+type DummyThresholdKms = ThresholdKms<
     DummyInitiator,
     DummyUserDecryptor,
     DummyPublicDecryptor,

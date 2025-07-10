@@ -1,6 +1,6 @@
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
-use kms_grpc::kms::v1::{Empty, KeyGenRequest, KeyGenResult, KeySetAddedInfo};
+use kms_grpc::kms::v1::{Empty, KeyGenRequest, KeyGenResult};
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, PubDataType};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
@@ -15,12 +15,12 @@ use tracing::Instrument;
 
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::base::{
-    compute_info, convert_key_response, preproc_proto_to_keyset_config, retrieve_parameters,
-    KeyGenCallValues, DSEP_PUBDATA_KEY,
+    compute_info, convert_key_response, retrieve_parameters, KeyGenCallValues, DSEP_PUBDATA_KEY,
 };
 use crate::engine::centralized::central_kms::{
     async_generate_decompression_keys, async_generate_fhe_keys, RealCentralizedKms,
 };
+use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::engine::validation::validate_request_id;
 use crate::tonic_handle_potential_err;
 use crate::tonic_some_or_err;
@@ -66,9 +66,8 @@ pub async fn key_gen_impl<
         retrieve_parameters(inner.params),
         "Parameter choice is not recognized".to_string(),
     )?;
-
-    let keyset_config = tonic_handle_potential_err(
-        preproc_proto_to_keyset_config(&inner.keyset_config),
+    let internal_keyset_config = tonic_handle_potential_err(
+        InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info),
         "Invalid keyset config".to_string(),
     )?;
 
@@ -95,8 +94,7 @@ pub async fn key_gen_impl<
                 crypto_storage,
                 sk,
                 params,
-                keyset_config,
-                inner.keyset_added_info,
+                internal_keyset_config,
                 eip712_domain,
                 permit,
             )
@@ -154,8 +152,7 @@ pub(crate) async fn key_gen_background<
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
     sk: Arc<PrivateSigKey>,
     params: DKGParams,
-    keyset_config: KeySetConfig,
-    keyset_added_info: Option<KeySetAddedInfo>,
+    internal_keyset_config: InternalKeySetConfig,
     eip712_domain: Option<Eip712Domain>,
     permit: OwnedSemaphorePermit,
 ) -> Result<(), anyhow::Error> {
@@ -184,14 +181,14 @@ pub(crate) async fn key_gen_background<
             return Ok(());
         }
     }
-    match keyset_config {
+    match internal_keyset_config.keyset_config() {
         KeySetConfig::Standard(standard_key_set_config) => {
             let (fhe_key_set, key_info) = match async_generate_fhe_keys(
                 &sk,
                 crypto_storage.clone(),
                 params,
-                standard_key_set_config,
-                keyset_added_info,
+                standard_key_set_config.to_owned(),
+                internal_keyset_config.get_compression_id(),
                 None,
                 eip712_domain.as_ref(),
             )
@@ -217,58 +214,40 @@ pub(crate) async fn key_gen_background<
             tracing::info!("⏱️ Core Event Time for Keygen: {:?}", start.elapsed());
         }
 
-        KeySetConfig::DecompressionOnly => match keyset_added_info {
-            Some(added_info) => {
-                match (
-                    added_info.from_keyset_id_decompression_only,
-                    added_info.to_keyset_id_decompression_only,
-                ) {
-                    (Some(from), Some(to)) => {
-                        let decompression_key = async_generate_decompression_keys(
-                            crypto_storage.clone(),
-                            &from.into(),
-                            &to.into(),
-                        )
-                        .await?;
-                        let info = match compute_info(
-                            &sk,
-                            &DSEP_PUBDATA_KEY,
-                            &decompression_key,
-                            eip712_domain.as_ref(),
-                        ) {
-                            Ok(info) => {
-                                HashMap::from_iter(vec![(PubDataType::DecompressionKey, info)])
-                            }
-                            Err(_) => {
-                                let mut guarded_meta_storage = meta_store.write().await;
-                                // We cannot do much if updating the storage fails at this point...
-                                let _ = guarded_meta_storage.update(
-                                    req_id,
-                                    Err("Failed to compute decompression key info".to_string()),
-                                );
-                                anyhow::bail!("Failed to compute decompression key info");
-                            }
-                        };
-                        crypto_storage
-                            .write_decompression_key_with_meta_store(
-                                req_id,
-                                decompression_key,
-                                info,
-                                meta_store,
-                            )
-                            .await;
-                        tracing::info!(
-                            "⏱️ Core Event Time for decompression Keygen: {:?}",
-                            start.elapsed()
-                        );
-                    }
-                    _ => anyhow::bail!("Missing from and to keyset information"),
+        KeySetConfig::DecompressionOnly => {
+            let (from, to) = internal_keyset_config.get_from_and_to()?;
+            let decompression_key =
+                async_generate_decompression_keys(crypto_storage.clone(), &from, &to).await?;
+            let info = match compute_info(
+                &sk,
+                &DSEP_PUBDATA_KEY,
+                &decompression_key,
+                eip712_domain.as_ref(),
+            ) {
+                Ok(info) => HashMap::from_iter(vec![(PubDataType::DecompressionKey, info)]),
+                Err(_) => {
+                    let mut guarded_meta_storage = meta_store.write().await;
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_storage.update(
+                        req_id,
+                        Err("Failed to compute decompression key info".to_string()),
+                    );
+                    anyhow::bail!("Failed to compute decompression key info");
                 }
-            }
-            None => {
-                anyhow::bail!("Added info is required when only generating a decompression key")
-            }
-        },
+            };
+            crypto_storage
+                .write_decompression_key_with_meta_store(
+                    req_id,
+                    decompression_key,
+                    info,
+                    meta_store,
+                )
+                .await;
+            tracing::info!(
+                "⏱️ Core Event Time for decompression Keygen: {:?}",
+                start.elapsed()
+            );
+        }
     }
     Ok(())
 }

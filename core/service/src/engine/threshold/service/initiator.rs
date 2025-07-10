@@ -23,7 +23,9 @@ use tonic_health::server::HealthReporter;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    engine::{base::derive_request_id, threshold::traits::Initiator},
+    engine::{
+        base::derive_request_id, threshold::traits::Initiator, validation::validate_request_id,
+    },
     tonic_some_or_err,
     vault::storage::{read_versioned_at_request_id, store_versioned_at_request_id, Storage},
 };
@@ -200,12 +202,12 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> {
     async fn init(&self, request: Request<v1::InitRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
-
         let request_id = tonic_some_or_err(
             inner.request_id.clone(),
-            "Request ID is not set (inner key gen)".to_string(),
+            "Request ID is not set (initiator)".to_string(),
         )?
         .into();
+        validate_request_id(&request_id)?;
 
         self.init_prss(&request_id).await.map_err(|e| {
             tonic::Status::new(

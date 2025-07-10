@@ -35,9 +35,8 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     engine::{
-        base::{preproc_proto_to_keyset_config, retrieve_parameters},
-        threshold::traits::KeyGenPreprocessor,
-        validation::validate_request_id,
+        base::retrieve_parameters, keyset_configuration::preproc_proto_to_keyset_config,
+        threshold::traits::KeyGenPreprocessor, validation::validate_request_id,
     },
     tonic_handle_potential_err, tonic_some_or_err,
     util::{
@@ -235,15 +234,7 @@ impl KeyGenPreprocessor for RealPreprocessor {
             "Request ID is not set (key_gen_preproc)".to_string(),
         )?
         .into();
-
-        // ensure the request ID is valid
-        if !request_id.is_valid() {
-            tracing::warn!("Request ID {} is not valid!", request_id.to_string());
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("Request ID {request_id} is not valid!"),
-            ));
-        }
+        validate_request_id(&request_id)?;
 
         //Retrieve the DKG parameters
         let dkg_params = tonic_handle_potential_err(

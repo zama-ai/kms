@@ -40,9 +40,10 @@ use crate::{
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
         base::{
-            compute_info, convert_key_response, preproc_proto_to_keyset_config,
-            retrieve_parameters, BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY,
+            compute_info, convert_key_response, retrieve_parameters, BaseKmsStruct,
+            KeyGenCallValues, DSEP_PUBDATA_KEY,
         },
+        keyset_configuration::InternalKeySetConfig,
         threshold::{
             service::{kms_impl::compute_all_info, ThresholdFheKeys},
             traits::KeyGenerator,
@@ -165,15 +166,17 @@ impl<
     async fn launch_dkg(
         &self,
         dkg_params: DKGParams,
-        keyset_config: ddec_keyset_config::KeySetConfig,
-        keyset_added_info: KeySetAddedInfo,
+        internal_keyset_config: InternalKeySetConfig,
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
         eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
         //Retrieve the right metric tag
-        let op_tag = match (&preproc_handle_w_mode, keyset_config) {
+        let op_tag = match (
+            &preproc_handle_w_mode,
+            internal_keyset_config.keyset_config(),
+        ) {
             (PreprocHandleWithMode::Secure(_), ddec_keyset_config::KeySetConfig::Standard(_)) => {
                 OP_KEYGEN
             }
@@ -234,7 +237,7 @@ impl<
         // we need to clone the req ID because async closures are not stable
         let req_id_clone = req_id;
         let keygen_background = async move {
-            match keyset_config {
+            match internal_keyset_config.keyset_config() {
                 ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
                     Self::key_gen_background(
                         &req_id_clone,
@@ -244,8 +247,8 @@ impl<
                         preproc_handle_w_mode,
                         sk,
                         dkg_params,
-                        inner_config,
-                        keyset_added_info,
+                        inner_config.to_owned(),
+                        internal_keyset_config.get_compression_id(),
                         eip712_domain_copy,
                         permit,
                     )
@@ -260,7 +263,8 @@ impl<
                         preproc_handle_w_mode,
                         sk,
                         dkg_params,
-                        keyset_added_info,
+                        internal_keyset_config
+                            .keyset_added_info().expect("keyset added info must be set for secure key generation and should have been validated before starting key generation").to_owned(),
                         eip712_domain_copy,
                         permit,
                     )
@@ -312,15 +316,7 @@ impl<
             "Request ID is not set (inner key gen)".to_string(),
         )?
         .into();
-
-        // ensure the request ID is valid
-        if !request_id.is_valid() {
-            tracing::warn!("Request ID {} is not valid!", request_id.to_string());
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("Request ID {request_id} is not valid!"),
-            ));
-        }
+        validate_request_id(&request_id)?;
 
         // Retrieve kg params and preproc_id
         let dkg_params = tonic_handle_potential_err(
@@ -347,22 +343,15 @@ impl<
 
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
 
-        let keyset_config = tonic_handle_potential_err(
-            preproc_proto_to_keyset_config(&inner.keyset_config),
-            "Failed to parse KeySetConfig".to_string(),
+        let internal_keyset_config = tonic_handle_potential_err(
+            InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info),
+            "Invalid keyset config".to_string(),
         )?;
-
-        let keyset_added_info = inner.keyset_added_info.unwrap_or(KeySetAddedInfo {
-            compression_keyset_id: None,
-            from_keyset_id_decompression_only: None,
-            to_keyset_id_decompression_only: None,
-        });
 
         tonic_handle_potential_err(
             self.launch_dkg(
                 dkg_params,
-                keyset_config,
-                keyset_added_info,
+                internal_keyset_config,
                 preproc_handle,
                 request_id,
                 eip712_domain.as_ref(),
@@ -746,7 +735,7 @@ impl<
         base_session: &mut BaseSession,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
         params: DKGParams,
-        keyset_added_info: KeySetAddedInfo,
+        compression_key_id: RequestId,
         preprocessing: &mut P,
     ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<4>)>
     where
@@ -754,17 +743,9 @@ impl<
             + Send
             + ?Sized,
     {
-        let key_id = keyset_added_info
-            .compression_keyset_id
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "missing key ID for the keyset that contains the compression secret key share"
-                )
-            })?
-            .into();
         let existing_compression_sk = {
             let threshold_keys = crypto_storage
-                .read_guarded_threshold_fhe_keys_from_cache(&key_id)
+                .read_guarded_threshold_fhe_keys_from_cache(&compression_key_id)
                 .await?;
             let compression_sk_share = threshold_keys
                 .private_keys
@@ -797,7 +778,7 @@ impl<
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
         keyset_config: ddec_keyset_config::StandardKeySetConfig,
-        keyset_added_info: KeySetAddedInfo,
+        compression_key_id: Option<RequestId>,
         eip712_domain: Option<alloy_sol_types::Eip712Domain>,
         permit: OwnedSemaphorePermit,
     ) {
@@ -858,7 +839,7 @@ impl<
                             &mut base_session,
                             crypto_storage.clone(),
                             params,
-                            keyset_added_info,
+                            compression_key_id.expect("compression key ID must be set for secure key generation and should have been validated before starting key generation"),
                             preproc_handle.as_mut(),
                         )
                         .await

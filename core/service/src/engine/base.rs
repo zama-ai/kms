@@ -46,8 +46,6 @@ use threshold_fhe::execution::endpoints::decryption::{
     LowLevelCiphertext, SnsRadixOrBoolCiphertext,
 };
 use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
-#[cfg(feature = "non-wasm")]
-use threshold_fhe::execution::keyset_config as ddec_keyset_config;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::hashing::hash_element;
 use threshold_fhe::hashing::serialize_hash_element;
@@ -755,79 +753,6 @@ pub(crate) fn convert_key_response(
             (key_type, key_info.into())
         })
         .collect()
-}
-
-#[cfg(feature = "non-wasm")]
-pub(crate) struct WrappedKeySetConfig(kms_grpc::kms::v1::KeySetConfig);
-
-#[cfg(feature = "non-wasm")]
-impl TryFrom<WrappedKeySetConfig> for ddec_keyset_config::KeySetConfig {
-    type Error = anyhow::Error;
-
-    fn try_from(value: WrappedKeySetConfig) -> Result<Self, Self::Error> {
-        let keyset_type = kms_grpc::kms::v1::KeySetType::try_from(value.0.keyset_type)?;
-        match keyset_type {
-            kms_grpc::kms::v1::KeySetType::Standard => {
-                let inner_config = value
-                    .0
-                    .standard_keyset_config
-                    .ok_or_else(|| anyhow::anyhow!("missing StandardKeySetConfig"))?;
-                let compute_key_type =
-                    kms_grpc::kms::v1::ComputeKeyType::try_from(inner_config.compute_key_type)?;
-                let compression_type = kms_grpc::kms::v1::KeySetCompressionConfig::try_from(
-                    inner_config.keyset_compression_config,
-                )?;
-                Ok(ddec_keyset_config::KeySetConfig::Standard(
-                    ddec_keyset_config::StandardKeySetConfig {
-                        computation_key_type: WrappedComputeKeyType(compute_key_type).into(),
-                        compression_config: WrappedCompressionConfig(compression_type).into(),
-                    },
-                ))
-            }
-            kms_grpc::kms::v1::KeySetType::DecompressionOnly => {
-                Ok(ddec_keyset_config::KeySetConfig::DecompressionOnly)
-            }
-        }
-    }
-}
-
-#[cfg(feature = "non-wasm")]
-pub(crate) struct WrappedComputeKeyType(kms_grpc::kms::v1::ComputeKeyType);
-
-#[cfg(feature = "non-wasm")]
-impl From<WrappedComputeKeyType> for ddec_keyset_config::ComputeKeyType {
-    fn from(value: WrappedComputeKeyType) -> Self {
-        match value.0 {
-            kms_grpc::kms::v1::ComputeKeyType::Cpu => ddec_keyset_config::ComputeKeyType::Cpu,
-        }
-    }
-}
-
-#[cfg(feature = "non-wasm")]
-pub(crate) struct WrappedCompressionConfig(kms_grpc::kms::v1::KeySetCompressionConfig);
-
-#[cfg(feature = "non-wasm")]
-impl From<WrappedCompressionConfig> for ddec_keyset_config::KeySetCompressionConfig {
-    fn from(value: WrappedCompressionConfig) -> Self {
-        match value.0 {
-            kms_grpc::kms::v1::KeySetCompressionConfig::Generate => {
-                ddec_keyset_config::KeySetCompressionConfig::Generate
-            }
-            kms_grpc::kms::v1::KeySetCompressionConfig::UseExisting => {
-                ddec_keyset_config::KeySetCompressionConfig::UseExisting
-            }
-        }
-    }
-}
-
-#[cfg(feature = "non-wasm")]
-pub(crate) fn preproc_proto_to_keyset_config(
-    keyset_config: &Option<kms_grpc::kms::v1::KeySetConfig>,
-) -> anyhow::Result<ddec_keyset_config::KeySetConfig> {
-    match keyset_config {
-        None => Ok(ddec_keyset_config::KeySetConfig::default()),
-        Some(inner) => Ok(WrappedKeySetConfig(*inner).try_into()?),
-    }
 }
 
 #[cfg(test)]

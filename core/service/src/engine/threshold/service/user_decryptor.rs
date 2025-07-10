@@ -47,7 +47,7 @@ use crate::{
         },
         threshold::traits::UserDecryptor,
         traits::BaseKms,
-        validation::{validate_user_decrypt_req, DSEP_USER_DECRYPTION},
+        validation::{validate_request_id, validate_user_decrypt_req, DSEP_USER_DECRYPTION},
     },
     tonic_handle_potential_err,
     util::{
@@ -436,16 +436,7 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<UserDecryptionResponse>, Status> {
         let request_id: RequestId = request.into_inner().into();
-        if !request_id.is_valid() {
-            tracing::warn!(
-                "The value {} is not a valid request ID!",
-                request_id.to_string()
-            );
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("The value {request_id} is not a valid request ID!"),
-            ));
-        }
+        validate_request_id(&request_id)?;
 
         // Retrieve the UserDecryptMetaStore object
         let status = {

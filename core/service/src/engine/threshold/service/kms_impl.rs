@@ -47,7 +47,7 @@ use crate::{
     engine::{
         base::{compute_info, BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY},
         prepare_shutdown_signals,
-        threshold::generic::GenericKms,
+        threshold::threshold_kms::ThresholdKms,
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     tonic_some_or_err,
@@ -135,7 +135,7 @@ pub fn compute_all_info(
 }
 
 #[cfg(not(feature = "insecure"))]
-pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
+pub type RealThresholdKms<PubS, PrivS, BackS> = ThresholdKms<
     RealInitiator<PrivS>,
     RealUserDecryptor<PubS, PrivS, BackS>,
     RealPublicDecryptor<PubS, PrivS, BackS>,
@@ -146,7 +146,7 @@ pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
 >;
 
 #[cfg(feature = "insecure")]
-pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
+pub type RealThresholdKms<PubS, PrivS, BackS> = ThresholdKms<
     RealInitiator<PrivS>,
     RealUserDecryptor<PubS, PrivS, BackS>,
     RealPublicDecryptor<PubS, PrivS, BackS>,
@@ -510,7 +510,7 @@ where
         crypto_storage: crypto_storage.clone(),
     };
 
-    let kms = GenericKms::new(
+    let kms = ThresholdKms::new(
         initiator,
         user_decryptor,
         public_decryptor,

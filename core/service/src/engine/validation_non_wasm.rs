@@ -32,6 +32,8 @@ const ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID: &str =
     "Key ID is not set in public decryption request";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID: &str =
     "Request ID is invalid in public decryption request";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_KEY_ID: &str =
+    "Key ID is invalid in public decryption request";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS: &str =
     "No ciphertexts in public decryption request";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP: &str =
@@ -50,6 +52,8 @@ const ERR_VALIDATE_USER_DECRYPTION_NO_REQ_ID: &str =
 const ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID: &str = "Key ID is not set in user decryption request";
 const ERR_VALIDATE_USER_DECRYPTION_BAD_REQ_ID: &str =
     "Request ID is invalid in user decryption request";
+const ERR_VALIDATE_USER_DECRYPTION_BAD_KEY_ID: &str =
+    "Key ID is invalid in user decryption request";
 const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user decryption request";
 
 pub(crate) const DSEP_REQ_RESP: DomainSep = *b"REQ_RESP";
@@ -92,6 +96,11 @@ pub fn validate_user_decrypt_req(
         format!("{ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID} (Request ID: {req:?})"),
     )?
     .into();
+    if !key_id.is_valid() {
+        return Err(anyhow_error_and_warn_log(format!(
+            "{ERR_VALIDATE_USER_DECRYPTION_BAD_KEY_ID} (Request ID: {key_id})"
+        )));
+    }
 
     let request_id: RequestId = tonic_some_or_err(
         req.request_id.clone(),
@@ -181,6 +190,11 @@ pub fn validate_public_decrypt_req(
         format!("{ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID} (Request ID: {req:?})"),
     )?
     .into();
+    if !key_id.is_valid() {
+        return Err(anyhow_error_and_warn_log(format!(
+            "{ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_KEY_ID} (Request ID: {key_id})"
+        )));
+    }
 
     let request_id: RequestId = tonic_some_or_err(
         req.request_id.clone(),
