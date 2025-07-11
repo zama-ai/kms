@@ -60,7 +60,8 @@ cfg_if::cfg_if! {
             pub static ref TEST_CENTRAL_KEY_ID: RequestId =
                 derive_request_id("TEST_CENTRAL_KEY_ID").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_4P: RequestId =
-                derive_request_id("TEST_THRESHOLD_KEY_ID_4P").unwrap();
+
+            derive_request_id("TEST_THRESHOLD_KEY_ID_4P").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_10P: RequestId =
                 derive_request_id("TEST_THRESHOLD_KEY_ID_10P").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_13P: RequestId =
@@ -139,4 +140,9 @@ lazy_static::lazy_static! {
     // We do so, since there is ever only one conceptual signing key per party (at least for now).
     // This is a bit hackish, but it works for now.
     pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
+}
+
+#[cfg(feature = "insecure")]
+lazy_static::lazy_static! {
+    pub static ref MOCK_NITRO_SIGNING_KEY_BYTES: Vec<u8> = include_bytes!("../certs/mock_nitro_signing_key.der").into();
 }

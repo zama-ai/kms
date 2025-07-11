@@ -165,7 +165,8 @@ async fn main() -> anyhow::Result<()> {
     let security_module = need_security_module
         .then(make_security_module)
         .transpose()
-        .inspect_err(|e| tracing::warn!("Could not initialize security module: {e}"))?;
+        .inspect_err(|e| tracing::warn!("Could not initialize security module: {e}"))?
+        .map(Arc::new);
 
     // public vault
     let public_storage = make_storage(
@@ -198,7 +199,14 @@ async fn main() -> anyhow::Result<()> {
             .private_vault
             .as_ref()
             .and_then(|v| v.keychain.as_ref())
-            .map(|k| make_keychain_proxy(k, awskms_client.clone(), security_module.clone(), None)),
+            .map(|k| {
+                make_keychain_proxy(
+                    k,
+                    awskms_client.clone(),
+                    security_module.as_ref().map(Arc::clone),
+                    None,
+                )
+            }),
     )
     .await
     .transpose()
@@ -244,7 +252,7 @@ async fn main() -> anyhow::Result<()> {
                 make_keychain_proxy(
                     k,
                     awskms_client.clone(),
-                    security_module.clone(),
+                    security_module.as_ref().map(Arc::clone),
                     Some(&private_vault),
                 )
             }),
@@ -344,6 +352,8 @@ async fn main() -> anyhow::Result<()> {
                                 key,
                                 trusted_releases: None,
                                 pcr8_expected: false,
+                                #[cfg(feature = "insecure")]
+                                mock_enclave: true,
                             }
                         }
                         // When remote attestation is used, the enclave generates a
@@ -357,7 +367,7 @@ async fn main() -> anyhow::Result<()> {
                             ref cert,
                             ref trusted_releases,
                         } => {
-                            let security_module = security_module.unwrap_or_else(|| {
+                            let security_module = security_module.clone().unwrap_or_else(|| {
                             panic!("EIF signing certificate present but not security module, unable to construct TLS identity")
                         });
                             tracing::info!(
@@ -374,12 +384,14 @@ async fn main() -> anyhow::Result<()> {
                                 key,
                                 trusted_releases: Some(Arc::new(trusted_releases.clone())),
                                 pcr8_expected: true,
+                                #[cfg(feature = "insecure")]
+                                mock_enclave: core_config.mock_enclave.is_some_and(|m| m),
                             }
                         }
                         TlsConf::FullAuto {
                             ref trusted_releases,
                         } => {
-                            let security_module = security_module.unwrap_or_else(|| {
+                            let security_module = security_module.clone().unwrap_or_else(|| {
                                 panic!("TLS identity and security module not present")
                             });
                             tracing::info!(
@@ -400,6 +412,8 @@ async fn main() -> anyhow::Result<()> {
                                 key,
                                 trusted_releases: Some(Arc::new(trusted_releases.clone())),
                                 pcr8_expected: false,
+                                #[cfg(feature = "insecure")]
+                                mock_enclave: core_config.mock_enclave.is_some_and(|m| m),
                             }
                         }
                     };

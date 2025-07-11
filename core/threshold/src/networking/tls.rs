@@ -47,6 +47,9 @@ pub struct BasicTLSConfig {
     pub trusted_releases: Option<Arc<Vec<ReleasePCRValues>>>,
     // are enclave images signed?
     pub pcr8_expected: bool,
+    // is enclave mocked?
+    #[cfg(feature = "insecure")]
+    pub mock_enclave: bool,
 }
 
 /// TLS identity after the peer list is known
@@ -64,6 +67,9 @@ pub struct SendingServiceTLSConfig {
     pub trusted_releases: Option<Arc<Vec<ReleasePCRValues>>>,
     // are enclave images signed?
     pub pcr8_expected: bool,
+    // is enclave mocked?
+    #[cfg(feature = "insecure")]
+    pub mock_enclave: bool,
 }
 
 /// Our custom verifier for our custom mTLS certificates extended with AWS Nitro
@@ -74,6 +80,8 @@ pub struct AttestedServerVerifier {
     verifier: Arc<dyn ServerCertVerifier>,
     release_pcrs: Arc<Vec<ReleasePCRValues>>,
     pcr8_expected: bool,
+    #[cfg(feature = "insecure")]
+    mock_enclave: bool,
 }
 
 impl AttestedServerVerifier {
@@ -81,11 +89,14 @@ impl AttestedServerVerifier {
         verifier: Arc<dyn ServerCertVerifier>,
         release_pcrs: Arc<Vec<ReleasePCRValues>>,
         pcr8_expected: bool,
+        #[cfg(feature = "insecure")] mock_enclave: bool,
     ) -> Self {
         Self {
             verifier,
             release_pcrs,
             pcr8_expected,
+            #[cfg(feature = "insecure")]
+            mock_enclave,
         }
     }
 }
@@ -113,6 +124,19 @@ impl ServerCertVerifier for AttestedServerVerifier {
         // check the bundled attestation document and EIF signing certificate
         let (_, cert) = parse_x509_certificate(end_entity.as_ref())
             .map_err(|e| Error::General(e.to_string()))?;
+        #[cfg(feature = "insecure")]
+        if !&self.mock_enclave {
+            validate_wrapped_cert(
+                &cert,
+                &self.release_pcrs,
+                self.pcr8_expected,
+                CertVerifier::Server(self.verifier.clone(), server_name, ocsp_response),
+                intermediates,
+                now,
+            )
+            .map_err(|e| Error::General(e.to_string()))?;
+        }
+        #[cfg(not(feature = "insecure"))]
         validate_wrapped_cert(
             &cert,
             &self.release_pcrs,
@@ -156,6 +180,8 @@ pub struct AttestedClientVerifier {
     verifiers: HashMap<String, Arc<dyn ClientCertVerifier>>,
     release_pcrs: Option<Arc<Vec<ReleasePCRValues>>>,
     pcr8_expected: bool,
+    #[cfg(feature = "insecure")]
+    mock_enclave: bool,
 }
 
 impl AttestedClientVerifier {
@@ -163,6 +189,7 @@ impl AttestedClientVerifier {
         ca_certs: HashMap<String, Pem>,
         release_pcrs: Option<Arc<Vec<ReleasePCRValues>>>,
         pcr8_expected: bool,
+        #[cfg(feature = "insecure")] mock_enclave: bool,
     ) -> anyhow::Result<Self> {
         let verifiers = ca_certs
             .iter()
@@ -195,6 +222,8 @@ impl AttestedClientVerifier {
             verifiers,
             release_pcrs,
             pcr8_expected,
+            #[cfg(feature = "insecure")]
+            mock_enclave,
         })
     }
 
@@ -242,6 +271,19 @@ impl ClientCertVerifier for AttestedClientVerifier {
 
         // check the bundled attestation document and EIF signing certificate
         if let Some(release_pcrs) = &self.release_pcrs {
+            #[cfg(feature = "insecure")]
+            if !&self.mock_enclave {
+                validate_wrapped_cert(
+                    &cert,
+                    release_pcrs,
+                    self.pcr8_expected,
+                    CertVerifier::Client(verifier.clone()),
+                    intermediates,
+                    now,
+                )
+                .map_err(|e| Error::General(e.to_string()))?;
+            }
+            #[cfg(not(feature = "insecure"))]
             validate_wrapped_cert(
                 &cert,
                 release_pcrs,
@@ -311,7 +353,12 @@ fn validate_wrapped_cert(
     };
     let attestation_doc =
         attestation_doc_validation::validate_and_parse_attestation_doc(attestation_doc.value)
-            .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))?;
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("AWS Nitro attestation failed: {e}"),
+                )
+            })?;
     let Some(attested_pk) = attestation_doc.public_key else {
         bail!("Bad certificate: public key not present in attestation document")
     };

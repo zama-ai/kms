@@ -20,6 +20,7 @@ use tokio::{
 use tokio_rustls::rustls::{
     client::{danger::DangerousClientConfigBuilder, ClientConfig, WebPkiServerVerifier},
     pki_types::{CertificateDer, PrivateKeyDer, ServerName},
+    version::TLS13,
     RootCertStore,
 };
 use tonic::service::interceptor::InterceptedService;
@@ -113,6 +114,8 @@ impl GrpcSendingService {
                 ca_certs,
                 trusted_releases,
                 pcr8_expected,
+                #[cfg(feature = "insecure")]
+                mock_enclave,
             }) => {
                 // If the host is an IP address then we abort
                 // domain names are needed for TLS.
@@ -131,7 +134,8 @@ impl GrpcSendingService {
                 // If we have a list of trusted software hashes, we're running
                 // within the AWS Nitro enclave and we have to use vsock proxies
                 // to make TCP connections to peers.
-                let endpoint = if trusted_releases.is_some() {
+                #[cfg(feature = "insecure")]
+                let endpoint = if trusted_releases.is_some() && !*mock_enclave {
                     format!("https://localhost:{}", receiver.1)
                         .parse::<Uri>()
                         .map_err(|_e| {
@@ -172,13 +176,15 @@ impl GrpcSendingService {
                         let safe_server_cert_verifier =
                             WebPkiServerVerifier::builder(Arc::new(roots)).build()?;
                         DangerousClientConfigBuilder {
-                            cfg: ClientConfig::builder(),
+                            cfg: ClientConfig::builder_with_protocol_versions(&[&TLS13]),
                         }
                         .with_custom_certificate_verifier(Arc::new(
                             AttestedServerVerifier::new(
                                 safe_server_cert_verifier,
                                 trusted_releases.clone(),
                                 *pcr8_expected,
+                                #[cfg(feature = "insecure")]
+                                *mock_enclave,
                             ),
                         ))
                     }
