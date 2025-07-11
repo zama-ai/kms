@@ -171,8 +171,8 @@ impl<C: KemCore> Visitor<'_> for PublicEncKeyVisitor<C> {
         let array = match v.try_into() {
             Ok(array) => array,
             Err(_) => {
-                let msg = "Byte array of incorrect length";
-                tracing::error!(msg);
+                let msg = "ML-KEM Public Enc Key Byte array of incorrect length";
+                tracing::warn!(msg);
                 return Err(serde::de::Error::custom(msg));
             }
         };
@@ -249,8 +249,8 @@ impl<C: KemCore> Visitor<'_> for PrivateEncKeyVisitor<C> {
         let array = match v.try_into() {
             Ok(array) => array,
             Err(_) => {
-                let msg = "Byte array of incorrect length";
-                tracing::error!(msg);
+                let msg = "ML-KEM Private Enc Key Byte array of incorrect length";
+                tracing::warn!(msg);
                 return Err(serde::de::Error::custom(msg));
             }
         };

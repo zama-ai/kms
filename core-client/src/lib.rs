@@ -702,6 +702,8 @@ pub fn setup_logging() {
     let log_level_str = std::env::var("RUST_LOG").unwrap_or_else(|_| "INFO".to_string());
     let log_level = tracing::Level::from_str(&log_level_str).unwrap_or(tracing::Level::INFO);
 
+    println!("Setting up logging with level: {:?}", log_level);
+
     let subscriber = tracing_subscriber::fmt()
         .with_writer(file_and_stdout)
         .with_ansi(false)
@@ -1257,7 +1259,8 @@ pub async fn execute_cmd(
     let client_storage: FileStorage =
         FileStorage::new(Some(destination_prefix), StorageType::CLIENT, None).unwrap();
     let mut internal_client: Option<Client> = None;
-    let mut core_endpoints = Vec::with_capacity(num_parties);
+    let mut core_endpoints_req = Vec::with_capacity(num_parties);
+    let mut core_endpoints_resp = Vec::with_capacity(num_parties);
 
     let param = cc_conf.fhe_params.unwrap_or(FheParameter::Test);
     let client_param = match param {
@@ -1285,12 +1288,19 @@ pub async fn execute_cmd(
             "http://".to_string() + &address
         };
 
-        let core_endpoint = retry!(
+        let core_endpoint_req = retry!(
             CoreServiceEndpointClient::connect(url.clone()).await,
             5,
             100
         )?;
-        core_endpoints.push(core_endpoint);
+        core_endpoints_req.push(core_endpoint_req);
+
+        let core_endpoint_resp = retry!(
+            CoreServiceEndpointClient::connect(url.clone()).await,
+            5,
+            100
+        )?;
+        core_endpoints_resp.push(core_endpoint_resp);
 
         // there's only 1 party, so use index 1
         pub_storage.insert(
@@ -1324,12 +1334,19 @@ pub async fn execute_cmd(
 
             tracing::info!("Connecting to {:?}", url);
 
-            let core_endpoint = retry!(
+            let core_endpoint_req = retry!(
                 CoreServiceEndpointClient::connect(url.clone()).await,
                 5,
                 100
             )?;
-            core_endpoints.push(core_endpoint);
+            core_endpoints_req.push(core_endpoint_req);
+
+            let core_endpoint_resp = retry!(
+                CoreServiceEndpointClient::connect(url.clone()).await,
+                5,
+                100
+            )?;
+            core_endpoints_resp.push(core_endpoint_resp);
 
             pub_storage.insert(
                 i as u32 + 1,
@@ -1409,7 +1426,8 @@ pub async fn execute_cmd(
                 let req_id = RequestId::new_random(&mut rng);
                 let internal_client = internal_client.clone();
                 let ct_batch = ct_batch.clone();
-                let mut core_endpoints = core_endpoints.clone();
+                let mut core_endpoints_req = core_endpoints_req.clone();
+                let mut core_endpoints_resp = core_endpoints_resp.clone();
                 let ptxt = ptxt.clone();
                 let kms_addrs = kms_addrs.clone();
 
@@ -1428,7 +1446,7 @@ pub async fn execute_cmd(
                     // make parallel requests by calling [decrypt] in a thread
                     let mut req_tasks = JoinSet::new();
 
-                    for ce in core_endpoints.iter_mut() {
+                    for ce in core_endpoints_req.iter_mut() {
                         let req_cloned = dec_req.clone();
                         let mut cur_client = ce.clone();
                         req_tasks.spawn(async move {
@@ -1444,8 +1462,14 @@ pub async fn execute_cmd(
                     }
                     assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
+                    tracing::info!(
+                        "{:?} ###! Sent all public decrypt requests. Since start {:?}",
+                        req_id.as_str(),
+                        start.elapsed()
+                    );
+
                     let resp_response_vec = get_public_decrypt_responses(
-                        &mut core_endpoints,
+                        &mut core_endpoints_resp,
                         Some(dec_req),
                         Some(ptxt),
                         req_id,
@@ -1453,6 +1477,7 @@ pub async fn execute_cmd(
                         num_expected_responses,
                         &*internal_client.read().await,
                         &kms_addrs,
+                        start,
                     )
                     .await?;
 
@@ -1514,7 +1539,8 @@ pub async fn execute_cmd(
                 internal_client,
                 ct_batch,
                 key_id,
-                core_endpoints.clone(),
+                core_endpoints_req.clone(),
+                core_endpoints_resp.clone(),
                 ptxt,
                 num_parties,
                 max_iter,
@@ -1527,7 +1553,7 @@ pub async fn execute_cmd(
             tracing::info!("Key generation with parameter {}.", param.as_str_name());
             let req_id = do_keygen(
                 &mut internal_client,
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1550,7 +1576,7 @@ pub async fn execute_cmd(
             );
             let req_id = do_keygen(
                 &mut internal_client,
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1571,7 +1597,7 @@ pub async fn execute_cmd(
 
             let req_id = do_crsgen(
                 &mut internal_client,
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1594,7 +1620,7 @@ pub async fn execute_cmd(
 
             let req_id = do_crsgen(
                 &mut internal_client,
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1614,7 +1640,7 @@ pub async fn execute_cmd(
 
             let req_id = do_preproc(
                 &mut internal_client,
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 &mut rng,
                 cmd_config,
                 num_parties,
@@ -1633,7 +1659,7 @@ pub async fn execute_cmd(
         }
         CCCommand::PreprocKeyGenResult(result_parameters) => {
             let req_id: RequestId = result_parameters.request_id;
-            let _ = get_preproc_keygen_responses(&mut core_endpoints, req_id, max_iter).await?;
+            let _ = get_preproc_keygen_responses(&mut core_endpoints_req, req_id, max_iter).await?;
             vec![(Some(req_id), "preproc result queried".to_string())]
         }
         CCCommand::KeyGenResult(result_parameters) => {
@@ -1644,7 +1670,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 req_id,
                 max_iter,
                 false,
@@ -1674,7 +1700,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 req_id,
                 max_iter,
                 true,
@@ -1704,7 +1730,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_public_decrypt_responses(
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 None,
                 None,
                 req_id,
@@ -1712,6 +1738,7 @@ pub async fn execute_cmd(
                 num_expected_responses,
                 internal_client.as_ref().unwrap(),
                 &kms_addrs,
+                tokio::time::Instant::now(),
             )
             .await?;
             let res = format!("{resp_response_vec:x?}");
@@ -1725,7 +1752,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 req_id,
                 max_iter,
                 false,
@@ -1755,7 +1782,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 req_id,
                 max_iter,
                 true,
@@ -1825,7 +1852,8 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
     internal_client: Arc<RwLock<Client>>,
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
-    core_endpoints: Vec<CoreServiceEndpointClient<Channel>>,
+    core_endpoints_req: Vec<CoreServiceEndpointClient<Channel>>,
+    core_endpoints_resp: Vec<CoreServiceEndpointClient<Channel>>,
     ptxt: TypedPlaintext,
     num_parties: usize,
     max_iter: usize,
@@ -1840,7 +1868,8 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
         let req_id = RequestId::new_random(rng);
         let internal_client = internal_client.clone();
         let ct_batch = ct_batch.clone();
-        let mut core_endpoints = core_endpoints.clone();
+        let mut core_endpoints_req = core_endpoints_req.clone();
+        let mut core_endpoints_resp = core_endpoints_resp.clone();
         let original_plaintext = ptxt.clone();
 
         // start timing measurement for this request
@@ -1860,7 +1889,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
             // make parallel requests by calling user decryption in a thread
             let mut req_tasks = JoinSet::new();
 
-            for ce in &mut core_endpoints {
+            for ce in &mut core_endpoints_req {
                 let req_cloned = user_decrypt_req.clone();
                 let mut cur_client = ce.clone();
                 req_tasks.spawn(async move {
@@ -1877,9 +1906,15 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
             }
             assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
+            tracing::info!(
+                "{:?} ###! Sent all user decrypt requests. Since start {:?}",
+                req_id.as_str(),
+                start.elapsed()
+            );
+
             // get all responses
             let mut resp_tasks = JoinSet::new();
-            for ce in &mut core_endpoints {
+            for ce in &mut core_endpoints_resp {
                 let mut cur_client = ce.clone();
                 let req_id_clone = user_decrypt_req.request_id.as_ref().unwrap().clone();
 
@@ -1925,6 +1960,13 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 }
             }
 
+            tracing::info!(
+                "{:?} ###! Received {} user decrypt responses. Since start {:?}",
+                req_id.as_str(),
+                resp_response_vec.len(),
+                start.elapsed()
+            );
+
             let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req).unwrap();
             let eip712_domain =
                 protobuf_to_alloy_domain(user_decrypt_req.domain.as_ref().unwrap()).unwrap();
@@ -1965,6 +2007,13 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 "User decrypted Plaintext {:?}",
                 TestingPlaintext::try_from(decrypted_plaintext)?
             );
+
+            tracing::info!(
+                "{:?} ###! Verified user decrypt responses and reconstructed. Since start {:?}",
+                req_id.as_str(),
+                start.elapsed()
+            );
+
             Ok((Some(req_id), res))
         });
     }
@@ -1992,6 +2041,7 @@ async fn get_public_decrypt_responses(
     num_expected_responses: usize,
     internal_client: &Client,
     kms_addrs: &[alloy_primitives::Address],
+    start: tokio::time::Instant,
 ) -> anyhow::Result<Vec<PublicDecryptionResponse>> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
@@ -2039,6 +2089,13 @@ async fn get_public_decrypt_responses(
             break;
         }
     }
+
+    tracing::info!(
+        "{:?} ###! Received {} public decrypt responses. Since start {:?}",
+        request_id.as_str(),
+        resp_response_vec.len(),
+        start.elapsed()
+    );
 
     resp_response_vec.sort_by_key(|(id, _)| *id);
     let resp_response_vec: Vec<_> = resp_response_vec
@@ -2100,6 +2157,12 @@ async fn get_public_decrypt_responses(
         kms_addrs,
     )
     .unwrap();
+
+    tracing::info!(
+        "{:?} ###! Verified public decypt responses. Since start {:?}",
+        request_id.as_str(),
+        start.elapsed()
+    );
 
     Ok(resp_response_vec)
 }
