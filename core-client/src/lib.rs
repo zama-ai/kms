@@ -702,7 +702,7 @@ pub fn setup_logging() {
     let log_level_str = std::env::var("RUST_LOG").unwrap_or_else(|_| "INFO".to_string());
     let log_level = tracing::Level::from_str(&log_level_str).unwrap_or(tracing::Level::INFO);
 
-    println!("Setting up logging with level: {:?}", log_level);
+    println!("Setting up logging with level: {log_level:?}");
 
     let subscriber = tracing_subscriber::fmt()
         .with_writer(file_and_stdout)
