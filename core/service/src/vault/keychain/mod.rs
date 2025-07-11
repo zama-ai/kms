@@ -10,7 +10,7 @@ use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
 use rand::SeedableRng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::convert::Into;
+use std::{convert::Into, sync::Arc};
 use strum_macros::EnumTryAs;
 use tfhe::{named::Named, Unversionize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
@@ -55,7 +55,6 @@ pub trait Keychain {
 
 #[allow(clippy::large_enum_variant)]
 #[enum_dispatch(Keychain)]
-#[derive(Clone)]
 pub enum KeychainProxy {
     AwsKmsSymm(awskms::AWSKMSKeychain<SecurityModuleProxy, awskms::Symm, AesRng>),
     AwsKmsAsymm(awskms::AWSKMSKeychain<SecurityModuleProxy, awskms::Asymm, AesRng>),
@@ -77,7 +76,7 @@ pub enum EnvelopeStore {
 pub async fn make_keychain_proxy(
     keychain_conf: &KeychainConf,
     awskms_client: Option<AWSKMSClient>,
-    security_module: Option<SecurityModuleProxy>,
+    security_module: Option<Arc<SecurityModuleProxy>>,
     pub_storage: Option<&impl StorageReader>,
 ) -> anyhow::Result<KeychainProxy> {
     let rng = AesRng::from_entropy();
