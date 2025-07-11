@@ -38,6 +38,7 @@ use rsa::{
     Oaep, RsaPrivateKey, RsaPublicKey,
 };
 use serde::{de::DeserializeOwned, Serialize};
+use std::sync::Arc;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{named::Named, Unversionize, Versionize};
 use url::Url;
@@ -121,7 +122,7 @@ impl RootKey for Asymm {}
 pub struct AWSKMSKeychain<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> {
     rng: R,
     awskms_client: AWSKMSClient,
-    security_module: S,
+    security_module: Arc<S>,
     recipient_sk: RsaPrivateKey,
     recipient_pk: RsaPublicKey,
     root_key: K,
@@ -131,7 +132,7 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
     pub fn new(
         mut rng: R,
         awskms_client: AWSKMSClient,
-        security_module: S,
+        security_module: Arc<S>,
         root_key: K,
     ) -> anyhow::Result<Self> {
         let recipient_sk = RsaPrivateKey::new(&mut rng, RECIPIENT_KEYPAIR_SIZE)?;

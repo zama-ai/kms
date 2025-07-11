@@ -32,7 +32,7 @@ use kms_lib::{
 use observability::conf::TelemetryConfig;
 use observability::telemetry::init_tracing;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 use strum::EnumIs;
 use threshold_fhe::execution::runtime::party::Role;
 use url::Url;
@@ -273,7 +273,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     // security module (used for remote attestation with AWS KMS only so far)
     let security_module = if need_awskms_client {
-        Some(make_security_module()?)
+        Some(Arc::new(make_security_module()?))
     } else {
         None
     };
@@ -335,7 +335,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     make_keychain_proxy(
                         k,
                         awskms_client.clone(),
-                        security_module.clone(),
+                        security_module.as_ref().map(Arc::clone),
                         Some(&pub_proxy_storage),
                     )
                 }),

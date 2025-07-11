@@ -119,10 +119,15 @@ pub struct AttestedVerifier {
     // TLS identity is based on the decryption signing key, and no traditional
     // PKI is used.
     pcr8_expected: bool,
+    #[cfg(feature = "insecure")]
+    mock_enclave: bool,
 }
 
 impl AttestedVerifier {
-    pub fn new(pcr8_expected: bool) -> anyhow::Result<Self> {
+    pub fn new(
+        pcr8_expected: bool,
+        #[cfg(feature = "insecure")] mock_enclave: bool,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             root_hint_subjects: Vec::new(),
             supported_algs: CryptoProvider::get_default()
@@ -133,6 +138,8 @@ Crypto provider should exist at this point"
                 .signature_verification_algorithms,
             contexts: RwLock::new(HashMap::new()),
             pcr8_expected,
+            #[cfg(feature = "insecure")]
+            mock_enclave,
         })
     }
 
@@ -243,6 +250,22 @@ impl ServerCertVerifier for AttestedVerifier {
             })?;
         // check the bundled attestation document and EIF signing certificate
         if let Some(release_pcrs) = &context.release_pcrs {
+            #[cfg(feature = "insecure")]
+            if !&self.mock_enclave {
+                validate_wrapped_cert(
+                    &cert,
+                    release_pcrs,
+                    self.pcr8_expected,
+                    CertVerifier::Server(server_verifier.clone(), server_name, ocsp_response),
+                    intermediates,
+                    now,
+                )
+                .map_err(|e| {
+                    tracing::error!("bundled attestation document validation error: {e}");
+                    Error::General(e.to_string())
+                })?;
+            }
+            #[cfg(not(feature = "insecure"))]
             validate_wrapped_cert(
                 &cert,
                 release_pcrs,
@@ -328,6 +351,22 @@ impl ClientCertVerifier for AttestedVerifier {
 
         // check the bundled attestation document and EIF signing certificate
         if let Some(release_pcrs) = &context.release_pcrs {
+            #[cfg(feature = "insecure")]
+            if !&self.mock_enclave {
+                validate_wrapped_cert(
+                    &cert,
+                    release_pcrs,
+                    self.pcr8_expected,
+                    CertVerifier::Client(client_verifier.clone()),
+                    intermediates,
+                    now,
+                )
+                .map_err(|e| {
+                    tracing::error!("bundled attestation document validation error: {e}");
+                    Error::General(e.to_string())
+                })?;
+            }
+            #[cfg(not(feature = "insecure"))]
             validate_wrapped_cert(
                 &cert,
                 release_pcrs,
@@ -402,7 +441,12 @@ fn validate_wrapped_cert(
     };
     let attestation_doc =
         attestation_doc_validation::validate_and_parse_attestation_doc(attestation_doc.value)
-            .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))?;
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("AWS Nitro attestation failed: {e}"),
+                )
+            })?;
     let Some(attested_pk) = attestation_doc.public_key else {
         bail!("Bad certificate: public key not present in attestation document")
     };

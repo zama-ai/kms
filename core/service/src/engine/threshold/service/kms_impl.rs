@@ -216,7 +216,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     public_storage: PubS,
     private_storage: PrivS,
     backup_storage: Option<Vault>,
-    security_module: Option<SecurityModuleProxy>,
+    security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
     sk: PrivateSigKey,
     tls_config: Option<(ServerConfig, ClientConfig)>,

@@ -39,6 +39,7 @@ use tokio_rustls::rustls::{
     crypto::aws_lc_rs::default_provider as aws_lc_rs_default_provider,
     pki_types::{CertificateDer, PrivateKeyDer},
     server::ServerConfig,
+    version::TLS13,
 };
 
 #[derive(Parser)]
@@ -120,9 +121,10 @@ async fn build_tls_config(
     my_id: usize,
     peers: &[PeerConf],
     tls_config: &TlsConf,
-    security_module: Option<SecurityModuleProxy>,
+    security_module: Option<Arc<SecurityModuleProxy>>,
     public_vault: &Vault,
     sk: &PrivateSigKey,
+    #[cfg(feature = "insecure")] mock_enclave: bool,
 ) -> anyhow::Result<(ServerConfig, ClientConfig)> {
     let context_id = *DEFAULT_MPC_CONTEXT;
     aws_lc_rs_default_provider()
@@ -144,17 +146,12 @@ async fn build_tls_config(
         .collect::<anyhow::Result<Vec<_>>>()?;
     let ca_certs = build_ca_certs_map(ca_certs_list.into_iter())?;
 
-    let tls_identity = match tls_config {
+    let (cert, key, trusted_releases, pcr8_expected) = match tls_config {
         TlsConf::Manual { ref cert, ref key } => {
             tracing::info!("Using third-party TLS certificate without Nitro remote attestation");
             let cert = cert.into_pem(my_id, peers)?;
             let key = key.into_pem()?;
-            BasicTLSConfig {
-                cert,
-                key,
-                trusted_releases: None,
-                pcr8_expected: false,
-            }
+            (cert, key, None, false)
         }
         // When remote attestation is used, the enclave generates a
         // self-signed TLS certificate for a private key that never
@@ -175,12 +172,7 @@ async fn build_tls_config(
             let (cert, key) = security_module
                 .wrap_x509_cert(context_id, eif_signing_cert_pem)
                 .await?;
-            BasicTLSConfig {
-                cert,
-                key,
-                trusted_releases: Some(Arc::new(trusted_releases.clone())),
-                pcr8_expected: true,
-            }
+            (cert, key, Some(Arc::new(trusted_releases.clone())), true)
         }
         TlsConf::FullAuto {
             ref trusted_releases,
@@ -202,12 +194,7 @@ async fn build_tls_config(
             let (cert, key) = security_module
                 .issue_x509_cert(context_id, ca_cert, sk)
                 .await?;
-            BasicTLSConfig {
-                cert,
-                key,
-                trusted_releases: Some(Arc::new(trusted_releases.clone())),
-                pcr8_expected: false,
-            }
+            (cert, key, Some(Arc::new(trusted_releases.clone())), false)
         }
     };
 
@@ -215,17 +202,21 @@ async fn build_tls_config(
     let key_der = PrivateKeyDer::try_from(key.contents.as_slice())
         .unwrap_or_else(|e| panic!("Could not read TLS private key: {e}"))
         .clone_key();
-    let verifier = Arc::new(AttestedVerifier::new(pcr8_expected)?);
+    let verifier = Arc::new(AttestedVerifier::new(
+        pcr8_expected,
+        #[cfg(feature = "insecure")]
+        mock_enclave,
+    )?);
     // Adding a context to the verifier is optional at this point and
     // can be done at any point of the application lifecycle, for
     // example, when a new context is set through a GRPC call.
     verifier.add_context(context_id.derive_session_id()?, ca_certs, trusted_releases)?;
 
-    let server_config = ServerConfig::builder()
+    let server_config = ServerConfig::builder_with_protocol_versions(&[&TLS13])
         .with_client_cert_verifier(verifier.clone())
         .with_single_cert(cert_chain.clone(), key_der.clone_key())?;
     let client_config = DangerousClientConfigBuilder {
-        cfg: ClientConfig::builder(),
+        cfg: ClientConfig::builder_with_protocol_versions(&[&TLS13]),
     }
     .with_custom_certificate_verifier(verifier)
     .with_client_auth_cert(cert_chain, key_der)?;
@@ -352,7 +343,8 @@ async fn main() -> anyhow::Result<()> {
     let security_module = need_security_module
         .then(make_security_module)
         .transpose()
-        .inspect_err(|e| tracing::warn!("Could not initialize security module: {e}"))?;
+        .inspect_err(|e| tracing::warn!("Could not initialize security module: {e}"))?
+        .map(Arc::new);
 
     // public vault
     let public_storage = make_storage(
@@ -391,7 +383,7 @@ async fn main() -> anyhow::Result<()> {
                 make_keychain_proxy(
                     k,
                     awskms_client.clone(),
-                    security_module.clone(),
+                    security_module.as_ref().map(Arc::clone),
                     Some(&public_vault.storage),
                 )
             }),
@@ -440,7 +432,7 @@ async fn main() -> anyhow::Result<()> {
                 make_keychain_proxy(
                     k,
                     awskms_client.clone(),
-                    security_module.clone(),
+                    security_module.as_ref().map(Arc::clone),
                     Some(&public_vault),
                 )
             }),
@@ -495,6 +487,8 @@ async fn main() -> anyhow::Result<()> {
                             security_module.clone(),
                             &public_vault,
                             &sk,
+                            #[cfg(feature = "insecure")]
+                            core_config.mock_enclave.is_some_and(|m| m),
                         )
                         .await?
                     }

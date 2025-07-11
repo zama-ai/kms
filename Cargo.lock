@@ -2378,6 +2378,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "coset"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4c8cc80f631f8307b887faca24dcc3abc427cd0367f6eb6188f6e8f5b7ad8fb"
+dependencies = [
+ "ciborium",
+ "ciborium-io",
+]
+
+[[package]]
 name = "cpp_demangle"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4218,8 +4228,10 @@ dependencies = [
  "lazy_static",
  "ml-kem",
  "nom 8.0.0",
+ "nsm-nitro-enclave-utils",
  "observability",
  "ordermap",
+ "p384",
  "proptest",
  "rand 0.8.5",
  "rasn",
@@ -4710,6 +4722,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "nsm-nitro-enclave-utils"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d4e410e81041860422375b33dfc36268ce347e64d887c0a58ad97bdfd12de6e"
+dependencies = [
+ "aws-nitro-enclaves-nsm-api",
+ "coset",
+ "hex",
+ "p384",
+ "rustls-pki-types",
+ "sealed",
+ "serde",
+ "serde_bytes",
+ "serde_json",
 ]
 
 [[package]]
@@ -6423,15 +6452,14 @@ dependencies = [
 [[package]]
 name = "rustls"
 version = "0.23.31"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0ebcbd2f03de0fc1122ad9bb24b127a5a6cd51d72604a3f3c50ac459762b6cc"
+source = "git+https://github.com/mkmks/rustls.git?branch=k256#55d28db7c0fe82d04fde58e7d003cdf61375f292"
 dependencies = [
  "aws-lc-rs",
  "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
- "rustls-webpki 0.103.5",
+ "rustls-webpki 0.103.4",
  "subtle",
  "zeroize",
 ]
@@ -6460,8 +6488,7 @@ dependencies = [
 [[package]]
 name = "rustls-pki-types"
 version = "1.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "229a4a4c221013e7e1f1a043678c5cc39fe5171437c88fb47151a21e6f5b5c79"
+source = "git+https://github.com/mkmks/pki-types.git?branch=k256#8dd57cb582858019097f5c6c453e98c04e2031d1"
 dependencies = [
  "web-time",
  "zeroize",
@@ -6479,9 +6506,8 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5a37813727b78798e53c2bec3f5e8fe12a6d6f8389bf9ca7802add4c9905ad8"
+version = "0.103.4"
+source = "git+https://github.com/mkmks/webpki.git?branch=k256#a379a63cabdead8e824b67adf9a42d06040d0429"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -6600,6 +6626,17 @@ name = "sdd"
 version = "3.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
+
+[[package]]
+name = "sealed"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22f968c5ea23d555e670b449c1c5e7b2fc399fdaec1d304a17cd48e288abc107"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
 
 [[package]]
 name = "sec1"
@@ -7737,8 +7774,7 @@ dependencies = [
 [[package]]
 name = "tokio-rustls"
 version = "0.26.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e727b36a1a0e8b74c376ac2211e40c2c8af09fb4013c60d910495810f008e9b"
+source = "git+https://github.com/mkmks/tokio-rustls.git?branch=k256#862ac0b09ce8d47893f04b0e31fc1d5270c7445f"
 dependencies = [
  "rustls 0.23.31",
  "tokio",

@@ -11,7 +11,6 @@ pub mod aws;
 pub mod keychain;
 pub mod storage;
 
-#[derive(Clone)]
 pub struct Vault {
     pub storage: StorageProxy,
     pub keychain: Option<KeychainProxy>,

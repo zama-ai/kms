@@ -201,6 +201,7 @@ required-features = ["non-wasm", "measure_memory"]
 default = ["non-wasm", "extension_degree_4"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
 testing = ["dep:tokio", "non-wasm"]
+insecure = []
 slow_tests = ["testing", "all_extension_degrees"]
 experimental = ["dep:crypto-bigint", "choreographer", "testing"]
 templating = ["minijinja"]
