@@ -233,3 +233,7 @@ lto = "off"
 [patch.crates-io]
 # MEDIUM RISK: Using fork instead of upstream - verify changes, consider upstreaming
 rcgen = { git = 'https://github.com/mkmks/rcgen.git', branch = 'k256' }
+rustls = { git = 'https://github.com/mkmks/rustls.git', branch = 'k256' }
+rustls-pki-types = { git = 'https://github.com/mkmks/pki-types.git', branch = 'k256' }
+rustls-webpki = { git = 'https://github.com/mkmks/webpki.git', branch = 'k256' }
+tokio-rustls = { git = 'https://github.com/mkmks/tokio-rustls.git', branch = 'k256' }
