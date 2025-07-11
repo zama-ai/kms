@@ -57,6 +57,7 @@ kms-grpc = { path = "./core/grpc", default-features = false }
 lazy_static = "=1.5.0"
 mockall = "=0.13.1"
 opentelemetry = "=0.29.1"
+p384 = "=0.13.1"
 paste = "=1.0"
 prost = "=0.13.5"
 prost-build = "=0.13.5"
@@ -147,3 +148,7 @@ lto = "off"
 
 [patch.crates-io]
 rcgen = { git = 'https://github.com/mkmks/rcgen.git', branch = 'k256' }
+rustls = { git = 'https://github.com/mkmks/rustls.git', branch = 'k256' }
+rustls-pki-types = { git = 'https://github.com/mkmks/pki-types.git', branch = 'k256' }
+rustls-webpki = { git = 'https://github.com/mkmks/webpki.git', branch = 'k256' }
+tokio-rustls = { git = 'https://github.com/mkmks/tokio-rustls.git', branch = 'k256' }

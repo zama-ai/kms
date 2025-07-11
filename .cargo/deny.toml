@@ -99,7 +99,7 @@ allow = [
     # "HPND", no longer used
     "ISC",
     "MIT",
-    # "MPL-2.0", no longer used
+    "MPL-2.0",
     "OpenSSL",
     # "Unicode-DFS-2016", no longer used
     "Unicode-3.0",

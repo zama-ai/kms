@@ -60,7 +60,8 @@ cfg_if::cfg_if! {
             pub static ref TEST_CENTRAL_KEY_ID: RequestId =
                 derive_request_id("TEST_CENTRAL_KEY_ID").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_4P: RequestId =
-                derive_request_id("TEST_THRESHOLD_KEY_ID_4P").unwrap();
+
+            derive_request_id("TEST_THRESHOLD_KEY_ID_4P").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_10P: RequestId =
                 derive_request_id("TEST_THRESHOLD_KEY_ID_10P").unwrap();
             pub static ref TEST_THRESHOLD_KEY_ID_13P: RequestId =
@@ -156,4 +157,9 @@ fn test_context_derivation() {
         ),
         sid
     );
+}
+
+#[cfg(feature = "insecure")]
+lazy_static::lazy_static! {
+    pub static ref MOCK_NITRO_SIGNING_KEY_BYTES: Vec<u8> = include_bytes!("../certs/mock_nitro_signing_key.der").into();
 }
