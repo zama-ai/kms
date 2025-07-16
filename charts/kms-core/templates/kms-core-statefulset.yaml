@@ -99,11 +99,11 @@ spec:
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
             {{- if .Values.kmsCore.envFrom.configmap.name }}
-            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
               valueFrom:
                 configMapKeyRef:
@@ -202,11 +202,11 @@ spec:
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
             {{- if .Values.kmsCore.envFrom.configmap.name }}
-            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
               valueFrom:
                 configMapKeyRef:
@@ -331,7 +331,11 @@ spec:
               {{ include "kmsCoreMode" . }} \
               {{- if .Values.kmsCore.thresholdMode.enabled }}
               --signing-key-party-id ${KMS_CORE__THRESHOLD__MY_ID} \
-              --num-parties {{ .Values.kmsPeers.count }} \
+              {{- if .Values.kmsCore.thresholdMode.peersList }}
+              --num-parties {{ len .Values.kmsCore.thresholdMode.peersList }} \
+              {{- else }}
+              --num-parties {{ int .Values.kmsPeers.count }} \
+              {{- end }}
               {{ if .Values.kmsCore.addressOverride }}
               --tls-subject {{ .Values.kmsCore.addressOverride | quote }}
               {{- else }}
@@ -358,11 +362,11 @@ spec:
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
             {{- if .Values.kmsCore.envFrom.configmap.name }}
-            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
               valueFrom:
                 configMapKeyRef:
@@ -452,11 +456,11 @@ spec:
               value: {{ (index .Values.minio.provisioning.users 0).password}}
             {{- end }}
             {{- if .Values.kmsCore.envFrom.configmap.name }}
-            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
-                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey}}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
               valueFrom:
                 configMapKeyRef:
