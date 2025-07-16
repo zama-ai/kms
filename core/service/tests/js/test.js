@@ -26,6 +26,8 @@ const {
     transcript_to_eip712domain_js,
     transcript_to_response_js,
     new_server_id_addr,
+    transcript_to_server_addrs_js,
+    transcript_to_client_addrs_js,
 } = require("../../pkg");
 
 test('pke', (_t) => {
@@ -73,6 +75,10 @@ test('centralized user decryption response', (_t) => {
     assert.deepEqual(48, pt2[0].bytes[0]);
 });
 
+function bytes_to_hex_string(key_bytes) {
+    return '0x' + Array.from(key_bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
 test('centralized user decryption response with js', (_t) => {
     // TEST_CENTRAL_WASM_TRANSCRIPT_PATH
     const transcript_buf = fs.readFileSync('temp/test-central-wasm-transcript.bin.8')
@@ -87,6 +93,12 @@ test('centralized user decryption response with js', (_t) => {
     // test user decryption using js objects
     // these logs display the format of the request and response.
     console.log("centralized user decryption response")
+    const server_addr = transcript_to_server_addrs_js(transcript);
+    const client_addr = transcript_to_client_addrs_js(transcript);
+    console.log(server_addr);
+    console.log(client_addr);
+    console.log(bytes_to_hex_string(ml_kem_pke_pk_to_u8vec(enc_pk)));
+    console.log(bytes_to_hex_string(ml_kem_pke_sk_to_u8vec(enc_sk)));
     console.log(request_js);
     console.log(eip712_domain_js);
     console.log(response_js);
@@ -110,6 +122,12 @@ test('threshold user decryption response', (_t) => {
 
     // test user decryption using wasm objects
     console.log("threshold user decryption response")
+    const server_addr = transcript_to_server_addrs_js(transcript);
+    const client_addr = transcript_to_client_addrs_js(transcript);
+    console.log(server_addr);
+    console.log(client_addr);
+    console.log(bytes_to_hex_string(ml_kem_pke_pk_to_u8vec(enc_pk)));
+    console.log(bytes_to_hex_string(ml_kem_pke_sk_to_u8vec(enc_sk)));
     console.log(request_js);
     console.log(eip712_domain_js);
     console.log(response_js);

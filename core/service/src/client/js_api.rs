@@ -287,6 +287,32 @@ pub fn transcript_to_client(transcript: &TestingUserDecryptionTranscript) -> Cli
 }
 
 #[wasm_bindgen]
+#[cfg(feature = "wasm_tests")]
+pub fn transcript_to_server_addrs_js(transcript: &TestingUserDecryptionTranscript) -> JsValue {
+    #[derive(serde::Serialize)]
+    struct ServerIdAddr {
+        id: String,
+        addr: String,
+    }
+    let val = transcript
+        .server_addrs
+        .iter()
+        .map(|(id, addr)| ServerIdAddr {
+            id: id.to_string(),
+            addr: addr.to_checksum(None),
+        })
+        .collect::<Vec<_>>();
+    serde_wasm_bindgen::to_value(&val).unwrap()
+}
+
+#[wasm_bindgen]
+#[cfg(feature = "wasm_tests")]
+pub fn transcript_to_client_addrs_js(transcript: &TestingUserDecryptionTranscript) -> JsValue {
+    let val = transcript.client_address.to_checksum(None);
+    serde_wasm_bindgen::to_value(&val).unwrap()
+}
+
+#[wasm_bindgen]
 pub fn ml_kem_pke_keygen() -> PrivateEncKeyMlKem512 {
     let mut rng = AesRng::from_entropy();
     let (dk, _ek) = hybrid_ml_kem::keygen::<ml_kem::MlKem512, _>(&mut rng);
