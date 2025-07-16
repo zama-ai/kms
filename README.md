@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="KMS-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="KMS-light.png">
-  <img width=600 alt="Zama KMS">
+  <img width=500 alt="Zama KMS">
 </picture>
 </p>
 
@@ -30,7 +30,7 @@ available to the public.
 
 The system consists of a core cryptography layer that implements cryptographic primitives and MPC protocols and a service layer that packs everything up and offers an interface for interacting with the components.
 
-Interaction with the KMS can either happen via a gRPC interface, or in its deployed form via the [fhevm](https://github.com/zama-ai/fhevm).
+Interaction with the KMS can either happen via a gRPC interface, or in its deployed form via the [FHEVM](https://github.com/zama-ai/fhevm).
 
 ### Main features
 
@@ -126,15 +126,15 @@ But to deploy the KMS securely, we recommend the documentation on [on-prem deplo
 For more high-level information about using and deploying the code, check out [this](./docs/README.md) section.
 
 
-## External Resources
+## Resources
 
-### Theoretical Background
-- Blog post on our [threshold key management system](https://www.zama.ai/post/introducing-zama-threshold-key-management-system-tkms)
+### Theoretical background
+- The blog post about Zama [threshold key management system](https://www.zama.ai/post/introducing-zama-threshold-key-management-system-tkms)
 - The [Noah's ark](https://eprint.iacr.org/2023/815) paper contains the technical details of some of our protocols
 - An [initial, preliminary version of our proposed NIST submission](docs/CryptographicDocumentation.pdf), which contains the detailed specification of all contained protocols
 
-### fhevm Application Whitepaper
-- [fhevm Whitepaper](https://github.com/zama-ai/fhevm/blob/main/fhevm-whitepaper.pdf)
+### FHEVM application whitepaper
+- [FHEVM Whitepaper](https://github.com/zama-ai/fhevm/blob/main/fhevm-whitepaper.pdf)
 
 ### Docker images and high level usage
 - [Docker images](https://github.com/zama-ai/kms-core/pkgs/container/kms-service)
@@ -163,7 +163,7 @@ To cite KMS in academic papers, please use the following entry:
 ```
 
 ### License
-This software is distributed under the **BSD-3-Clause-Clear** license. Read [this](LICENSE.txt) for more details.
+This software is distributed under the **BSD-3-Clause-Clear** license. Read [this](LICENSE) for more details.
 
 #### FAQ
 **Is Zama’s technology free to use?**
