@@ -109,11 +109,13 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+            {{- if .Values.kmsCore.nitroEnclave.enabled }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+            {{- end }}
             {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
@@ -372,11 +374,13 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+            {{- if .Values.kmsCore.privateVault.awskms.enabled }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+            {{- end }}
             {{- end }}
           {{- if not .Values.kmsCore.privateVault.s3.enabled }}
           volumeMounts:
@@ -466,11 +470,13 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+            {{- if .Values.kmsCore.privateVault.awskms.enabled }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+            {{- end }}
             {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
