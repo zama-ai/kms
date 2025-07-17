@@ -54,6 +54,8 @@ on:
         type: string
         required: true
     secrets:
+      GHCR_READ_TOKEN:
+        required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
       NPM_TOKEN:

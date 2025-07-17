@@ -11,6 +11,7 @@ permissions: {}
 
 jobs:
   sync-repo:
+    name: Sync repo
     if: ${{ github.repository == 'zama-ai/kms' }}
     runs-on: ubuntu-latest
     steps:
