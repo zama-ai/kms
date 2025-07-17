@@ -338,7 +338,7 @@ spec:
               {{- else }}
               --num-parties {{ int .Values.kmsPeers.count }} \
               {{- end }}
-              {{ if .Values.kmsCore.addressOverride }}
+              {{- if .Values.kmsCore.addressOverride }}
               --tls-subject {{ .Values.kmsCore.addressOverride | quote }}
               {{- else }}
               --tls-subject "{{ include "kmsCoreName" . }}-${KMS_CORE__THRESHOLD__MY_ID}"
