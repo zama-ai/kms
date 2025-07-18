@@ -463,11 +463,13 @@ mod tests {
     use std::{collections::HashMap, fmt::Display};
     use tfhe::boolean::prelude::GlweDimension;
     use tfhe::core_crypto::entities::GlweSecretKey;
-    use tfhe::shortint::noise_squashing::NoiseSquashingPrivateKey;
-    use tfhe::{
-        core_crypto::entities::LweSecretKey,
-        shortint::{ClassicPBSParameters, ShortintParameterSet},
+    use tfhe::shortint::client_key::atomic_pattern::{
+        AtomicPatternClientKey, StandardAtomicPatternClientKey,
     };
+    use tfhe::shortint::noise_squashing::NoiseSquashingPrivateKey;
+    use tfhe::shortint::prelude::ModulusSwitchType;
+    use tfhe::shortint::PBSParameters;
+    use tfhe::{core_crypto::entities::LweSecretKey, shortint::ClassicPBSParameters};
     use tokio::task::JoinSet;
 
     fn reconstruct_shares_to_scalar<Z: BaseRing + Display, const EXTENSION_DEGREE: usize>(
@@ -835,17 +837,26 @@ mod tests {
                 NoiseSquashingPrivateKey::from_raw_parts(new_raw_sns_private_key, new_sns_params),
             );
 
-        let (glwe_raw, lwe_raw, params) = keyset
+        let (glwe_raw, lwe_raw, params, _) = match keyset
             .client_key
             .to_owned()
             .into_raw_parts()
             .0
             .into_raw_parts()
-            .into_raw_parts();
+            .atomic_pattern
+        {
+            tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
+                standard_atomic_pattern_client_key,
+            ) => standard_atomic_pattern_client_key.into_raw_parts(),
+            tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey::KeySwitch32(_) => {
+                panic!("KeySwitch32 is not supported in this test")
+            }
+        };
 
         //We update the parameters to match with our truncated keys.
         //In particular we truncate the lwe_key by picking a new lwe_dimension
         //and the glwe_key by picking a new GlweDimension and PolynomialSize
+        // and set modulus switch noise reduction to standard
         let test_lwe_dim = params.lwe_dimension().0.min(8);
         let test_glwe_dim = params.glwe_dimension().0.min(1);
         let test_poly_size = params.polynomial_size().0.min(10);
@@ -867,11 +878,9 @@ mod tests {
             log2_p_fail: -80.,
             ciphertext_modulus: params.ciphertext_modulus(),
             encryption_key_choice: params.encryption_key_choice(),
-            modulus_switch_noise_reduction_params: None,
+            modulus_switch_noise_reduction_params: ModulusSwitchType::Standard,
         };
-        let new_params = ShortintParameterSet::new_pbs_param_set(
-            tfhe::shortint::PBSParameters::PBS(new_pbs_params),
-        );
+
         let lwe_cont: Vec<u64> = lwe_raw.into_container();
         let con = lwe_cont[..test_lwe_dim].to_vec();
         let new_lwe_raw = LweSecretKey::from_container(con);
@@ -881,15 +890,24 @@ mod tests {
             con,
             tfhe::integer::parameters::PolynomialSize(test_poly_size),
         );
+
+        let sck = StandardAtomicPatternClientKey::from_raw_parts(
+            new_glwe_raw,
+            new_lwe_raw,
+            PBSParameters::PBS(new_pbs_params),
+            None,
+        );
+        let sck = tfhe::shortint::ClientKey {
+            atomic_pattern: AtomicPatternClientKey::Standard(sck),
+        };
+        let sck = tfhe::integer::ClientKey::from_raw_parts(sck);
+
         let ck = tfhe::ClientKey::from_raw_parts(
-            tfhe::integer::ClientKey::from_raw_parts(tfhe::shortint::ClientKey::from_raw_parts(
-                new_glwe_raw,
-                new_lwe_raw,
-                new_params,
-            )),
+            sck,
             None,
             None,
             Some(new_sns_private_key),
+            None, //TODO: Fill when we have compression keys for big ctxt
             tfhe::Tag::default(),
         );
         keyset.client_key = ck;

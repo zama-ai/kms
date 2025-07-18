@@ -134,13 +134,13 @@ where
     storage.refresh_centralized_fhe_keys(keyset2_id).await?;
 
     // we need the private glwe key from keyset 2
-    let (client_key_2, _, _, _, _) = storage
+    let (client_key_2, _, _, _, _, _) = storage
         .read_cloned_centralized_fhe_keys_from_cache(keyset2_id)
         .await?
         .client_key
         .into_raw_parts();
     // we need the private compression key from keyset 1
-    let (_, _, compression_private_key_1, _, _) = storage
+    let (_, _, compression_private_key_1, _, _, _) = storage
         .read_cloned_centralized_fhe_keys_from_cache(keyset1_id)
         .await?
         .client_key
@@ -206,9 +206,9 @@ pub fn generate_fhe_keys(
                         // we generate the client key as usual,
                         // but we replace the compression private key using an existing compression private key
                         let client_key = generate_client_fhe_key(params, seed);
-                        let (client_key, dedicated_compact_private_key, _, _, tag) = client_key.into_raw_parts();
-                        let (_, _, existing_compression_private_key, noise_squashing_key, _) = key_handle.client_key.into_raw_parts();
-                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, noise_squashing_key, tag)
+                        let (client_key, dedicated_compact_private_key, _, _, _, tag) = client_key.into_raw_parts();
+                        let (_, _, existing_compression_private_key, noise_squashing_key, noise_squashing_compression_key, _) = key_handle.client_key.into_raw_parts();
+                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, noise_squashing_key,noise_squashing_compression_key, tag)
                     },
                     None => anyhow::bail!("existing key handle is required when using existing compression key for keygen")
                 }
@@ -225,6 +225,7 @@ pub fn generate_fhe_keys(
             server_key.3,
             server_key.4,
             server_key.5,
+            server_key.6,
         );
         let public_key = FhePublicKey::new(&client_key);
         let pks = FhePubKeySet {

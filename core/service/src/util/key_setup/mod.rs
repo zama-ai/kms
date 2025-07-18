@@ -892,7 +892,7 @@ where
         }
     };
 
-    let (integer_server_key, _, _, decompression_key, sns_key, _) =
+    let (integer_server_key, _, _, decompression_key, sns_key, _, _) =
         key_set.public_keys.server_key.clone().into_raw_parts();
 
     // Store keys for each party

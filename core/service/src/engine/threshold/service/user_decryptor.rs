@@ -203,7 +203,7 @@ impl<
                         &mut session,
                         &low_level_ct.try_get_small_ct()?,
                         &keys.private_keys,
-                        &keys.integer_server_key.as_ref().key_switching_key,
+                        keys.get_key_switching_key()?,
                         DecryptionMode::BitDecSmall,
                     )
                     .await;

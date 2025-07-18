@@ -247,7 +247,8 @@ mod test {
         .enable_compression(COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M64)
         .build();
         let (client_key, server_key) = generate_keys(config);
-        let (_, _, compression_key, decompression_key, _, _) = server_key.clone().into_raw_parts();
+        let (_, _, compression_key, decompression_key, _, _, _) =
+            server_key.clone().into_raw_parts();
         assert!(compression_key.is_some());
         assert!(decompression_key.is_some());
         let not_compressed = T::encrypt(clear_value, &client_key);

@@ -122,7 +122,12 @@ fn main() {
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
     for (name, params) in ALL_PARAMS {
-        let config = ConfigBuilder::with_custom_parameters(params).build();
+        let config = ConfigBuilder::with_custom_parameters(
+            params
+                .get_params_basics_handle()
+                .to_classic_pbs_parameters(),
+        )
+        .build();
         let cks = ClientKey::generate(config);
         let compressed_sks = CompressedServerKey::new(&cks);
 

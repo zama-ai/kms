@@ -604,7 +604,7 @@ impl<
                     }
                 };
 
-                let (client_key, _, _, _, _) = to_hl_client_key(
+                let (client_key, _, _, _, _, _) = to_hl_client_key(
                     &params,
                     dummy_lwe_secret_key,
                     bit_glwe_secret_key,
@@ -879,6 +879,7 @@ impl<
                 _raw_compression_key,
                 raw_decompression_key,
                 raw_noise_squashing_key,
+                _raw_noise_squashing_compression_key,
                 _raw_tag,
             ) = pub_key_set.server_key.clone().into_raw_parts();
             (

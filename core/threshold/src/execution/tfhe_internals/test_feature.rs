@@ -10,7 +10,10 @@ use tfhe::{
     integer::compression_keys::DecompressionKey,
     prelude::{FheDecrypt, FheTryEncrypt},
     shortint::{
-        self, list_compression::CompressionPrivateKeys, ClassicPBSParameters, ShortintParameterSet,
+        self,
+        client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
+        list_compression::CompressionPrivateKeys,
+        ClassicPBSParameters, PBSParameters,
     },
     zk::CompactPkeCrs,
     ClientKey, ConfigBuilder, Seed,
@@ -51,10 +54,18 @@ pub struct KeySet {
 }
 impl KeySet {
     pub fn get_raw_lwe_client_key(&self) -> LweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _, _) = self.client_key.clone().into_raw_parts();
-        let short_client_key = inner_client_key.into_raw_parts();
-        let (_glwe_secret_key, lwe_secret_key, _shortint_param) = short_client_key.into_raw_parts();
-        lwe_secret_key
+        let (inner_client_key, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+        match inner_client_key.into_raw_parts().atomic_pattern {
+            shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
+                standard_atomic_pattern_client_key,
+            ) => standard_atomic_pattern_client_key
+                .into_raw_parts()
+                .1
+                .clone(),
+            shortint::client_key::atomic_pattern::AtomicPatternClientKey::KeySwitch32(_) => {
+                panic!("KeySwitch32 is not supported for now")
+            }
+        }
     }
 
     pub fn get_raw_lwe_encryption_client_key(&self) -> LweSecretKey<Vec<u64>> {
@@ -63,7 +74,7 @@ impl KeySet {
         // In the normal DKG the shares that correspond to the lwe private key
         // is copied to the encryption private key if the compact PKE parameters
         // don't exist.
-        let (_, compact_private_key, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, compact_private_key, _, _, _, _) = self.client_key.clone().into_raw_parts();
         if let Some(inner) = compact_private_key {
             let raw_parts = inner.0.into_raw_parts();
             raw_parts.into_raw_parts().0
@@ -73,7 +84,7 @@ impl KeySet {
     }
 
     pub fn get_raw_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u64>>> {
-        let (_, _, compression_sk, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, _, compression_sk, _, _, _) = self.client_key.clone().into_raw_parts();
         if let Some(inner) = compression_sk {
             let raw_parts = inner.into_raw_parts();
             Some(raw_parts.post_packing_ks_key)
@@ -83,14 +94,22 @@ impl KeySet {
     }
 
     pub fn get_raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _, _) = self.client_key.clone().into_raw_parts();
-        let short_client_key = inner_client_key.into_raw_parts();
-        let (glwe_secret_key, _lwe_secret_key, _shortint_param) = short_client_key.into_raw_parts();
-        glwe_secret_key
+        let (inner_client_key, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+        match inner_client_key.into_raw_parts().atomic_pattern {
+            shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
+                standard_atomic_pattern_client_key,
+            ) => standard_atomic_pattern_client_key
+                .into_raw_parts()
+                .0
+                .clone(),
+            shortint::client_key::atomic_pattern::AtomicPatternClientKey::KeySwitch32(_) => {
+                panic!("KeySwitch32 is not supported for now")
+            }
+        }
     }
 
     pub fn get_raw_glwe_client_sns_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
-        let (_, _, _, noise_squashing_key, _) = self.client_key.clone().into_raw_parts();
+        let (_, _, _, noise_squashing_key, _, _) = self.client_key.clone().into_raw_parts();
         noise_squashing_key.map(|sns_key| sns_key.into_raw_parts().into_raw_parts().0)
     }
 
@@ -101,8 +120,15 @@ impl KeySet {
 
     pub fn get_cpu_params(&self) -> anyhow::Result<ClassicPBSParameters> {
         match self.client_key.computation_parameters() {
-            shortint::PBSParameters::PBS(classic_pbsparameters) => Ok(classic_pbsparameters),
-            shortint::PBSParameters::MultiBitPBS(_) => anyhow::bail!("GPU parameters unsupported"),
+            shortint::AtomicPatternParameters::Standard(pbsparameters) => match pbsparameters {
+                shortint::PBSParameters::PBS(classic_pbsparameters) => Ok(classic_pbsparameters),
+                shortint::PBSParameters::MultiBitPBS(_) => {
+                    anyhow::bail!("GPU parameters unsupported")
+                }
+            },
+            shortint::AtomicPatternParameters::KeySwitch32(_) => {
+                anyhow::bail!("KS32 parameters unsupported")
+            }
         }
     }
 }
@@ -518,10 +544,16 @@ pub fn to_hl_client_key(
         DKGParams::WithoutSnS(p) => *p,
     };
     let ciphertext_params = regular_params.ciphertext_parameters;
-    let sps = ShortintParameterSet::new_pbs_param_set(tfhe::shortint::PBSParameters::PBS(
-        ciphertext_params,
-    ));
-    let sck = shortint::ClientKey::from_raw_parts(glwe_secret_key, lwe_secret_key, sps);
+
+    let sck = StandardAtomicPatternClientKey::from_raw_parts(
+        glwe_secret_key,
+        lwe_secret_key,
+        PBSParameters::PBS(ciphertext_params),
+        None,
+    );
+    let sck = shortint::ClientKey {
+        atomic_pattern: AtomicPatternClientKey::Standard(sck),
+    };
 
     //If necessary generate a dedicated compact private key
     let dedicated_compact_private_key =
@@ -586,6 +618,7 @@ pub fn to_hl_client_key(
         dedicated_compact_private_key,
         compression_key,
         noise_squashing_key,
+        None, //TODO: Fill when we have compression keys for big ctxt
         tfhe::Tag::default(),
     ))
 }
@@ -713,9 +746,12 @@ impl PartialEq for FhePubKeySet {
             pk.into_raw_parts() == other_pk.into_raw_parts() && tag == other_tag
         };
 
-        let (sks, ksk, comp, decomp, sns, tag) = self.server_key.clone().into_raw_parts();
-        let (other_sks, other_ksk, other_comp, other_decomp, other_sns, other_tag) =
+        let (sks, ksk, comp, decomp, sns, _sns_comp, tag) =
+            self.server_key.clone().into_raw_parts();
+        let (other_sks, other_ksk, other_comp, other_decomp, other_sns, _other_sns_comp, other_tag) =
             other.server_key.clone().into_raw_parts();
+
+        // TODO: Can't compare the sns compression keys, and can't call into_raw_parts on them either.
         let ok2 = sks.into_raw_parts() == other_sks.into_raw_parts()
             && ksk.map(|x| x.into_raw_parts()) == other_ksk.map(|x| x.into_raw_parts())
             && comp.map(|x| x.into_raw_parts()) == other_comp.map(|x| x.into_raw_parts())
@@ -747,7 +783,7 @@ pub fn run_decompression_test(
         Some(inner) => inner,
         None => &keyset1_client_key.generate_server_key(),
     };
-    let (_, _, _, decompression_key1, _, _) = server_key1.clone().into_raw_parts();
+    let (_, _, _, decompression_key1, _, _, _) = server_key1.clone().into_raw_parts();
     let decompression_key1 = decompression_key1.unwrap().into_raw_parts();
     assert_eq!(
         decompression_key1.blind_rotate_key.glwe_size(),

@@ -17,6 +17,7 @@ use tfhe::{
             NoiseEstimationMeasureBound, NoiseSquashingParameters, PolynomialSize, RSigmaFactor,
             ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme, Variance,
         },
+        prelude::ModulusSwitchType,
         CarryModulus, ClassicPBSParameters, EncryptionKeyChoice, MaxNoiseLevel, MessageModulus,
         PBSOrder, PBSParameters,
     },
@@ -77,6 +78,13 @@ pub struct MSNRKParams {
     pub num_needed_noise: usize,
     pub noise_bound: NoiseBounds,
     pub params: ModulusSwitchNoiseReductionParams,
+}
+
+#[derive(Debug)]
+pub enum MSNRKConfiguration {
+    Standard,
+    DriftTechniqueNoiseReduction(MSNRKParams),
+    CenteredMeanNoiseReduction,
 }
 
 #[derive(Debug)]
@@ -293,7 +301,7 @@ pub trait DKGParamsBasics: Sync {
     fn get_pksk_params(&self) -> Option<KSKParams>;
     fn get_bk_params(&self) -> BKParams;
     // msnrk: modulus switch noise reduction key
-    fn get_msnrk_params(&self) -> Option<MSNRKParams>;
+    fn get_msnrk_configuration(&self) -> MSNRKConfiguration;
     fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters>;
 
     fn all_lwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
@@ -562,8 +570,15 @@ impl DKGParamsBasics for DKGParamsRegular {
             .ciphertext_parameters
             .modulus_switch_noise_reduction_params
         {
-            Some(param) => param.modulus_switch_zeros_count.0,
-            None => 0,
+            ModulusSwitchType::Standard => 0,
+            ModulusSwitchType::DriftTechniqueNoiseReduction(
+                modulus_switch_noise_reduction_params,
+            ) => {
+                modulus_switch_noise_reduction_params
+                    .modulus_switch_zeros_count
+                    .0
+            }
+            ModulusSwitchType::CenteredMeanNoiseReduction => 0,
         };
         let bound = NoiseBounds::LweNoise(self.lwe_tuniform_bound());
         NoiseInfo { amount, bound }
@@ -635,15 +650,24 @@ impl DKGParamsBasics for DKGParamsRegular {
         }
     }
 
-    fn get_msnrk_params(&self) -> Option<MSNRKParams> {
+    fn get_msnrk_configuration(&self) -> MSNRKConfiguration {
         let NoiseInfo { amount, bound } = self.num_needed_noise_msnrk();
-        self.ciphertext_parameters
+        match self
+            .ciphertext_parameters
             .modulus_switch_noise_reduction_params
-            .map(|params| MSNRKParams {
+        {
+            ModulusSwitchType::Standard => MSNRKConfiguration::Standard,
+            ModulusSwitchType::DriftTechniqueNoiseReduction(
+                modulus_switch_noise_reduction_params,
+            ) => MSNRKConfiguration::DriftTechniqueNoiseReduction(MSNRKParams {
                 num_needed_noise: amount,
                 noise_bound: bound,
-                params,
-            })
+                params: modulus_switch_noise_reduction_params,
+            }),
+            ModulusSwitchType::CenteredMeanNoiseReduction => {
+                MSNRKConfiguration::CenteredMeanNoiseReduction
+            }
+        }
     }
 
     fn compression_sk_num_bits(&self) -> usize {
@@ -1053,8 +1077,8 @@ impl DKGParamsBasics for DKGParamsSnS {
         self.regular_params.get_bk_params()
     }
 
-    fn get_msnrk_params(&self) -> Option<MSNRKParams> {
-        self.regular_params.get_msnrk_params()
+    fn get_msnrk_configuration(&self) -> MSNRKConfiguration {
+        self.regular_params.get_msnrk_configuration()
     }
 
     fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters> {
@@ -1176,22 +1200,35 @@ impl DKGParamsSnS {
 
     fn num_needed_noise_msnrk_sns(&self) -> NoiseInfo {
         let amount = match self.sns_params.modulus_switch_noise_reduction_params {
-            Some(param) => param.modulus_switch_zeros_count.0,
-            None => 0,
+            ModulusSwitchType::Standard => 0,
+            ModulusSwitchType::DriftTechniqueNoiseReduction(
+                modulus_switch_noise_reduction_params,
+            ) => {
+                modulus_switch_noise_reduction_params
+                    .modulus_switch_zeros_count
+                    .0
+            }
+            ModulusSwitchType::CenteredMeanNoiseReduction => 0,
         };
         let bound = NoiseBounds::LweNoise(self.lwe_tuniform_bound());
         NoiseInfo { amount, bound }
     }
 
-    pub fn get_msnrk_params_sns(&self) -> Option<MSNRKParams> {
+    pub fn get_msnrk_configuration_sns(&self) -> MSNRKConfiguration {
         let NoiseInfo { amount, bound } = self.num_needed_noise_msnrk_sns();
-        self.sns_params
-            .modulus_switch_noise_reduction_params
-            .map(|params| MSNRKParams {
+        match self.sns_params.modulus_switch_noise_reduction_params {
+            ModulusSwitchType::Standard => MSNRKConfiguration::Standard,
+            ModulusSwitchType::DriftTechniqueNoiseReduction(
+                modulus_switch_noise_reduction_params,
+            ) => MSNRKConfiguration::DriftTechniqueNoiseReduction(MSNRKParams {
                 num_needed_noise: amount,
                 noise_bound: bound,
-                params,
-            })
+                params: modulus_switch_noise_reduction_params,
+            }),
+            ModulusSwitchType::CenteredMeanNoiseReduction => {
+                MSNRKConfiguration::CenteredMeanNoiseReduction
+            }
+        }
     }
 }
 
@@ -1279,7 +1316,8 @@ const BC_PARAMS_NIGEL: DKGParamsRegular = DKGParamsRegular {
         log2_p_fail: -64.0629,
         ciphertext_modulus: CiphertextModulus::new_native(),
         encryption_key_choice: EncryptionKeyChoice::Big,
-        modulus_switch_noise_reduction_params: None,
+        //Note: Not sure about this one
+        modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
     },
     dedicated_compact_public_key_parameters: Some((
         CompactPublicKeyEncryptionParameters {
@@ -1315,7 +1353,7 @@ pub const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
         decomp_base_log: DecompositionBaseLog(24),
         decomp_level_count: DecompositionLevelCount(3),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-        modulus_switch_noise_reduction_params: None,
+        modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
         // we keep the same message and carry modulus
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
@@ -1349,12 +1387,14 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
             log2_p_fail: -64f64,
             ciphertext_modulus: CiphertextModulus::new_native(),
             encryption_key_choice: EncryptionKeyChoice::Big,
-            modulus_switch_noise_reduction_params: Some(ModulusSwitchNoiseReductionParams {
-                modulus_switch_zeros_count: LweCiphertextCount(10),
-                ms_bound: NoiseEstimationMeasureBound(288230376151711744f64),
-                ms_r_sigma_factor: RSigmaFactor(9.75539320076416),
-                ms_input_variance: Variance(1.92631390716519e-10),
-            }),
+            modulus_switch_noise_reduction_params: ModulusSwitchType::DriftTechniqueNoiseReduction(
+                ModulusSwitchNoiseReductionParams {
+                    modulus_switch_zeros_count: LweCiphertextCount(10),
+                    ms_bound: NoiseEstimationMeasureBound(288230376151711744f64),
+                    ms_r_sigma_factor: RSigmaFactor(9.75539320076416),
+                    ms_input_variance: Variance(1.92631390716519e-10),
+                },
+            ),
         },
         compression_decompression_parameters: Some(CompressionParameters {
             br_level: DecompositionLevelCount(1),
@@ -1392,12 +1432,14 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
         decomp_base_log: DecompositionBaseLog(33),
         decomp_level_count: DecompositionLevelCount(2),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-        modulus_switch_noise_reduction_params: Some(ModulusSwitchNoiseReductionParams {
-            modulus_switch_zeros_count: LweCiphertextCount(8),
-            ms_bound: NoiseEstimationMeasureBound(288230376151711744f64),
-            ms_r_sigma_factor: RSigmaFactor(9.2),
-            ms_input_variance: Variance(2.182718682903484e-224),
-        }),
+        modulus_switch_noise_reduction_params: ModulusSwitchType::DriftTechniqueNoiseReduction(
+            ModulusSwitchNoiseReductionParams {
+                modulus_switch_zeros_count: LweCiphertextCount(8),
+                ms_bound: NoiseEstimationMeasureBound(288230376151711744f64),
+                ms_r_sigma_factor: RSigmaFactor(9.2),
+                ms_input_variance: Variance(2.182718682903484e-224),
+            },
+        ),
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
     },
@@ -1426,7 +1468,7 @@ pub const OLD_PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParams
             log2_p_fail: -80., //most likely not true, but these should be deprecated anyway
             ciphertext_modulus: CiphertextModulus::new_native(),
             encryption_key_choice: EncryptionKeyChoice::Small,
-            modulus_switch_noise_reduction_params: None,
+            modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
         },
         compression_decompression_parameters: None,
         dedicated_compact_public_key_parameters: None,
@@ -1439,7 +1481,7 @@ pub const OLD_PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParams
         decomp_base_log: DecompositionBaseLog(24),
         decomp_level_count: DecompositionLevelCount(3),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-        modulus_switch_noise_reduction_params: None,
+        modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
     },
