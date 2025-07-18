@@ -4,8 +4,8 @@ use crate::algebra::{
     bivariate::compute_powers_list,
     poly::Poly,
     structure_traits::{
-        BaseRing, Derive, FromU128, Invert, One, QuotientMaximalIdeal, Ring, RingEmbed, Sample,
-        Solve, Solve1, Syndrome, ZConsts, Zero,
+        BaseRing, Derive, FromU128, Invert, One, QuotientMaximalIdeal, Ring,
+        RingWithExceptionalSequence, Sample, Solve, Solve1, Syndrome, ZConsts, Zero,
     },
     syndrome::lagrange_numerators,
 };
@@ -571,8 +571,12 @@ where
     const LOG_SIZE_EXCEPTIONAL_SET: usize = Self::QUOTIENT_OUTPUT_SIZE.ilog2() as usize;
 }
 
-impl<Z: Ring, const EXTENSION_DEGREE: usize> RingEmbed for ResiduePoly<Z, EXTENSION_DEGREE> {
-    fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self> {
+impl<Z: Ring, const EXTENSION_DEGREE: usize> RingWithExceptionalSequence
+    for ResiduePoly<Z, EXTENSION_DEGREE>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+{
+    fn get_from_exceptional_sequence(idx: usize) -> anyhow::Result<Self> {
         if idx >= (1 << EXTENSION_DEGREE) {
             return Err(anyhow_error_and_log(format!(
                 "Value {idx} is too large to be embedded!"
@@ -668,7 +672,7 @@ where
         let parties: Vec<_> = sharing
             .shares
             .iter()
-            .map(|share| Self::embed_exceptional_set(share.owner().one_based()))
+            .map(|share| Self::embed_role_to_exceptional_sequence(&share.owner()))
             .collect::<Result<Vec<_>, _>>()?;
 
         // lagrange numerators from Eq.15
@@ -706,7 +710,7 @@ where
 
         let alpha_k = self.bit_compose(0);
         let ainv = alpha_k.invert();
-        let mut x0 = Self::embed_quotient_exceptional_set(ainv)?;
+        let mut x0 = Self::embed_quotient_exceptional_sequence(ainv)?;
 
         // compute Newton-Raphson iterations
         for _ in 0..Z::BIT_LENGTH.ilog2() {

@@ -444,7 +444,7 @@ fn setup_threshold_store() -> (
 
     let fhe_key_set = key_set.public_keys.clone();
 
-    let (integer_server_key, _, _, _, sns_key, _) =
+    let (integer_server_key, _, _, _, sns_key, _, _) =
         key_set.public_keys.server_key.clone().into_raw_parts();
 
     let threshold_fhe_keys = ThresholdFheKeys {

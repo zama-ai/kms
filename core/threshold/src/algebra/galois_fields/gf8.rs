@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::algebra::structure_traits::RingWithExceptionalSequence;
 use crate::{algebra::poly::lagrange_polynomials, error::error_handler::anyhow_error_and_log};
 
 use crate::algebra::{
@@ -74,6 +75,20 @@ impl Ring for GF8 {
     }
 }
 
+const EXCEPTIONAL_SEQUENCE_SIZE: usize = 1 << GF8::BIT_LENGTH;
+
+impl RingWithExceptionalSequence for GF8 {
+    fn get_from_exceptional_sequence(idx: usize) -> anyhow::Result<Self> {
+        if idx >= EXCEPTIONAL_SEQUENCE_SIZE {
+            Err(anyhow::anyhow!(
+                "Index out of bounds for GF8 exceptional sequence"
+            ))
+        } else {
+            Ok(GF8::from(idx as u8))
+        }
+    }
+}
+
 lazy_static! {
     static ref LAGRANGE_STORE: RwLock<HashMap<Vec<GF8>, Vec<Poly<GF8>>>> =
         RwLock::new(HashMap::new());
@@ -102,10 +117,6 @@ impl Field for GF8 {
                 "Error reading LAGRANGE_STORE".to_string(),
             ))
         }
-    }
-
-    fn invert(&self) -> Self {
-        <GF8 as GaloisField>::ONE / *self
     }
 }
 

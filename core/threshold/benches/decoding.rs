@@ -6,9 +6,11 @@ use pprof::criterion::PProfProfiler;
 use rand::SeedableRng;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::num::Wrapping;
+use threshold_fhe::algebra::structure_traits::RingWithExceptionalSequence;
 use threshold_fhe::algebra::structure_traits::{FromU128, Sample};
-use threshold_fhe::execution::sharing::shamir::ShamirSharing;
+use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::sharing::shamir::{InputOp, RevealOp, ShamirFieldPoly};
+use threshold_fhe::execution::sharing::share::Share;
 use threshold_fhe::experimental::algebra::levels::LevelOne;
 use threshold_fhe::{
     algebra::{
@@ -40,14 +42,15 @@ fn bench_decode_z2(c: &mut Criterion) {
 
             let shares: Vec<_> = party_ids
                 .iter()
-                .map(|x| ShamirSharing::<GF256> {
-                    share: f.eval(&GF256::from(*x)),
-                    party_id: *x,
+                .map(|x| {
+                    let party = Role::indexed_from_one(*x as usize);
+                    let point = f.eval(&GF256::embed_role_to_exceptional_sequence(&party).unwrap());
+                    Share::<GF256>::new(party, point)
                 })
                 .collect();
 
             b.iter(|| {
-                let secret_poly = error_correction(&shares, threshold, 0).unwrap();
+                let secret_poly = error_correction(shares.clone(), threshold, 0).unwrap();
                 assert_eq!(secret_poly, f);
             });
         });

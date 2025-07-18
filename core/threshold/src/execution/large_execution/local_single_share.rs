@@ -4,7 +4,7 @@ use super::{
     share_dispute::{SecureShareDispute, ShareDispute, ShareDisputeOutput},
 };
 use crate::{
-    algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed},
+    algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
@@ -42,7 +42,10 @@ pub trait LocalSingleShare: ProtocolDescription + Send + Sync + Clone {
     /// Output:
     /// - A HashMap that maps role to the vector of shares receive from that party (including my own shares).
     /// Corrupt parties are mapped to the default 0 sharing
-    async fn execute<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, L: LargeSessionHandles>(
+    async fn execute<
+        Z: RingWithExceptionalSequence + Invert + Derive + ErrorCorrect,
+        L: LargeSessionHandles,
+    >(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -96,7 +99,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalSingleShare
 {
     #[instrument(name="LocalSingleShare",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size = ?secrets.len()))]
     async fn execute<
-        Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect,
+        Z: RingWithExceptionalSequence + Invert + Derive + ErrorCorrect,
         L: LargeSessionHandles,
     >(
         &self,
@@ -162,7 +165,7 @@ pub(crate) async fn send_receive_pads<Z, L, S>(
     share_dispute: &S,
 ) -> anyhow::Result<ShareDisputeOutput<Z>>
 where
-    Z: Ring + RingEmbed + Derive + Invert,
+    Z: RingWithExceptionalSequence + Derive + Invert,
     L: LargeSessionHandles,
     S: ShareDispute,
 {
@@ -443,7 +446,7 @@ pub(crate) mod tests {
     use super::{Derive, LocalSingleShare, SecureLocalSingleShare};
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
     use crate::algebra::galois_rings::degree_4::ResiduePolyF4Z64;
-    use crate::algebra::structure_traits::{ErrorCorrect, Invert, RingEmbed};
+    use crate::algebra::structure_traits::{ErrorCorrect, Invert};
     use crate::execution::sharing::shamir::RevealOp;
     #[cfg(feature = "slow_tests")]
     use crate::execution::{
@@ -486,7 +489,7 @@ pub(crate) mod tests {
     use rstest::rstest;
 
     fn test_lsl_strategies<
-        Z: Ring + RingEmbed + Derive + Invert + ErrorCorrect,
+        Z: Derive + Invert + ErrorCorrect,
         const EXTENSION_DEGREE: usize,
         L: LocalSingleShare + 'static,
     >(

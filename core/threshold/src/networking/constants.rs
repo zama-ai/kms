@@ -2,18 +2,35 @@
 use lazy_static::lazy_static;
 use tokio::time::Duration;
 
-/// The default incoming messages limit per party
+/// The default incoming messages limit per party per session
 pub(crate) const MESSAGE_LIMIT: usize = 70;
 
 /// The default multiplier to determine the next interval between retries
 pub(crate) const MULTIPLIER: f64 = 1.1;
 
+/// The default maximum number of "Inactive" sessions a party can open
+pub(crate) const MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY: u64 = 100;
+
+/// The default initial interval for exponential backoff in milliseconds
+pub(crate) const INITIAL_INTERVAL_MS: u64 = 100;
+
+// The default time interval to update session status
+pub(crate) const SESSION_STATUS_UPDATE_INTERVAL_SECS: u64 = 60;
+
+// The default time interval after which we completely forget about completed sessions
+pub(crate) const SESSION_CLEANUP_INTERVAL_SECS: u64 = 3600;
+
+// The default time interval after which we discard inactive sessions
+pub(crate) const DISCARD_INACTIVE_SESSION_INTERVAL_SECS: u64 = 15 * 60;
+
+// The default maximum waiting time we wait for trying to push the message in the queue
+pub(crate) const MAX_WAITING_TIME_MESSAGE_QUEUE: u64 = 60;
 lazy_static! {
-    /// The default maximum internal between retries
-    pub(crate) static ref MAX_INTERVAL: Duration = Duration::from_secs(5);
+    /// The default maximum internal between retries (Cap at 60s intervals)
+    pub static ref MAX_INTERVAL: Duration = Duration::from_secs(60);
 
     /// The default maximum elapsed time before giving up on retrying
-    pub(crate) static ref MAX_ELAPSED_TIME: Option<Duration> = Some(Duration::from_secs(5 * 60));
+    pub(crate) static ref MAX_ELAPSED_TIME: Option<Duration> = Some(Duration::from_secs(60));
 
     /// maximum number of seconds that a party waits for a network message during a protocol
     pub(crate) static ref NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
@@ -36,4 +53,6 @@ lazy_static! {
 
     // max message size for decoding - enconding message on gRPC protocol
     pub(crate) static ref MAX_EN_DECODE_MESSAGE_SIZE: usize = 2 * 1024 * 1024 * 1024;
+
+
 }

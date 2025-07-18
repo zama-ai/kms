@@ -32,6 +32,7 @@ use crate::{
     engine::{
         base::{compute_info, retrieve_parameters, BaseKmsStruct, DSEP_PUBDATA_CRS},
         threshold::traits::CrsGenerator,
+        validation::validate_request_id,
     },
     tonic_handle_potential_err,
     util::{
@@ -105,17 +106,21 @@ impl<
             "witness dimension computation failed".to_string(),
         )?;
 
-        let req_id = inner.request_id.ok_or_else(|| {
-            tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                "missing request ID in CRS generation",
-            )
-        })?;
+        let req_id = inner
+            .request_id
+            .ok_or_else(|| {
+                tonic::Status::new(
+                    tonic::Code::InvalidArgument,
+                    "missing request ID in CRS generation",
+                )
+            })?
+            .into();
+        validate_request_id(&req_id)?;
 
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
 
         self.inner_crs_gen(
-            req_id.into(),
+            req_id,
             witness_dim,
             inner.max_num_bits,
             dkg_params,
@@ -221,6 +226,7 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         let request_id = request.into_inner().into();
+        validate_request_id(&request_id)?;
         let status = {
             let guarded_meta_store = self.crs_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)

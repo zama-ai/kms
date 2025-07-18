@@ -1,4 +1,5 @@
-use ml_kem::kem::{DecapsulationKey, EncapsulationKey};
+use ml_kem::array::typenum::Unsigned;
+use ml_kem::array::Array;
 use ml_kem::EncodedSizeUser;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -7,16 +8,17 @@ use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::hybrid_ml_kem::KemParam;
-use crate::cryptography::hybrid_ml_kem::ML_KEM_SK_LEN;
-use crate::cryptography::hybrid_ml_kem::{self, ML_KEM_PK_LENGTH};
+use crate::cryptography::hybrid_ml_kem::{self};
 
 use super::error::CryptographyError;
+
+type MlKemType = ml_kem::MlKem512;
+type MlKemParams = ml_kem::MlKem512Params;
 
 struct InnerBackupPrivateKey {
     // None of these types can be versioned,
     // so we need to make a wrapper
-    decapsulation_key: DecapsulationKey<KemParam>,
+    decapsulation_key: <ml_kem::kem::Kem<MlKemParams> as ml_kem::KemCore>::DecapsulationKey,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -45,16 +47,19 @@ impl TryFrom<&BackupPrivateKey> for InnerBackupPrivateKey {
     type Error = CryptographyError;
 
     fn try_from(value: &BackupPrivateKey) -> Result<Self, Self::Error> {
-        if value.decapsulation_key.len() != ML_KEM_SK_LEN {
+        type EncodedSize512 = <<ml_kem::kem::Kem<MlKemParams> as ml_kem::KemCore>::DecapsulationKey as EncodedSizeUser>::EncodedSize;
+        let z = EncodedSize512::USIZE;
+        if value.decapsulation_key.len() != z {
             return Err(CryptographyError::LengthError(
                 "decapsulation key has the wrong length".to_string(),
             ));
         }
-        let mut decaps_key_buf = [0u8; ML_KEM_SK_LEN];
+        let mut decaps_key_buf: Array<u8, EncodedSize512> = Array::default();
         decaps_key_buf.copy_from_slice(&value.decapsulation_key);
-        Ok(Self {
-            decapsulation_key: DecapsulationKey::<KemParam>::from_bytes(&decaps_key_buf.into()),
-        })
+
+        let decapsulation_key =
+            <MlKemType as ml_kem::KemCore>::DecapsulationKey::from_bytes(&decaps_key_buf);
+        Ok(Self { decapsulation_key })
     }
 }
 
@@ -76,7 +81,7 @@ impl InnerBackupPrivateKey {
             SAFE_SER_SIZE_LIMIT,
         )
         .map_err(CryptographyError::SafeDeserializationError)?;
-        hybrid_ml_kem::dec(buf, &self.decapsulation_key)
+        hybrid_ml_kem::dec::<MlKemType>(buf, &self.decapsulation_key)
     }
 }
 
@@ -99,24 +104,26 @@ impl Named for BackupPublicKey {
 struct InnerBackupPublicKey {
     // note we cannot serialize/deserialize EncapsulationKey
     // so a wrapper is needed
-    encapsulation_key: EncapsulationKey<KemParam>,
+    encapsulation_key: <ml_kem::kem::Kem<MlKemParams> as ml_kem::KemCore>::EncapsulationKey,
 }
 
 impl TryFrom<&BackupPublicKey> for InnerBackupPublicKey {
     type Error = CryptographyError;
 
     fn try_from(value: &BackupPublicKey) -> Result<Self, Self::Error> {
-        if value.encapsulation_key.len() != ML_KEM_PK_LENGTH {
+        type EncodedSize512 = <<ml_kem::kem::Kem<MlKemParams> as ml_kem::KemCore>::EncapsulationKey as EncodedSizeUser>::EncodedSize;
+        let z = EncodedSize512::USIZE;
+        if value.encapsulation_key.len() != z {
             return Err(CryptographyError::LengthError(
                 "encapsulation key has the wrong length".to_string(),
             ));
         }
-        let mut encapsulation_key_buf = [0u8; ML_KEM_PK_LENGTH];
+        let mut encapsulation_key_buf: Array<u8, EncodedSize512> = Array::default();
         encapsulation_key_buf.copy_from_slice(&value.encapsulation_key);
 
         Ok(Self {
-            encapsulation_key: EncapsulationKey::<KemParam>::from_bytes(
-                &encapsulation_key_buf.into(),
+            encapsulation_key: <ml_kem::kem::Kem<ml_kem::MlKem512Params> as ml_kem::KemCore>::EncapsulationKey::from_bytes(
+                &encapsulation_key_buf,
             ),
         })
     }
@@ -139,7 +146,7 @@ impl InnerBackupPublicKey {
         rng: &mut R,
         msg: &[u8],
     ) -> Result<Vec<u8>, CryptographyError> {
-        let inner = hybrid_ml_kem::enc(rng, msg, &self.encapsulation_key).unwrap();
+        let inner = hybrid_ml_kem::enc::<MlKemType, _>(rng, msg, &self.encapsulation_key).unwrap();
         let mut ct_buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(&inner, &mut ct_buf, SAFE_SER_SIZE_LIMIT)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;
@@ -169,7 +176,7 @@ pub fn keygen<R: Rng + CryptoRng>(
     //todo change order
     rng: &mut R,
 ) -> Result<(BackupPrivateKey, BackupPublicKey), CryptographyError> {
-    let (decapsulation_key, encapsulation_key) = hybrid_ml_kem::keygen(rng);
+    let (decapsulation_key, encapsulation_key) = hybrid_ml_kem::keygen::<MlKemType, _>(rng);
 
     let sk = InnerBackupPrivateKey { decapsulation_key };
     let pk = InnerBackupPublicKey { encapsulation_key };

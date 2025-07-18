@@ -9,7 +9,7 @@ use crate::algebra::base_ring::Z64;
 use crate::algebra::galois_rings::common::ResiduePoly;
 use crate::algebra::structure_traits::ErrorCorrect;
 use crate::algebra::structure_traits::Invert;
-use crate::algebra::structure_traits::RingEmbed;
+use crate::algebra::structure_traits::RingWithExceptionalSequence;
 use crate::algebra::structure_traits::Solve;
 use crate::execution::constants::LOG_B_SWITCH_SQUASH;
 use crate::execution::constants::STATSEC;
@@ -53,7 +53,7 @@ pub struct DummyPreprocessing<Z> {
 
 impl<Z> DummyPreprocessing<Z>
 where
-    Z: Ring + RingEmbed,
+    Z: RingWithExceptionalSequence,
 {
     /// Dummy preprocessing which generates shares deterministically from `seed`
     pub fn new<Ses: ParameterHandles>(seed: u64, session: &Ses) -> Self {
@@ -76,10 +76,9 @@ where
     ) -> anyhow::Result<Vec<Share<Z>>> {
         let role_with_embeddings = (1..=parties)
             .map(|party_id| {
-                Ok((
-                    Role::indexed_from_one(party_id),
-                    Z::embed_exceptional_set(party_id)?,
-                ))
+                let party_role = Role::indexed_from_one(party_id);
+                let embedding = Z::embed_role_to_exceptional_sequence(&party_role)?;
+                Ok((party_role, embedding))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
@@ -94,7 +93,7 @@ where
 
 impl<Z> TriplePreprocessing<Z> for DummyPreprocessing<Z>
 where
-    Z: Ring + RingEmbed,
+    Z: RingWithExceptionalSequence,
 {
     /// Computes a dummy triple deterministically constructed from the seed in [DummyPreprocessing].
     fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
@@ -160,7 +159,7 @@ where
 
 impl<Z> RandomPreprocessing<Z> for DummyPreprocessing<Z>
 where
-    Z: Ring + RingEmbed,
+    Z: RingWithExceptionalSequence,
 {
     /// Computes a random element deterministically but pseudorandomly constructed from the seed in [DummyPreprocessing].
     fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
@@ -202,11 +201,11 @@ where
     }
 }
 
-impl<Z> BasePreprocessing<Z> for DummyPreprocessing<Z> where Z: Ring + RingEmbed {}
+impl<Z> BasePreprocessing<Z> for DummyPreprocessing<Z> where Z: RingWithExceptionalSequence {}
 
 impl<Z> BitPreprocessing<Z> for DummyPreprocessing<Z>
 where
-    Z: Ring + RingEmbed,
+    Z: RingWithExceptionalSequence,
 {
     ///__NOTE__ : It is useless to append bits to a [`DummyPreprocessing`]
     /// we generate them on the fly with no interaction
@@ -340,7 +339,7 @@ where
 #[async_trait]
 impl<Z> DKGPreprocessing<Z> for DummyPreprocessing<Z>
 where
-    Z: Ring + RingEmbed,
+    Z: RingWithExceptionalSequence,
 {
     fn next_noise_vec(
         &mut self,

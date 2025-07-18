@@ -23,7 +23,9 @@ use tonic_health::server::HealthReporter;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    engine::{base::derive_request_id, threshold::traits::Initiator},
+    engine::{
+        base::derive_request_id, threshold::traits::Initiator, validation::validate_request_id,
+    },
     tonic_some_or_err,
     vault::storage::{read_versioned_at_request_id, store_versioned_at_request_id, Storage},
 };
@@ -44,17 +46,16 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
     pub async fn init_prss_from_disk(&self, req_id: &RequestId) -> anyhow::Result<()> {
         let prss_setup_z128_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
-            let base_session = self
+            let parameters = self
                 .session_preparer
-                .make_base_session(req_id.derive_session_id()?, NetworkMode::Sync)
-                .await?;
+                .get_session_parameters(req_id.derive_session_id()?)?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
                 &derive_request_id(&format!(
                     "PRSSSetup_Z128_ID_{}_{}_{}",
                     req_id,
-                    base_session.parameters.num_parties(),
-                    base_session.parameters.threshold()
+                    parameters.num_parties(),
+                    parameters.threshold()
                 ))?,
                 &PrivDataType::PrssSetup.to_string(),
             )
@@ -76,17 +77,16 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 
         let prss_setup_z64_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
-            let base_session = self
+            let parameters = self
                 .session_preparer
-                .make_base_session(req_id.derive_session_id()?, NetworkMode::Sync)
-                .await?;
+                .get_session_parameters(req_id.derive_session_id()?)?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
                 &derive_request_id(&format!(
                     "PRSSSetup_Z64_ID_{}_{}_{}",
                     req_id,
-                    base_session.parameters.num_parties(),
-                    base_session.parameters.threshold()
+                    parameters.num_parties(),
+                    parameters.threshold()
                 ))?,
                 &PrivDataType::PrssSetup.to_string(),
             )
@@ -200,12 +200,12 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> {
     async fn init(&self, request: Request<v1::InitRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
-
         let request_id = tonic_some_or_err(
             inner.request_id.clone(),
-            "Request ID is not set (inner key gen)".to_string(),
+            "Request ID is not set (initiator)".to_string(),
         )?
         .into();
+        validate_request_id(&request_id)?;
 
         self.init_prss(&request_id).await.map_err(|e| {
             tonic::Status::new(

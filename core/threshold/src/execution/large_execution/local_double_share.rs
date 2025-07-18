@@ -11,7 +11,7 @@ use crate::execution::{
     runtime::session::LargeSessionHandles,
 };
 use crate::{
-    algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed},
+    algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
     error::error_handler::anyhow_error_and_log,
     execution::runtime::party::Role,
     networking::value::BroadcastValue,
@@ -35,7 +35,7 @@ pub struct DoubleShares<Z> {
 
 #[async_trait]
 pub trait LocalDoubleShare: ProtocolDescription + Send + Sync + Clone {
-    async fn execute<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, L: LargeSessionHandles>(
+    async fn execute<Z: Derive + ErrorCorrect + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -86,10 +86,7 @@ impl<C: Coinflip, S: ShareDispute, BCast: Broadcast> LocalDoubleShare
     for RealLocalDoubleShare<C, S, BCast>
 {
     #[instrument(name="LocalDoubleShare",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?secrets.len()))]
-    async fn execute<
-        Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
-        L: LargeSessionHandles,
-    >(
+    async fn execute<Z: Derive + ErrorCorrect + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -175,7 +172,7 @@ pub(crate) async fn send_receive_pads_double<Z, L, S>(
     share_dispute: &S,
 ) -> anyhow::Result<ShareDisputeOutputDouble<Z>>
 where
-    Z: Ring + RingEmbed + Derive + Invert,
+    Z: RingWithExceptionalSequence + Derive + Invert,
     L: LargeSessionHandles,
     S: ShareDispute,
 {
@@ -401,7 +398,9 @@ pub(crate) mod tests {
         },
     };
 
-    use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed};
+    use crate::algebra::structure_traits::{
+        Derive, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence,
+    };
     use crate::execution::sharing::shamir::RevealOp;
     use crate::{
         algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
@@ -426,7 +425,7 @@ pub(crate) mod tests {
     use rstest::rstest;
 
     fn test_ldl_strategies<
-        Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
+        Z: RingWithExceptionalSequence + Derive + ErrorCorrect + Invert,
         const EXTENSION_DEGREE: usize,
         LD: LocalDoubleShare + 'static,
     >(

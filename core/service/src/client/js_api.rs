@@ -68,6 +68,7 @@
 //! node --test tests/js
 //! ```
 use crate::cryptography::hybrid_ml_kem;
+use crate::cryptography::internal_crypto_types::{PrivateEncKey, PublicEncKey};
 use bc2wrap::{deserialize, serialize};
 use kms_grpc::kms::v1::Eip712DomainMsg;
 use kms_grpc::kms::v1::FheParameter;
@@ -76,15 +77,24 @@ use threshold_fhe::execution::tfhe_internals::parameters::BC_PARAMS_SNS;
 
 use super::*;
 
+// Since wasm_bindgen is limited, namely it says
+// structs with #[wasm_bindgen] cannot have lifetime or type parameters currently
+// we have no make a concrete type for the private encryption key.
+#[wasm_bindgen]
+pub struct PrivateEncKeyMlKem512(pub(crate) PrivateEncKey<ml_kem::MlKem512>);
+
+#[wasm_bindgen]
+pub struct PublicEncKeyMlKem512(pub(crate) PublicEncKey<ml_kem::MlKem512>);
+
 // We can't wasm-bindgen consts, so we put it in a function instead.
 #[wasm_bindgen]
 pub fn ml_kem_pke_pk_len() -> usize {
-    hybrid_ml_kem::ML_KEM_PK_LENGTH
+    hybrid_ml_kem::ML_KEM_512_PK_LENGTH
 }
 
 #[wasm_bindgen]
 pub fn ml_kem_pke_sk_len() -> usize {
-    hybrid_ml_kem::ML_KEM_SK_LEN
+    hybrid_ml_kem::ML_KEM_512_SK_LEN
 }
 
 #[wasm_bindgen]
@@ -253,14 +263,14 @@ pub fn transcript_to_response_js(transcript: &TestingUserDecryptionTranscript) -
 
 #[wasm_bindgen]
 #[cfg(feature = "wasm_tests")]
-pub fn transcript_to_enc_sk(transcript: &TestingUserDecryptionTranscript) -> PrivateEncKey {
-    transcript.eph_sk.clone()
+pub fn transcript_to_enc_sk(transcript: &TestingUserDecryptionTranscript) -> PrivateEncKeyMlKem512 {
+    PrivateEncKeyMlKem512(transcript.eph_sk.clone().unwrap_ml_kem_512())
 }
 
 #[wasm_bindgen]
 #[cfg(feature = "wasm_tests")]
-pub fn transcript_to_enc_pk(transcript: &TestingUserDecryptionTranscript) -> PublicEncKey {
-    transcript.eph_pk.clone()
+pub fn transcript_to_enc_pk(transcript: &TestingUserDecryptionTranscript) -> PublicEncKeyMlKem512 {
+    PublicEncKeyMlKem512(transcript.eph_pk.clone().unwrap_ml_kem_512())
 }
 
 #[wasm_bindgen]
@@ -277,55 +287,83 @@ pub fn transcript_to_client(transcript: &TestingUserDecryptionTranscript) -> Cli
 }
 
 #[wasm_bindgen]
-pub struct CryptoBoxCt {
-    ct: Vec<u8>,
-}
-
-#[wasm_bindgen]
-pub fn ml_kem_pke_keygen() -> PrivateEncKey {
-    let mut rng = AesRng::from_entropy();
-    let (dk, _ek) = hybrid_ml_kem::keygen(&mut rng);
-    PrivateEncKey(dk)
-}
-
-#[wasm_bindgen]
-pub fn ml_kem_pke_get_pk(sk: &PrivateEncKey) -> PublicEncKey {
-    PublicEncKey(sk.0.encapsulation_key().clone())
-}
-
-#[wasm_bindgen]
-pub fn ml_kem_pke_pk_to_u8vec(pk: &PublicEncKey) -> Result<Vec<u8>, JsError> {
-    serialize(pk).map_err(|e| JsError::new(&e.to_string()))
-}
-
-#[wasm_bindgen]
-pub fn ml_kem_pke_sk_to_u8vec(sk: &PrivateEncKey) -> Result<Vec<u8>, JsError> {
-    serialize(sk).map_err(|e| JsError::new(&e.to_string()))
-}
-
-#[wasm_bindgen]
-pub fn u8vec_to_ml_kem_pke_pk(v: &[u8]) -> Result<PublicEncKey, JsError> {
-    deserialize(v).map_err(|e| JsError::new(&e.to_string()))
-}
-
-#[wasm_bindgen]
-pub fn u8vec_to_ml_kem_pke_sk(v: &[u8]) -> Result<PrivateEncKey, JsError> {
-    deserialize(v).map_err(|e| JsError::new(&e.to_string()))
-}
-
-#[wasm_bindgen]
-pub fn ml_kem_pke_encrypt(msg: &[u8], their_pk: &PublicEncKey) -> CryptoBoxCt {
-    let mut rng = AesRng::from_entropy();
-
-    CryptoBoxCt {
-        ct: serialize(&hybrid_ml_kem::enc(&mut rng, msg, &their_pk.0).unwrap()).unwrap(),
+#[cfg(feature = "wasm_tests")]
+pub fn transcript_to_server_addrs_js(transcript: &TestingUserDecryptionTranscript) -> JsValue {
+    #[derive(serde::Serialize)]
+    struct ServerIdAddr {
+        id: String,
+        addr: String,
     }
+    let val = transcript
+        .server_addrs
+        .iter()
+        .map(|(id, addr)| ServerIdAddr {
+            id: id.to_string(),
+            addr: addr.to_checksum(None),
+        })
+        .collect::<Vec<_>>();
+    serde_wasm_bindgen::to_value(&val).unwrap()
 }
 
 #[wasm_bindgen]
-pub fn ml_kem_pke_decrypt(ct: &CryptoBoxCt, my_sk: &PrivateEncKey) -> Vec<u8> {
-    let ct: hybrid_ml_kem::HybridKemCt = deserialize(&ct.ct).unwrap();
-    hybrid_ml_kem::dec(ct, &my_sk.0).unwrap()
+#[cfg(feature = "wasm_tests")]
+pub fn transcript_to_client_addrs_js(transcript: &TestingUserDecryptionTranscript) -> JsValue {
+    let val = transcript.client_address.to_checksum(None);
+    serde_wasm_bindgen::to_value(&val).unwrap()
+}
+
+#[wasm_bindgen]
+pub fn ml_kem_pke_keygen() -> PrivateEncKeyMlKem512 {
+    let mut rng = AesRng::from_entropy();
+    let (dk, _ek) = hybrid_ml_kem::keygen::<ml_kem::MlKem512, _>(&mut rng);
+    PrivateEncKeyMlKem512(PrivateEncKey(dk))
+}
+
+#[wasm_bindgen]
+pub fn ml_kem_pke_get_pk(sk: &PrivateEncKeyMlKem512) -> PublicEncKeyMlKem512 {
+    PublicEncKeyMlKem512(PublicEncKey(sk.0 .0.encapsulation_key().clone()))
+}
+
+#[wasm_bindgen]
+pub fn ml_kem_pke_pk_to_u8vec(pk: &PublicEncKeyMlKem512) -> Result<Vec<u8>, JsError> {
+    serialize(&pk.0).map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn ml_kem_pke_sk_to_u8vec(sk: &PrivateEncKeyMlKem512) -> Result<Vec<u8>, JsError> {
+    serialize(&sk.0).map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn u8vec_to_ml_kem_pke_pk(v: &[u8]) -> Result<PublicEncKeyMlKem512, JsError> {
+    deserialize::<PublicEncKey<ml_kem::MlKem512>>(v)
+        .map(PublicEncKeyMlKem512)
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn u8vec_to_ml_kem_pke_sk(v: &[u8]) -> Result<PrivateEncKeyMlKem512, JsError> {
+    deserialize::<PrivateEncKey<ml_kem::MlKem512>>(v)
+        .map(PrivateEncKeyMlKem512)
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// This function is *not* used by relayer-sdk because the encryption
+/// happens on the KMS side. It's just here for completeness and tests.
+#[wasm_bindgen]
+pub fn ml_kem_pke_encrypt(msg: &[u8], their_pk: &PublicEncKeyMlKem512) -> Vec<u8> {
+    let mut rng = AesRng::from_entropy();
+    serialize(&hybrid_ml_kem::enc::<ml_kem::MlKem512, _>(&mut rng, msg, &their_pk.0 .0).unwrap())
+        .unwrap()
+}
+
+/// This function is *not* used by relayer-sdk because the decryption
+/// is handled by [process_user_decryption_resp].
+/// It's just here for completeness and tests.
+#[wasm_bindgen]
+pub fn ml_kem_pke_decrypt(ct: &[u8], my_sk: &PrivateEncKeyMlKem512) -> Vec<u8> {
+    let ct: hybrid_ml_kem::HybridKemCt = deserialize(ct).unwrap();
+    hybrid_ml_kem::dec::<ml_kem::MlKem512>(ct, &my_sk.0 .0).unwrap()
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -443,8 +481,8 @@ pub fn process_user_decryption_resp_from_js(
     request: JsValue,
     eip712_domain: JsValue,
     agg_resp: JsValue,
-    enc_pk: &PublicEncKey,
-    enc_sk: &PrivateEncKey,
+    enc_pk: &PublicEncKeyMlKem512,
+    enc_sk: &PrivateEncKeyMlKem512,
     verify: bool,
 ) -> Result<Vec<TypedPlaintext>, JsError> {
     let agg_resp = js_to_resp(agg_resp)
@@ -510,8 +548,8 @@ pub fn process_user_decryption_resp(
     request: Option<ParsedUserDecryptionRequest>,
     eip712_domain: Option<Eip712DomainMsg>,
     agg_resp: Vec<UserDecryptionResponse>,
-    enc_pk: &PublicEncKey,
-    enc_sk: &PrivateEncKey,
+    enc_pk: &PublicEncKeyMlKem512,
+    enc_sk: &PrivateEncKeyMlKem512,
     verify: bool,
 ) -> Result<Vec<TypedPlaintext>, JsError> {
     // if verify is true, then request and eip712 domain must exist
@@ -520,9 +558,19 @@ pub fn process_user_decryption_resp(
         let pb_domain = eip712_domain.ok_or_else(|| JsError::new("missing eip712 domain"))?;
         let eip712_domain =
             protobuf_to_alloy_domain(&pb_domain).map_err(|e| JsError::new(&e.to_string()))?;
-        client.process_user_decryption_resp(&request, &eip712_domain, &agg_resp, enc_pk, enc_sk)
+        client.process_user_decryption_resp(
+            &request,
+            &eip712_domain,
+            &agg_resp,
+            &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
+            &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
+        )
     } else {
-        client.insecure_process_user_decryption_resp(&agg_resp, enc_pk, enc_sk)
+        client.insecure_process_user_decryption_resp(
+            &agg_resp,
+            &UnifiedPublicEncKey::MlKem512(enc_pk.0.clone()),
+            &UnifiedPrivateEncKey::MlKem512(enc_sk.0.clone()),
+        )
     };
     match user_decrypt_resp {
         Ok(resp) => Ok(resp),

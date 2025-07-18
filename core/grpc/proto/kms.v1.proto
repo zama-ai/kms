@@ -10,8 +10,9 @@ message InitRequest {
 // Placeholder response, when no content is needed
 message Empty {}
 
-// Simple response to return a 32 Byte / 256 Bit ID, to be used to retrieve the
-// computed result later on. This string does NOT contain a `0x` prefix.
+/// A unique 32 Byte / 256 Bit ID, to be used to identify a request and
+/// for retrieving the computed result later on. 
+/// Must be encoded in lower-case hex. The string must NOT contain a `0x` prefix.
 message RequestId { string request_id = 1; }
 
 // The type of keyset to generate during in a key generation call.
@@ -126,8 +127,8 @@ message KeyGenResult {
 message SignedPubDataHandle {
   // The key handle;
   // This is a 256 bits `SHAKE-256` hash of the `tfhe::safe_serialization` of the
-  // underlying struct. This handle serves as the `URI` to locate the actual
-  // object in the `storage`.
+  // underlying struct using [`DSEP_HANDLE`] as domain seperator. 
+  // This handle serves as the `URI` to locate the actual object in the `storage`.
   string key_handle = 1;
   // Plain ECDSA Signature on the key handle.
   bytes signature = 2;
@@ -242,9 +243,9 @@ message PublicDecryptionResponse {
   PublicDecryptionResponsePayload payload = 2;
 }
 
-// https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator
-// eventually chain_id, verifying_contract and salt will be parsed in to
-// solidity types
+// Eip712 domain information. 
+// Any constraints specified in the [standard](https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator) _must_ be fulfilled.  
+// Furthermore, be aware that all parameters will eventually be parsed into Solidity types. 
 message Eip712DomainMsg {
   string name = 1;
   string version = 2;
@@ -265,15 +266,14 @@ message UserDecryptionRequest {
   // used for key generation
   RequestId key_id = 3;
 
-  // The client's (blockchain wallet) address,
-  // encoded using EIP-55.
+  // The client's (blockchain wallet) address, encoded using EIP-55. I.e. including `0x`.
   string client_address = 4;
 
   // Encoding of the user's public encryption key for this request.
-  // Encoding using the default encoding of libsodium, i.e. the 32 bytes of a
-  // Montgomery point.
+  // This must be a bincode (v.1) encoded ML-KEM 512 key.
   bytes enc_key = 5;
 
+  // The user's EIP712 domain. This MUST be present. Furthermore, the `verifying_contract` MUST be set and be distinct from `client_address`.
   Eip712DomainMsg domain = 6;
 }
 

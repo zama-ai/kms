@@ -24,7 +24,7 @@ use tokio_rustls::rustls::{
 };
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Uri;
-use tonic::{async_trait, transport::Channel, Status};
+use tonic::{async_trait, transport::Channel};
 
 use crate::{error::error_handler::anyhow_error_and_log, networking::tls::AttestedServerVerifier};
 use crate::{execution::runtime::party::Identity, session_id::SessionId};
@@ -32,7 +32,7 @@ use crate::{execution::runtime::party::Identity, session_id::SessionId};
 #[cfg(feature = "choreographer")]
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
 use super::{
-    grpc::{CoreToCoreNetworkConfig, MessageQueueStore, OptionConfigWrapper},
+    grpc::{MessageQueueStore, OptionConfigWrapper},
     tls::SendingServiceTLSConfig,
 };
 use super::{NetworkMode, Networking};
@@ -58,7 +58,7 @@ pub trait SendingService: Send + Sync {
     /// Init and start the sending service
     fn new(
         tls_certs: Option<SendingServiceTLSConfig>,
-        conf: Option<CoreToCoreNetworkConfig>,
+        conf: OptionConfigWrapper,
     ) -> anyhow::Result<Self>
     where
         Self: std::marker::Sized;
@@ -228,34 +228,45 @@ impl GrpcSendingService {
     ) {
         let mut received_request = 0;
         let mut incorrectly_sent = 0;
+
         while let Some(value) = receiver.recv().await {
             received_request += 1;
+
             let send_fn = || async {
                 network_channel
                     .clone()
                     .send_value(value.clone())
                     .await
-                    .map_err(Status::into)
-            };
-            let mut nb_retry = 0;
-            let on_network_fail = |e, duration: Duration| {
-                tracing::debug!(
-                    "Retry {nb_retry}, network failure for message: {e:?} - Receiver {receiver:?} - Duration {:?} secs",
-                    duration.as_secs()
-                );
-                nb_retry += 1;
+                    .map(|_| ())
+                    .map_err(|status| {
+                        // All errors are transient and retryable
+                        backoff::Error::Transient {
+                            err: status,
+                            retry_after: None,
+                        }
+                    })
             };
 
+            let on_network_fail = |e, duration: Duration| {
+                tracing::debug!(
+                    "Network retry for message: {e:?} - Duration {:?} secs",
+                    duration.as_secs()
+                );
+            };
+
+            // Single unified retry strategy
             let res = retry_notify(exponential_backoff.clone(), send_fn, on_network_fail).await;
-            if let Err(err) = res {
+
+            if let Err(status) = res {
                 incorrectly_sent += 1;
-                tracing::error!(
-                    "Error sending, {:?}, after {:?} timeout and {nb_retry} retries, and {incorrectly_sent} errors so far",
-                    err,
-                    exponential_backoff.max_elapsed_time
+                tracing::warn!(
+                    "Failed to send message after retries: {} - {}",
+                    status.code(),
+                    status.message()
                 );
             }
         }
+
         if received_request == 0 {
             // This is not necessarily an error since we may use the network to only receive in certain protocols
             tracing::info!("No more listeners, nothing happened, shutting down network task");
@@ -301,10 +312,10 @@ impl SendingService for GrpcSendingService {
     /// __NOTE__: This requires the service to be running already
     fn new(
         tls_certs: Option<SendingServiceTLSConfig>,
-        config: Option<CoreToCoreNetworkConfig>,
+        config: OptionConfigWrapper,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            config: OptionConfigWrapper { conf: config },
+            config,
             tls_certs,
             thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
             channel_map: DashMap::new(),
@@ -313,25 +324,37 @@ impl SendingService for GrpcSendingService {
 
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
     fn add_connection(&self, other: Identity) -> anyhow::Result<UnboundedSender<SendValueRequest>> {
+        // 1. Create channel first (no allocation issues)
         let (sender, receiver) = unbounded_channel::<SendValueRequest>();
+
+        // 2. Connect to party (can fail, so do before any spawning)
         let network_channel = self.connect_to_party(other.clone())?;
+
+        // 3. Configurable backoff with initial_interval from config
         let exponential_backoff = ExponentialBackoff::<SystemClock> {
+            initial_interval: self.config.get_initial_interval(), // Configurable start
             max_elapsed_time: self.config.get_max_elapsed_time(),
             max_interval: self.config.get_max_interval(),
             multiplier: self.config.get_multiplier(),
             ..Default::default()
         };
-        let mut handles = self.thread_handles.write().map_err(|e| {
-            anyhow_error_and_log(format!(
-                "Failed to acquire write lock for thread handles: {e}"
-            ))
-        })?;
-        let handle = tokio::spawn(Self::run_network_task(
-            receiver,
-            network_channel,
-            exponential_backoff,
-        ));
-        handles.add(handle);
+
+        // 4. Single spawn with integrated error handling (eliminates double-spawn overhead)
+        let handle = tokio::spawn(async move {
+            // Run the actual network task (already logs completion status)
+            Self::run_network_task(receiver, network_channel, exponential_backoff).await;
+        });
+
+        // 5. Minimize lock scope - acquire write lock last and release immediately
+        self.thread_handles
+            .write()
+            .map_err(|e| {
+                anyhow_error_and_log(format!(
+                    "Failed to acquire write lock for thread handles: {e}"
+                ))
+            })?
+            .add(handle);
+
         Ok(sender)
     }
 
@@ -340,12 +363,20 @@ impl SendingService for GrpcSendingService {
         &self,
         others: Vec<Identity>,
     ) -> anyhow::Result<HashMap<Identity, UnboundedSender<SendValueRequest>>> {
-        let mut map = HashMap::new();
+        let mut result = HashMap::with_capacity(others.len());
+
         for other in others {
-            let connection = self.add_connection(other.clone())?;
-            map.insert(other.clone(), connection);
+            match self.add_connection(other.clone()) {
+                Ok(sender) => {
+                    result.insert(other, sender);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to establish connection to {}: {}", other, e);
+                    return Err(e);
+                }
+            }
         }
-        Ok(map)
+        Ok(result)
     }
 }
 
@@ -359,6 +390,7 @@ impl Drop for GrpcSendingService {
 ///It communicates with the SendingService via the mpsc Sender channel (sending_channels)
 ///And retrieves messages via the Grpc Server mpsc Receiver channel (receiving_channels)
 ///It also deals with the network round and timeouts
+#[derive(Debug)]
 pub struct NetworkSession {
     pub owner: Identity,
     // Sessoin id of this Network session
@@ -367,7 +399,8 @@ pub struct NetworkSession {
     /// Sending channels for this session
     pub sending_channels: HashMap<Identity, UnboundedSender<SendValueRequest>>,
     /// Channels which are filled by the grpc server receiving messages from the other parties
-    pub receiving_channels: Arc<MessageQueueStore>,
+    /// owned by the session and thus automatically cleaned up on drop
+    pub receiving_channels: MessageQueueStore,
     // Round counter for the current session, behind a lock to be able to update it without a mut ref to self
     pub round_counter: RwLock<usize>,
     // Measure the number of bytes sent by this session
@@ -589,8 +622,8 @@ mod tests {
     };
     use std::time::Duration;
 
-    #[test]
-    fn test_network_stack() {
+    #[tokio::test]
+    async fn test_network_stack() {
         let sid = SessionId::from(0);
         let mut role_assignment = RoleAssignment::new();
         let role_1 = Role::indexed_from_one(1);
@@ -631,11 +664,13 @@ mod tests {
                     let _res = futures::join!(core_future);
                 });
 
-                let network_stack = networking.make_session(
-                    sid,
-                    role_assignment.clone(),
-                    crate::networking::NetworkMode::Sync,
-                );
+                let network_stack = networking
+                    .make_session(
+                        sid,
+                        role_assignment.clone(),
+                        crate::networking::NetworkMode::Sync,
+                    )
+                    .unwrap();
 
                 let (send, recv) = tokio::sync::oneshot::channel();
                 if role.one_based() == 1 {
@@ -685,11 +720,13 @@ mod tests {
                 let _res = futures::join!(core_future);
             });
 
-            let network_stack = networking.make_session(
-                sid,
-                role_assignment.clone(),
-                crate::networking::NetworkMode::Sync,
-            );
+            let network_stack = networking
+                .make_session(
+                    sid,
+                    role_assignment.clone(),
+                    crate::networking::NetworkMode::Sync,
+                )
+                .unwrap();
 
             let (send, recv) = tokio::sync::oneshot::channel();
             tokio::spawn(async move {

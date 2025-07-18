@@ -24,6 +24,7 @@ permissions:
   actions: read
   contents: read
   pull-requests: read
+  packages: read
 
 jobs:
   # Initial job that determines which components have changed
@@ -243,12 +244,12 @@ jobs:
     if: >-
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6323a1e8e260961562b66a9f33a608f86cd6c831
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
     with:
       docker-file: "./docker/core-client/Dockerfile"
       working-directory: "./core-client"
       push_image: true
-      image-name: 'kms-core-client'
+      image-name: 'kms/core-client'
       app-cache-dir: 'kms-core-client'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -377,7 +378,7 @@ jobs:
       docker-file: "./docker/core/service/Dockerfile"
       working-directory: "./core/service"
       push_image: true
-      image-name: 'kms-service'
+      image-name: 'kms/core-service'
       app-cache-dir: 'kms'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -408,8 +409,8 @@ jobs:
       docker-file-enclave: "./docker/core/service/enclave.dockerfile"
       working-directory: "./core/service"
       push_image: true
-      image-name: 'kms-service'
-      image-enclave-name: 'kms-service-enclave'
+      image-name: 'kms/core-service'
+      image-enclave-name: 'kms/core-service-enclave'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
@@ -500,12 +501,12 @@ jobs:
     if: >-
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6323a1e8e260961562b66a9f33a608f86cd6c831
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
     with:
       docker-file: "./docker/base/Dockerfile"
       working-directory: "./base"
       push_image: true
-      image-name: 'kms-golden-image'
+      image-name: 'kms/rust-golden-image'
       app-cache-dir: 'kms-base'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}

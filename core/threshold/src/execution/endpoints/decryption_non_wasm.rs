@@ -1120,8 +1120,13 @@ where
     let ciphertext_modulus = 64;
     let mut output_ctxt;
 
+    let pbs_order = match ct_block.atomic_pattern {
+        tfhe::shortint::AtomicPatternKind::Standard(pbsorder) => pbsorder,
+        tfhe::shortint::AtomicPatternKind::KeySwitch32 => PBSOrder::KeyswitchBootstrap,
+    };
+
     //If ctype = F-GLWE we need to KS before doing the decryption
-    let (mask, body) = if ct_block.pbs_order == PBSOrder::KeyswitchBootstrap {
+    let (mask, body) = if pbs_order == PBSOrder::KeyswitchBootstrap {
         output_ctxt = LweCiphertext::new(0, ksk.output_lwe_size(), ksk.ciphertext_modulus());
         keyswitch_lwe_ciphertext(ksk, &ct_block.ct, &mut output_ctxt);
         output_ctxt.get_mask_and_body()
@@ -1174,6 +1179,7 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use std::sync::Arc;
+    use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::{prelude::FheEncrypt, FheUint8};
 
     #[test]
@@ -1457,15 +1463,23 @@ mod tests {
         >::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_sks(key_shares);
-        runtime.setup_ks(Arc::new(
-            keyset
+        runtime.setup_ks(
+            match &keyset
                 .public_keys
                 .server_key
-                .into_raw_parts()
-                .0
-                .into_raw_parts()
-                .key_switching_key,
-        ));
+                .as_ref()
+                .as_ref()
+                .atomic_pattern
+            {
+                AtomicPatternServerKey::Standard(ap) => Arc::new(ap.key_switching_key.clone()),
+                AtomicPatternServerKey::KeySwitch32(_) => {
+                    panic!("Unsupported KeySwitch32 AP",);
+                }
+                AtomicPatternServerKey::Dynamic(_) => {
+                    panic!("Unsupported Dynamic AP",);
+                }
+            },
+        );
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
         let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmall).unwrap();
@@ -1547,15 +1561,23 @@ mod tests {
         >::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_sks(key_shares);
-        runtime.setup_ks(Arc::new(
-            keyset
+        runtime.setup_ks(
+            match &keyset
                 .public_keys
                 .server_key
-                .into_raw_parts()
-                .0
-                .into_raw_parts()
-                .key_switching_key,
-        ));
+                .as_ref()
+                .as_ref()
+                .atomic_pattern
+            {
+                AtomicPatternServerKey::Standard(ap) => Arc::new(ap.key_switching_key.clone()),
+                AtomicPatternServerKey::KeySwitch32(_) => {
+                    panic!("Unsupported KeySwitch32 AP",);
+                }
+                AtomicPatternServerKey::Dynamic(_) => {
+                    panic!("Unsupported Dynamic AP",);
+                }
+            },
+        );
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
         let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecLarge).unwrap();

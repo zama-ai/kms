@@ -92,6 +92,8 @@ jobs:
       id-token: write
     needs: determine-tag
     outputs:
+      image: ${{ steps.push.outputs.image }}
+      digest: ${{ steps.push.outputs.digest }}
       enclave_pcr0: ${{ steps.eif.outputs.eif_pcr0 }}
       enclave_pcr1: ${{ steps.eif.outputs.eif_pcr1 }}
       enclave_pcr2: ${{ steps.eif.outputs.eif_pcr2 }}
@@ -189,6 +191,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Docker Build and Push Enclave Image
+        id: push
         uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
         with:
           context: .
@@ -215,7 +218,10 @@ jobs:
         env:
           IMAGE_NAME: ${{ inputs.image-name }}
           DOCKER_TAG: ${{ needs.determine-tag.outputs.docker_tag }}
-        run: echo "image=ghcr.io/zama-ai/${IMAGE_NAME}:${DOCKER_TAG}" >> "${GITHUB_OUTPUT}"
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          echo "image=ghcr.io/zama-ai/${IMAGE_NAME}:${DOCKER_TAG}" >> "${GITHUB_OUTPUT}"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
       ###########################################################
       # Release Part for EIF
@@ -227,3 +233,21 @@ jobs:
         with:
           files: |
             ${{ env.EIF_OUTPUT_DIR }}/eif-info.txt
+
+
+  provenance-prod:
+    permissions:
+      actions: 'read'
+      attestations: 'write'
+      packages: 'write'
+      id-token: write
+    needs: [build-and-push-enclave]
+    if: github.event_name == 'release'
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ghcr.io/zama-ai/${{ inputs.image-name }}
+      digest: ${{ needs.build-and-push-enclave.outputs.digest }}
+      registry-username: ${{ github.actor }}
+      private-repository: true
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}

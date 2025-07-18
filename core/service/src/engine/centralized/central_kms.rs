@@ -2,7 +2,9 @@ use crate::anyhow_error_and_log;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::decompression;
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signcryption::{signcrypt, SigncryptionPayload};
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenCallValues, PubDecCallValues, UserDecryptCallValues};
@@ -20,8 +22,6 @@ use crate::vault::storage::{
     read_pk_at_request_id,
 };
 use aes_prng::AesRng;
-#[cfg(feature = "non-wasm")]
-use kms_grpc::kms::v1::KeySetAddedInfo;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
 #[cfg(feature = "non-wasm")]
@@ -79,7 +79,7 @@ pub(crate) async fn async_generate_fhe_keys<PubS, PrivS, BackS>(
     storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
     params: DKGParams,
     keyset_config: StandardKeySetConfig,
-    keyset_added_info: Option<KeySetAddedInfo>,
+    compression_key_id: Option<RequestId>,
     seed: Option<Seed>,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
@@ -92,19 +92,16 @@ where
     let sk_copy = sk.to_owned();
     let eip712_domain_copy = eip712_domain.cloned();
 
-    let existing_key_handle = match keyset_added_info {
-        Some(added_info) => match added_info.compression_keyset_id {
-            Some(key_id) => {
-                let key_id = key_id.into();
-                storage.refresh_centralized_fhe_keys(&key_id).await?;
-                Some(
-                    storage
-                        .read_cloned_centralized_fhe_keys_from_cache(&key_id)
-                        .await?,
-                )
-            }
-            None => None,
-        },
+    let existing_key_handle = match compression_key_id {
+        Some(compression_key_id_inner) => {
+            storage
+                .refresh_centralized_fhe_keys(&compression_key_id_inner)
+                .await?;
+            let existing_key_handle = storage
+                .read_cloned_centralized_fhe_keys_from_cache(&compression_key_id_inner)
+                .await?;
+            Some(existing_key_handle)
+        }
         None => None,
     };
 
@@ -137,13 +134,13 @@ where
     storage.refresh_centralized_fhe_keys(keyset2_id).await?;
 
     // we need the private glwe key from keyset 2
-    let (client_key_2, _, _, _, _) = storage
+    let (client_key_2, _, _, _, _, _) = storage
         .read_cloned_centralized_fhe_keys_from_cache(keyset2_id)
         .await?
         .client_key
         .into_raw_parts();
     // we need the private compression key from keyset 1
-    let (_, _, compression_private_key_1, _, _) = storage
+    let (_, _, compression_private_key_1, _, _, _) = storage
         .read_cloned_centralized_fhe_keys_from_cache(keyset1_id)
         .await?
         .client_key
@@ -209,9 +206,9 @@ pub fn generate_fhe_keys(
                         // we generate the client key as usual,
                         // but we replace the compression private key using an existing compression private key
                         let client_key = generate_client_fhe_key(params, seed);
-                        let (client_key, dedicated_compact_private_key, _, _, tag) = client_key.into_raw_parts();
-                        let (_, _, existing_compression_private_key, noise_squashing_key, _) = key_handle.client_key.into_raw_parts();
-                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, noise_squashing_key, tag)
+                        let (client_key, dedicated_compact_private_key, _, _, _, tag) = client_key.into_raw_parts();
+                        let (_, _, existing_compression_private_key, noise_squashing_key, noise_squashing_compression_key, _) = key_handle.client_key.into_raw_parts();
+                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, noise_squashing_key,noise_squashing_compression_key, tag)
                     },
                     None => anyhow::bail!("existing key handle is required when using existing compression key for keygen")
                 }
@@ -228,6 +225,7 @@ pub fn generate_fhe_keys(
             server_key.3,
             server_key.4,
             server_key.5,
+            server_key.6,
         );
         let public_key = FhePublicKey::new(&client_key);
         let pks = FhePubKeySet {
@@ -420,7 +418,7 @@ pub async fn async_user_decrypt<
     rng: &mut (impl CryptoRng + RngCore),
     typed_ciphertexts: &[TypedCiphertext],
     req_digest: &[u8],
-    client_enc_key: &PublicEncKey,
+    client_enc_key: &UnifiedPublicEncKey,
     client_address: &alloy_primitives::Address,
     server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
@@ -753,7 +751,7 @@ impl<
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
         link: &[u8],
-        client_enc_key: &PublicEncKey,
+        client_enc_key: &UnifiedPublicEncKey,
         client_address: &alloy_primitives::Address,
     ) -> anyhow::Result<Vec<u8>> {
         let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
@@ -850,6 +848,34 @@ impl<
     }
 }
 
+#[cfg(feature = "non-wasm")]
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        BackS: Storage + Sync + Send + 'static,
+    > RealCentralizedKms<PubS, PrivS, BackS>
+{
+    /// Get a reference to the key generation MetaStore
+    pub fn get_key_gen_meta_store(&self) -> &Arc<RwLock<MetaStore<KeyGenCallValues>>> {
+        &self.key_meta_map
+    }
+
+    /// Get a reference to the public decryption MetaStore
+    pub fn get_pub_dec_meta_store(&self) -> &Arc<RwLock<MetaStore<PubDecCallValues>>> {
+        &self.pub_dec_meta_store
+    }
+
+    /// Get a reference to the user decryption MetaStore
+    pub fn get_user_dec_meta_store(&self) -> &Arc<RwLock<MetaStore<UserDecryptCallValues>>> {
+        &self.user_decrypt_meta_map
+    }
+
+    /// Get a reference to the CRS generation MetaStore
+    pub fn get_crs_meta_store(&self) -> &Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>> {
+        &self.crs_meta_map
+    }
+}
+
 #[tonic::async_trait]
 impl<
         PubS: Storage + Sync + Send + 'static,
@@ -901,7 +927,9 @@ pub(crate) mod tests {
     };
     use crate::consts::{DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
-    use crate::cryptography::internal_crypto_types::{gen_sig_keys, PrivateSigKey};
+    use crate::cryptography::internal_crypto_types::{
+        gen_sig_keys, PrivateSigKey, UnifiedPublicEncKey,
+    };
     use crate::cryptography::signcryption::{
         decrypt_signcryption_with_link, ephemeral_signcryption_key_generation,
     };
@@ -1375,14 +1403,18 @@ pub(crate) mod tests {
         };
         let link = vec![42_u8, 42, 42];
         let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
-        let client_keys = {
-            let mut keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
+        let client_key_pair = {
+            let mut keys = ephemeral_signcryption_key_generation::<ml_kem::MlKem512>(
+                &mut rng,
+                &client_sig_key,
+            );
             if sim_type == SimulationType::BadEphemeralKey {
                 let bad_keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
                 keys.sk = bad_keys.sk;
             }
             keys
         };
+        let unified_client_keys = UnifiedPublicEncKey::MlKem512(client_key_pair.pk.enc_key.clone());
         let mut rng = kms.base_kms.new_rng().await;
         let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage
@@ -1395,8 +1427,8 @@ pub(crate) mod tests {
             fhe_type,
             ct_format,
             &link,
-            &client_keys.pk.enc_key,
-            &client_keys.pk.client_address,
+            &unified_client_keys,
+            &client_key_pair.pk.client_address,
         );
         // if bad FHE key is used, then it *might* panic
         let raw_cipher = if sim_type == SimulationType::BadFheKey {
@@ -1414,7 +1446,7 @@ pub(crate) mod tests {
             &DSEP_USER_DECRYPTION,
             &raw_cipher,
             &link,
-            &client_keys,
+            &client_key_pair.to_unified(),
             &keys.centralized_kms_keys.sig_pk,
         );
         if sim_type == SimulationType::BadEphemeralKey {

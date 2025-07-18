@@ -15,7 +15,7 @@ permissions: {}
 
 jobs:
   docker-golden-image:
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6323a1e8e260961562b66a9f33a608f86cd6c831
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
     permissions:
       actions: read
       contents: read
@@ -27,7 +27,7 @@ jobs:
       docker-file: "./docker/base/Dockerfile"
       working-directory: "./base"
       push_image: true
-      image-name: 'kms-golden-image'
+      image-name: 'kms/rust-golden-image'
       app-cache-dir: 'kms-base'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -36,7 +36,7 @@ jobs:
 
   docker-kms-core-client:
     needs: docker-golden-image
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@6323a1e8e260961562b66a9f33a608f86cd6c831
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
     permissions:
       actions: read
       contents: read
@@ -48,7 +48,7 @@ jobs:
       docker-file: "./docker/core-client/Dockerfile"
       working-directory: "./core-client"
       push_image: true
-      image-name: 'kms-core-client'
+      image-name: 'kms/core-client'
       ref: ${{ inputs.ref || '' }}
       app-cache-dir: 'kms-core-client'
     secrets:
@@ -70,7 +70,7 @@ jobs:
       docker-file: "./docker/core/service/Dockerfile"
       working-directory: "./core/service"
       push_image: true
-      image-name: 'kms-service'
+      image-name: 'kms/core-service'
       ref: ${{ inputs.ref || '' }}
       app-cache-dir: 'kms'
     secrets:
@@ -96,7 +96,7 @@ jobs:
       docker-file-enclave: "./docker/core/service/enclave.dockerfile"
       working-directory: "./core/service"
       push_image: true
-      image-name: 'kms-service'
-      image-enclave-name: 'kms-service-enclave'
+      image-name: 'kms/core-service'
+      image-enclave-name: 'kms/core-service-enclave'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}

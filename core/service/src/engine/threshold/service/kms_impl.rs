@@ -8,7 +8,10 @@ use kms_grpc::{
     RequestId,
 };
 use serde::{Deserialize, Serialize};
-use tfhe::{integer::compression_keys::DecompressionKey, named::Named, Versionize};
+use tfhe::{
+    core_crypto::prelude::LweKeyswitchKey, integer::compression_keys::DecompressionKey,
+    named::Named, Versionize,
+};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
@@ -47,7 +50,7 @@ use crate::{
     engine::{
         base::{compute_info, BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY},
         prepare_shutdown_signals,
-        threshold::generic::GenericKms,
+        threshold::threshold_kms::ThresholdKms,
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     tonic_some_or_err,
@@ -88,6 +91,22 @@ pub struct ThresholdFheKeys {
     pub sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey>,
     pub decompression_key: Option<DecompressionKey>,
     pub pk_meta_data: KeyGenCallValues,
+}
+
+impl ThresholdFheKeys {
+    pub fn get_key_switching_key(&self) -> anyhow::Result<&LweKeyswitchKey<Vec<u64>>> {
+        match &self.integer_server_key.as_ref().atomic_pattern {
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Standard(
+                standard_atomic_pattern_server_key,
+            ) => Ok(&standard_atomic_pattern_server_key.key_switching_key),
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::KeySwitch32(_) => {
+                anyhow::bail!("No support for KeySwitch32 server key")
+            }
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Dynamic(_) => {
+                anyhow::bail!("No support for dynamic atomic pattern server key")
+            }
+        }
+    }
 }
 
 impl Named for ThresholdFheKeys {
@@ -135,7 +154,7 @@ pub fn compute_all_info(
 }
 
 #[cfg(not(feature = "insecure"))]
-pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
+pub type RealThresholdKms<PubS, PrivS, BackS> = ThresholdKms<
     RealInitiator<PrivS>,
     RealUserDecryptor<PubS, PrivS, BackS>,
     RealPublicDecryptor<PubS, PrivS, BackS>,
@@ -146,7 +165,7 @@ pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
 >;
 
 #[cfg(feature = "insecure")]
-pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
+pub type RealThresholdKms<PubS, PrivS, BackS> = ThresholdKms<
     RealInitiator<PrivS>,
     RealUserDecryptor<PubS, PrivS, BackS>,
     RealPublicDecryptor<PubS, PrivS, BackS>,
@@ -284,7 +303,7 @@ where
             let nm = networking_manager.clone();
             Box::pin(async move {
                 let manager = nm.read().await;
-                let impl_networking = manager.make_session(session_id, roles, network_mode);
+                let impl_networking = manager.make_session(session_id, roles, network_mode)?;
                 Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
             })
         },
@@ -508,7 +527,7 @@ where
         crypto_storage: crypto_storage.clone(),
     };
 
-    let kms = GenericKms::new(
+    let kms = ThresholdKms::new(
         initiator,
         user_decryptor,
         public_decryptor,

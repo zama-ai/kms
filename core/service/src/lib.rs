@@ -1,7 +1,6 @@
 use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::B256;
 use anyhow::anyhow;
-use cryptography::internal_crypto_types::PublicEncKey;
 use kms_grpc::{
     kms::v1::UserDecryptionResponsePayload, rpc_types::UserDecryptResponseVerification,
 };
@@ -85,7 +84,7 @@ pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) ->
 pub fn compute_user_decrypt_message_hash(
     payload: &UserDecryptionResponsePayload,
     eip712_domain: &Eip712Domain,
-    user_pk: &PublicEncKey,
+    user_pk: &UnifiedPublicEncKey,
 ) -> anyhow::Result<B256> {
     use alloy_sol_types::SolStruct;
     // convert external_handles back to bytes32 to be signed
@@ -101,9 +100,9 @@ pub fn compute_user_decrypt_message_hash(
 
     // the solidity structure to sign with EIP-712
     // note that the JS client must also use the same encoding to verify the result
-    let user_pk = bc2wrap::serialize(user_pk)?;
+    let user_pk_buf = user_pk.bytes_for_hashing()?;
     let message = UserDecryptResponseVerification {
-        publicKey: user_pk.into(),
+        publicKey: user_pk_buf.into(),
         ctHandles: external_handles,
         userDecryptedShare: user_decrypted_share_buf.into(),
     };
@@ -118,3 +117,5 @@ pub fn compute_user_decrypt_message_hash(
 
 // ree-export DecryptionMode
 pub use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
+
+use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;

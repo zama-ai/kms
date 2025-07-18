@@ -13,7 +13,7 @@ use crate::{
     anyhow_error_and_log,
     client::{compute_link, ParsedUserDecryptionRequest},
     cryptography::{
-        internal_crypto_types::{PublicEncKey, PublicSigKey, Signature},
+        internal_crypto_types::{PublicEncKey, PublicSigKey, Signature, UnifiedPublicEncKey},
         signcryption::internal_verify_sig,
     },
     some_or_err,
@@ -59,8 +59,17 @@ pub(crate) fn check_ext_user_decryption_signature(
     let sig =
         alloy_signer::Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
 
-    let user_pk: PublicEncKey = bc2wrap::deserialize(request.enc_key())?;
-    let hash = crate::compute_user_decrypt_message_hash(payload, eip712_domain, &user_pk)?;
+    // NOTE: we need to support legacy user_pk, so try to deserialize MlKem1024 first
+    let unified_pk =
+        match bc2wrap::deserialize::<PublicEncKey<ml_kem::MlKem1024>>(request.enc_key()) {
+            Ok(pk) => UnifiedPublicEncKey::MlKem1024(pk),
+            Err(_) => tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
+                request.enc_key(),
+                crate::consts::SAFE_SER_SIZE_LIMIT,
+            )
+            .map_err(|e| anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"))?,
+        };
+    let hash = crate::compute_user_decrypt_message_hash(payload, eip712_domain, &unified_pk)?;
 
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("recovered address: {}", addr);
@@ -433,7 +442,7 @@ mod tests {
     use crate::{
         client::{compute_link, CiphertextHandle, ParsedUserDecryptionRequest},
         cryptography::{
-            internal_crypto_types::{gen_sig_keys, PublicSigKey},
+            internal_crypto_types::{gen_sig_keys, PublicSigKey, UnifiedPublicEncKey},
             signcryption::ephemeral_encryption_key_generation,
         },
         engine::{
@@ -482,16 +491,24 @@ mod tests {
             .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let (eph_client_pk, _eph_client_sk) = ephemeral_encryption_key_generation(&mut rng);
+        let (eph_client_pk, _eph_client_sk) =
+            ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
 
         let dummy_domain = dummy_domain();
         let ciphertext_handle = vec![5, 6, 7, 8];
 
+        let mut enc_key_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &UnifiedPublicEncKey::MlKem512(eph_client_pk.clone()),
+            &mut enc_key_buf,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
         let request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed
             alloy_primitives::Address::from_public_key(client_vk.pk()),
-            bc2wrap::serialize(&eph_client_pk).unwrap(),
+            enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
         );
@@ -508,9 +525,13 @@ mod tests {
             party_id: 1,
             degree: 1,
         };
-        let external_sig =
-            compute_external_user_decrypt_signature(&sk0, &payload, &dummy_domain, &eph_client_pk)
-                .unwrap();
+        let external_sig = compute_external_user_decrypt_signature(
+            &sk0,
+            &payload,
+            &dummy_domain,
+            &eph_client_pk.to_unified(),
+        )
+        .unwrap();
 
         // incorrect external signature length
         {
@@ -533,7 +554,7 @@ mod tests {
                 &sk_bad,
                 &payload,
                 &dummy_domain,
-                &eph_client_pk,
+                &eph_client_pk.to_unified(),
             )
             .unwrap();
             assert!(check_ext_user_decryption_signature(
@@ -610,7 +631,17 @@ mod tests {
             .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let (eph_client_pk, _eph_client_sk) = ephemeral_encryption_key_generation(&mut rng);
+        let (eph_client_pk, _eph_client_sk) =
+            ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
+
+        let mut enc_key_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &UnifiedPublicEncKey::MlKem512(eph_client_pk.clone()),
+            &mut enc_key_buf,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
+
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
 
         let dummy_domain = dummy_domain();
@@ -619,7 +650,7 @@ mod tests {
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
             alloy_primitives::Address::from_public_key(client_vk.pk()),
-            bc2wrap::serialize(&eph_client_pk).unwrap(),
+            enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
         );
@@ -640,7 +671,7 @@ mod tests {
             &sk0,
             &pivot_resp,
             &dummy_domain,
-            &eph_client_pk,
+            &eph_client_pk.to_unified(),
         )
         .unwrap();
 
@@ -832,16 +863,24 @@ mod tests {
             .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let (eph_client_pk, _eph_client_sk) = ephemeral_encryption_key_generation(&mut rng);
+        let (eph_client_pk, _eph_client_sk) =
+            ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
 
         let dummy_domain = dummy_domain();
         let ciphertext_handle = vec![5, 6, 7, 8];
 
+        let mut enc_key_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &UnifiedPublicEncKey::MlKem512(eph_client_pk.clone()),
+            &mut enc_key_buf,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
             alloy_primitives::Address::from_public_key(client_vk.pk()),
-            bc2wrap::serialize(&eph_client_pk).unwrap(),
+            enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
         );
@@ -863,7 +902,7 @@ mod tests {
                 &sk1,
                 &payload0,
                 &dummy_domain,
-                &eph_client_pk,
+                &eph_client_pk.to_unified(),
             )
             .unwrap();
             UserDecryptionResponse {
@@ -890,7 +929,7 @@ mod tests {
                 &sk2,
                 &payload,
                 &dummy_domain,
-                &eph_client_pk,
+                &eph_client_pk.to_unified(),
             )
             .unwrap();
             UserDecryptionResponse {
@@ -917,7 +956,7 @@ mod tests {
                 &sk3,
                 &payload,
                 &dummy_domain,
-                &eph_client_pk,
+                &eph_client_pk.to_unified(),
             )
             .unwrap();
             UserDecryptionResponse {
@@ -944,7 +983,7 @@ mod tests {
                 &sk4,
                 &payload,
                 &dummy_domain,
-                &eph_client_pk,
+                &eph_client_pk.to_unified(),
             )
             .unwrap();
             UserDecryptionResponse {
@@ -1086,7 +1125,7 @@ mod tests {
                     &sk3,
                     &payload,
                     &dummy_domain,
-                    &eph_client_pk,
+                    &eph_client_pk.to_unified(),
                 )
                 .unwrap();
                 UserDecryptionResponse {
@@ -1186,16 +1225,24 @@ mod tests {
             .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let (eph_client_pk, _eph_client_sk) = ephemeral_encryption_key_generation(&mut rng);
+        let (eph_client_pk, _eph_client_sk) =
+            ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
 
         let dummy_domain = dummy_domain();
         let ciphertext_handle = vec![5, 6, 7, 8];
 
+        let mut enc_key_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &UnifiedPublicEncKey::MlKem512(eph_client_pk.clone()),
+            &mut enc_key_buf,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
         let client_request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed here because we're testing response validation
             alloy_primitives::Address::from_public_key(client_vk.pk()),
-            bc2wrap::serialize(&eph_client_pk).unwrap(),
+            enc_key_buf.clone(),
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
             dummy_domain.verifying_contract.unwrap(),
         );
@@ -1219,7 +1266,7 @@ mod tests {
                 &sk1,
                 &payload0,
                 &dummy_domain,
-                &eph_client_pk,
+                &eph_client_pk.to_unified(),
             )
             .unwrap();
             UserDecryptionResponse {
@@ -1246,7 +1293,7 @@ mod tests {
                 &sk2,
                 &payload,
                 &dummy_domain,
-                &eph_client_pk,
+                &eph_client_pk.to_unified(),
             )
             .unwrap();
             UserDecryptionResponse {
@@ -1267,7 +1314,7 @@ mod tests {
             let bad_client_request = ParsedUserDecryptionRequest::new(
                 None, // No signature is needed here because we're testing response validation
                 alloy_primitives::Address::from_public_key(bad_client_vk.pk()),
-                bc2wrap::serialize(&eph_client_pk).unwrap(),
+                enc_key_buf,
                 vec![CiphertextHandle::new(ciphertext_handle.clone())],
                 dummy_domain.verifying_contract.unwrap(),
             );

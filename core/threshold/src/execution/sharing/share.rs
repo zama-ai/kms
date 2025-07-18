@@ -32,11 +32,16 @@ impl<Z: Ring> Share<Z> {
         self.value
     }
 
+    pub fn take_value(self) -> Z {
+        self.value
+    }
+
     /// Get the designated owner of the share
     pub fn owner(&self) -> Role {
         self.owner
     }
 }
+
 impl<Z: Ring> Add for Share<Z> {
     type Output = Self;
 
