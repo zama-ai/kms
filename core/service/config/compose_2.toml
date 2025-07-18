@@ -84,6 +84,7 @@ tracing_service_name = "kms-threshold-2"
 # tracing_endpoint = "http://otelcol:4317"
 tracing_otlp_timeout_ms = 10000
 metrics_bind_address = "0.0.0.0:9646"
+enable_sys_metrics = true
 
 [telemetry.batch]
 max_queue_size = 8192

@@ -82,6 +82,7 @@ max_opened_inactive_sessions_per_party = 100
 tracing_service_name = "kms-threshold-4"
 # tracing_endpoint = "http://localhost:4317"
 metrics_bind_address = "0.0.0.0:9646"
+enable_sys_metrics = true
 
 [telemetry.batch]
 max_queue_size = 8192
