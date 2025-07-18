@@ -541,9 +541,8 @@ jobs:
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/threshold'
-      # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
-      # and limit the number of test ran in parallel to 4
-      args-tests: '-F slow_tests --lib'
+      # with the rayon pool, each test uses more thread to run. We limit to number of cpu /2 tests in parallel.
+      args-tests: '-F slow_tests --lib -- --test-threads=8'
       package-name: 'threshold-fhe'
       app-cache-dir: 'threshold-fhe'
       nextest-test-threads: 4

@@ -35,6 +35,7 @@ use threshold_fhe::{
         tfhe_internals::private_keysets::PrivateKeySet,
     },
     session_id::SessionId,
+    thread_handles::spawn_compute_bound,
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
@@ -74,10 +75,10 @@ pub trait NoiseFloodDecryptor: Send + Sync {
 
     async fn decrypt<T>(
         noiseflood_session: &mut Self::Prep,
-        server_key: &tfhe::integer::ServerKey,
-        ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+        server_key: Arc<tfhe::integer::ServerKey>,
+        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
         ct: LowLevelCiphertext,
-        secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     ) -> anyhow::Result<(HashMap<String, T>, Duration)>
     where
         T: tfhe::integer::block_decomposition::Recomposable
@@ -96,10 +97,10 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
 
     async fn decrypt<T>(
         noiseflood_session: &mut Self::Prep,
-        server_key: &tfhe::integer::ServerKey,
-        ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+        server_key: Arc<tfhe::integer::ServerKey>,
+        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
         ct: LowLevelCiphertext,
-        secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
     ) -> anyhow::Result<(HashMap<String, T>, Duration)>
     where
         T: tfhe::integer::block_decomposition::Recomposable
@@ -152,7 +153,7 @@ impl<
     async fn inner_decrypt<T>(
         session_id: SessionId,
         session_prep: Arc<SessionPreparer>,
-        ct: &[u8],
+        ct: Vec<u8>,
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
@@ -169,8 +170,11 @@ impl<
         );
 
         let keys = fhe_keys;
-        let low_level_ct =
-            deserialize_to_low_level(fhe_type, ct_format, ct, &keys.decompression_key)?;
+        let decomp_key = keys.decompression_key.clone();
+        let low_level_ct = spawn_compute_bound(move || {
+            deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
+        })
+        .await??;
 
         let dec = match dec_mode {
             DecryptionMode::NoiseFloodSmall => {
@@ -184,12 +188,13 @@ impl<
 
                 Dec::decrypt(
                     &mut noiseflood_session,
-                    &keys.integer_server_key,
+                    keys.integer_server_key.clone(),
                     keys.sns_key
                         .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("missing sns key"))?,
+                        .ok_or_else(|| anyhow::anyhow!("missing sns key"))?
+                        .clone(),
                     low_level_ct,
-                    &keys.private_keys,
+                    keys.private_keys.clone(),
                 )
                 .await
             }
@@ -261,7 +266,7 @@ impl<
         &self,
         request: Request<PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let inner = request.into_inner();
+        let inner = Arc::new(request.into_inner());
         tracing::info!(
             request_id = ?inner.request_id,
             "Received new decryption request"
@@ -298,14 +303,20 @@ impl<
 
         let permit = self.rate_limiter.start_pub_decrypt().await?;
 
-        let (ciphertexts, key_id, req_id, eip712_domain) = validate_public_decrypt_req(&inner)
-            .inspect_err(|e| {
-                tracing::error!(
-                    error = ?e,
-                    request_id = ?inner.request_id,
-                    "Failed to validate decrypt request"
-                );
-            })?;
+        let (ciphertexts, key_id, req_id, eip712_domain) = {
+            let inner_compute = inner.clone();
+            tonic_handle_potential_err(
+                spawn_compute_bound(move || validate_public_decrypt_req(&inner_compute)).await,
+                "Error delegating validate_public_decrypt_req to rayon".to_string(),
+            )?
+        }
+        .inspect_err(|e| {
+            tracing::error!(
+                error = ?e,
+                request_id = ?inner.request_id,
+                "Failed to validate decrypt request"
+            );
+        })?;
 
         // Do some checks before we start modifying the database
         {
@@ -427,8 +438,8 @@ impl<
                 let mut inner_timer = inner_timer;
                 inner_timer.tag(TAG_TFHE_TYPE, fhe_type_string);
 
-                let ciphertext = &typed_ciphertext.ciphertext;
                 let ct_format = typed_ciphertext.ciphertext_format();
+                let ciphertext = typed_ciphertext.ciphertext;
                 let fhe_keys_rlock = crypto_storage
                     .read_guarded_threshold_fhe_keys_from_cache(&key_id)
                     .await?;
@@ -595,13 +606,17 @@ impl<
             let extra_data = vec![];
 
             // Compute expensive signature OUTSIDE the lock
-            let external_sig = match compute_external_pt_signature(
-                &sigkey,
-                ext_handles_bytes,
-                &pts,
-                extra_data.clone(),
-                eip712_domain,
-            ) {
+            let external_sig = match {
+                let extra_data = extra_data.clone();
+                let pts = pts.clone();
+                compute_external_pt_signature(
+                    &sigkey,
+                    ext_handles_bytes,
+                    &pts,
+                    extra_data.clone(),
+                    eip712_domain,
+                )
+            } {
                 Ok(sig) => sig,
                 Err(e) => {
                     let msg = format!(
@@ -616,7 +631,9 @@ impl<
             };
 
             // Single success update with minimal lock hold time
-            let success_result = Ok((req_id, pts.clone(), external_sig, extra_data));
+            let pts_len = pts.len();
+            let success_result = external_sig.map(|sig| (req_id, pts, sig, extra_data));
+
             let (lock_acquired_time, total_lock_time) = {
                 let lock_start = std::time::Instant::now();
                 let mut guarded_meta_store = meta_store.write().await;
@@ -729,10 +746,10 @@ mod tests {
 
         async fn decrypt<T>(
             noiseflood_session: &mut Self::Prep,
-            _server_key: &tfhe::integer::ServerKey,
-            _ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+            _server_key: Arc<tfhe::integer::ServerKey>,
+            _ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
             _ct: LowLevelCiphertext,
-            _secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+            _secret_key_share: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
         ) -> anyhow::Result<(HashMap<String, T>, Duration)>
         where
             T: tfhe::integer::block_decomposition::Recomposable

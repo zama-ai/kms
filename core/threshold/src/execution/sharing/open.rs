@@ -1,6 +1,9 @@
 use itertools::Itertools;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 use tokio::{task::JoinSet, time::error::Elapsed};
 use tonic::async_trait;
 use tracing::instrument;
@@ -14,6 +17,7 @@ use crate::{
         runtime::{party::Role, session::BaseSessionHandles},
     },
     networking::value::NetworkValue,
+    thread_handles::spawn_compute_bound,
     ProtocolDescription,
 };
 
@@ -233,7 +237,7 @@ impl RobustOpen for SecureRobustOpen {
             .await;
 
             //Start filling sharings with my own shares
-            let mut sharings = shares
+            let sharings = shares
                 .into_iter()
                 .map(|share| ShamirSharings::create(vec![Share::new(own_role, share)]))
                 .collect_vec();
@@ -243,8 +247,7 @@ impl RobustOpen for SecureRobustOpen {
                 crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
             };
 
-            try_reconstruct_from_shares(session, &mut sharings, degree, jobs, reconstruct_fn)
-                .await?
+            try_reconstruct_from_shares(session, sharings, degree, jobs, reconstruct_fn).await?
         } else {
             None
         };
@@ -271,7 +274,7 @@ type ReconsFunc<Z> = fn(
 /// - a set of jobs to receive the shares from the other parties
 async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
     session: &B,
-    sharings: &mut [ShamirSharings<Z>],
+    sharings: Vec<ShamirSharings<Z>>,
     degree: usize,
     mut jobs: JoinSet<Result<JobResultType<Z>, Elapsed>>,
     reconstruct_fn: ReconsFunc<Z>,
@@ -288,14 +291,23 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
     let mut collected_shares = 0;
     let required_shares = threshold as usize + 1; // Minimum shares needed for reconstruction
     let mut last_reconstruction_attempt = 0;
+    let sharings = Arc::new(Mutex::new(sharings));
 
     //Start awaiting on receive jobs to retrieve the shares
     while let Some(v) = jobs.join_next().await {
+        let sharings = sharings.clone();
         let joined_result = v?;
         match joined_result {
             Ok((party_id, data)) => {
                 if let Ok(values) = data {
-                    fill_indexed_shares(sharings, values, num_secrets, party_id)?;
+                    fill_indexed_shares(
+                        &mut sharings
+                            .lock()
+                            .map_err(|_| anyhow_error_and_log("Poisoned lock"))?,
+                        values,
+                        num_secrets,
+                        party_id,
+                    )?;
                     collected_shares += 1;
                 } else if let Err(e) = data {
                     tracing::warn!(
@@ -324,29 +336,24 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
         if should_attempt_reconstruction {
             last_reconstruction_attempt = collected_shares;
 
-            let res: Option<Vec<_>> =
-            //Note: here we keep waiting on new shares until we have all of the values opened.
-            // Here we want to use par_iter for opening the huge batches
-            // present in DKG, but we want to avoid using it for
-            // other tasks.
-            if num_secrets > 2 * BATCH_SIZE_BITS {
-                 sharings
-                .par_iter()
-                .with_min_len(2 * BATCH_SIZE_BITS)
-                .map(|sharing| {
-                    reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
-                        .unwrap_or_default()
-                })
-                .collect()
-            } else {
-                 sharings
-                .iter()
-                .map(|sharing| {
-                    reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
-                        .unwrap_or_default()
-                })
-                .collect()
-            };
+            // Spawn a task on rayon.
+            let res: Option<Vec<_>> = spawn_compute_bound(move || -> anyhow::Result<_> {
+                //Note: here we keep waiting on new shares until we have all of the values opened.
+                // Here we want to use par_iter for opening the huge batches
+                // present in DKG, but we want to avoid using it for
+                // other tasks.
+                Ok(sharings
+                    .lock()
+                    .map_err(|_| anyhow_error_and_log("Poisoned lock"))?
+                    .par_iter()
+                    .with_min_len(2 * BATCH_SIZE_BITS)
+                    .map(|sharing| {
+                        reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
+                            .unwrap_or_default()
+                    })
+                    .collect())
+            })
+            .await??;
 
             //Only prematurely shutdown the jobs if we have managed to reconstruct everything
             if res.is_some() {
