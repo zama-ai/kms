@@ -1,5 +1,9 @@
 // === Standard Library ===
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    ops::DerefMut,
+    sync::{Arc, Mutex},
+};
 
 // === External Crates ===
 use anyhow::anyhow;
@@ -37,6 +41,7 @@ use threshold_fhe::{
         runtime::session::SmallSession,
         tfhe_internals::private_keysets::PrivateKeySet,
     },
+    thread_handles::spawn_compute_bound,
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
@@ -79,8 +84,8 @@ pub trait NoiseFloodPartialDecryptor: Send + Sync {
     type Prep: OfflineNoiseFloodSession<{ ResiduePolyF4Z128::EXTENSION_DEGREE }> + Send;
     async fn partial_decrypt(
         noiseflood_session: &mut Self::Prep,
-        server_key: &tfhe::integer::ServerKey,
-        ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+        server_key: Arc<tfhe::integer::ServerKey>,
+        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
         ct: LowLevelCiphertext,
         secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
@@ -103,8 +108,8 @@ impl NoiseFloodPartialDecryptor for SecureNoiseFloodPartialDecryptor {
 
     async fn partial_decrypt(
         noiseflood_session: &mut Self::Prep,
-        server_key: &tfhe::integer::ServerKey,
-        ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+        server_key: Arc<tfhe::integer::ServerKey>,
+        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
         ct: LowLevelCiphertext,
         secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
@@ -166,11 +171,11 @@ impl<
     async fn inner_user_decrypt(
         req_id: &RequestId,
         session_prep: Arc<SessionPreparer>,
-        rng: &mut (impl CryptoRng + RngCore),
-        typed_ciphertexts: &[TypedCiphertext],
+        rng: impl CryptoRng + RngCore + Send + 'static,
+        typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
-        client_enc_key: &UnifiedPublicEncKey,
-        client_address: &alloy_primitives::Address,
+        client_enc_key: UnifiedPublicEncKey,
+        client_address: alloy_primitives::Address,
         sig_key: Arc<PrivateSigKey>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
         server_verf_key: Vec<u8>,
@@ -182,9 +187,13 @@ impl<
 
         let mut all_signcrypted_cts = vec![];
 
+        let rng = Arc::new(Mutex::new(rng));
+        let client_enc_key = Arc::new(client_enc_key);
+        let client_address = Arc::new(client_address);
+
         // TODO: Each iteration of this loop should probably happen
         // inside its own tokio task
-        for (ctr, typed_ciphertext) in typed_ciphertexts.iter().enumerate() {
+        for (ctr, typed_ciphertext) in typed_ciphertexts.into_iter().enumerate() {
             // Create and start a the timer, it'll be dropped and thus
             // exported at the end of the iteration
             let mut inner_timer = metrics::METRICS
@@ -195,8 +204,8 @@ impl<
             let fhe_type_str = typed_ciphertext.fhe_type_string();
             inner_timer.tag(TAG_TFHE_TYPE, fhe_type_str);
             let ct_format = typed_ciphertext.ciphertext_format();
-            let ct = &typed_ciphertext.ciphertext;
             let external_handle = typed_ciphertext.external_handle.clone();
+            let ct = typed_ciphertext.ciphertext;
             let session_id = req_id.derive_session_id_with_counter(ctr as u64)?;
 
             let hex_req_id = hex::encode(req_id.as_bytes());
@@ -208,8 +217,11 @@ impl<
                 hex::encode(&typed_ciphertext.external_handle)
             );
 
-            let low_level_ct =
-                deserialize_to_low_level(fhe_type, ct_format, ct, &keys.decompression_key)?;
+            let decomp_key = keys.decompression_key.clone();
+            let low_level_ct = spawn_compute_bound(move || {
+                deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
+            })
+            .await??;
 
             let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
@@ -223,9 +235,9 @@ impl<
 
                     let pdec = Dec::partial_decrypt(
                         &mut noiseflood_session,
-                        &keys.integer_server_key,
+                        keys.integer_server_key.clone(),
                         keys.sns_key
-                            .as_ref()
+                            .clone()
                             .ok_or_else(|| anyhow::anyhow!("missing sns key"))?,
                         low_level_ct,
                         &keys.private_keys,
@@ -309,14 +321,26 @@ impl<
                         plaintext: TypedPlaintext::from_bytes(pdec_serialized, fhe_type),
                         link: link.clone(),
                     };
-                    let enc_res = signcrypt(
-                        rng,
-                        &DSEP_USER_DECRYPTION,
-                        &bc2wrap::serialize(&signcryption_msg)?,
-                        client_enc_key,
-                        client_address,
-                        &sig_key,
-                    )?;
+
+                    let rng = rng.clone();
+                    let sig_key = sig_key.clone();
+                    let client_enc_key = client_enc_key.clone();
+                    let client_address = client_address.clone();
+
+                    let enc_res = spawn_compute_bound(move || {
+                        let mut rng = rng
+                            .lock()
+                            .map_err(|_| anyhow_error_and_log("Poisoned mutex guard"))?;
+                        signcrypt(
+                            rng.deref_mut(),
+                            &DSEP_USER_DECRYPTION,
+                            &bc2wrap::serialize(&signcryption_msg)?,
+                            &client_enc_key,
+                            &client_address,
+                            &sig_key,
+                        )
+                    })
+                    .await??;
                     let res = bc2wrap::serialize(&enc_res)?;
 
                     tracing::info!(
@@ -352,7 +376,7 @@ impl<
             &sig_key,
             &payload,
             domain,
-            client_enc_key,
+            &client_enc_key,
             extra_data.clone(),
         )?;
         Ok((payload, external_signature, extra_data))
@@ -458,21 +482,27 @@ impl<
 
         let permit = self.rate_limiter.start_user_decrypt().await?;
 
-        let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) =
-            validate_user_decrypt_req(&inner).inspect_err(|e| {
-                tracing::error!(
-                    error = ?e,
-                    request_id = ?inner.request_id,
-                    "Failed to validate decrypt request {}",
-                    format_user_request(&inner)
-                );
-            })?;
+        let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) = {
+            let inner_compute = inner.clone();
+            tonic_handle_potential_err(
+                spawn_compute_bound(move || validate_user_decrypt_req(&inner_compute)).await,
+                "Error delegating validate_user_decrypt_req to rayon".to_string(),
+            )?
+        }
+        .inspect_err(|e| {
+            tracing::error!(
+                error = ?e,
+                request_id = ?inner.request_id,
+                "Failed to validate decrypt request {}",
+                format_user_request(&inner)
+            );
+        })?;
 
         timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
-        let mut rng = self.base_kms.new_rng().await;
+        let rng = self.base_kms.new_rng().await;
         let sig_key = Arc::clone(&self.base_kms.sig_key);
 
         // Do some checks before we start modifying the database
@@ -545,11 +575,11 @@ impl<
                         Self::inner_user_decrypt(
                             &req_id,
                             prep,
-                            &mut rng,
-                            &typed_ciphertexts,
+                            rng,
+                            typed_ciphertexts,
                             link.clone(),
-                            &client_enc_key,
-                            &client_address,
+                            client_enc_key,
+                            client_address,
                             sig_key,
                             k,
                             server_verf_key,
@@ -658,8 +688,8 @@ mod tests {
 
         async fn partial_decrypt(
             noiseflood_session: &mut Self::Prep,
-            _server_key: &tfhe::integer::ServerKey,
-            _ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+            _server_key: Arc<tfhe::integer::ServerKey>,
+            _ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
             _ct: LowLevelCiphertext,
             _secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         ) -> anyhow::Result<(
