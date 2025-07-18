@@ -103,7 +103,7 @@ impl<C: KemCore> Serialize for PublicEncKey<C> {
     }
 }
 
-impl Named for PublicEncKey {
+impl<C: KemCore> Named for PublicEncKey<C> {
     const NAME: &'static str = "PublicEncKey";
 }
 
