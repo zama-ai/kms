@@ -86,16 +86,16 @@ pub enum ThresholdFheKeysVersioned {
 #[derive(Clone, Serialize, Deserialize, Versionize)]
 #[versionize(ThresholdFheKeysVersioned)]
 pub struct ThresholdFheKeys {
-    pub private_keys: PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    pub integer_server_key: tfhe::integer::ServerKey,
-    pub sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey>,
+    pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
+    pub integer_server_key: Arc<tfhe::integer::ServerKey>,
+    pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
     pub decompression_key: Option<DecompressionKey>,
     pub pk_meta_data: KeyGenCallValues,
 }
 
 impl ThresholdFheKeys {
     pub fn get_key_switching_key(&self) -> anyhow::Result<&LweKeyswitchKey<Vec<u64>>> {
-        match &self.integer_server_key.as_ref().atomic_pattern {
+        match &self.integer_server_key.as_ref().as_ref().atomic_pattern {
             tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Standard(
                 standard_atomic_pattern_server_key,
             ) => Ok(&standard_atomic_pattern_server_key.key_switching_key),

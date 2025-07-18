@@ -111,12 +111,13 @@ impl<
 
                 decrypt_using_noiseflooding(
                     &mut noiseflood_session,
-                    &keys.integer_server_key,
+                    keys.integer_server_key.clone(),
                     keys.sns_key
                         .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("missing sns key"))?,
+                        .ok_or_else(|| anyhow::anyhow!("missing sns key"))?
+                        .clone(),
                     low_level_ct,
-                    &keys.private_keys,
+                    keys.private_keys.clone(),
                     dec_mode,
                     session_prep.own_identity()?,
                 )

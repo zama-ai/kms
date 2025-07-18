@@ -890,9 +890,9 @@ impl<
         };
 
         let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys,
-            integer_server_key,
-            sns_key,
+            private_keys: Arc::new(private_keys),
+            integer_server_key: Arc::new(integer_server_key),
+            sns_key: sns_key.map(Arc::new),
             decompression_key,
             pk_meta_data: info.clone(),
         };

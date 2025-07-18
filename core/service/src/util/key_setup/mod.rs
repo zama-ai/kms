@@ -25,6 +25,7 @@ use rcgen::{
 };
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use tfhe::Seed;
 use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -908,9 +909,9 @@ where
             }
         };
         let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: key_shares[i - 1].to_owned(),
-            integer_server_key: integer_server_key.clone(),
-            sns_key: sns_key.clone(),
+            private_keys: Arc::new(key_shares[i - 1].to_owned()),
+            integer_server_key: Arc::new(integer_server_key.clone()),
+            sns_key: sns_key.clone().map(Arc::new),
             decompression_key: decompression_key.clone(),
             pk_meta_data: info,
         };
