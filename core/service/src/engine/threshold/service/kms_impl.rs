@@ -8,7 +8,10 @@ use kms_grpc::{
     RequestId,
 };
 use serde::{Deserialize, Serialize};
-use tfhe::{integer::compression_keys::DecompressionKey, named::Named, Versionize};
+use tfhe::{
+    core_crypto::prelude::LweKeyswitchKey, integer::compression_keys::DecompressionKey,
+    named::Named, Versionize,
+};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
@@ -88,6 +91,22 @@ pub struct ThresholdFheKeys {
     pub sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey>,
     pub decompression_key: Option<DecompressionKey>,
     pub pk_meta_data: KeyGenCallValues,
+}
+
+impl ThresholdFheKeys {
+    pub fn get_key_switching_key(&self) -> anyhow::Result<&LweKeyswitchKey<Vec<u64>>> {
+        match &self.integer_server_key.as_ref().atomic_pattern {
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Standard(
+                standard_atomic_pattern_server_key,
+            ) => Ok(&standard_atomic_pattern_server_key.key_switching_key),
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::KeySwitch32(_) => {
+                anyhow::bail!("No support for KeySwitch32 server key")
+            }
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Dynamic(_) => {
+                anyhow::bail!("No support for dynamic atomic pattern server key")
+            }
+        }
+    }
 }
 
 impl Named for ThresholdFheKeys {

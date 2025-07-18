@@ -2478,10 +2478,15 @@ pub(crate) mod tests {
     use std::str::FromStr;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use std::sync::Arc;
-    use tfhe::core_crypto::prelude::{ContiguousEntityContainer, LweCiphertextOwned};
+    use tfhe::core_crypto::prelude::{
+        decrypt_lwe_ciphertext, divide_round, ContiguousEntityContainer, LweCiphertextOwned,
+    };
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use tfhe::integer::compression_keys::DecompressionKey;
     use tfhe::prelude::ParameterSetConformant;
+    use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
+    use tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey;
+    use tfhe::shortint::server_key::ModulusSwitchConfiguration;
     use tfhe::zk::CompactPkeCrs;
     use tfhe::Tag;
     use tfhe::{FheTypes, ProvenCompactCiphertextList};
@@ -5836,41 +5841,72 @@ pub(crate) mod tests {
         let max_degree = shortint_server_key.max_degree; // we don't really check the max degree
         assert!(shortint_server_key.is_conformant(&(pbs_params, max_degree)));
 
-        match &shortint_server_key.bootstrapping_key {
-            tfhe::shortint::server_key::ShortintBootstrappingKey::Classic {
-                bsk: _bsk,
-                modulus_switch_noise_reduction_key,
-            } => {
-                assert!(modulus_switch_noise_reduction_key.is_some());
+        match &shortint_server_key.atomic_pattern {
+            AtomicPatternServerKey::Standard(atomic_pattern) => {
+                match &atomic_pattern.bootstrapping_key {
+                    tfhe::shortint::server_key::ShortintBootstrappingKey::Classic {
+                        bsk: _bsk,
+                        modulus_switch_noise_reduction_key,
+                    } => {
+                        match modulus_switch_noise_reduction_key {
+                            // Check that we can decrypt this key to 0
+                            ModulusSwitchConfiguration::DriftTechniqueNoiseReduction(key) => {
+                                let zeros_ct = &key.modulus_switch_zeros;
+                                let (
+                                    client_key,
+                                    _compact_client_key,
+                                    _compression_key,
+                                    _noise_squashing_key,
+                                    _noise_squashing_compression_key,
+                                    _tag,
+                                ) = client_key.into_raw_parts();
 
-                // Check that we can decrypt this key to 0
-                let zeros_ct = modulus_switch_noise_reduction_key
-                    .as_ref()
-                    .map(|x| x.modulus_switch_zeros.clone())
-                    .unwrap();
-                let (client_key, _compact_client_key, _compression_key, _noise_squashing_key, _tag) =
-                    client_key.into_raw_parts();
+                                let client_key = client_key.into_raw_parts().atomic_pattern;
 
-                // We need to make a reference ciphertext to convert
-                // the zero ciphertexts into a Ciphertext Type
-                let ct_reference = client_key.encrypt_one_block(0);
-                for ct in zeros_ct.iter() {
-                    let ctt = tfhe::shortint::Ciphertext::new(
-                        LweCiphertextOwned::from_container(
-                            ct.into_container().to_vec(),
-                            ct.ciphertext_modulus(),
-                        ),
-                        ct_reference.degree,
-                        ct_reference.noise_level(),
-                        ct_reference.message_modulus,
-                        ct_reference.carry_modulus,
-                        tfhe::shortint::PBSOrder::BootstrapKeyswitch,
-                    );
-                    let pt = client_key.decrypt_one_block(&ctt);
-                    assert_eq!(pt, 0);
+                                //NOTE: Small workaround to cope with tfhe-rs change to the ClientKey decryption
+                                //to fetch the key based on the ctxt's PBSOrder and not the key's EncryptionKeyChoice
+                                let lwe_secret_key = if let AtomicPatternClientKey::Standard(
+                                    client_key,
+                                ) = client_key
+                                {
+                                    let (_, lwe_sk, _, _) = client_key.into_raw_parts();
+                                    lwe_sk
+                                } else {
+                                    panic!("Expected Standard AtomicPatternClientKey");
+                                };
+
+                                let message_space_size = pbs_params.message_modulus().0
+                                    * pbs_params.carry_modulus().0
+                                    * 2;
+                                let delta = 1u64 << (u64::BITS - (message_space_size).ilog2());
+                                // We need to make a reference ciphertext to convert
+                                // the zero ciphertexts into a Ciphertext Type
+                                for ct in zeros_ct.iter() {
+                                    let ctt = LweCiphertextOwned::from_container(
+                                        ct.into_container().to_vec(),
+                                        ct.ciphertext_modulus(),
+                                    );
+
+                                    let pt = decrypt_lwe_ciphertext(&lwe_secret_key, &ctt);
+                                    // This is enough as this is expected to be a fresh encryption of 0
+                                    let pt = divide_round(pt.0, delta) % message_space_size;
+                                    assert_eq!(pt, 0);
+                                }
+                            }
+                            //In case of Standard or CenteredMeanNoiseReduction, we don't have a modulus switch key so do nothing
+                            ModulusSwitchConfiguration::Standard => {}
+                            ModulusSwitchConfiguration::CenteredMeanNoiseReduction => {}
+                        }
+                    }
+                    _ => panic!("expected classic bsk"),
                 }
             }
-            _ => panic!("expected classic bsk"),
+            AtomicPatternServerKey::KeySwitch32(_) => {
+                panic!("Unsuported AtomicPatternServerKey::KeySwitch32")
+            }
+            AtomicPatternServerKey::Dynamic(_) => {
+                panic!("Unsuported AtomicPatternServerKey::Dynamic")
+            }
         }
     }
 

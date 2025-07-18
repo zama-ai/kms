@@ -134,7 +134,7 @@ impl<
                     &mut session,
                     &low_level_ct.try_get_small_ct()?,
                     &keys.private_keys,
-                    &keys.integer_server_key.as_ref().key_switching_key,
+                    keys.get_key_switching_key()?,
                     dec_mode,
                     session_prep.own_identity()?,
                 )
@@ -269,7 +269,7 @@ impl<
         };
         // Log after lock is released
         tracing::info!(
-            "MetaStore INITIAL insert - req_id={}, key_id={}, party_id={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}", 
+            "MetaStore INITIAL insert - req_id={}, key_id={}, party_id={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
             req_id, key_id, self.session_preparer.my_id, ciphertexts.len(), lock_acquired_time, total_lock_time
         );
 
@@ -511,7 +511,7 @@ impl<
                 };
                 // Log after lock is released
                 tracing::warn!(
-                    "MetaStore ERROR update - req_id={}, lock_acquired_in={:?}, total_lock_held={:?}", 
+                    "MetaStore ERROR update - req_id={}, lock_acquired_in={:?}, total_lock_held={:?}",
                     req_id, lock_acquired_time, total_lock_time
                 );
                 return;
@@ -544,7 +544,7 @@ impl<
             };
             // Log after lock is released
             tracing::info!(
-                "MetaStore SUCCESS update - req_id={}, key_id={}, party_id={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}", 
+                "MetaStore SUCCESS update - req_id={}, key_id={}, party_id={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
                 req_id, key_id, party_id, pts.len(), lock_acquired_time, total_lock_time
             );
         };

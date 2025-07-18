@@ -30,9 +30,8 @@ use tracing::instrument;
 use zeroize::Zeroize;
 
 use super::constants::{
-    ZK_DEFAULT_MAX_NUM_BITS, ZK_DSEP_AGG_PADDED, ZK_DSEP_CHI_PADDED, ZK_DSEP_HASH, ZK_DSEP_HASH_P,
-    ZK_DSEP_HASH_PADDED, ZK_DSEP_LMAP_PADDED, ZK_DSEP_PHI_PADDED, ZK_DSEP_R_PADDED,
-    ZK_DSEP_T_PADDED, ZK_DSEP_W_PADDED, ZK_DSEP_XI_PADDED, ZK_DSEP_Z_PADDED,
+    ZK_DEFAULT_MAX_NUM_BITS, ZK_DSEP_AGG, ZK_DSEP_CHI, ZK_DSEP_GAMMA, ZK_DSEP_HASH, ZK_DSEP_HASH_P,
+    ZK_DSEP_LMAP, ZK_DSEP_PHI, ZK_DSEP_R, ZK_DSEP_T, ZK_DSEP_W, ZK_DSEP_XI, ZK_DSEP_Z,
 };
 
 pub type SecureCeremony = RealCeremony<SyncReliableBroadcast>;
@@ -300,7 +299,7 @@ impl InternalPublicParameter {
     fn try_into_tfhe_zk_pok_pp(
         &self,
         params: &CompactPublicKeyEncryptionParameters,
-        _sid: SessionId, // TODO(#2505) add sid to the from_vec functions
+        sid: SessionId, // TODO(#2505) add sid to the from_vec functions
     ) -> anyhow::Result<CompactPkeCrs> {
         let g_list = self
             .g1g2list
@@ -339,12 +338,14 @@ impl InternalPublicParameter {
                     inner_v1.q,
                     inner_v1.t,
                     inner_v1.msbs_zero_padding_bit_count,
-                    *ZK_DSEP_HASH_PADDED,
-                    *ZK_DSEP_T_PADDED,
-                    *ZK_DSEP_AGG_PADDED,
-                    *ZK_DSEP_LMAP_PADDED,
-                    *ZK_DSEP_Z_PADDED,
-                    *ZK_DSEP_W_PADDED,
+                    sid.into(),
+                    ZK_DSEP_HASH,
+                    ZK_DSEP_T,
+                    ZK_DSEP_AGG,
+                    ZK_DSEP_LMAP,
+                    ZK_DSEP_Z,
+                    ZK_DSEP_W,
+                    ZK_DSEP_GAMMA,
                 ))
             }
             MetaParameter::V2(inner_v2) => {
@@ -366,16 +367,18 @@ impl InternalPublicParameter {
                     inner_v2.t,
                     inner_v2.msbs_zero_padding_bit_count,
                     inner_v2.bound_type,
-                    *ZK_DSEP_HASH_PADDED,
-                    *ZK_DSEP_R_PADDED,
-                    *ZK_DSEP_T_PADDED,
-                    *ZK_DSEP_W_PADDED,
-                    *ZK_DSEP_AGG_PADDED,
-                    *ZK_DSEP_LMAP_PADDED,
-                    *ZK_DSEP_PHI_PADDED,
-                    *ZK_DSEP_XI_PADDED,
-                    *ZK_DSEP_Z_PADDED,
-                    *ZK_DSEP_CHI_PADDED,
+                    sid.into(),
+                    ZK_DSEP_HASH,
+                    ZK_DSEP_R,
+                    ZK_DSEP_T,
+                    ZK_DSEP_W,
+                    ZK_DSEP_AGG,
+                    ZK_DSEP_LMAP,
+                    ZK_DSEP_PHI,
+                    ZK_DSEP_XI,
+                    ZK_DSEP_Z,
+                    ZK_DSEP_CHI,
+                    ZK_DSEP_GAMMA,
                 ))
             }
         };
@@ -965,7 +968,7 @@ mod tests {
     use rand::SeedableRng;
     use rstest::rstest;
     use std::collections::HashMap;
-    use tfhe_zk_pok::{curve_api::Bls12_446, proofs};
+    use tfhe_zk_pok::{curve_api::Bls12_446, proofs, proofs::LEGACY_HASH_DS_LEN_BYTES};
     use tokio::task::JoinSet;
 
     #[derive(Clone, Default)]
@@ -1073,13 +1076,21 @@ mod tests {
             .map(|x| x.normalize())
             .collect_vec();
 
+        const DUMMY_DSEP_HASH_PADDED: &[u8; LEGACY_HASH_DS_LEN_BYTES] =
+            &[1; LEGACY_HASH_DS_LEN_BYTES];
+        const DUMMY_DSEP_S_PADDED: &[u8; LEGACY_HASH_DS_LEN_BYTES] = &[2; LEGACY_HASH_DS_LEN_BYTES];
+        const DUMMY_DSEP_T_PADDED: &[u8; LEGACY_HASH_DS_LEN_BYTES] = &[3; LEGACY_HASH_DS_LEN_BYTES];
+        const DUMMY_DSEP_AGG_PADDED: &[u8; LEGACY_HASH_DS_LEN_BYTES] =
+            &[4; LEGACY_HASH_DS_LEN_BYTES];
+
+        // We use a range proof here to simplify the testing as pke and pkev2 proofs are harder to setup
         let public_params = proofs::range::PublicParams::<Bls12_446>::from_vec(
             g_list,
             g_hat_list,
-            *ZK_DSEP_HASH_PADDED,
-            *ZK_DSEP_Z_PADDED, //Using DSEP HASH_Z instead of HASH_S as we don't have defined the latter
-            *ZK_DSEP_T_PADDED,
-            *ZK_DSEP_AGG_PADDED,
+            *DUMMY_DSEP_HASH_PADDED,
+            *DUMMY_DSEP_S_PADDED,
+            *DUMMY_DSEP_T_PADDED,
+            *DUMMY_DSEP_AGG_PADDED,
         );
         let l = 6;
         let x = rng.gen::<u64>() % (1 << l);

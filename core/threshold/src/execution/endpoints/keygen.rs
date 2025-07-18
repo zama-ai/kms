@@ -9,7 +9,8 @@ use crate::execution::tfhe_internals::lwe_ciphertext::{
 use crate::execution::tfhe_internals::lwe_key::LweCompactPublicKeyShare;
 use crate::execution::tfhe_internals::lwe_packing_keyswitch_key_generation::allocate_and_generate_lwe_packing_keyswitch_key;
 use crate::execution::tfhe_internals::parameters::{
-    BKParams, DKGParams, DistributedCompressionParameters, KSKParams, MSNRKParams, NoiseInfo,
+    BKParams, DKGParams, DistributedCompressionParameters, KSKParams, MSNRKConfiguration,
+    MSNRKParams, NoiseInfo,
 };
 use crate::{
     algebra::{
@@ -38,9 +39,10 @@ use serde::{Deserialize, Serialize};
 use tfhe::core_crypto::algorithms::convert_standard_lwe_bootstrap_key_to_fourier_128;
 use tfhe::core_crypto::commons::traits::UnsignedInteger;
 use tfhe::core_crypto::entities::Fourier128LweBootstrapKey;
+use tfhe::shortint::atomic_pattern::{AtomicPatternServerKey, StandardAtomicPatternServerKey};
 use tfhe::shortint::list_compression::{CompressionKey, DecompressionKey};
 use tfhe::shortint::noise_squashing::NoiseSquashingKey;
-use tfhe::shortint::server_key::ModulusSwitchNoiseReductionKey;
+use tfhe::shortint::server_key::{ModulusSwitchConfiguration, ModulusSwitchNoiseReductionKey};
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::Versionize;
 use tfhe::{
@@ -72,8 +74,8 @@ struct RawPubKeySet {
     pub bk: LweBootstrapKey<Vec<u64>>,
     pub bk_sns: Option<LweBootstrapKey<Vec<u128>>>,
     pub compression_keys: Option<(CompressionKey, DecompressionKey)>,
-    pub msnrk: Option<ModulusSwitchNoiseReductionKey>,
-    pub msnrk_sns: Option<ModulusSwitchNoiseReductionKey>,
+    pub msnrk: ModulusSwitchConfiguration<u64>,
+    pub msnrk_sns: Option<ModulusSwitchConfiguration<u64>>,
 }
 
 impl Eq for RawPubKeySet {}
@@ -107,17 +109,18 @@ impl RawPubKeySet {
             regular_params.get_carry_modulus(),
         );
 
-        let params_tfhe = regular_params.to_classic_pbs_parameters();
-
-        tfhe::shortint::ServerKey::from_raw_parts(
+        let atomic_pattern = StandardAtomicPatternServerKey::from_raw_parts(
             self.ksk.clone(),
             pk_bk,
+            regular_params.pbs_order(),
+        );
+
+        tfhe::shortint::ServerKey::from_raw_parts(
+            AtomicPatternServerKey::Standard(atomic_pattern),
             regular_params.get_message_modulus(),
             regular_params.get_carry_modulus(),
             MaxDegree::new(max_value),
             max_noise_level,
-            params_tfhe.ciphertext_modulus,
-            regular_params.encryption_key_choice().into(),
         )
     }
 
@@ -142,8 +145,8 @@ impl RawPubKeySet {
                 )
             },
         );
-        let noise_squashing_key = match (&self.bk_sns, params) {
-            (Some(bk_sns), DKGParams::WithSnS(sns_param)) => {
+        let noise_squashing_key = match (&self.bk_sns, &self.msnrk_sns, params) {
+            (Some(bk_sns), Some(msnrk_sns), DKGParams::WithSnS(sns_param)) => {
                 let mut fourier_bk = Fourier128LweBootstrapKey::new(
                     bk_sns.input_lwe_dimension(),
                     bk_sns.glwe_size(),
@@ -156,7 +159,7 @@ impl RawPubKeySet {
                 convert_standard_lwe_bootstrap_key_to_fourier_128(bk_sns, &mut fourier_bk);
                 let key = NoiseSquashingKey::from_raw_parts(
                     fourier_bk,
-                    self.msnrk_sns.clone(),
+                    msnrk_sns.clone(),
                     sns_param.message_modulus,
                     sns_param.carry_modulus,
                     sns_param.ciphertext_modulus,
@@ -187,6 +190,7 @@ impl RawPubKeySet {
                 compression_key,
                 decompression_key,
                 noise_squashing_key,
+                None, //TODO: Fill when we have compression keys for big ctxt
                 tfhe::Tag::default(),
             )
         } else {
@@ -196,6 +200,7 @@ impl RawPubKeySet {
                 compression_key,
                 decompression_key,
                 noise_squashing_key,
+                None, //TODO: Fill when we have compression keys for big ctxt
                 tfhe::Tag::default(),
             )
         }
@@ -528,7 +533,7 @@ async fn generate_mod_switch_noise_reduction_key<
     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
-) -> anyhow::Result<ModulusSwitchNoiseReductionKey>
+) -> anyhow::Result<ModulusSwitchNoiseReductionKey<u64>>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
@@ -698,7 +703,8 @@ where
     // TODO implement `modulus_switch_noise_reduction_key` keygen
     let blind_rotate_key = ShortintBootstrappingKey::Classic {
         bsk: fourier_bsk,
-        modulus_switch_noise_reduction_key: None,
+        // NOTE: Not sure if it should be standard or CenteredMean
+        modulus_switch_noise_reduction_key: ModulusSwitchConfiguration::Standard,
     };
 
     let decompression_key = DecompressionKey {
@@ -1005,23 +1011,31 @@ where
             )
             .await?;
 
-            let msnrk_sns = if let Some(msnrk_params) = sns_params.get_msnrk_params_sns() {
-                Some(
-                    generate_mod_switch_noise_reduction_key(
-                        &lwe_secret_key_share,
-                        &msnrk_params,
-                        &mut mpc_encryption_rng,
-                        session,
-                        preprocessing,
+            let msnrk_sns = match sns_params.get_msnrk_configuration_sns() {
+                MSNRKConfiguration::Standard => ModulusSwitchConfiguration::Standard,
+                MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
+                    ModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
+                        generate_mod_switch_noise_reduction_key(
+                            &lwe_secret_key_share,
+                            &msnrkparams,
+                            &mut mpc_encryption_rng,
+                            session,
+                            preprocessing,
+                        )
+                        .await?,
                     )
-                    .await?,
-                )
-            } else {
-                None
+                }
+                MSNRKConfiguration::CenteredMeanNoiseReduction => {
+                    ModulusSwitchConfiguration::CenteredMeanNoiseReduction
+                }
             };
 
             tracing::info!("(Party {my_role}) Opening SnS BK...Done");
-            (Some(glwe_secret_key_share_sns), Some(bk_sns), msnrk_sns)
+            (
+                Some(glwe_secret_key_share_sns),
+                Some(bk_sns),
+                Some(msnrk_sns),
+            )
         }
         DKGParams::WithoutSnS(_) => (None, None, None),
     };
@@ -1064,19 +1078,23 @@ where
     };
 
     // If needed, compute the mod switch noise reduction key
-    let msnrk = if let Some(msnrk_param) = params_basics_handle.get_msnrk_params() {
-        Some(
-            generate_mod_switch_noise_reduction_key(
-                &lwe_secret_key_share,
-                &msnrk_param,
-                &mut mpc_encryption_rng,
-                session,
-                preprocessing,
+    let msnrk = match params_basics_handle.get_msnrk_configuration() {
+        MSNRKConfiguration::Standard => ModulusSwitchConfiguration::Standard,
+        MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
+            ModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
+                generate_mod_switch_noise_reduction_key(
+                    &lwe_secret_key_share,
+                    &msnrkparams,
+                    &mut mpc_encryption_rng,
+                    session,
+                    preprocessing,
+                )
+                .await?,
             )
-            .await?,
-        )
-    } else {
-        None
+        }
+        MSNRKConfiguration::CenteredMeanNoiseReduction => {
+            ModulusSwitchConfiguration::CenteredMeanNoiseReduction
+        }
     };
 
     // note that glwe_secret_key_share_compression may be None even if compression_keys is Some
@@ -1288,7 +1306,12 @@ pub mod tests {
         integer::parameters::DynamicDistribution,
         prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt},
         set_server_key,
-        shortint::{noise_squashing::NoiseSquashingKey, parameters::CoreCiphertextModulus},
+        shortint::{
+            client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
+            noise_squashing::NoiseSquashingKey,
+            parameters::CoreCiphertextModulus,
+            PBSParameters,
+        },
         CompressedCiphertextListBuilder, FheUint32, FheUint64, FheUint8,
     };
     use tfhe_csprng::seeders::Seeder;
@@ -2289,7 +2312,8 @@ pub mod tests {
 
         let pk: RawPubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
         let pub_key_set = pk.to_pubkeyset(DKGParams::WithSnS(params));
-        let (integer_server_key, _, _, _, ck, _) = pub_key_set.server_key.clone().into_raw_parts();
+        let (integer_server_key, _, _, _, ck, _, _) =
+            pub_key_set.server_key.clone().into_raw_parts();
         let ck = ck.unwrap();
 
         set_server_key(pub_key_set.server_key);
@@ -2414,6 +2438,7 @@ pub mod tests {
                 None,
                 None,
                 None,
+                None,
                 tfhe::Tag::default(),
             );
             let pub_key_set = pk.to_pubkeyset(params);
@@ -2459,6 +2484,7 @@ pub mod tests {
             None,
             None,
             None,
+            None,
             tfhe::Tag::default(),
         );
 
@@ -2498,11 +2524,15 @@ pub mod tests {
         );
         let pk: RawPubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
 
-        let shortint_client_key = tfhe::shortint::ClientKey::from_raw_parts(
+        let sck = StandardAtomicPatternClientKey::from_raw_parts(
             glwe_secret_key,
             lwe_secret_key,
-            params_tfhe_rs.into(),
+            PBSParameters::PBS(params_tfhe_rs),
+            None,
         );
+        let shortint_client_key = tfhe::shortint::ClientKey {
+            atomic_pattern: AtomicPatternClientKey::Standard(sck),
+        };
 
         (shortint_client_key, pk)
     }
@@ -2525,7 +2555,7 @@ pub mod tests {
 
         let clear_res: u64 = shortint_client_key.decrypt(&ct_1);
 
-        let modulus = shortint_client_key.parameters.message_modulus().0;
+        let modulus = shortint_client_key.parameters().message_modulus().0;
 
         let expected_res = ((clear_a * scalar as u64 - clear_b) * clear_b) % modulus;
         assert_eq!(clear_res, expected_res);

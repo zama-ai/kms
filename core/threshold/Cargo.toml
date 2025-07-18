@@ -96,6 +96,8 @@ serial_test.workspace = true
 tempfile.workspace = true
 tracing-test = "=0.2.5"
 webpki = { version = "=0.22.4", features = ["std"] }
+# we need the experimental feature to simplify some tests
+tfhe-zk-pok = { workspace = true, features = ["experimental"] }
 # "self-import" needed for integration test
 threshold-fhe = { workspace = true, features = ["testing"] }
 
