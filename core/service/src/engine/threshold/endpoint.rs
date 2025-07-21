@@ -1,7 +1,7 @@
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
-    ContextManager, CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor,
-    UserDecryptor,
+    BackupOperator, ContextManager, CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator,
+    PublicDecryptor, UserDecryptor,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
@@ -21,7 +21,8 @@ macro_rules! impl_endpoint {
                 PP: KeyGenPreprocessor + Sync + Send + 'static,
                 CG: CrsGenerator + Sync + Send + 'static,
                 CM: ContextManager + Sync + Send + 'static,
-            > CoreServiceEndpoint for ThresholdKms<IN, UD, PD, KG, PP, CG, CM> $implementations
+                BO: BackupOperator + Sync + Send + 'static,
+            > CoreServiceEndpoint for ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO> $implementations
 
         #[cfg(feature="insecure")]
         #[tonic::async_trait]
@@ -35,7 +36,8 @@ macro_rules! impl_endpoint {
                 CG: CrsGenerator + Sync + Send + 'static,
                 ICG: InsecureCrsGenerator + Sync + Send + 'static,
                 CM: ContextManager + Sync + Send + 'static,
-            > CoreServiceEndpoint for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM> $implementations
+                BO: BackupOperator + Sync + Send + 'static,
+            > CoreServiceEndpoint for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO> $implementations
     }
 }
 
@@ -551,6 +553,44 @@ impl_endpoint! {
             request: Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
         ) -> Result<Response<Empty>, Status> {
             self.context_manager.destroy_custodian_context(request).await
+        }
+
+        /// WARNING: This method is not fully implemented yet.
+        ///
+        /// Retrieves the encryption public key of this KMS.
+        /// This can be used by a custorian to encrypt data for the KMS during recovery.
+        ///
+        /// * `_request` - Struct containing all the data of the request.
+        ///
+        /// # Returns
+        /// * `Ok(Response<OperatorPublicKey>)`
+        ///
+        /// # Conditions
+        /// * Pre-condition:  -
+        /// * Post-condition: -
+        #[tracing::instrument(skip(self, request))]
+        async fn get_operator_public_key(
+            &self,
+            request: Request<kms_grpc::kms::v1::Empty>,
+        ) -> Result<Response<kms_grpc::kms::v1::OperatorPublicKey>, Status> {
+            self.backup_operator.get_operator_public_key(request).await
+        }
+
+        /// WARNING: This method is not fully implemented yet.
+        ///
+        /// Restore keys from a backup.
+        ///
+        /// * `_request` - Struct containing all the data of the request.
+        ///
+        /// # Conditions
+        /// * Pre-condition:  -
+        /// * Post-condition: -
+        #[tracing::instrument(skip(self, request))]
+        async fn custodian_backup_restore(
+            &self,
+            request: Request<kms_grpc::kms::v1::Empty>,
+        ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
+            self.backup_operator.custodian_backup_restore(request).await
         }
     }
 }

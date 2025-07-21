@@ -74,10 +74,9 @@ use threshold_fhe::execution::tfhe_internals::{
 pub struct RealKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 > {
     pub base_kms: BaseKmsStruct,
-    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     // TODO eventually add mode to allow for nlarge as well.
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     pub dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
@@ -93,19 +92,15 @@ pub struct RealKeyGenerator<
 pub struct RealInsecureKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 > {
-    pub real_key_generator: RealKeyGenerator<PubS, PrivS, BackS>,
+    pub real_key_generator: RealKeyGenerator<PubS, PrivS>,
 }
 
 #[cfg(feature = "insecure")]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > RealInsecureKeyGenerator<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    RealInsecureKeyGenerator<PubS, PrivS>
 {
-    pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, BackS>) -> Self {
+    pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS>) -> Self {
         Self {
             real_key_generator: RealKeyGenerator {
                 base_kms: value.base_kms.new_instance().await,
@@ -123,11 +118,8 @@ impl<
 
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS>
 {
     async fn insecure_key_gen(
         &self,
@@ -156,11 +148,8 @@ pub enum PreprocHandleWithMode {
     Insecure,
 }
 
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > RealKeyGenerator<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    RealKeyGenerator<PubS, PrivS>
 {
     #[allow(clippy::too_many_arguments)]
     async fn launch_dkg(
@@ -384,7 +373,7 @@ impl<
 
     async fn decompression_key_gen_closure<P>(
         base_session: &mut BaseSession,
-        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         keyset_added_info: KeySetAddedInfo,
         preprocessing: &mut P,
@@ -452,7 +441,7 @@ impl<
     #[cfg(feature = "insecure")]
     async fn get_glwe_and_compression_key_shares(
         keyset_added_info: KeySetAddedInfo,
-        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     ) -> anyhow::Result<(
         GlweSecretKeyShare<Z128, 4>,
         CompressionPrivateKeyShares<Z128, 4>,
@@ -641,7 +630,7 @@ impl<
         req_id: &RequestId,
         mut base_session: BaseSession,
         meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
-        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
@@ -733,7 +722,7 @@ impl<
 
     async fn key_gen_from_existing_compression_sk<P>(
         base_session: &mut BaseSession,
-        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         params: DKGParams,
         compression_key_id: RequestId,
         preprocessing: &mut P,
@@ -773,7 +762,7 @@ impl<
         req_id: &RequestId,
         mut base_session: BaseSession,
         meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
-        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
@@ -914,11 +903,8 @@ impl<
 }
 
 #[tonic::async_trait]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > KeyGenerator for RealKeyGenerator<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> KeyGenerator
+    for RealKeyGenerator<PubS, PrivS>
 {
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         self.inner_key_gen(request, false).await

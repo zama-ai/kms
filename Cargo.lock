@@ -3940,6 +3940,7 @@ dependencies = [
  "alloy-signer",
  "alloy-sol-types",
  "anyhow",
+ "attestation-doc-validation",
  "bytes",
  "cc-tests-utils",
  "clap",

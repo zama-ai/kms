@@ -7,10 +7,13 @@ use crate::{
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{base::KmsFheKeyHandles, context::ContextInfo, threshold::service::ThresholdFheKeys},
     util::meta_store::MetaStore,
-    vault::storage::{
-        delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
-        store_context_at_request_id, store_pk_at_request_id, store_versioned_at_request_id,
-        Storage,
+    vault::{
+        storage::{
+            delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
+            store_context_at_request_id, store_pk_at_request_id, store_versioned_at_request_id,
+            Storage,
+        },
+        Vault,
     },
 };
 use kms_grpc::{
@@ -36,7 +39,6 @@ use super::{check_data_exists, log_storage_success, CryptoMaterialReader};
 pub struct CryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
 > {
     /// Storage for publicly readable data (may be susceptible to malicious modifications)
     pub(crate) public_storage: Arc<Mutex<PubS>>,
@@ -44,18 +46,17 @@ pub struct CryptoMaterialStorage<
     /// Storage for private data (only accessible by owner, modifications are detectable)
     pub(crate) private_storage: Arc<Mutex<PrivS>>,
 
-    /// Optional backup storage for recovery purposes
-    pub(crate) backup_storage: Option<Arc<Mutex<BackS>>>,
+    /// Optional backup vault for recovery purposes
+    pub(crate) backup_vault: Option<Arc<Mutex<Vault>>>,
 
     /// Cache for already generated public keys
     pub(crate) pk_cache: Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>,
 }
 
-impl<PubS, PrivS, BackS> CryptoMaterialStorage<PubS, PrivS, BackS>
+impl<PubS, PrivS> CryptoMaterialStorage<PubS, PrivS>
 where
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
 {
     // =========================
     // Initializers
@@ -67,13 +68,13 @@ where
     pub fn new(
         public_storage: Arc<Mutex<PubS>>,
         private_storage: Arc<Mutex<PrivS>>,
-        backup_storage: Option<Arc<Mutex<BackS>>>,
+        backup_vault: Option<Arc<Mutex<Vault>>>,
         pk_cache: Option<Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>>,
     ) -> Self {
         Self {
             public_storage,
             private_storage,
-            backup_storage,
+            backup_vault,
             pk_cache: pk_cache.unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new()))),
         }
     }
@@ -82,13 +83,13 @@ where
     pub fn from(
         public_storage: PubS,
         private_storage: PrivS,
-        backup_storage: Option<BackS>,
+        backup_vault: Option<Vault>,
         pk_cache: Option<Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>>,
     ) -> Self {
         Self::new(
             Arc::new(Mutex::new(public_storage)),
             Arc::new(Mutex::new(private_storage)),
-            backup_storage.map(|s| Arc::new(Mutex::new(s))),
+            backup_vault.map(|s| Arc::new(Mutex::new(s))),
             pk_cache,
         )
     }
@@ -104,8 +105,8 @@ where
     }
 
     /// Getter for backup_storage (if present)
-    pub fn get_backup_storage(&self) -> Option<Arc<Mutex<BackS>>> {
-        self.backup_storage.as_ref().map(Arc::clone)
+    pub fn get_backup_vault(&self) -> Option<Arc<Mutex<Vault>>> {
+        self.backup_vault.as_ref().map(Arc::clone)
     }
 
     // =========================
@@ -465,7 +466,7 @@ where
         let f3 = async {
             let mut priv_storage = self.private_storage.lock().await;
             // can't map() because async closures aren't stable in Rust
-            let back_storage = match self.backup_storage {
+            let back_vault = match self.backup_vault {
                 Some(ref x) => Some(x.lock().await),
                 None => None,
             };
@@ -483,7 +484,7 @@ where
                 );
             }
             let del_err_1 = del_result_1.is_err();
-            let del_err_2 = match back_storage {
+            let del_err_2 = match back_vault {
                 Some(mut x) => {
                     let result = delete_at_request_id(
                         &mut (*x),
@@ -856,17 +857,14 @@ where
 }
 
 // we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > Clone for CryptoMaterialStorage<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Clone
+    for CryptoMaterialStorage<PubS, PrivS>
 {
     fn clone(&self) -> Self {
         Self {
             public_storage: Arc::clone(&self.public_storage),
             private_storage: Arc::clone(&self.private_storage),
-            backup_storage: self.backup_storage.as_ref().map(Arc::clone),
+            backup_vault: self.backup_vault.as_ref().map(Arc::clone),
             pk_cache: Arc::clone(&self.pk_cache),
         }
     }

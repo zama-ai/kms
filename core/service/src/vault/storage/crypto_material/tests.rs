@@ -42,7 +42,7 @@ async fn write_crs() {
     let crypto_storage = CryptoMaterialStorage {
         public_storage: pub_storage.clone(),
         private_storage: Arc::new(Mutex::new(RamStorage::new())),
-        backup_storage: None as Option<Arc<Mutex<RamStorage>>>,
+        backup_vault: None,
         pk_cache: Arc::new(RwLock::new(HashMap::new())),
     };
 
@@ -103,7 +103,7 @@ async fn read_public_key() {
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
         FailingRamStorage::new(100),
         RamStorage::new(),
-        None as Option<RamStorage>,
+        None,
         HashMap::new(),
         HashMap::new(),
     );
@@ -142,7 +142,7 @@ async fn write_central_keys() {
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
         FailingRamStorage::new(100),
         RamStorage::new(),
-        None as Option<RamStorage>,
+        None,
         HashMap::new(),
         HashMap::new(),
     );
@@ -413,14 +413,14 @@ async fn write_threshold_keys_failed_storage() {
 }
 
 fn setup_threshold_store() -> (
-    ThresholdCryptoMaterialStorage<FailingRamStorage, RamStorage, RamStorage>,
+    ThresholdCryptoMaterialStorage<FailingRamStorage, RamStorage>,
     ThresholdFheKeys,
     FhePubKeySet,
 ) {
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         FailingRamStorage::new(100),
         RamStorage::new(),
-        None as Option<RamStorage>,
+        None,
         HashMap::new(),
         HashMap::new(),
     );

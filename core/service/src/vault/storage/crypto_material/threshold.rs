@@ -19,7 +19,10 @@ use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
 use crate::{
     engine::threshold::service::ThresholdFheKeys,
     util::meta_store::MetaStore,
-    vault::storage::{store_pk_at_request_id, store_versioned_at_request_id, Storage},
+    vault::{
+        storage::{store_pk_at_request_id, store_versioned_at_request_id, Storage},
+        Vault,
+    },
 };
 
 use super::base::CryptoMaterialStorage;
@@ -29,23 +32,19 @@ use super::base::CryptoMaterialStorage;
 pub struct ThresholdCryptoMaterialStorage<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
 > {
-    pub(crate) inner: CryptoMaterialStorage<PubS, PrivS, BackS>,
+    pub(crate) inner: CryptoMaterialStorage<PubS, PrivS>,
     fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
 }
 
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+    ThresholdCryptoMaterialStorage<PubS, PrivS>
 {
     /// Create a new cached storage device for threshold KMS.
     pub fn new(
         public_storage: PubS,
         private_storage: PrivS,
-        backup_storage: Option<BackS>,
+        backup_vault: Option<Vault>,
         pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
         fhe_keys: HashMap<RequestId, ThresholdFheKeys>,
     ) -> Self {
@@ -53,7 +52,7 @@ impl<
             inner: CryptoMaterialStorage {
                 public_storage: Arc::new(Mutex::new(public_storage)),
                 private_storage: Arc::new(Mutex::new(private_storage)),
-                backup_storage: backup_storage.map(|x| Arc::new(Mutex::new(x))),
+                backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
                 pk_cache: Arc::new(RwLock::new(pk_cache)),
             },
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
@@ -104,7 +103,7 @@ impl<
         let f1 = async {
             let mut priv_storage = self.inner.private_storage.lock().await;
             // can't map() because async closures aren't stable in Rust
-            let back_storage = match self.inner.backup_storage {
+            let back_vault = match self.inner.backup_vault {
                 Some(ref x) => Some(x.lock().await),
                 None => None,
             };
@@ -126,7 +125,7 @@ impl<
             }
             let store_is_ok = store_result.is_ok();
 
-            let backup_is_ok = match back_storage {
+            let backup_is_ok = match back_vault {
                 Some(mut x) => {
                     let backup_result = store_versioned_at_request_id(
                         &mut (*x),
@@ -241,7 +240,7 @@ impl<
         req_id: &RequestId,
     ) -> anyhow::Result<OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>>
     {
-        CryptoMaterialStorage::<PubS, PrivS, BackS>::read_guarded_crypto_material_from_cache(
+        CryptoMaterialStorage::<PubS, PrivS>::read_guarded_crypto_material_from_cache(
             req_id,
             self.fhe_keys.clone(),
         )
@@ -259,7 +258,7 @@ impl<
     /// since it's easy to deadlock, it's a consequence of RwLocks.
     /// see https://docs.rs/tokio/latest/tokio/sync/struct.RwLock.html#method.read_owned
     pub async fn refresh_threshold_fhe_keys(&self, req_id: &RequestId) -> anyhow::Result<()> {
-        CryptoMaterialStorage::<PubS, PrivS, BackS>::refresh_crypto_material::<ThresholdFheKeys, _>(
+        CryptoMaterialStorage::<PubS, PrivS>::refresh_crypto_material::<ThresholdFheKeys, _>(
             self.fhe_keys.clone(),
             req_id,
             self.inner.private_storage.clone(),
@@ -305,11 +304,8 @@ impl<
 }
 
 // we need to manually implement clone, see  https://github.com/rust-lang/rust/issues/26925
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > Clone for ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> Clone
+    for ThresholdCryptoMaterialStorage<PubS, PrivS>
 {
     fn clone(&self) -> Self {
         Self {
@@ -318,14 +314,10 @@ impl<
         }
     }
 }
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > From<&ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>>
-    for CryptoMaterialStorage<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+    From<&ThresholdCryptoMaterialStorage<PubS, PrivS>> for CryptoMaterialStorage<PubS, PrivS>
 {
-    fn from(value: &ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>) -> Self {
+    fn from(value: &ThresholdCryptoMaterialStorage<PubS, PrivS>) -> Self {
         value.inner.clone()
     }
 }

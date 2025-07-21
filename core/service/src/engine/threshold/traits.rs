@@ -108,3 +108,16 @@ pub trait ContextManager {
         request: Request<DestroyCustodianContextRequest>,
     ) -> Result<Response<Empty>, Status>;
 }
+
+#[tonic::async_trait]
+pub trait BackupOperator {
+    async fn get_operator_public_key(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<OperatorPublicKey>, Status>;
+
+    async fn custodian_backup_restore(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<Empty>, Status>;
+}

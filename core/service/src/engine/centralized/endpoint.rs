@@ -2,7 +2,9 @@ use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::centralized::service::{delete_kms_context_impl, new_kms_context_impl};
 use crate::tonic_some_or_err;
 use crate::vault::storage::Storage;
-use kms_grpc::kms::v1::{self, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult};
+use kms_grpc::kms::v1::{
+    self, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult, OperatorPublicKey,
+};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use tonic::{Request, Response, Status};
 
@@ -14,11 +16,8 @@ use crate::engine::centralized::service::{
 };
 
 #[tonic::async_trait]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > CoreServiceEndpoint for RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    CoreServiceEndpoint for RealCentralizedKms<PubS, PrivS>
 {
     /// Initializes the centralized KMS service.
     ///
@@ -528,6 +527,52 @@ impl<
     ) -> Result<Response<Empty>, Status> {
         Err(Status::unimplemented(
             "destroy_custodian_context is not implemented",
+        ))
+    }
+
+    /// WARNING: This method is not implemented yet.
+    ///
+    /// Currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
+    ///
+    /// However it is supposed to retrieve the encryption public key of this KMS.
+    /// This can be used by a custorian to encrypt data for the KMS during recovery.
+    ///
+    /// * `_request` - Struct containing all the data of the request.
+    ///
+    /// # Returns
+    /// * `Ok(Response<OperatorPublicKey>)`
+    ///
+    /// # Conditions
+    /// * Pre-condition:  -
+    /// * Post-condition: -
+    #[tracing::instrument(skip(self, _request))]
+    async fn get_operator_public_key(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<OperatorPublicKey>, Status> {
+        Err(Status::unimplemented(
+            "get_operator_public_key is not implemented",
+        ))
+    }
+
+    /// WARNING: This method is not fully implemented yet.
+    ///
+    /// Currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
+    ///
+    /// However, it is supposed to restore keys from a backup.
+    ///
+    /// * `_request` - Struct containing all the data of the request.
+    ///
+    /// # Conditions
+    /// * Pre-condition:  -
+    /// * Post-condition: -
+    #[tracing::instrument(skip(self, _request))]
+    async fn custodian_backup_restore(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<Empty>, Status> {
+        Err(Status::unimplemented(
+            "custodian_backup_restore is not implemented",
         ))
     }
 }

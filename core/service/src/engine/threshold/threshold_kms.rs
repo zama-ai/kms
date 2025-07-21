@@ -17,6 +17,7 @@ pub struct ThresholdKms<
     CG: Sync,
     #[cfg(feature = "insecure")] ICG: Sync,
     CM: Sync,
+    BO: Sync,
 > {
     pub(crate) initiator: IN,
     pub(crate) user_decryptor: UD,
@@ -29,6 +30,7 @@ pub struct ThresholdKms<
     #[cfg(feature = "insecure")]
     pub(crate) insecure_crs_generator: ICG,
     pub(crate) context_manager: CM,
+    pub(crate) backup_operator: BO,
     tracker: Arc<TaskTracker>,
     health_reporter: Arc<RwLock<HealthReporter>>,
     mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
@@ -45,7 +47,8 @@ impl<
         CG: Sync,
         ICG: Sync,
         CM: Sync,
-    > ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM>
+        BO: Sync,
+    > ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -58,6 +61,7 @@ impl<
         crs_generator: CG,
         insecure_crs_generator: ICG,
         context_manager: CM,
+        backup_operator: BO,
         tracker: Arc<TaskTracker>,
         health_reporter: Arc<RwLock<HealthReporter>>,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
@@ -72,6 +76,7 @@ impl<
             crs_generator,
             insecure_crs_generator,
             context_manager,
+            backup_operator,
             tracker,
             health_reporter,
             mpc_abort_handle,
@@ -91,7 +96,8 @@ impl<
         CG: Sync,
         ICG: Sync,
         CM: Sync,
-    > Shutdown for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM>
+        BO: Sync,
+    > Shutdown for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
     async fn shutdown(&self) -> anyhow::Result<()> {
         self.health_reporter
@@ -133,7 +139,8 @@ impl<
         CG: Sync,
         ICG: Sync,
         CM: Sync,
-    > Drop for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM>
+        BO: Sync,
+    > Drop for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
     fn drop(&mut self) {
         let _ = self.shutdown();
@@ -141,8 +148,8 @@ impl<
 }
 
 #[cfg(not(feature = "insecure"))]
-impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync>
-    ThresholdKms<IN, UD, PD, KG, PP, CG, CM>
+impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync>
+    ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO>
 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -153,6 +160,7 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync>
         keygen_preprocessor: PP,
         crs_generator: CG,
         context_manager: CM,
+        backup_operator: BO,
         tracker: Arc<TaskTracker>,
         health_reporter: Arc<RwLock<HealthReporter>>,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
@@ -165,6 +173,7 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync>
             keygen_preprocessor,
             crs_generator,
             context_manager,
+            backup_operator,
             tracker,
             health_reporter,
             mpc_abort_handle,
@@ -174,8 +183,8 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync>
 
 #[tonic::async_trait]
 #[cfg(not(feature = "insecure"))]
-impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync> Shutdown
-    for ThresholdKms<IN, UD, PD, KG, PP, CG, CM>
+impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync> Shutdown
+    for ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO>
 {
     async fn shutdown(&self) -> anyhow::Result<()> {
         self.health_reporter
@@ -207,8 +216,8 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync> Shutd
 
 #[cfg(not(feature = "insecure"))]
 #[allow(clippy::let_underscore_future)]
-impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync> Drop
-    for ThresholdKms<IN, UD, PD, KG, PP, CG, CM>
+impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync> Drop
+    for ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO>
 {
     fn drop(&mut self) {
         let _ = self.shutdown();

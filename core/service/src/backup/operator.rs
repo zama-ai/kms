@@ -274,6 +274,10 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
         &self.public_key
     }
 
+    pub fn public_key_bytes(&self) -> Vec<u8> {
+        self.public_key.encapsulation_key.clone()
+    }
+
     pub fn role(&self) -> Role {
         self.my_role
     }
