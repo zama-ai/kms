@@ -32,6 +32,7 @@ aes = "=0.8.4"
 aes-prng = "=0.2.1"
 anyhow = "=1.0.98"
 async-trait = "=0.1.88"
+attestation-doc-validation = { version = "=0.10.0" }
 backward-compatibility = { path = "./backward-compatibility" }
 backoff = "=0.4.0"
 base64 = "=0.22.1"
@@ -44,6 +45,7 @@ observability = { path = "./observability" }
 threshold-fhe = { path = "./core/threshold/", default-features = false }
 enum_dispatch = "0.3.13"
 futures = "=0.3.31"
+futures-util = "=0.3.31"
 hex = "=0.4.3"
 http = "=1.3.1"
 itertools = "=0.14.0"

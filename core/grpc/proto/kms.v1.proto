@@ -445,3 +445,11 @@ message DestroyCustodianContextRequest {
   // The ID of the custodian context to destroy.
   RequestId context_id = 1;
 }
+
+message OperatorPublicKey {
+  // The public key that a custodian can use to encrypt a backup share
+  bytes public_key = 1;
+  // The attestation document that proves the public key is generated within an
+  // enclave initialized from a trusted software build
+  bytes attestation_document = 2;
+}

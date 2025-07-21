@@ -32,9 +32,8 @@ use crate::vault::storage::Storage;
 pub async fn key_gen_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS, BackS>,
+    service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<KeyGenRequest>,
 ) -> Result<Response<Empty>, Status> {
     let _timer = METRICS
@@ -119,9 +118,8 @@ pub async fn key_gen_impl<
 pub async fn get_key_gen_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS, BackS>,
+    service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<KeyGenResult>, Status> {
     let request_id = request.into_inner().into();
@@ -145,11 +143,10 @@ pub async fn get_key_gen_result_impl<
 pub(crate) async fn key_gen_background<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
     req_id: &RequestId,
     meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
-    crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
+    crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     sk: Arc<PrivateSigKey>,
     params: DKGParams,
     internal_keyset_config: InternalKeySetConfig,

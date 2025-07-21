@@ -3,8 +3,8 @@ use crate::client::test_tools::ServerHandle;
 use crate::consts::DEFAULT_URL;
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
-    ContextManager, CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor,
-    UserDecryptor,
+    BackupOperator, ContextManager, CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator,
+    PublicDecryptor, UserDecryptor,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
@@ -71,6 +71,7 @@ type DummyThresholdKms = ThresholdKms<
     DummyPreprocessor,
     DummyCrsGenerator,
     DummyContextManager,
+    DummyBackupOperator,
 >;
 
 #[cfg(feature = "insecure")]
@@ -84,6 +85,7 @@ type DummyThresholdKms = ThresholdKms<
     DummyCrsGenerator,
     DummyCrsGenerator, // the insecure one is the same as the dummy one
     DummyContextManager,
+    DummyBackupOperator,
 >;
 
 async fn new_dummy_threshold_kms() -> (DummyThresholdKms, HealthServer<impl Health>) {
@@ -106,6 +108,7 @@ async fn new_dummy_threshold_kms() -> (DummyThresholdKms, HealthServer<impl Heal
             #[cfg(feature = "insecure")]
             DummyCrsGenerator {},
             DummyContextManager {},
+            DummyBackupOperator {},
             Arc::new(TaskTracker::new()),
             Arc::new(RwLock::new(threshold_health_reporter)),
             handle,
@@ -335,6 +338,28 @@ impl ContextManager for DummyContextManager {
     async fn destroy_custodian_context(
         &self,
         _request: Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
+        Ok(Response::new(kms_grpc::kms::v1::Empty {}))
+    }
+}
+
+struct DummyBackupOperator;
+
+#[tonic::async_trait]
+impl BackupOperator for DummyBackupOperator {
+    async fn get_operator_public_key(
+        &self,
+        _request: Request<kms_grpc::kms::v1::Empty>,
+    ) -> Result<Response<kms_grpc::kms::v1::OperatorPublicKey>, Status> {
+        Ok(Response::new(kms_grpc::kms::v1::OperatorPublicKey {
+            public_key: vec![],
+            attestation_document: vec![],
+        }))
+    }
+
+    async fn custodian_backup_restore(
+        &self,
+        _request: Request<kms_grpc::kms::v1::Empty>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
         Ok(Response::new(kms_grpc::kms::v1::Empty {}))
     }

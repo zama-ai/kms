@@ -30,9 +30,8 @@ use crate::vault::storage::Storage;
 pub async fn user_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS, BackS>,
+    service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<Empty>, Status> {
     // Start timing and counting before any operations
@@ -136,7 +135,7 @@ pub async fn user_decrypt_impl<
                 &key_id,
                 &request_id
             );
-            match async_user_decrypt::<PubS, PrivS, BackS>(
+            match async_user_decrypt::<PubS, PrivS>(
                 &keys,
                 &sig_key,
                 &mut rng,
@@ -179,9 +178,8 @@ pub async fn user_decrypt_impl<
 pub async fn get_user_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS, BackS>,
+    service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<UserDecryptionResponse>, Status> {
     let request_id = request.into_inner().into();
@@ -217,9 +215,8 @@ pub async fn get_user_decryption_result_impl<
 pub async fn public_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS, BackS>,
+    service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<PublicDecryptionRequest>,
 ) -> Result<Response<Empty>, Status> {
     // Start timing and counting before any operations
@@ -335,7 +332,7 @@ pub async fn public_decrypt_impl<
             let (send, recv) = tokio::sync::oneshot::channel();
             rayon::spawn_fifo(move || {
                 let decryptions =
-                    central_public_decrypt::<PubS, PrivS, BackS>(&keys, &ciphertexts, metric_tags);
+                    central_public_decrypt::<PubS, PrivS>(&keys, &ciphertexts, metric_tags);
                 let _ = send.send(decryptions);
             });
             let decryptions = recv.await;
@@ -392,9 +389,8 @@ pub async fn public_decrypt_impl<
 pub async fn get_public_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS, BackS>,
+    service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<PublicDecryptionResponse>, Status> {
     let request_id = request.into_inner().into();

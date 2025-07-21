@@ -63,10 +63,9 @@ use super::{session::SessionPreparer, ThresholdFheKeys};
 pub struct RealUserDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
 > {
     pub base_kms: BaseKmsStruct,
-    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub user_decrypt_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     pub session_preparer: Arc<SessionPreparer>,
     pub tracker: Arc<TaskTracker>,
@@ -74,11 +73,8 @@ pub struct RealUserDecryptor<
     pub decryption_mode: DecryptionMode,
 }
 
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > RealUserDecryptor<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+    RealUserDecryptor<PubS, PrivS>
 {
     /// Helper method for user decryption which carries out the actual threshold decryption using noise
     /// flooding or bit-decomposition.
@@ -289,11 +285,8 @@ impl<
 }
 
 #[tonic::async_trait]
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > UserDecryptor for RealUserDecryptor<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> UserDecryptor
+    for RealUserDecryptor<PubS, PrivS>
 {
     async fn user_decrypt(
         &self,

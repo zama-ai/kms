@@ -13,7 +13,7 @@ aes.workspace = true
 aes-prng.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
-attestation-doc-validation = { version = "=0.10.0", optional = true }
+attestation-doc-validation = { workspace = true, optional = true}
 backoff = { workspace = true, features = ["tokio"], optional = true }
 bincode.workspace = true
 bc2wrap.workspace = true

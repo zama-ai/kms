@@ -28,9 +28,8 @@ use crate::vault::storage::Storage;
 pub async fn crs_gen_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS, BackS>,
+    service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<CrsGenRequest>,
 ) -> Result<Response<Empty>, Status> {
     tracing::info!("Received CRS generation request");
@@ -107,9 +106,8 @@ pub async fn crs_gen_impl<
 pub async fn get_crs_gen_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS, BackS>,
+    service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<CrsGenResult>, Status> {
     let request_id = request.into_inner().into();
@@ -133,12 +131,11 @@ pub async fn get_crs_gen_result_impl<
 pub(crate) async fn crs_gen_background<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
     req_id: &RequestId,
     rng: AesRng,
     meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
-    crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
+    crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     sk: Arc<PrivateSigKey>,
     params: DKGParams,
     eip712_domain: Option<Eip712Domain>,

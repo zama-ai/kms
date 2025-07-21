@@ -15,12 +15,12 @@ use crate::engine::Shutdown;
 use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
 use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
-#[cfg(feature = "non-wasm")]
-use crate::vault::storage::Storage;
 use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_data_versioned,
     read_pk_at_request_id,
 };
+#[cfg(feature = "non-wasm")]
+use crate::vault::{storage::Storage, Vault};
 use aes_prng::AesRng;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
@@ -74,9 +74,9 @@ use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
 
 #[cfg(feature = "non-wasm")]
-pub(crate) async fn async_generate_fhe_keys<PubS, PrivS, BackS>(
+pub(crate) async fn async_generate_fhe_keys<PubS, PrivS>(
     sk: &PrivateSigKey,
-    storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
+    storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     params: DKGParams,
     keyset_config: StandardKeySetConfig,
     compression_key_id: Option<RequestId>,
@@ -86,7 +86,6 @@ pub(crate) async fn async_generate_fhe_keys<PubS, PrivS, BackS>(
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
@@ -120,15 +119,14 @@ where
 }
 
 #[cfg(feature = "non-wasm")]
-pub(crate) async fn async_generate_decompression_keys<PubS, PrivS, BackS>(
-    storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
+pub(crate) async fn async_generate_decompression_keys<PubS, PrivS>(
+    storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     keyset1_id: &RequestId,
     keyset2_id: &RequestId,
 ) -> anyhow::Result<DecompressionKey>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 {
     storage.refresh_centralized_fhe_keys(keyset1_id).await?;
     storage.refresh_centralized_fhe_keys(keyset2_id).await?;
@@ -339,10 +337,9 @@ pub(crate) struct CentralizedTestingKeys {
 pub struct RealCentralizedKms<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
 > {
     pub(crate) base_kms: BaseKmsStruct,
-    pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
+    pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     // Map storing ongoing key generation requests.
     pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
     // Map storing ongoing public decryption requests.
@@ -365,7 +362,6 @@ pub struct RealCentralizedKms<
 pub fn central_public_decrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
     keys: &KmsFheKeyHandles,
     cts: &Vec<TypedCiphertext>,
@@ -395,7 +391,7 @@ pub fn central_public_decrypt<
             let fhe_type = ct.fhe_type()?;
             let fhe_type_string = ct.fhe_type_string();
             inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
-            RealCentralizedKms::<PubS, PrivS, BackS>::public_decrypt(
+            RealCentralizedKms::<PubS, PrivS>::public_decrypt(
                 keys,
                 &ct.ciphertext,
                 fhe_type,
@@ -411,7 +407,6 @@ pub fn central_public_decrypt<
 pub async fn async_user_decrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
     keys: &KmsFheKeyHandles,
     sig_key: &PrivateSigKey,
@@ -450,7 +445,7 @@ pub async fn async_user_decrypt<
         inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
         let ct_format = typed_ciphertext.ciphertext_format();
         let external_handle = typed_ciphertext.external_handle.clone();
-        let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS, BackS>::user_decrypt(
+        let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS>::user_decrypt(
             keys,
             sig_key,
             rng,
@@ -486,11 +481,8 @@ pub async fn async_user_decrypt<
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output
 #[cfg(feature = "non-wasm")]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > fmt::Debug for RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> fmt::Debug
+    for RealCentralizedKms<PubS, PrivS>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CentralizedKms")
@@ -500,11 +492,8 @@ impl<
 }
 
 #[cfg(feature = "non-wasm")]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > BaseKms for RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> BaseKms
+    for RealCentralizedKms<PubS, PrivS>
 {
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         dsep: &DomainSep,
@@ -721,11 +710,8 @@ fn unsafe_decrypt(
 }
 
 #[cfg(feature = "non-wasm")]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > Kms for RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Kms
+    for RealCentralizedKms<PubS, PrivS>
 {
     fn public_decrypt(
         keys: &KmsFheKeyHandles,
@@ -779,16 +765,13 @@ impl<
 }
 
 #[cfg(feature = "non-wasm")]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    RealCentralizedKms<PubS, PrivS>
 {
     pub async fn new(
         public_storage: PubS,
         private_storage: PrivS,
-        backup_storage: Option<BackS>,
+        backup_vault: Option<Vault>,
         sk: PrivateSigKey,
         rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> anyhow::Result<(Self, HealthServer<impl Health>)> {
@@ -814,7 +797,7 @@ impl<
         let crypto_storage = CentralizedCryptoMaterialStorage::new(
             public_storage,
             private_storage,
-            backup_storage,
+            backup_vault,
             pk_map,
             key_info,
         );
@@ -822,7 +805,7 @@ impl<
         let (health_reporter, health_service) = tonic_health::server::health_reporter();
         // We will serve as soon as the server is started
         health_reporter
-            .set_serving::<CoreServiceEndpointServer<RealCentralizedKms<PubS, PrivS, PrivS>>>()
+            .set_serving::<CoreServiceEndpointServer<RealCentralizedKms<PubS, PrivS>>>()
             .await;
         Ok((
             RealCentralizedKms {
@@ -849,11 +832,8 @@ impl<
 }
 
 #[cfg(feature = "non-wasm")]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    RealCentralizedKms<PubS, PrivS>
 {
     /// Get a reference to the key generation MetaStore
     pub fn get_key_gen_meta_store(&self) -> &Arc<RwLock<MetaStore<KeyGenCallValues>>> {
@@ -877,11 +857,8 @@ impl<
 }
 
 #[tonic::async_trait]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > Shutdown for RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Shutdown
+    for RealCentralizedKms<PubS, PrivS>
 {
     async fn shutdown(&self) -> anyhow::Result<()> {
         self.health_reporter
@@ -898,11 +875,8 @@ impl<
 
 #[allow(clippy::let_underscore_future)]
 #[cfg(feature = "non-wasm")]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > Drop for RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Drop
+    for RealCentralizedKms<PubS, PrivS>
 {
     fn drop(&mut self) {
         if let Some(handles) = Arc::get_mut(&mut self.thread_handles) {
@@ -1221,7 +1195,7 @@ pub(crate) mod tests {
                 new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
                     .await
                     .unwrap(),
-                None as Option<RamStorage>,
+                None,
                 keys.centralized_kms_keys.sig_sk.clone(),
                 None,
             )
@@ -1237,13 +1211,12 @@ pub(crate) mod tests {
             .read_cloned_centralized_fhe_keys_from_cache(key_id)
             .await
             .unwrap();
-        let raw_plaintext =
-            RealCentralizedKms::<FileStorage, FileStorage, FileStorage>::public_decrypt(
-                &key_handle,
-                &ct,
-                fhe_type,
-                ct_format,
-            );
+        let raw_plaintext = RealCentralizedKms::<FileStorage, FileStorage>::public_decrypt(
+            &key_handle,
+            &ct,
+            fhe_type,
+            ct_format,
+        );
         // if bad FHE key is used, then it *might* panic
         let plaintext = if sim_type == SimulationType::BadFheKey {
             match raw_plaintext {
@@ -1325,9 +1298,8 @@ pub(crate) mod tests {
     async fn set_wrong_client_key<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
     >(
-        inner: &RealCentralizedKms<PubS, PrivS, BackS>,
+        inner: &RealCentralizedKms<PubS, PrivS>,
         key_handle: &RequestId,
         params: DKGParams,
     ) {
@@ -1346,9 +1318,8 @@ pub(crate) mod tests {
     fn set_wrong_sig_key<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
     >(
-        inner: &mut RealCentralizedKms<PubS, PrivS, BackS>,
+        inner: &mut RealCentralizedKms<PubS, PrivS>,
         rng: &mut AesRng,
     ) {
         // move to the next state so ensure we're generating a different ecdsa key
@@ -1387,7 +1358,7 @@ pub(crate) mod tests {
                 new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
                     .await
                     .unwrap(),
-                None as Option<RamStorage>,
+                None,
                 keys.centralized_kms_keys.sig_sk.clone(),
                 None,
             )
@@ -1416,7 +1387,7 @@ pub(crate) mod tests {
         };
         let unified_client_keys = UnifiedPublicEncKey::MlKem512(client_key_pair.pk.enc_key.clone());
         let mut rng = kms.base_kms.new_rng().await;
-        let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage, FileStorage>::user_decrypt(
+        let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage
                 .read_cloned_centralized_fhe_keys_from_cache(key_handle)
                 .await
@@ -1499,7 +1470,7 @@ pub(crate) mod tests {
                 new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
                     .await
                     .unwrap(),
-                None as Option<RamStorage>,
+                None,
                 keys.centralized_kms_keys.sig_sk.clone(),
                 None,
             )
@@ -1524,7 +1495,7 @@ pub(crate) mod tests {
                 new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
                     .await
                     .unwrap(),
-                None as Option<RamStorage>,
+                None,
                 keys.centralized_kms_keys.sig_sk.clone(),
                 None,
             )

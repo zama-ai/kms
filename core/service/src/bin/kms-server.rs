@@ -358,7 +358,7 @@ async fn main() -> anyhow::Result<()> {
                     ref cert,
                     ref trusted_releases,
                 }) => {
-                    let security_module = security_module.unwrap_or_else(|| {
+                    let security_module = security_module.as_ref().unwrap_or_else(|| {
                             panic!("EIF signing certificate present but not security module, unable to construct TLS identity")
                         });
                     tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
@@ -376,6 +376,7 @@ async fn main() -> anyhow::Result<()> {
                     ref trusted_releases,
                 }) => {
                     let security_module = security_module
+                        .as_ref()
                         .unwrap_or_else(|| panic!("TLS identity and security module not present"));
                     tracing::info!(
                         "Using TLS certificate with Nitro remote attestation signed by onboard CA"
@@ -406,6 +407,7 @@ async fn main() -> anyhow::Result<()> {
                 public_vault,
                 private_vault,
                 backup_vault,
+                security_module,
                 mpc_listener,
                 sk,
                 tls_identity,
