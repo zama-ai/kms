@@ -49,6 +49,10 @@ impl SecretShareKeychain {
             num_shares,
         })
     }
+
+    pub fn operator_public_key_bytes(&self) -> Vec<u8> {
+        self.operator.public_key_bytes()
+    }
 }
 
 impl Keychain for SecretShareKeychain {

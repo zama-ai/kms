@@ -93,7 +93,7 @@ pub enum BackupPublicKeyVersioned {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(BackupPublicKeyVersioned)]
 pub struct BackupPublicKey {
-    encapsulation_key: Vec<u8>,
+    pub(crate) encapsulation_key: Vec<u8>,
 }
 
 impl Named for BackupPublicKey {

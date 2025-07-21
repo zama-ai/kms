@@ -66,6 +66,7 @@ threshold-fhe = { workspace = true, default-features = false, features = [
     "extension_degree_4",
 ] }
 enum_dispatch.workspace = true
+futures-util.workspace = true
 kms-grpc = { workspace = true, default-features = false }
 hex.workspace = true
 http = "=0.2.12"
@@ -108,7 +109,6 @@ tracing = { workspace = true, features = ["log"] }
 trait-variant.workspace = true
 url = { version = "=2.5.4", features = ["serde"] }
 validator.workspace = true
-futures-util = "=0.3.31"
 ordermap = "=0.5.7"
 x509-parser = { workspace = true, optional = true }
 

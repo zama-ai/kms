@@ -57,10 +57,9 @@ use super::{session::SessionPreparer, ThresholdFheKeys};
 pub struct RealPublicDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
 > {
     pub base_kms: BaseKmsStruct,
-    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     pub session_preparer: Arc<SessionPreparer>,
     pub tracker: Arc<TaskTracker>,
@@ -68,11 +67,8 @@ pub struct RealPublicDecryptor<
     pub decryption_mode: DecryptionMode,
 }
 
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > RealPublicDecryptor<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+    RealPublicDecryptor<PubS, PrivS>
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
     /// flooding or bit-decomposition
@@ -172,11 +168,8 @@ impl<
 }
 
 #[tonic::async_trait]
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > PublicDecryptor for RealPublicDecryptor<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> PublicDecryptor
+    for RealPublicDecryptor<PubS, PrivS>
 {
     #[tracing::instrument(skip(self, request), fields(
         party_id = ?self.session_preparer.my_id,

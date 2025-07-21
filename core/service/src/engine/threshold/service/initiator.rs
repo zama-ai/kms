@@ -111,7 +111,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             self.health_reporter
                 .write()
                 .await
-                .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS, PrivS>>>()
+                .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS>>>()
                 .await;
         }
         Ok(())
@@ -188,7 +188,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             self.health_reporter
                 .write()
                 .await
-                .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS, PrivS>>>()
+                .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS>>>()
                 .await;
         }
         tracing::info!("PRSS completed successfully for identity {}.", own_identity);

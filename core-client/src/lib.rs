@@ -38,6 +38,7 @@ use strum_macros::{Display, EnumString};
 use tfhe::named::Named;
 use tfhe::Versionize;
 use threshold_fhe::execution::runtime::party::Role;
+use threshold_fhe::hashing::{hash_element, DomainSep};
 use tokio::sync::RwLock;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
@@ -467,6 +468,8 @@ pub enum CCCommand {
     CrsGenResult(ResultParameters),
     InsecureCrsGen(CrsParameters),
     InsecureCrsGenResult(ResultParameters),
+    GetOperatorPublicKey(NoParameters),
+    CustodianBackupRestore(NoParameters),
     DoNothing(NoParameters),
 }
 
@@ -1189,6 +1192,63 @@ async fn do_preproc(
     Ok(req_id)
 }
 
+async fn do_get_operator_pub_keys(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+) -> anyhow::Result<Vec<String>> {
+    let mut req_tasks = JoinSet::new();
+    for ce in core_endpoints.iter_mut() {
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .get_operator_public_key(tonic::Request::new(kms_grpc::kms::v1::Empty {}))
+                .await
+        });
+    }
+
+    let mut backup_pks = Vec::with_capacity(core_endpoints.len());
+
+    while let Some(inner) = req_tasks.join_next().await {
+        let pk = inner??.into_inner();
+        let attestation_doc = attestation_doc_validation::validate_and_parse_attestation_doc(
+            &pk.attestation_document,
+        )?;
+        let Some(attested_pk) = attestation_doc.public_key else {
+            anyhow::bail!("Bad response: public key not present in attestation document")
+        };
+
+        if pk.public_key.as_slice() != attested_pk.as_slice() {
+            let dsep: DomainSep = *b"EQUALITY";
+            let pk_hash = hex::encode(hash_element(&dsep, pk.public_key.as_slice()));
+            let att_pk_hash = hex::encode(hash_element(&dsep, attested_pk.as_slice()));
+            anyhow::bail!("Bad response: public key with hash {} does not match attestation document public key with hash {}", pk_hash, att_pk_hash)
+        };
+
+        backup_pks.push(hex::encode(pk.public_key.as_slice()));
+    }
+
+    Ok(backup_pks)
+}
+
+async fn do_custodian_backup_restore(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+) -> anyhow::Result<()> {
+    let mut req_tasks = JoinSet::new();
+    for ce in core_endpoints.iter_mut() {
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .custodian_backup_restore(tonic::Request::new(kms_grpc::kms::v1::Empty {}))
+                .await
+        });
+    }
+
+    while let Some(inner) = req_tasks.join_next().await {
+        let _ = inner??;
+    }
+
+    Ok(())
+}
+
 /// execute a command based on the provided configuration
 pub async fn execute_cmd(
     cmd_config: &CmdConfig,
@@ -1803,6 +1863,14 @@ pub async fn execute_cmd(
             )
             .await?;
             vec![(Some(req_id), "insecure crs gen result queried".to_string())]
+        }
+        CCCommand::GetOperatorPublicKey(NoParameters {}) => {
+            let pks = do_get_operator_pub_keys(&mut core_endpoints_req).await?;
+            pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
+        }
+        CCCommand::CustodianBackupRestore(NoParameters {}) => {
+            do_custodian_backup_restore(&mut core_endpoints_req).await?;
+            vec![(None, "custodian backup restore complete".to_string())]
         }
     };
 

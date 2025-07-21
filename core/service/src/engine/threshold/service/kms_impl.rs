@@ -46,7 +46,7 @@ use crate::{
     anyhow_error_and_log,
     conf::threshold::{PeerConf, ThresholdPartyConf, TlsCert},
     consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
-    cryptography::internal_crypto_types::PrivateSigKey,
+    cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
     engine::{
         base::{compute_info, BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY},
         prepare_shutdown_signals,
@@ -58,18 +58,21 @@ use crate::{
         meta_store::MetaStore,
         rate_limiter::{RateLimiter, RateLimiterConfig},
     },
-    vault::storage::{
-        crypto_material::ThresholdCryptoMaterialStorage, read_all_data_versioned,
-        read_pk_at_request_id, Storage,
+    vault::{
+        storage::{
+            crypto_material::ThresholdCryptoMaterialStorage, read_all_data_versioned,
+            read_pk_at_request_id, Storage,
+        },
+        Vault,
     },
 };
 
 // === Current Module Imports ===
 use super::{
-    context_manager::RealContextManager, crs_generator::RealCrsGenerator, initiator::RealInitiator,
-    key_generator::RealKeyGenerator, preprocessor::RealPreprocessor,
-    public_decryptor::RealPublicDecryptor, session::SessionPreparer,
-    user_decryptor::RealUserDecryptor,
+    backup_operator::RealBackupOperator, context_manager::RealContextManager,
+    crs_generator::RealCrsGenerator, initiator::RealInitiator, key_generator::RealKeyGenerator,
+    preprocessor::RealPreprocessor, public_decryptor::RealPublicDecryptor,
+    session::SessionPreparer, user_decryptor::RealUserDecryptor,
 };
 
 // === Insecure Feature-Specific Imports ===
@@ -154,35 +157,38 @@ pub fn compute_all_info(
 }
 
 #[cfg(not(feature = "insecure"))]
-pub type RealThresholdKms<PubS, PrivS, BackS> = ThresholdKms<
+pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInitiator<PrivS>,
-    RealUserDecryptor<PubS, PrivS, BackS>,
-    RealPublicDecryptor<PubS, PrivS, BackS>,
-    RealKeyGenerator<PubS, PrivS, BackS>,
+    RealUserDecryptor<PubS, PrivS>,
+    RealPublicDecryptor<PubS, PrivS>,
+    RealKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
-    RealCrsGenerator<PubS, PrivS, BackS>,
-    RealContextManager<PubS, PrivS, BackS>,
+    RealCrsGenerator<PubS, PrivS>,
+    RealContextManager<PubS, PrivS>,
+    RealBackupOperator<PubS, PrivS>,
 >;
 
 #[cfg(feature = "insecure")]
-pub type RealThresholdKms<PubS, PrivS, BackS> = ThresholdKms<
+pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInitiator<PrivS>,
-    RealUserDecryptor<PubS, PrivS, BackS>,
-    RealPublicDecryptor<PubS, PrivS, BackS>,
-    RealKeyGenerator<PubS, PrivS, BackS>,
-    RealInsecureKeyGenerator<PubS, PrivS, BackS>,
+    RealUserDecryptor<PubS, PrivS>,
+    RealPublicDecryptor<PubS, PrivS>,
+    RealKeyGenerator<PubS, PrivS>,
+    RealInsecureKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
-    RealCrsGenerator<PubS, PrivS, BackS>,
-    RealInsecureCrsGenerator<PubS, PrivS, BackS>,
-    RealContextManager<PubS, PrivS, BackS>,
+    RealCrsGenerator<PubS, PrivS>,
+    RealInsecureCrsGenerator<PubS, PrivS>,
+    RealContextManager<PubS, PrivS>,
+    RealBackupOperator<PubS, PrivS>,
 >;
 
 #[allow(clippy::too_many_arguments)]
-pub async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
+pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: ThresholdPartyConf,
     public_storage: PubS,
     private_storage: PrivS,
-    backup_storage: Option<BackS>,
+    backup_storage: Option<Vault>,
+    security_module: Option<SecurityModuleProxy>,
     mpc_listener: TcpListener,
     sk: PrivateSigKey,
     tls_identity: Option<BasicTLSConfig>,
@@ -190,14 +196,13 @@ pub async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
     rate_limiter_conf: Option<RateLimiterConfig>,
     shutdown_signal: F,
 ) -> anyhow::Result<(
-    RealThresholdKms<PubS, PrivS, BackS>,
+    RealThresholdKms<PubS, PrivS>,
     HealthServer<impl Health>,
     MetaStoreStatusServiceImpl,
 )>
 where
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
     // load keys from storage
@@ -428,7 +433,7 @@ where
         thread_core_health_reporter
             .write()
             .await
-            .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS, BackS>>>()
+            .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
             .await;
     }
     let initiator = RealInitiator {
@@ -527,6 +532,11 @@ where
         crypto_storage: crypto_storage.clone(),
     };
 
+    let backup_operator = RealBackupOperator {
+        crypto_storage: crypto_storage.clone(),
+        security_module,
+    };
+
     let kms = ThresholdKms::new(
         initiator,
         user_decryptor,
@@ -539,6 +549,7 @@ where
         #[cfg(feature = "insecure")]
         insecure_crs_generator,
         context_manager,
+        backup_operator,
         Arc::clone(&tracker),
         Arc::clone(&thread_core_health_reporter),
         abort_handle,

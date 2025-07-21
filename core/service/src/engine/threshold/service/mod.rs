@@ -15,6 +15,7 @@ mod kms_impl;
 pub use kms_impl::*;
 
 // Module components
+mod backup_operator;
 mod context_manager;
 mod crs_generator;
 mod initiator;

@@ -2070,7 +2070,8 @@ pub mod test_tools {
                     threshold_party_config,
                     cur_pub_storage,
                     cur_priv_storage,
-                    None as Option<PrivS>,
+                    None,
+                    None,
                     mpc_listener,
                     sk,
                     None,
@@ -2339,15 +2340,10 @@ pub mod test_tools {
             .unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel();
         let sk = get_core_signing_key(&priv_storage).await.unwrap();
-        let (kms, health_service) = RealCentralizedKms::new(
-            pub_storage,
-            priv_storage,
-            None as Option<PrivS>,
-            sk,
-            rate_limiter_conf,
-        )
-        .await
-        .expect("Could not create KMS");
+        let (kms, health_service) =
+            RealCentralizedKms::new(pub_storage, priv_storage, None, sk, rate_limiter_conf)
+                .await
+                .expect("Could not create KMS");
         let arc_kms = Arc::new(kms);
         let arc_kms_clone = Arc::clone(&arc_kms);
         tokio::spawn(async move {
@@ -2372,7 +2368,7 @@ pub mod test_tools {
             .expect("Could not start server");
         });
         let service_name = <CoreServiceEndpointServer<
-            RealCentralizedKms<FileStorage, FileStorage, FileStorage>,
+            RealCentralizedKms<FileStorage, FileStorage>,
         > as NamedService>::NAME;
         await_server_ready(service_name, listen_port).await;
         ServerHandle::new_centralized(arc_kms_clone, listen_port, tx)
@@ -2581,7 +2577,7 @@ pub(crate) mod tests {
             .await
             .expect("Failed to get health client");
         let service_name = <CoreServiceEndpointServer<
-            RealCentralizedKms<FileStorage, FileStorage, FileStorage>,
+            RealCentralizedKms<FileStorage, FileStorage>,
         > as NamedService>::NAME;
         let request = tonic::Request::new(HealthCheckRequest {
             service: service_name.to_string(),
@@ -2642,7 +2638,7 @@ pub(crate) mod tests {
             .await
             .expect("Failed to get core health client");
         let core_service_name = <CoreServiceEndpointServer<
-            RealThresholdKms<FileStorage, FileStorage, FileStorage>,
+            RealThresholdKms<FileStorage, FileStorage>,
         > as NamedService>::NAME;
         let status = get_status(&mut main_health_client, core_service_name)
             .await
@@ -2730,7 +2726,7 @@ pub(crate) mod tests {
             .await
             .expect("Failed to get health client");
         let service_name = <CoreServiceEndpointServer<
-            RealCentralizedKms<FileStorage, FileStorage, FileStorage>,
+            RealCentralizedKms<FileStorage, FileStorage>,
         > as NamedService>::NAME;
         let request = tonic::Request::new(HealthCheckRequest {
             service: service_name.to_string(),
@@ -2787,7 +2783,7 @@ pub(crate) mod tests {
             .await
             .expect("Failed to get core health client");
         let core_service_name = <CoreServiceEndpointServer<
-            RealThresholdKms<FileStorage, FileStorage, FileStorage>,
+            RealThresholdKms<FileStorage, FileStorage>,
         > as NamedService>::NAME;
         // Get health client for main server 1
         let mut threshold_health_client =
@@ -2838,7 +2834,7 @@ pub(crate) mod tests {
         // Ensure that the servers are ready
         for cur_handle in kms_servers.values() {
             let service_name = <CoreServiceEndpointServer<
-                RealThresholdKms<FileStorage, FileStorage, FileStorage>,
+                RealThresholdKms<FileStorage, FileStorage>,
             > as NamedService>::NAME;
             await_server_ready(service_name, cur_handle.service_port).await;
         }
@@ -2849,7 +2845,7 @@ pub(crate) mod tests {
             .await
             .expect("Failed to get core health client");
         let core_service_name = <CoreServiceEndpointServer<
-            RealThresholdKms<FileStorage, FileStorage, FileStorage>,
+            RealThresholdKms<FileStorage, FileStorage>,
         > as NamedService>::NAME;
         let status = get_status(&mut core_health_client, core_service_name)
             .await
