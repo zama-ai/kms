@@ -77,11 +77,11 @@ kmsCore:
           pcr2: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     # Threshold value is the number of corruptions that the protocol handles.
     # This value appears in the config file as `threshold`.
-    multiplier: 1.1
+    multiplier: 2
     maxInterval: 1
     maxElapsedTime: 300
     networkTimeout: 300
-    initialIntervalMs: 25
+    initialIntervalMs: 100
     cleanupIntervalSecs: 2
 
     thresholdValue: 1
@@ -99,6 +99,22 @@ kmsCore:
     cpuCount: 6
     # Enclave Memory in GiB
     memoryGiB: 20
+    grpcPeerProxy:
+      resources:
+        requests:
+          memory: 12Gi
+          cpu: 10
+        limits:
+          memory: 24Gi
+          cpu: 12
+    enclavePeerProxy:
+      resources:
+        requests:
+          memory: 1Gi
+          cpu: 1
+        limits:
+          memory: 1Gi
+          cpu: 1
     cid: 20
     eifPath: /app/kms/core/service/enclave.eif
     eifSignKey: 00000000-0000-0000-0000-000000000000

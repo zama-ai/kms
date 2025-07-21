@@ -269,6 +269,13 @@ spec:
                      "cid" .Values.kmsCore.nitroEnclave.cid
                      "port" .Values.kmsCore.ports.peer
                 ) | indent 10 | trim }}
+          resources:
+            requests:
+              memory: {{ .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources.requests.memory }}
+              cpu: {{ .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources.requests.cpu }}
+            limits:
+              memory: {{ .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources.limits.memory }}
+              cpu: {{ .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources.limits.cpu }}
         {{- /* Init GRPC External Peers Proxy Sockets */}}
         {{- if .Values.kmsCore.thresholdMode.peersList }}
           {{- range .Values.kmsCore.thresholdMode.peersList }}
@@ -279,6 +286,13 @@ spec:
                      "address" .host
                      "port" .port
                 ) | indent 10 | trim }}
+          resources:
+            requests:
+              memory: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.requests.memory }}
+              cpu: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.requests.cpu }}
+            limits:
+              memory: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.limits.memory }}
+              cpu: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.limits.cpu }}
           {{- end }}
         {{- else }}
           {{- range $i := $peersIDList }}
@@ -289,6 +303,13 @@ spec:
                      "address" (printf "%s-%d" $kmsCoreName (int $i))
                      "port" $.Values.kmsCore.ports.peer
                 ) | indent 10 | trim }}
+          resources:
+            requests:
+              memory: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.requests.memory }}
+              cpu: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.requests.cpu }}
+            limits:
+              memory: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.limits.memory }}
+              cpu: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.limits.cpu }}
           {{- end }}
         {{- end }}
         {{- end }}
