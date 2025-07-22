@@ -9,7 +9,10 @@ use kms_grpc::{
 };
 use observability::{
     metrics,
-    metrics_names::{OP_KEYGEN_PREPROC, TAG_PARTY_ID},
+    metrics_names::{
+        ERR_CANCELLED, ERR_INVALID_REQUEST, ERR_USER_PREPROC_FAILED, ERR_WITH_META_STORAGE,
+        OP_KEYGEN_PREPROC, TAG_PARTY_ID,
+    },
 };
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
@@ -69,10 +72,6 @@ impl RealPreprocessor {
         request_id: RequestId,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
-        let _request_counter = metrics::METRICS
-            .increment_request_counter(OP_KEYGEN_PREPROC)
-            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
-
         // Prepare the timer before giving it to the tokio task
         // that runs the computation
         let timer = metrics::METRICS
@@ -84,21 +83,36 @@ impl RealPreprocessor {
             });
         {
             let mut guarded_meta_store = self.preproc_buckets.write().await;
-            guarded_meta_store.insert(&request_id)?;
+            guarded_meta_store.insert(&request_id).inspect_err(|_| {
+                let _ = metrics::METRICS
+                    .increment_error_counter(OP_KEYGEN_PREPROC, ERR_WITH_META_STORAGE);
+            })?;
         }
         // Derive a sequence of sessionId from request_id
-        let own_identity = self.session_preparer.own_identity()?;
+        let own_identity = self.session_preparer.own_identity().inspect_err(|_| {
+            let _ = metrics::METRICS
+                .increment_error_counter(OP_KEYGEN_PREPROC, ERR_USER_PREPROC_FAILED);
+        })?;
 
         let sids = (0..self.num_sessions_preproc)
             .map(|ctr| request_id.derive_session_id_with_counter(ctr as u64))
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .collect::<anyhow::Result<Vec<_>>>()
+            .inspect_err(|_| {
+                let _ = metrics::METRICS
+                    .increment_error_counter(OP_KEYGEN_PREPROC, ERR_INVALID_REQUEST);
+            })?;
+
         let base_sessions = {
             let mut res = Vec::with_capacity(sids.len());
             for sid in sids {
                 let base_session = self
                     .session_preparer
                     .make_base_session(sid, NetworkMode::Sync)
-                    .await?;
+                    .await
+                    .inspect_err(|_| {
+                        let _ = metrics::METRICS
+                            .increment_error_counter(OP_KEYGEN_PREPROC, ERR_USER_PREPROC_FAILED);
+                    })?;
                 res.push(base_session)
             }
             res
@@ -111,7 +125,12 @@ impl RealPreprocessor {
         let prss_setup = tonic_some_or_err(
             (*self.prss_setup.read().await).clone(),
             "No PRSS setup exists".to_string(),
-        )?;
+        )
+        .inspect_err(|_| {
+            let _ = metrics::METRICS
+                .increment_error_counter(OP_KEYGEN_PREPROC, ERR_USER_PREPROC_FAILED);
+        })?;
+
         let token = CancellationToken::new();
         {
             self.ongoing.lock().await.insert(request_id, token.clone());
@@ -132,6 +151,8 @@ impl RealPreprocessor {
                         // Delete any stored data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let mut guarded_bucket_store = bucket_store_cancellation.write().await;
                         let _ = guarded_bucket_store.delete(&request_id);
+                        let _ = metrics::METRICS
+                .increment_error_counter(OP_KEYGEN_PREPROC, ERR_CANCELLED);
                         tracing::info!("Trying to clean up any already written material.")
                     },
                 }
@@ -205,13 +226,27 @@ impl RealPreprocessor {
         // Update the bucket store with the result (success or error)
         let mut guarded_meta_store = bucket_store.write().await;
         // We cannot do much if updating the storage fails at this point...
-        let _ = guarded_meta_store.update(req_id, handle_update.clone());
+        let meta_store_write = guarded_meta_store.update(req_id, handle_update.clone());
 
         // Log completion status
-        if handle_update.is_ok() {
+        if handle_update.is_ok() && meta_store_write.is_ok() {
             tracing::info!("Preproc Finished Successfully P[{:?}]", own_identity);
         } else {
-            tracing::info!("Preproc Failed P[{:?}]", own_identity);
+            if handle_update.is_err() {
+                tracing::info!("Preproc Failed P[{:?}]", own_identity);
+                let _ = metrics::METRICS
+                    .increment_error_counter(OP_KEYGEN_PREPROC, ERR_USER_PREPROC_FAILED);
+                return;
+            }
+
+            if meta_store_write.is_err() {
+                tracing::info!(
+                    "Preproc Failed due to meta store issue P[{:?}]",
+                    own_identity
+                );
+                let _ = metrics::METRICS
+                    .increment_error_counter(OP_KEYGEN_PREPROC, ERR_WITH_META_STORAGE);
+            }
         }
     }
 }
@@ -222,6 +257,10 @@ impl KeyGenPreprocessor for RealPreprocessor {
         &self,
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let _request_counter = metrics::METRICS
+            .increment_request_counter(OP_KEYGEN_PREPROC)
+            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
+
         let permit = self
             .rate_limiter
             .start_preproc()
@@ -234,13 +273,20 @@ impl KeyGenPreprocessor for RealPreprocessor {
             "Request ID is not set (key_gen_preproc)".to_string(),
         )?
         .into();
-        validate_request_id(&request_id)?;
+        validate_request_id(&request_id).inspect_err(|_| {
+            let _ =
+                metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC, ERR_INVALID_REQUEST);
+        })?;
 
         //Retrieve the DKG parameters
         let dkg_params = tonic_handle_potential_err(
             retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
-        )?;
+        )
+        .inspect_err(|_| {
+            let _ =
+                metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC, ERR_INVALID_REQUEST);
+        })?;
 
         //Ensure there's no entry in preproc buckets for that request_id
         let entry_exists = {
@@ -251,11 +297,17 @@ impl KeyGenPreprocessor for RealPreprocessor {
         let keyset_config = tonic_handle_potential_err(
             preproc_proto_to_keyset_config(&inner.keyset_config),
             "Failed to process keyset config".to_string(),
-        )?;
+        )
+        .inspect_err(|_| {
+            let _ =
+                metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC, ERR_INVALID_REQUEST);
+        })?;
 
-        //If the entry did not exist before, start the preproc
+        // If the entry did not exist before, start the preproc
+        // NOTE: We currently consider an existing entry is NOT an error
         if !entry_exists {
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
+            // We don't increment the error counter here but rather in launch_dkg_preproc
             tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
         } else {
             tracing::warn!(

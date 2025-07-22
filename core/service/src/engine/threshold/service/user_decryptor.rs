@@ -13,8 +13,10 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_RATE_LIMIT_EXCEEDED, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID,
-        TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+        ERR_INVALID_REQUEST, ERR_KEY_NOT_FOUND, ERR_RATE_LIMIT_EXCEEDED,
+        ERR_USER_DECRYPTION_FAILED, ERR_WITH_META_STORAGE, OP_USER_DECRYPT_INNER,
+        OP_USER_DECRYPT_REQUEST, TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
+        TAG_TFHE_TYPE,
     },
 };
 use rand::{CryptoRng, RngCore};
@@ -324,7 +326,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             tonic_handle_potential_err(
                 validate_user_decrypt_req(&inner),
                 format!("Failed to validate user decryption request: {inner:?}"),
-            )?;
+            )
+            .inspect_err(|_| {
+                let _ = metrics::METRICS
+                    .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_INVALID_REQUEST);
+            })?;
 
         if let Some(b) = timer.as_mut() {
             //We log but we don't want to return early because timer failed
@@ -348,13 +354,21 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             tonic_handle_potential_err(
                 guarded_meta_store.insert(&req_id),
                 "Could not insert user decryption request".to_string(),
-            )?;
+            )
+            .inspect_err(|_| {
+                let _ = metrics::METRICS
+                    .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_WITH_META_STORAGE);
+            })?;
         }
 
         tonic_handle_potential_err(
             crypto_storage.refresh_threshold_fhe_keys(&key_id).await,
             format!("Cannot find threshold keys with key ID {key_id}"),
-        )?;
+        )
+        .inspect_err(|_| {
+            let _ = metrics::METRICS
+                .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
+        })?;
 
         let prep = Arc::clone(&self.session_preparer);
         let dec_mode = self.decryption_mode;
@@ -408,9 +422,20 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 match tmp {
                     Ok((payload, sig)) => {
                         // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store.update(&req_id, Ok((payload, sig)));
+                        let _ = guarded_meta_store
+                            .update(&req_id, Ok((payload, sig)))
+                            .inspect_err(|_| {
+                                let _ = metrics::METRICS.increment_error_counter(
+                                    OP_USER_DECRYPT_REQUEST,
+                                    ERR_WITH_META_STORAGE,
+                                );
+                            });
                     }
                     Result::Err(e) => {
+                        let _ = metrics::METRICS.increment_error_counter(
+                            OP_USER_DECRYPT_REQUEST,
+                            ERR_USER_DECRYPTION_FAILED,
+                        );
                         // We cannot do much if updating the storage fails at this point...
                         let _ = guarded_meta_store
                             .update(&req_id, Err(format!("Failed decryption: {e}")));
