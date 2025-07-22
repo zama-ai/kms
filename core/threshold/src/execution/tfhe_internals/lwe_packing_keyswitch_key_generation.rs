@@ -25,6 +25,7 @@ fn generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
     output_glwe_sk: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     lwe_packing_keyswitch_key: &mut LwePackingKeyswitchKeyShares<Z, EXTENSION_DEGREE>,
+    encryption_type: EncryptionType,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) where
     Z: BaseRing,
@@ -56,8 +57,7 @@ fn generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
             // Here  we take the decomposition term from the native torus, bring it to the torus we
             // are working with by dividing by the scaling factor and the encryption will take care
             // of mapping that back to the native torus
-            //We only generate KSK in the smaller encryption domain, so we hardcode the 64 value here
-            let shift = 64 - decomp_base_log.0 * level.0;
+            let shift = encryption_type.bit_len() - decomp_base_log.0 * level.0;
             message[0] = input_key_element << shift;
         }
 
@@ -66,7 +66,7 @@ fn generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
             packing_keyswitch_key_block,
             &decomposition_plaintexts_buffer,
             generator,
-            EncryptionType::Bits64,
+            encryption_type,
         );
     }
 }
@@ -76,6 +76,7 @@ pub fn allocate_and_generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_D
     output_glwe_sk: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     decomp_base_log: DecompositionBaseLog,
     decomp_level_count: DecompositionLevelCount,
+    encryption_type: EncryptionType,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) -> LwePackingKeyswitchKeyShares<Z, EXTENSION_DEGREE>
 where
@@ -92,6 +93,12 @@ where
         output_glwe_sk.polynomial_size(),
     );
 
-    generate_lwe_packing_keyswitch_key(input_lwe_sk, output_glwe_sk, &mut new_ksk, generator);
+    generate_lwe_packing_keyswitch_key(
+        input_lwe_sk,
+        output_glwe_sk,
+        &mut new_ksk,
+        encryption_type,
+        generator,
+    );
     new_ksk
 }

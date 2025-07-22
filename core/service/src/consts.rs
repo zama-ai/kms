@@ -29,8 +29,15 @@ pub const MINIMUM_SESSIONS_PREPROC: u16 = 2;
 pub const PRSS_INIT_REQ_ID: &str =
     "0000000000000000000000000000000000000000000000000000000000000001";
 
+#[cfg(feature = "slow_tests")]
 pub const DEFAULT_AMOUNT_PARTIES: usize = 13;
+#[cfg(feature = "slow_tests")]
 pub const DEFAULT_THRESHOLD: usize = 4;
+
+#[cfg(not(feature = "slow_tests"))]
+pub const DEFAULT_AMOUNT_PARTIES: usize = 4;
+#[cfg(not(feature = "slow_tests"))]
+pub const DEFAULT_THRESHOLD: usize = 1;
 
 pub const SAFE_SER_SIZE_LIMIT: u64 = threshold_fhe::hashing::SAFE_SER_SIZE_LIMIT;
 

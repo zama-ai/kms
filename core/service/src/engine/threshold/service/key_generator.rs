@@ -10,23 +10,29 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN, OP_KEYGEN,
-        TAG_PARTY_ID,
+        OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN,
+        OP_INSECURE_SNS_COMPRESSION_KEYGEN, OP_KEYGEN, OP_SNS_COMPRESSION_KEYGEN, TAG_PARTY_ID,
     },
 };
-use tfhe::integer::compression_keys::DecompressionKey;
+use tfhe::{
+    integer::compression_keys::DecompressionKey,
+    shortint::list_compression::NoiseSquashingCompressionKey,
+};
 use threshold_fhe::{
     algebra::{base_ring::Z128, galois_rings::degree_4::ResiduePolyF4Z128},
     execution::{
         endpoints::keygen::{
             distributed_decompression_keygen_z128,
             distributed_keygen_from_optional_compression_sk_z128, distributed_keygen_z128,
-            CompressionPrivateKeySharesEnum, FhePubKeySet, GlweSecretKeyShareEnum, PrivateKeySet,
+            distributed_sns_compression_keygen_z128, CompressionPrivateKeySharesEnum, FhePubKeySet,
+            GlweSecretKeyShareEnum, PrivateKeySet,
         },
         keyset_config as ddec_keyset_config,
         online::preprocessing::DKGPreprocessing,
         runtime::session::BaseSession,
-        tfhe_internals::parameters::DKGParams,
+        tfhe_internals::{
+            compression_decompression_key::SnsCompressionPrivateKeyShares, parameters::DKGParams,
+        },
     },
     networking::NetworkMode,
 };
@@ -55,7 +61,10 @@ use crate::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
     },
-    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
+    vault::storage::{
+        crypto_material::ThresholdCryptoMaterialStorage, read_pk_at_request_id,
+        read_versioned_at_request_id, Storage,
+    },
 };
 
 // === Current Module Imports ===
@@ -173,6 +182,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 PreprocHandleWithMode::Secure(_),
                 ddec_keyset_config::KeySetConfig::DecompressionOnly,
             ) => OP_DECOMPRESSION_KEYGEN,
+            (
+                PreprocHandleWithMode::Secure(_),
+                ddec_keyset_config::KeySetConfig::AddSnsCompressionKey,
+            ) => OP_SNS_COMPRESSION_KEYGEN,
             (PreprocHandleWithMode::Insecure, ddec_keyset_config::KeySetConfig::Standard(_)) => {
                 OP_INSECURE_KEYGEN
             }
@@ -180,6 +193,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 PreprocHandleWithMode::Insecure,
                 ddec_keyset_config::KeySetConfig::DecompressionOnly,
             ) => OP_INSECURE_DECOMPRESSION_KEYGEN,
+            (
+                PreprocHandleWithMode::Insecure,
+                ddec_keyset_config::KeySetConfig::AddSnsCompressionKey,
+            ) => OP_INSECURE_SNS_COMPRESSION_KEYGEN,
         };
 
         let _request_counter = metrics::METRICS
@@ -259,6 +276,22 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     )
                     .await
                 }
+                ddec_keyset_config::KeySetConfig::AddSnsCompressionKey => {
+                    Self::sns_compression_key_gen_background(
+                        &req_id_clone,
+                        base_session,
+                        meta_store,
+                        crypto_storage,
+                        preproc_handle_w_mode,
+                        sk,
+                        dkg_params,
+                        internal_keyset_config
+                            .keyset_added_info().expect("keyset added info must be set for secure key generation and should have been validated before starting key generation").to_owned(),
+                        eip712_domain_copy,
+                        permit,
+                    )
+                    .await
+                }
             }
         };
         self.tracker
@@ -296,8 +329,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
         let inner = request.into_inner();
         tracing::info!(
-            "Keygen Request ID: {:?}, insecure={}",
+            "Keygen starting with request_id={:?}, keyset_config={:?}, keyset_added_info={:?}, insecure={}",
             inner.request_id,
+            inner.keyset_config,
+            inner.keyset_added_info,
             insecure
         );
         let request_id: RequestId = tonic_some_or_err(
@@ -369,6 +404,46 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             request_id: Some(request_id.into()),
             key_results: convert_key_response(res),
         }))
+    }
+
+    async fn sns_compression_key_gen_closure<P>(
+        base_session: &mut BaseSession,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        params: DKGParams,
+        base_key_id: &RequestId,
+        preprocessing: &mut P,
+    ) -> anyhow::Result<(
+        SnsCompressionPrivateKeyShares<Z128, 4>,
+        NoiseSquashingCompressionKey,
+    )>
+    where
+        P: DKGPreprocessing<threshold_fhe::algebra::galois_rings::common::ResiduePoly<Z128, 4>>
+            + Send
+            + ?Sized,
+    {
+        let private_sns_key_share = {
+            let threshold_keys = crypto_storage
+                .read_guarded_threshold_fhe_keys_from_cache(base_key_id)
+                .await?;
+            threshold_keys
+                .private_keys
+                .glwe_secret_key_share_sns_as_lwe
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("missing sns secret key share"))?
+        };
+        let (sns_sk_share, shortint_sns_compression_key) = distributed_sns_compression_keygen_z128(
+            base_session,
+            preprocessing,
+            params,
+            &private_sns_key_share,
+        )
+        .await?;
+
+        tracing::info!(
+            "Internal SNS compression key generation completed for base key ID: {}",
+            base_key_id
+        );
+        Ok((sns_sk_share, shortint_sns_compression_key))
     }
 
     async fn decompression_key_gen_closure<P>(
@@ -600,6 +675,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     None,
                     None,
                     dummy_sns_secret_key,
+                    None,
                 )?
                 .into_raw_parts();
 
@@ -718,6 +794,178 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             "Decompression DKG protocol took {} ms to complete for request {req_id}",
             start.elapsed().as_millis()
         );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn sns_compression_key_gen_background(
+        req_id: &RequestId,
+        mut base_session: BaseSession,
+        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        preproc_handle_w_mode: PreprocHandleWithMode,
+        sk: Arc<PrivateSigKey>,
+        params: DKGParams,
+        keyset_added_info: KeySetAddedInfo,
+        eip712_domain: Option<alloy_sol_types::Eip712Domain>,
+        permit: OwnedSemaphorePermit,
+    ) {
+        let _permit = permit;
+        let start = Instant::now();
+        tracing::info!("Starting SNS compression key generation for request {req_id}");
+
+        let base_key_id: RequestId = match keyset_added_info
+            .base_keyset_id_for_sns_compression_key
+            .ok_or(anyhow::anyhow!(
+            "missing key ID that should be used as the base for the sns compression key generation"
+        )) {
+            Ok(k) => k.into(),
+            Err(e) => {
+                let mut guarded_meta_storage = meta_store.write().await;
+                // We cannot do much if updating the storage fails at this point...
+                let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));
+                return;
+            }
+        };
+
+        let dkg_res = match preproc_handle_w_mode {
+            PreprocHandleWithMode::Insecure => {
+                // sanity check to make sure we're using the insecure feature
+                #[cfg(not(feature = "insecure"))]
+                {
+                    panic!("attempting to call insecure compression keygen when the insecure feature is not set");
+                }
+                #[cfg(feature = "insecure")]
+                {
+                    Err(anyhow::anyhow!(
+                        "insecure sns compression key generation is not supported yet"
+                    ))
+                }
+            }
+            PreprocHandleWithMode::Secure(preproc_handle) => {
+                let mut preproc_handle = preproc_handle.lock().await;
+                Self::sns_compression_key_gen_closure(
+                    &mut base_session,
+                    crypto_storage.clone(),
+                    params,
+                    &base_key_id,
+                    preproc_handle.as_mut(),
+                )
+                .await
+            }
+        };
+
+        // Make sure the dkg ended nicely
+        let (sns_compression_sk_shares, sns_compression_key) = match dkg_res {
+            Ok(k) => k,
+            Err(e) => {
+                // If dkg errored out, update status
+                let mut guarded_meta_storage = meta_store.write().await;
+                // We cannot do much if updating the storage fails at this point...
+                let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));
+                return;
+            }
+        };
+
+        let (threshold_fhe_keys, fhe_pub_key_set) = match Self::add_sns_compression_key_to_keyset(
+            &base_key_id,
+            crypto_storage.clone(),
+            sns_compression_key,
+            sns_compression_sk_shares,
+        )
+        .await
+        {
+            Ok(res) => res,
+            Err(e) => {
+                let mut guarded_meta_storage = meta_store.write().await;
+                // We cannot do much if updating the storage fails at this point...
+                let _ = guarded_meta_storage.update(
+                    req_id,
+                    Err(format!("Failed to add sns compression key due to {e}")),
+                );
+                return;
+            }
+        };
+
+        // Compute all the info required for storing
+        let info = match compute_all_info(&sk, &fhe_pub_key_set, eip712_domain.as_ref()) {
+            Ok(info) => info,
+            Err(_) => {
+                let mut guarded_meta_storage = meta_store.write().await;
+                // We cannot do much if updating the storage fails at this point...
+                let _ = guarded_meta_storage
+                    .update(req_id, Err("Failed to compute key info".to_string()));
+                return;
+            }
+        };
+
+        // NOTE: we store the result in base key ID and not the req_id
+        crypto_storage
+            .write_threshold_keys_with_meta_store(
+                req_id,
+                threshold_fhe_keys,
+                fhe_pub_key_set,
+                info,
+                meta_store,
+            )
+            .await;
+
+        tracing::info!(
+            "Sns compression DKG protocol took {} ms to complete for request {req_id}",
+            start.elapsed().as_millis()
+        );
+    }
+
+    async fn add_sns_compression_key_to_keyset(
+        base_key_id: &RequestId,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+        sns_compression_key: NoiseSquashingCompressionKey,
+        sns_compression_sk_shares: SnsCompressionPrivateKeyShares<Z128, 4>,
+    ) -> anyhow::Result<(ThresholdFheKeys, FhePubKeySet)> {
+        // update the private keys
+        let threshold_fhe_keys = crypto_storage
+            .read_guarded_threshold_fhe_keys_from_cache(base_key_id)
+            .await?;
+
+        let mut new_threshold_fhe_keys = (*threshold_fhe_keys).clone();
+        new_threshold_fhe_keys.private_keys.glwe_sns_compression_key =
+            Some(sns_compression_sk_shares);
+
+        // update the server keys
+        let pub_storage = crypto_storage.inner.public_storage.clone();
+        let guarded_pub_storage = pub_storage.lock().await;
+        let old_server_key: tfhe::ServerKey = read_versioned_at_request_id(
+            &(*guarded_pub_storage),
+            base_key_id,
+            &PubDataType::ServerKey.to_string(),
+        )
+        .await?;
+
+        let server_key_parts = old_server_key.into_raw_parts();
+        let new_server_key = tfhe::ServerKey::from_raw_parts(
+            server_key_parts.0,
+            server_key_parts.1,
+            server_key_parts.2,
+            server_key_parts.3,
+            server_key_parts.4,
+            Some(
+                tfhe::integer::ciphertext::NoiseSquashingCompressionKey::from_raw_parts(
+                    sns_compression_key,
+                ),
+            ),
+            server_key_parts.6,
+        );
+
+        // just read the public key since we need it in the return type, but no need to update it
+        let kms_grpc::rpc_types::WrappedPublicKeyOwned::Compact(compact_pk) =
+            read_pk_at_request_id(&(*guarded_pub_storage), base_key_id).await?;
+
+        Ok((
+            new_threshold_fhe_keys,
+            FhePubKeySet {
+                public_key: compact_pk,
+                server_key: new_server_key,
+            },
+        ))
     }
 
     async fn key_gen_from_existing_compression_sk<P>(

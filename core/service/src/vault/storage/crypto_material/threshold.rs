@@ -89,7 +89,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     /// must be used, otherwise the storage state may become inconsistent.
     pub async fn write_threshold_keys_with_meta_store(
         &self,
-        req_id: &RequestId,
+        key_id: &RequestId,
         threshold_fhe_keys: ThresholdFheKeys,
         fhe_key_set: FhePubKeySet,
         info: HashMap<PubDataType, SignedPubDataHandleInternal>,
@@ -110,7 +110,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
             let store_result = store_versioned_at_request_id(
                 &mut (*priv_storage),
-                req_id,
+                key_id,
                 &threshold_fhe_keys,
                 &PrivDataType::FheKeyInfo.to_string(),
             )
@@ -119,7 +119,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             if let Err(e) = &store_result {
                 tracing::error!(
                     "Failed to store threshold FHE keys to private storage for request {}: {}",
-                    req_id,
+                    key_id,
                     e
                 );
             }
@@ -129,14 +129,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 Some(mut x) => {
                     let backup_result = store_versioned_at_request_id(
                         &mut (*x),
-                        req_id,
+                        key_id,
                         &threshold_fhe_keys,
                         &PrivDataType::FheKeyInfo.to_string(),
                     )
                     .await;
 
                     if let Err(e) = &backup_result {
-                        tracing::error!("Failed to store threshold FHE keys to backup storage for request {}: {}", req_id, e);
+                        tracing::error!("Failed to store threshold FHE keys to backup storage for request {}: {}", key_id, e);
                     }
                     backup_result.is_ok()
                 }
@@ -149,13 +149,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             let mut pub_storage = self.inner.public_storage.lock().await;
             let result = store_pk_at_request_id(
                 &mut (*pub_storage),
-                req_id,
+                key_id,
                 WrappedPublicKey::Compact(&fhe_key_set.public_key),
             )
             .await;
 
             if let Err(e) = &result {
-                tracing::error!("Failed to store public key for request {}: {}", req_id, e);
+                tracing::error!("Failed to store public key for request {}: {}", key_id, e);
             }
             result.is_ok()
         };
@@ -163,28 +163,29 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             let mut pub_storage = self.inner.public_storage.lock().await;
             let result = store_versioned_at_request_id(
                 &mut (*pub_storage),
-                req_id,
+                key_id,
                 &fhe_key_set.server_key,
                 &PubDataType::ServerKey.to_string(),
             )
             .await;
 
             if let Err(e) = &result {
-                tracing::error!("Failed to store server key for request {}: {}", req_id, e);
+                tracing::error!("Failed to store server key for request {}: {}", key_id, e);
             }
             result.is_ok()
         };
 
         let (r1, r2, r3) = tokio::join!(f1, f2, f3);
 
-        //Try to store the new data
-        tracing::info!("Storing DKG objects for request {}", req_id);
-        let meta_update_result = guarded_meta_storage.update(req_id, Ok(info));
+        // Try to store the new data
+        tracing::info!("Storing DKG objects for key ID {}", key_id);
+
+        let meta_update_result = guarded_meta_storage.update(key_id, Ok(info));
         if let Err(e) = &meta_update_result {
             tracing::error!(
                 "Error ({}) while updating KeyGen meta store for {}",
                 e,
-                req_id
+                key_id
             );
         }
 
@@ -194,28 +195,28 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             {
                 let mut guarded_pk_cache = self.inner.pk_cache.write().await;
                 let previous = guarded_pk_cache.insert(
-                    *req_id,
+                    *key_id,
                     WrappedPublicKeyOwned::Compact(fhe_key_set.public_key.clone()),
                 );
                 if previous.is_some() {
-                    tracing::warn!("PK already exists in pk_cache for {}, overwriting", req_id);
+                    tracing::warn!("PK already exists in pk_cache for {}, overwriting", key_id);
                 } else {
-                    tracing::debug!("Added new PK to pk_cache for {}", req_id);
+                    tracing::debug!("Added new PK to pk_cache for {}", key_id);
                 }
             }
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
-                let previous = guarded_fhe_keys.insert(*req_id, threshold_fhe_keys);
+                let previous = guarded_fhe_keys.insert(*key_id, threshold_fhe_keys);
                 if previous.is_some() {
                     tracing::warn!(
                         "Threshold FHE keys already exist in cache for {}, overwriting",
-                        req_id
+                        key_id
                     );
                 } else {
-                    tracing::debug!("Added new threshold FHE keys to cache for {}", req_id);
+                    tracing::debug!("Added new threshold FHE keys to cache for {}", key_id);
                 }
             }
-            tracing::info!("Finished DKG for Request Id {req_id}.");
+            tracing::info!("Finished DKG for Request Id {key_id}.");
         } else {
             // Try to delete stored data to avoid anything dangling
             // Ignore any failure to delete something since it might be
@@ -223,9 +224,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // In any case, we can't do much.
             tracing::warn!(
                 "Failed to ensure existence of threshold key material for request with ID: {}",
-                req_id
+                key_id
             );
-            self.purge_key_material(req_id, guarded_meta_storage).await;
+            self.purge_key_material(key_id, guarded_meta_storage).await;
         }
     }
 

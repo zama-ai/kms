@@ -160,6 +160,110 @@ where
 }
 
 #[cfg(feature = "non-wasm")]
+pub(crate) async fn async_generate_sns_compression_keys<PubS, PrivS>(
+    sk: &PrivateSigKey,
+    storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
+    params: DKGParams,
+    exsiting_keyset_id: &RequestId,
+    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+{
+    use tfhe::integer::ciphertext::NoiseSquashingCompressionPrivateKey;
+
+    use crate::vault::storage::read_versioned_at_request_id;
+
+    storage
+        .refresh_centralized_fhe_keys(exsiting_keyset_id)
+        .await?;
+
+    let KmsFheKeyHandles {
+        client_key,
+        decompression_key,
+        public_key_info: _, // this needs to be recomputed
+    } = storage
+        .read_cloned_centralized_fhe_keys_from_cache(exsiting_keyset_id)
+        .await?;
+    let (
+        client_key,
+        compact_private_key,
+        compression_private_key,
+        sns_private_key,
+        _sns_compression_private_key,
+        client_tag,
+    ) = client_key.into_raw_parts();
+
+    let sns_compression_params = match params {
+        DKGParams::WithoutSnS(_) => {
+            anyhow::bail!("SNS compression keys can only be generated with SnS parameters");
+        }
+        DKGParams::WithSnS(dkgparams_sn_s) => match dkgparams_sn_s.sns_compression_params {
+            Some(sns_compression_params) => sns_compression_params,
+            None => {
+                anyhow::bail!(
+                    "SNS compression parameters are required to generate SNS compression keys"
+                );
+            }
+        },
+    };
+
+    let int_sns_compression_private_key =
+        NoiseSquashingCompressionPrivateKey::new(sns_compression_params);
+    let int_sns_compression_key = match &sns_private_key {
+        Some(sns_private_key) => {
+            sns_private_key.new_noise_squashing_compression_key(&int_sns_compression_private_key)
+        }
+        None => {
+            anyhow::bail!(
+                "SNS private key is missing for keyset {}",
+                exsiting_keyset_id
+            );
+        }
+    };
+
+    let new_client_key = ClientKey::from_raw_parts(
+        client_key,
+        compact_private_key,
+        compression_private_key,
+        sns_private_key,
+        Some(int_sns_compression_private_key),
+        client_tag,
+    );
+
+    let pub_storage = storage.inner.public_storage.lock().await;
+    let old_server_key: tfhe::ServerKey = read_versioned_at_request_id(
+        &(*pub_storage),
+        exsiting_keyset_id,
+        &kms_grpc::rpc_types::PubDataType::ServerKey.to_string(),
+    )
+    .await?;
+
+    let kms_grpc::rpc_types::WrappedPublicKeyOwned::Compact(compact_public_key) =
+        read_pk_at_request_id(&(*pub_storage), exsiting_keyset_id).await?;
+
+    let old_parts = old_server_key.into_raw_parts();
+    let new_server_key = tfhe::ServerKey::from_raw_parts(
+        old_parts.0,
+        old_parts.1,
+        old_parts.2,
+        old_parts.3,
+        old_parts.4,
+        Some(int_sns_compression_key),
+        old_parts.6,
+    );
+
+    let pks = FhePubKeySet {
+        public_key: compact_public_key,
+        server_key: new_server_key,
+    };
+    let handles =
+        KmsFheKeyHandles::new(sk, new_client_key, &pks, decompression_key, eip712_domain)?;
+    Ok((pks, handles))
+}
+
+#[cfg(feature = "non-wasm")]
 pub(crate) async fn async_generate_crs(
     sk: &PrivateSigKey,
     params: DKGParams,
@@ -250,9 +354,9 @@ pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientK
     let compression_params = params
         .get_params_basics_handle()
         .get_compression_decompression_params();
-    let noise_squashing_params = match params {
+    let sns_params = match params {
         DKGParams::WithoutSnS(_) => None,
-        DKGParams::WithSnS(dkg_sns) => Some(dkg_sns.sns_params),
+        DKGParams::WithSnS(dkg_sns) => Some((dkg_sns.sns_params, dkg_sns.sns_compression_params)),
     };
     let config = ConfigBuilder::with_custom_parameters(pbs_params);
     let config = if let Some(dedicated_pk_params) =
@@ -267,8 +371,13 @@ pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientK
     } else {
         config
     };
-    let config = if let Some(params) = noise_squashing_params {
-        config.enable_noise_squashing(params)
+    let config = if let Some((params, compression_params)) = sns_params {
+        let config = config.enable_noise_squashing(params);
+        if let Some(compression_params) = compression_params {
+            config.enable_noise_squashing_compression(compression_params)
+        } else {
+            config
+        }
     } else {
         config
     };
@@ -1511,5 +1620,26 @@ pub(crate) mod tests {
         let new_val = TestType { i: 33 };
         let wrong_val = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &new_val, None).unwrap();
         assert_ne!(base, wrong_val);
+    }
+
+    #[test]
+    fn sanity_check_sns_compression_test_params() {
+        use tfhe::prelude::{FheDecrypt, FheEncrypt, SquashNoise};
+        let params = TEST_PARAM;
+        let cks = crate::engine::centralized::central_kms::generate_client_fhe_key(params, None);
+        let sks = cks.generate_server_key();
+
+        tfhe::set_server_key(sks);
+        let pt = 12u32;
+        let ct = tfhe::FheUint32::encrypt(pt, &cks);
+        let large_ct = ct.squash_noise().unwrap();
+
+        let compressed_large_ct = tfhe::CompressedSquashedNoiseCiphertextListBuilder::new()
+            .push(large_ct)
+            .build()
+            .unwrap();
+        let new_large_ct: tfhe::SquashedNoiseFheUint = compressed_large_ct.get(0).unwrap().unwrap();
+        let actual_pt: u32 = new_large_ct.decrypt(&cks);
+        assert_eq!(actual_pt, pt);
     }
 }
