@@ -182,18 +182,35 @@ impl BackupMaterial {
         operator_role: Role,
     ) -> bool {
         if self.backup_id != backup_id {
+            tracing::error!(
+                "backup_id mismatch: expected {} but got {}",
+                self.backup_id,
+                backup_id
+            );
             return false;
         }
         if self.custodian_role != custodian_role {
+            tracing::error!(
+                "custodian_role mismatch: expected {} but got {}",
+                self.custodian_role,
+                custodian_role
+            );
             return false;
         }
         if self.operator_role != operator_role {
+            tracing::error!(
+                "operator_role mismatch: expected {} but got {}",
+                self.operator_role,
+                operator_role,
+            );
             return false;
         }
         if &self.custodian_pk != custodian_pk {
+            tracing::error!("custodian_pk mismatch");
             return false;
         }
         if &self.operator_pk != operator_pk {
+            tracing::error!("operator_pk mismatch");
             return false;
         }
         true
@@ -227,16 +244,19 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
             } = msg.msg.clone();
 
             if header != HEADER {
+                println!("header probem");
                 return Err(BackupError::CustodianSetupError);
             }
 
             if custodian_role != Role::indexed_from_zero(i) {
+                println!("index probem");
                 return Err(BackupError::CustodianSetupError);
             }
 
             let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             const ONE_HOUR_SECS: u64 = 3600;
             if !(now - ONE_HOUR_SECS < timestamp && timestamp < now + ONE_HOUR_SECS) {
+                println!("time probem");
                 return Err(BackupError::CustodianSetupError);
             }
 
@@ -391,8 +411,8 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
     /// so the are a separate input.
     pub fn verify_and_recover(
         &self,
-        custodian_recovery_output: BTreeMap<Role, CustodianRecoveryOutput>,
-        commitments: BTreeMap<Role, Vec<u8>>,
+        custodian_recovery_output: &BTreeMap<Role, CustodianRecoveryOutput>,
+        commitments: &BTreeMap<Role, Vec<u8>>,
         backup_id: RequestId,
     ) -> Result<Vec<u8>, BackupError> {
         // the output is ordered by custodian ID, from 0 to n-1

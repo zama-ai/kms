@@ -161,7 +161,7 @@ fn full_flow() {
                     }
                 }
                 operator
-                    .verify_and_recover(reencrypted_ct, commitments, backup_id)
+                    .verify_and_recover(&reencrypted_ct, &commitments, backup_id)
                     .unwrap()
             })
             .collect();

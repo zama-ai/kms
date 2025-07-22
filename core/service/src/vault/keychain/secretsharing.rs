@@ -83,9 +83,7 @@ impl Keychain for SecretShareKeychain {
         let EnvelopeLoad::OperatorRecoveryInput(rs, cs) = envelope else {
             anyhow::bail!("Expected multi-share encrypted data")
         };
-        let payload_bytes =
-            self.operator
-                .verify_and_recover(rs.clone(), cs.clone(), *payload_id)?;
+        let payload_bytes = self.operator.verify_and_recover(rs, cs, *payload_id)?;
         let mut buf = std::io::Cursor::new(&payload_bytes);
         safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT)
             .map_err(|e| anyhow_error_and_log(format!("Cannot decrypt backup: {e}")))

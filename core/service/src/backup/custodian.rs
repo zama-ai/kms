@@ -154,6 +154,10 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         backup_id: RequestId,
         operator_role: Role,
     ) -> Result<CustodianRecoveryOutput, BackupError> {
+        tracing::debug!(
+            "Verifying and re-encrypting backup for operator: {}",
+            operator_role
+        );
         // check the signature
         let signature = Signature {
             sig: k256::ecdsa::Signature::from_slice(&backup.signature)?,
@@ -165,17 +169,17 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
             operator_verification_key,
         )
         .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
-
+        tracing::debug!("Signature verified for operator: {}", operator_role);
         // recovered share
         let s_i_j = self.decryptor.decrypt(&backup.ciphertext)?;
-
+        tracing::debug!("Decrypted ciphertext for operator: {}", operator_role);
         // check the decrypted result
         let backup_material: BackupMaterial = tfhe::safe_serialization::safe_deserialize(
             std::io::Cursor::new(&s_i_j),
             SAFE_SER_SIZE_LIMIT,
         )
         .map_err(BackupError::SafeDeserializationError)?;
-
+        tracing::debug!("Deserialized backup material");
         if !backup_material.matches_expected_metadata(
             backup_id,
             &self.verification_key,
@@ -183,13 +187,15 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
             operator_verification_key,
             operator_role,
         ) {
+            tracing::error!("Backup material did not match expected metadate");
             return Err(BackupError::CustodianRecoveryError);
         }
 
         // re-encrypted share and sign it
         let st_i_j = operator_pk.encrypt(rng, &s_i_j)?;
+        tracing::debug!("Re-encrypted share under operator's public key");
         let sigt_i_j = self.signer.sign(&DSEP_BACKUP_CUSTODIAN, &st_i_j)?;
-
+        tracing::debug!("Signed re-encrypted share");
         Ok(CustodianRecoveryOutput {
             signature: sigt_i_j,
             ciphertext: st_i_j,
