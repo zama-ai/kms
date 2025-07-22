@@ -12,7 +12,11 @@ use tfhe::{
     shortint::{
         self,
         client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
-        list_compression::{CompressionPrivateKeys, NoiseSquashingCompressionPrivateKey},
+        list_compression::{
+            CompressionPrivateKeys, NoiseSquashingCompressionKey,
+            NoiseSquashingCompressionPrivateKey,
+        },
+        noise_squashing::NoiseSquashingPrivateKey,
         ClassicPBSParameters, PBSParameters,
     },
     zk::CompactPkeCrs,
@@ -513,6 +517,80 @@ where
     Ok((transferred_pub_key, shared_sk))
 }
 
+// TODO(2674): remove this code once the SnS compression key upgrade is done
+pub async fn initialize_sns_compression_key_materials<
+    S: BaseSessionHandles,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    params: DKGParams,
+    sns_sk: Option<NoiseSquashingPrivateKey>,
+) -> anyhow::Result<(
+    SnsCompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>,
+    NoiseSquashingCompressionKey,
+)>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+{
+    let own_role = session.my_role();
+    let params_basic_handle = params.get_params_basics_handle();
+    let is_input_party = own_role.one_based() == INPUT_PARTY_ID;
+
+    let raw_sns_compression_params = params_basic_handle
+            .get_sns_compression_params().ok_or(anyhow::anyhow!(
+                "insecure sns compression key generation is not supported without SnS compression parameters",
+            ))?.raw_compression_parameters;
+    let sns_compression_sk: Option<NoiseSquashingCompressionPrivateKey> = if is_input_party {
+        Some(NoiseSquashingCompressionPrivateKey::new(
+            raw_sns_compression_params,
+        ))
+    } else {
+        None
+    };
+    let sns_compression_key = match (&sns_compression_sk, sns_sk) {
+        (None, None) => None,
+        (Some(sns_compression_sk), Some(sns_sk)) => {
+            Some(sns_sk.new_noise_squashing_compression_key(sns_compression_sk))
+        }
+        _ => anyhow::bail!("the party with the sns compression sk should also have the sns sk"),
+    };
+    let raw_sns_compression_sk_container128: Option<Vec<u128>> =
+        sns_compression_sk.map(|inner| inner.into_raw_parts().0.into_container());
+
+    let secrets = if let Some(compression_container) = raw_sns_compression_sk_container128 {
+        if is_input_party {
+            Some(
+                compression_container
+                    .iter()
+                    .map(|cur| {
+                        ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<u128>(*cur))
+                    })
+                    .collect_vec(),
+            )
+        } else {
+            anyhow::bail!("the input party should have the sns compression secret key")
+        }
+    } else {
+        None
+    };
+    let glwe_sns_compression_key_shares128 =
+        robust_input(session, &secrets, &own_role, INPUT_PARTY_ID).await?;
+
+    let final_sns_compression_key_shares = SnsCompressionPrivateKeyShares {
+        post_packing_ks_key: GlweSecretKeyShare {
+            data: glwe_sns_compression_key_shares128,
+            polynomial_size: raw_sns_compression_params.packing_ks_polynomial_size,
+        },
+        params: raw_sns_compression_params,
+    };
+
+    let final_sns_compression_key =
+        transfer_sns_compression_key(session, sns_compression_key, INPUT_PARTY_ID).await?;
+
+    Ok((final_sns_compression_key_shares, final_sns_compression_key))
+}
+
 pub async fn transfer_pub_key<S: BaseSessionHandles>(
     session: &S,
     pubkey: Option<FhePubKeySet>,
@@ -522,9 +600,26 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
     let network_val = transfer_network_value(session, pkval, input_party_id).await?;
     match network_val {
         NetworkValue::PubKeySet(pk) => Ok(*pk),
-        _ => Err(anyhow_error_and_log(
-            "I have received something different from a public key!",
-        ))?,
+        e => Err(anyhow_error_and_log(format!(
+            "Expected PubKeySet network message but got {}",
+            e.network_type_name()
+        )))?,
+    }
+}
+
+pub async fn transfer_sns_compression_key<S: BaseSessionHandles>(
+    session: &S,
+    key: Option<NoiseSquashingCompressionKey>,
+    input_party_id: usize,
+) -> anyhow::Result<NoiseSquashingCompressionKey> {
+    let key_networkval = key.map(|inner| NetworkValue::<Z128>::SnsCompressionKey(Box::new(inner)));
+    let network_val = transfer_network_value(session, key_networkval, input_party_id).await?;
+    match network_val {
+        NetworkValue::SnsCompressionKey(k) => Ok(*k),
+        e => Err(anyhow_error_and_log(format!(
+            "Expected SnsCompressionKey network message but got {}",
+            e.network_type_name()
+        )))?,
     }
 }
 
@@ -538,9 +633,10 @@ pub async fn transfer_crs<S: BaseSessionHandles>(
     let network_val = transfer_network_value(session, crs, input_party_id).await?;
     match network_val {
         NetworkValue::Crs(crs) => Ok(*crs),
-        _ => Err(anyhow_error_and_log(
-            "I have received something different from a CRS!",
-        ))?,
+        e => Err(anyhow_error_and_log(format!(
+            "Expected Crs network message but got {}",
+            e.network_type_name()
+        )))?,
     }
 }
 

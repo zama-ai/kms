@@ -6184,6 +6184,20 @@ pub(crate) mod tests {
         .await;
     }
 
+    #[cfg(all(feature = "slow_tests", feature = "insecure"))]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    #[tracing_test::traced_test]
+    async fn test_insecure_threshold_sns_compression_keygen() {
+        run_threshold_sns_compression_keygen(
+            4,
+            FheParameter::Test,
+            &TEST_THRESHOLD_KEY_ID_4P,
+            true,
+        )
+        .await;
+    }
+
     // Run the threshold sns compression keygen protocol
     // which should only generate the sns compression key (and its private shares)
     // from an existing `base_key_id`. The resulting key should be one that is
