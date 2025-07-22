@@ -1167,6 +1167,7 @@ mod tests {
         let glwe_secret_key_sns_as_lwe = keys.get_raw_glwe_client_sns_key_as_lwe().unwrap();
         let key_shares = keygen_all_party_shares(
             lwe_secret_key,
+            keys.get_raw_lwe_encryption_client_key(),
             glwe_secret_key,
             glwe_secret_key_sns_as_lwe,
             params,

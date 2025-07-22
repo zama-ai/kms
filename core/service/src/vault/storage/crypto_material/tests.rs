@@ -433,6 +433,7 @@ fn setup_threshold_store() -> (
     let key_set = gen_key_set(TEST_PARAM, &mut rng);
     let key_shares = keygen_all_party_shares(
         key_set.get_raw_lwe_client_key(),
+        key_set.get_raw_lwe_encryption_client_key(),
         key_set.get_raw_glwe_client_key(),
         key_set.get_raw_glwe_client_sns_key_as_lwe().unwrap(),
         pbs_params,

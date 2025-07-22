@@ -2482,6 +2482,8 @@ pub(crate) mod tests {
     use tfhe::prelude::ParameterSetConformant;
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey;
+    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
+    use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
     use tfhe::shortint::server_key::ModulusSwitchConfiguration;
     use tfhe::zk::CompactPkeCrs;
     use tfhe::Tag;
@@ -3002,6 +3004,29 @@ pub(crate) mod tests {
                 compression_keyset_id: None,
                 from_keyset_id_decompression_only: Some(request_id_1.into()),
                 to_keyset_id_decompression_only: Some(request_id_2.into()),
+                base_keyset_id_for_sns_compression_key: None,
+            }),
+        )
+        .await;
+    }
+
+    // test centralized sns compression keygen using the testing parameters
+    // this test will use an existing base key stored under the key ID `TEST_CENTRAL_KEY_ID`
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn test_sns_compression_key_gen_centralized() {
+        let request_id = derive_request_id("test_sns_compression_key_gen_centralized").unwrap();
+        // Delete potentially old data
+        purge(None, None, &request_id, 1).await;
+        key_gen_centralized(
+            &request_id,
+            FheParameter::Test,
+            None,
+            Some(KeySetAddedInfo {
+                compression_keyset_id: None,
+                from_keyset_id_decompression_only: None,
+                to_keyset_id_decompression_only: None,
+                base_keyset_id_for_sns_compression_key: Some((*TEST_CENTRAL_KEY_ID).into()),
             }),
         )
         .await;
@@ -3043,9 +3068,77 @@ pub(crate) mod tests {
                 compression_keyset_id: None,
                 from_keyset_id_decompression_only: Some(request_id_1.into()),
                 to_keyset_id_decompression_only: Some(request_id_2.into()),
+                base_keyset_id_for_sns_compression_key: None,
             }),
         )
         .await;
+    }
+
+    // test centralized sns compression keygen using the default parameters
+    // this test will use an existing base key stored under the key ID `DEFAULT_CENTRAL_KEY_ID`
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_sns_compression_key_gen_centralized() {
+        let request_id = derive_request_id("default_sns_compression_key_gen_centralized").unwrap();
+        // Delete potentially old data
+        purge(None, None, &request_id, 1).await;
+        key_gen_centralized(
+            &request_id,
+            FheParameter::Test,
+            None,
+            Some(KeySetAddedInfo {
+                compression_keyset_id: None,
+                from_keyset_id_decompression_only: None,
+                to_keyset_id_decompression_only: None,
+                base_keyset_id_for_sns_compression_key: Some((*DEFAULT_CENTRAL_KEY_ID).into()),
+            }),
+        )
+        .await;
+    }
+
+    // check that the server keys stored under the IDs `key_id_base` and `key_id_with_sns_compression`
+    // are identical except for the sns compression key
+    async fn identical_keys_except_sns_compression_from_storage<R: StorageReader>(
+        internal_client: &Client,
+        storage: &R,
+        key_id_base: &RequestId,
+        key_id_with_sns_compression: &RequestId,
+    ) {
+        let server_key_base: tfhe::ServerKey = internal_client
+            .get_key(key_id_base, PubDataType::ServerKey, storage)
+            .await
+            .unwrap();
+
+        let server_key_sns: tfhe::ServerKey = internal_client
+            .get_key(key_id_with_sns_compression, PubDataType::ServerKey, storage)
+            .await
+            .unwrap();
+
+        identical_keys_except_sns_compression(server_key_base, server_key_sns).await
+    }
+
+    // check that the two keys are identical except for the sns compression key
+    async fn identical_keys_except_sns_compression(
+        server_key_base: tfhe::ServerKey,
+        server_key_sns: tfhe::ServerKey,
+    ) {
+        let server_key_base_parts = server_key_base.into_raw_parts();
+        let server_key_sns_parts = server_key_sns.into_raw_parts();
+
+        // 5 should be sns compression
+        assert!(server_key_sns_parts.5.is_some());
+
+        // we can't compare keys directly, so we serialize them
+        assert_eq!(
+            bc2wrap::serialize(&server_key_base_parts.0).unwrap(),
+            bc2wrap::serialize(&server_key_sns_parts.0).unwrap()
+        );
+
+        assert_ne!(
+            bc2wrap::serialize(&server_key_base_parts.5).unwrap(),
+            bc2wrap::serialize(&server_key_sns_parts.5).unwrap(),
+        )
     }
 
     async fn key_gen_centralized(
@@ -3101,30 +3194,51 @@ pub(crate) mod tests {
 
         let inner_config = keyset_config.unwrap_or_default();
         let keyset_type = KeySetType::try_from(inner_config.keyset_type).unwrap();
+
+        let basic_checks = async |resp: &kms_grpc::kms::v1::KeyGenResult| {
+            let req_id = resp.request_id.clone().unwrap();
+            let pk = internal_client
+                .retrieve_public_key(resp, &pub_storage)
+                .await
+                .unwrap();
+            assert!(pk.is_some());
+            let server_key: Option<tfhe::ServerKey> = internal_client
+                .retrieve_server_key(resp, &pub_storage)
+                .await
+                .unwrap();
+            assert!(server_key.is_some());
+
+            // read the client key
+            let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
+                .read_data(&req_id.into(), &PrivDataType::FheKeyInfo.to_string())
+                .await
+                .unwrap();
+            let client_key = handle.client_key;
+
+            check_conformance(server_key.unwrap(), client_key);
+        };
+
         match keyset_type {
             KeySetType::Standard => {
-                let pk = internal_client
-                    .retrieve_public_key(&inner_resp, &pub_storage)
-                    .await
-                    .unwrap();
-                assert!(pk.is_some());
-                let server_key: Option<tfhe::ServerKey> = internal_client
-                    .retrieve_server_key(&inner_resp, &pub_storage)
-                    .await
-                    .unwrap();
-                assert!(server_key.is_some());
+                basic_checks(&inner_resp).await;
+            }
+            KeySetType::AddSnsCompressionKey => {
+                basic_checks(&inner_resp).await;
 
-                // read the client key
-                let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
-                    .read_data(
-                        &inner_resp.request_id.unwrap().into(),
-                        &PrivDataType::FheKeyInfo.to_string(),
-                    )
-                    .await
-                    .unwrap();
-                let client_key = handle.client_key;
-
-                check_conformance(server_key.unwrap(), client_key);
+                // check that the integer server key are the same, before and after the sns compression key gen
+                let new_keyset_id: RequestId = keyset_added_info
+                    .clone()
+                    .unwrap()
+                    .base_keyset_id_for_sns_compression_key
+                    .unwrap()
+                    .into();
+                identical_keys_except_sns_compression_from_storage(
+                    &internal_client,
+                    &pub_storage,
+                    request_id,
+                    &new_keyset_id,
+                )
+                .await;
             }
             KeySetType::DecompressionOnly => {
                 // setup storage
@@ -5776,12 +5890,13 @@ pub(crate) mod tests {
         purge(None, None, &key_id, amount_parties).await;
         let (_kms_servers, kms_clients, internal_client) =
             threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
-        let keys = run_keygen(
+        let keys = run_threshold_keygen(
             FheParameter::Test,
             &kms_clients,
             &internal_client,
             None,
             &key_id,
+            None,
             None,
             true,
         )
@@ -5795,10 +5910,12 @@ pub(crate) mod tests {
     #[cfg(feature = "insecure")]
     #[rstest::rstest]
     #[case(4)]
-    #[case(7)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_insecure_dkg(#[case] amount_parties: usize) {
+        // NOTE: amount_parties must not be too high
+        // because every party will load all the keys and each ServerKey is 1.5 GB
+        // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
         use crate::engine::base::derive_request_id;
 
         let param = FheParameter::Default;
@@ -5811,12 +5928,13 @@ pub(crate) mod tests {
         purge(None, None, &key_id, amount_parties).await;
         let (_kms_servers, kms_clients, internal_client) =
             threshold_handles(*dkg_param, amount_parties, true, None, None).await;
-        let keys = run_keygen(
+        let keys = run_threshold_keygen(
             param,
             &kms_clients,
             &internal_client,
             None,
             &key_id,
+            None,
             None,
             true,
         )
@@ -5969,16 +6087,18 @@ pub(crate) mod tests {
                 &internal_client,
                 &preproc_id_1.unwrap(),
                 None,
+                None,
             )
             .await;
         }
 
-        let keys1 = run_keygen(
+        let keys1 = run_threshold_keygen(
             parameter,
             &kms_clients,
             &internal_client,
             preproc_id_1,
             &key_id_1,
+            None,
             None,
             insecure,
         )
@@ -5993,16 +6113,18 @@ pub(crate) mod tests {
                 &internal_client,
                 &preproc_id_2.unwrap(),
                 None,
+                None,
             )
             .await;
         }
 
-        let keys2 = run_keygen(
+        let keys2 = run_threshold_keygen(
             parameter,
             &kms_clients,
             &internal_client,
             preproc_id_2,
             &key_id_2,
+            None,
             None,
             insecure,
         )
@@ -6017,17 +6139,19 @@ pub(crate) mod tests {
             &internal_client,
             &preproc_id_3,
             None,
+            None,
         )
         .await;
 
         // finally do the decompression keygen between the first and second keysets
-        let decompression_key = run_keygen(
+        let decompression_key = run_threshold_keygen(
             parameter,
             &kms_clients,
             &internal_client,
             Some(preproc_id_3),
             &key_id_3,
             Some((key_id_1, key_id_2)),
+            None,
             insecure,
         )
         .await
@@ -6043,6 +6167,94 @@ pub(crate) mod tests {
             Some(&server_key_1),
             decompression_key.into_raw_parts(),
         );
+    }
+
+    // Test threshold sns compression keygen using the testing parameters
+    // this test will use an existing base key stored under the key ID `TEST_THRESHOLD_KEY_ID_4P`
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn test_threshold_sns_compression_keygen() {
+        run_threshold_sns_compression_keygen(
+            4,
+            FheParameter::Test,
+            &TEST_THRESHOLD_KEY_ID_4P,
+            false,
+        )
+        .await;
+    }
+
+    // Run the threshold sns compression keygen protocol
+    // which should only generate the sns compression key (and its private shares)
+    // from an existing `base_key_id`. The resulting key should be one that is
+    // identical to the key under `base_key_id` except for the sns compression key.
+    #[cfg(feature = "slow_tests")]
+    async fn run_threshold_sns_compression_keygen(
+        amount_parties: usize,
+        parameter: FheParameter,
+        base_key_id: &RequestId,
+        insecure: bool,
+    ) {
+        use threshold_fhe::execution::tfhe_internals::test_feature::run_sns_compression_test;
+        // for generating the sns compression key
+        let preproc_id = if insecure {
+            None
+        } else {
+            Some(
+                derive_request_id(&format!(
+                    "sns_com_dkg_preproc_{amount_parties}_{parameter:?}"
+                ))
+                .unwrap(),
+            )
+        };
+        let sns_compression_req_id: RequestId =
+            derive_request_id(&format!("sns_com_dkg_key_{amount_parties}_{parameter:?}")).unwrap();
+        purge(None, None, &sns_compression_req_id, amount_parties).await;
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+        let dkg_param: WrappedDKGParams = parameter.into();
+        let (kms_servers, kms_clients, internal_client) =
+            threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+
+        // generate the sns compression key by overwriting the first key
+        if !insecure {
+            run_preproc(
+                amount_parties,
+                parameter,
+                &kms_clients,
+                &internal_client,
+                &preproc_id.unwrap(),
+                None,
+                Some(*base_key_id),
+            )
+            .await;
+        }
+
+        let keys2 = run_threshold_keygen(
+            parameter,
+            &kms_clients,
+            &internal_client,
+            preproc_id,
+            &sns_compression_req_id,
+            None,
+            Some(*base_key_id),
+            insecure,
+        )
+        .await;
+        let (client_key_2, _public_key_2, server_key_2) = keys2.get_standard();
+
+        for handle in kms_servers.into_values() {
+            handle.assert_shutdown().await;
+        }
+
+        let pub_storage =
+            FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(1))).unwrap();
+        let server_key_base: tfhe::ServerKey = internal_client
+            .get_key(base_key_id, PubDataType::ServerKey, &pub_storage)
+            .await
+            .unwrap();
+        identical_keys_except_sns_compression(server_key_base, server_key_2.clone()).await;
+        run_sns_compression_test(client_key_2, server_key_2);
     }
 
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -6145,6 +6357,7 @@ pub(crate) mod tests {
                             &internalclient_clone,
                             &cur_id,
                             None,
+                            None,
                         )
                         .await
                     }
@@ -6163,12 +6376,13 @@ pub(crate) mod tests {
                     let internalclient_clone = Arc::clone(&arc_internalclient);
                     async move {
                         // todo proper use of insecure to skip preproc
-                        run_keygen(
+                        run_threshold_keygen(
                             parameter,
                             &clients_clone,
                             &internalclient_clone,
                             Some(preproc_ids_clone),
                             &key_id,
+                            None,
                             None,
                             insecure,
                         )
@@ -6197,6 +6411,7 @@ pub(crate) mod tests {
                     &internal_client,
                     &cur_id,
                     None,
+                    None,
                 )
                 .await;
                 preproc_ids.insert(i, cur_id);
@@ -6205,12 +6420,13 @@ pub(crate) mod tests {
                 let key_id: RequestId =
                     derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}"))
                         .unwrap();
-                let keyset = run_keygen(
+                let keyset = run_threshold_keygen(
                     parameter,
                     &kms_clients,
                     &internal_client,
                     Some(preproc_ids.get(&i).unwrap().to_owned()),
                     &key_id,
+                    None,
                     None,
                     insecure,
                 )
@@ -6238,11 +6454,23 @@ pub(crate) mod tests {
         internal_client: &Client,
         preproc_req_id: &RequestId,
         decompression_keygen: Option<(RequestId, RequestId)>,
+        sns_compression_keygen: Option<RequestId>,
     ) {
-        let keyset_config = decompression_keygen.as_ref().map(|_| KeySetConfig {
-            keyset_type: KeySetType::DecompressionOnly.into(),
-            standard_keyset_config: None,
-        });
+        let keyset_config = match (decompression_keygen, sns_compression_keygen) {
+            (None, None) => None,
+            (None, Some(_overwrite_keyset_id)) => Some(KeySetConfig {
+                keyset_type: KeySetType::AddSnsCompressionKey.into(),
+                standard_keyset_config: None,
+            }),
+            (Some((_from, _to)), None) => Some(KeySetConfig {
+                keyset_type: KeySetType::DecompressionOnly.into(),
+                standard_keyset_config: None,
+            }),
+            (Some(_), Some(_)) => {
+                panic!("cannot have both decompression and sns compression keygen")
+            }
+        };
+
         let preproc_request = internal_client
             .preproc_request(preproc_req_id, Some(parameter), keyset_config)
             .unwrap();
@@ -6313,25 +6541,50 @@ pub(crate) mod tests {
         resp_response_vec
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-    async fn run_keygen(
+    async fn run_threshold_keygen(
         parameter: FheParameter,
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
         internal_client: &Client,
         preproc_req_id: Option<RequestId>,
         keygen_req_id: &RequestId,
         decompression_keygen: Option<(RequestId, RequestId)>,
+        sns_compression_keygen: Option<RequestId>,
         insecure: bool,
     ) -> TestKeyGenResult {
-        let keyset_config = decompression_keygen.as_ref().map(|_| KeySetConfig {
-            keyset_type: KeySetType::DecompressionOnly.into(),
-            standard_keyset_config: None,
-        });
-        let keyset_added_info = decompression_keygen.map(|(from, to)| KeySetAddedInfo {
-            compression_keyset_id: None,
-            from_keyset_id_decompression_only: Some(from.into()),
-            to_keyset_id_decompression_only: Some(to.into()),
-        });
+        let keyset_config = match (decompression_keygen, sns_compression_keygen) {
+            (None, None) => None,
+            (None, Some(_overwrite_keyset_id)) => Some(KeySetConfig {
+                keyset_type: KeySetType::AddSnsCompressionKey.into(),
+                standard_keyset_config: None,
+            }),
+            (Some((_from, _to)), None) => Some(KeySetConfig {
+                keyset_type: KeySetType::DecompressionOnly.into(),
+                standard_keyset_config: None,
+            }),
+            (Some(_), Some(_)) => {
+                panic!("cannot have both decompression and sns compression keygen")
+            }
+        };
+        let keyset_added_info = match (decompression_keygen, sns_compression_keygen) {
+            (None, None) => None,
+            (None, Some(overwrite_keyset_id)) => Some(KeySetAddedInfo {
+                compression_keyset_id: None,
+                from_keyset_id_decompression_only: None,
+                to_keyset_id_decompression_only: None,
+                base_keyset_id_for_sns_compression_key: Some(overwrite_keyset_id.into()),
+            }),
+            (Some((from, to)), None) => Some(KeySetAddedInfo {
+                compression_keyset_id: None,
+                from_keyset_id_decompression_only: Some(from.into()),
+                to_keyset_id_decompression_only: Some(to.into()),
+                base_keyset_id_for_sns_compression_key: None,
+            }),
+            (Some(_), Some(_)) => {
+                panic!("cannot have both decompression and sns compression keygen")
+            }
+        };
 
         let req_keygen = internal_client
             .key_gen_request(
@@ -6346,7 +6599,7 @@ pub(crate) mod tests {
 
         let responses = launch_dkg(req_keygen.clone(), kms_clients, insecure).await;
         for response in responses {
-            assert!(response.is_ok());
+            response.unwrap();
         }
 
         wait_for_keygen_result(
@@ -6549,7 +6802,7 @@ pub(crate) mod tests {
             }
 
             let threshold = kms_clients.len().div_ceil(3) - 1;
-            let (lwe_sk, glwe_sk, sns_glwe_sk) =
+            let (lwe_sk, glwe_sk, sns_glwe_sk, sns_compression_sk) =
                 try_reconstruct_shares(internal_client.params, threshold, all_threshold_fhe_keys);
             out = Some(TestKeyGenResult::Standard((
                 to_hl_client_key(
@@ -6559,6 +6812,7 @@ pub(crate) mod tests {
                     None,
                     None,
                     Some(sns_glwe_sk),
+                    sns_compression_sk,
                 )
                 .unwrap(),
                 final_public_key.unwrap(),
@@ -6601,6 +6855,7 @@ pub(crate) mod tests {
         tfhe::core_crypto::prelude::LweSecretKeyOwned<u64>,
         tfhe::core_crypto::prelude::GlweSecretKeyOwned<u64>,
         tfhe::core_crypto::prelude::GlweSecretKeyOwned<u128>,
+        Option<NoiseSquashingCompressionPrivateKey>,
     ) {
         use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
         use threshold_fhe::execution::{
@@ -6660,24 +6915,61 @@ pub(crate) mod tests {
                 None => None,
             })
             .collect::<HashMap<_, _>>();
-        let sns_param = match param {
+        let dkg_sns_param = match param {
             DKGParams::WithoutSnS(_) => panic!("missing sns param"),
-            DKGParams::WithSnS(sns_param) => sns_param.sns_params,
+            DKGParams::WithSnS(sns_param) => sns_param,
         };
         let sns_glwe_sk = GlweSecretKeyOwned::from_container(
             reconstruct_bit_vec(
                 sns_lwe_shares,
-                sns_param
+                dkg_sns_param
+                    .sns_params
                     .glwe_dimension
-                    .to_equivalent_lwe_dimension(sns_param.polynomial_size)
+                    .to_equivalent_lwe_dimension(dkg_sns_param.sns_params.polynomial_size)
                     .0,
                 threshold,
             )
             .into_iter()
             .map(|x| x as u128)
             .collect(),
-            sns_param.polynomial_size,
+            dkg_sns_param.sns_params.polynomial_size,
         );
-        (lwe_secret_key, glwe_sk, sns_glwe_sk)
+
+        let sns_compression_key_shares = all_threshold_fhe_keys
+            .iter()
+            .map(|(k, v)| (*k, v.private_keys.glwe_sns_compression_key.clone()))
+            .filter_map(|(k, v)| match v {
+                Some(vv) => Some((k, vv.post_packing_ks_key.data)),
+                None => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let sns_compression_private_key =
+            if let Some(sns_compression_params) = dkg_sns_param.sns_compression_params {
+                let sns_compression_key_bits = reconstruct_bit_vec(
+                    sns_compression_key_shares,
+                    dkg_sns_param.sns_compression_sk_num_bits(),
+                    threshold,
+                )
+                .into_iter()
+                .map(|x| x as u128)
+                .collect::<Vec<_>>();
+
+                Some(NoiseSquashingCompressionPrivateKey::from_raw_parts(
+                    GlweSecretKeyOwned::from_container(
+                        sns_compression_key_bits,
+                        sns_compression_params.packing_ks_polynomial_size,
+                    ),
+                    sns_compression_params,
+                ))
+            } else {
+                None
+            };
+
+        (
+            lwe_secret_key,
+            glwe_sk,
+            sns_glwe_sk,
+            sns_compression_private_key,
+        )
     }
 }

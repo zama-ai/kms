@@ -1,13 +1,16 @@
 use std::slice::IterMut;
 
 use itertools::Itertools;
+use num_traits::Zero;
 use tfhe::{
     boolean::prelude::{
         DecompositionBaseLog, DecompositionLevelCount, GlweDimension, LweDimension, PolynomialSize,
     },
     core_crypto::prelude::{
         CiphertextModulus, ContiguousEntityContainerMut, GlweSize, LwePackingKeyswitchKeyOwned,
+        UnsignedInteger,
     },
+    prelude::CastFrom,
 };
 
 use crate::{
@@ -83,10 +86,13 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LwePackingKeyswitchKeyShares<Z,
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    pub async fn open_to_tfhers_type<S: BaseSessionHandles>(
+    pub async fn open_to_tfhers_type<
+        Scalar: Zero + UnsignedInteger + CastFrom<u8>,
+        S: BaseSessionHandles,
+    >(
         self,
         session: &S,
-    ) -> anyhow::Result<LwePackingKeyswitchKeyOwned<u64>> {
+    ) -> anyhow::Result<LwePackingKeyswitchKeyOwned<Scalar>> {
         let my_role = session.my_role();
         let input_key_lwe_dimension = LweDimension(self.data.len());
         let output_key_glwe_dimension = self.output_glwe_size.to_glwe_dimension();
@@ -114,7 +120,7 @@ where
             .collect();
 
         let mut ksk = LwePackingKeyswitchKeyOwned::new(
-            0_u64,
+            Scalar::zero(),
             self.decomp_base_log,
             self.decomp_level_count,
             input_key_lwe_dimension,
@@ -134,8 +140,8 @@ where
             for c_m in underlying_container.iter_mut() {
                 if let Some(m) = masks_iterator.next() {
                     let m_byte_vec = m.to_byte_vec();
-                    let m = m_byte_vec.iter().rev().fold(0_u64, |acc, byte| {
-                        acc.wrapping_shl(8).wrapping_add(*byte as u64)
+                    let m = m_byte_vec.iter().rev().fold(Scalar::zero(), |acc, byte| {
+                        acc.wrapping_shl(8).wrapping_add(Scalar::cast_from(*byte))
                     });
                     *c_m = m;
                 } else {
@@ -155,9 +161,8 @@ where
                             "Not enough bodies to cast the compression key to tfhe-rs type",
                         ));
                     };
-                    // Below we perform recomposition to convert Vec<u8> to u64
-                    tmp.iter().rev().fold(0_u64, |acc, byte| {
-                        acc.wrapping_shl(8).wrapping_add(*byte as u64)
+                    tmp.iter().rev().fold(Scalar::zero(), |acc, byte| {
+                        acc.wrapping_shl(8).wrapping_add(Scalar::cast_from(*byte))
                     })
                 };
                 *(c_b) = body_data;

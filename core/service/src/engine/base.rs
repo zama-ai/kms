@@ -740,11 +740,11 @@ pub type PubDecCallValues = (Vec<u8>, Vec<TypedPlaintext>, Vec<u8>);
 #[cfg(feature = "non-wasm")]
 pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>);
 
-/// Helper method which takes a [HashMap<PubDataType, SignedPubDataHandle>] and returns
+/// Helper method which takes a [KeyGenCallValues] and returns
 /// [HashMap<String, SignedPubDataHandle>] by applying the [ToString] function on [PubDataType] for each element in the map.
 /// The function is needed since protobuf does not support enums in maps.
 pub(crate) fn convert_key_response(
-    key_info_map: HashMap<PubDataType, SignedPubDataHandleInternal>,
+    key_info_map: KeyGenCallValues,
 ) -> HashMap<String, SignedPubDataHandle> {
     key_info_map
         .into_iter()

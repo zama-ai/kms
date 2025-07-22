@@ -70,6 +70,7 @@ fn ddec_nsmall(c: &mut Criterion) {
         let params = keyset.get_cpu_params().unwrap();
         let key_shares = keygen_all_party_shares(
             lwe_secret_key,
+            keyset.get_raw_lwe_encryption_client_key(),
             glwe_secret_key,
             glwe_secret_key_sns_as_lwe,
             params,
@@ -135,6 +136,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
         let params = keyset.get_cpu_params().unwrap();
         let key_shares = keygen_all_party_shares(
             lwe_secret_key,
+            keyset.get_raw_lwe_encryption_client_key(),
             glwe_secret_key,
             glwe_secret_key_sns_as_lwe,
             params,
@@ -196,6 +198,7 @@ fn ddec_nlarge(c: &mut Criterion) {
         let params = keyset.get_cpu_params().unwrap();
         let key_shares = keygen_all_party_shares(
             lwe_secret_key,
+            keyset.get_raw_lwe_encryption_client_key(),
             glwe_secret_key,
             glwe_secret_key_sns_as_lwe,
             params,
@@ -264,6 +267,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
         let params = keyset.get_cpu_params().unwrap();
         let key_shares = keygen_all_party_shares(
             lwe_secret_key,
+            keyset.get_raw_lwe_encryption_client_key(),
             glwe_secret_key,
             glwe_secret_key_sns_as_lwe,
             params,

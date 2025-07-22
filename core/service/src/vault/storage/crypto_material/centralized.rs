@@ -96,7 +96,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     /// must be used, otherwise the storage state may become inconsistent.
     pub async fn write_centralized_keys_with_meta_store(
         &self,
-        req_id: &RequestId,
+        key_id: &RequestId,
         key_info: KmsFheKeyHandles,
         fhe_key_set: FhePubKeySet,
         meta_store: Arc<RwLock<MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>>>,
@@ -108,8 +108,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
         // Try to store the new data
         tracing::info!(
-            "Attempting to store centralized keygen material for request {}",
-            req_id
+            "Attempting to store centralized keygen material for key ID {}",
+            key_id
         );
 
         let f1 = async {
@@ -121,7 +121,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             };
             let store_result_1 = store_versioned_at_request_id(
                 &mut (*priv_storage),
-                req_id,
+                key_id,
                 &key_info,
                 &PrivDataType::FheKeyInfo.to_string(),
             )
@@ -129,7 +129,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             if let Err(e) = &store_result_1 {
                 tracing::error!(
                     "Failed to store FHE key info to private storage for request {}: {}",
-                    req_id,
+                    key_id,
                     e
                 );
             }
@@ -139,7 +139,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 Some(mut x) => {
                     let result = store_versioned_at_request_id(
                         &mut (*x),
-                        req_id,
+                        key_id,
                         &key_info,
                         &PrivDataType::FheKeyInfo.to_string(),
                     )
@@ -147,7 +147,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     if let Err(e) = &result {
                         tracing::error!(
                             "Failed to store FHE key info to backup storage for request {}: {}",
-                            req_id,
+                            key_id,
                             e
                         );
                     }
@@ -162,12 +162,12 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             let mut pub_storage = self.inner.public_storage.lock().await;
             let result = store_pk_at_request_id(
                 &mut (*pub_storage),
-                req_id,
+                key_id,
                 WrappedPublicKey::Compact(&fhe_key_set.public_key),
             )
             .await;
             if let Err(e) = &result {
-                tracing::error!("Failed to store public key for request {}: {}", req_id, e);
+                tracing::error!("Failed to store public key for request {}: {}", key_id, e);
             }
             result.is_ok()
         };
@@ -176,13 +176,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             let mut pub_storage = self.inner.public_storage.lock().await;
             let result = store_versioned_at_request_id(
                 &mut (*pub_storage),
-                req_id,
+                key_id,
                 &fhe_key_set.server_key,
                 &PubDataType::ServerKey.to_string(),
             )
             .await;
             if let Err(e) = &result {
-                tracing::error!("Failed to store server key for request {}: {}", req_id, e);
+                tracing::error!("Failed to store server key for request {}: {}", key_id, e);
             }
             result.is_ok()
         };
@@ -192,9 +192,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             && r2
             && r3
             && guarded_meta_store
-                .update(req_id, Ok(key_info.public_key_info.to_owned()))
+                .update(key_id, Ok(key_info.public_key_info.to_owned()))
                 .inspect_err(|e| {
-                    tracing::error!("Error ({e}) while updating PK meta store for {}", req_id)
+                    tracing::error!("Error ({e}) while updating PK meta store for {}", key_id)
                 })
                 .is_ok()
         {
@@ -203,27 +203,27 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             {
                 let mut guarded_pk_cache = self.inner.pk_cache.write().await;
                 let previous = guarded_pk_cache.insert(
-                    *req_id,
+                    *key_id,
                     WrappedPublicKeyOwned::Compact(fhe_key_set.public_key.clone()),
                 );
                 if previous.is_some() {
-                    tracing::warn!("PK already exists in pk_cache for {}, overwriting", req_id);
+                    tracing::warn!("PK already exists in pk_cache for {}, overwriting", key_id);
                 } else {
-                    tracing::debug!("Added new PK to pk_cache for {}", req_id);
+                    tracing::debug!("Added new PK to pk_cache for {}", key_id);
                 }
             }
             {
                 let mut guarded_fhe_keys = self.fhe_keys.write().await;
-                let previous = guarded_fhe_keys.insert(*req_id, key_info);
+                let previous = guarded_fhe_keys.insert(*key_id, key_info);
                 if previous.is_some() {
                     tracing::warn!(
                         "FHE keys already exist in cache for {}, overwriting",
-                        req_id
+                        key_id
                     );
                 }
                 tracing::info!(
                     "Successfully stored centralized keygen material for request {}",
-                    req_id
+                    key_id
                 );
             }
         } else {
@@ -232,7 +232,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // it might be because the data did not get created
             // In any case, we can't do much.
             self.inner
-                .purge_key_material(req_id, guarded_meta_store)
+                .purge_key_material(key_id, guarded_meta_store)
                 .await;
         }
     }

@@ -217,6 +217,9 @@ impl NoiseBounds {
             NoiseBounds::GlweNoise(_) => CorrelatedRandomnessType::NoiseGlwe,
             NoiseBounds::GlweNoiseSnS(_) => CorrelatedRandomnessType::NoiseGlweSnS,
             NoiseBounds::CompressionKSKNoise(_) => CorrelatedRandomnessType::NoiseCompressionKSK,
+            NoiseBounds::SnsCompressionKSKNoise(_) => {
+                CorrelatedRandomnessType::SnsNoiseCompressionKSK
+            }
         }
     }
 }
@@ -316,6 +319,22 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
             }
             DKGParams::WithoutSnS(_) => (),
         }
+    }
+
+    // Generate noise for sns compression key if needed
+    match keyset_config {
+        KeySetConfig::Standard(_) | KeySetConfig::AddSnsCompressionKey => match params {
+            DKGParams::WithSnS(sns_params) => {
+                let noise_info = sns_params.num_needed_noise_sns_compression_key();
+                let bound = noise_info.bound;
+                prep.append_noises(
+                    RealSecretDistributions::from_noise_info(noise_info, preprocessing_bits)?,
+                    bound,
+                );
+            }
+            DKGParams::WithoutSnS(_) => (),
+        },
+        KeySetConfig::DecompressionOnly => {}
     }
 
     //Generate noise needed for the pk
