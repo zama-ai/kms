@@ -14,8 +14,9 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_PUBLIC_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
-        TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+        ERR_INVALID_REQUEST, ERR_KEY_NOT_FOUND, ERR_PUBLIC_DECRYPTION_FAILED,
+        ERR_WITH_META_STORAGE, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST, TAG_KEY_ID,
+        TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
     },
 };
 use tfhe::FheTypes;
@@ -291,15 +292,14 @@ impl<
             validate_public_decrypt_req(&inner),
             format!("Failed to validate decrypt request {inner:?}"),
         )
-        .map_err(|e| {
+        .inspect_err(|e| {
             tracing::error!(
                 error = ?e,
                 request_id = ?inner.request_id,
                 "Failed to validate decrypt request"
             );
             let _ = metrics::METRICS
-                .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_PUBLIC_DECRYPTION_FAILED);
-            e
+                .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_INVALID_REQUEST);
         })?;
 
         if let Some(b) = timer.as_mut() {
@@ -328,7 +328,11 @@ impl<
             tonic_handle_potential_err(
                 guarded_meta_store.insert(&req_id),
                 "Could not insert decryption into meta store".to_string(),
-            )?;
+            )
+            .inspect_err(|_| {
+                let _ = metrics::METRICS
+                    .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_WITH_META_STORAGE);
+            })?;
             let total_lock_time = lock_start.elapsed();
             (lock_acquired_time, total_lock_time)
         };
@@ -343,7 +347,11 @@ impl<
                 .refresh_threshold_fhe_keys(&key_id)
                 .await,
             format!("Cannot find threshold keys with key ID {key_id}"),
-        )?;
+        )
+        .inspect_err(|_| {
+            let _ = metrics::METRICS
+                .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
+        })?;
 
         let ext_handles_bytes = ciphertexts
             .iter()
@@ -377,7 +385,13 @@ impl<
             let internal_sid = tonic_handle_potential_err(
                 req_id.derive_session_id_with_counter(ctr as u64),
                 "failed to derive session ID from counter".to_string(),
-            )?;
+            )
+            .inspect_err(|_| {
+                let _ = metrics::METRICS.increment_error_counter(
+                    OP_PUBLIC_DECRYPT_REQUEST,
+                    ERR_PUBLIC_DECRYPTION_FAILED,
+                );
+            })?;
 
             let hex_req_id = hex::encode(req_id.as_bytes());
             let decimal_req_id: u128 = req_id.try_into().unwrap_or(0);
@@ -514,6 +528,8 @@ impl<
                         anyhow::bail!("Unsupported fhe type {:?}", unsupported_fhe_type);
                     }
                 };
+                // We don't update the error counter here but rather in the signature task
+                // so we only update it once even if there are multiple decryption task that fail
                 match res_plaintext {
                     Ok(plaintext) => Ok((ctr, plaintext)),
                     Result::Err(e) => Err(anyhow_error_and_log(format!(
@@ -537,7 +553,6 @@ impl<
             let _timer = timer;
             // NOTE: _permit should be dropped at the end of this function
             let mut decs = HashMap::new();
-            let error_msg: Option<String> = None;
 
             // Collect all results first, without holding any locks
             while let Some(resp) = dec_tasks.pop() {
@@ -546,7 +561,11 @@ impl<
                         decs.insert(idx, plaintext);
                     }
                     Ok(Err(e)) => {
-                        let msg = format!("Failed decryption with err: {e:?}");
+                        let _ = metrics::METRICS.increment_error_counter(
+                            OP_PUBLIC_DECRYPT_REQUEST,
+                            ERR_PUBLIC_DECRYPTION_FAILED,
+                        );
+                        let msg = format!("Failed decryption {req_id} with err: {e:?}");
                         tracing::error!(msg);
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(&req_id, Err(msg));
@@ -554,7 +573,11 @@ impl<
                         return;
                     }
                     Err(e) => {
-                        let msg = format!("Failed decryption with JoinError: {e:?}");
+                        let _ = metrics::METRICS.increment_error_counter(
+                            OP_PUBLIC_DECRYPT_REQUEST,
+                            ERR_PUBLIC_DECRYPTION_FAILED,
+                        );
+                        let msg = format!("Failed decryption {req_id} with JoinError: {e:?}");
                         tracing::error!(msg);
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(&req_id, Err(msg));
@@ -562,24 +585,6 @@ impl<
                         return;
                     }
                 }
-            }
-
-            // Handle error case with single lock acquisition
-            if let Some(msg) = error_msg {
-                let (lock_acquired_time, total_lock_time) = {
-                    let lock_start = std::time::Instant::now();
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let lock_acquired_time = lock_start.elapsed();
-                    let _ = guarded_meta_store.update(&req_id, Err(msg));
-                    let total_lock_time = lock_start.elapsed();
-                    (lock_acquired_time, total_lock_time)
-                };
-                // Log after lock is released
-                tracing::warn!(
-                    "MetaStore ERROR update - req_id={}, lock_acquired_in={:?}, total_lock_held={:?}",
-                    req_id, lock_acquired_time, total_lock_time
-                );
-                return;
             }
 
             // Prepare success data outside of lock
@@ -603,7 +608,14 @@ impl<
                 let lock_start = std::time::Instant::now();
                 let mut guarded_meta_store = meta_store.write().await;
                 let lock_acquired_time = lock_start.elapsed();
-                let _ = guarded_meta_store.update(&req_id, success_result);
+                let _ = guarded_meta_store
+                    .update(&req_id, success_result)
+                    .inspect_err(|_| {
+                        let _ = metrics::METRICS.increment_error_counter(
+                            OP_PUBLIC_DECRYPT_REQUEST,
+                            ERR_WITH_META_STORAGE,
+                        );
+                    });
                 let total_lock_time = lock_start.elapsed();
                 (lock_acquired_time, total_lock_time)
             };
