@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeMap,
+    fmt::Display,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -15,18 +16,7 @@ use threshold_fhe::{
         runtime::party::Role,
         sharing::{shamir::ShamirSharings, share::Share},
     },
-    hashing::DomainSep,
-};
-
-use crate::{
-    backup::custodian::DSEP_BACKUP_SETUP,
-    consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::{
-        backup_pke::BackupPublicKey,
-        internal_crypto_types::{PublicSigKey, Signature},
-        signcryption::internal_verify_sig,
-    },
-    engine::base::safe_serialize_hash_element_versioned,
+    hashing::{hash_element, DomainSep},
 };
 
 use super::{
@@ -38,9 +28,118 @@ use super::{
     secretsharing,
     traits::{BackupDecryptor, BackupSigner},
 };
+use crate::{
+    anyhow_error_and_log,
+    backup::custodian::DSEP_BACKUP_SETUP,
+    consts::SAFE_SER_SIZE_LIMIT,
+    cryptography::{
+        backup_pke::BackupPublicKey,
+        internal_crypto_types::{PublicSigKey, Signature},
+        signcryption::internal_verify_sig,
+    },
+    engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY},
+};
 
 const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
 pub(crate) const DSEP_BACKUP_OPERATOR: DomainSep = *b"BKUPOPER";
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum RecoveryRequestVersioned {
+    V0(RecoveryRequest),
+}
+
+impl Named for RecoveryRequest {
+    const NAME: &'static str = "backup::RecoveryRequest";
+}
+
+/// The data sent to the custodians by the operator during the recovery procedure.
+#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[versionize(RecoveryRequestVersioned)]
+pub struct RecoveryRequest {
+    /// The ephemeral key used to signcrypt the recovered data during transit to the operator.
+    enc_key: BackupPublicKey,
+    /// The public key of the operator that was originally used to sign the backup.
+    verification_key: PublicSigKey,
+    /// The ciphertexts that are the backup. Ordered by the custodian role.
+    cts: Vec<OperatorBackupOutput>,
+    /// The request ID under which the backup was created.
+    backup_id: RequestId,
+    /// The role of the operator
+    operator_role: Role,
+}
+
+impl RecoveryRequest {
+    pub fn new(
+        enc_key: BackupPublicKey,
+        verification_key: PublicSigKey,
+        cts: Vec<OperatorBackupOutput>,
+        backup_id: RequestId,
+        operator_role: Role,
+    ) -> anyhow::Result<Self> {
+        let res = Self {
+            enc_key,
+            verification_key,
+            cts,
+            backup_id,
+            operator_role,
+        };
+
+        if !res.is_valid() {
+            return Err(anyhow_error_and_log("Invalid RecoveryRequest data"));
+        }
+        Ok(res)
+    }
+
+    /// Validate that the data in the request is sensible.
+    /// Note: this should not be taken as a cryptographic validation, but just as a fail-fast sanity check.
+    /// Furthermore, the typoe constraints will always ensure that a [`RecoveryRequest`] is valid,
+    /// hence a failure can only be expected as a result of manipulation of a serialized requst.
+    pub fn is_valid(&self) -> bool {
+        if !self.backup_id.is_valid() {
+            tracing::error!("RecoveryRequest has an invalid backup ID");
+            return false;
+        }
+        if !self.operator_role.one_based() == 0 {
+            tracing::error!("RecoveryRequest has an invalid operator role");
+            return false;
+        }
+        true
+    }
+
+    pub fn encryption_key(&self) -> &BackupPublicKey {
+        &self.enc_key
+    }
+
+    pub fn verification_key(&self) -> &PublicSigKey {
+        &self.verification_key
+    }
+
+    pub fn ciphertexts(&self) -> &Vec<OperatorBackupOutput> {
+        &self.cts
+    }
+
+    pub fn backup_id(&self) -> RequestId {
+        self.backup_id
+    }
+
+    pub fn operator_role(&self) -> Role {
+        self.operator_role
+    }
+}
+
+impl Display for RecoveryRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "RecoveryRequest with:\n backup id: {}\n operator role: {}\n verification key address: {}\n ciphertext digest: {}\n encryption key digest: {}",
+            self.backup_id,
+            self.operator_role,
+            alloy_primitives::Address::from_public_key(self.verification_key.pk()),
+            hex::encode(hash_element(&DSEP_PUBDATA_KEY, &bc2wrap::serialize(&self.cts).unwrap())),
+            hex::encode(hash_element(&DSEP_PUBDATA_KEY,  &bc2wrap::serialize(&self.enc_key).unwrap()))
+        )
+    }
+}
 
 pub struct Operator<S: BackupSigner, D: BackupDecryptor> {
     my_role: Role,
@@ -87,7 +186,7 @@ pub struct OperatorBackupOutput {
     /// We cannot use the regular commitment routines from commitment.rs
     /// because the operator cannot keep the opening and it cannot make it public.
     /// As such, we need to ensure the material that is being committed
-    /// has enough entorpy.
+    /// has enough entropy.
     pub commitment: Vec<u8>,
 }
 

@@ -1,15 +1,15 @@
 use aes_prng::AesRng;
 use clap::Parser;
-use kms_grpc::{rpc_types::PubDataType, RequestId};
+use kms_grpc::rpc_types::PubDataType;
 use kms_lib::{
     backup::{
         custodian::Custodian,
-        operator::OperatorBackupOutput,
+        operator::{OperatorBackupOutput, RecoveryRequest},
         seed_phrase::{generate_keys_from_rng, generate_keys_from_seed_phrase},
     },
     consts::RND_SIZE,
     cryptography::{
-        backup_pke::{self, BackupPublicKey},
+        backup_pke::{self},
         internal_crypto_types::PublicSigKey,
     },
     engine::base::derive_request_id,
@@ -20,7 +20,7 @@ use kms_lib::{
 };
 use observability::{conf::TelemetryConfig, telemetry::init_tracing};
 use rand::{RngCore, SeedableRng};
-use std::{env, path::PathBuf, str::FromStr};
+use std::{env, path::PathBuf};
 use threshold_fhe::{
     execution::runtime::party::Role,
     hashing::{hash_element, DomainSep},
@@ -32,53 +32,49 @@ const CUSTODIAN_VERF_KEY: &str = "CUSTODIAN_ENC_KEY";
 
 const SEED_PHRASE_DESC: &str = "The SECRET seed phrase for the custodian keys is: ";
 
+/// The parameters needed to generate custodian keys and setup
 #[derive(Debug, Parser, Clone)]
 pub struct GenerateParams {
+    /// Optional randomness to be used, along with the system entropy, to generate the keys
     #[clap(long, short = 'r', default_value = None)]
     pub randomness: Option<String>,
+    /// The optional relative path for storing the generated *public* keys.
+    /// If not provided, the keys will be stored in a key directory in the current folder
     #[clap(long, short = 'p', default_value = None)]
     pub path: Option<PathBuf>,
 }
+
+/// The parameters needed to verify existing custodian keys against the stored public keys.
 #[derive(Debug, Parser, Clone)]
 pub struct VerifyParams {
+    /// The BIP39 seed phrase needed to recover the custodian keys
     #[clap(long, short = 's')]
     pub seed_phrase: String,
+    /// The optional relative path for reading the previously generated *public* keys.
+    /// If not provided, the keys will be stored in a key directory in the current folder
     #[clap(long, short = 'p', default_value = None)]
     pub path: Option<PathBuf>,
 }
-#[derive(Debug, Parser, Clone)]
-pub struct CoreDecParams {
-    #[clap(long, short = 'c', required = true)]
-    pub ct_path: PathBuf,
-    #[clap(long, short = 'e', required = true)]
-    pub enc_key_path: PathBuf,
-    #[clap(long, short = 'v', required = true)]
-    pub verf_key_path: PathBuf, // TODO should be optional once we move to encrypt-then-sign
-}
+
+/// The parameters needed for a custodian to decrypt a backup for a given operator.
 #[derive(Debug, Parser, Clone)]
 pub struct DecryptParams {
+    /// The BIP39 seed phrase needed to recover the custodian keys
     #[clap(long, short = 's')]
     pub seed_phrase: String,
+    /// The optional relative path for storing the generated *public* keys.
+    /// If not provided, the keys will be stored in a key directory in the current folder
     #[clap(long, short = 'r', default_value = None)]
     pub randomness: Option<String>,
-    #[clap(long, short = 'i', required = true)]
-    pub backup_id: String,
-    #[clap(long, required = true)]
-    pub custodian_role: usize,
-    #[clap(long, required = true)]
-    pub operator_role: usize,
     #[clap(long, short = 'c', required = true)]
-    pub ct_path: PathBuf,
-    #[clap(long, short = 'e', required = true)]
-    // This and the key below could be combined into a single struct as they come from the new operator
-    pub enc_key_path: PathBuf,
-    #[clap(long, short = 'v', required = true)]
-    pub verf_key_path: PathBuf, // TODO should be optional once we move to encrypt-then-sign
+    pub custodian_role: usize,
+    /// The relative path to the [`RecoveryRequest`] file containing the request of a custodian for recovery
+    #[clap(long, short = 'b', required = true)]
+    pub recovery_request_path: String,
+    /// The relative path for the reencrypted backup which will be given to the operator.
     #[clap(long, short = 'o', required = true)]
     pub output_path: PathBuf,
 }
-#[derive(Debug, Parser, Clone)]
-pub struct NoParameters {}
 
 #[derive(Debug, Clone, Parser)]
 pub enum CustodianCommand {
@@ -177,8 +173,11 @@ async fn main() -> Result<(), anyhow::Error> {
                 "Decrypting ciphertexts for custodian role: {}",
                 params.custodian_role
             );
-            let backup_id =
-                RequestId::from_str(&params.backup_id).expect("Invalid backup ID format");
+            let recovery_request: RecoveryRequest =
+                safe_read_element_versioned(&params.recovery_request_path).await?;
+            if !recovery_request.is_valid() {
+                return Err(anyhow::anyhow!("Invalid RecoveryRequest data"));
+            }
             // Logic for decrypting payloads
             let custodian_keys = generate_keys_from_seed_phrase(&params.seed_phrase)
                 .expect("Failed to recover keys");
@@ -191,28 +190,23 @@ async fn main() -> Result<(), anyhow::Error> {
             )?;
             tracing::info!("Custodian initialized successfully");
             let mut rng = get_rng(params.randomness.as_ref());
-            let ct: OperatorBackupOutput = safe_read_element_versioned(&params.ct_path).await?;
-            tracing::info!("Read ciphertext from {}", params.ct_path.display());
-            let core_enc_key: BackupPublicKey =
-                safe_read_element_versioned(&params.enc_key_path).await?;
-            tracing::info!(
-                "Read operator's encryption key from {}",
-                params.enc_key_path.display()
-            );
-            let core_verf_key: PublicSigKey =
-                safe_read_element_versioned(&params.verf_key_path).await?;
-            tracing::info!(
-                "Read operator's verification key from {}",
-                params.verf_key_path.display()
-            );
 
+            let custodian_backup: &OperatorBackupOutput = recovery_request
+                .ciphertexts()
+                .get(params.custodian_role - 1)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "No ciphertext found for custodian role: {}",
+                        custodian.role()
+                    )
+                });
             let res = custodian.verify_reencrypt(
                 &mut rng,
-                &ct,
-                &core_verf_key,
-                &core_enc_key,
-                backup_id,
-                Role::indexed_from_one(params.operator_role),
+                custodian_backup,
+                recovery_request.verification_key(),
+                recovery_request.encryption_key(),
+                recovery_request.backup_id(),
+                recovery_request.operator_role(),
             )?;
             tracing::info!("Verified reencryption successfully");
             safe_write_element_versioned(&params.output_path, &res).await?;
@@ -253,7 +247,7 @@ mod tests {
     use kms_lib::{
         backup::{
             custodian::{Custodian, CustodianRecoveryOutput, CustodianSetupMessage},
-            operator::Operator,
+            operator::{Operator, RecoveryRequest},
         },
         cryptography::{
             backup_pke::{self, BackupPrivateKey},
@@ -262,6 +256,7 @@ mod tests {
         engine::base::derive_request_id,
         util::file_handling::{safe_read_element_versioned, safe_write_element_versioned},
     };
+    use std::path::MAIN_SEPARATOR;
     use std::{collections::BTreeMap, fs, path::Path, thread};
     use threshold_fhe::execution::runtime::party::Role;
 
@@ -352,29 +347,17 @@ mod tests {
         // Decrypt
         for custodian_index in 1..=amount_custodians {
             for operator_index in 1..=amount_operators {
-                let ct_path = format!(
-                    "{TEST_DIR}/backups/ct-{operator_index}-to-{custodian_index}.bin", // todo should use delimiter in case of windows
-                );
                 let decrypt_command = vec![
                     "decrypt".to_string(),
                     "--seed-phrase".to_string(),
                     seed_phrase.to_string(),
-                    "--backup-id".to_string(),
-                    backup_id.to_string(),
                     "--custodian-role".to_string(),
                     custodian_index.to_string(),
-                    "--operator-role".to_string(),
-                    operator_index.to_string(),
-                    "-c".to_string(),
-                    ct_path,
-                    "-e".to_string(),
-                    format!("{TEST_DIR}/operator-enc-key-{}.bin", operator_index),
-                    "-v".to_string(),
-                    format!("{TEST_DIR}/operator-verf-key-{}.bin", operator_index),
+                    "-b".to_string(),
+                    format!("{TEST_DIR}{MAIN_SEPARATOR}operator-{operator_index}{MAIN_SEPARATOR}{backup_id}-request.bin"),
                     "-o".to_string(),
                     format!(
-                        "{TEST_DIR}/recovered_keys-{}-{}.bin",
-                        operator_index, custodian_index
+                        "{TEST_DIR}{MAIN_SEPARATOR}operator-{operator_index}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin",
                     ),
                 ];
                 let _verf_out = run_commands(decrypt_command);
@@ -445,15 +428,28 @@ mod tests {
             .secret_share_and_encrypt(&mut rng, msg, backup_id)
             .unwrap();
         let mut commitments = BTreeMap::new();
+        let mut ciphertexts = Vec::new();
         for custodian_index in 1..=amount_custodians {
             let custodian_role = Role::indexed_from_one(custodian_index);
-            let ct_path = format!("{TEST_DIR}/backups/ct-{operator_role}-to-{custodian_role}.bin");
             let ct = ct_map.get(&custodian_role).unwrap();
             commitments.insert(custodian_role, ct.commitment.clone());
-            safe_write_element_versioned(&Path::new(&ct_path), ct)
-                .await
-                .unwrap();
+            ciphertexts.push(ct.to_owned());
         }
+        let recovery_request = RecoveryRequest::new(
+            operator.public_key().to_owned(),
+            operator.verification_key().to_owned(),
+            ciphertexts,
+            backup_id,
+            operator_role,
+        )
+        .unwrap();
+        let request_path = format!(
+            "{TEST_DIR}{MAIN_SEPARATOR}operator-{}{MAIN_SEPARATOR}{backup_id}-request.bin",
+            operator_role.one_based()
+        );
+        safe_write_element_versioned(&Path::new(&request_path), &recovery_request)
+            .await
+            .unwrap();
         (commitments, operator)
     }
 
@@ -465,13 +461,9 @@ mod tests {
     ) -> Vec<u8> {
         let mut outputs = BTreeMap::new();
         for custodian_index in 1..=amount_custodians {
-            let payload_path = format!(
-                "{TEST_DIR}/recovered_keys-{}-{}.bin",
-                operator.role().one_based(),
-                custodian_index
-            );
+            let recovered_backup_path = format!("{TEST_DIR}{MAIN_SEPARATOR}operator-{}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin", operator.role());
             let payload: CustodianRecoveryOutput =
-                safe_read_element_versioned(&Path::new(&payload_path))
+                safe_read_element_versioned(&Path::new(&recovered_backup_path))
                     .await
                     .unwrap();
             outputs.insert(Role::indexed_from_one(custodian_index), payload);
@@ -487,25 +479,9 @@ mod tests {
         role: Role,
         threshold: usize,
     ) -> anyhow::Result<Operator<PrivateSigKey, BackupPrivateKey>> {
+        // Note that in the actual deployment, the operator keys are generated before the encryption keys
         let (verification_key, signing_key) = gen_sig_keys(rng);
         let (private_key, public_key) = backup_pke::keygen(rng).unwrap();
-        safe_write_element_versioned(
-            Path::new(&format!(
-                "{TEST_DIR}/operator-enc-key-{}.bin",
-                role.one_based()
-            )),
-            &public_key,
-        )
-        .await?;
-        safe_write_element_versioned(
-            Path::new(&format!(
-                "{TEST_DIR}/operator-verf-key-{}.bin",
-                role.one_based(),
-            )),
-            &verification_key,
-        )
-        .await?;
-
         Ok(Operator::new(
             role,
             setup_msgs,
