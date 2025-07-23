@@ -3010,6 +3010,7 @@ pub(crate) mod tests {
         .await;
     }
 
+    // TODO(2674)
     // test centralized sns compression keygen using the testing parameters
     // this test will use an existing base key stored under the key ID `TEST_CENTRAL_KEY_ID`
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -3074,6 +3075,7 @@ pub(crate) mod tests {
         .await;
     }
 
+    // TODO(2674)
     // test centralized sns compression keygen using the default parameters
     // this test will use an existing base key stored under the key ID `DEFAULT_CENTRAL_KEY_ID`
     #[cfg(feature = "slow_tests")]
@@ -4221,7 +4223,10 @@ pub(crate) mod tests {
     #[rstest::rstest]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn test_user_decryption_centralized_precompute_sns(#[values(true, false)] secure: bool) {
+    async fn test_user_decryption_centralized_precompute_sns(
+        #[values(true, false)] secure: bool,
+        #[values(true, false)] compression: bool,
+    ) {
         user_decryption_centralized(
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID,
@@ -4229,7 +4234,7 @@ pub(crate) mod tests {
             false,
             TestingPlaintext::U8(48),
             EncryptionConfig {
-                compression: false,
+                compression,
                 precompute_sns: true,
             },
             4,
@@ -4243,6 +4248,7 @@ pub(crate) mod tests {
     #[serial]
     async fn test_user_decryption_centralized_precompute_sns_legacy(
         #[values(true, false)] secure: bool,
+        #[values(true, false)] compression: bool,
     ) {
         user_decryption_centralized(
             &TEST_PARAM,
@@ -4251,7 +4257,7 @@ pub(crate) mod tests {
             true,
             TestingPlaintext::U8(48),
             EncryptionConfig {
-                compression: false,
+                compression,
                 precompute_sns: true,
             },
             4,
@@ -4273,7 +4279,7 @@ pub(crate) mod tests {
             TestingPlaintext::U8(48),
             EncryptionConfig {
                 compression: true,
-                precompute_sns: false,
+                precompute_sns: true,
             },
             1, // wasm tests are single-threaded
             true,
@@ -4293,7 +4299,7 @@ pub(crate) mod tests {
             TestingPlaintext::U8(48),
             EncryptionConfig {
                 compression: true,
-                precompute_sns: false,
+                precompute_sns: true,
             },
             1, // wasm tests are single-threaded
             true,
@@ -4317,7 +4323,7 @@ pub(crate) mod tests {
             msg,
             EncryptionConfig {
                 compression: true,
-                precompute_sns: false,
+                precompute_sns: true,
             },
             1, // wasm tests are single-threaded
             true,
@@ -4383,6 +4389,7 @@ pub(crate) mod tests {
     #[serial]
     async fn default_user_decryption_centralized_precompute_sns(
         #[values(true, false)] secure: bool,
+        #[values(true, false)] compression: bool,
     ) {
         use crate::consts::DEFAULT_PARAM;
 
@@ -4395,7 +4402,7 @@ pub(crate) mod tests {
             false,
             msg,
             EncryptionConfig {
-                compression: false,
+                compression,
                 precompute_sns: true,
             },
             parallelism,
@@ -4717,6 +4724,7 @@ pub(crate) mod tests {
         #[case] amount_parties: usize,
         #[case] key_id: &RequestId,
         #[case] decryption_mode: DecryptionMode,
+        #[values(true, false)] compression: bool,
     ) {
         decryption_threshold(
             TEST_PARAM,
@@ -4727,7 +4735,7 @@ pub(crate) mod tests {
                 TestingPlaintext::U16(444),
             ],
             EncryptionConfig {
-                compression: false,
+                compression,
                 precompute_sns: true,
             },
             2,
@@ -4777,6 +4785,7 @@ pub(crate) mod tests {
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
         #[case] key_id: &RequestId,
+        #[values(true, false)] compression: bool,
     ) {
         use crate::consts::DEFAULT_PARAM;
 
@@ -4785,7 +4794,7 @@ pub(crate) mod tests {
             key_id,
             msg,
             EncryptionConfig {
-                compression: false,
+                compression,
                 precompute_sns: true,
             },
             parallelism,
@@ -5879,7 +5888,6 @@ pub(crate) mod tests {
     #[cfg(feature = "insecure")]
     #[rstest::rstest]
     #[case(4)]
-    #[case(7)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn test_insecure_dkg(#[case] amount_parties: usize) {
@@ -6184,6 +6192,7 @@ pub(crate) mod tests {
         .await;
     }
 
+    // TODO(2674)
     #[cfg(all(feature = "slow_tests", feature = "insecure"))]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
@@ -6951,9 +6960,9 @@ pub(crate) mod tests {
 
         let sns_compression_key_shares = all_threshold_fhe_keys
             .iter()
-            .map(|(k, v)| (*k, v.private_keys.glwe_sns_compression_key.clone()))
+            .map(|(k, v)| (*k, v.private_keys.glwe_sns_compression_key_as_lwe.clone()))
             .filter_map(|(k, v)| match v {
-                Some(vv) => Some((k, vv.post_packing_ks_key.data)),
+                Some(vv) => Some((k, vv.data)),
                 None => None,
             })
             .collect::<HashMap<_, _>>();

@@ -28,9 +28,9 @@ use std::path::Path;
 use tfhe::Seed;
 use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_fhe::execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
 use threshold_fhe::execution::{
-    tfhe_internals::test_feature::{gen_key_set, keygen_all_party_shares},
-    zk::ceremony::public_parameters_by_trusted_setup,
+    tfhe_internals::test_feature::gen_key_set, zk::ceremony::public_parameters_by_trusted_setup,
 };
 use threshold_fhe::session_id::SessionId;
 use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
@@ -861,24 +861,11 @@ where
     }
 
     // Generate key set and shares
-    let key_set = gen_key_set(dkg_params, &mut rng);
-
-    // Get raw GLWE client SNS key as LWE with error handling
-    let raw_glwe_client_sns_key_as_lwe = match key_set.get_raw_glwe_client_sns_key_as_lwe() {
-        Some(key) => key,
-        None => {
-            let msg = "Failed to get raw GLWE client SNS key as LWE";
-            tracing::error!(msg);
-            panic!("{}", msg);
-        }
-    };
+    let keyset = gen_key_set(dkg_params, &mut rng);
 
     // Generate key shares with error handling
-    let key_shares = match keygen_all_party_shares(
-        key_set.get_raw_lwe_client_key(),
-        key_set.get_raw_lwe_encryption_client_key(),
-        key_set.get_raw_glwe_client_key(),
-        raw_glwe_client_sns_key_as_lwe,
+    let key_shares = match keygen_all_party_shares_from_keyset(
+        &keyset,
         dkg_params
             .get_params_basics_handle()
             .to_classic_pbs_parameters(),
@@ -894,14 +881,14 @@ where
     };
 
     let (integer_server_key, _, _, decompression_key, sns_key, _, _) =
-        key_set.public_keys.server_key.clone().into_raw_parts();
+        keyset.public_keys.server_key.clone().into_raw_parts();
 
     // Store keys for each party
     for i in 1..=amount_parties {
         // Get signing key for this party
         let sk = &signing_keys[i - 1];
         // Compute info with proper error handling
-        let info = match compute_all_info(sk, &key_set.public_keys, None) {
+        let info = match compute_all_info(sk, &keyset.public_keys, None) {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Failed to compute key info for party {}: {}", i, e);
@@ -920,7 +907,7 @@ where
         if let Err(store_err) = store_pk_at_request_id(
             &mut pub_storages[i - 1],
             key_id,
-            WrappedPublicKey::Compact(&key_set.public_keys.public_key),
+            WrappedPublicKey::Compact(&keyset.public_keys.public_key),
         )
         .await
         {
@@ -937,7 +924,7 @@ where
         if let Err(store_err) = store_versioned_at_request_id(
             &mut pub_storages[i - 1],
             key_id,
-            &key_set.public_keys.server_key,
+            &keyset.public_keys.server_key,
             &PubDataType::ServerKey.to_string(),
         )
         .await

@@ -6,6 +6,7 @@ use tfhe::{
     core_crypto::{
         commons::traits::Numeric,
         entities::{GlweSecretKey, LweSecretKey},
+        prelude::UnsignedInteger,
     },
     integer::compression_keys::DecompressionKey,
     prelude::{FheDecrypt, FheEncrypt, ParameterSetConformant, SquashNoise},
@@ -28,7 +29,6 @@ use crate::{
     algebra::{
         base_ring::{Z128, Z64},
         galois_rings::common::ResiduePoly,
-        poly::Poly,
         structure_traits::{Ring, RingWithExceptionalSequence},
     },
     error::error_handler::anyhow_error_and_log,
@@ -37,7 +37,11 @@ use crate::{
             CompressionPrivateKeySharesEnum, FhePubKeySet, GlweSecretKeyShareEnum, PrivateKeySet,
         },
         runtime::{party::Role, session::BaseSessionHandles},
-        sharing::{input::robust_input, share::Share},
+        sharing::{
+            input::robust_input,
+            shamir::{InputOp, ShamirSharings},
+            share::Share,
+        },
         tfhe_internals::{
             compression_decompression_key::{
                 CompressionPrivateKeyShares, SnsCompressionPrivateKeyShares,
@@ -130,6 +134,11 @@ impl KeySet {
         let (_, _, _, _, sns_compression_key, _) = self.client_key.clone().into_raw_parts();
         sns_compression_key
             .map(|sns_compression_key| sns_compression_key.into_raw_parts().into_raw_parts().0)
+    }
+
+    pub fn get_raw_sns_compression_client_key_as_lwe(&self) -> Option<LweSecretKey<Vec<u128>>> {
+        self.get_raw_sns_compression_client_key()
+            .map(|inner| inner.into_lwe_secret_key())
     }
 
     pub fn get_cpu_params(&self) -> anyhow::Result<ClassicPBSParameters> {
@@ -480,18 +489,11 @@ where
             })
         });
 
-    let glwe_sns_compression_key =
+    let glwe_sns_compression_key_as_lwe =
         params_basic_handle
             .get_sns_compression_params()
-            .map(|sns_compression_params| {
-                let params = sns_compression_params.raw_compression_parameters;
-                SnsCompressionPrivateKeyShares {
-                    post_packing_ks_key: GlweSecretKeyShare {
-                        data: glwe_sns_compression_key_shares128,
-                        polynomial_size: params.packing_ks_polynomial_size,
-                    },
-                    params,
-                }
+            .map(|_sns_compression_params| LweSecretKeyShare {
+                data: glwe_sns_compression_key_shares128,
             });
 
     let transferred_pub_key =
@@ -511,7 +513,7 @@ where
         glwe_secret_key_share_sns_as_lwe: sns_key_shares128,
         parameters: params_basic_handle.to_classic_pbs_parameters(),
         glwe_secret_key_share_compression,
-        glwe_sns_compression_key,
+        glwe_sns_compression_key_as_lwe,
     };
 
     Ok((transferred_pub_key, shared_sk))
@@ -803,18 +805,45 @@ pub fn to_hl_client_key(
     ))
 }
 
-/// Keygen that generates secret key shares for many parties
-/// Note that Z64 shares of glwe_secret_key_share is used. So this function
-/// should not be used in combination with key rotation tests.
+/// Helper function to generate secret key shares
+#[allow(clippy::type_complexity)]
+fn secret_share_key_shares<
+    R: Rng + CryptoRng,
+    const EXTENSION_DEGREE: usize,
+    Scalar: UnsignedInteger,
+>(
+    secret_key_container: Vec<Scalar>,
+    num_parties: usize,
+    threshold: usize,
+    rng: &mut R,
+) -> anyhow::Result<Vec<Vec<Share<ResiduePoly<Wrapping<Scalar>, EXTENSION_DEGREE>>>>>
+where
+    ResiduePoly<Wrapping<Scalar>, EXTENSION_DEGREE>: RingWithExceptionalSequence,
+    Wrapping<Scalar>: Ring,
+{
+    let s_length = secret_key_container.len();
+    let mut res: Vec<Vec<Share<ResiduePoly<Wrapping<Scalar>, EXTENSION_DEGREE>>>> =
+        vec![Vec::with_capacity(s_length); num_parties];
+
+    // for each bit in the secret key generate all parties shares
+    for (i, bit) in secret_key_container.iter().enumerate() {
+        let embedded_secret =
+            ResiduePoly::<Wrapping<Scalar>, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
+        let shares = ShamirSharings::share(rng, embedded_secret, num_parties, threshold)?;
+        for (v, share) in res.iter_mut().zip_eq(shares.shares) {
+            v.insert(i, share);
+        }
+    }
+
+    Ok(res)
+}
+
+/// Keygen that generates secret key shares for many parties.
 ///
 /// __NOTE__: Some secret keys are actually dummy or None, what we really need here are the key
 /// passed as input.
-#[allow(clippy::too_many_arguments)]
-pub fn keygen_all_party_shares<R: Rng + CryptoRng, const EXTENSION_DEGREE: usize>(
-    lwe_secret_key: LweSecretKey<Vec<u64>>,
-    lwe_encryption_secret_key: LweSecretKey<Vec<u64>>,
-    glwe_secret_key: GlweSecretKey<Vec<u64>>,
-    glwe_secret_key_sns_as_lwe: LweSecretKey<Vec<u128>>,
+pub fn keygen_all_party_shares_from_keyset<R: Rng + CryptoRng, const EXTENSION_DEGREE: usize>(
+    keyset: &KeySet,
     parameters: ClassicPBSParameters,
     rng: &mut R,
     num_parties: usize,
@@ -824,74 +853,61 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: RingWithExceptionalSequence,
     ResiduePoly<Z64, EXTENSION_DEGREE>: RingWithExceptionalSequence,
 {
-    let s_vector = glwe_secret_key_sns_as_lwe.into_container();
-    let s_length = s_vector.len();
-    let mut vv128: Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> =
-        vec![Vec::with_capacity(s_length); num_parties];
+    let lwe_secret_key = keyset.get_raw_lwe_client_key();
 
-    let role_with_embeddings_z64 = (1..=num_parties)
-        .map(|party_id| {
-            Ok((
-                Role::indexed_from_one(party_id),
-                ResiduePoly::<Z64, EXTENSION_DEGREE>::get_from_exceptional_sequence(party_id)?,
-            ))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    let lwe_encryption_secret_key = keyset.get_raw_lwe_encryption_client_key();
+    let glwe_secret_key = keyset.get_raw_glwe_client_key();
+    let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
+    let glwe_secret_key_sns_compression_as_lwe = keyset.get_raw_sns_compression_client_key_as_lwe();
+    keygen_all_party_shares(
+        lwe_secret_key,
+        lwe_encryption_secret_key,
+        glwe_secret_key,
+        glwe_secret_key_sns_as_lwe,
+        glwe_secret_key_sns_compression_as_lwe,
+        parameters,
+        rng,
+        num_parties,
+        threshold,
+    )
+}
 
-    let role_with_embeddings_z128 = (1..=num_parties)
-        .map(|party_id| {
-            Ok((
-                Role::indexed_from_one(party_id),
-                ResiduePoly::<Z128, EXTENSION_DEGREE>::get_from_exceptional_sequence(party_id)?,
-            ))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
+#[allow(clippy::too_many_arguments)]
+fn keygen_all_party_shares<R: Rng + CryptoRng, const EXTENSION_DEGREE: usize>(
+    lwe_secret_key: LweSecretKey<Vec<u64>>,
+    lwe_encryption_secret_key: LweSecretKey<Vec<u64>>,
+    glwe_secret_key: GlweSecretKey<Vec<u64>>,
+    glwe_secret_key_sns_as_lwe: LweSecretKey<Vec<u128>>,
+    glwe_secreet_key_sns_compression_as_lwe: Option<LweSecretKey<Vec<u128>>>,
+    parameters: ClassicPBSParameters,
+    rng: &mut R,
+    num_parties: usize,
+    threshold: usize,
+) -> anyhow::Result<Vec<PrivateKeySet<EXTENSION_DEGREE>>>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: RingWithExceptionalSequence,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: RingWithExceptionalSequence,
+{
     // for each bit in the secret key generate all parties shares
-    for (i, bit) in s_vector.iter().enumerate() {
-        let embedded_secret = ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
-        let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
-
-        for (v, (role, embedding)) in vv128.iter_mut().zip_eq(role_with_embeddings_z128.iter()) {
-            v.insert(i, Share::new(*role, poly.eval(embedding)));
-        }
-    }
+    let vv128: Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> = secret_share_key_shares(
+        glwe_secret_key_sns_as_lwe.into_container(),
+        num_parties,
+        threshold,
+        rng,
+    )?;
 
     // do the same for 64 bit lwe key
-    let s_vector64 = lwe_secret_key.into_container();
-    let s_length64 = s_vector64.len();
-    let mut vv64_lwe_key: Vec<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>> =
-        vec![Vec::with_capacity(s_length64); num_parties];
-    // for each bit in the secret key generate all parties shares
-    for (i, bit) in s_vector64.iter().enumerate() {
-        let embedded_secret = ResiduePoly::<Z64, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
-        let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
-
-        for (v, (role, embedding)) in vv64_lwe_key
-            .iter_mut()
-            .zip_eq(role_with_embeddings_z64.iter())
-        {
-            v.insert(i, Share::new(*role, poly.eval(embedding)));
-        }
-    }
+    let vv64_lwe_key: Vec<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>> =
+        secret_share_key_shares(lwe_secret_key.into_container(), num_parties, threshold, rng)?;
 
     // do the same for 64 bit lwe encryption key
-    let s_enc_vector64 = lwe_encryption_secret_key.into_container();
-    let s_enc_length64 = s_enc_vector64.len();
-    let mut vv64_lwe_enc_key: Vec<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>> =
-        vec![Vec::with_capacity(s_enc_length64); num_parties];
-    // for each bit in the secret key generate all parties shares
-    for (i, bit) in s_enc_vector64.iter().enumerate() {
-        let embedded_secret = ResiduePoly::<Z64, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
-        let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
-
-        for (v, (role, embedding)) in vv64_lwe_enc_key
-            .iter_mut()
-            .zip_eq(role_with_embeddings_z64.iter())
-        {
-            v.insert(i, Share::new(*role, poly.eval(embedding)));
-        }
-    }
+    let vv64_lwe_enc_key: Vec<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>> =
+        secret_share_key_shares(
+            lwe_encryption_secret_key.into_container(),
+            num_parties,
+            threshold,
+            rng,
+        )?;
 
     // do the same for 128 bit glwe key, this is how we generate it normally
     let glwe_poly_size = glwe_secret_key.polynomial_size();
@@ -900,21 +916,19 @@ where
         .into_iter()
         .map(|x| x as u128)
         .collect_vec();
-    let s_length128 = s_vector128.len();
-    let mut vv128_glwe_key: Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> =
-        vec![Vec::with_capacity(s_length128); num_parties];
-    // for each bit in the secret key generate all parties shares
-    for (i, bit) in s_vector128.iter().enumerate() {
-        let embedded_secret = ResiduePoly::<Z128, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
-        let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
+    let vv128_glwe_key: Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> =
+        secret_share_key_shares(s_vector128, num_parties, threshold, rng)?;
 
-        for (v, (role, embedding)) in vv128_glwe_key
-            .iter_mut()
-            .zip_eq(role_with_embeddings_z128.iter())
-        {
-            v.insert(i, Share::new(*role, poly.eval(embedding)));
-        }
-    }
+    // optionally share the sns compression secret key
+    let all_glwe_sns_compression_key_as_lwe = match glwe_secreet_key_sns_compression_as_lwe {
+        Some(inner) => Some(secret_share_key_shares(
+            inner.into_container(),
+            num_parties,
+            threshold,
+            rng,
+        )?),
+        None => None,
+    };
 
     // put the individual parties shares into SecretKeyShare structs
     let shared_sks: Vec<_> = (0..num_parties)
@@ -935,7 +949,9 @@ where
             parameters,
             // the below is not really used for any computation
             glwe_secret_key_share_compression: None,
-            glwe_sns_compression_key: None,
+            glwe_sns_compression_key_as_lwe: all_glwe_sns_compression_key_as_lwe
+                .as_ref()
+                .map(|x| LweSecretKeyShare { data: x[p].clone() }),
         })
         .collect();
 

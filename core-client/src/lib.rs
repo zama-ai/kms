@@ -7,7 +7,7 @@ use alloy_primitives::Signature;
 use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bytes::Bytes;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenResult, FheParameter, KeyGenPreprocResult, KeyGenResult,
@@ -389,7 +389,7 @@ pub struct CipherParameters {
     pub compression: bool,
     /// Boolean to do SnS preprocessing on the ciphertext or not.
     /// SnS preprocessing performs a PBS to convert 64-bit ciphertexts to 128-bit ones.
-    /// At the moment it cannot be used in combination with compression. Default: False.
+    /// Default: False.
     #[clap(long)]
     pub precompute_sns: bool,
     /// Key identifier to use for public/user decryption.
@@ -432,10 +432,62 @@ pub struct CipherWithParams {
     cipher: Vec<u8>,
 }
 
+#[derive(ValueEnum, Debug, Clone, Default)]
+pub enum KeySetType {
+    #[default]
+    Standard,
+    // DecompressionOnly, // we'll support this in the future
+    AddSnsCompressionKey,
+}
+
+impl From<KeySetType> for kms_grpc::kms::v1::KeySetType {
+    fn from(value: KeySetType) -> Self {
+        match value {
+            KeySetType::Standard => kms_grpc::kms::v1::KeySetType::Standard,
+            KeySetType::AddSnsCompressionKey => kms_grpc::kms::v1::KeySetType::AddSnsCompressionKey,
+        }
+    }
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct KeySetAddedInfo {
+    #[clap(long)]
+    base_keyset_id_for_sns_compression_key: Option<RequestId>,
+}
+
+impl From<KeySetAddedInfo> for kms_grpc::kms::v1::KeySetAddedInfo {
+    fn from(value: KeySetAddedInfo) -> Self {
+        kms_grpc::kms::v1::KeySetAddedInfo {
+            compression_keyset_id: None,
+            from_keyset_id_decompression_only: None,
+            to_keyset_id_decompression_only: None,
+            base_keyset_id_for_sns_compression_key: value
+                .base_keyset_id_for_sns_compression_key
+                .map(|x| x.into()),
+        }
+    }
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct SharedKeyGenParameters {
+    #[clap(value_enum, long, short = 't')]
+    pub keyset_type: Option<KeySetType>,
+    #[command(flatten)]
+    pub keyset_added_info: Option<KeySetAddedInfo>,
+}
+
 #[derive(Debug, Parser, Clone)]
 pub struct KeyGenParameters {
     #[clap(long, short = 'i')]
     pub preproc_id: RequestId,
+    #[command(flatten)]
+    pub shared_args: SharedKeyGenParameters,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct InsecureKeyGenParameters {
+    #[command(flatten)]
+    pub shared_args: SharedKeyGenParameters,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -456,7 +508,7 @@ pub enum CCCommand {
     PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
     KeyGenResult(ResultParameters),
-    InsecureKeyGen(NoParameters),
+    InsecureKeyGen(InsecureKeyGenParameters),
     InsecureKeyGenResult(ResultParameters),
     Encrypt(CipherParameters),
     #[clap(subcommand)]
@@ -486,7 +538,7 @@ pub struct CmdConfig {
     #[clap(long, short = 'l')]
     pub logs: bool,
     /// Max number of iterations to query the KMS for a response
-    #[clap(long, default_value = "20")]
+    #[clap(long, default_value = "30")]
     #[validate(range(min = 1))]
     pub max_iter: usize,
     /// Should we expect a response from every KMS core or not
@@ -992,6 +1044,7 @@ async fn do_keygen(
     param: FheParameter,
     preproc_id: Option<RequestId>,
     insecure: bool,
+    shared_config: &SharedKeyGenParameters,
     destination_prefix: &Path,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
@@ -1005,12 +1058,24 @@ async fn do_keygen(
 
     //NOTE: If we do not use dummy_domain here, then
     //this needs changing too in the KeyGenResult command.
+    let keyset_config =
+        shared_config
+            .keyset_type
+            .clone()
+            .map(|x| kms_grpc::kms::v1::KeySetConfig {
+                keyset_type: kms_grpc::kms::v1::KeySetType::from(x) as i32,
+                standard_keyset_config: None,
+            });
+    let keyset_added_info = shared_config
+        .keyset_added_info
+        .clone()
+        .map(kms_grpc::kms::v1::KeySetAddedInfo::from);
     let dkg_req = internal_client.key_gen_request(
         &req_id,
         preproc_id,
         Some(param),
-        None,
-        None,
+        keyset_config,
+        keyset_added_info,
         Some(dummy_domain()),
     )?;
 
@@ -1281,20 +1346,11 @@ pub async fn execute_cmd(
             if let CipherArguments::FromArgs(cipher_params) = cipher_args {
                 tracing::info!("Fetching tfhe keys. ({command:?})");
                 fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
-                //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.3
-                if cipher_params.compression && cipher_params.precompute_sns {
-                    panic!("Compression on big ciphertexts is not supported yet!");
-                }
             }
         }
         CCCommand::Encrypt(cipher_params) => {
             tracing::info!("Fetching tfhe keys. ({command:?})");
             fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
-
-            //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.3
-            if cipher_params.compression && cipher_params.precompute_sns {
-                panic!("Compression on big ciphertexts is not supported yet!");
-            }
         }
         CCCommand::KeyGen(_)
         | CCCommand::InsecureKeyGen(_)
@@ -1608,7 +1664,10 @@ pub async fn execute_cmd(
             )
             .await?
         }
-        CCCommand::KeyGen(KeyGenParameters { preproc_id }) => {
+        CCCommand::KeyGen(KeyGenParameters {
+            preproc_id,
+            shared_args,
+        }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!("Key generation with parameter {}.", param.as_str_name());
             let req_id = do_keygen(
@@ -1622,13 +1681,14 @@ pub async fn execute_cmd(
                 param,
                 Some(*preproc_id),
                 false,
+                shared_args,
                 destination_prefix,
             )
             .await?;
 
             vec![(Some(req_id), "keygen done".to_string())]
         }
-        CCCommand::InsecureKeyGen(NoParameters {}) => {
+        CCCommand::InsecureKeyGen(InsecureKeyGenParameters { shared_args }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "Insecure key generation with parameter {}.",
@@ -1645,6 +1705,7 @@ pub async fn execute_cmd(
                 param,
                 None,
                 true,
+                shared_args,
                 destination_prefix,
             )
             .await?;

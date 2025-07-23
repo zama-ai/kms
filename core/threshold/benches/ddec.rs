@@ -14,7 +14,7 @@ use threshold_fhe::{
         endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},
         runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         tfhe_internals::{
-            test_feature::{keygen_all_party_shares, KeySet},
+            test_feature::{keygen_all_party_shares_from_keyset, KeySet},
             utils::expanded_encrypt,
         },
     },
@@ -64,21 +64,10 @@ fn ddec_nsmall(c: &mut Criterion) {
     let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
-        let lwe_secret_key = keyset.get_raw_lwe_client_key();
-        let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
         let params = keyset.get_cpu_params().unwrap();
-        let key_shares = keygen_all_party_shares(
-            lwe_secret_key,
-            keyset.get_raw_lwe_encryption_client_key(),
-            glwe_secret_key,
-            glwe_secret_key_sns_as_lwe,
-            params,
-            &mut rng,
-            config.n,
-            config.t,
-        )
-        .unwrap();
+        let key_shares =
+            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
+                .unwrap();
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
@@ -130,21 +119,10 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
     let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
-        let lwe_secret_key = keyset.get_raw_lwe_client_key();
-        let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
         let params = keyset.get_cpu_params().unwrap();
-        let key_shares = keygen_all_party_shares(
-            lwe_secret_key,
-            keyset.get_raw_lwe_encryption_client_key(),
-            glwe_secret_key,
-            glwe_secret_key_sns_as_lwe,
-            params,
-            &mut rng,
-            config.n,
-            config.t,
-        )
-        .unwrap();
+        let key_shares =
+            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
+                .unwrap();
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
@@ -192,21 +170,10 @@ fn ddec_nlarge(c: &mut Criterion) {
     let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
-        let lwe_secret_key = keyset.get_raw_lwe_client_key();
-        let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
         let params = keyset.get_cpu_params().unwrap();
-        let key_shares = keygen_all_party_shares(
-            lwe_secret_key,
-            keyset.get_raw_lwe_encryption_client_key(),
-            glwe_secret_key,
-            glwe_secret_key_sns_as_lwe,
-            params,
-            &mut rng,
-            config.n,
-            config.t,
-        )
-        .unwrap();
+        let key_shares =
+            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
+                .unwrap();
 
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
@@ -261,21 +228,10 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
     let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
-        let lwe_secret_key = keyset.get_raw_lwe_client_key();
-        let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
         let params = keyset.get_cpu_params().unwrap();
-        let key_shares = keygen_all_party_shares(
-            lwe_secret_key,
-            keyset.get_raw_lwe_encryption_client_key(),
-            glwe_secret_key,
-            glwe_secret_key_sns_as_lwe,
-            params,
-            &mut rng,
-            config.n,
-            config.t,
-        )
-        .unwrap();
+        let key_shares =
+            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
+                .unwrap();
 
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
         let (raw_ct, _id, _tag) = ct.into_raw_parts();

@@ -261,7 +261,7 @@ pub struct PrivateKeySet<const EXTENSION_DEGREE: usize> {
     // eventually we'll remove the enum here when we support more Z64+Z128 preproc
     pub glwe_secret_key_share_compression:
         Option<CompressionPrivateKeySharesEnum<EXTENSION_DEGREE>>,
-    pub glwe_sns_compression_key: Option<SnsCompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
+    pub glwe_sns_compression_key_as_lwe: Option<LweSecretKeyShare<Z128, EXTENSION_DEGREE>>,
     pub parameters: ClassicPBSParameters,
 }
 
@@ -291,7 +291,7 @@ impl<const EXTENSION_DEGREE: usize> Upgrade<PrivateKeySet<EXTENSION_DEGREE>>
             glwe_secret_key_share: self.glwe_secret_key_share,
             glwe_secret_key_share_sns_as_lwe: self.glwe_secret_key_share_sns_as_lwe,
             glwe_secret_key_share_compression: self.glwe_secret_key_share_compression,
-            glwe_sns_compression_key: None,
+            glwe_sns_compression_key_as_lwe: None,
             parameters: self.parameters,
         })
     }
@@ -435,13 +435,17 @@ where
             },
         );
 
+        let glwe_sns_compression_key_as_lwe = self
+            .glwe_secret_key_share_sns_compression
+            .map(|share| share.into_lwe_secret_key());
+
         PrivateKeySet {
             lwe_encryption_secret_key_share: converted_lwe_encryption_key_share,
             lwe_compute_secret_key_share: converted_lwe_secret_key_share,
             glwe_secret_key_share: converted_glwe_secret_key_share,
             glwe_secret_key_share_sns_as_lwe,
             glwe_secret_key_share_compression,
-            glwe_sns_compression_key: self.glwe_secret_key_share_sns_compression,
+            glwe_sns_compression_key_as_lwe,
             parameters,
         }
     }
@@ -462,7 +466,7 @@ impl<const EXTENSION_DEGREE: usize> GenericPrivateKeySet<Z64, EXTENSION_DEGREE> 
             glwe_secret_key_share_compression: self
                 .glwe_secret_key_share_compression
                 .map(CompressionPrivateKeySharesEnum::Z64),
-            glwe_sns_compression_key: None,
+            glwe_sns_compression_key_as_lwe: None,
             parameters,
         }
     }

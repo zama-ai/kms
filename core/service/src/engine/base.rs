@@ -241,7 +241,16 @@ macro_rules! deserialize_to_low_level_helper {
                 LowLevelCiphertext::Small(RadixOrBoolCiphertext::Radix(radix_ct))
             }
             CiphertextFormat::BigCompressed => {
-                anyhow::bail!("big compressed ciphertexts are not supported yet");
+                let ct_list = safe_deserialize::<tfhe::CompressedSquashedNoiseCiphertextList>(
+                    std::io::Cursor::new($serialized_high_level),
+                    SAFE_SER_SIZE_LIMIT,
+                )
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let ct: tfhe::SquashedNoiseFheUint = ct_list.get(0)?.ok_or(anyhow::anyhow!(
+                    "expected at least one ciphertext in the compressed list"
+                ))?;
+                let radix_ct = ct.underlying_squashed_noise_ciphertext().clone();
+                LowLevelCiphertext::BigCompressed(SnsRadixOrBoolCiphertext::Radix(radix_ct))
             }
             CiphertextFormat::BigExpanded => {
                 let r = safe_deserialize::<tfhe::SquashedNoiseFheUint>(
@@ -250,7 +259,7 @@ macro_rules! deserialize_to_low_level_helper {
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 let radix_ct = r.underlying_squashed_noise_ciphertext().clone();
-                LowLevelCiphertext::Big(SnsRadixOrBoolCiphertext::Radix(radix_ct))
+                LowLevelCiphertext::BigStandard(SnsRadixOrBoolCiphertext::Radix(radix_ct))
             }
         }
     }};
@@ -285,7 +294,16 @@ pub fn deserialize_to_low_level(
                 )))
             }
             CiphertextFormat::BigCompressed => {
-                anyhow::bail!("big compressed ciphertexts are not supported yet");
+                let ct_list = safe_deserialize::<tfhe::CompressedSquashedNoiseCiphertextList>(
+                    std::io::Cursor::new(serialized_high_level),
+                    SAFE_SER_SIZE_LIMIT,
+                )
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let ct: tfhe::SquashedNoiseFheBool = ct_list.get(0)?.ok_or(anyhow::anyhow!(
+                    "expected at least one ciphertext in the compressed list"
+                ))?;
+                let radix_ct = ct.underlying_squashed_noise_ciphertext().clone();
+                LowLevelCiphertext::BigCompressed(SnsRadixOrBoolCiphertext::Bool(radix_ct))
             }
             CiphertextFormat::BigExpanded => {
                 let r = safe_deserialize::<tfhe::SquashedNoiseFheBool>(
@@ -294,7 +312,7 @@ pub fn deserialize_to_low_level(
                 )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
                 let radix_ct = r.underlying_squashed_noise_ciphertext().clone();
-                LowLevelCiphertext::Big(SnsRadixOrBoolCiphertext::Bool(radix_ct))
+                LowLevelCiphertext::BigStandard(SnsRadixOrBoolCiphertext::Bool(radix_ct))
             }
         },
         FheTypes::Uint4 => {
