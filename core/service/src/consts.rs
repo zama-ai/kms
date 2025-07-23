@@ -85,8 +85,28 @@ cfg_if::cfg_if! {
             pub static ref DEFAULT_DEC_ID: RequestId = derive_request_id("DEFAULT_DEC_ID").unwrap();
             pub static ref OTHER_CENTRAL_DEFAULT_ID: RequestId =
                 derive_request_id("OTHER_DEFAULT_ID").unwrap();
+        }
+    }
+}
 
-            // What we will use in a default deployment
+#[cfg(feature = "non-wasm")]
+cfg_if::cfg_if! {
+    // these are for the "fast" tests, so use 4 parties
+    if #[cfg(all(not(feature = "slow_tests"), any(test, feature = "testing")))] {
+        lazy_static::lazy_static! {
+            pub static ref TEST_THRESHOLD_KEY_ID: RequestId = *TEST_THRESHOLD_KEY_ID_4P;
+            pub static ref TEST_THRESHOLD_CRS_ID: RequestId = *TEST_THRESHOLD_CRS_ID_4P;
+            pub static ref DEFAULT_THRESHOLD_KEY_ID: RequestId = *DEFAULT_THRESHOLD_KEY_ID_4P;
+            pub static ref DEFAULT_THRESHOLD_CRS_ID: RequestId = *DEFAULT_THRESHOLD_CRS_ID_4P;
+        }
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+cfg_if::cfg_if! {
+    // these are for the slow_tests, so use 13 parties
+    if #[cfg(all(feature = "slow_tests", any(test, feature = "testing")))] {
+        lazy_static::lazy_static! {
             pub static ref TEST_THRESHOLD_KEY_ID: RequestId = *TEST_THRESHOLD_KEY_ID_13P;
             pub static ref TEST_THRESHOLD_CRS_ID: RequestId = *TEST_THRESHOLD_CRS_ID_13P;
             pub static ref DEFAULT_THRESHOLD_KEY_ID: RequestId = *DEFAULT_THRESHOLD_KEY_ID_13P;

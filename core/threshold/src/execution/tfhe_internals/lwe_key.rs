@@ -158,6 +158,10 @@ where
     pub fn data_as_raw_vec(&self) -> Vec<ResiduePoly<Z, EXTENSION_DEGREE>> {
         self.data.iter().map(|share| share.value()).collect_vec()
     }
+
+    pub fn data_as_raw_iter(&self) -> impl Iterator<Item = ResiduePoly<Z, EXTENSION_DEGREE>> + '_ {
+        self.data.iter().map(|share| share.value())
+    }
 }
 
 pub fn allocate_and_generate_new_lwe_compact_public_key<Z, Gen, const EXTENSION_DEGREE: usize>(

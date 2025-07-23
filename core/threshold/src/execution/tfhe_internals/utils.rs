@@ -258,6 +258,7 @@ pub mod tests {
     use crate::algebra::base_ring::{Z128, Z64};
     use crate::algebra::galois_rings::common::ResiduePoly;
     use crate::execution::tfhe_internals::compression_decompression_key::SnsCompressionPrivateKeyShares;
+    use crate::execution::tfhe_internals::glwe_key::GlweSecretKeyShare;
     use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
     use crate::file_handling::tests::read_element;
     use crate::{
@@ -379,12 +380,24 @@ pub mod tests {
 
             match params {
                 DKGParams::WithoutSnS(_) => (),
-                DKGParams::WithSnS(_sns_params) => {
+                DKGParams::WithSnS(sns_params) => {
                     let _ = big_glwe_key_shares
                         .insert(role, sk.glwe_secret_key_share_sns_as_lwe.unwrap().data);
 
-                    if let Some(inner) = sk.glwe_sns_compression_key {
-                        sns_compression_key_shares.insert(role, inner);
+                    if let Some(inner) = sk.glwe_sns_compression_key_as_lwe {
+                        sns_compression_key_shares.insert(
+                            role,
+                            SnsCompressionPrivateKeyShares {
+                                post_packing_ks_key: GlweSecretKeyShare {
+                                    data: inner.data,
+                                    polynomial_size: sns_params
+                                        .sns_compression_params
+                                        .unwrap()
+                                        .packing_ks_polynomial_size,
+                                },
+                                params: sns_params.sns_compression_params.unwrap(),
+                            },
+                        );
                     }
                 }
             }

@@ -653,7 +653,16 @@ macro_rules! deserialize_to_low_level_and_decrypt_helper {
                 $fout(hl_ct.decrypt(&$keys.client_key))
             }
             CiphertextFormat::BigCompressed => {
-                anyhow::bail!("big compressed ciphertexts are not supported yet");
+                let r = safe_deserialize::<tfhe::CompressedSquashedNoiseCiphertextList>(
+                    std::io::Cursor::new($serialized_high_level),
+                    SAFE_SER_SIZE_LIMIT,
+                )
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let ct: tfhe::SquashedNoiseFheUint = r.get(0)?.ok_or(anyhow::anyhow!(
+                    "Failed to get first element from CompressedSquashedNoiseCiphertextList"
+                ))?;
+                let raw_res = ct.decrypt(&$keys.client_key);
+                $fout(raw_res)
             }
             CiphertextFormat::BigExpanded => {
                 let r = safe_deserialize::<tfhe::SquashedNoiseFheUint>(
@@ -691,7 +700,16 @@ fn unsafe_decrypt(
                 TypedPlaintext::from_bool(hl_ct.decrypt(&keys.client_key))
             }
             CiphertextFormat::BigCompressed => {
-                anyhow::bail!("big compressed ciphertexts are not supported yet");
+                let r = safe_deserialize::<tfhe::CompressedSquashedNoiseCiphertextList>(
+                    std::io::Cursor::new(serialized_high_level),
+                    SAFE_SER_SIZE_LIMIT,
+                )
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let ct: tfhe::SquashedNoiseFheBool = r.get(0)?.ok_or(anyhow::anyhow!(
+                    "Failed to get first element from CompressedSquashedNoiseCiphertextList"
+                ))?;
+                let raw_res = ct.decrypt(&keys.client_key);
+                TypedPlaintext::from_bool(raw_res)
             }
             CiphertextFormat::BigExpanded => {
                 let r = safe_deserialize::<tfhe::SquashedNoiseFheBool>(

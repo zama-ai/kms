@@ -18,7 +18,7 @@ use tfhe::zk::CompactPkeCrs;
 use tfhe::{
     FheBool, FheTypes, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256,
     FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, FheUint80, HlCompactable, HlCompressible,
-    HlExpandable, ServerKey, Unversionize, Versionize,
+    HlExpandable, HlSquashedNoiseCompressible, ServerKey, Unversionize, Versionize,
 };
 use threshold_fhe::execution::{runtime::party::Role, tfhe_internals::utils::expanded_encrypt};
 
@@ -32,7 +32,8 @@ fn enc_and_serialize_ctxt<M, T>(
 where
     M: HlCompactable + Numeric,
     T: HlExpandable + HlCompressible + Tagged + Versionize + Named + serde::Serialize + SquashNoise,
-    <T as tfhe::prelude::SquashNoise>::Output: Named + Versionize + serde::Serialize,
+    <T as tfhe::prelude::SquashNoise>::Output:
+        Named + Versionize + serde::Serialize + HlSquashedNoiseCompressible,
 {
     let ct: T = expanded_encrypt(pk, msg, num_bits).unwrap();
     let ct_format = enc_config.try_into_ciphertext_format().unwrap();
@@ -47,7 +48,21 @@ where
             (serialized_ct, ct_format)
         }
         CiphertextFormat::BigCompressed => {
-            panic!("cannot compress 128-bit ciphertext")
+            let server_key = server_key.unwrap().clone();
+            tfhe::set_server_key(server_key);
+            let squashed = ct.squash_noise().unwrap();
+            let ct_list = tfhe::CompressedSquashedNoiseCiphertextListBuilder::new()
+                .push(squashed)
+                .build()
+                .unwrap();
+            let mut serialized_ct = Vec::new();
+            safe_serialize(
+                &ct_list,
+                &mut serialized_ct,
+                crate::consts::SAFE_SER_SIZE_LIMIT,
+            )
+            .unwrap();
+            (serialized_ct, ct_format)
         }
         CiphertextFormat::BigExpanded => {
             let server_key = server_key.unwrap().clone();
@@ -74,7 +89,7 @@ pub struct EncryptionConfig {
 impl EncryptionConfig {
     pub fn try_into_ciphertext_format(self) -> anyhow::Result<CiphertextFormat> {
         match (self.compression, self.precompute_sns) {
-            (true, true) => anyhow::bail!("compression is not supported with sns precompute"),
+            (true, true) => Ok(CiphertextFormat::BigCompressed),
             (true, false) => Ok(CiphertextFormat::SmallCompressed),
             (false, true) => Ok(CiphertextFormat::BigExpanded),
             (false, false) => Ok(CiphertextFormat::SmallExpanded),
@@ -500,18 +515,17 @@ pub async fn purge(
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod setup {
-    use crate::consts::{
-        SIGNING_KEY_ID, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_13P,
-        TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_13P,
-    };
+    #[cfg(feature = "slow_tests")]
+    use crate::consts::{TEST_THRESHOLD_CRS_ID_13P, TEST_THRESHOLD_KEY_ID_13P};
     use crate::util::key_setup::{
         ensure_central_crs_exists, ensure_central_keys_exist, ensure_client_keys_exist,
         ThresholdSigningKeyConfig,
     };
     use crate::{
         consts::{
-            KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_CRS_ID, TEST_CENTRAL_KEY_ID,
-            TEST_PARAM, TEST_THRESHOLD_CRS_ID_4P, TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
+            KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_CRS_ID,
+            TEST_CENTRAL_KEY_ID, TEST_PARAM, TEST_THRESHOLD_CRS_ID_10P, TEST_THRESHOLD_CRS_ID_4P,
+            TEST_THRESHOLD_KEY_ID_10P, TEST_THRESHOLD_KEY_ID_4P, TMP_PATH_PREFIX,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
     };
@@ -554,6 +568,7 @@ pub(crate) mod setup {
             10,
         )
         .await;
+        #[cfg(feature = "slow_tests")]
         threshold_material(
             &TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID_13P,

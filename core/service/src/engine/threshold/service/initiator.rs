@@ -221,7 +221,7 @@ impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> 
 mod tests {
     use crate::{
         client::test_tools::{self},
-        consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_THRESHOLD, PRSS_INIT_REQ_ID},
+        consts::PRSS_INIT_REQ_ID,
         engine::base::derive_request_id,
         util::key_setup::test_tools::purge,
         vault::storage::{file::FileStorage, StorageType},
@@ -232,9 +232,15 @@ mod tests {
     #[serial_test::serial]
     #[tracing_test::traced_test]
     async fn prss_disk_test() {
+        // We're starting two sets of servers in this test, both sets of servers will load all the keys
+        // but it seems that the when shutting down the first set of servers, the keys are not immediately removed from memory
+        // and this leads to OOM. So we reduce the amount of parties to 4 for this test.
+        const PRSS_AMOUNT_PARTIES: usize = 4;
+        const PRSS_THRESHOLD: usize = 1;
+
         let mut pub_storage = Vec::new();
         let mut priv_storage = Vec::new();
-        for i in 1..=DEFAULT_AMOUNT_PARTIES {
+        for i in 1..=PRSS_AMOUNT_PARTIES {
             let cur_pub =
                 FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap();
             pub_storage.push(cur_pub);
@@ -243,23 +249,23 @@ mod tests {
 
             // make sure the store does not contain any PRSS info (currently stored under ID 1)
             let req_id = derive_request_id(&format!(
-                "PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_{DEFAULT_AMOUNT_PARTIES}_{DEFAULT_THRESHOLD}"
+                "PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}"
             ))
             .unwrap();
-            purge(None, None, &req_id, DEFAULT_AMOUNT_PARTIES).await;
+            purge(None, None, &req_id, PRSS_AMOUNT_PARTIES).await;
 
             let req_id = derive_request_id(&format!(
-                "PRSSSetup_Z64_ID_{PRSS_INIT_REQ_ID}_{DEFAULT_AMOUNT_PARTIES}_{DEFAULT_THRESHOLD}"
+                "PRSSSetup_Z64_ID_{PRSS_INIT_REQ_ID}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}"
             ))
             .unwrap();
-            purge(None, None, &req_id, DEFAULT_AMOUNT_PARTIES).await;
+            purge(None, None, &req_id, PRSS_AMOUNT_PARTIES).await;
 
             priv_storage.push(cur_priv);
         }
 
         // create parties and run PrssSetup
         let server_handles = test_tools::setup_threshold_no_client(
-            DEFAULT_THRESHOLD as u8,
+            PRSS_THRESHOLD as u8,
             pub_storage.clone(),
             priv_storage.clone(),
             true,
@@ -267,7 +273,7 @@ mod tests {
             None,
         )
         .await;
-        assert_eq!(server_handles.len(), DEFAULT_AMOUNT_PARTIES);
+        assert_eq!(server_handles.len(), PRSS_AMOUNT_PARTIES);
 
         // shut parties down
         for server_handle in server_handles.into_values() {
@@ -285,7 +291,7 @@ mod tests {
 
         // create parties again without running PrssSetup this time (it should now be read from disk)
         let server_handles = test_tools::setup_threshold_no_client(
-            DEFAULT_THRESHOLD as u8,
+            PRSS_THRESHOLD as u8,
             pub_storage,
             priv_storage,
             false,
@@ -293,7 +299,7 @@ mod tests {
             None,
         )
         .await;
-        assert_eq!(server_handles.len(), DEFAULT_AMOUNT_PARTIES);
+        assert_eq!(server_handles.len(), PRSS_AMOUNT_PARTIES);
 
         // check that PRSS setups were not created, but instead read from disk now
         assert!(logs_contain(

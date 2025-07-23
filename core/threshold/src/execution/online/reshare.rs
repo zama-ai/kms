@@ -23,11 +23,8 @@ use crate::{
             share::Share,
         },
         tfhe_internals::{
-            compression_decompression_key::{
-                CompressionPrivateKeyShares, SnsCompressionPrivateKeyShares,
-            },
-            glwe_key::GlweSecretKeyShare,
-            lwe_key::LweSecretKeyShare,
+            compression_decompression_key::CompressionPrivateKeyShares,
+            glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare,
         },
     },
     networking::value::BroadcastValue,
@@ -240,20 +237,14 @@ where
             None
         };
 
-    let glwe_secret_key_share_sns_compression = if let Some(inner) =
-        &mut input_share.glwe_sns_compression_key
-    {
-        Some(SnsCompressionPrivateKeyShares {
-            post_packing_ks_key: GlweSecretKeyShare {
-                data: reshare_same_sets(preproc128, session, &mut inner.post_packing_ks_key.data)
-                    .await?,
-                polynomial_size: inner.polynomial_size(),
-            },
-            params: inner.params,
-        })
-    } else {
-        None
-    };
+    let glwe_sns_compression_key_as_lwe =
+        if let Some(inner) = &mut input_share.glwe_sns_compression_key_as_lwe {
+            Some(LweSecretKeyShare {
+                data: reshare_same_sets(preproc128, session, &mut inner.data).await?,
+            })
+        } else {
+            None
+        };
 
     Ok(PrivateKeySet {
         lwe_encryption_secret_key_share,
@@ -262,7 +253,7 @@ where
         glwe_secret_key_share_sns_as_lwe,
         parameters: input_share.parameters,
         glwe_secret_key_share_compression,
-        glwe_sns_compression_key: glwe_secret_key_share_sns_compression,
+        glwe_sns_compression_key_as_lwe,
     })
 }
 
@@ -460,12 +451,13 @@ mod tests {
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::RandomPreprocessing;
     use crate::execution::sharing::shamir::RevealOp;
-    use crate::execution::tfhe_internals::test_feature::KeySet;
+    use crate::execution::tfhe_internals::test_feature::{
+        keygen_all_party_shares_from_keyset, KeySet,
+    };
     use crate::networking::NetworkMode;
     use crate::{
         algebra::structure_traits::{Sample, Zero},
         error::error_handler::anyhow_error_and_log,
-        execution::tfhe_internals::test_feature::keygen_all_party_shares,
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             online::preprocessing::dummy::DummyPreprocessing,
@@ -679,20 +671,9 @@ mod tests {
 
         // generate the key shares
         let mut rng = AesRng::from_entropy();
-        let lwe_secret_key = keyset.get_raw_lwe_client_key();
-        let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
-        let mut key_shares = keygen_all_party_shares(
-            lwe_secret_key,
-            keyset.get_raw_lwe_encryption_client_key(),
-            glwe_secret_key,
-            glwe_secret_key_sns_as_lwe,
-            params,
-            &mut rng,
-            num_parties,
-            threshold,
-        )
-        .unwrap();
+        let mut key_shares =
+            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
+                .unwrap();
 
         let identities = generate_fixed_identities(num_parties);
         //Reshare assumes Sync network
@@ -764,15 +745,16 @@ mod tests {
                 glwe_secret_key_share_compression: key_shares[0]
                     .glwe_secret_key_share_compression
                     .clone(),
-                glwe_sns_compression_key: key_shares[0].glwe_sns_compression_key.clone().map(
-                    |mut inner| {
-                        inner.post_packing_ks_key.data[0] = Share::new(
+                glwe_sns_compression_key_as_lwe: key_shares[0]
+                    .glwe_sns_compression_key_as_lwe
+                    .clone()
+                    .map(|mut inner| {
+                        inner.data[0] = Share::new(
                             Role::indexed_from_zero(0),
                             ResiduePoly::<Z128, EXTENSION_DEGREE>::sample(&mut rng),
                         );
                         inner
-                    },
-                ),
+                    }),
             }
         }
         // sanity check that we can still reconstruct

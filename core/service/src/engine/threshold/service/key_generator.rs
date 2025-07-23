@@ -1000,6 +1000,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         );
     }
 
+    // TODO(2674)
     async fn add_sns_compression_key_to_keyset(
         base_key_id: &RequestId,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -1012,8 +1013,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             .await?;
 
         let mut new_threshold_fhe_keys = (*threshold_fhe_keys).clone();
-        new_threshold_fhe_keys.private_keys.glwe_sns_compression_key =
-            Some(sns_compression_sk_shares);
+        new_threshold_fhe_keys
+            .private_keys
+            .glwe_sns_compression_key_as_lwe = Some(
+            sns_compression_sk_shares
+                .post_packing_ks_key
+                .into_lwe_secret_key(),
+        );
 
         // update the server keys
         let pub_storage = crypto_storage.inner.public_storage.clone();

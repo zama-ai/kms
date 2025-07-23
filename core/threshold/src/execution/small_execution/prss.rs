@@ -937,7 +937,9 @@ mod tests {
     use crate::execution::runtime::session::SmallSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::small_execution::agree_random::DSEP_AR;
-    use crate::execution::tfhe_internals::test_feature::KeySet;
+    use crate::execution::tfhe_internals::test_feature::{
+        keygen_all_party_shares_from_keyset, KeySet,
+    };
     use crate::execution::tfhe_internals::utils::expanded_encrypt;
     use crate::hashing::hash_element_w_size;
     use crate::malicious_execution::small_execution::malicious_prss::{
@@ -952,7 +954,6 @@ mod tests {
             structure_traits::{One, Zero},
         },
         commitment::KEY_BYTE_LEN,
-        execution::tfhe_internals::test_feature::keygen_all_party_shares,
         execution::{
             constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, SMALL_TEST_KEY_PATH, STATSEC},
             endpoints::decryption::{threshold_decrypt64, DecryptionMode},
@@ -1156,29 +1157,18 @@ mod tests {
         // RNG for keys
         let mut rng = AesRng::seed_from_u64(69);
         let msg: u8 = 3;
-        let keys: KeySet = read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
-        let params = keys.get_cpu_params().unwrap();
+        let keyset: KeySet = read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
+        let params = keyset.get_cpu_params().unwrap();
 
         let identities = generate_fixed_identities(num_parties);
 
-        // generate keys
-        let lwe_secret_key = keys.get_raw_lwe_client_key();
-        let glwe_secret_key = keys.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keys.get_raw_glwe_client_sns_key_as_lwe().unwrap();
-        let key_shares = keygen_all_party_shares(
-            lwe_secret_key,
-            keys.get_raw_lwe_encryption_client_key(),
-            glwe_secret_key,
-            glwe_secret_key_sns_as_lwe,
-            params,
-            &mut rng,
-            num_parties,
-            threshold,
-        )
-        .unwrap();
+        // generate key shares for all parties
+        let key_shares =
+            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
+                .unwrap();
 
-        set_server_key(keys.public_keys.server_key.clone());
-        let ct: FheUint8 = expanded_encrypt(&keys.public_keys.public_key, msg, 8).unwrap();
+        set_server_key(keyset.public_keys.server_key.clone());
+        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, msg, 8).unwrap();
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
@@ -1186,7 +1176,7 @@ mod tests {
         let mut runtime =
             DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
 
-        runtime.setup_server_key(Arc::new(keys.public_keys.server_key));
+        runtime.setup_server_key(Arc::new(keyset.public_keys.server_key));
         runtime.setup_sks(key_shares);
 
         let mut seed = [0_u8; aes_prng::SEED_SIZE];

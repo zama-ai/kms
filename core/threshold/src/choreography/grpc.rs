@@ -30,7 +30,7 @@ use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcas
 use crate::execution::endpoints::decryption::{
     combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
     task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, NoiseFloodPreparation,
-    RadixOrBoolCiphertext, SnsRadixOrBoolCiphertext,
+    RadixOrBoolCiphertext, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
 };
 use crate::execution::endpoints::decryption::{NoiseFloodLargeSession, NoiseFloodSmallSession};
 use crate::execution::endpoints::keygen::FhePubKeySet;
@@ -1648,6 +1648,7 @@ where
                                                 &mut noiseflood_preprocessing,
                                                 &key_ref.1,
                                                 &ctxt,
+                                                SnsDecryptionKeyType::SnsKey,
                                             )
                                             .await
                                             .unwrap(),
@@ -2118,6 +2119,7 @@ where
                                     &mut preprocessing,
                                     &key_ref.1,
                                     &ct_large,
+                                    SnsDecryptionKeyType::SnsKey,
                                 )
                                 .await
                                 .map_err(|e| {
