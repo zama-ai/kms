@@ -59,7 +59,7 @@ pub struct DecryptParams {
     /// The custodian role (1-based index) who is doing the decryption.
     #[clap(long, short = 'c', required = true)]
     pub custodian_role: usize,
-    /// The relative path to the [`RecoveryRequest`] file containing the request of a custodian for recovery
+    /// The relative path to the [`RecoveryRequest`] file containing the request of an operator for recovery
     #[clap(long, short = 'b', required = true)]
     pub recovery_request_path: String,
     /// The relative path for the reencrypted backup which will be given to the operator.
