@@ -876,6 +876,7 @@ where
     // Generate key shares with error handling
     let key_shares = match keygen_all_party_shares(
         key_set.get_raw_lwe_client_key(),
+        key_set.get_raw_lwe_encryption_client_key(),
         key_set.get_raw_glwe_client_key(),
         raw_glwe_client_sns_key_as_lwe,
         dkg_params

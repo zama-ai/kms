@@ -257,6 +257,7 @@ where
 pub mod tests {
     use crate::algebra::base_ring::{Z128, Z64};
     use crate::algebra::galois_rings::common::ResiduePoly;
+    use crate::execution::tfhe_internals::compression_decompression_key::SnsCompressionPrivateKeyShares;
     use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
     use crate::file_handling::tests::read_element;
     use crate::{
@@ -269,6 +270,7 @@ pub mod tests {
     use std::collections::HashMap;
     use std::path::Path;
     use tfhe::core_crypto::entities::{GlweSecretKeyOwned, LweSecretKeyOwned};
+    use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
 
     use super::reconstruct_bit_vec;
 
@@ -356,6 +358,7 @@ pub mod tests {
             crate::execution::endpoints::keygen::GlweSecretKeyShareEnum<EXTENSION_DEGREE>,
         >,
         HashMap<Role, Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
+        HashMap<Role, SnsCompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
     ) {
         let mut sk_shares = HashMap::new();
         for party in 1..=parties {
@@ -370,18 +373,27 @@ pub mod tests {
 
         let mut glwe_key_shares = HashMap::new();
         let mut big_glwe_key_shares = HashMap::new();
+        let mut sns_compression_key_shares = HashMap::new();
         for (role, sk) in sk_shares {
             glwe_key_shares.insert(role, sk.glwe_secret_key_share);
 
             match params {
                 DKGParams::WithoutSnS(_) => (),
-                DKGParams::WithSnS(_) => {
+                DKGParams::WithSnS(_sns_params) => {
                     let _ = big_glwe_key_shares
                         .insert(role, sk.glwe_secret_key_share_sns_as_lwe.unwrap().data);
+
+                    if let Some(inner) = sk.glwe_sns_compression_key {
+                        sns_compression_key_shares.insert(role, inner);
+                    }
                 }
             }
         }
-        (glwe_key_shares, big_glwe_key_shares)
+        (
+            glwe_key_shares,
+            big_glwe_key_shares,
+            sns_compression_key_shares,
+        )
     }
 
     pub fn reconstruct_glwe_secret_key_from_file<const EXTENSION_DEGREE: usize>(
@@ -389,12 +401,16 @@ pub mod tests {
         threshold: usize,
         params: DKGParams,
         prefix_path: &Path,
-    ) -> (GlweSecretKeyOwned<u64>, Option<LweSecretKeyOwned<u128>>)
+    ) -> (
+        GlweSecretKeyOwned<u64>,
+        Option<LweSecretKeyOwned<u128>>,
+        Option<NoiseSquashingCompressionPrivateKey>,
+    )
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {
-        let (glwe_key_shares, big_glwe_key_shares) =
+        let (glwe_key_shares, big_glwe_key_shares, sns_compression_key_shares) =
             read_secret_key_shares_from_file::<EXTENSION_DEGREE>(parties, params, prefix_path);
         let glwe_key = reconstruct_bit_vec_from_glwe_share_enum(
             glwe_key_shares,
@@ -406,7 +422,7 @@ pub mod tests {
             params.get_params_basics_handle().polynomial_size(),
         );
 
-        let big_glwe_secret_key = match params {
+        let (big_glwe_secret_key, sns_compression_secret_key) = match params {
             DKGParams::WithSnS(sns_params) => {
                 let big_glwe_key = reconstruct_bit_vec(
                     big_glwe_key_shares,
@@ -416,17 +432,46 @@ pub mod tests {
                 .into_iter()
                 .map(|bit| bit as u128)
                 .collect_vec();
-                Some(
-                    GlweSecretKeyOwned::from_container(
-                        big_glwe_key,
-                        sns_params.polynomial_size_sns(),
-                    )
-                    .into_lwe_secret_key(),
+                let glwe_secret_key_as_lwe = GlweSecretKeyOwned::from_container(
+                    big_glwe_key,
+                    sns_params.polynomial_size_sns(),
                 )
+                .into_lwe_secret_key();
+
+                let sns_compression_private_key =
+                    if let Some(sns_compression_params) = sns_params.sns_compression_params {
+                        let sns_compression_key_bits = reconstruct_bit_vec(
+                            sns_compression_key_shares
+                                .into_iter()
+                                .map(|(k, v)| (k, v.post_packing_ks_key.data))
+                                .collect::<HashMap<_, _>>(),
+                            sns_params.sns_compression_sk_num_bits(),
+                            threshold,
+                        )
+                        .into_iter()
+                        .map(|x| x as u128)
+                        .collect::<Vec<_>>();
+
+                        Some(NoiseSquashingCompressionPrivateKey::from_raw_parts(
+                            GlweSecretKeyOwned::from_container(
+                                sns_compression_key_bits,
+                                sns_compression_params.packing_ks_polynomial_size,
+                            ),
+                            sns_compression_params,
+                        ))
+                    } else {
+                        None
+                    };
+
+                (Some(glwe_secret_key_as_lwe), sns_compression_private_key)
             }
-            DKGParams::WithoutSnS(_) => None,
+            DKGParams::WithoutSnS(_) => (None, None),
         };
 
-        (glwe_secret_key, big_glwe_secret_key)
+        (
+            glwe_secret_key,
+            big_glwe_secret_key,
+            sns_compression_secret_key,
+        )
     }
 }

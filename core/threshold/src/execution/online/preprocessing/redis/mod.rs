@@ -13,7 +13,6 @@ use redis::{Commands, RedisResult};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
-use std::slice::Iter;
 use std::sync::Arc;
 
 use super::RandomPreprocessing;
@@ -89,22 +88,7 @@ pub enum CorrelatedRandomnessType {
     NoiseGlwe,
     NoiseGlweSnS,
     NoiseCompressionKSK,
-}
-
-impl CorrelatedRandomnessType {
-    pub fn iterator() -> Iter<'static, CorrelatedRandomnessType> {
-        static CORRELATED_RANDOMNESS_TYPES: [CorrelatedRandomnessType; 7] = [
-            CorrelatedRandomnessType::Triple,
-            CorrelatedRandomnessType::Randomness,
-            CorrelatedRandomnessType::Bit,
-            CorrelatedRandomnessType::DDecMask,
-            CorrelatedRandomnessType::NoiseLwe,
-            CorrelatedRandomnessType::NoiseGlwe,
-            CorrelatedRandomnessType::NoiseGlweSnS,
-        ];
-
-        CORRELATED_RANDOMNESS_TYPES.iter()
-    }
+    SnsNoiseCompressionKSK,
 }
 
 impl CorrelatedRandomnessType {
@@ -119,6 +103,7 @@ impl CorrelatedRandomnessType {
             CorrelatedRandomnessType::NoiseGlwe => "_noise_glwe",
             CorrelatedRandomnessType::NoiseGlweSnS => "_noise_glwe_sns",
             CorrelatedRandomnessType::NoiseCompressionKSK => "_noise_compression_ksk",
+            CorrelatedRandomnessType::SnsNoiseCompressionKSK => "_sns_noise_compression_ksk",
         }
     }
 }

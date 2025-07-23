@@ -18,7 +18,8 @@ use crate::engine::base::{
     compute_info, convert_key_response, retrieve_parameters, KeyGenCallValues, DSEP_PUBDATA_KEY,
 };
 use crate::engine::centralized::central_kms::{
-    async_generate_decompression_keys, async_generate_fhe_keys, RealCentralizedKms,
+    async_generate_decompression_keys, async_generate_fhe_keys,
+    async_generate_sns_compression_keys, RealCentralizedKms,
 };
 use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::engine::validation::validate_request_id;
@@ -242,6 +243,40 @@ pub(crate) async fn key_gen_background<
                 .await;
             tracing::info!(
                 "⏱️ Core Event Time for decompression Keygen: {:?}",
+                start.elapsed()
+            );
+        }
+        KeySetConfig::AddSnsCompressionKey => {
+            let overwrite_key_id =
+                internal_keyset_config.get_base_key_id_for_sns_compression_key()?;
+            tracing::info!("Starting key generation for SNS compression key with request ID: {}, base key ID: {}", req_id, overwrite_key_id);
+            let (fhe_key_set, key_info) = match async_generate_sns_compression_keys(
+                &sk,
+                crypto_storage.clone(),
+                params,
+                &overwrite_key_id,
+                eip712_domain.as_ref(),
+            )
+            .await
+            {
+                Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
+                Err(e) => {
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(
+                        req_id,
+                        Err(format!(
+                            "Failed key generation for key with ID {req_id}: {e}"
+                        )),
+                    );
+                    return Err(anyhow::anyhow!("Failed key generation: {}", e));
+                }
+            };
+            crypto_storage
+                .write_centralized_keys_with_meta_store(req_id, key_info, fhe_key_set, meta_store)
+                .await;
+
+            tracing::info!(
+                "⏱️ Core Event Time for SNS compression Keygen: {:?}",
                 start.elapsed()
             );
         }
