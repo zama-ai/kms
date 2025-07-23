@@ -690,6 +690,7 @@ impl Client {
                 None => {
                     tracing::warn!("Signature could not be verified for a CRS");
                     // do not insert
+                    continue;
                 }
             }
 
