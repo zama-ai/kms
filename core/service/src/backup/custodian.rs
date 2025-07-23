@@ -8,11 +8,10 @@ use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{execution::runtime::party::Role, hashing::DomainSep};
 
 use crate::{
-    backup::seed_phrase,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
-        backup_pke::{BackupPrivateKey, BackupPublicKey},
-        internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature},
+        backup_pke::BackupPublicKey,
+        internal_crypto_types::{PublicSigKey, Signature},
         signcryption::internal_verify_sig,
     },
 };
@@ -117,22 +116,6 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
             signer,
             verification_key,
         })
-    }
-
-    pub fn from_seed_phrase(role: Role, seed_phrase: &str) -> Result<Self, BackupError>
-    where
-        S: From<PrivateSigKey>,
-        D: From<BackupPrivateKey>,
-    {
-        let custodian_keys = seed_phrase::generate_keys_from_seed_phrase(seed_phrase)
-            .map_err(|e| BackupError::SetupError(e.to_string()))?;
-        Self::new(
-            role,
-            S::from(custodian_keys.sig_key),
-            custodian_keys.verf_key,
-            D::from(custodian_keys.nested_dec_key),
-            custodian_keys.nested_enc_key,
-        )
     }
 
     // We allow the following lints because we are fine with mutating the rng even if

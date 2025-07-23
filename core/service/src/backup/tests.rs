@@ -8,7 +8,7 @@ use rand::{rngs::OsRng, SeedableRng};
 use threshold_fhe::execution::runtime::party::Role;
 
 use crate::{
-    backup::seed_phrase::generate_keys_from_rng,
+    backup::seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     cryptography::{
         backup_pke,
         internal_crypto_types::{gen_sig_keys, PublicSigKey},
@@ -46,15 +46,8 @@ fn full_flow() {
         let custodians: Vec<_> = (0..custodian_count)
             .map(|i| {
                 let custodian_role = Role::indexed_from_zero(i);
-                let (keys, _mnemonic) = generate_keys_from_rng(&mut rng).unwrap();
-                custodian::Custodian::new(
-                    custodian_role,
-                    keys.sig_key,
-                    keys.verf_key,
-                    keys.nested_dec_key,
-                    keys.nested_enc_key,
-                )
-                .unwrap()
+                let mnemonic = seed_phrase_from_rng(&mut rng).unwrap();
+                custodian_from_seed_phrase(&mnemonic, custodian_role).unwrap()
             })
             .collect();
         let custodian_messages: Vec<_> = custodians
