@@ -34,6 +34,7 @@ impl Default for KeySetCompressionConfig {
 pub enum KeySetConfig {
     Standard(StandardKeySetConfig),
     DecompressionOnly,
+    AddSnsCompressionKey,
 }
 
 impl Default for KeySetConfig {
@@ -52,15 +53,12 @@ impl KeySetConfig {
             KeySetConfig::Standard(standard_key_set_config) => {
                 standard_key_set_config.is_using_existing_compression_sk()
             }
-            KeySetConfig::DecompressionOnly => false,
+            _ => false,
         }
     }
 
     pub fn is_standard(&self) -> bool {
-        match self {
-            KeySetConfig::Standard(_) => true,
-            KeySetConfig::DecompressionOnly => false,
-        }
+        matches!(self, KeySetConfig::Standard(_))
     }
 
     pub fn is_standard_cpu_generate_compression_key(&self) -> bool {
@@ -71,7 +69,7 @@ impl KeySetConfig {
                     (ComputeKeyType::Cpu, KeySetCompressionConfig::UseExisting) => false,
                 }
             }
-            KeySetConfig::DecompressionOnly => false,
+            _ => false,
         }
     }
 }

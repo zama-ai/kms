@@ -32,18 +32,20 @@ aes = "=0.8.4"
 aes-prng = "=0.2.1"
 anyhow = "=1.0.98"
 async-trait = "=0.1.88"
+attestation-doc-validation = { version = "=0.10.0" }
 backward-compatibility = { path = "./backward-compatibility" }
 backoff = "=0.4.0"
 base64 = "=0.22.1"
 bincode = { version = "=2.0.1", features = ["serde"] }
 bc2wrap = { path = "./bc2wrap" }
 bytes = "=1.10.1"
-clap = { version = "=4.5.38", features = ["derive"] }
-cfg-if = "=1.0.0"
+clap = { version = "=4.5.41", features = ["derive"] }
+cfg-if = "=1.0.1"
 observability = { path = "./observability" }
 threshold-fhe = { path = "./core/threshold/", default-features = false }
 enum_dispatch = "0.3.13"
 futures = "=0.3.31"
+futures-util = "=0.3.31"
 hex = "=0.4.3"
 http = "=1.3.1"
 itertools = "=0.14.0"
@@ -60,17 +62,17 @@ prost-types = "=0.13.5"
 rand = "=0.8.5"
 rayon = "=1.10.0"
 rcgen = { version = "=0.14.0", default-features = false, features = [
-      "aws_lc_rs",
-      "crypto",
-      "pem",
-      "x509-parser",
+    "aws_lc_rs",
+    "crypto",
+    "pem",
+    "x509-parser",
 ] }
-reqwest = { version = "=0.12.15", default-features = false, features = [
+reqwest = { version = "=0.12.22", default-features = false, features = [
     "json",
     "rustls-tls",
 ] }
 schemars = "=0.8.22"
-secp256k1 = "=0.31.0"
+secp256k1 = "=0.31.1"
 serde = { version = "=1.0.219", features = ["derive", "rc"] }
 serde_json = "=1.0.140"
 serial_test = "=3.2.0"
@@ -81,13 +83,15 @@ thiserror = "=2.0.12"
 tonic-health = "=0.13.1"
 tonic-tls = "=0.3.0"
 tower = "=0.5.2"
-tower-http = "=0.6.4"
-tfhe = "=1.1.3"
-tfhe-csprng = "=0.5.0"
-tfhe-versionable = "=0.5.0"
-tfhe-zk-pok = "=0.5.0"
-tokio = { version = "=1.45.0", features = ["full"] }
-tokio-rustls = { version = "=0.26.2", default-features = false, features = ["ring"] }
+tower-http = "=0.6.6"
+tfhe = "=1.3.2"
+tfhe-csprng = "=0.6.0"
+tfhe-versionable = "=0.6.0"
+tfhe-zk-pok = "=0.7.0"
+tokio = { version = "=1.46.1", features = ["full"] }
+tokio-rustls = { version = "=0.26.2", default-features = false, features = [
+    "ring",
+] }
 tonic = "=0.13.1"
 tonic-build = "=0.13.1"
 tracing = { version = "=0.1.41", features = ["log"] }

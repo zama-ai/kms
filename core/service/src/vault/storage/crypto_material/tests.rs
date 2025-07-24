@@ -10,7 +10,7 @@ use threshold_fhe::{
         endpoints::keygen::FhePubKeySet,
         tfhe_internals::{
             parameters::DKGParams,
-            test_feature::{gen_key_set, keygen_all_party_shares},
+            test_feature::{gen_key_set, keygen_all_party_shares_from_keyset},
         },
     },
     session_id::SessionId,
@@ -42,7 +42,7 @@ async fn write_crs() {
     let crypto_storage = CryptoMaterialStorage {
         public_storage: pub_storage.clone(),
         private_storage: Arc::new(Mutex::new(RamStorage::new())),
-        backup_storage: None as Option<Arc<Mutex<RamStorage>>>,
+        backup_vault: None,
         pk_cache: Arc::new(RwLock::new(HashMap::new())),
     };
 
@@ -103,7 +103,7 @@ async fn read_public_key() {
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
         FailingRamStorage::new(100),
         RamStorage::new(),
-        None as Option<RamStorage>,
+        None,
         HashMap::new(),
         HashMap::new(),
     );
@@ -142,7 +142,7 @@ async fn write_central_keys() {
     let crypto_storage = CentralizedCryptoMaterialStorage::new(
         FailingRamStorage::new(100),
         RamStorage::new(),
-        None as Option<RamStorage>,
+        None,
         HashMap::new(),
         HashMap::new(),
     );
@@ -413,14 +413,14 @@ async fn write_threshold_keys_failed_storage() {
 }
 
 fn setup_threshold_store() -> (
-    ThresholdCryptoMaterialStorage<FailingRamStorage, RamStorage, RamStorage>,
+    ThresholdCryptoMaterialStorage<FailingRamStorage, RamStorage>,
     ThresholdFheKeys,
     FhePubKeySet,
 ) {
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         FailingRamStorage::new(100),
         RamStorage::new(),
-        None as Option<RamStorage>,
+        None,
         HashMap::new(),
         HashMap::new(),
     );
@@ -430,22 +430,14 @@ fn setup_threshold_store() -> (
         .to_classic_pbs_parameters();
 
     let mut rng = AesRng::seed_from_u64(100);
-    let key_set = gen_key_set(TEST_PARAM, &mut rng);
-    let key_shares = keygen_all_party_shares(
-        key_set.get_raw_lwe_client_key(),
-        key_set.get_raw_glwe_client_key(),
-        key_set.get_raw_glwe_client_sns_key_as_lwe().unwrap(),
-        pbs_params,
-        &mut rng,
-        4,
-        1,
-    )
-    .unwrap();
+    let keyset = gen_key_set(TEST_PARAM, &mut rng);
+    let key_shares =
+        keygen_all_party_shares_from_keyset(&keyset, pbs_params, &mut rng, 4, 1).unwrap();
 
-    let fhe_key_set = key_set.public_keys.clone();
+    let fhe_key_set = keyset.public_keys.clone();
 
-    let (integer_server_key, _, _, _, sns_key, _) =
-        key_set.public_keys.server_key.clone().into_raw_parts();
+    let (integer_server_key, _, _, _, sns_key, _, _) =
+        keyset.public_keys.server_key.clone().into_raw_parts();
 
     let threshold_fhe_keys = ThresholdFheKeys {
         private_keys: key_shares[0].to_owned(),

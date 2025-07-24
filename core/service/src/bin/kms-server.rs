@@ -358,7 +358,7 @@ async fn main() -> anyhow::Result<()> {
                     ref cert,
                     ref trusted_releases,
                 }) => {
-                    let security_module = security_module.unwrap_or_else(|| {
+                    let security_module = security_module.as_ref().unwrap_or_else(|| {
                             panic!("EIF signing certificate present but not security module, unable to construct TLS identity")
                         });
                     tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
@@ -376,6 +376,7 @@ async fn main() -> anyhow::Result<()> {
                     ref trusted_releases,
                 }) => {
                     let security_module = security_module
+                        .as_ref()
                         .unwrap_or_else(|| panic!("TLS identity and security module not present"));
                     tracing::info!(
                         "Using TLS certificate with Nitro remote attestation signed by onboard CA"
@@ -406,6 +407,7 @@ async fn main() -> anyhow::Result<()> {
                 public_vault,
                 private_vault,
                 backup_vault,
+                security_module,
                 mpc_listener,
                 sk,
                 tls_identity,
@@ -439,11 +441,11 @@ async fn main() -> anyhow::Result<()> {
             )
             .await?;
             let meta_store_status_service = Arc::new(MetaStoreStatusServiceImpl::new(
-                None, // key_gen_store
-                None, // pub_dec_store
-                None, // user_dec_store
-                None, // crs_store
-                None, // preproc_store
+                Some(Arc::clone(kms.get_key_gen_meta_store())), // key_gen_store
+                Some(Arc::clone(kms.get_pub_dec_meta_store())), // pub_dec_store
+                Some(Arc::clone(kms.get_user_dec_meta_store())), // user_dec_store
+                Some(Arc::clone(kms.get_crs_meta_store())),     // crs_store
+                None, // preproc_store - not available in centralized mode
             ));
             run_server(
                 core_config.service,

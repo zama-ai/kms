@@ -7,9 +7,9 @@ use tfhe::FheTypes;
 use threshold_fhe::hashing::DomainSep;
 
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::cryptography::internal_crypto_types::PublicEncKey;
 use crate::cryptography::internal_crypto_types::PublicSigKey;
 use crate::cryptography::internal_crypto_types::Signature;
+use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 
 use super::base::KmsFheKeyHandles;
 
@@ -48,7 +48,7 @@ pub trait Kms: BaseKms {
         ct_type: FheTypes,
         ct_format: CiphertextFormat,
         digest_link: &[u8],
-        enc_key: &PublicEncKey,
+        enc_key: &UnifiedPublicEncKey,
         client_address: &alloy_primitives::Address,
     ) -> anyhow::Result<Vec<u8>>;
 }

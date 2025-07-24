@@ -11,6 +11,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
     prepare-batch:
@@ -26,7 +27,7 @@ jobs:
             with:
               submodules: true
               token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-              persist-credentials: false
+              persist-credentials: true
 
           - name: Get changed product files
             id: list_changed_files

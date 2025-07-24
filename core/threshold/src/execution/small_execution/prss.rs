@@ -8,7 +8,7 @@ use crate::{
     algebra::{
         bivariate::{compute_powers_list, MatrixMul},
         poly::Poly,
-        structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
+        structure_traits::{ErrorCorrect, Invert, Ring, RingWithExceptionalSequence},
     },
     error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
@@ -426,7 +426,7 @@ pub type SecurePRSSState<Z> = PRSSState<Z, SyncReliableBroadcast>;
 
 /// computes the points on the polys f_A for all parties in the given sets A
 /// f_A is one at 0, and zero at the party indices not in set A
-fn party_compute_f_a_points<Z: Ring + RingEmbed + Invert>(
+fn party_compute_f_a_points<Z: RingWithExceptionalSequence + Invert>(
     all_roles: &[Role],
     partysets: &Vec<PartySet>,
 ) -> anyhow::Result<Vec<Vec<Z>>> {
@@ -465,11 +465,10 @@ fn embed_parties_and_compute_alpha_powers<Z>(
     threshold: usize,
 ) -> anyhow::Result<Vec<Vec<Z>>>
 where
-    Z: Ring,
-    Z: RingEmbed,
+    Z: RingWithExceptionalSequence,
 {
     let parties: Vec<_> = (1..=num_parties)
-        .map(Z::embed_exceptional_set)
+        .map(Z::get_from_exceptional_sequence)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(compute_powers_list(&parties, threshold))
 }
@@ -477,8 +476,7 @@ where
 #[async_trait]
 impl<Z, B> PRSSPrimitives<Z> for PRSSState<Z, B>
 where
-    Z: Ring,
-    Z: RingEmbed,
+    Z: RingWithExceptionalSequence,
     Z: Invert,
     Z: PRSSConversions,
     B: Broadcast,
@@ -816,7 +814,7 @@ fn handle_non_voting_parties<Z: Ring, S: BaseSessionHandles>(
 }
 
 /// Helper method for computing the parties resulting share value based on the winning psi value for each [PrssSet]
-fn compute_party_shares<Z: Ring + RingEmbed + Invert, P: ParameterHandles>(
+fn compute_party_shares<Z: RingWithExceptionalSequence + Invert, P: ParameterHandles>(
     true_prf_vals: &HashMap<&PartySet, &Vec<Z>>,
     param: &P,
     mode: ComputeShareMode,
@@ -881,7 +879,9 @@ fn compute_party_shares<Z: Ring + RingEmbed + Invert, P: ParameterHandles>(
 
 // Note: We force the use of the Secure version of PRSSState (i.e. use a secure broadcast)
 // to make our life simpler
-impl<Z: Ring + RingEmbed + Invert + PRSSConversions> DerivePRSSState<Z> for PRSSSetup<Z> {
+impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions> DerivePRSSState<Z>
+    for PRSSSetup<Z>
+{
     type OutputType = SecurePRSSState<Z>;
     /// initializes a PRSS state for a new session
     /// PRxS counters are set to zero
@@ -918,7 +918,10 @@ impl<Z: Ring + RingEmbed + Invert + PRSSConversions> DerivePRSSState<Z> for PRSS
 /// a_1^2           a_2^2           a_3^2       ...    a_columns^2
 /// ...
 /// a_1^{rows-1}    a_2^{rows-1}    a_3^{rows-1}...    a_columns^{rows-1}
-fn transpose_vdm<Z: Ring + RingEmbed>(rows: usize, columns: usize) -> anyhow::Result<ArrayD<Z>> {
+fn transpose_vdm<Z: RingWithExceptionalSequence>(
+    rows: usize,
+    columns: usize,
+) -> anyhow::Result<ArrayD<Z>> {
     Ok(init_vdm::<Z>(columns, rows)?.reversed_axes())
 }
 
@@ -934,7 +937,9 @@ mod tests {
     use crate::execution::runtime::session::SmallSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::small_execution::agree_random::DSEP_AR;
-    use crate::execution::tfhe_internals::test_feature::KeySet;
+    use crate::execution::tfhe_internals::test_feature::{
+        keygen_all_party_shares_from_keyset, KeySet,
+    };
     use crate::execution::tfhe_internals::utils::expanded_encrypt;
     use crate::hashing::hash_element_w_size;
     use crate::malicious_execution::small_execution::malicious_prss::{
@@ -949,7 +954,6 @@ mod tests {
             structure_traits::{One, Zero},
         },
         commitment::KEY_BYTE_LEN,
-        execution::tfhe_internals::test_feature::keygen_all_party_shares,
         execution::{
             constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, SMALL_TEST_KEY_PATH, STATSEC},
             endpoints::decryption::{threshold_decrypt64, DecryptionMode},
@@ -1003,7 +1007,7 @@ mod tests {
     }
 
     //NOTE: Need to generalize (some of) the tests to ResiduePolyF4Z64 ?
-    impl<Z: Ring + RingEmbed + Invert> PRSSSetup<Z> {
+    impl<Z: RingWithExceptionalSequence + Invert> PRSSSetup<Z> {
         // initializes the epoch for a single party (without actual networking)
         pub fn testing_party_epoch_init(
             num_parties: usize,
@@ -1153,28 +1157,18 @@ mod tests {
         // RNG for keys
         let mut rng = AesRng::seed_from_u64(69);
         let msg: u8 = 3;
-        let keys: KeySet = read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
-        let params = keys.get_cpu_params().unwrap();
+        let keyset: KeySet = read_element(std::path::Path::new(SMALL_TEST_KEY_PATH)).unwrap();
+        let params = keyset.get_cpu_params().unwrap();
 
         let identities = generate_fixed_identities(num_parties);
 
-        // generate keys
-        let lwe_secret_key = keys.get_raw_lwe_client_key();
-        let glwe_secret_key = keys.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keys.get_raw_glwe_client_sns_key_as_lwe().unwrap();
-        let key_shares = keygen_all_party_shares(
-            lwe_secret_key,
-            glwe_secret_key,
-            glwe_secret_key_sns_as_lwe,
-            params,
-            &mut rng,
-            num_parties,
-            threshold,
-        )
-        .unwrap();
+        // generate key shares for all parties
+        let key_shares =
+            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
+                .unwrap();
 
-        set_server_key(keys.public_keys.server_key.clone());
-        let ct: FheUint8 = expanded_encrypt(&keys.public_keys.public_key, msg, 8).unwrap();
+        set_server_key(keyset.public_keys.server_key.clone());
+        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, msg, 8).unwrap();
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
@@ -1182,7 +1176,7 @@ mod tests {
         let mut runtime =
             DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
 
-        runtime.setup_server_key(Arc::new(keys.public_keys.server_key));
+        runtime.setup_server_key(Arc::new(keyset.public_keys.server_key));
         runtime.setup_sks(key_shares);
 
         let mut seed = [0_u8; aes_prng::SEED_SIZE];
@@ -2373,40 +2367,40 @@ mod tests {
         // Check second row is
         // 1, 2, 3, 4 = 1, x, 1+x, 2x
         assert_eq!(
-            ResiduePolyF4::embed_exceptional_set(1).unwrap(),
+            ResiduePolyF4::get_from_exceptional_sequence(1).unwrap(),
             res[[1, 0]]
         );
         assert_eq!(
-            ResiduePolyF4::embed_exceptional_set(2).unwrap(),
+            ResiduePolyF4::get_from_exceptional_sequence(2).unwrap(),
             res[[1, 1]]
         );
         assert_eq!(
-            ResiduePolyF4::embed_exceptional_set(3).unwrap(),
+            ResiduePolyF4::get_from_exceptional_sequence(3).unwrap(),
             res[[1, 2]]
         );
         assert_eq!(
-            ResiduePolyF4::embed_exceptional_set(4).unwrap(),
+            ResiduePolyF4::get_from_exceptional_sequence(4).unwrap(),
             res[[1, 3]]
         );
         // Check third row is
         // 1, x^2, (1+x)^2, (2x)^2
         assert_eq!(
-            ResiduePolyF4::embed_exceptional_set(1).unwrap(),
+            ResiduePolyF4::get_from_exceptional_sequence(1).unwrap(),
             res[[2, 0]]
         );
         assert_eq!(
-            ResiduePolyF4Z128::embed_exceptional_set(2).unwrap()
-                * ResiduePolyF4Z128::embed_exceptional_set(2).unwrap(),
+            ResiduePolyF4Z128::get_from_exceptional_sequence(2).unwrap()
+                * ResiduePolyF4Z128::get_from_exceptional_sequence(2).unwrap(),
             res[[2, 1]]
         );
         assert_eq!(
-            ResiduePolyF4Z128::embed_exceptional_set(3).unwrap()
-                * ResiduePolyF4Z128::embed_exceptional_set(3).unwrap(),
+            ResiduePolyF4Z128::get_from_exceptional_sequence(3).unwrap()
+                * ResiduePolyF4Z128::get_from_exceptional_sequence(3).unwrap(),
             res[[2, 2]]
         );
         assert_eq!(
-            ResiduePolyF4Z128::embed_exceptional_set(4).unwrap()
-                * ResiduePolyF4Z128::embed_exceptional_set(4).unwrap(),
+            ResiduePolyF4Z128::get_from_exceptional_sequence(4).unwrap()
+                * ResiduePolyF4Z128::get_from_exceptional_sequence(4).unwrap(),
             res[[2, 3]]
         );
     }

@@ -1,8 +1,9 @@
-use crate::cryptography::internal_crypto_types::Signature;
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::internal_crypto_types::{
-    PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair,
-    SigncryptionPrivKey, SigncryptionPubKey,
+    PrivateSigKey, PublicSigKey, SigncryptionKeyPair, SigncryptionPrivKey, SigncryptionPubKey,
+    UnifiedPrivateEncKey, UnifiedSigncryptionKeyPair, UnifiedSigncryptionKeyPairOwned,
 };
+use crate::cryptography::internal_crypto_types::{Signature, UnifiedPublicEncKey};
 use crate::cryptography::signcryption::{
     decrypt_signcryption_with_link, ephemeral_encryption_key_generation,
     insecure_decrypt_ignoring_signature, internal_verify_sig,
@@ -178,8 +179,9 @@ pub struct TestingUserDecryptionTranscript {
     cts: Vec<Vec<u8>>,
     // request
     request: Option<UserDecryptionRequest>,
-    eph_sk: PrivateEncKey,
-    eph_pk: PublicEncKey,
+    // We keep the unified keys here because for legacy tests we need to produce legacy transcripts
+    eph_sk: UnifiedPrivateEncKey,
+    eph_pk: UnifiedPublicEncKey,
     // response
     agg_resp: Vec<UserDecryptionResponse>,
 }
@@ -769,13 +771,19 @@ impl Client {
     /// the users's wallet private key. Returns the full [UserDecryptionRequest] containing
     /// the signed payload to send to the servers, along with the generated
     /// user decryption key pair.
+    ///
+    /// Note that we only support MlKem512 in the latest version and not other variants of MlKem.
     pub fn user_decryption_request(
         &mut self,
         domain: &Eip712Domain,
         typed_ciphertexts: Vec<TypedCiphertext>,
         request_id: &RequestId,
         key_id: &RequestId,
-    ) -> anyhow::Result<(UserDecryptionRequest, PublicEncKey, PrivateEncKey)> {
+    ) -> anyhow::Result<(
+        UserDecryptionRequest,
+        UnifiedPublicEncKey,
+        UnifiedPrivateEncKey,
+    )> {
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
                 "The request id format is not valid {request_id}"
@@ -788,12 +796,68 @@ impl Client {
 
         let domain_msg = alloy_to_protobuf_domain(domain)?;
 
-        let (enc_pk, enc_sk) = ephemeral_encryption_key_generation(&mut self.rng);
+        // NOTE: we only support MlKem512 in the latest version
+        let (enc_pk, enc_sk) =
+            ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut self.rng);
+
+        let mut enc_key_buf = Vec::new();
+        // The key is freshly generated, so we can safely unwrap the serialization
+        tfhe::safe_serialization::safe_serialize(
+            &UnifiedPublicEncKey::MlKem512(enc_pk.clone()),
+            &mut enc_key_buf,
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .expect("Failed to serialize ephemeral encryption key");
+
+        Ok((
+            UserDecryptionRequest {
+                request_id: Some((*request_id).into()),
+                enc_key: enc_key_buf,
+                client_address: self.client_address.to_checksum(None),
+                typed_ciphertexts,
+                key_id: Some((*key_id).into()),
+                domain: Some(domain_msg),
+            },
+            UnifiedPublicEncKey::MlKem512(enc_pk),
+            UnifiedPrivateEncKey::MlKem512(enc_sk),
+        ))
+    }
+
+    /// This is the legacy version of the user decryption request
+    /// where the encryption key is MlKem1024 serialized using bincode2.
+    /// The normal version [Self::user_decryption_request] uses MlKem512 uses safe serialization.
+    #[cfg(test)]
+    fn user_decryption_request_legacy(
+        &mut self,
+        domain: &Eip712Domain,
+        typed_ciphertexts: Vec<TypedCiphertext>,
+        request_id: &RequestId,
+        key_id: &RequestId,
+    ) -> anyhow::Result<(
+        UserDecryptionRequest,
+        UnifiedPublicEncKey,
+        UnifiedPrivateEncKey,
+    )> {
+        if !request_id.is_valid() {
+            return Err(anyhow_error_and_log(format!(
+                "The request id format is not valid {request_id}"
+            )));
+        }
+        let _client_sk = some_or_err(
+            self.client_sk.clone(),
+            "missing client signing key".to_string(),
+        )?;
+
+        let domain_msg = alloy_to_protobuf_domain(domain)?;
+
+        let (enc_pk, enc_sk) =
+            ephemeral_encryption_key_generation::<ml_kem::MlKem1024>(&mut self.rng);
 
         Ok((
             UserDecryptionRequest {
                 request_id: Some((*request_id).into()),
                 // The key is freshly generated, so we can safely unwrap the serialization
+                // NOTE: in the legacy version we do not serialize the unified version
                 enc_key: bc2wrap::serialize(&enc_pk)
                     .expect("Failed to serialize ephemeral encryption key"),
                 client_address: self.client_address.to_checksum(None),
@@ -801,8 +865,8 @@ impl Client {
                 key_id: Some((*key_id).into()),
                 domain: Some(domain_msg),
             },
-            enc_pk,
-            enc_sk,
+            UnifiedPublicEncKey::MlKem1024(enc_pk),
+            UnifiedPrivateEncKey::MlKem1024(enc_sk),
         ))
     }
 
@@ -1105,19 +1169,43 @@ impl Client {
         client_request: &ParsedUserDecryptionRequest,
         eip712_domain: &Eip712Domain,
         agg_resp: &[UserDecryptionResponse],
-        enc_pk: &PublicEncKey,
-        enc_sk: &PrivateEncKey,
+        enc_pk: &UnifiedPublicEncKey,
+        enc_sk: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        let client_keys = SigncryptionPair {
-            sk: SigncryptionPrivKey {
-                signing_key: self.client_sk.clone(),
-                decryption_key: enc_sk.clone(),
-            },
-            pk: SigncryptionPubKey {
-                client_address: self.client_address,
-                enc_key: enc_pk.clone(),
-            },
+        let owned_client_keys = match (enc_pk, enc_sk) {
+            (UnifiedPublicEncKey::MlKem512(pk), UnifiedPrivateEncKey::MlKem512(sk)) => {
+                let v = SigncryptionKeyPair::<ml_kem::MlKem512> {
+                    sk: SigncryptionPrivKey {
+                        signing_key: self.client_sk.clone(),
+                        decryption_key: sk.clone(),
+                    },
+                    pk: SigncryptionPubKey {
+                        client_address: self.client_address,
+                        enc_key: pk.clone(),
+                    },
+                };
+                UnifiedSigncryptionKeyPairOwned::MlKem512(v)
+            }
+            (UnifiedPublicEncKey::MlKem1024(pk), UnifiedPrivateEncKey::MlKem1024(sk)) => {
+                let v = SigncryptionKeyPair::<ml_kem::MlKem1024> {
+                    sk: SigncryptionPrivKey {
+                        signing_key: self.client_sk.clone(),
+                        decryption_key: sk.clone(),
+                    },
+                    pk: SigncryptionPubKey {
+                        client_address: self.client_address,
+                        enc_key: pk.clone(),
+                    },
+                };
+                UnifiedSigncryptionKeyPairOwned::MlKem1024(v)
+            }
+            _ => {
+                return Err(anyhow_error_and_log(
+                    "Public and private keys do not have the same variant".to_string(),
+                ));
+            }
         };
+        let client_keys = owned_client_keys.reference();
 
         // The condition below decides whether we'll parse the response
         // in the centralized mode or threshold mode.
@@ -1155,19 +1243,43 @@ impl Client {
     pub fn insecure_process_user_decryption_resp(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        enc_pk: &PublicEncKey,
-        enc_sk: &PrivateEncKey,
+        enc_pk: &UnifiedPublicEncKey,
+        enc_sk: &UnifiedPrivateEncKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        let client_keys = SigncryptionPair {
-            sk: SigncryptionPrivKey {
-                signing_key: self.client_sk.clone(),
-                decryption_key: enc_sk.clone(),
-            },
-            pk: SigncryptionPubKey {
-                client_address: self.client_address,
-                enc_key: enc_pk.clone(),
-            },
+        let owned_client_keys = match (enc_pk, enc_sk) {
+            (UnifiedPublicEncKey::MlKem512(pk), UnifiedPrivateEncKey::MlKem512(sk)) => {
+                let v = SigncryptionKeyPair::<ml_kem::MlKem512> {
+                    sk: SigncryptionPrivKey {
+                        signing_key: self.client_sk.clone(),
+                        decryption_key: sk.clone(),
+                    },
+                    pk: SigncryptionPubKey {
+                        client_address: self.client_address,
+                        enc_key: pk.clone(),
+                    },
+                };
+                UnifiedSigncryptionKeyPairOwned::MlKem512(v)
+            }
+            (UnifiedPublicEncKey::MlKem1024(pk), UnifiedPrivateEncKey::MlKem1024(sk)) => {
+                let v = SigncryptionKeyPair::<ml_kem::MlKem1024> {
+                    sk: SigncryptionPrivKey {
+                        signing_key: self.client_sk.clone(),
+                        decryption_key: sk.clone(),
+                    },
+                    pk: SigncryptionPubKey {
+                        client_address: self.client_address,
+                        enc_key: pk.clone(),
+                    },
+                };
+                UnifiedSigncryptionKeyPairOwned::MlKem1024(v)
+            }
+            _ => {
+                return Err(anyhow_error_and_log(
+                    "Public and private keys do not have the same variant".to_string(),
+                ));
+            }
         };
+        let client_keys = owned_client_keys.reference();
 
         // The same logic is used in `process_user_decryption_resp`.
         if agg_resp.len() <= 1 && self.server_identities.len() == 1 {
@@ -1183,7 +1295,7 @@ impl Client {
         request: &ParsedUserDecryptionRequest,
         eip712_domain: &Eip712Domain,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &SigncryptionPair,
+        client_keys: &UnifiedSigncryptionKeyPair,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
@@ -1271,7 +1383,7 @@ impl Client {
     fn insecure_centralized_user_decryption_resp(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &SigncryptionPair,
+        client_keys: &UnifiedSigncryptionKeyPair,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
@@ -1294,7 +1406,7 @@ impl Client {
         client_request: &ParsedUserDecryptionRequest,
         eip712_domain: &Eip712Domain,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &SigncryptionPair,
+        client_keys: &UnifiedSigncryptionKeyPair,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let validated_resps = some_or_err(
             validate_user_decrypt_responses_against_request(
@@ -1461,7 +1573,7 @@ impl Client {
     fn insecure_threshold_user_decryption_resp(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &SigncryptionPair,
+        client_keys: &UnifiedSigncryptionKeyPair,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
@@ -1479,7 +1591,7 @@ impl Client {
     #[allow(clippy::type_complexity)]
     fn insecure_threshold_user_decryption_resp_to_blocks<Z: BaseRing>(
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &SigncryptionPair,
+        client_keys: &UnifiedSigncryptionKeyPair,
     ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ResiduePolyF4<Z>>)>>
     where
         ResiduePolyF4<Z>: ErrorCorrect + MemoizedExceptionals,
@@ -1595,7 +1707,7 @@ impl Client {
     fn insecure_threshold_user_decryption_resp_z128(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &SigncryptionPair,
+        client_keys: &UnifiedSigncryptionKeyPair,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
             Self::insecure_threshold_user_decryption_resp_to_blocks::<Z128>(agg_resp, client_keys)?;
@@ -1636,7 +1748,7 @@ impl Client {
     fn insecure_threshold_user_decryption_resp_z64(
         &self,
         agg_resp: &[UserDecryptionResponse],
-        client_keys: &SigncryptionPair,
+        client_keys: &UnifiedSigncryptionKeyPair,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
         let all_decrypted_blocks =
             Self::insecure_threshold_user_decryption_resp_to_blocks::<Z64>(agg_resp, client_keys)?;
@@ -1676,7 +1788,7 @@ impl Client {
     fn recover_sharings<Z: BaseRing>(
         &self,
         agg_resp: &[UserDecryptionResponsePayload],
-        client_keys: &SigncryptionPair,
+        client_keys: &UnifiedSigncryptionKeyPair,
     ) -> anyhow::Result<Vec<(FheTypes, u32, Vec<ShamirSharings<ResiduePolyF4<Z>>>, usize)>> {
         let batch_count = agg_resp
             .first()
@@ -1958,7 +2070,8 @@ pub mod test_tools {
                     threshold_party_config,
                     cur_pub_storage,
                     cur_priv_storage,
-                    None as Option<PrivS>,
+                    None,
+                    None,
                     mpc_listener,
                     sk,
                     None,
@@ -2227,15 +2340,10 @@ pub mod test_tools {
             .unwrap();
         let (tx, rx) = tokio::sync::oneshot::channel();
         let sk = get_core_signing_key(&priv_storage).await.unwrap();
-        let (kms, health_service) = RealCentralizedKms::new(
-            pub_storage,
-            priv_storage,
-            None as Option<PrivS>,
-            sk,
-            rate_limiter_conf,
-        )
-        .await
-        .expect("Could not create KMS");
+        let (kms, health_service) =
+            RealCentralizedKms::new(pub_storage, priv_storage, None, sk, rate_limiter_conf)
+                .await
+                .expect("Could not create KMS");
         let arc_kms = Arc::new(kms);
         let arc_kms_clone = Arc::clone(&arc_kms);
         tokio::spawn(async move {
@@ -2260,7 +2368,7 @@ pub mod test_tools {
             .expect("Could not start server");
         });
         let service_name = <CoreServiceEndpointServer<
-            RealCentralizedKms<FileStorage, FileStorage, FileStorage>,
+            RealCentralizedKms<FileStorage, FileStorage>,
         > as NamedService>::NAME;
         await_server_ready(service_name, listen_port).await;
         ServerHandle::new_centralized(arc_kms_clone, listen_port, tx)
@@ -2327,9 +2435,9 @@ pub(crate) mod tests {
     use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID_4P};
     use crate::consts::{DEFAULT_THRESHOLD, TEST_THRESHOLD_KEY_ID_10P};
     use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};
-    use crate::cryptography::internal_crypto_types::WrappedDKGParams;
+    use crate::cryptography::internal_crypto_types::{PrivateSigKey, Signature};
     use crate::cryptography::internal_crypto_types::{
-        PrivateEncKey, PrivateSigKey, PublicEncKey, Signature,
+        UnifiedPrivateEncKey, UnifiedPublicEncKey, WrappedDKGParams,
     };
     use crate::engine::base::{compute_handle, derive_request_id, BaseKmsStruct, DSEP_PUBDATA_CRS};
     #[cfg(feature = "slow_tests")]
@@ -2366,10 +2474,17 @@ pub(crate) mod tests {
     use std::str::FromStr;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use std::sync::Arc;
-    use tfhe::core_crypto::prelude::{ContiguousEntityContainer, LweCiphertextOwned};
+    use tfhe::core_crypto::prelude::{
+        decrypt_lwe_ciphertext, divide_round, ContiguousEntityContainer, LweCiphertextOwned,
+    };
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use tfhe::integer::compression_keys::DecompressionKey;
     use tfhe::prelude::ParameterSetConformant;
+    use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
+    use tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey;
+    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
+    use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
+    use tfhe::shortint::server_key::ModulusSwitchConfiguration;
     use tfhe::zk::CompactPkeCrs;
     use tfhe::Tag;
     use tfhe::{FheTypes, ProvenCompactCiphertextList};
@@ -2464,7 +2579,7 @@ pub(crate) mod tests {
             .await
             .expect("Failed to get health client");
         let service_name = <CoreServiceEndpointServer<
-            RealCentralizedKms<FileStorage, FileStorage, FileStorage>,
+            RealCentralizedKms<FileStorage, FileStorage>,
         > as NamedService>::NAME;
         let request = tonic::Request::new(HealthCheckRequest {
             service: service_name.to_string(),
@@ -2525,7 +2640,7 @@ pub(crate) mod tests {
             .await
             .expect("Failed to get core health client");
         let core_service_name = <CoreServiceEndpointServer<
-            RealThresholdKms<FileStorage, FileStorage, FileStorage>,
+            RealThresholdKms<FileStorage, FileStorage>,
         > as NamedService>::NAME;
         let status = get_status(&mut main_health_client, core_service_name)
             .await
@@ -2613,7 +2728,7 @@ pub(crate) mod tests {
             .await
             .expect("Failed to get health client");
         let service_name = <CoreServiceEndpointServer<
-            RealCentralizedKms<FileStorage, FileStorage, FileStorage>,
+            RealCentralizedKms<FileStorage, FileStorage>,
         > as NamedService>::NAME;
         let request = tonic::Request::new(HealthCheckRequest {
             service: service_name.to_string(),
@@ -2670,7 +2785,7 @@ pub(crate) mod tests {
             .await
             .expect("Failed to get core health client");
         let core_service_name = <CoreServiceEndpointServer<
-            RealThresholdKms<FileStorage, FileStorage, FileStorage>,
+            RealThresholdKms<FileStorage, FileStorage>,
         > as NamedService>::NAME;
         // Get health client for main server 1
         let mut threshold_health_client =
@@ -2721,7 +2836,7 @@ pub(crate) mod tests {
         // Ensure that the servers are ready
         for cur_handle in kms_servers.values() {
             let service_name = <CoreServiceEndpointServer<
-                RealThresholdKms<FileStorage, FileStorage, FileStorage>,
+                RealThresholdKms<FileStorage, FileStorage>,
             > as NamedService>::NAME;
             await_server_ready(service_name, cur_handle.service_port).await;
         }
@@ -2732,7 +2847,7 @@ pub(crate) mod tests {
             .await
             .expect("Failed to get core health client");
         let core_service_name = <CoreServiceEndpointServer<
-            RealThresholdKms<FileStorage, FileStorage, FileStorage>,
+            RealThresholdKms<FileStorage, FileStorage>,
         > as NamedService>::NAME;
         let status = get_status(&mut core_health_client, core_service_name)
             .await
@@ -2889,6 +3004,30 @@ pub(crate) mod tests {
                 compression_keyset_id: None,
                 from_keyset_id_decompression_only: Some(request_id_1.into()),
                 to_keyset_id_decompression_only: Some(request_id_2.into()),
+                base_keyset_id_for_sns_compression_key: None,
+            }),
+        )
+        .await;
+    }
+
+    // TODO(2674)
+    // test centralized sns compression keygen using the testing parameters
+    // this test will use an existing base key stored under the key ID `TEST_CENTRAL_KEY_ID`
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn test_sns_compression_key_gen_centralized() {
+        let request_id = derive_request_id("test_sns_compression_key_gen_centralized").unwrap();
+        // Delete potentially old data
+        purge(None, None, &request_id, 1).await;
+        key_gen_centralized(
+            &request_id,
+            FheParameter::Test,
+            None,
+            Some(KeySetAddedInfo {
+                compression_keyset_id: None,
+                from_keyset_id_decompression_only: None,
+                to_keyset_id_decompression_only: None,
+                base_keyset_id_for_sns_compression_key: Some((*TEST_CENTRAL_KEY_ID).into()),
             }),
         )
         .await;
@@ -2930,9 +3069,78 @@ pub(crate) mod tests {
                 compression_keyset_id: None,
                 from_keyset_id_decompression_only: Some(request_id_1.into()),
                 to_keyset_id_decompression_only: Some(request_id_2.into()),
+                base_keyset_id_for_sns_compression_key: None,
             }),
         )
         .await;
+    }
+
+    // TODO(2674)
+    // test centralized sns compression keygen using the default parameters
+    // this test will use an existing base key stored under the key ID `DEFAULT_CENTRAL_KEY_ID`
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_sns_compression_key_gen_centralized() {
+        let request_id = derive_request_id("default_sns_compression_key_gen_centralized").unwrap();
+        // Delete potentially old data
+        purge(None, None, &request_id, 1).await;
+        key_gen_centralized(
+            &request_id,
+            FheParameter::Test,
+            None,
+            Some(KeySetAddedInfo {
+                compression_keyset_id: None,
+                from_keyset_id_decompression_only: None,
+                to_keyset_id_decompression_only: None,
+                base_keyset_id_for_sns_compression_key: Some((*DEFAULT_CENTRAL_KEY_ID).into()),
+            }),
+        )
+        .await;
+    }
+
+    // check that the server keys stored under the IDs `key_id_base` and `key_id_with_sns_compression`
+    // are identical except for the sns compression key
+    async fn identical_keys_except_sns_compression_from_storage<R: StorageReader>(
+        internal_client: &Client,
+        storage: &R,
+        key_id_base: &RequestId,
+        key_id_with_sns_compression: &RequestId,
+    ) {
+        let server_key_base: tfhe::ServerKey = internal_client
+            .get_key(key_id_base, PubDataType::ServerKey, storage)
+            .await
+            .unwrap();
+
+        let server_key_sns: tfhe::ServerKey = internal_client
+            .get_key(key_id_with_sns_compression, PubDataType::ServerKey, storage)
+            .await
+            .unwrap();
+
+        identical_keys_except_sns_compression(server_key_base, server_key_sns).await
+    }
+
+    // check that the two keys are identical except for the sns compression key
+    async fn identical_keys_except_sns_compression(
+        server_key_base: tfhe::ServerKey,
+        server_key_sns: tfhe::ServerKey,
+    ) {
+        let server_key_base_parts = server_key_base.into_raw_parts();
+        let server_key_sns_parts = server_key_sns.into_raw_parts();
+
+        // 5 should be sns compression
+        assert!(server_key_sns_parts.5.is_some());
+
+        // we can't compare keys directly, so we serialize them
+        assert_eq!(
+            bc2wrap::serialize(&server_key_base_parts.0).unwrap(),
+            bc2wrap::serialize(&server_key_sns_parts.0).unwrap()
+        );
+
+        assert_ne!(
+            bc2wrap::serialize(&server_key_base_parts.5).unwrap(),
+            bc2wrap::serialize(&server_key_sns_parts.5).unwrap(),
+        )
     }
 
     async fn key_gen_centralized(
@@ -2988,30 +3196,51 @@ pub(crate) mod tests {
 
         let inner_config = keyset_config.unwrap_or_default();
         let keyset_type = KeySetType::try_from(inner_config.keyset_type).unwrap();
+
+        let basic_checks = async |resp: &kms_grpc::kms::v1::KeyGenResult| {
+            let req_id = resp.request_id.clone().unwrap();
+            let pk = internal_client
+                .retrieve_public_key(resp, &pub_storage)
+                .await
+                .unwrap();
+            assert!(pk.is_some());
+            let server_key: Option<tfhe::ServerKey> = internal_client
+                .retrieve_server_key(resp, &pub_storage)
+                .await
+                .unwrap();
+            assert!(server_key.is_some());
+
+            // read the client key
+            let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
+                .read_data(&req_id.into(), &PrivDataType::FheKeyInfo.to_string())
+                .await
+                .unwrap();
+            let client_key = handle.client_key;
+
+            check_conformance(server_key.unwrap(), client_key);
+        };
+
         match keyset_type {
             KeySetType::Standard => {
-                let pk = internal_client
-                    .retrieve_public_key(&inner_resp, &pub_storage)
-                    .await
-                    .unwrap();
-                assert!(pk.is_some());
-                let server_key: Option<tfhe::ServerKey> = internal_client
-                    .retrieve_server_key(&inner_resp, &pub_storage)
-                    .await
-                    .unwrap();
-                assert!(server_key.is_some());
+                basic_checks(&inner_resp).await;
+            }
+            KeySetType::AddSnsCompressionKey => {
+                basic_checks(&inner_resp).await;
 
-                // read the client key
-                let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
-                    .read_data(
-                        &inner_resp.request_id.unwrap().into(),
-                        &PrivDataType::FheKeyInfo.to_string(),
-                    )
-                    .await
-                    .unwrap();
-                let client_key = handle.client_key;
-
-                check_conformance(server_key.unwrap(), client_key);
+                // check that the integer server key are the same, before and after the sns compression key gen
+                let new_keyset_id: RequestId = keyset_added_info
+                    .clone()
+                    .unwrap()
+                    .base_keyset_id_for_sns_compression_key
+                    .unwrap()
+                    .into();
+                identical_keys_except_sns_compression_from_storage(
+                    &internal_client,
+                    &pub_storage,
+                    request_id,
+                    &new_keyset_id,
+                )
+                .await;
             }
             KeySetType::DecompressionOnly => {
                 // setup storage
@@ -3979,6 +4208,7 @@ pub(crate) mod tests {
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID,
             false,
+            false,
             TestingPlaintext::U8(48),
             EncryptionConfig {
                 compression: true,
@@ -3993,14 +4223,41 @@ pub(crate) mod tests {
     #[rstest::rstest]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn test_user_decryption_centralized_precompute_sns(#[values(true, false)] secure: bool) {
+    async fn test_user_decryption_centralized_precompute_sns(
+        #[values(true, false)] secure: bool,
+        #[values(true, false)] compression: bool,
+    ) {
         user_decryption_centralized(
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID,
             false,
+            false,
             TestingPlaintext::U8(48),
             EncryptionConfig {
-                compression: false,
+                compression,
+                precompute_sns: true,
+            },
+            4,
+            secure,
+        )
+        .await;
+    }
+
+    #[rstest::rstest]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn test_user_decryption_centralized_precompute_sns_legacy(
+        #[values(true, false)] secure: bool,
+        #[values(true, false)] compression: bool,
+    ) {
+        user_decryption_centralized(
+            &TEST_PARAM,
+            &TEST_CENTRAL_KEY_ID,
+            false,
+            true,
+            TestingPlaintext::U8(48),
+            EncryptionConfig {
+                compression,
                 precompute_sns: true,
             },
             4,
@@ -4018,10 +4275,31 @@ pub(crate) mod tests {
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID,
             true,
+            false,
             TestingPlaintext::U8(48),
             EncryptionConfig {
                 compression: true,
-                precompute_sns: false,
+                precompute_sns: true,
+            },
+            1, // wasm tests are single-threaded
+            true,
+        )
+        .await;
+    }
+
+    #[cfg(feature = "wasm_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn test_user_decryption_centralized_and_write_transcript_legacy() {
+        user_decryption_centralized(
+            &TEST_PARAM,
+            &TEST_CENTRAL_KEY_ID,
+            true,
+            true,
+            TestingPlaintext::U8(48),
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: true,
             },
             1, // wasm tests are single-threaded
             true,
@@ -4041,10 +4319,11 @@ pub(crate) mod tests {
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
             true,
+            false,
             msg,
             EncryptionConfig {
                 compression: true,
-                precompute_sns: false,
+                precompute_sns: true,
             },
             1, // wasm tests are single-threaded
             true,
@@ -4064,6 +4343,7 @@ pub(crate) mod tests {
         user_decryption_centralized(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
+            false,
             false,
             msg,
             EncryptionConfig {
@@ -4091,6 +4371,7 @@ pub(crate) mod tests {
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
             false,
+            false,
             msg,
             EncryptionConfig {
                 compression: false,
@@ -4108,6 +4389,7 @@ pub(crate) mod tests {
     #[serial]
     async fn default_user_decryption_centralized_precompute_sns(
         #[values(true, false)] secure: bool,
+        #[values(true, false)] compression: bool,
     ) {
         use crate::consts::DEFAULT_PARAM;
 
@@ -4117,9 +4399,10 @@ pub(crate) mod tests {
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
             false,
+            false,
             msg,
             EncryptionConfig {
-                compression: false,
+                compression,
                 precompute_sns: true,
             },
             parallelism,
@@ -4128,10 +4411,14 @@ pub(crate) mod tests {
         .await;
     }
 
+    /// Note that the `legacy` argument is used to determine whether to use the legacy
+    /// user decryption request, created using [Client::user_decryption_request_legacy] or the current one.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn user_decryption_centralized(
         dkg_params: &DKGParams,
         key_id: &RequestId,
         _write_transcript: bool,
+        legacy: bool,
         msg: TestingPlaintext,
         enc_config: EncryptionConfig,
         parallelism: usize,
@@ -4163,14 +4450,25 @@ pub(crate) mod tests {
                     external_handle: j.to_be_bytes().to_vec(),
                 }];
                 let request_id = derive_request_id(&format!("TEST_USER_DECRYPT_ID_{j}")).unwrap();
-                internal_client
-                    .user_decryption_request(
-                        &dummy_domain(),
-                        typed_ciphertexts,
-                        &request_id,
-                        key_id,
-                    )
-                    .unwrap()
+                if legacy {
+                    internal_client
+                        .user_decryption_request_legacy(
+                            &dummy_domain(),
+                            typed_ciphertexts,
+                            &request_id,
+                            key_id,
+                        )
+                        .unwrap()
+                } else {
+                    internal_client
+                        .user_decryption_request(
+                            &dummy_domain(),
+                            typed_ciphertexts,
+                            &request_id,
+                            key_id,
+                        )
+                        .unwrap()
+                }
             })
             .collect();
 
@@ -4270,7 +4568,13 @@ pub(crate) mod tests {
                 };
 
                 let path_prefix = if *dkg_params != PARAMS_TEST_BK_SNS {
-                    crate::consts::DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH
+                    if legacy {
+                        crate::consts::DEFAULT_CENTRAL_WASM_TRANSCRIPT_LEGACY_PATH
+                    } else {
+                        crate::consts::DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH
+                    }
+                } else if legacy {
+                    crate::consts::TEST_CENTRAL_WASM_TRANSCRIPT_LEGACY_PATH
                 } else {
                     crate::consts::TEST_CENTRAL_WASM_TRANSCRIPT_PATH
                 };
@@ -4420,6 +4724,7 @@ pub(crate) mod tests {
         #[case] amount_parties: usize,
         #[case] key_id: &RequestId,
         #[case] decryption_mode: DecryptionMode,
+        #[values(true, false)] compression: bool,
     ) {
         decryption_threshold(
             TEST_PARAM,
@@ -4430,7 +4735,7 @@ pub(crate) mod tests {
                 TestingPlaintext::U16(444),
             ],
             EncryptionConfig {
-                compression: false,
+                compression,
                 precompute_sns: true,
             },
             2,
@@ -4480,6 +4785,7 @@ pub(crate) mod tests {
         #[case] parallelism: usize,
         #[case] amount_parties: usize,
         #[case] key_id: &RequestId,
+        #[values(true, false)] compression: bool,
     ) {
         use crate::consts::DEFAULT_PARAM;
 
@@ -4488,7 +4794,7 @@ pub(crate) mod tests {
             key_id,
             msg,
             EncryptionConfig {
-                compression: false,
+                compression,
                 precompute_sns: true,
             },
             parallelism,
@@ -4713,6 +5019,7 @@ pub(crate) mod tests {
             TEST_PARAM,
             key_id,
             false,
+            false,
             pt,
             EncryptionConfig {
                 compression: true,
@@ -4742,6 +5049,7 @@ pub(crate) mod tests {
             TEST_PARAM,
             key_id,
             false,
+            false,
             pt,
             EncryptionConfig {
                 compression: true,
@@ -4766,6 +5074,7 @@ pub(crate) mod tests {
             TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID_4P,
             false,
+            false,
             TestingPlaintext::U32(u32::MAX),
             EncryptionConfig {
                 compression: true,
@@ -4789,6 +5098,7 @@ pub(crate) mod tests {
         user_decryption_threshold(
             TEST_PARAM,
             &TEST_THRESHOLD_KEY_ID_4P,
+            false,
             false,
             TestingPlaintext::U16(u16::MAX),
             EncryptionConfig {
@@ -4820,6 +5130,38 @@ pub(crate) mod tests {
             TEST_PARAM,
             key_id,
             false,
+            false,
+            TestingPlaintext::U8(42),
+            EncryptionConfig {
+                compression: false,
+                precompute_sns: true,
+            },
+            4,
+            secure,
+            amount_parties,
+            None,
+            None,
+            Some(decryption_mode),
+        )
+        .await;
+    }
+
+    #[rstest::rstest]
+    #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+    #[case(false, 4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn test_user_decryption_threshold_precompute_sns_legacy(
+        #[case] secure: bool,
+        #[case] amount_parties: usize,
+        #[case] key_id: &RequestId,
+        #[case] decryption_mode: DecryptionMode,
+    ) {
+        user_decryption_threshold(
+            TEST_PARAM,
+            key_id,
+            false,
+            true,
             TestingPlaintext::U8(42),
             EncryptionConfig {
                 compression: false,
@@ -4849,6 +5191,37 @@ pub(crate) mod tests {
         user_decryption_threshold(
             TEST_PARAM,
             key_id,
+            true,
+            false,
+            TestingPlaintext::U8(42),
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
+            1,
+            secure,
+            amount_parties,
+            None,
+            None,
+            None,
+        )
+        .await;
+    }
+
+    #[cfg(feature = "wasm_tests")]
+    #[rstest::rstest]
+    #[case(true, 4, &TEST_THRESHOLD_KEY_ID_4P)]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn test_user_decryption_threshold_and_write_transcript_legacy(
+        #[case] secure: bool,
+        #[case] amount_parties: usize,
+        #[case] key_id: &RequestId,
+    ) {
+        user_decryption_threshold(
+            TEST_PARAM,
+            key_id,
+            true,
             true,
             TestingPlaintext::U8(42),
             EncryptionConfig {
@@ -4883,6 +5256,7 @@ pub(crate) mod tests {
             DEFAULT_PARAM,
             key_id,
             true,
+            false,
             msg,
             EncryptionConfig {
                 compression: true,
@@ -4917,6 +5291,7 @@ pub(crate) mod tests {
             DEFAULT_PARAM,
             key_id,
             false,
+            false,
             msg,
             EncryptionConfig {
                 compression: true,
@@ -4949,6 +5324,7 @@ pub(crate) mod tests {
         user_decryption_threshold(
             DEFAULT_PARAM,
             key_id,
+            false,
             false,
             msg,
             EncryptionConfig {
@@ -4984,6 +5360,7 @@ pub(crate) mod tests {
             DEFAULT_PARAM,
             key_id,
             false,
+            false,
             msg,
             EncryptionConfig {
                 compression: true,
@@ -5007,7 +5384,11 @@ pub(crate) mod tests {
         amount_parties: usize,
         malicious_parties: Option<Vec<u32>>,
         party_ids_to_crash: Vec<usize>,
-        reqs: Vec<(UserDecryptionRequest, PublicEncKey, PrivateEncKey)>,
+        reqs: Vec<(
+            UserDecryptionRequest,
+            UnifiedPublicEncKey,
+            UnifiedPrivateEncKey,
+        )>,
         response_map: HashMap<RequestId, Vec<UserDecryptionResponse>>,
         server_private_keys: HashMap<u32, PrivateSigKey>,
     ) {
@@ -5125,11 +5506,14 @@ pub(crate) mod tests {
         server_private_keys
     }
 
+    /// Note that the `legacy` argument is used to determine whether to use the legacy
+    /// user decryption request, created using [Client::user_decryption_request_legacy] or the current one.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn user_decryption_threshold(
         dkg_params: DKGParams,
         key_id: &RequestId,
-        write_transcript: bool,
+        _write_transcript: bool,
+        legacy: bool,
         msg: TestingPlaintext,
         enc_config: EncryptionConfig,
         parallelism: usize,
@@ -5140,7 +5524,6 @@ pub(crate) mod tests {
         decryption_mode: Option<DecryptionMode>,
     ) {
         assert!(parallelism > 0);
-        _ = write_transcript;
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let (mut kms_servers, mut kms_clients, mut internal_client) =
             threshold_handles(dkg_params, amount_parties, true, None, decryption_mode).await;
@@ -5157,14 +5540,25 @@ pub(crate) mod tests {
                     ciphertext_format: ct_format.into(),
                     external_handle: j.to_be_bytes().to_vec(),
                 }];
-                let (req, enc_pk, enc_sk) = internal_client
-                    .user_decryption_request(
-                        &dummy_domain(),
-                        typed_ciphertexts,
-                        &request_id,
-                        &key_id.to_string().try_into().unwrap(),
-                    )
-                    .unwrap();
+                let (req, enc_pk, enc_sk) = if legacy {
+                    internal_client
+                        .user_decryption_request_legacy(
+                            &dummy_domain(),
+                            typed_ciphertexts,
+                            &request_id,
+                            &key_id.to_string().try_into().unwrap(),
+                        )
+                        .unwrap()
+                } else {
+                    internal_client
+                        .user_decryption_request(
+                            &dummy_domain(),
+                            typed_ciphertexts,
+                            &request_id,
+                            &key_id.to_string().try_into().unwrap(),
+                        )
+                        .unwrap()
+                };
                 (req, enc_pk, enc_sk)
             })
             .collect();
@@ -5264,7 +5658,7 @@ pub(crate) mod tests {
             assert_eq!(parallelism, 1);
             // Compute threshold < amount_parties/3
             let threshold = max_threshold(amount_parties);
-            if write_transcript {
+            if _write_transcript {
                 // We write a plaintext/ciphertext to file as a workaround
                 // for tfhe encryption on the wasm side since it cannot
                 // be instantiated easily without a seeder and we don't
@@ -5293,7 +5687,13 @@ pub(crate) mod tests {
                     agg_resp,
                 };
                 let path_prefix = if dkg_params != PARAMS_TEST_BK_SNS {
-                    crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH
+                    if legacy {
+                        crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_LEGACY_PATH
+                    } else {
+                        crate::consts::DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH
+                    }
+                } else if legacy {
+                    crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_LEGACY_PATH
                 } else {
                     crate::consts::TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
                 };
@@ -5488,7 +5888,6 @@ pub(crate) mod tests {
     #[cfg(feature = "insecure")]
     #[rstest::rstest]
     #[case(4)]
-    #[case(7)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn test_insecure_dkg(#[case] amount_parties: usize) {
@@ -5499,12 +5898,13 @@ pub(crate) mod tests {
         purge(None, None, &key_id, amount_parties).await;
         let (_kms_servers, kms_clients, internal_client) =
             threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
-        let keys = run_keygen(
+        let keys = run_threshold_keygen(
             FheParameter::Test,
             &kms_clients,
             &internal_client,
             None,
             &key_id,
+            None,
             None,
             true,
         )
@@ -5518,10 +5918,12 @@ pub(crate) mod tests {
     #[cfg(feature = "insecure")]
     #[rstest::rstest]
     #[case(4)]
-    #[case(7)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_insecure_dkg(#[case] amount_parties: usize) {
+        // NOTE: amount_parties must not be too high
+        // because every party will load all the keys and each ServerKey is 1.5 GB
+        // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
         use crate::engine::base::derive_request_id;
 
         let param = FheParameter::Default;
@@ -5534,12 +5936,13 @@ pub(crate) mod tests {
         purge(None, None, &key_id, amount_parties).await;
         let (_kms_servers, kms_clients, internal_client) =
             threshold_handles(*dkg_param, amount_parties, true, None, None).await;
-        let keys = run_keygen(
+        let keys = run_threshold_keygen(
             param,
             &kms_clients,
             &internal_client,
             None,
             &key_id,
+            None,
             None,
             true,
         )
@@ -5560,41 +5963,72 @@ pub(crate) mod tests {
         let max_degree = shortint_server_key.max_degree; // we don't really check the max degree
         assert!(shortint_server_key.is_conformant(&(pbs_params, max_degree)));
 
-        match &shortint_server_key.bootstrapping_key {
-            tfhe::shortint::server_key::ShortintBootstrappingKey::Classic {
-                bsk: _bsk,
-                modulus_switch_noise_reduction_key,
-            } => {
-                assert!(modulus_switch_noise_reduction_key.is_some());
+        match &shortint_server_key.atomic_pattern {
+            AtomicPatternServerKey::Standard(atomic_pattern) => {
+                match &atomic_pattern.bootstrapping_key {
+                    tfhe::shortint::server_key::ShortintBootstrappingKey::Classic {
+                        bsk: _bsk,
+                        modulus_switch_noise_reduction_key,
+                    } => {
+                        match modulus_switch_noise_reduction_key {
+                            // Check that we can decrypt this key to 0
+                            ModulusSwitchConfiguration::DriftTechniqueNoiseReduction(key) => {
+                                let zeros_ct = &key.modulus_switch_zeros;
+                                let (
+                                    client_key,
+                                    _compact_client_key,
+                                    _compression_key,
+                                    _noise_squashing_key,
+                                    _noise_squashing_compression_key,
+                                    _tag,
+                                ) = client_key.into_raw_parts();
 
-                // Check that we can decrypt this key to 0
-                let zeros_ct = modulus_switch_noise_reduction_key
-                    .as_ref()
-                    .map(|x| x.modulus_switch_zeros.clone())
-                    .unwrap();
-                let (client_key, _compact_client_key, _compression_key, _noise_squashing_key, _tag) =
-                    client_key.into_raw_parts();
+                                let client_key = client_key.into_raw_parts().atomic_pattern;
 
-                // We need to make a reference ciphertext to convert
-                // the zero ciphertexts into a Ciphertext Type
-                let ct_reference = client_key.encrypt_one_block(0);
-                for ct in zeros_ct.iter() {
-                    let ctt = tfhe::shortint::Ciphertext::new(
-                        LweCiphertextOwned::from_container(
-                            ct.into_container().to_vec(),
-                            ct.ciphertext_modulus(),
-                        ),
-                        ct_reference.degree,
-                        ct_reference.noise_level(),
-                        ct_reference.message_modulus,
-                        ct_reference.carry_modulus,
-                        tfhe::shortint::PBSOrder::BootstrapKeyswitch,
-                    );
-                    let pt = client_key.decrypt_one_block(&ctt);
-                    assert_eq!(pt, 0);
+                                //NOTE: Small workaround to cope with tfhe-rs change to the ClientKey decryption
+                                //to fetch the key based on the ctxt's PBSOrder and not the key's EncryptionKeyChoice
+                                let lwe_secret_key = if let AtomicPatternClientKey::Standard(
+                                    client_key,
+                                ) = client_key
+                                {
+                                    let (_, lwe_sk, _, _) = client_key.into_raw_parts();
+                                    lwe_sk
+                                } else {
+                                    panic!("Expected Standard AtomicPatternClientKey");
+                                };
+
+                                let message_space_size = pbs_params.message_modulus().0
+                                    * pbs_params.carry_modulus().0
+                                    * 2;
+                                let delta = 1u64 << (u64::BITS - (message_space_size).ilog2());
+                                // We need to make a reference ciphertext to convert
+                                // the zero ciphertexts into a Ciphertext Type
+                                for ct in zeros_ct.iter() {
+                                    let ctt = LweCiphertextOwned::from_container(
+                                        ct.into_container().to_vec(),
+                                        ct.ciphertext_modulus(),
+                                    );
+
+                                    let pt = decrypt_lwe_ciphertext(&lwe_secret_key, &ctt);
+                                    // This is enough as this is expected to be a fresh encryption of 0
+                                    let pt = divide_round(pt.0, delta) % message_space_size;
+                                    assert_eq!(pt, 0);
+                                }
+                            }
+                            //In case of Standard or CenteredMeanNoiseReduction, we don't have a modulus switch key so do nothing
+                            ModulusSwitchConfiguration::Standard => {}
+                            ModulusSwitchConfiguration::CenteredMeanNoiseReduction => {}
+                        }
+                    }
+                    _ => panic!("expected classic bsk"),
                 }
             }
-            _ => panic!("expected classic bsk"),
+            AtomicPatternServerKey::KeySwitch32(_) => {
+                panic!("Unsuported AtomicPatternServerKey::KeySwitch32")
+            }
+            AtomicPatternServerKey::Dynamic(_) => {
+                panic!("Unsuported AtomicPatternServerKey::Dynamic")
+            }
         }
     }
 
@@ -5661,16 +6095,18 @@ pub(crate) mod tests {
                 &internal_client,
                 &preproc_id_1.unwrap(),
                 None,
+                None,
             )
             .await;
         }
 
-        let keys1 = run_keygen(
+        let keys1 = run_threshold_keygen(
             parameter,
             &kms_clients,
             &internal_client,
             preproc_id_1,
             &key_id_1,
+            None,
             None,
             insecure,
         )
@@ -5685,16 +6121,18 @@ pub(crate) mod tests {
                 &internal_client,
                 &preproc_id_2.unwrap(),
                 None,
+                None,
             )
             .await;
         }
 
-        let keys2 = run_keygen(
+        let keys2 = run_threshold_keygen(
             parameter,
             &kms_clients,
             &internal_client,
             preproc_id_2,
             &key_id_2,
+            None,
             None,
             insecure,
         )
@@ -5709,17 +6147,19 @@ pub(crate) mod tests {
             &internal_client,
             &preproc_id_3,
             None,
+            None,
         )
         .await;
 
         // finally do the decompression keygen between the first and second keysets
-        let decompression_key = run_keygen(
+        let decompression_key = run_threshold_keygen(
             parameter,
             &kms_clients,
             &internal_client,
             Some(preproc_id_3),
             &key_id_3,
             Some((key_id_1, key_id_2)),
+            None,
             insecure,
         )
         .await
@@ -5735,6 +6175,109 @@ pub(crate) mod tests {
             Some(&server_key_1),
             decompression_key.into_raw_parts(),
         );
+    }
+
+    // Test threshold sns compression keygen using the testing parameters
+    // this test will use an existing base key stored under the key ID `TEST_THRESHOLD_KEY_ID_4P`
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn test_threshold_sns_compression_keygen() {
+        run_threshold_sns_compression_keygen(
+            4,
+            FheParameter::Test,
+            &TEST_THRESHOLD_KEY_ID_4P,
+            false,
+        )
+        .await;
+    }
+
+    // TODO(2674)
+    #[cfg(all(feature = "slow_tests", feature = "insecure"))]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    #[tracing_test::traced_test]
+    async fn test_insecure_threshold_sns_compression_keygen() {
+        run_threshold_sns_compression_keygen(
+            4,
+            FheParameter::Test,
+            &TEST_THRESHOLD_KEY_ID_4P,
+            true,
+        )
+        .await;
+    }
+
+    // Run the threshold sns compression keygen protocol
+    // which should only generate the sns compression key (and its private shares)
+    // from an existing `base_key_id`. The resulting key should be one that is
+    // identical to the key under `base_key_id` except for the sns compression key.
+    #[cfg(feature = "slow_tests")]
+    async fn run_threshold_sns_compression_keygen(
+        amount_parties: usize,
+        parameter: FheParameter,
+        base_key_id: &RequestId,
+        insecure: bool,
+    ) {
+        use threshold_fhe::execution::tfhe_internals::test_feature::run_sns_compression_test;
+        // for generating the sns compression key
+        let preproc_id = if insecure {
+            None
+        } else {
+            Some(
+                derive_request_id(&format!(
+                    "sns_com_dkg_preproc_{amount_parties}_{parameter:?}"
+                ))
+                .unwrap(),
+            )
+        };
+        let sns_compression_req_id: RequestId =
+            derive_request_id(&format!("sns_com_dkg_key_{amount_parties}_{parameter:?}")).unwrap();
+        purge(None, None, &sns_compression_req_id, amount_parties).await;
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
+        let dkg_param: WrappedDKGParams = parameter.into();
+        let (kms_servers, kms_clients, internal_client) =
+            threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+
+        // generate the sns compression key by overwriting the first key
+        if !insecure {
+            run_preproc(
+                amount_parties,
+                parameter,
+                &kms_clients,
+                &internal_client,
+                &preproc_id.unwrap(),
+                None,
+                Some(*base_key_id),
+            )
+            .await;
+        }
+
+        let keys2 = run_threshold_keygen(
+            parameter,
+            &kms_clients,
+            &internal_client,
+            preproc_id,
+            &sns_compression_req_id,
+            None,
+            Some(*base_key_id),
+            insecure,
+        )
+        .await;
+        let (client_key_2, _public_key_2, server_key_2) = keys2.get_standard();
+
+        for handle in kms_servers.into_values() {
+            handle.assert_shutdown().await;
+        }
+
+        let pub_storage =
+            FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(1))).unwrap();
+        let server_key_base: tfhe::ServerKey = internal_client
+            .get_key(base_key_id, PubDataType::ServerKey, &pub_storage)
+            .await
+            .unwrap();
+        identical_keys_except_sns_compression(server_key_base, server_key_2.clone()).await;
+        run_sns_compression_test(client_key_2, server_key_2);
     }
 
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -5837,6 +6380,7 @@ pub(crate) mod tests {
                             &internalclient_clone,
                             &cur_id,
                             None,
+                            None,
                         )
                         .await
                     }
@@ -5855,12 +6399,13 @@ pub(crate) mod tests {
                     let internalclient_clone = Arc::clone(&arc_internalclient);
                     async move {
                         // todo proper use of insecure to skip preproc
-                        run_keygen(
+                        run_threshold_keygen(
                             parameter,
                             &clients_clone,
                             &internalclient_clone,
                             Some(preproc_ids_clone),
                             &key_id,
+                            None,
                             None,
                             insecure,
                         )
@@ -5889,6 +6434,7 @@ pub(crate) mod tests {
                     &internal_client,
                     &cur_id,
                     None,
+                    None,
                 )
                 .await;
                 preproc_ids.insert(i, cur_id);
@@ -5897,12 +6443,13 @@ pub(crate) mod tests {
                 let key_id: RequestId =
                     derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}"))
                         .unwrap();
-                let keyset = run_keygen(
+                let keyset = run_threshold_keygen(
                     parameter,
                     &kms_clients,
                     &internal_client,
                     Some(preproc_ids.get(&i).unwrap().to_owned()),
                     &key_id,
+                    None,
                     None,
                     insecure,
                 )
@@ -5930,11 +6477,23 @@ pub(crate) mod tests {
         internal_client: &Client,
         preproc_req_id: &RequestId,
         decompression_keygen: Option<(RequestId, RequestId)>,
+        sns_compression_keygen: Option<RequestId>,
     ) {
-        let keyset_config = decompression_keygen.as_ref().map(|_| KeySetConfig {
-            keyset_type: KeySetType::DecompressionOnly.into(),
-            standard_keyset_config: None,
-        });
+        let keyset_config = match (decompression_keygen, sns_compression_keygen) {
+            (None, None) => None,
+            (None, Some(_overwrite_keyset_id)) => Some(KeySetConfig {
+                keyset_type: KeySetType::AddSnsCompressionKey.into(),
+                standard_keyset_config: None,
+            }),
+            (Some((_from, _to)), None) => Some(KeySetConfig {
+                keyset_type: KeySetType::DecompressionOnly.into(),
+                standard_keyset_config: None,
+            }),
+            (Some(_), Some(_)) => {
+                panic!("cannot have both decompression and sns compression keygen")
+            }
+        };
+
         let preproc_request = internal_client
             .preproc_request(preproc_req_id, Some(parameter), keyset_config)
             .unwrap();
@@ -6005,25 +6564,50 @@ pub(crate) mod tests {
         resp_response_vec
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-    async fn run_keygen(
+    async fn run_threshold_keygen(
         parameter: FheParameter,
         kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
         internal_client: &Client,
         preproc_req_id: Option<RequestId>,
         keygen_req_id: &RequestId,
         decompression_keygen: Option<(RequestId, RequestId)>,
+        sns_compression_keygen: Option<RequestId>,
         insecure: bool,
     ) -> TestKeyGenResult {
-        let keyset_config = decompression_keygen.as_ref().map(|_| KeySetConfig {
-            keyset_type: KeySetType::DecompressionOnly.into(),
-            standard_keyset_config: None,
-        });
-        let keyset_added_info = decompression_keygen.map(|(from, to)| KeySetAddedInfo {
-            compression_keyset_id: None,
-            from_keyset_id_decompression_only: Some(from.into()),
-            to_keyset_id_decompression_only: Some(to.into()),
-        });
+        let keyset_config = match (decompression_keygen, sns_compression_keygen) {
+            (None, None) => None,
+            (None, Some(_overwrite_keyset_id)) => Some(KeySetConfig {
+                keyset_type: KeySetType::AddSnsCompressionKey.into(),
+                standard_keyset_config: None,
+            }),
+            (Some((_from, _to)), None) => Some(KeySetConfig {
+                keyset_type: KeySetType::DecompressionOnly.into(),
+                standard_keyset_config: None,
+            }),
+            (Some(_), Some(_)) => {
+                panic!("cannot have both decompression and sns compression keygen")
+            }
+        };
+        let keyset_added_info = match (decompression_keygen, sns_compression_keygen) {
+            (None, None) => None,
+            (None, Some(overwrite_keyset_id)) => Some(KeySetAddedInfo {
+                compression_keyset_id: None,
+                from_keyset_id_decompression_only: None,
+                to_keyset_id_decompression_only: None,
+                base_keyset_id_for_sns_compression_key: Some(overwrite_keyset_id.into()),
+            }),
+            (Some((from, to)), None) => Some(KeySetAddedInfo {
+                compression_keyset_id: None,
+                from_keyset_id_decompression_only: Some(from.into()),
+                to_keyset_id_decompression_only: Some(to.into()),
+                base_keyset_id_for_sns_compression_key: None,
+            }),
+            (Some(_), Some(_)) => {
+                panic!("cannot have both decompression and sns compression keygen")
+            }
+        };
 
         let req_keygen = internal_client
             .key_gen_request(
@@ -6038,7 +6622,7 @@ pub(crate) mod tests {
 
         let responses = launch_dkg(req_keygen.clone(), kms_clients, insecure).await;
         for response in responses {
-            assert!(response.is_ok());
+            response.unwrap();
         }
 
         wait_for_keygen_result(
@@ -6241,7 +6825,7 @@ pub(crate) mod tests {
             }
 
             let threshold = kms_clients.len().div_ceil(3) - 1;
-            let (lwe_sk, glwe_sk, sns_glwe_sk) =
+            let (lwe_sk, glwe_sk, sns_glwe_sk, sns_compression_sk) =
                 try_reconstruct_shares(internal_client.params, threshold, all_threshold_fhe_keys);
             out = Some(TestKeyGenResult::Standard((
                 to_hl_client_key(
@@ -6251,6 +6835,7 @@ pub(crate) mod tests {
                     None,
                     None,
                     Some(sns_glwe_sk),
+                    sns_compression_sk,
                 )
                 .unwrap(),
                 final_public_key.unwrap(),
@@ -6293,6 +6878,7 @@ pub(crate) mod tests {
         tfhe::core_crypto::prelude::LweSecretKeyOwned<u64>,
         tfhe::core_crypto::prelude::GlweSecretKeyOwned<u64>,
         tfhe::core_crypto::prelude::GlweSecretKeyOwned<u128>,
+        Option<NoiseSquashingCompressionPrivateKey>,
     ) {
         use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
         use threshold_fhe::execution::{
@@ -6352,24 +6938,61 @@ pub(crate) mod tests {
                 None => None,
             })
             .collect::<HashMap<_, _>>();
-        let sns_param = match param {
+        let dkg_sns_param = match param {
             DKGParams::WithoutSnS(_) => panic!("missing sns param"),
-            DKGParams::WithSnS(sns_param) => sns_param.sns_params,
+            DKGParams::WithSnS(sns_param) => sns_param,
         };
         let sns_glwe_sk = GlweSecretKeyOwned::from_container(
             reconstruct_bit_vec(
                 sns_lwe_shares,
-                sns_param
+                dkg_sns_param
+                    .sns_params
                     .glwe_dimension
-                    .to_equivalent_lwe_dimension(sns_param.polynomial_size)
+                    .to_equivalent_lwe_dimension(dkg_sns_param.sns_params.polynomial_size)
                     .0,
                 threshold,
             )
             .into_iter()
             .map(|x| x as u128)
             .collect(),
-            sns_param.polynomial_size,
+            dkg_sns_param.sns_params.polynomial_size,
         );
-        (lwe_secret_key, glwe_sk, sns_glwe_sk)
+
+        let sns_compression_key_shares = all_threshold_fhe_keys
+            .iter()
+            .map(|(k, v)| (*k, v.private_keys.glwe_sns_compression_key_as_lwe.clone()))
+            .filter_map(|(k, v)| match v {
+                Some(vv) => Some((k, vv.data)),
+                None => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let sns_compression_private_key =
+            if let Some(sns_compression_params) = dkg_sns_param.sns_compression_params {
+                let sns_compression_key_bits = reconstruct_bit_vec(
+                    sns_compression_key_shares,
+                    dkg_sns_param.sns_compression_sk_num_bits(),
+                    threshold,
+                )
+                .into_iter()
+                .map(|x| x as u128)
+                .collect::<Vec<_>>();
+
+                Some(NoiseSquashingCompressionPrivateKey::from_raw_parts(
+                    GlweSecretKeyOwned::from_container(
+                        sns_compression_key_bits,
+                        sns_compression_params.packing_ks_polynomial_size,
+                    ),
+                    sns_compression_params,
+                ))
+            } else {
+                None
+            };
+
+        (
+            lwe_secret_key,
+            glwe_sk,
+            sns_glwe_sk,
+            sns_compression_private_key,
+        )
     }
 }

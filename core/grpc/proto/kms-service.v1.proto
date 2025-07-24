@@ -56,4 +56,11 @@ service CoreServiceEndpoint {
 
   // Destroy an existing custodian context.
   rpc DestroyCustodianContext(kms.v1.DestroyCustodianContextRequest) returns (kms.v1.Empty);
+
+  // Get the public key that a custodian can use to encrypt a backup share
+  // before sending it to the KMS.
+  rpc GetOperatorPublicKey(kms.v1.Empty) returns (kms.v1.OperatorPublicKey);
+
+  // Restore the contents of the KMS private storage from custodian backup shares.
+  rpc CustodianBackupRestore(kms.v1.Empty) returns (kms.v1.Empty);
 }

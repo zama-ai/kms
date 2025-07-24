@@ -11,7 +11,7 @@ use crate::{
     algebra::{
         bivariate::{BivariateEval, BivariatePoly},
         poly::Poly,
-        structure_traits::{Ring, RingEmbed},
+        structure_traits::{Ring, RingWithExceptionalSequence},
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
@@ -41,7 +41,7 @@ pub trait Vss: Send + Sync + Clone + ProtocolDescription {
     ///
     /// Returns
     /// - a vector of shares (share at index i is a sharing of the secret of party i)
-    async fn execute<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+    async fn execute<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secret: &Z,
@@ -72,7 +72,7 @@ pub trait Vss: Send + Sync + Clone + ProtocolDescription {
     /// - a vector of shares (shares at index i is a sharing of the secrets of party i)
     /// so in a successful execution shares.len() should be the number of parties
     /// and shares[0].len() should be the number of secrets
-    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+    async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -156,7 +156,7 @@ impl ProtocolDescription for DummyVss {
 
 #[async_trait]
 impl Vss for DummyVss {
-    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+    async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -231,7 +231,7 @@ impl<BCast: Broadcast> RealVss<BCast> {
 #[async_trait]
 impl<BCast: Broadcast> Vss for RealVss<BCast> {
     #[instrument(name="VSS", skip(self,session, secrets),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()), batch_size= ?secrets.len())]
-    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+    async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -254,7 +254,7 @@ impl<BCast: Broadcast> Vss for RealVss<BCast> {
 
 pub(crate) type MapRoleDoublePoly<Z> = HashMap<Role, Vec<DoublePoly<Z>>>;
 
-pub(crate) fn sample_secret_polys<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+pub(crate) fn sample_secret_polys<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
     session: &mut S,
     secrets: &[Z],
 ) -> anyhow::Result<(Vec<BivariatePoly<Z>>, MapRoleDoublePoly<Z>)> {
@@ -270,7 +270,7 @@ pub(crate) fn sample_secret_polys<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         .role_assignments()
         .keys()
         .map(|r| {
-            let embedded_role = Z::embed_exceptional_set(r.one_based())?;
+            let embedded_role = Z::embed_role_to_exceptional_sequence(r)?;
             let mut vec_map = Vec::with_capacity(bivariate_poly.len());
             for p in &bivariate_poly {
                 let share_in_x = p.partial_y_evaluation(embedded_role)?;
@@ -430,7 +430,11 @@ fn parse_round_1_received_data<Z: Ring>(
     }
 }
 
-pub(crate) async fn round_2<Z: Ring + RingEmbed, S: BaseSessionHandles, BCast: Broadcast>(
+pub(crate) async fn round_2<
+    Z: RingWithExceptionalSequence,
+    S: BaseSessionHandles,
+    BCast: Broadcast,
+>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
@@ -538,7 +542,11 @@ fn verify_round_2_broadcast<Z: Ring>(
 // Role0 -> Some(v) with v indexed as v[dealer_idx][Pj index][secret_idx]
 // Role1 -> None means somethings wrong happened, consider all values to be 0
 //...
-pub(crate) async fn round_3<Z: Ring + RingEmbed, S: BaseSessionHandles, BCast: Broadcast>(
+pub(crate) async fn round_3<
+    Z: RingWithExceptionalSequence,
+    S: BaseSessionHandles,
+    BCast: Broadcast,
+>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
@@ -603,7 +611,11 @@ pub(crate) async fn round_3<Z: Ring + RingEmbed, S: BaseSessionHandles, BCast: B
     Ok(unhappy_vec)
 }
 
-pub(crate) async fn round_4<Z: Ring + RingEmbed, S: BaseSessionHandles, BCast: Broadcast>(
+pub(crate) async fn round_4<
+    Z: RingWithExceptionalSequence,
+    S: BaseSessionHandles,
+    BCast: Broadcast,
+>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
@@ -737,13 +749,12 @@ fn generate_verification_value<Z>(
     r1vss: &Round1VSSOutput<Z>,
 ) -> anyhow::Result<Vec<(Z, Z)>>
 where
-    Z: Ring,
-    Z: RingEmbed,
+    Z: RingWithExceptionalSequence,
 {
     // Using direct indexing is fine because we checked all the lengths before
     let current_vss = &r1vss.received_vss[dealer_role];
     let mut out = Vec::with_capacity(num_secrets);
-    let alpha_other = Z::embed_exceptional_set(party_role.one_based())?;
+    let alpha_other = Z::embed_role_to_exceptional_sequence(party_role)?;
     let my_challenges_to_pj = &r1vss.sent_challenges[party_role][dealer_role];
     let pj_challenges_to_me = &r1vss.received_vss[party_role].challenges_list[dealer_role];
     for i in 0..num_secrets {
@@ -871,8 +882,7 @@ fn answer_to_potential_conflicts<Z>(
     vss: &Round1VSSOutput<Z>,
 ) -> anyhow::Result<BTreeMap<(Role, Role, Role), Vec<Z>>>
 where
-    Z: Ring,
-    Z: RingEmbed,
+    Z: RingWithExceptionalSequence,
 {
     let mut msg = BTreeMap::<(Role, Role, Role), Vec<Z>>::new();
     //Can now match over the tuples of keys in potentially unhappy
@@ -880,8 +890,8 @@ where
         match key_tuple {
             //If vss_idx is the one where I'm sender send F(alpha_j, alpha_i)
             (dealer_role, pi_role, pj_role) if dealer_role == own_role => {
-                let point_x = Z::embed_exceptional_set(pj_role.one_based())?;
-                let point_y = Z::embed_exceptional_set(pi_role.one_based())?;
+                let point_x = Z::embed_role_to_exceptional_sequence(pj_role)?;
+                let point_y = Z::embed_role_to_exceptional_sequence(pi_role)?;
                 msg.insert(
                     (*own_role, *pi_role, *pj_role),
                     vss.my_poly
@@ -892,7 +902,7 @@ where
             }
             //If im a Pi send Fi(alpha_j)
             (dealer_role, pi_role, pj_role) if pi_role == own_role => {
-                let point = Z::embed_exceptional_set(pj_role.one_based())?;
+                let point = Z::embed_role_to_exceptional_sequence(pj_role)?;
                 msg.insert(
                     (*dealer_role, *pi_role, *pj_role),
                     vss.received_vss[dealer_role]
@@ -904,7 +914,7 @@ where
             }
             //If im a Pj send Gj(alpha_i)
             (dealer_role, pi_role, pj_role) if pj_role == own_role => {
-                let point = Z::embed_exceptional_set(pi_role.one_based())?;
+                let point = Z::embed_role_to_exceptional_sequence(pi_role)?;
                 msg.insert(
                     (*dealer_role, *pi_role, *pj_role),
                     vss.received_vss[dealer_role]
@@ -986,7 +996,7 @@ fn find_real_conflicts<Z: Ring>(
     (unhappy_vec, malicious_bcast)
 }
 
-fn round_4_conflict_resolution<Z: Ring + RingEmbed>(
+fn round_4_conflict_resolution<Z: RingWithExceptionalSequence>(
     msg: &mut BTreeMap<(Role, Role), ValueOrPoly<Z>>,
     is_dealer: bool,
     dealer_role: Role,
@@ -994,7 +1004,7 @@ fn round_4_conflict_resolution<Z: Ring + RingEmbed>(
     vss: &Round1VSSOutput<Z>,
 ) -> anyhow::Result<()> {
     for role_pi in unhappy_set.iter() {
-        let point_pi = Z::embed_exceptional_set(role_pi.one_based())?;
+        let point_pi = Z::embed_role_to_exceptional_sequence(role_pi)?;
         let msg_entry = match is_dealer {
             //As a dealer, resolve conflict with P_i by sending F(X,alpha_i) (P_i 's share)
             true => ValueOrPoly::Poly(
@@ -1017,7 +1027,7 @@ fn round_4_conflict_resolution<Z: Ring + RingEmbed>(
     Ok(())
 }
 
-fn round_4_fix_conflicts<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+fn round_4_fix_conflicts<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
     session: &mut S,
     num_secrets: usize,
     dealer_role: Role,
@@ -1105,7 +1115,7 @@ fn round_4_fix_conflicts<Z: Ring + RingEmbed, S: BaseSessionHandles>(
                 |p| p,
             );
             for (role_pj, value_pj) in non_dealer_happy_values {
-                let point_pj = Z::embed_exceptional_set(role_pj.one_based())?;
+                let point_pj = Z::embed_role_to_exceptional_sequence(&role_pj)?;
                 let all_equals = sender_poly
                     .iter()
                     .map(|p| p.eval(&point_pj))
@@ -1319,7 +1329,8 @@ pub(crate) mod tests {
             //Check that received share come from bivariate pol
             for (pn, r) in results.clone().iter() {
                 if pn != party_nb {
-                    let embedded_pn = ResiduePolyF4Z128::embed_exceptional_set(pn + 1).unwrap();
+                    let embedded_pn =
+                        ResiduePolyF4Z128::get_from_exceptional_sequence(pn + 1).unwrap();
                     let expected_result_x = result
                         .my_poly
                         .iter()
@@ -1356,7 +1367,7 @@ pub(crate) mod tests {
             let mut vec_y = Vec::with_capacity(4);
             for (pn, r) in results.clone().iter() {
                 if pn != party_nb {
-                    let point_pn = ResiduePolyF4Z128::embed_exceptional_set(0).unwrap();
+                    let point_pn = ResiduePolyF4Z128::get_from_exceptional_sequence(0).unwrap();
                     vec_x.push(
                         (0..num_secrets)
                             .map(|i| {
@@ -1457,7 +1468,7 @@ pub(crate) mod tests {
     }
 
     fn test_vss_strategies_large<
-        Z: Ring + RingEmbed + ErrorCorrect,
+        Z: ErrorCorrect,
         const EXTENSION_DEGREE: usize,
         V: Vss + 'static,
     >(

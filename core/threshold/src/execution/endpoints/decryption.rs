@@ -118,14 +118,24 @@ impl RadixOrBoolCiphertext {
 }
 
 pub enum LowLevelCiphertext {
-    Big(SnsRadixOrBoolCiphertext),
+    BigCompressed(SnsRadixOrBoolCiphertext),
+    BigStandard(SnsRadixOrBoolCiphertext),
     Small(RadixOrBoolCiphertext),
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum SnsDecryptionKeyType {
+    SnsKey,
+    SnsCompressionKey,
 }
 
 impl LowLevelCiphertext {
     pub fn try_get_big_ct(self) -> anyhow::Result<SnsRadixOrBoolCiphertext> {
         match self {
-            LowLevelCiphertext::Big(ct128) => Ok(ct128),
+            LowLevelCiphertext::BigCompressed(_) => {
+                anyhow::bail!("expected big ciphertext but got a big compressed one")
+            }
+            LowLevelCiphertext::BigStandard(ct128) => Ok(ct128),
             LowLevelCiphertext::Small(_) => {
                 anyhow::bail!("expected big ciphertext but got a small one")
             }
@@ -133,10 +143,21 @@ impl LowLevelCiphertext {
     }
     pub fn try_get_small_ct(self) -> anyhow::Result<RadixOrBoolCiphertext> {
         match self {
-            LowLevelCiphertext::Big(_) => {
+            LowLevelCiphertext::BigCompressed(_) => {
+                anyhow::bail!("expected big ciphertext but got a big compressed one")
+            }
+            LowLevelCiphertext::BigStandard(_) => {
                 anyhow::bail!("expected small ciphertext but got a big one")
             }
             LowLevelCiphertext::Small(ct64) => Ok(ct64),
+        }
+    }
+
+    pub fn decryption_key_type(&self) -> SnsDecryptionKeyType {
+        match self {
+            LowLevelCiphertext::BigCompressed(_) => SnsDecryptionKeyType::SnsCompressionKey,
+            LowLevelCiphertext::BigStandard(_) => SnsDecryptionKeyType::SnsKey,
+            LowLevelCiphertext::Small(_) => SnsDecryptionKeyType::SnsKey,
         }
     }
 }

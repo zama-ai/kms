@@ -25,11 +25,12 @@ use crate::choreography::requests::{
     SessionType, Status, ThresholdDecryptParams, ThresholdKeyGenParams,
     ThresholdKeyGenResultParams,
 };
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
 use crate::execution::endpoints::decryption::{
     combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
     task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, NoiseFloodPreparation,
-    RadixOrBoolCiphertext, SnsRadixOrBoolCiphertext,
+    RadixOrBoolCiphertext, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
 };
 use crate::execution::endpoints::decryption::{NoiseFloodLargeSession, NoiseFloodSmallSession};
 use crate::execution::endpoints::keygen::FhePubKeySet;
@@ -75,6 +76,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::num::Wrapping;
 use std::sync::{Arc, Mutex};
+use tfhe::core_crypto::prelude::LweKeyswitchKey;
+use tfhe::integer::ServerKey;
+use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
 use tokio::task::{JoinHandle, JoinSet};
 use tracing::{instrument, Instrument};
 
@@ -1521,15 +1525,12 @@ where
             let prss_setup = self.data.prss_setup.clone();
             let sns_key = Arc::new(key_ref.0.server_key.noise_squashing_key().unwrap());
             let server_key = Arc::new(key_ref.0.server_key.as_ref());
-            let ks = Arc::new(
-                key_ref
-                    .0
-                    .server_key
-                    .as_ref()
-                    .as_ref()
-                    .key_switching_key
-                    .clone(),
-            );
+            let ks = get_key_switching_key(key_ref.0.server_key.as_ref()).map_err(|_| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    "Failed to retrieve ksk from server key",
+                )
+            })?;
             //Throughput number of ctxts is dictated by num_sessions*num_copies
             //we thus only take the 1st ctxt here
             let num_blocks = ctxts[0].len();
@@ -1647,6 +1648,7 @@ where
                                                 &mut noiseflood_preprocessing,
                                                 &key_ref.1,
                                                 &ctxt,
+                                                SnsDecryptionKeyType::SnsKey,
                                             )
                                             .await
                                             .unwrap(),
@@ -1979,16 +1981,14 @@ where
                             .for_each(|(block, ctxts)| ctxts.push(block));
                     });
 
+                    let ks =
+                        get_key_switching_key(key_ref.0.server_key.as_ref()).map_err(|_| {
+                            tonic::Status::new(
+                                tonic::Code::Aborted,
+                                "Failed to retrieve ksk from server key",
+                            )
+                        })?;
                     let my_future = || async move {
-                        let ks = Arc::new(
-                            key_ref
-                                .0
-                                .server_key
-                                .as_ref()
-                                .as_ref()
-                                .key_switching_key
-                                .clone(),
-                        );
                         let mut tasks = JoinSet::new();
                         for (block_idx, (ctxts_blocks, (mut session, mut inner_preprocessings))) in
                             ctxts_w_session_layout
@@ -2119,6 +2119,7 @@ where
                                     &mut preprocessing,
                                     &key_ref.1,
                                     &ct_large,
+                                    SnsDecryptionKeyType::SnsKey,
                                 )
                                 .await
                                 .map_err(|e| {
@@ -2672,4 +2673,16 @@ pub fn create_large_sessions(base_sessions: Vec<BaseSession>) -> Vec<LargeSessio
         .into_iter()
         .map(LargeSession::new)
         .collect_vec()
+}
+
+pub fn get_key_switching_key(
+    key_ref: &ServerKey,
+) -> anyhow::Result<Arc<LweKeyswitchKey<Vec<u64>>>> {
+    match &key_ref.as_ref().atomic_pattern {
+        AtomicPatternServerKey::Standard(ap) => Ok(Arc::new(ap.key_switching_key.clone())),
+        AtomicPatternServerKey::KeySwitch32(_) => {
+            Err(anyhow_error_and_log("Unsupported KeySwitch32 AP"))
+        }
+        AtomicPatternServerKey::Dynamic(_) => Err(anyhow_error_and_log("Unsupported Dynamic AP")),
+    }
 }

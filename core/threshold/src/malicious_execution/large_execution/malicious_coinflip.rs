@@ -1,7 +1,7 @@
 use tonic::async_trait;
 
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Ring, RingEmbed},
+    algebra::structure_traits::ErrorCorrect,
     execution::{
         large_execution::{coinflip::Coinflip, vss::Vss},
         runtime::session::LargeSessionHandles,
@@ -35,7 +35,7 @@ impl<V: Vss> ProtocolDescription for DroppingCoinflipAfterVss<V> {
 
 #[async_trait]
 impl<V: Vss> Coinflip for DroppingCoinflipAfterVss<V> {
-    async fn execute<Z: Ring + RingEmbed + ErrorCorrect, L: LargeSessionHandles>(
+    async fn execute<Z: ErrorCorrect, L: LargeSessionHandles>(
         &self,
         session: &mut L,
     ) -> anyhow::Result<Z> {
@@ -77,7 +77,7 @@ impl<V: Vss, RO: RobustOpen> MaliciousCoinflipRecons<V, RO> {
 
 #[async_trait]
 impl<V: Vss, RO: RobustOpen> Coinflip for MaliciousCoinflipRecons<V, RO> {
-    async fn execute<Z: Ring + RingEmbed + ErrorCorrect, L: LargeSessionHandles>(
+    async fn execute<Z: ErrorCorrect, L: LargeSessionHandles>(
         &self,
         session: &mut L,
     ) -> anyhow::Result<Z> {

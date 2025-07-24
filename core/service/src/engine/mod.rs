@@ -10,6 +10,8 @@ pub mod centralized;
 #[cfg(feature = "non-wasm")]
 pub mod context;
 #[cfg(feature = "non-wasm")]
+pub mod keyset_configuration;
+#[cfg(feature = "non-wasm")]
 pub mod threshold;
 #[cfg(feature = "non-wasm")]
 pub mod traits;

@@ -4,6 +4,7 @@ use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use crate::execution::config::BatchParams;
 use crate::execution::constants::B_SWITCH_SQUASH;
 use crate::execution::endpoints::decryption::RadixOrBoolCiphertext;
+use crate::execution::endpoints::decryption::SnsDecryptionKeyType;
 use crate::execution::endpoints::decryption::SnsRadixOrBoolCiphertext;
 use crate::execution::large_execution::offline::SecureLargePreprocessing;
 use crate::execution::online::bit_manipulation::{bit_dec_batch, BatchedBits};
@@ -50,6 +51,7 @@ use rand::SeedableRng;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::num::Wrapping;
+use std::ops::Mul;
 #[cfg(any(test, feature = "testing"))]
 use std::sync::Arc;
 use tfhe::core_crypto::prelude::{keyswitch_lwe_ciphertext, LweCiphertext, LweKeyswitchKey};
@@ -244,8 +246,10 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
     let execution_start_timer = Instant::now();
+    let ddec_key_type = ct.decryption_key_type();
     let ct_large = match ct {
-        LowLevelCiphertext::Big(ct128) => ct128,
+        LowLevelCiphertext::BigCompressed(ct128) => ct128,
+        LowLevelCiphertext::BigStandard(ct128) => ct128,
         LowLevelCiphertext::Small(ct64) => match ct64 {
             RadixOrBoolCiphertext::Radix(base_radix_ciphertext) => SnsRadixOrBoolCiphertext::Radix(
                 ck.squash_radix_ciphertext_noise(server_key, &base_radix_ciphertext)?,
@@ -267,6 +271,7 @@ where
         &mut preprocessing,
         secret_key_share,
         &ct_large,
+        ddec_key_type,
     )
     .await?;
 
@@ -329,8 +334,10 @@ where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
     let execution_start_timer = Instant::now();
+    let ddec_key_type = ct.decryption_key_type();
     let ct_large = match ct {
-        LowLevelCiphertext::Big(ct128) => ct128,
+        LowLevelCiphertext::BigCompressed(ct128) => ct128,
+        LowLevelCiphertext::BigStandard(ct128) => ct128,
         LowLevelCiphertext::Small(ct64) => match ct64 {
             RadixOrBoolCiphertext::Radix(base_radix_ciphertext) => SnsRadixOrBoolCiphertext::Radix(
                 ck.squash_radix_ciphertext_noise(server_key, &base_radix_ciphertext)?,
@@ -358,7 +365,8 @@ where
     let mut preparation = noiseflood_session.init_prep_noiseflooding(len).await?;
     let mut shared_masked_ptxts = Vec::with_capacity(len);
     for current_ct_block in ct_large.packed_blocks() {
-        let partial_decrypt = partial_decrypt128(secret_key_share, current_ct_block)?;
+        let partial_decrypt =
+            partial_decrypt128(secret_key_share, current_ct_block, ddec_key_type)?;
         let res = partial_decrypt + preparation.next_mask()?;
 
         shared_masked_ptxts.push(res);
@@ -725,6 +733,7 @@ where
                         &mut noiseflood_preprocessing,
                         &party_keyshare,
                         &large_ct,
+                        SnsDecryptionKeyType::SnsKey,
                     )
                     .await
                     .unwrap();
@@ -746,6 +755,7 @@ where
                         &mut noiseflood_preprocessing,
                         &party_keyshare,
                         &large_ct,
+                        SnsDecryptionKeyType::SnsKey,
                     )
                     .await
                     .unwrap();
@@ -865,6 +875,7 @@ pub async fn run_decryption_noiseflood<
     preprocessing: &mut P,
     keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
     ciphertext: &SnsRadixOrBoolCiphertext,
+    ddec_key_type: SnsDecryptionKeyType,
 ) -> anyhow::Result<T>
 where
     T: tfhe::integer::block_decomposition::Recomposable
@@ -873,7 +884,7 @@ where
 {
     let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
     for current_ct_block in ciphertext.packed_blocks() {
-        let partial_decrypt = partial_decrypt128(keyshares, current_ct_block)?;
+        let partial_decrypt = partial_decrypt128(keyshares, current_ct_block, ddec_key_type)?;
         let res = partial_decrypt + preprocessing.next_mask()?;
 
         shared_masked_ptxts.push(res);
@@ -897,6 +908,7 @@ pub async fn run_decryption_noiseflood_64<
     preprocessing: &mut P,
     keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
     ciphertext: &SnsRadixOrBoolCiphertext,
+    ddec_key_type: SnsDecryptionKeyType,
 ) -> anyhow::Result<Z64>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
@@ -906,6 +918,7 @@ where
         preprocessing,
         keyshares,
         ciphertext,
+        ddec_key_type,
     )
     .await?;
     Ok(Wrapping(res))
@@ -928,6 +941,7 @@ where
     let res = run_decryption_bitdec(session, prep, keyshares, ksk, ciphertext).await?;
     Ok(Wrapping(res))
 }
+
 // run decryption with bit-decomposition
 #[instrument(
     name = "TFHE.Threshold-Dec-2",
@@ -1080,27 +1094,40 @@ where
 pub fn partial_decrypt128<const EXTENSION_DEGREE: usize>(
     sk_share: &PrivateKeySet<EXTENSION_DEGREE>,
     ct: &SquashedNoiseCiphertext,
+    ddec_key_type: SnsDecryptionKeyType,
 ) -> anyhow::Result<ResiduePoly<Z128, EXTENSION_DEGREE>>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
-    let sns_secret_key = match &sk_share.glwe_secret_key_share_sns_as_lwe {
-        Some(key) => key.data_as_raw_vec(),
-        None => {
-            return Err(anyhow_error_and_log(
-                "Missing the switch and squash secret key".to_string(),
-            ))
+    let sns_secret_key = match ddec_key_type {
+        SnsDecryptionKeyType::SnsKey => match &sk_share.glwe_secret_key_share_sns_as_lwe {
+            Some(key) => key.data_as_raw_iter(),
+            None => {
+                return Err(anyhow_error_and_log(
+                    "Missing the switch and squash secret key".to_string(),
+                ))
+            }
+        },
+        SnsDecryptionKeyType::SnsCompressionKey => {
+            match &sk_share.glwe_sns_compression_key_as_lwe {
+                Some(key) => key.data_as_raw_iter(),
+                None => {
+                    return Err(anyhow_error_and_log(
+                        "Missing the switch and squash compression secret key".to_string(),
+                    ))
+                }
+            }
         }
     };
     let ct = ct.lwe_ciphertext();
     let (mask, body) = ct.get_mask_and_body();
-    let a_time_s = (0..sns_secret_key.len()).fold(
+
+    let a_time_s = (sns_secret_key.zip_eq(mask.as_ref())).fold(
         ResiduePoly::<Z128, EXTENSION_DEGREE>::ZERO,
-        |acc, column| {
-            acc + sns_secret_key[column]
-                * ResiduePoly::<Z128, EXTENSION_DEGREE>::from_scalar(Wrapping(
-                    mask.as_ref()[column],
-                ))
+        |acc, (sk, m)| {
+            let tmp =
+                <ResiduePoly<Z128, EXTENSION_DEGREE> as Mul<Z128>>::mul(sk, Wrapping::<u128>(*m));
+            acc + tmp
         },
     );
     // b-<a, s>
@@ -1120,8 +1147,13 @@ where
     let ciphertext_modulus = 64;
     let mut output_ctxt;
 
+    let pbs_order = match ct_block.atomic_pattern {
+        tfhe::shortint::AtomicPatternKind::Standard(pbsorder) => pbsorder,
+        tfhe::shortint::AtomicPatternKind::KeySwitch32 => PBSOrder::KeyswitchBootstrap,
+    };
+
     //If ctype = F-GLWE we need to KS before doing the decryption
-    let (mask, body) = if ct_block.pbs_order == PBSOrder::KeyswitchBootstrap {
+    let (mask, body) = if pbs_order == PBSOrder::KeyswitchBootstrap {
         output_ctxt = LweCiphertext::new(0, ksk.output_lwe_size(), ksk.ciphertext_modulus());
         keyswitch_lwe_ciphertext(ksk, &ct_block.ct, &mut output_ctxt);
         output_ctxt.get_mask_and_body()
@@ -1129,15 +1161,16 @@ where
         ct_block.ct.get_mask_and_body()
     };
 
-    let key_share64 = sk_share
-        .lwe_compute_secret_key_share
-        .data_as_raw_vec()
-        .clone();
-    let a_time_s =
-        (0..key_share64.len()).fold(ResiduePoly::<Z64, EXTENSION_DEGREE>::ZERO, |acc, column| {
-            acc + key_share64[column]
-                * ResiduePoly::<Z64, EXTENSION_DEGREE>::from_scalar(Wrapping(mask.as_ref()[column]))
-        });
+    let key_share64 = sk_share.lwe_compute_secret_key_share.data_as_raw_iter();
+    let a_time_s = key_share64.zip_eq(mask.as_ref()).fold(
+        ResiduePoly::<Z64, EXTENSION_DEGREE>::ZERO,
+        |acc, (sk, m)| {
+            let tmp =
+                <ResiduePoly<Z64, EXTENSION_DEGREE> as Mul<Z64>>::mul(sk, Wrapping::<u64>(*m));
+            acc + tmp
+        },
+    );
+
     // b-<a, s>
     // Compute Delta, taking into account that total_block_bits omits the additional padding bit
     let delta_pad_bits = ciphertext_modulus - (sk_share.parameters.total_block_bits() + 1);
@@ -1154,12 +1187,13 @@ mod tests {
     use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve};
     use crate::execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
     use crate::execution::sharing::shamir::RevealOp;
-    use crate::execution::tfhe_internals::test_feature::KeySet;
+    use crate::execution::tfhe_internals::test_feature::{
+        keygen_all_party_shares_from_keyset, KeySet,
+    };
     use crate::networking::NetworkMode;
     use crate::{
         algebra::base_ring::{Z128, Z64},
         algebra::galois_rings::common::ResiduePoly,
-        execution::tfhe_internals::test_feature::keygen_all_party_shares,
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             endpoints::decryption::threshold_decrypt64,
@@ -1174,6 +1208,7 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use std::sync::Arc;
+    use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::{prelude::FheEncrypt, FheUint8};
 
     #[test]
@@ -1181,13 +1216,8 @@ mod tests {
         let parties = 5;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let params = keyset.get_cpu_params().unwrap();
-        let lwe_secret_key = keyset.get_raw_lwe_client_key();
-        let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
-        let shares = keygen_all_party_shares::<_, 4>(
-            lwe_secret_key,
-            glwe_secret_key,
-            glwe_secret_key_sns_as_lwe,
+        let shares = keygen_all_party_shares_from_keyset::<_, 4>(
+            &keyset,
             params,
             &mut AesRng::seed_from_u64(0),
             parties,
@@ -1265,22 +1295,11 @@ mod tests {
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let params = keyset.get_cpu_params().unwrap();
 
-        let lwe_secret_key = keyset.get_raw_lwe_client_key();
-        let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
-
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares = keygen_all_party_shares(
-            lwe_secret_key,
-            glwe_secret_key,
-            glwe_secret_key_sns_as_lwe,
-            params,
-            &mut rng,
-            num_parties,
-            threshold,
-        )
-        .unwrap();
+        let key_shares =
+            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
+                .unwrap();
         let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
@@ -1348,22 +1367,11 @@ mod tests {
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let params = keyset.get_cpu_params().unwrap();
 
-        let lwe_secret_key = keyset.get_raw_lwe_client_key();
-        let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
-
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares = keygen_all_party_shares(
-            lwe_secret_key,
-            glwe_secret_key,
-            glwe_secret_key_sns_as_lwe,
-            params,
-            &mut rng,
-            num_parties,
-            threshold,
-        )
-        .unwrap();
+        let key_shares =
+            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
+                .unwrap();
         let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
@@ -1431,22 +1439,11 @@ mod tests {
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let params = keyset.get_cpu_params().unwrap();
 
-        let lwe_secret_key = keyset.get_raw_lwe_client_key();
-        let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
-
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares = keygen_all_party_shares(
-            lwe_secret_key,
-            glwe_secret_key,
-            glwe_secret_key_sns_as_lwe,
-            params,
-            &mut rng,
-            num_parties,
-            threshold,
-        )
-        .unwrap();
+        let key_shares =
+            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
+                .unwrap();
         let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
@@ -1457,15 +1454,23 @@ mod tests {
         >::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_sks(key_shares);
-        runtime.setup_ks(Arc::new(
-            keyset
+        runtime.setup_ks(
+            match &keyset
                 .public_keys
                 .server_key
-                .into_raw_parts()
-                .0
-                .into_raw_parts()
-                .key_switching_key,
-        ));
+                .as_ref()
+                .as_ref()
+                .atomic_pattern
+            {
+                AtomicPatternServerKey::Standard(ap) => Arc::new(ap.key_switching_key.clone()),
+                AtomicPatternServerKey::KeySwitch32(_) => {
+                    panic!("Unsupported KeySwitch32 AP",);
+                }
+                AtomicPatternServerKey::Dynamic(_) => {
+                    panic!("Unsupported Dynamic AP",);
+                }
+            },
+        );
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
         let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmall).unwrap();
@@ -1521,22 +1526,11 @@ mod tests {
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let params = keyset.get_cpu_params().unwrap();
 
-        let lwe_secret_key = keyset.get_raw_lwe_client_key();
-        let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
-
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares = keygen_all_party_shares(
-            lwe_secret_key,
-            glwe_secret_key,
-            glwe_secret_key_sns_as_lwe,
-            params,
-            &mut rng,
-            num_parties,
-            threshold,
-        )
-        .unwrap();
+        let key_shares =
+            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
+                .unwrap();
         let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
@@ -1547,15 +1541,23 @@ mod tests {
         >::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_sks(key_shares);
-        runtime.setup_ks(Arc::new(
-            keyset
+        runtime.setup_ks(
+            match &keyset
                 .public_keys
                 .server_key
-                .into_raw_parts()
-                .0
-                .into_raw_parts()
-                .key_switching_key,
-        ));
+                .as_ref()
+                .as_ref()
+                .atomic_pattern
+            {
+                AtomicPatternServerKey::Standard(ap) => Arc::new(ap.key_switching_key.clone()),
+                AtomicPatternServerKey::KeySwitch32(_) => {
+                    panic!("Unsupported KeySwitch32 AP",);
+                }
+                AtomicPatternServerKey::Dynamic(_) => {
+                    panic!("Unsupported Dynamic AP",);
+                }
+            },
+        );
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
         let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecLarge).unwrap();

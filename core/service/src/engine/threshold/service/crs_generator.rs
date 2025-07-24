@@ -32,6 +32,7 @@ use crate::{
     engine::{
         base::{compute_info, retrieve_parameters, BaseKmsStruct, DSEP_PUBDATA_CRS},
         threshold::traits::CrsGenerator,
+        validation::validate_request_id,
     },
     tonic_handle_potential_err,
     util::{
@@ -55,10 +56,9 @@ cfg_if::cfg_if! {
 pub struct RealCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
 > {
     pub base_kms: BaseKmsStruct,
-    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub crs_meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     pub session_preparer: SessionPreparer,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
@@ -68,11 +68,8 @@ pub struct RealCrsGenerator<
     pub rate_limiter: RateLimiter,
 }
 
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > RealCrsGenerator<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+    RealCrsGenerator<PubS, PrivS>
 {
     async fn inner_crs_gen_from_request(
         &self,
@@ -105,17 +102,21 @@ impl<
             "witness dimension computation failed".to_string(),
         )?;
 
-        let req_id = inner.request_id.ok_or_else(|| {
-            tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                "missing request ID in CRS generation",
-            )
-        })?;
+        let req_id = inner
+            .request_id
+            .ok_or_else(|| {
+                tonic::Status::new(
+                    tonic::Code::InvalidArgument,
+                    "missing request ID in CRS generation",
+                )
+            })?
+            .into();
+        validate_request_id(&req_id)?;
 
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
 
         self.inner_crs_gen(
-            req_id.into(),
+            req_id,
             witness_dim,
             inner.max_num_bits,
             dkg_params,
@@ -221,6 +222,7 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         let request_id = request.into_inner().into();
+        validate_request_id(&request_id)?;
         let status = {
             let guarded_meta_store = self.crs_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
@@ -240,7 +242,7 @@ impl<
         mut base_session: BaseSession,
         rng: AesRng,
         meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
-        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+        crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
         eip712_domain: Option<alloy_sol_types::Eip712Domain>,
@@ -329,11 +331,8 @@ impl<
 }
 
 #[tonic::async_trait]
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > CrsGenerator for RealCrsGenerator<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> CrsGenerator
+    for RealCrsGenerator<PubS, PrivS>
 {
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         self.inner_crs_gen_from_request(request, false).await
@@ -351,19 +350,15 @@ impl<
 pub struct RealInsecureCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
 > {
-    pub real_crs_generator: RealCrsGenerator<PubS, PrivS, BackS>,
+    pub real_crs_generator: RealCrsGenerator<PubS, PrivS>,
 }
 
 #[cfg(feature = "insecure")]
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > RealInsecureCrsGenerator<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+    RealInsecureCrsGenerator<PubS, PrivS>
 {
-    pub async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS, BackS>) -> Self {
+    pub async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS>) -> Self {
         Self {
             real_crs_generator: RealCrsGenerator {
                 base_kms: value.base_kms.new_instance().await,
@@ -380,11 +375,8 @@ impl<
 
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+    InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS>
 {
     async fn insecure_crs_gen(
         &self,

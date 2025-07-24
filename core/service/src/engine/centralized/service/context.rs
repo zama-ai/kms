@@ -16,9 +16,8 @@ use crate::{
 pub async fn new_kms_context_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
-    crypto_storage: &CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
+    crypto_storage: &CentralizedCryptoMaterialStorage<PubS, PrivS>,
     request: Request<NewKmsContextRequest>,
 ) -> Result<Response<Empty>, Status> {
     // first verify that the context is valid
@@ -70,9 +69,8 @@ pub async fn new_kms_context_impl<
 pub async fn delete_kms_context_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
-    crypto_storage: &CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
+    crypto_storage: &CentralizedCryptoMaterialStorage<PubS, PrivS>,
     request: Request<DestroyKmsContextRequest>,
 ) -> Result<Response<Empty>, Status> {
     let context_id = request
@@ -114,12 +112,12 @@ mod tests {
 
     async fn setup_crypto_storage() -> (
         PublicSigKey,
-        CentralizedCryptoMaterialStorage<RamStorage, RamStorage, RamStorage>,
+        CentralizedCryptoMaterialStorage<RamStorage, RamStorage>,
     ) {
         let priv_storage = RamStorage::new();
         let pub_storage = RamStorage::new();
 
-        let crypto_storage = CentralizedCryptoMaterialStorage::<_, _, RamStorage>::new(
+        let crypto_storage = CentralizedCryptoMaterialStorage::<_, _>::new(
             priv_storage,
             pub_storage,
             None,

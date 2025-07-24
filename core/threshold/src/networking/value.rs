@@ -49,14 +49,14 @@ pub enum BroadcastValue<Z: Eq + Zero + Sized> {
 }
 
 impl<Z: Eq + Zero + Serialize> BroadcastValue<Z> {
-    pub fn to_bcast_hash(&self) -> BcastHash {
+    pub fn to_bcast_hash(&self) -> Result<BcastHash, anyhow::Error> {
         // Note that we are implicitly assuming that the serialization of a broadcast value ensure uniqueness
         let digest = serialize_hash_element(&DSEP_BRACH, &self)
-            .expect("Could not serialize and hash message");
+            .map_err(|e| anyhow::anyhow!("Could not serialize and hash message: {}", e))?;
         digest
             .as_slice()
             .try_into()
-            .expect("wrong length in broadcast hash")
+            .map_err(|_| anyhow::anyhow!("Invalid hash length for broadcast hash"))
     }
 }
 
@@ -90,6 +90,8 @@ pub enum NetworkValue<Z: Eq + Zero> {
     Crs(Box<CompactPkeCrs>),
     #[cfg(any(test, feature = "testing"))]
     DecompressionKey(Box<tfhe::integer::compression_keys::DecompressionKey>),
+    #[cfg(any(test, feature = "testing"))]
+    SnsCompressionKey(Box<tfhe::shortint::list_compression::NoiseSquashingCompressionKey>),
     RingValue(Z),
     VecRingValue(Vec<Z>),
     VecPairRingValue(Vec<(Z, Z)>),
@@ -116,6 +118,33 @@ impl<Z: Ring> NetworkValue<Z> {
     pub fn from_network(serialized: anyhow::Result<Vec<u8>>) -> anyhow::Result<Self> {
         bc2wrap::deserialize::<Self>(&serialized?)
             .map_err(|_e| anyhow_error_and_log("failed to parse value"))
+    }
+}
+
+impl<Z: Eq + Zero> NetworkValue<Z> {
+    pub fn network_type_name(&self) -> String {
+        match self {
+            #[cfg(any(test, feature = "testing"))]
+            NetworkValue::PubKeySet(_) => "PubKeySet".to_string(),
+            #[cfg(feature = "experimental")]
+            NetworkValue::PubBgvKeySet(_) => "PubBgvKeySet".to_string(),
+            #[cfg(any(test, feature = "testing"))]
+            NetworkValue::Crs(_) => "Crs".to_string(),
+            #[cfg(any(test, feature = "testing"))]
+            NetworkValue::DecompressionKey(_) => "DecompressionKey".to_string(),
+            #[cfg(any(test, feature = "testing"))]
+            NetworkValue::SnsCompressionKey(_) => "SnsCompressionKey".to_string(),
+            NetworkValue::RingValue(_) => "RingValue".to_string(),
+            NetworkValue::VecRingValue(_) => "VecRingValue".to_string(),
+            NetworkValue::VecPairRingValue(_) => "VecPairRingValue".to_string(),
+            NetworkValue::Send(_) => "Send".to_string(),
+            NetworkValue::EchoBatch(_) => "EchoBatch".to_string(),
+            NetworkValue::VoteBatch(_) => "VoteBatch".to_string(),
+            NetworkValue::AgreeRandom(_) => "AgreeRandom".to_string(),
+            NetworkValue::Bot => "Bot".to_string(),
+            NetworkValue::Empty => "Empty".to_string(),
+            NetworkValue::Round1VSS(_) => "Round1VSS".to_string(),
+        }
     }
 }
 

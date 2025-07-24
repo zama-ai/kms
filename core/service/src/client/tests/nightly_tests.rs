@@ -33,13 +33,14 @@ async fn default_decryption_threshold_with_sns_preprocessing(
     #[case] parallelism: usize,
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
+    #[values(true, false)] compression: bool,
 ) {
     decryption_threshold(
         DEFAULT_PARAM,
         key_id,
         msg,
         EncryptionConfig {
-            compression: false, // in the future we will have precompute_sns with compression
+            compression,
             precompute_sns: true,
         },
         parallelism,
@@ -112,13 +113,14 @@ async fn default_decryption_centralized(
 async fn default_decryption_centralized_precompute_sns(
     #[case] msgs: Vec<TestingPlaintext>,
     #[case] parallelism: usize,
+    #[values(true, false)] compression: bool,
 ) {
     decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         msgs,
         EncryptionConfig {
-            compression: false,
+            compression,
             precompute_sns: true,
         },
         parallelism,
@@ -153,6 +155,7 @@ async fn default_user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         false,
+        false,
         msg,
         EncryptionConfig {
             compression: true,
@@ -186,14 +189,16 @@ async fn default_user_decryption_centralized_precompute_sns(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,
     #[values(true, false)] secure: bool,
+    #[values(true, false)] compression: bool,
 ) {
     user_decryption_centralized(
         &DEFAULT_PARAM,
         &DEFAULT_CENTRAL_KEY_ID,
         false,
+        false,
         msg,
         EncryptionConfig {
-            compression: false,
+            compression,
             precompute_sns: true,
         },
         parallelism,
@@ -264,10 +269,56 @@ async fn default_user_decryption_threshold(
         DEFAULT_PARAM,
         key_id,
         false,
+        false,
         msg,
         EncryptionConfig {
             compression: true,
             precompute_sns: false,
+        },
+        parallelism,
+        secure,
+        amount_parties,
+        None,
+        None,
+        None,
+    )
+    .await;
+}
+
+#[cfg(feature = "slow_tests")]
+#[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(TestingPlaintext::U8(u8::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
+#[case(TestingPlaintext::Bool(true), 2, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
+#[case(TestingPlaintext::U8(u8::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
+#[case(TestingPlaintext::U16(u16::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
+#[case(TestingPlaintext::U32(u32::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
+#[case(TestingPlaintext::U64(u64::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
+#[case(TestingPlaintext::U80((1u128 << 80) - 1), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
+#[case(TestingPlaintext::U128(u128::MAX), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
+#[case(TestingPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
+#[case(TestingPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
+// Note: this takes approx. 300 secs locally.
+#[case(TestingPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
+#[serial]
+#[tracing_test::traced_test]
+async fn default_user_decryption_threshold_sns_precompute(
+    #[case] msg: TestingPlaintext,
+    #[case] parallelism: usize,
+    #[case] amount_parties: usize,
+    #[case] key_id: &RequestId,
+    #[values(true, false)] compression: bool,
+) {
+    let secure = true;
+    user_decryption_threshold(
+        DEFAULT_PARAM,
+        key_id,
+        false,
+        false,
+        msg,
+        EncryptionConfig {
+            compression,
+            precompute_sns: true,
         },
         parallelism,
         secure,
@@ -307,6 +358,7 @@ async fn default_user_decryption_threshold_with_crash(
     user_decryption_threshold(
         DEFAULT_PARAM,
         key_id,
+        false,
         false,
         msg,
         EncryptionConfig {

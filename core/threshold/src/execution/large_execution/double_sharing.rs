@@ -5,7 +5,7 @@ use super::{
 use crate::{
     algebra::{
         bivariate::MatrixMul,
-        structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed},
+        structure_traits::{Derive, ErrorCorrect, Invert, Ring},
     },
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{party::Role, session::LargeSessionHandles},
@@ -89,7 +89,7 @@ impl<Z: Default, S: LocalDoubleShare + Default> Default for RealDoubleSharing<Z,
 }
 
 #[async_trait]
-impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
+impl<Z: Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
     for RealDoubleSharing<Z, S>
 {
     #[instrument(name="DoubleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),own_identity=?session.own_identity(), batch_size = ?l))]
@@ -228,7 +228,6 @@ pub(crate) mod tests {
     use crate::algebra::structure_traits::Derive;
     use crate::algebra::structure_traits::ErrorCorrect;
     use crate::algebra::structure_traits::Invert;
-    use crate::algebra::structure_traits::RingEmbed;
     use crate::execution::large_execution::constants::DISPUTE_STAT_SEC;
     use crate::execution::large_execution::double_sharing::SecureDoubleSharing;
     use crate::execution::runtime::session::BaseSessionHandles;
@@ -247,10 +246,7 @@ pub(crate) mod tests {
         tests::helper::tests_and_benches::execute_protocol_large,
     };
 
-    fn test_doublesharing<
-        Z: Ring + RingEmbed + ErrorCorrect + Derive + Invert,
-        const EXTENSION_DEGREE: usize,
-    >(
+    fn test_doublesharing<Z: ErrorCorrect + Derive + Invert, const EXTENSION_DEGREE: usize>(
         parties: usize,
         threshold: usize,
     ) {

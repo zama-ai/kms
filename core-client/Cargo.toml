@@ -21,6 +21,7 @@ aes-prng.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
 alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 alloy-signer.workspace = true
+attestation-doc-validation.workspace = true
 bytes.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 anyhow.workspace = true

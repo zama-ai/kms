@@ -18,7 +18,7 @@ use threshold_fhe::{
         runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         tfhe_internals::{
             parameters::BC_PARAMS_SNS,
-            test_feature::{gen_key_set, keygen_all_party_shares, KeySet},
+            test_feature::{gen_key_set, keygen_all_party_shares_from_keyset, KeySet},
             utils::expanded_encrypt,
         },
     },
@@ -34,20 +34,10 @@ fn main() {
     let keyset: KeySet = gen_key_set(BC_PARAMS_SNS, &mut rng);
     set_server_key(keyset.public_keys.server_key.clone());
 
-    let lwe_secret_key = keyset.get_raw_lwe_client_key();
-    let glwe_secret_key = keyset.get_raw_glwe_client_key();
-    let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
     let params = keyset.get_cpu_params().unwrap();
-    let key_shares = keygen_all_party_shares(
-        lwe_secret_key,
-        glwe_secret_key,
-        glwe_secret_key_sns_as_lwe,
-        params,
-        &mut rng,
-        num_parties,
-        threshold,
-    )
-    .unwrap();
+    let key_shares =
+        keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
+            .unwrap();
 
     // Encrypt a message and extract the raw ciphertexts.
     let message = rng.gen::<u8>();

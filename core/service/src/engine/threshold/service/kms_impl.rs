@@ -8,7 +8,10 @@ use kms_grpc::{
     RequestId,
 };
 use serde::{Deserialize, Serialize};
-use tfhe::{integer::compression_keys::DecompressionKey, named::Named, Versionize};
+use tfhe::{
+    core_crypto::prelude::LweKeyswitchKey, integer::compression_keys::DecompressionKey,
+    named::Named, Versionize,
+};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
@@ -43,11 +46,11 @@ use crate::{
     anyhow_error_and_log,
     conf::threshold::{PeerConf, ThresholdPartyConf, TlsCert},
     consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
-    cryptography::internal_crypto_types::PrivateSigKey,
+    cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
     engine::{
         base::{compute_info, BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY},
         prepare_shutdown_signals,
-        threshold::generic::GenericKms,
+        threshold::threshold_kms::ThresholdKms,
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     tonic_some_or_err,
@@ -55,18 +58,21 @@ use crate::{
         meta_store::MetaStore,
         rate_limiter::{RateLimiter, RateLimiterConfig},
     },
-    vault::storage::{
-        crypto_material::ThresholdCryptoMaterialStorage, read_all_data_versioned,
-        read_pk_at_request_id, Storage,
+    vault::{
+        storage::{
+            crypto_material::ThresholdCryptoMaterialStorage, read_all_data_versioned,
+            read_pk_at_request_id, Storage,
+        },
+        Vault,
     },
 };
 
 // === Current Module Imports ===
 use super::{
-    context_manager::RealContextManager, crs_generator::RealCrsGenerator, initiator::RealInitiator,
-    key_generator::RealKeyGenerator, preprocessor::RealPreprocessor,
-    public_decryptor::RealPublicDecryptor, session::SessionPreparer,
-    user_decryptor::RealUserDecryptor,
+    backup_operator::RealBackupOperator, context_manager::RealContextManager,
+    crs_generator::RealCrsGenerator, initiator::RealInitiator, key_generator::RealKeyGenerator,
+    preprocessor::RealPreprocessor, public_decryptor::RealPublicDecryptor,
+    session::SessionPreparer, user_decryptor::RealUserDecryptor,
 };
 
 // === Insecure Feature-Specific Imports ===
@@ -88,6 +94,22 @@ pub struct ThresholdFheKeys {
     pub sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey>,
     pub decompression_key: Option<DecompressionKey>,
     pub pk_meta_data: KeyGenCallValues,
+}
+
+impl ThresholdFheKeys {
+    pub fn get_key_switching_key(&self) -> anyhow::Result<&LweKeyswitchKey<Vec<u64>>> {
+        match &self.integer_server_key.as_ref().atomic_pattern {
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Standard(
+                standard_atomic_pattern_server_key,
+            ) => Ok(&standard_atomic_pattern_server_key.key_switching_key),
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::KeySwitch32(_) => {
+                anyhow::bail!("No support for KeySwitch32 server key")
+            }
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Dynamic(_) => {
+                anyhow::bail!("No support for dynamic atomic pattern server key")
+            }
+        }
+    }
 }
 
 impl Named for ThresholdFheKeys {
@@ -135,35 +157,38 @@ pub fn compute_all_info(
 }
 
 #[cfg(not(feature = "insecure"))]
-pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
+pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInitiator<PrivS>,
-    RealUserDecryptor<PubS, PrivS, BackS>,
-    RealPublicDecryptor<PubS, PrivS, BackS>,
-    RealKeyGenerator<PubS, PrivS, BackS>,
+    RealUserDecryptor<PubS, PrivS>,
+    RealPublicDecryptor<PubS, PrivS>,
+    RealKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
-    RealCrsGenerator<PubS, PrivS, BackS>,
-    RealContextManager<PubS, PrivS, BackS>,
+    RealCrsGenerator<PubS, PrivS>,
+    RealContextManager<PubS, PrivS>,
+    RealBackupOperator<PubS, PrivS>,
 >;
 
 #[cfg(feature = "insecure")]
-pub type RealThresholdKms<PubS, PrivS, BackS> = GenericKms<
+pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInitiator<PrivS>,
-    RealUserDecryptor<PubS, PrivS, BackS>,
-    RealPublicDecryptor<PubS, PrivS, BackS>,
-    RealKeyGenerator<PubS, PrivS, BackS>,
-    RealInsecureKeyGenerator<PubS, PrivS, BackS>,
+    RealUserDecryptor<PubS, PrivS>,
+    RealPublicDecryptor<PubS, PrivS>,
+    RealKeyGenerator<PubS, PrivS>,
+    RealInsecureKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
-    RealCrsGenerator<PubS, PrivS, BackS>,
-    RealInsecureCrsGenerator<PubS, PrivS, BackS>,
-    RealContextManager<PubS, PrivS, BackS>,
+    RealCrsGenerator<PubS, PrivS>,
+    RealInsecureCrsGenerator<PubS, PrivS>,
+    RealContextManager<PubS, PrivS>,
+    RealBackupOperator<PubS, PrivS>,
 >;
 
 #[allow(clippy::too_many_arguments)]
-pub async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
+pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: ThresholdPartyConf,
     public_storage: PubS,
     private_storage: PrivS,
-    backup_storage: Option<BackS>,
+    backup_storage: Option<Vault>,
+    security_module: Option<SecurityModuleProxy>,
     mpc_listener: TcpListener,
     sk: PrivateSigKey,
     tls_identity: Option<BasicTLSConfig>,
@@ -171,14 +196,13 @@ pub async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
     rate_limiter_conf: Option<RateLimiterConfig>,
     shutdown_signal: F,
 ) -> anyhow::Result<(
-    RealThresholdKms<PubS, PrivS, BackS>,
+    RealThresholdKms<PubS, PrivS>,
     HealthServer<impl Health>,
     MetaStoreStatusServiceImpl,
 )>
 where
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
     // load keys from storage
@@ -284,7 +308,7 @@ where
             let nm = networking_manager.clone();
             Box::pin(async move {
                 let manager = nm.read().await;
-                let impl_networking = manager.make_session(session_id, roles, network_mode);
+                let impl_networking = manager.make_session(session_id, roles, network_mode)?;
                 Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
             })
         },
@@ -409,7 +433,7 @@ where
         thread_core_health_reporter
             .write()
             .await
-            .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS, BackS>>>()
+            .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
             .await;
     }
     let initiator = RealInitiator {
@@ -508,7 +532,12 @@ where
         crypto_storage: crypto_storage.clone(),
     };
 
-    let kms = GenericKms::new(
+    let backup_operator = RealBackupOperator {
+        crypto_storage: crypto_storage.clone(),
+        security_module,
+    };
+
+    let kms = ThresholdKms::new(
         initiator,
         user_decryptor,
         public_decryptor,
@@ -520,6 +549,7 @@ where
         #[cfg(feature = "insecure")]
         insecure_crs_generator,
         context_manager,
+        backup_operator,
         Arc::clone(&tracker),
         Arc::clone(&thread_core_health_reporter),
         abort_handle,

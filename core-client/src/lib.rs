@@ -7,7 +7,7 @@ use alloy_primitives::Signature;
 use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bytes::Bytes;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
 use kms_grpc::kms::v1::{
     CiphertextFormat, CrsGenResult, FheParameter, KeyGenPreprocResult, KeyGenResult,
@@ -38,6 +38,7 @@ use strum_macros::{Display, EnumString};
 use tfhe::named::Named;
 use tfhe::Versionize;
 use threshold_fhe::execution::runtime::party::Role;
+use threshold_fhe::hashing::{hash_element, DomainSep};
 use tokio::sync::RwLock;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
@@ -388,7 +389,7 @@ pub struct CipherParameters {
     pub compression: bool,
     /// Boolean to do SnS preprocessing on the ciphertext or not.
     /// SnS preprocessing performs a PBS to convert 64-bit ciphertexts to 128-bit ones.
-    /// At the moment it cannot be used in combination with compression. Default: False.
+    /// Default: False.
     #[clap(long)]
     pub precompute_sns: bool,
     /// Key identifier to use for public/user decryption.
@@ -431,10 +432,62 @@ pub struct CipherWithParams {
     cipher: Vec<u8>,
 }
 
+#[derive(ValueEnum, Debug, Clone, Default)]
+pub enum KeySetType {
+    #[default]
+    Standard,
+    // DecompressionOnly, // we'll support this in the future
+    AddSnsCompressionKey,
+}
+
+impl From<KeySetType> for kms_grpc::kms::v1::KeySetType {
+    fn from(value: KeySetType) -> Self {
+        match value {
+            KeySetType::Standard => kms_grpc::kms::v1::KeySetType::Standard,
+            KeySetType::AddSnsCompressionKey => kms_grpc::kms::v1::KeySetType::AddSnsCompressionKey,
+        }
+    }
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct KeySetAddedInfo {
+    #[clap(long)]
+    base_keyset_id_for_sns_compression_key: Option<RequestId>,
+}
+
+impl From<KeySetAddedInfo> for kms_grpc::kms::v1::KeySetAddedInfo {
+    fn from(value: KeySetAddedInfo) -> Self {
+        kms_grpc::kms::v1::KeySetAddedInfo {
+            compression_keyset_id: None,
+            from_keyset_id_decompression_only: None,
+            to_keyset_id_decompression_only: None,
+            base_keyset_id_for_sns_compression_key: value
+                .base_keyset_id_for_sns_compression_key
+                .map(|x| x.into()),
+        }
+    }
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct SharedKeyGenParameters {
+    #[clap(value_enum, long, short = 't')]
+    pub keyset_type: Option<KeySetType>,
+    #[command(flatten)]
+    pub keyset_added_info: Option<KeySetAddedInfo>,
+}
+
 #[derive(Debug, Parser, Clone)]
 pub struct KeyGenParameters {
     #[clap(long, short = 'i')]
     pub preproc_id: RequestId,
+    #[command(flatten)]
+    pub shared_args: SharedKeyGenParameters,
+}
+
+#[derive(Debug, Parser, Clone)]
+pub struct InsecureKeyGenParameters {
+    #[command(flatten)]
+    pub shared_args: SharedKeyGenParameters,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -455,7 +508,7 @@ pub enum CCCommand {
     PreprocKeyGenResult(ResultParameters),
     KeyGen(KeyGenParameters),
     KeyGenResult(ResultParameters),
-    InsecureKeyGen(NoParameters),
+    InsecureKeyGen(InsecureKeyGenParameters),
     InsecureKeyGenResult(ResultParameters),
     Encrypt(CipherParameters),
     #[clap(subcommand)]
@@ -467,6 +520,8 @@ pub enum CCCommand {
     CrsGenResult(ResultParameters),
     InsecureCrsGen(CrsParameters),
     InsecureCrsGenResult(ResultParameters),
+    GetOperatorPublicKey(NoParameters),
+    CustodianBackupRestore(NoParameters),
     DoNothing(NoParameters),
 }
 
@@ -483,7 +538,7 @@ pub struct CmdConfig {
     #[clap(long, short = 'l')]
     pub logs: bool,
     /// Max number of iterations to query the KMS for a response
-    #[clap(long, default_value = "20")]
+    #[clap(long, default_value = "30")]
     #[validate(range(min = 1))]
     pub max_iter: usize,
     /// Should we expect a response from every KMS core or not
@@ -701,6 +756,8 @@ pub fn setup_logging() {
     // read the RUST_LOG environment variable to set the logging level, or set to INFO as default
     let log_level_str = std::env::var("RUST_LOG").unwrap_or_else(|_| "INFO".to_string());
     let log_level = tracing::Level::from_str(&log_level_str).unwrap_or(tracing::Level::INFO);
+
+    println!("Setting up logging with level: {log_level:?}");
 
     let subscriber = tracing_subscriber::fmt()
         .with_writer(file_and_stdout)
@@ -987,6 +1044,7 @@ async fn do_keygen(
     param: FheParameter,
     preproc_id: Option<RequestId>,
     insecure: bool,
+    shared_config: &SharedKeyGenParameters,
     destination_prefix: &Path,
 ) -> anyhow::Result<RequestId> {
     let req_id = RequestId::new_random(rng);
@@ -1000,12 +1058,24 @@ async fn do_keygen(
 
     //NOTE: If we do not use dummy_domain here, then
     //this needs changing too in the KeyGenResult command.
+    let keyset_config =
+        shared_config
+            .keyset_type
+            .clone()
+            .map(|x| kms_grpc::kms::v1::KeySetConfig {
+                keyset_type: kms_grpc::kms::v1::KeySetType::from(x) as i32,
+                standard_keyset_config: None,
+            });
+    let keyset_added_info = shared_config
+        .keyset_added_info
+        .clone()
+        .map(kms_grpc::kms::v1::KeySetAddedInfo::from);
     let dkg_req = internal_client.key_gen_request(
         &req_id,
         preproc_id,
         Some(param),
-        None,
-        None,
+        keyset_config,
+        keyset_added_info,
         Some(dummy_domain()),
     )?;
 
@@ -1187,6 +1257,63 @@ async fn do_preproc(
     Ok(req_id)
 }
 
+async fn do_get_operator_pub_keys(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+) -> anyhow::Result<Vec<String>> {
+    let mut req_tasks = JoinSet::new();
+    for ce in core_endpoints.iter_mut() {
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .get_operator_public_key(tonic::Request::new(kms_grpc::kms::v1::Empty {}))
+                .await
+        });
+    }
+
+    let mut backup_pks = Vec::with_capacity(core_endpoints.len());
+
+    while let Some(inner) = req_tasks.join_next().await {
+        let pk = inner??.into_inner();
+        let attestation_doc = attestation_doc_validation::validate_and_parse_attestation_doc(
+            &pk.attestation_document,
+        )?;
+        let Some(attested_pk) = attestation_doc.public_key else {
+            anyhow::bail!("Bad response: public key not present in attestation document")
+        };
+
+        if pk.public_key.as_slice() != attested_pk.as_slice() {
+            let dsep: DomainSep = *b"EQUALITY";
+            let pk_hash = hex::encode(hash_element(&dsep, pk.public_key.as_slice()));
+            let att_pk_hash = hex::encode(hash_element(&dsep, attested_pk.as_slice()));
+            anyhow::bail!("Bad response: public key with hash {} does not match attestation document public key with hash {}", pk_hash, att_pk_hash)
+        };
+
+        backup_pks.push(hex::encode(pk.public_key.as_slice()));
+    }
+
+    Ok(backup_pks)
+}
+
+async fn do_custodian_backup_restore(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+) -> anyhow::Result<()> {
+    let mut req_tasks = JoinSet::new();
+    for ce in core_endpoints.iter_mut() {
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .custodian_backup_restore(tonic::Request::new(kms_grpc::kms::v1::Empty {}))
+                .await
+        });
+    }
+
+    while let Some(inner) = req_tasks.join_next().await {
+        let _ = inner??;
+    }
+
+    Ok(())
+}
+
 /// execute a command based on the provided configuration
 pub async fn execute_cmd(
     cmd_config: &CmdConfig,
@@ -1219,20 +1346,11 @@ pub async fn execute_cmd(
             if let CipherArguments::FromArgs(cipher_params) = cipher_args {
                 tracing::info!("Fetching tfhe keys. ({command:?})");
                 fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
-                //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.3
-                if cipher_params.compression && cipher_params.precompute_sns {
-                    panic!("Compression on big ciphertexts is not supported yet!");
-                }
             }
         }
         CCCommand::Encrypt(cipher_params) => {
             tracing::info!("Fetching tfhe keys. ({command:?})");
             fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
-
-            //TODO remove this check once we can compress big ciphertexts with tfhe-rs v1.3
-            if cipher_params.compression && cipher_params.precompute_sns {
-                panic!("Compression on big ciphertexts is not supported yet!");
-            }
         }
         CCCommand::KeyGen(_)
         | CCCommand::InsecureKeyGen(_)
@@ -1257,7 +1375,8 @@ pub async fn execute_cmd(
     let client_storage: FileStorage =
         FileStorage::new(Some(destination_prefix), StorageType::CLIENT, None).unwrap();
     let mut internal_client: Option<Client> = None;
-    let mut core_endpoints = Vec::with_capacity(num_parties);
+    let mut core_endpoints_req = Vec::with_capacity(num_parties);
+    let mut core_endpoints_resp = Vec::with_capacity(num_parties);
 
     let param = cc_conf.fhe_params.unwrap_or(FheParameter::Test);
     let client_param = match param {
@@ -1285,12 +1404,19 @@ pub async fn execute_cmd(
             "http://".to_string() + &address
         };
 
-        let core_endpoint = retry!(
+        let core_endpoint_req = retry!(
             CoreServiceEndpointClient::connect(url.clone()).await,
             5,
             100
         )?;
-        core_endpoints.push(core_endpoint);
+        core_endpoints_req.push(core_endpoint_req);
+
+        let core_endpoint_resp = retry!(
+            CoreServiceEndpointClient::connect(url.clone()).await,
+            5,
+            100
+        )?;
+        core_endpoints_resp.push(core_endpoint_resp);
 
         // there's only 1 party, so use index 1
         pub_storage.insert(
@@ -1324,12 +1450,19 @@ pub async fn execute_cmd(
 
             tracing::info!("Connecting to {:?}", url);
 
-            let core_endpoint = retry!(
+            let core_endpoint_req = retry!(
                 CoreServiceEndpointClient::connect(url.clone()).await,
                 5,
                 100
             )?;
-            core_endpoints.push(core_endpoint);
+            core_endpoints_req.push(core_endpoint_req);
+
+            let core_endpoint_resp = retry!(
+                CoreServiceEndpointClient::connect(url.clone()).await,
+                5,
+                100
+            )?;
+            core_endpoints_resp.push(core_endpoint_resp);
 
             pub_storage.insert(
                 i as u32 + 1,
@@ -1404,11 +1537,13 @@ pub async fn execute_cmd(
             let mut durations = Vec::new();
 
             let mut join_set: JoinSet<Result<_, anyhow::Error>> = JoinSet::new();
+            let start = tokio::time::Instant::now();
             for _ in 0..cipher_args.get_num_requests() {
                 let req_id = RequestId::new_random(&mut rng);
                 let internal_client = internal_client.clone();
                 let ct_batch = ct_batch.clone();
-                let mut core_endpoints = core_endpoints.clone();
+                let mut core_endpoints_req = core_endpoints_req.clone();
+                let mut core_endpoints_resp = core_endpoints_resp.clone();
                 let ptxt = ptxt.clone();
                 let kms_addrs = kms_addrs.clone();
 
@@ -1427,7 +1562,7 @@ pub async fn execute_cmd(
                     // make parallel requests by calling [decrypt] in a thread
                     let mut req_tasks = JoinSet::new();
 
-                    for ce in core_endpoints.iter_mut() {
+                    for ce in core_endpoints_req.iter_mut() {
                         let req_cloned = dec_req.clone();
                         let mut cur_client = ce.clone();
                         req_tasks.spawn(async move {
@@ -1443,8 +1578,14 @@ pub async fn execute_cmd(
                     }
                     assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
+                    tracing::info!(
+                        "{:?} ###! Sent all public decrypt requests. Since start {:?}",
+                        req_id.as_str(),
+                        start.elapsed()
+                    );
+
                     let resp_response_vec = get_public_decrypt_responses(
-                        &mut core_endpoints,
+                        &mut core_endpoints_resp,
                         Some(dec_req),
                         Some(ptxt),
                         req_id,
@@ -1452,6 +1593,7 @@ pub async fn execute_cmd(
                         num_expected_responses,
                         &*internal_client.read().await,
                         &kms_addrs,
+                        start,
                     )
                     .await?;
 
@@ -1469,7 +1611,7 @@ pub async fn execute_cmd(
                 result_vec.push(res);
             }
 
-            print_timings("public decrypt", &mut durations, command_timer_start);
+            print_timings("public decrypt", &mut durations, start);
 
             result_vec
         }
@@ -1513,7 +1655,8 @@ pub async fn execute_cmd(
                 internal_client,
                 ct_batch,
                 key_id,
-                core_endpoints.clone(),
+                core_endpoints_req.clone(),
+                core_endpoints_resp.clone(),
                 ptxt,
                 num_parties,
                 max_iter,
@@ -1521,12 +1664,15 @@ pub async fn execute_cmd(
             )
             .await?
         }
-        CCCommand::KeyGen(KeyGenParameters { preproc_id }) => {
+        CCCommand::KeyGen(KeyGenParameters {
+            preproc_id,
+            shared_args,
+        }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!("Key generation with parameter {}.", param.as_str_name());
             let req_id = do_keygen(
                 &mut internal_client,
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1535,13 +1681,14 @@ pub async fn execute_cmd(
                 param,
                 Some(*preproc_id),
                 false,
+                shared_args,
                 destination_prefix,
             )
             .await?;
 
             vec![(Some(req_id), "keygen done".to_string())]
         }
-        CCCommand::InsecureKeyGen(NoParameters {}) => {
+        CCCommand::InsecureKeyGen(InsecureKeyGenParameters { shared_args }) => {
             let mut internal_client = internal_client.unwrap();
             tracing::info!(
                 "Insecure key generation with parameter {}.",
@@ -1549,7 +1696,7 @@ pub async fn execute_cmd(
             );
             let req_id = do_keygen(
                 &mut internal_client,
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1558,6 +1705,7 @@ pub async fn execute_cmd(
                 param,
                 None,
                 true,
+                shared_args,
                 destination_prefix,
             )
             .await?;
@@ -1570,7 +1718,7 @@ pub async fn execute_cmd(
 
             let req_id = do_crsgen(
                 &mut internal_client,
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1593,7 +1741,7 @@ pub async fn execute_cmd(
 
             let req_id = do_crsgen(
                 &mut internal_client,
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1613,7 +1761,7 @@ pub async fn execute_cmd(
 
             let req_id = do_preproc(
                 &mut internal_client,
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 &mut rng,
                 cmd_config,
                 num_parties,
@@ -1632,7 +1780,7 @@ pub async fn execute_cmd(
         }
         CCCommand::PreprocKeyGenResult(result_parameters) => {
             let req_id: RequestId = result_parameters.request_id;
-            let _ = get_preproc_keygen_responses(&mut core_endpoints, req_id, max_iter).await?;
+            let _ = get_preproc_keygen_responses(&mut core_endpoints_req, req_id, max_iter).await?;
             vec![(Some(req_id), "preproc result queried".to_string())]
         }
         CCCommand::KeyGenResult(result_parameters) => {
@@ -1643,7 +1791,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 req_id,
                 max_iter,
                 false,
@@ -1673,7 +1821,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 req_id,
                 max_iter,
                 true,
@@ -1703,7 +1851,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_public_decrypt_responses(
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 None,
                 None,
                 req_id,
@@ -1711,6 +1859,7 @@ pub async fn execute_cmd(
                 num_expected_responses,
                 internal_client.as_ref().unwrap(),
                 &kms_addrs,
+                tokio::time::Instant::now(),
             )
             .await?;
             let res = format!("{resp_response_vec:x?}");
@@ -1724,7 +1873,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 req_id,
                 max_iter,
                 false,
@@ -1754,7 +1903,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
-                &mut core_endpoints,
+                &mut core_endpoints_req,
                 req_id,
                 max_iter,
                 true,
@@ -1775,6 +1924,14 @@ pub async fn execute_cmd(
             )
             .await?;
             vec![(Some(req_id), "insecure crs gen result queried".to_string())]
+        }
+        CCCommand::GetOperatorPublicKey(NoParameters {}) => {
+            let pks = do_get_operator_pub_keys(&mut core_endpoints_req).await?;
+            pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
+        }
+        CCCommand::CustodianBackupRestore(NoParameters {}) => {
+            do_custodian_backup_restore(&mut core_endpoints_req).await?;
+            vec![(None, "custodian backup restore complete".to_string())]
         }
     };
 
@@ -1824,7 +1981,8 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
     internal_client: Arc<RwLock<Client>>,
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
-    core_endpoints: Vec<CoreServiceEndpointClient<Channel>>,
+    core_endpoints_req: Vec<CoreServiceEndpointClient<Channel>>,
+    core_endpoints_resp: Vec<CoreServiceEndpointClient<Channel>>,
     ptxt: TypedPlaintext,
     num_parties: usize,
     max_iter: usize,
@@ -1839,7 +1997,8 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
         let req_id = RequestId::new_random(rng);
         let internal_client = internal_client.clone();
         let ct_batch = ct_batch.clone();
-        let mut core_endpoints = core_endpoints.clone();
+        let mut core_endpoints_req = core_endpoints_req.clone();
+        let mut core_endpoints_resp = core_endpoints_resp.clone();
         let original_plaintext = ptxt.clone();
 
         // start timing measurement for this request
@@ -1859,7 +2018,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
             // make parallel requests by calling user decryption in a thread
             let mut req_tasks = JoinSet::new();
 
-            for ce in &mut core_endpoints {
+            for ce in &mut core_endpoints_req {
                 let req_cloned = user_decrypt_req.clone();
                 let mut cur_client = ce.clone();
                 req_tasks.spawn(async move {
@@ -1876,9 +2035,15 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
             }
             assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
+            tracing::info!(
+                "{:?} ###! Sent all user decrypt requests. Since start {:?}",
+                req_id.as_str(),
+                start.elapsed()
+            );
+
             // get all responses
             let mut resp_tasks = JoinSet::new();
-            for ce in &mut core_endpoints {
+            for ce in &mut core_endpoints_resp {
                 let mut cur_client = ce.clone();
                 let req_id_clone = user_decrypt_req.request_id.as_ref().unwrap().clone();
 
@@ -1924,6 +2089,13 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 }
             }
 
+            tracing::info!(
+                "{:?} ###! Received {} user decrypt responses. Since start {:?}",
+                req_id.as_str(),
+                resp_response_vec.len(),
+                start.elapsed()
+            );
+
             let client_request = ParsedUserDecryptionRequest::try_from(&user_decrypt_req).unwrap();
             let eip712_domain =
                 protobuf_to_alloy_domain(user_decrypt_req.domain.as_ref().unwrap()).unwrap();
@@ -1964,6 +2136,13 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
                 "User decrypted Plaintext {:?}",
                 TestingPlaintext::try_from(decrypted_plaintext)?
             );
+
+            tracing::info!(
+                "{:?} ###! Verified user decrypt responses and reconstructed. Since start {:?}",
+                req_id.as_str(),
+                start.elapsed()
+            );
+
             Ok((Some(req_id), res))
         });
     }
@@ -1991,6 +2170,7 @@ async fn get_public_decrypt_responses(
     num_expected_responses: usize,
     internal_client: &Client,
     kms_addrs: &[alloy_primitives::Address],
+    start: tokio::time::Instant,
 ) -> anyhow::Result<Vec<PublicDecryptionResponse>> {
     // get all responses
     let mut resp_tasks = JoinSet::new();
@@ -2038,6 +2218,13 @@ async fn get_public_decrypt_responses(
             break;
         }
     }
+
+    tracing::info!(
+        "{:?} ###! Received {} public decrypt responses. Since start {:?}",
+        request_id.as_str(),
+        resp_response_vec.len(),
+        start.elapsed()
+    );
 
     resp_response_vec.sort_by_key(|(id, _)| *id);
     let resp_response_vec: Vec<_> = resp_response_vec
@@ -2099,6 +2286,12 @@ async fn get_public_decrypt_responses(
         kms_addrs,
     )
     .unwrap();
+
+    tracing::info!(
+        "{:?} ###! Verified public decypt responses. Since start {:?}",
+        request_id.as_str(),
+        start.elapsed()
+    );
 
     Ok(resp_response_vec)
 }

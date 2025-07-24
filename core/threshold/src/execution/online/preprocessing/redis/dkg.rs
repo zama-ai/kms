@@ -1,7 +1,7 @@
 use tonic::async_trait;
 
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, Solve},
+    algebra::structure_traits::{ErrorCorrect, Invert, Solve},
     error::error_handler::anyhow_error_and_log,
     execution::{
         keyset_config::KeySetConfig,
@@ -24,7 +24,7 @@ use super::{
 #[async_trait]
 impl<Z> DKGPreprocessing<Z> for RedisPreprocessing<Z>
 where
-    Z: Ring + RingEmbed + Solve + Invert + ErrorCorrect + PRSSConversions,
+    Z: Solve + Invert + ErrorCorrect + PRSSConversions,
 {
     fn append_noises(&mut self, noises: Vec<Share<Z>>, bound: NoiseBounds) {
         // TODO unwrap is ok?

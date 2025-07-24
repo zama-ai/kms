@@ -7,7 +7,7 @@ This tutorial shows you a subset of the options of the `core-client`. For more d
 
 ### Requirements
 - Rust. Ensure you have a recent version of Rust (`v1.86` or newer) installed on your system. More information on the [official website](https://www.rust-lang.org/).
-- [The protobuf compiler, `protoc`](https://protobuf.dev/installation/) must be installed and [Docker](https://docs.docker.com/engine/install/) must be installed and running.
+- [The protobuf compiler, `protoc`](https://protobuf.dev/installation/) must be installed and [Docker](https://docs.docker.com/engine/install/) must be installed and running. IMPORTANT: Note that running the KMS servers requires a lot of RAM. So please _ensure that your Docker is setup to have at least 24 GB of RAM_. If not, the KMS nodes may exit `with code 137`.
 - Ensure you have access to the required Docker images on Github.
   - While some repositories are still private, you need to setup access. For this, either use [this link](https://github.com/settings/tokens) or go to your GitHub, click you profile picture, select "Settings". Then navigate to "Developer Settings" > "Personal Access Tokens" > "Tokens (classic)" > "Generate new token (classic)". The token must have at least the "read:packages" permission.
   Afterwards, do `docker login ghcr.io` and use your github ID and the token to login. Note that this token is saved by docker locally in the clear, so it's best to only give it the permissions you need and set the expiration time to a short period of time.

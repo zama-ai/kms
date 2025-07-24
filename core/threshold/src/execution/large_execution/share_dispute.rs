@@ -1,7 +1,7 @@
 use crate::{
     algebra::{
         poly::Poly,
-        structure_traits::{Invert, Ring, RingEmbed},
+        structure_traits::{Invert, Ring, RingWithExceptionalSequence},
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
@@ -43,7 +43,7 @@ pub trait ShareDispute: ProtocolDescription + Send + Sync + Clone {
     /// Returns:
     /// - a hashmap which maps roles to shares I received
     /// - another hashmap which maps roles to shares I sent
-    async fn execute<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
+    async fn execute<Z: RingWithExceptionalSequence + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -52,7 +52,7 @@ pub trait ShareDispute: ProtocolDescription + Send + Sync + Clone {
     /// Executes the ShareDispute protocol on a vector of secrets,
     /// actually sharing the secret using a sharing of degree t and one of degree 2t
     /// Needed for doubleSharings
-    async fn execute_double<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
+    async fn execute_double<Z: RingWithExceptionalSequence + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -89,7 +89,7 @@ pub(crate) fn share_secrets<Z, R: Rng + CryptoRng>(
     degree: usize,
 ) -> anyhow::Result<Vec<Vec<Z>>>
 where
-    Z: Ring + RingEmbed + Invert,
+    Z: RingWithExceptionalSequence + Invert,
 {
     secrets
         .iter()
@@ -119,7 +119,7 @@ pub(crate) fn fill_incomplete_output<Z: Ring, L: LargeSessionHandles>(
 #[async_trait]
 impl ShareDispute for RealShareDispute {
     #[instrument(name="ShareDispute (t,2t)",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size= ?secrets.len()))]
-    async fn execute_double<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
+    async fn execute_double<Z: RingWithExceptionalSequence + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -173,7 +173,7 @@ impl ShareDispute for RealShareDispute {
     }
 
     #[instrument(name="ShareDispute (t)",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?secrets.len()))]
-    async fn execute<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
+    async fn execute<Z: RingWithExceptionalSequence + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -362,8 +362,7 @@ pub(crate) fn interpolate_poly_w_punctures<Z, R: Rng + CryptoRng>(
     secret: Z,
 ) -> anyhow::Result<Vec<Z>>
 where
-    Z: Ring,
-    Z: RingEmbed,
+    Z: RingWithExceptionalSequence,
     Z: Invert,
 {
     if threshold < dispute_party_ids.len() {
@@ -394,8 +393,7 @@ pub(crate) fn evaluate_w_new_roots<Z>(
     base_poly: &Poly<Z>,
 ) -> anyhow::Result<Vec<Z>>
 where
-    Z: Ring,
-    Z: RingEmbed,
+    Z: RingWithExceptionalSequence,
     Z: Invert,
 {
     let (normalized_parties_root, x_coords) = Poly::<Z>::normalized_parties_root(num_parties)?;
@@ -419,7 +417,7 @@ pub(crate) mod tests {
         algebra::{
             galois_rings::degree_4::{ResiduePolyF4, ResiduePolyF4Z128, ResiduePolyF4Z64},
             poly::Poly,
-            structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, Zero},
+            structure_traits::{ErrorCorrect, Invert, Ring, Zero},
         },
         execution::{
             large_execution::share_dispute::{
@@ -446,7 +444,7 @@ pub(crate) mod tests {
     /// Accepts a set of dispute pairs that will be inserted to the honest parties' sessions
     /// before executing the protocol
     fn test_share_dispute_strategies<
-        Z: Ring + RingEmbed + ErrorCorrect + Invert,
+        Z: ErrorCorrect + Invert,
         const EXTENSION_DEGREE: usize,
         S: ShareDispute + 'static,
     >(

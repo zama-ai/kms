@@ -58,6 +58,8 @@ on:
         required: true
       JOB_SECRET:
         required: true
+      GHCR_READ_TOKEN:
+        required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
       NPM_TOKEN:
@@ -70,7 +72,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-permissions: {}
+permissions:
+  packages: read
 
 jobs:
   start-runner:
@@ -94,6 +97,7 @@ jobs:
     needs: start-runner
     uses: ./.github/workflows/common-testing.yml
     secrets:
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}

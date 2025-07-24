@@ -6,18 +6,16 @@ use crate::{
 pub struct RealContextManager<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 > {
     pub base_kms: BaseKmsStruct,
-    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
 }
 
 #[tonic::async_trait]
-impl<PubS, PrivS, BackS> ContextManager for RealContextManager<PubS, PrivS, BackS>
+impl<PubS, PrivS> ContextManager for RealContextManager<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 {
     async fn new_kms_context(
         &self,

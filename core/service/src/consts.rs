@@ -29,8 +29,15 @@ pub const MINIMUM_SESSIONS_PREPROC: u16 = 2;
 pub const PRSS_INIT_REQ_ID: &str =
     "0000000000000000000000000000000000000000000000000000000000000001";
 
+#[cfg(feature = "slow_tests")]
 pub const DEFAULT_AMOUNT_PARTIES: usize = 13;
+#[cfg(feature = "slow_tests")]
 pub const DEFAULT_THRESHOLD: usize = 4;
+
+#[cfg(not(feature = "slow_tests"))]
+pub const DEFAULT_AMOUNT_PARTIES: usize = 4;
+#[cfg(not(feature = "slow_tests"))]
+pub const DEFAULT_THRESHOLD: usize = 1;
 
 pub const SAFE_SER_SIZE_LIMIT: u64 = threshold_fhe::hashing::SAFE_SER_SIZE_LIMIT;
 
@@ -78,8 +85,28 @@ cfg_if::cfg_if! {
             pub static ref DEFAULT_DEC_ID: RequestId = derive_request_id("DEFAULT_DEC_ID").unwrap();
             pub static ref OTHER_CENTRAL_DEFAULT_ID: RequestId =
                 derive_request_id("OTHER_DEFAULT_ID").unwrap();
+        }
+    }
+}
 
-            // What we will use in a default deployment
+#[cfg(feature = "non-wasm")]
+cfg_if::cfg_if! {
+    // these are for the "fast" tests, so use 4 parties
+    if #[cfg(all(not(feature = "slow_tests"), any(test, feature = "testing")))] {
+        lazy_static::lazy_static! {
+            pub static ref TEST_THRESHOLD_KEY_ID: RequestId = *TEST_THRESHOLD_KEY_ID_4P;
+            pub static ref TEST_THRESHOLD_CRS_ID: RequestId = *TEST_THRESHOLD_CRS_ID_4P;
+            pub static ref DEFAULT_THRESHOLD_KEY_ID: RequestId = *DEFAULT_THRESHOLD_KEY_ID_4P;
+            pub static ref DEFAULT_THRESHOLD_CRS_ID: RequestId = *DEFAULT_THRESHOLD_CRS_ID_4P;
+        }
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+cfg_if::cfg_if! {
+    // these are for the slow_tests, so use 13 parties
+    if #[cfg(all(feature = "slow_tests", any(test, feature = "testing")))] {
+        lazy_static::lazy_static! {
             pub static ref TEST_THRESHOLD_KEY_ID: RequestId = *TEST_THRESHOLD_KEY_ID_13P;
             pub static ref TEST_THRESHOLD_CRS_ID: RequestId = *TEST_THRESHOLD_CRS_ID_13P;
             pub static ref DEFAULT_THRESHOLD_KEY_ID: RequestId = *DEFAULT_THRESHOLD_KEY_ID_13P;
@@ -96,6 +123,11 @@ cfg_if::cfg_if! {
         pub const TEST_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/test-threshold-wasm-transcript.bin";
         pub const DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/default-central-wasm-transcript.bin";
         pub const DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/default-threshold-wasm-transcript.bin";
+
+        pub const TEST_CENTRAL_WASM_TRANSCRIPT_LEGACY_PATH: &str = "temp/test-central-wasm-transcript-legacy.bin";
+        pub const TEST_THRESHOLD_WASM_TRANSCRIPT_LEGACY_PATH: &str = "temp/test-threshold-wasm-transcript-legacy.bin";
+        pub const DEFAULT_CENTRAL_WASM_TRANSCRIPT_LEGACY_PATH: &str = "temp/default-central-wasm-transcript-legacy.bin";
+        pub const DEFAULT_THRESHOLD_WASM_TRANSCRIPT_LEGACY_PATH: &str = "temp/default-threshold-wasm-transcript-legacy.bin";
 
         pub const TEST_SEC_PAR: u64 = 40;
     }

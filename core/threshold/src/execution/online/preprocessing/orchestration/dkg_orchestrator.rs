@@ -529,7 +529,12 @@ fn get_num_tuniform_raw_bits_required(
     tuniform_productions.push(params_basics_handle.all_compression_ksk_noise(keyset_config));
 
     match params {
-        DKGParams::WithSnS(sns_params) => tuniform_productions.push(sns_params.all_bk_sns_noise()),
+        DKGParams::WithSnS(sns_params) => {
+            tuniform_productions.push(sns_params.all_bk_sns_noise());
+            if sns_params.sns_compression_params.is_some() {
+                tuniform_productions.push(sns_params.num_needed_noise_sns_compression_key());
+            }
+        }
         DKGParams::WithoutSnS(_) => (),
     }
 

@@ -107,7 +107,9 @@ async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T) -> String {
 
     let config = CmdConfig {
         file_conf: Some(String::from(path_to_config.to_str().unwrap())),
-        command: CCCommand::InsecureKeyGen(NoParameters {}),
+        command: CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
+            shared_args: SharedKeyGenParameters::default(),
+        }),
         logs: true,
         max_iter: 200,
         expect_all_responses: true,
@@ -183,6 +185,7 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
         file_conf: Some(config_path.to_string()),
         command: CCCommand::KeyGen(KeyGenParameters {
             preproc_id: preproc_id.unwrap(),
+            shared_args: SharedKeyGenParameters::default(),
         }),
         logs: true,
         max_iter: 200,
@@ -239,7 +242,7 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<CCCom
             CCCommand::KeyGen(_key_gen_parameters) => CCCommand::KeyGenResult(ResultParameters {
                 request_id: req_id.unwrap(),
             }),
-            CCCommand::InsecureKeyGen(_no_parameters) => {
+            CCCommand::InsecureKeyGen(_insecure_key_gen_parameters) => {
                 CCCommand::InsecureKeyGenResult(ResultParameters {
                     request_id: req_id.unwrap(),
                 })

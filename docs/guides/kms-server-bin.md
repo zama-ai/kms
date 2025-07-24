@@ -25,7 +25,7 @@ cargo run --bin kms-gen-tls-certs -- --ca-prefix p --ca-count 4
 Running a centralized KMS Core with the default configuration:
 
 ```bash
-cargo run --bin kms-server -- centralized --config-file config/default_centralized.toml
+cargo run --bin kms-server -- --config-file config/default_centralized.toml
 ```
 
 ### Locally running a threshold KMS Core
@@ -33,10 +33,10 @@ cargo run --bin kms-server -- centralized --config-file config/default_centraliz
 Running a threshold KMS Core with the default configuration requires running the following commands, each in a separate terminal:
 
 ```bash
-cargo run --bin kms-server -- threshold --config-file config/default_1.toml
-cargo run --bin kms-server -- threshold --config-file config/default_2.toml
-cargo run --bin kms-server -- threshold --config-file config/default_3.toml
-cargo run --bin kms-server -- threshold --config-file config/default_4.toml
+cargo run --bin kms-server -- --config-file config/default_1.toml
+cargo run --bin kms-server -- --config-file config/default_2.toml
+cargo run --bin kms-server -- --config-file config/default_3.toml
+cargo run --bin kms-server -- --config-file config/default_4.toml
 ```
 
 ## kms-init
@@ -56,4 +56,4 @@ When a different set of nodes (or a different number of nodes) should run the th
 
 ## Docker and kms-core-client
 
-To interact with a deployed version of the KMS, the recommended way is to use the [`kms-core-client`](../../../../core-client/README.md).
+To interact with a deployed version of the KMS, the recommended way is to use the [`kms-core-client`](./core_client.md).

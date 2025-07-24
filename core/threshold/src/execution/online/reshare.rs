@@ -3,7 +3,9 @@ use crate::{
         base_ring::{Z128, Z64},
         galois_rings::common::ResiduePoly,
         poly::Poly,
-        structure_traits::{BaseRing, ErrorCorrect, Invert, Ring, RingEmbed, Syndrome},
+        structure_traits::{
+            BaseRing, ErrorCorrect, Invert, Ring, RingWithExceptionalSequence, Syndrome,
+        },
         syndrome::lagrange_numerators,
     },
     error::error_handler::anyhow_error_and_log,
@@ -109,7 +111,7 @@ where
     // embed party IDs into the ring
     let parties: Vec<_> = sorted_roles
         .iter()
-        .map(|role| ResiduePoly::<Z, EXTENSION_DEGREE>::embed_exceptional_set(role.one_based()))
+        .map(ResiduePoly::<Z, EXTENSION_DEGREE>::embed_role_to_exceptional_sequence)
         .collect::<Result<Vec<_>, _>>()?;
 
     // lagrange numerators from Eq.15
@@ -122,16 +124,17 @@ where
 // This function evaluates delta_i(0)
 fn delta0i<Z: BaseRing, const EXTENSION_DEGREE: usize>(
     lagrange_numerators: &[Poly<ResiduePoly<Z, EXTENSION_DEGREE>>],
-    one_based: usize,
+    party_role: &Role,
 ) -> anyhow::Result<ResiduePoly<Z, EXTENSION_DEGREE>>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring + Invert,
 {
-    let zero = ResiduePoly::<Z, EXTENSION_DEGREE>::embed_exceptional_set(0)?;
-    let alphai = ResiduePoly::<Z, EXTENSION_DEGREE>::embed_exceptional_set(one_based)?;
-    let denom = lagrange_numerators[one_based - 1].eval(&alphai);
+    let zero = ResiduePoly::<Z, EXTENSION_DEGREE>::get_from_exceptional_sequence(0)?;
+    let alphai =
+        ResiduePoly::<Z, EXTENSION_DEGREE>::embed_role_to_exceptional_sequence(party_role)?;
+    let denom = lagrange_numerators[party_role].eval(&alphai);
     let inv_denom = denom.invert()?;
-    Ok(inv_denom * lagrange_numerators[one_based - 1].eval(&zero))
+    Ok(inv_denom * lagrange_numerators[party_role].eval(&zero))
 }
 
 #[instrument(
@@ -233,6 +236,16 @@ where
         } else {
             None
         };
+
+    let glwe_sns_compression_key_as_lwe =
+        if let Some(inner) = &mut input_share.glwe_sns_compression_key_as_lwe {
+            Some(LweSecretKeyShare {
+                data: reshare_same_sets(preproc128, session, &mut inner.data).await?,
+            })
+        } else {
+            None
+        };
+
     Ok(PrivateKeySet {
         lwe_encryption_secret_key_share,
         lwe_compute_secret_key_share,
@@ -240,6 +253,7 @@ where
         glwe_secret_key_share_sns_as_lwe,
         parameters: input_share.parameters,
         glwe_secret_key_share_compression,
+        glwe_sns_compression_key_as_lwe,
     })
 }
 
@@ -368,7 +382,7 @@ where
     let lagrange_numerators = make_lagrange_numerators(&all_roles_sorted)?;
     let deltas = all_roles_sorted
         .iter()
-        .map(|role| delta0i(&lagrange_numerators, role.one_based()))
+        .map(|role| delta0i(&lagrange_numerators, role))
         .collect::<Result<Vec<_>, _>>()?;
 
     // To avoid calling robust open many times sequentially,
@@ -437,12 +451,13 @@ mod tests {
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::RandomPreprocessing;
     use crate::execution::sharing::shamir::RevealOp;
-    use crate::execution::tfhe_internals::test_feature::KeySet;
+    use crate::execution::tfhe_internals::test_feature::{
+        keygen_all_party_shares_from_keyset, KeySet,
+    };
     use crate::networking::NetworkMode;
     use crate::{
         algebra::structure_traits::{Sample, Zero},
         error::error_handler::anyhow_error_and_log,
-        execution::tfhe_internals::test_feature::keygen_all_party_shares,
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             online::preprocessing::dummy::DummyPreprocessing,
@@ -460,11 +475,13 @@ mod tests {
     use std::{collections::HashMap, fmt::Display};
     use tfhe::boolean::prelude::GlweDimension;
     use tfhe::core_crypto::entities::GlweSecretKey;
-    use tfhe::shortint::noise_squashing::NoiseSquashingPrivateKey;
-    use tfhe::{
-        core_crypto::entities::LweSecretKey,
-        shortint::{ClassicPBSParameters, ShortintParameterSet},
+    use tfhe::shortint::client_key::atomic_pattern::{
+        AtomicPatternClientKey, StandardAtomicPatternClientKey,
     };
+    use tfhe::shortint::noise_squashing::NoiseSquashingPrivateKey;
+    use tfhe::shortint::prelude::ModulusSwitchType;
+    use tfhe::shortint::PBSParameters;
+    use tfhe::{core_crypto::entities::LweSecretKey, shortint::ClassicPBSParameters};
     use tokio::task::JoinSet;
 
     fn reconstruct_shares_to_scalar<Z: BaseRing + Display, const EXTENSION_DEGREE: usize>(
@@ -530,21 +547,40 @@ mod tests {
             .map(|x| x.0)
             .collect_vec();
 
-        // reconstruct the 64/128-bit glwe key
-        // we need this temporary type to reconstruct
-        let shares64 = shares
-            .iter()
-            .map(|x| {
-                x.glwe_secret_key_share
-                    .clone()
-                    .unsafe_cast_to_z64()
-                    .data_as_raw_vec()
-            })
-            .collect_vec();
-        let glwe_sk64 = reconstruct_shares_to_scalar(shares64, threshold)
-            .into_iter()
-            .map(|x| x.0)
-            .collect_vec();
+        // reconstruct the glwe key, which may have 64-bit or 128-bit shares
+        // so we need to this workaround to handle both cases
+        let glwe_sk64 = match shares[0].glwe_secret_key_share {
+            GlweSecretKeyShareEnum::Z64(_) => {
+                let shares64 = shares
+                    .iter()
+                    .map(|x| {
+                        x.glwe_secret_key_share
+                            .clone()
+                            .unsafe_cast_to_z64()
+                            .data_as_raw_vec()
+                    })
+                    .collect_vec();
+                reconstruct_shares_to_scalar(shares64, threshold)
+                    .into_iter()
+                    .map(|x| x.0)
+                    .collect_vec()
+            }
+            GlweSecretKeyShareEnum::Z128(_) => {
+                let shares128 = shares
+                    .iter()
+                    .map(|x| {
+                        x.glwe_secret_key_share
+                            .clone()
+                            .unsafe_cast_to_z128()
+                            .data_as_raw_vec()
+                    })
+                    .collect_vec();
+                reconstruct_shares_to_scalar(shares128, threshold)
+                    .into_iter()
+                    .map(|x| x.0 as u64)
+                    .collect_vec()
+            }
+        };
 
         (glwe_sns_sk128, lwe_sk64, glwe_sk64)
     }
@@ -635,19 +671,9 @@ mod tests {
 
         // generate the key shares
         let mut rng = AesRng::from_entropy();
-        let lwe_secret_key = keyset.get_raw_lwe_client_key();
-        let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
-        let mut key_shares = keygen_all_party_shares(
-            lwe_secret_key,
-            glwe_secret_key,
-            glwe_secret_key_sns_as_lwe,
-            params,
-            &mut rng,
-            num_parties,
-            threshold,
-        )
-        .unwrap();
+        let mut key_shares =
+            keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
+                .unwrap();
 
         let identities = generate_fixed_identities(num_parties);
         //Reshare assumes Sync network
@@ -675,16 +701,32 @@ mod tests {
                         key_shares[1].lwe_encryption_secret_key_share.data.len()
                     ],
                 },
-                glwe_secret_key_share: GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
-                    data: vec![
-                        Share::new(
-                            Role::indexed_from_zero(0),
-                            ResiduePoly::<Z64, EXTENSION_DEGREE>::sample(&mut rng)
-                        );
-                        key_shares[1].glwe_secret_key_share.len()
-                    ],
-                    polynomial_size: key_shares[1].glwe_secret_key_share.polynomial_size(),
-                }),
+                glwe_secret_key_share: match key_shares[0].glwe_secret_key_share {
+                    GlweSecretKeyShareEnum::Z64(_) => {
+                        GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
+                            data: vec![
+                                Share::new(
+                                    Role::indexed_from_zero(0),
+                                    ResiduePoly::<Z64, EXTENSION_DEGREE>::sample(&mut rng)
+                                );
+                                key_shares[1].glwe_secret_key_share.len()
+                            ],
+                            polynomial_size: key_shares[1].glwe_secret_key_share.polynomial_size(),
+                        })
+                    }
+                    GlweSecretKeyShareEnum::Z128(_) => {
+                        GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
+                            data: vec![
+                                Share::new(
+                                    Role::indexed_from_zero(0),
+                                    ResiduePoly::<Z128, EXTENSION_DEGREE>::sample(&mut rng)
+                                );
+                                key_shares[1].glwe_secret_key_share.len()
+                            ],
+                            polynomial_size: key_shares[1].glwe_secret_key_share.polynomial_size(),
+                        })
+                    }
+                },
                 glwe_secret_key_share_sns_as_lwe: Some(LweSecretKeyShare {
                     data: vec![
                         Share::new(
@@ -700,7 +742,19 @@ mod tests {
                     ],
                 }),
                 parameters: key_shares[1].parameters,
-                glwe_secret_key_share_compression: None,
+                glwe_secret_key_share_compression: key_shares[0]
+                    .glwe_secret_key_share_compression
+                    .clone(),
+                glwe_sns_compression_key_as_lwe: key_shares[0]
+                    .glwe_sns_compression_key_as_lwe
+                    .clone()
+                    .map(|mut inner| {
+                        inner.data[0] = Share::new(
+                            Role::indexed_from_zero(0),
+                            ResiduePoly::<Z128, EXTENSION_DEGREE>::sample(&mut rng),
+                        );
+                        inner
+                    }),
             }
         }
         // sanity check that we can still reconstruct
@@ -832,17 +886,26 @@ mod tests {
                 NoiseSquashingPrivateKey::from_raw_parts(new_raw_sns_private_key, new_sns_params),
             );
 
-        let (glwe_raw, lwe_raw, params) = keyset
+        let (glwe_raw, lwe_raw, params, _) = match keyset
             .client_key
             .to_owned()
             .into_raw_parts()
             .0
             .into_raw_parts()
-            .into_raw_parts();
+            .atomic_pattern
+        {
+            tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
+                standard_atomic_pattern_client_key,
+            ) => standard_atomic_pattern_client_key.into_raw_parts(),
+            tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey::KeySwitch32(_) => {
+                panic!("KeySwitch32 is not supported in this test")
+            }
+        };
 
         //We update the parameters to match with our truncated keys.
         //In particular we truncate the lwe_key by picking a new lwe_dimension
         //and the glwe_key by picking a new GlweDimension and PolynomialSize
+        // and set modulus switch noise reduction to standard
         let test_lwe_dim = params.lwe_dimension().0.min(8);
         let test_glwe_dim = params.glwe_dimension().0.min(1);
         let test_poly_size = params.polynomial_size().0.min(10);
@@ -864,11 +927,9 @@ mod tests {
             log2_p_fail: -80.,
             ciphertext_modulus: params.ciphertext_modulus(),
             encryption_key_choice: params.encryption_key_choice(),
-            modulus_switch_noise_reduction_params: None,
+            modulus_switch_noise_reduction_params: ModulusSwitchType::Standard,
         };
-        let new_params = ShortintParameterSet::new_pbs_param_set(
-            tfhe::shortint::PBSParameters::PBS(new_pbs_params),
-        );
+
         let lwe_cont: Vec<u64> = lwe_raw.into_container();
         let con = lwe_cont[..test_lwe_dim].to_vec();
         let new_lwe_raw = LweSecretKey::from_container(con);
@@ -878,15 +939,24 @@ mod tests {
             con,
             tfhe::integer::parameters::PolynomialSize(test_poly_size),
         );
+
+        let sck = StandardAtomicPatternClientKey::from_raw_parts(
+            new_glwe_raw,
+            new_lwe_raw,
+            PBSParameters::PBS(new_pbs_params),
+            None,
+        );
+        let sck = tfhe::shortint::ClientKey {
+            atomic_pattern: AtomicPatternClientKey::Standard(sck),
+        };
+        let sck = tfhe::integer::ClientKey::from_raw_parts(sck);
+
         let ck = tfhe::ClientKey::from_raw_parts(
-            tfhe::integer::ClientKey::from_raw_parts(tfhe::shortint::ClientKey::from_raw_parts(
-                new_glwe_raw,
-                new_lwe_raw,
-                new_params,
-            )),
+            sck,
             None,
             None,
             Some(new_sns_private_key),
+            None, //TODO: Fill when we have compression keys for big ctxt
             tfhe::Tag::default(),
         );
         keyset.client_key = ck;

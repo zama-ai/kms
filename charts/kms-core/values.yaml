@@ -31,6 +31,8 @@ kmsCore:
         privateVaultKeychainAWSKMSRootKeySpec: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
         privateVaultKeychainAWSKMSRootKeyID: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
 
+  rateLimiter:
+    bucketSize: 50000
   # Add the following to enable threshold mode:
   thresholdMode:
     enabled: false

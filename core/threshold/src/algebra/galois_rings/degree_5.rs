@@ -16,7 +16,8 @@ use crate::algebra::{
     galois_fields::gf32::{GF32, GF32_FROM_GENERATOR},
     poly::{BitWiseEval, BitwisePoly},
     structure_traits::{
-        BaseRing, One, QuotientMaximalIdeal, Ring, RingEmbed, Solve1, ZConsts, Zero,
+        BaseRing, One, QuotientMaximalIdeal, Ring, RingWithExceptionalSequence, Solve1, ZConsts,
+        Zero,
     },
 };
 
@@ -199,8 +200,8 @@ impl<Z: BaseRing> QuotientMaximalIdeal for ResiduePolyF5<Z> {
             .ok_or_else(|| anyhow!("Unexpected index {} for GF32", idx))?;
         Self::bit_lift(*x, pos)
     }
-    fn embed_quotient_exceptional_set(x: GF32) -> anyhow::Result<Self> {
-        Self::embed_exceptional_set(x.0 as usize)
+    fn embed_quotient_exceptional_sequence(x: GF32) -> anyhow::Result<Self> {
+        Self::get_from_exceptional_sequence(x.0 as usize)
     }
 }
 
@@ -212,7 +213,7 @@ impl<Z: BaseRing> Solve1 for ResiduePolyF5<Z> {
         let v_pow_8 = v_pow_4 * v_pow_4;
         let v_pow_16 = v_pow_8 * v_pow_8;
         let res = v + v_pow_4 + v_pow_16;
-        Self::embed_exceptional_set(res.0 as usize)
+        Self::get_from_exceptional_sequence(res.0 as usize)
     }
 }
 
@@ -253,7 +254,7 @@ lazy_static! {
 
 impl MemoizedExceptionals for ResiduePolyF5Z64 {
     fn calculate_powers(index: usize, degree: usize) -> anyhow::Result<Vec<Self>> {
-        let point = Self::embed_exceptional_set(index)?;
+        let point = Self::get_from_exceptional_sequence(index)?;
         Ok(compute_powers(point, degree))
     }
     fn storage() -> &'static RwLock<HashMap<(usize, usize), Vec<Self>>> {
@@ -263,7 +264,7 @@ impl MemoizedExceptionals for ResiduePolyF5Z64 {
 
 impl MemoizedExceptionals for ResiduePolyF5Z128 {
     fn calculate_powers(index: usize, degree: usize) -> anyhow::Result<Vec<Self>> {
-        let point = Self::embed_exceptional_set(index)?;
+        let point = Self::get_from_exceptional_sequence(index)?;
         Ok(compute_powers(point, degree))
     }
     fn storage() -> &'static RwLock<HashMap<(usize, usize), Vec<Self>>> {
@@ -831,8 +832,8 @@ mod tests {
             #[test]
             fn [<test_shift_ $z:lower>]() {
                 assert_eq!(
-                    ResiduePolyF5::<$z>::embed_exceptional_set(5).unwrap(),
-                    ResiduePolyF5::<$z>::embed_exceptional_set(5).unwrap() << 0,
+                    ResiduePolyF5::<$z>::get_from_exceptional_sequence(5).unwrap(),
+                    ResiduePolyF5::<$z>::get_from_exceptional_sequence(5).unwrap() << 0,
                     "Fail 1"
                 );
                 assert_eq!(
@@ -855,7 +856,7 @@ mod tests {
                         $z::ZERO,
                     ])
                     .unwrap(),
-                    ResiduePolyF5::<$z>::embed_exceptional_set(2).unwrap() << 1,
+                    ResiduePolyF5::<$z>::get_from_exceptional_sequence(2).unwrap() << 1,
                     "Fail 4"
                 );
             }
@@ -875,7 +876,7 @@ mod tests {
         input = 3;
         reference.coefs[0] = Wrapping(1);
         reference.coefs[1] = Wrapping(1);
-        res = ResiduePolyF5::embed_exceptional_set(input).unwrap();
+        res = ResiduePolyF5::get_from_exceptional_sequence(input).unwrap();
         assert_eq!(reference, res);
 
         // Set the polynomial to x^2, i.e. 0b100 = 4
@@ -884,7 +885,7 @@ mod tests {
         reference.coefs[0] = Wrapping(0);
         reference.coefs[1] = Wrapping(0);
         reference.coefs[2] = Wrapping(1);
-        res = ResiduePolyF5::embed_exceptional_set(input).unwrap();
+        res = ResiduePolyF5::get_from_exceptional_sequence(input).unwrap();
         assert_eq!(reference, res);
     }
 

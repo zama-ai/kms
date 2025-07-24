@@ -4,8 +4,10 @@
 // Key Generation Operations
 pub const OP_INSECURE_KEYGEN: &str = "insecure_keygen";
 pub const OP_INSECURE_DECOMPRESSION_KEYGEN: &str = "insecure_decompression_keygen";
+pub const OP_INSECURE_SNS_COMPRESSION_KEYGEN: &str = "insecure_sns_compression_keygen";
 pub const OP_KEYGEN: &str = "keygen";
 pub const OP_DECOMPRESSION_KEYGEN: &str = "decompression_keygen";
+pub const OP_SNS_COMPRESSION_KEYGEN: &str = "sns_compression_keygen";
 pub const OP_KEYGEN_PREPROC: &str = "keygen_preproc";
 
 // Public/User decryption Operations

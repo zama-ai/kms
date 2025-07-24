@@ -1,5 +1,5 @@
 
-ARG IMAGE_NAME=kms-service
+ARG IMAGE_NAME=kms/core-service
 ARG IMAGE_TAG=latest
 ARG RUST_IMAGE_VERSION=latest
 

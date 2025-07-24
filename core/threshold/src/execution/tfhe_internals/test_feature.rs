@@ -6,11 +6,19 @@ use tfhe::{
     core_crypto::{
         commons::traits::Numeric,
         entities::{GlweSecretKey, LweSecretKey},
+        prelude::UnsignedInteger,
     },
     integer::compression_keys::DecompressionKey,
-    prelude::{FheDecrypt, FheTryEncrypt},
+    prelude::{FheDecrypt, FheEncrypt, ParameterSetConformant, SquashNoise},
     shortint::{
-        self, list_compression::CompressionPrivateKeys, ClassicPBSParameters, ShortintParameterSet,
+        self,
+        client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
+        list_compression::{
+            CompressionPrivateKeys, NoiseSquashingCompressionKey,
+            NoiseSquashingCompressionPrivateKey,
+        },
+        noise_squashing::NoiseSquashingPrivateKey,
+        ClassicPBSParameters, PBSParameters,
     },
     zk::CompactPkeCrs,
     ClientKey, ConfigBuilder, Seed,
@@ -21,8 +29,7 @@ use crate::{
     algebra::{
         base_ring::{Z128, Z64},
         galois_rings::common::ResiduePoly,
-        poly::Poly,
-        structure_traits::{Ring, RingEmbed},
+        structure_traits::{Ring, RingWithExceptionalSequence},
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
@@ -30,10 +37,17 @@ use crate::{
             CompressionPrivateKeySharesEnum, FhePubKeySet, GlweSecretKeyShareEnum, PrivateKeySet,
         },
         runtime::{party::Role, session::BaseSessionHandles},
-        sharing::{input::robust_input, share::Share},
+        sharing::{
+            input::robust_input,
+            shamir::{InputOp, ShamirSharings},
+            share::Share,
+        },
         tfhe_internals::{
-            compression_decompression_key::CompressionPrivateKeyShares,
-            glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare,
+            compression_decompression_key::{
+                CompressionPrivateKeyShares, SnsCompressionPrivateKeyShares,
+            },
+            glwe_key::GlweSecretKeyShare,
+            lwe_key::LweSecretKeyShare,
         },
     },
     networking::value::NetworkValue,
@@ -49,12 +63,21 @@ pub struct KeySet {
     pub client_key: tfhe::ClientKey,
     pub public_keys: FhePubKeySet,
 }
+
 impl KeySet {
     pub fn get_raw_lwe_client_key(&self) -> LweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _, _) = self.client_key.clone().into_raw_parts();
-        let short_client_key = inner_client_key.into_raw_parts();
-        let (_glwe_secret_key, lwe_secret_key, _shortint_param) = short_client_key.into_raw_parts();
-        lwe_secret_key
+        let (inner_client_key, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+        match inner_client_key.into_raw_parts().atomic_pattern {
+            shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
+                standard_atomic_pattern_client_key,
+            ) => standard_atomic_pattern_client_key
+                .into_raw_parts()
+                .1
+                .clone(),
+            shortint::client_key::atomic_pattern::AtomicPatternClientKey::KeySwitch32(_) => {
+                panic!("KeySwitch32 is not supported for now")
+            }
+        }
     }
 
     pub fn get_raw_lwe_encryption_client_key(&self) -> LweSecretKey<Vec<u64>> {
@@ -63,7 +86,7 @@ impl KeySet {
         // In the normal DKG the shares that correspond to the lwe private key
         // is copied to the encryption private key if the compact PKE parameters
         // don't exist.
-        let (_, compact_private_key, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, compact_private_key, _, _, _, _) = self.client_key.clone().into_raw_parts();
         if let Some(inner) = compact_private_key {
             let raw_parts = inner.0.into_raw_parts();
             raw_parts.into_raw_parts().0
@@ -73,7 +96,7 @@ impl KeySet {
     }
 
     pub fn get_raw_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u64>>> {
-        let (_, _, compression_sk, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, _, compression_sk, _, _, _) = self.client_key.clone().into_raw_parts();
         if let Some(inner) = compression_sk {
             let raw_parts = inner.into_raw_parts();
             Some(raw_parts.post_packing_ks_key)
@@ -83,14 +106,22 @@ impl KeySet {
     }
 
     pub fn get_raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _, _) = self.client_key.clone().into_raw_parts();
-        let short_client_key = inner_client_key.into_raw_parts();
-        let (glwe_secret_key, _lwe_secret_key, _shortint_param) = short_client_key.into_raw_parts();
-        glwe_secret_key
+        let (inner_client_key, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+        match inner_client_key.into_raw_parts().atomic_pattern {
+            shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
+                standard_atomic_pattern_client_key,
+            ) => standard_atomic_pattern_client_key
+                .into_raw_parts()
+                .0
+                .clone(),
+            shortint::client_key::atomic_pattern::AtomicPatternClientKey::KeySwitch32(_) => {
+                panic!("KeySwitch32 is not supported for now")
+            }
+        }
     }
 
     pub fn get_raw_glwe_client_sns_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
-        let (_, _, _, noise_squashing_key, _) = self.client_key.clone().into_raw_parts();
+        let (_, _, _, noise_squashing_key, _, _) = self.client_key.clone().into_raw_parts();
         noise_squashing_key.map(|sns_key| sns_key.into_raw_parts().into_raw_parts().0)
     }
 
@@ -99,10 +130,28 @@ impl KeySet {
             .map(|inner| inner.into_lwe_secret_key())
     }
 
+    pub fn get_raw_sns_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
+        let (_, _, _, _, sns_compression_key, _) = self.client_key.clone().into_raw_parts();
+        sns_compression_key
+            .map(|sns_compression_key| sns_compression_key.into_raw_parts().into_raw_parts().0)
+    }
+
+    pub fn get_raw_sns_compression_client_key_as_lwe(&self) -> Option<LweSecretKey<Vec<u128>>> {
+        self.get_raw_sns_compression_client_key()
+            .map(|inner| inner.into_lwe_secret_key())
+    }
+
     pub fn get_cpu_params(&self) -> anyhow::Result<ClassicPBSParameters> {
         match self.client_key.computation_parameters() {
-            shortint::PBSParameters::PBS(classic_pbsparameters) => Ok(classic_pbsparameters),
-            shortint::PBSParameters::MultiBitPBS(_) => anyhow::bail!("GPU parameters unsupported"),
+            shortint::AtomicPatternParameters::Standard(pbsparameters) => match pbsparameters {
+                shortint::PBSParameters::PBS(classic_pbsparameters) => Ok(classic_pbsparameters),
+                shortint::PBSParameters::MultiBitPBS(_) => {
+                    anyhow::bail!("GPU parameters unsupported")
+                }
+            },
+            shortint::AtomicPatternParameters::KeySwitch32(_) => {
+                anyhow::bail!("KS32 parameters unsupported")
+            }
         }
     }
 }
@@ -116,7 +165,7 @@ pub fn gen_key_set<R: Rng + CryptoRng>(params: DKGParams, rng: &mut R) -> KeySet
         .get_compression_decompression_params();
     let noise_squashing_params = match params {
         DKGParams::WithoutSnS(_) => None,
-        DKGParams::WithSnS(dkg_sns) => Some(dkg_sns.sns_params),
+        DKGParams::WithSnS(dkg_sns) => Some((dkg_sns.sns_params, dkg_sns.sns_compression_params)),
     };
     let config = ConfigBuilder::with_custom_parameters(pbs_params);
     let config = if let Some(dedicated_pk_params) =
@@ -131,8 +180,14 @@ pub fn gen_key_set<R: Rng + CryptoRng>(params: DKGParams, rng: &mut R) -> KeySet
     } else {
         config
     };
-    let config = if let Some(params) = noise_squashing_params {
-        config.enable_noise_squashing(params)
+    let config = if let Some((sns_params, sns_compression_params)) = noise_squashing_params {
+        let config = config.enable_noise_squashing(sns_params);
+        match sns_compression_params {
+            None => config,
+            Some(sns_compression_params) => {
+                config.enable_noise_squashing_compression(sns_compression_params)
+            }
+        }
     } else {
         config
     };
@@ -152,6 +207,7 @@ pub fn gen_key_set<R: Rng + CryptoRng>(params: DKGParams, rng: &mut R) -> KeySet
     }
 }
 
+// This is an insecure way to initialize the key materials in a distributed setting.
 // TODO we should add a unit test for this
 pub async fn initialize_key_material<S: BaseSessionHandles, const EXTENSION_DEGREE: usize>(
     session: &mut S,
@@ -258,6 +314,29 @@ where
                     Numeric::ZERO;
                     params_basic_handle.compression_sk_num_bits()
                 ])
+            }
+        }
+    };
+
+    let sns_compression_sk_container128: Option<Vec<u128>> = match &keyset {
+        Some(s) => {
+            if params_basic_handle.get_sns_compression_params().is_none() {
+                None
+            } else {
+                s.clone()
+                    .get_raw_sns_compression_client_key()
+                    .map(|x| x.into_container())
+            }
+        }
+        None => {
+            if let DKGParams::WithSnS(params_sns) = params {
+                params_sns
+                    .sns_compression_params
+                    .map(|_sns_compression_params| {
+                        vec![Numeric::ZERO; params_sns.sns_compression_sk_num_bits()]
+                    })
+            } else {
+                None
             }
         }
     };
@@ -371,6 +450,30 @@ where
         glwe_compression_key_shares128 =
             robust_input(session, &secrets, &own_role, INPUT_PARTY_ID).await?;
     };
+
+    tracing::debug!(
+        "I'm {:?}, Sharing sns compression key: len {:?}",
+        session.my_role(),
+        sns_compression_sk_container128.as_ref().map(|x| x.len()),
+    );
+    let mut glwe_sns_compression_key_shares128 = Vec::new();
+    if let Some(compression_container) = sns_compression_sk_container128 {
+        let secrets = if INPUT_PARTY_ID == own_role.one_based() {
+            Some(
+                compression_container
+                    .iter()
+                    .map(|cur| {
+                        ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<u128>(*cur))
+                    })
+                    .collect_vec(),
+            )
+        } else {
+            None
+        };
+        glwe_sns_compression_key_shares128 =
+            robust_input(session, &secrets, &own_role, INPUT_PARTY_ID).await?;
+    };
+
     tracing::debug!("I'm {:?}, private keys are all sent", session.my_role());
 
     let glwe_secret_key_share_compression = params_basic_handle
@@ -385,6 +488,13 @@ where
                 params,
             })
         });
+
+    let glwe_sns_compression_key_as_lwe =
+        params_basic_handle
+            .get_sns_compression_params()
+            .map(|_sns_compression_params| LweSecretKeyShare {
+                data: glwe_sns_compression_key_shares128,
+            });
 
     let transferred_pub_key =
         transfer_pub_key(session, keyset.map(|set| set.public_keys), INPUT_PARTY_ID).await?;
@@ -403,9 +513,84 @@ where
         glwe_secret_key_share_sns_as_lwe: sns_key_shares128,
         parameters: params_basic_handle.to_classic_pbs_parameters(),
         glwe_secret_key_share_compression,
+        glwe_sns_compression_key_as_lwe,
     };
 
     Ok((transferred_pub_key, shared_sk))
+}
+
+// TODO(2674): remove this code once the SnS compression key upgrade is done
+pub async fn initialize_sns_compression_key_materials<
+    S: BaseSessionHandles,
+    const EXTENSION_DEGREE: usize,
+>(
+    session: &mut S,
+    params: DKGParams,
+    sns_sk: Option<NoiseSquashingPrivateKey>,
+) -> anyhow::Result<(
+    SnsCompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>,
+    NoiseSquashingCompressionKey,
+)>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+{
+    let own_role = session.my_role();
+    let params_basic_handle = params.get_params_basics_handle();
+    let is_input_party = own_role.one_based() == INPUT_PARTY_ID;
+
+    let raw_sns_compression_params = params_basic_handle
+            .get_sns_compression_params().ok_or(anyhow::anyhow!(
+                "insecure sns compression key generation is not supported without SnS compression parameters",
+            ))?.raw_compression_parameters;
+    let sns_compression_sk: Option<NoiseSquashingCompressionPrivateKey> = if is_input_party {
+        Some(NoiseSquashingCompressionPrivateKey::new(
+            raw_sns_compression_params,
+        ))
+    } else {
+        None
+    };
+    let sns_compression_key = match (&sns_compression_sk, sns_sk) {
+        (None, None) => None,
+        (Some(sns_compression_sk), Some(sns_sk)) => {
+            Some(sns_sk.new_noise_squashing_compression_key(sns_compression_sk))
+        }
+        _ => anyhow::bail!("the party with the sns compression sk should also have the sns sk"),
+    };
+    let raw_sns_compression_sk_container128: Option<Vec<u128>> =
+        sns_compression_sk.map(|inner| inner.into_raw_parts().0.into_container());
+
+    let secrets = if let Some(compression_container) = raw_sns_compression_sk_container128 {
+        if is_input_party {
+            Some(
+                compression_container
+                    .iter()
+                    .map(|cur| {
+                        ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping::<u128>(*cur))
+                    })
+                    .collect_vec(),
+            )
+        } else {
+            anyhow::bail!("the input party should have the sns compression secret key")
+        }
+    } else {
+        None
+    };
+    let glwe_sns_compression_key_shares128 =
+        robust_input(session, &secrets, &own_role, INPUT_PARTY_ID).await?;
+
+    let final_sns_compression_key_shares = SnsCompressionPrivateKeyShares {
+        post_packing_ks_key: GlweSecretKeyShare {
+            data: glwe_sns_compression_key_shares128,
+            polynomial_size: raw_sns_compression_params.packing_ks_polynomial_size,
+        },
+        params: raw_sns_compression_params,
+    };
+
+    let final_sns_compression_key =
+        transfer_sns_compression_key(session, sns_compression_key, INPUT_PARTY_ID).await?;
+
+    Ok((final_sns_compression_key_shares, final_sns_compression_key))
 }
 
 pub async fn transfer_pub_key<S: BaseSessionHandles>(
@@ -417,9 +602,26 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
     let network_val = transfer_network_value(session, pkval, input_party_id).await?;
     match network_val {
         NetworkValue::PubKeySet(pk) => Ok(*pk),
-        _ => Err(anyhow_error_and_log(
-            "I have received something different from a public key!",
-        ))?,
+        e => Err(anyhow_error_and_log(format!(
+            "Expected PubKeySet network message but got {}",
+            e.network_type_name()
+        )))?,
+    }
+}
+
+pub async fn transfer_sns_compression_key<S: BaseSessionHandles>(
+    session: &S,
+    key: Option<NoiseSquashingCompressionKey>,
+    input_party_id: usize,
+) -> anyhow::Result<NoiseSquashingCompressionKey> {
+    let key_networkval = key.map(|inner| NetworkValue::<Z128>::SnsCompressionKey(Box::new(inner)));
+    let network_val = transfer_network_value(session, key_networkval, input_party_id).await?;
+    match network_val {
+        NetworkValue::SnsCompressionKey(k) => Ok(*k),
+        e => Err(anyhow_error_and_log(format!(
+            "Expected SnsCompressionKey network message but got {}",
+            e.network_type_name()
+        )))?,
     }
 }
 
@@ -433,9 +635,10 @@ pub async fn transfer_crs<S: BaseSessionHandles>(
     let network_val = transfer_network_value(session, crs, input_party_id).await?;
     match network_val {
         NetworkValue::Crs(crs) => Ok(*crs),
-        _ => Err(anyhow_error_and_log(
-            "I have received something different from a CRS!",
-        ))?,
+        e => Err(anyhow_error_and_log(format!(
+            "Expected Crs network message but got {}",
+            e.network_type_name()
+        )))?,
     }
 }
 
@@ -512,16 +715,23 @@ pub fn to_hl_client_key(
     dedicated_compact_private_key: Option<LweSecretKey<Vec<u64>>>,
     compression_key: Option<GlweSecretKey<Vec<u64>>>,
     sns_secret_key: Option<GlweSecretKey<Vec<u128>>>,
+    sns_compression_secret_key: Option<NoiseSquashingCompressionPrivateKey>,
 ) -> anyhow::Result<tfhe::ClientKey> {
     let regular_params = match params {
         DKGParams::WithSnS(p) => p.regular_params,
         DKGParams::WithoutSnS(p) => *p,
     };
     let ciphertext_params = regular_params.ciphertext_parameters;
-    let sps = ShortintParameterSet::new_pbs_param_set(tfhe::shortint::PBSParameters::PBS(
-        ciphertext_params,
-    ));
-    let sck = shortint::ClientKey::from_raw_parts(glwe_secret_key, lwe_secret_key, sps);
+
+    let sck = StandardAtomicPatternClientKey::from_raw_parts(
+        glwe_secret_key,
+        lwe_secret_key,
+        PBSParameters::PBS(ciphertext_params),
+        None,
+    );
+    let sck = shortint::ClientKey {
+        atomic_pattern: AtomicPatternClientKey::Standard(sck),
+    };
 
     //If necessary generate a dedicated compact private key
     let dedicated_compact_private_key =
@@ -581,103 +791,144 @@ pub fn to_hl_client_key(
             ),
         ),
     };
+
+    let sns_compression_key = sns_compression_secret_key
+        .map(tfhe::integer::ciphertext::NoiseSquashingCompressionPrivateKey::from_raw_parts);
+
     Ok(ClientKey::from_raw_parts(
         sck.into(),
         dedicated_compact_private_key,
         compression_key,
         noise_squashing_key,
+        sns_compression_key,
         tfhe::Tag::default(),
     ))
 }
 
-/// Keygen that generates secret key shares for many parties
-/// Note that Z64 shares of glwe_secret_key_share is used. So this function
-/// should not be used in combination with key rotation tests.
+/// Helper function to generate secret key shares
+#[allow(clippy::type_complexity)]
+fn secret_share_key_shares<
+    R: Rng + CryptoRng,
+    const EXTENSION_DEGREE: usize,
+    Scalar: UnsignedInteger,
+>(
+    secret_key_container: Vec<Scalar>,
+    num_parties: usize,
+    threshold: usize,
+    rng: &mut R,
+) -> anyhow::Result<Vec<Vec<Share<ResiduePoly<Wrapping<Scalar>, EXTENSION_DEGREE>>>>>
+where
+    ResiduePoly<Wrapping<Scalar>, EXTENSION_DEGREE>: RingWithExceptionalSequence,
+    Wrapping<Scalar>: Ring,
+{
+    let s_length = secret_key_container.len();
+    let mut res: Vec<Vec<Share<ResiduePoly<Wrapping<Scalar>, EXTENSION_DEGREE>>>> =
+        vec![Vec::with_capacity(s_length); num_parties];
+
+    // for each bit in the secret key generate all parties shares
+    for (i, bit) in secret_key_container.iter().enumerate() {
+        let embedded_secret =
+            ResiduePoly::<Wrapping<Scalar>, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
+        let shares = ShamirSharings::share(rng, embedded_secret, num_parties, threshold)?;
+        for (v, share) in res.iter_mut().zip_eq(shares.shares) {
+            v.insert(i, share);
+        }
+    }
+
+    Ok(res)
+}
+
+/// Keygen that generates secret key shares for many parties.
 ///
 /// __NOTE__: Some secret keys are actually dummy or None, what we really need here are the key
 /// passed as input.
-pub fn keygen_all_party_shares<R: Rng + CryptoRng, const EXTENSION_DEGREE: usize>(
-    lwe_secret_key: LweSecretKey<Vec<u64>>,
-    glwe_secret_key: GlweSecretKey<Vec<u64>>,
-    glwe_secret_key_sns_as_lwe: LweSecretKey<Vec<u128>>,
+pub fn keygen_all_party_shares_from_keyset<R: Rng + CryptoRng, const EXTENSION_DEGREE: usize>(
+    keyset: &KeySet,
     parameters: ClassicPBSParameters,
     rng: &mut R,
     num_parties: usize,
     threshold: usize,
 ) -> anyhow::Result<Vec<PrivateKeySet<EXTENSION_DEGREE>>>
 where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: RingWithExceptionalSequence,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: RingWithExceptionalSequence,
 {
-    let s_vector = glwe_secret_key_sns_as_lwe.into_container();
-    let s_length = s_vector.len();
-    let mut vv128: Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> =
-        vec![Vec::with_capacity(s_length); num_parties];
+    let lwe_secret_key = keyset.get_raw_lwe_client_key();
 
-    let role_with_embeddings_z64 = (1..=num_parties)
-        .map(|party_id| {
-            Ok((
-                Role::indexed_from_one(party_id),
-                ResiduePoly::<Z64, EXTENSION_DEGREE>::embed_exceptional_set(party_id)?,
-            ))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    let lwe_encryption_secret_key = keyset.get_raw_lwe_encryption_client_key();
+    let glwe_secret_key = keyset.get_raw_glwe_client_key();
+    let glwe_secret_key_sns_as_lwe = keyset.get_raw_glwe_client_sns_key_as_lwe().unwrap();
+    let glwe_secret_key_sns_compression_as_lwe = keyset.get_raw_sns_compression_client_key_as_lwe();
+    keygen_all_party_shares(
+        lwe_secret_key,
+        lwe_encryption_secret_key,
+        glwe_secret_key,
+        glwe_secret_key_sns_as_lwe,
+        glwe_secret_key_sns_compression_as_lwe,
+        parameters,
+        rng,
+        num_parties,
+        threshold,
+    )
+}
 
-    let role_with_embeddings_z128 = (1..=num_parties)
-        .map(|party_id| {
-            Ok((
-                Role::indexed_from_one(party_id),
-                ResiduePoly::<Z128, EXTENSION_DEGREE>::embed_exceptional_set(party_id)?,
-            ))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
+#[allow(clippy::too_many_arguments)]
+fn keygen_all_party_shares<R: Rng + CryptoRng, const EXTENSION_DEGREE: usize>(
+    lwe_secret_key: LweSecretKey<Vec<u64>>,
+    lwe_encryption_secret_key: LweSecretKey<Vec<u64>>,
+    glwe_secret_key: GlweSecretKey<Vec<u64>>,
+    glwe_secret_key_sns_as_lwe: LweSecretKey<Vec<u128>>,
+    glwe_secreet_key_sns_compression_as_lwe: Option<LweSecretKey<Vec<u128>>>,
+    parameters: ClassicPBSParameters,
+    rng: &mut R,
+    num_parties: usize,
+    threshold: usize,
+) -> anyhow::Result<Vec<PrivateKeySet<EXTENSION_DEGREE>>>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: RingWithExceptionalSequence,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: RingWithExceptionalSequence,
+{
     // for each bit in the secret key generate all parties shares
-    for (i, bit) in s_vector.iter().enumerate() {
-        let embedded_secret = ResiduePoly::<_, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
-        let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
-
-        for (v, (role, embedding)) in vv128.iter_mut().zip_eq(role_with_embeddings_z128.iter()) {
-            v.insert(i, Share::new(*role, poly.eval(embedding)));
-        }
-    }
+    let vv128: Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> = secret_share_key_shares(
+        glwe_secret_key_sns_as_lwe.into_container(),
+        num_parties,
+        threshold,
+        rng,
+    )?;
 
     // do the same for 64 bit lwe key
-    let s_vector64 = lwe_secret_key.into_container();
-    let s_length64 = s_vector64.len();
-    let mut vv64_lwe_key: Vec<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>> =
-        vec![Vec::with_capacity(s_length64); num_parties];
-    // for each bit in the secret key generate all parties shares
-    for (i, bit) in s_vector64.iter().enumerate() {
-        let embedded_secret = ResiduePoly::<Z64, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
-        let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
+    let vv64_lwe_key: Vec<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>> =
+        secret_share_key_shares(lwe_secret_key.into_container(), num_parties, threshold, rng)?;
 
-        for (v, (role, embedding)) in vv64_lwe_key
-            .iter_mut()
-            .zip_eq(role_with_embeddings_z64.iter())
-        {
-            v.insert(i, Share::new(*role, poly.eval(embedding)));
-        }
-    }
+    // do the same for 64 bit lwe encryption key
+    let vv64_lwe_enc_key: Vec<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>> =
+        secret_share_key_shares(
+            lwe_encryption_secret_key.into_container(),
+            num_parties,
+            threshold,
+            rng,
+        )?;
 
-    // do the same for 64 bit glwe key
+    // do the same for 128 bit glwe key, this is how we generate it normally
     let glwe_poly_size = glwe_secret_key.polynomial_size();
-    let s_vector64 = glwe_secret_key.into_container();
-    let s_length64 = s_vector64.len();
-    let mut vv64_glwe_key: Vec<Vec<Share<ResiduePoly<Z64, EXTENSION_DEGREE>>>> =
-        vec![Vec::with_capacity(s_length64); num_parties];
-    // for each bit in the secret key generate all parties shares
-    for (i, bit) in s_vector64.iter().enumerate() {
-        let embedded_secret = ResiduePoly::<Z64, EXTENSION_DEGREE>::from_scalar(Wrapping(*bit));
-        let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
+    let s_vector128 = glwe_secret_key
+        .into_container()
+        .into_iter()
+        .map(|x| x as u128)
+        .collect_vec();
+    let vv128_glwe_key: Vec<Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>> =
+        secret_share_key_shares(s_vector128, num_parties, threshold, rng)?;
 
-        for (v, (role, embedding)) in vv64_glwe_key
-            .iter_mut()
-            .zip_eq(role_with_embeddings_z64.iter())
-        {
-            v.insert(i, Share::new(*role, poly.eval(embedding)));
-        }
-    }
+    // optionally share the sns compression secret key
+    let all_glwe_sns_compression_key_as_lwe = match glwe_secreet_key_sns_compression_as_lwe {
+        Some(inner) => Some(secret_share_key_shares(
+            inner.into_container(),
+            num_parties,
+            threshold,
+            rng,
+        )?),
+        None => None,
+    };
 
     // put the individual parties shares into SecretKeyShare structs
     let shared_sks: Vec<_> = (0..num_parties)
@@ -685,19 +936,22 @@ where
             lwe_compute_secret_key_share: LweSecretKeyShare {
                 data: vv64_lwe_key[p].clone(),
             },
-            //For now assume the encryption key is same as compute key
             lwe_encryption_secret_key_share: LweSecretKeyShare {
-                data: vv64_lwe_key[p].clone(),
+                data: vv64_lwe_enc_key[p].clone(),
             },
-            glwe_secret_key_share: GlweSecretKeyShareEnum::Z64(GlweSecretKeyShare {
-                data: vv64_glwe_key[p].clone(),
+            glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
+                data: vv128_glwe_key[p].clone(),
                 polynomial_size: glwe_poly_size,
             }),
             glwe_secret_key_share_sns_as_lwe: Some(LweSecretKeyShare {
                 data: vv128[p].clone(),
             }),
             parameters,
+            // the below is not really used for any computation
             glwe_secret_key_share_compression: None,
+            glwe_sns_compression_key_as_lwe: all_glwe_sns_compression_key_as_lwe
+                .as_ref()
+                .map(|x| LweSecretKeyShare { data: x[p].clone() }),
         })
         .collect();
 
@@ -713,9 +967,12 @@ impl PartialEq for FhePubKeySet {
             pk.into_raw_parts() == other_pk.into_raw_parts() && tag == other_tag
         };
 
-        let (sks, ksk, comp, decomp, sns, tag) = self.server_key.clone().into_raw_parts();
-        let (other_sks, other_ksk, other_comp, other_decomp, other_sns, other_tag) =
+        let (sks, ksk, comp, decomp, sns, _sns_comp, tag) =
+            self.server_key.clone().into_raw_parts();
+        let (other_sks, other_ksk, other_comp, other_decomp, other_sns, _other_sns_comp, other_tag) =
             other.server_key.clone().into_raw_parts();
+
+        // TODO: Can't compare the sns compression keys, and can't call into_raw_parts on them either.
         let ok2 = sks.into_raw_parts() == other_sks.into_raw_parts()
             && ksk.map(|x| x.into_raw_parts()) == other_ksk.map(|x| x.into_raw_parts())
             && comp.map(|x| x.into_raw_parts()) == other_comp.map(|x| x.into_raw_parts())
@@ -747,7 +1004,7 @@ pub fn run_decompression_test(
         Some(inner) => inner,
         None => &keyset1_client_key.generate_server_key(),
     };
-    let (_, _, _, decompression_key1, _, _) = server_key1.clone().into_raw_parts();
+    let (_, _, _, decompression_key1, _, _, _) = server_key1.clone().into_raw_parts();
     let decompression_key1 = decompression_key1.unwrap().into_raw_parts();
     assert_eq!(
         decompression_key1.blind_rotate_key.glwe_size(),
@@ -771,7 +1028,7 @@ pub fn run_decompression_test(
     // create a ciphertext using keyset 1
     tfhe::set_server_key(server_key1.clone());
     let pt = 12u32;
-    let ct = tfhe::FheUint32::try_encrypt(pt, keyset1_client_key).unwrap();
+    let ct = tfhe::FheUint32::encrypt(pt, keyset1_client_key);
     let compressed_ct = tfhe::CompressedCiphertextListBuilder::new()
         .push(ct)
         .build()
@@ -789,6 +1046,77 @@ pub fn run_decompression_test(
     println!("Attempting to decrypt under keyset2");
     let pt2: u32 = ct2.decrypt(keyset2_client_key);
     assert_eq!(pt, pt2);
+}
+
+pub fn run_sns_compression_test(new_client_key: tfhe::ClientKey, new_server_key: tfhe::ServerKey) {
+    tfhe::set_server_key(new_server_key.clone());
+    let pt = 12u32;
+    let ct = tfhe::FheUint32::encrypt(pt, &new_client_key);
+    let large_ct = ct.squash_noise().unwrap();
+    let intermediate_pt: u32 = large_ct.decrypt(&new_client_key);
+    assert_eq!(intermediate_pt, pt);
+
+    // only after this point we start to use the sns compression key
+    let compressed_large_ct = tfhe::CompressedSquashedNoiseCiphertextListBuilder::new()
+        .push(large_ct)
+        .build()
+        .unwrap();
+    let new_large_ct: tfhe::SquashedNoiseFheUint = compressed_large_ct.get(0).unwrap().unwrap();
+    let actual_pt: u32 = new_large_ct.decrypt(&new_client_key);
+    assert_eq!(actual_pt, pt);
+}
+
+pub fn combine_and_run_sns_compression_test(
+    params: DKGParams,
+    client_key: &tfhe::ClientKey,
+    sns_compression_key: tfhe::shortint::list_compression::NoiseSquashingCompressionKey,
+    sns_compression_private_key: tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey,
+    server_key: Option<&tfhe::ServerKey>,
+) {
+    // first we put the private key to the client key
+    let int_sns_compression_private_key =
+        tfhe::integer::ciphertext::NoiseSquashingCompressionPrivateKey::from_raw_parts(
+            sns_compression_private_key,
+        );
+    let client_key_parts = client_key.clone().into_raw_parts();
+    let new_client_key = tfhe::ClientKey::from_raw_parts(
+        client_key_parts.0,
+        client_key_parts.1,
+        client_key_parts.2,
+        client_key_parts.3,
+        Some(int_sns_compression_private_key),
+        client_key_parts.5,
+    );
+
+    let server_key = match server_key {
+        Some(inner) => inner.clone(),
+        None => new_client_key.generate_server_key(),
+    };
+
+    let (sns_params, sns_compression_params) = match params {
+        DKGParams::WithoutSnS(_) => panic!("SNS compression test requires DKGParams with SnS"),
+        DKGParams::WithSnS(dkgparams_sn_s) => (
+            dkgparams_sn_s.sns_params,
+            dkgparams_sn_s.sns_compression_params.unwrap(),
+        ),
+    };
+    assert!(sns_compression_key.is_conformant(&(sns_params, sns_compression_params).into()));
+    let int_sns_compression_key =
+        tfhe::integer::ciphertext::NoiseSquashingCompressionKey::from_raw_parts(
+            sns_compression_key,
+        );
+    let server_key_parts = server_key.into_raw_parts();
+    let new_server_key = tfhe::ServerKey::from_raw_parts(
+        server_key_parts.0,
+        server_key_parts.1,
+        server_key_parts.2,
+        server_key_parts.3,
+        server_key_parts.4,
+        Some(int_sns_compression_key),
+        server_key_parts.6,
+    );
+
+    run_sns_compression_test(new_client_key, new_server_key);
 }
 
 #[cfg(test)]

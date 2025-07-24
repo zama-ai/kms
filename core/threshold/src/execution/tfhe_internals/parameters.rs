@@ -10,13 +10,15 @@ use tfhe::{
     integer::parameters::DynamicDistribution,
     shortint::{
         parameters::{
-            v1_1::V1_1_NOISE_SQUASHING_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
+            v1_3::V1_3_NOISE_SQUASHING_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
             CompactCiphertextListExpansionKind, CompactPublicKeyEncryptionParameters,
             CompressionParameters, DecompositionBaseLog, DecompositionLevelCount, GlweDimension,
             LweCiphertextCount, LweDimension, ModulusSwitchNoiseReductionParams,
-            NoiseEstimationMeasureBound, NoiseSquashingParameters, PolynomialSize, RSigmaFactor,
-            ShortintKeySwitchingParameters, SupportedCompactPkeZkScheme, Variance,
+            NoiseEstimationMeasureBound, NoiseSquashingCompressionParameters,
+            NoiseSquashingParameters, PolynomialSize, RSigmaFactor, ShortintKeySwitchingParameters,
+            SupportedCompactPkeZkScheme, Variance,
         },
+        prelude::ModulusSwitchType,
         CarryModulus, ClassicPBSParameters, EncryptionKeyChoice, MaxNoiseLevel, MessageModulus,
         PBSOrder, PBSParameters,
     },
@@ -30,6 +32,15 @@ pub enum EncryptionType {
     Bits128,
 }
 
+impl EncryptionType {
+    pub fn bit_len(&self) -> usize {
+        match self {
+            EncryptionType::Bits64 => 64,
+            EncryptionType::Bits128 => 128,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug, Default)]
 pub struct TUniformBound(pub usize);
 
@@ -40,6 +51,7 @@ pub enum NoiseBounds {
     GlweNoise(TUniformBound),
     GlweNoiseSnS(TUniformBound),
     CompressionKSKNoise(TUniformBound),
+    SnsCompressionKSKNoise(TUniformBound),
 }
 
 impl NoiseBounds {
@@ -50,6 +62,7 @@ impl NoiseBounds {
             NoiseBounds::GlweNoise(bound) => *bound,
             NoiseBounds::GlweNoiseSnS(bound) => *bound,
             NoiseBounds::CompressionKSKNoise(bound) => *bound,
+            NoiseBounds::SnsCompressionKSKNoise(bound) => *bound,
         }
     }
 }
@@ -80,11 +93,25 @@ pub struct MSNRKParams {
 }
 
 #[derive(Debug)]
+pub enum MSNRKConfiguration {
+    Standard,
+    DriftTechniqueNoiseReduction(MSNRKParams),
+    CenteredMeanNoiseReduction,
+}
+
+#[derive(Debug)]
 pub struct DistributedCompressionParameters {
     pub raw_compression_parameters: CompressionParameters,
     pub ksk_num_noise: usize,
     pub ksk_noisebound: NoiseBounds,
     pub bk_params: BKParams,
+}
+
+#[derive(Debug)]
+pub struct DistributedSnsCompressionParameters {
+    pub raw_compression_parameters: NoiseSquashingCompressionParameters,
+    pub ksk_num_noise: usize,
+    pub ksk_noisebound: NoiseBounds,
 }
 
 pub trait AugmentedCiphertextParameters {
@@ -131,6 +158,7 @@ impl AugmentedCiphertextParameters for ClassicPBSParameters {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq)]
 pub enum DKGParams {
     WithoutSnS(DKGParamsRegular),
@@ -214,6 +242,7 @@ impl From<DKGParamsRegular> for PBSParameters {
 pub struct DKGParamsSnS {
     pub regular_params: DKGParamsRegular,
     pub sns_params: NoiseSquashingParameters,
+    pub sns_compression_params: Option<NoiseSquashingCompressionParameters>,
 }
 
 #[derive(Debug, Clone)]
@@ -293,8 +322,9 @@ pub trait DKGParamsBasics: Sync {
     fn get_pksk_params(&self) -> Option<KSKParams>;
     fn get_bk_params(&self) -> BKParams;
     // msnrk: modulus switch noise reduction key
-    fn get_msnrk_params(&self) -> Option<MSNRKParams>;
+    fn get_msnrk_configuration(&self) -> MSNRKConfiguration;
     fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters>;
+    fn get_sns_compression_params(&self) -> Option<DistributedSnsCompressionParameters>;
 
     fn all_lwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
     fn all_lwe_hat_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
@@ -380,33 +410,43 @@ impl DKGParamsBasics for DKGParamsRegular {
         //Counted twice if there's no dedicated pk parameter
         let mut num_bits_needed = self.num_raw_bits(keyset_config);
 
-        if keyset_config.is_standard() {
-            //And additionally, need bits to process the TUniform noises
-            //(we need bound + 2 bits to sample a TUniform(bound))
-            //For pk
-            num_bits_needed += self.num_needed_noise_pk().num_bits_needed();
+        match keyset_config {
+            KeySetConfig::Standard(_) => {
+                //And additionally, need bits to process the TUniform noises
+                //(we need bound + 2 bits to sample a TUniform(bound))
+                //For pk
+                num_bits_needed += self.num_needed_noise_pk().num_bits_needed();
 
-            //For ksk
-            num_bits_needed += self.num_needed_noise_ksk().num_bits_needed();
+                //For ksk
+                num_bits_needed += self.num_needed_noise_ksk().num_bits_needed();
 
-            //For bk
-            num_bits_needed += self.num_needed_noise_bk().num_bits_needed();
+                //For bk
+                num_bits_needed += self.num_needed_noise_bk().num_bits_needed();
 
-            //For pksk
-            num_bits_needed += self.num_needed_noise_pksk().num_bits_needed();
+                //For pksk
+                num_bits_needed += self.num_needed_noise_pksk().num_bits_needed();
 
-            //For (de)compression keys
-            //note that the bits are automatically 0
-            //if compression is not supported by the parameters
+                //For (de)compression keys
+                //note that the bits are automatically 0
+                //if compression is not supported by the parameters
 
-            //For compression keys
-            num_bits_needed += self.num_needed_noise_compression_key().num_bits_needed();
+                //For compression keys
+                num_bits_needed += self.num_needed_noise_compression_key().num_bits_needed();
 
-            // for msnrk
-            num_bits_needed += self.num_needed_noise_msnrk().num_bits_needed();
+                // for msnrk
+                num_bits_needed += self.num_needed_noise_msnrk().num_bits_needed();
+
+                //For decompression keys
+                num_bits_needed += self.num_needed_noise_decompression_key().num_bits_needed();
+            }
+            KeySetConfig::DecompressionOnly => {
+                //For decompression keys
+                num_bits_needed += self.num_needed_noise_decompression_key().num_bits_needed();
+            }
+            KeySetConfig::AddSnsCompressionKey => {
+                // nothing to do here because this is for regular parameters
+            }
         }
-        //For decompression keys
-        num_bits_needed += self.num_needed_noise_decompression_key().num_bits_needed();
 
         num_bits_needed
     }
@@ -414,15 +454,27 @@ impl DKGParamsBasics for DKGParamsRegular {
     fn total_triples_required(&self, keyset_config: KeySetConfig) -> usize {
         //Required for the "normal" BK
         let mut num_triples_needed = 0;
-        if keyset_config.is_standard() {
-            num_triples_needed += self.lwe_dimension().0 * self.glwe_sk_num_bits();
-        }
 
-        //Required for the compression BK
-        if let Some(comp_params) = self.compression_decompression_parameters {
-            num_triples_needed += self.glwe_sk_num_bits()
-                * (comp_params.packing_ks_glwe_dimension.0
-                    * comp_params.packing_ks_polynomial_size.0)
+        match keyset_config {
+            KeySetConfig::Standard(_) => {
+                num_triples_needed += self.lwe_dimension().0 * self.glwe_sk_num_bits();
+
+                //Required for the compression BK
+                if let Some(comp_params) = self.compression_decompression_parameters {
+                    num_triples_needed += self.glwe_sk_num_bits()
+                        * (comp_params.packing_ks_glwe_dimension.0
+                            * comp_params.packing_ks_polynomial_size.0)
+                }
+            }
+            KeySetConfig::DecompressionOnly => {
+                //Required for the compression BK
+                if let Some(comp_params) = self.compression_decompression_parameters {
+                    num_triples_needed += self.glwe_sk_num_bits()
+                        * (comp_params.packing_ks_glwe_dimension.0
+                            * comp_params.packing_ks_polynomial_size.0)
+                }
+            }
+            KeySetConfig::AddSnsCompressionKey => {}
         }
 
         self.total_bits_required(keyset_config) + num_triples_needed
@@ -562,8 +614,15 @@ impl DKGParamsBasics for DKGParamsRegular {
             .ciphertext_parameters
             .modulus_switch_noise_reduction_params
         {
-            Some(param) => param.modulus_switch_zeros_count.0,
-            None => 0,
+            ModulusSwitchType::Standard => 0,
+            ModulusSwitchType::DriftTechniqueNoiseReduction(
+                modulus_switch_noise_reduction_params,
+            ) => {
+                modulus_switch_noise_reduction_params
+                    .modulus_switch_zeros_count
+                    .0
+            }
+            ModulusSwitchType::CenteredMeanNoiseReduction => 0,
         };
         let bound = NoiseBounds::LweNoise(self.lwe_tuniform_bound());
         NoiseInfo { amount, bound }
@@ -635,15 +694,24 @@ impl DKGParamsBasics for DKGParamsRegular {
         }
     }
 
-    fn get_msnrk_params(&self) -> Option<MSNRKParams> {
+    fn get_msnrk_configuration(&self) -> MSNRKConfiguration {
         let NoiseInfo { amount, bound } = self.num_needed_noise_msnrk();
-        self.ciphertext_parameters
+        match self
+            .ciphertext_parameters
             .modulus_switch_noise_reduction_params
-            .map(|params| MSNRKParams {
+        {
+            ModulusSwitchType::Standard => MSNRKConfiguration::Standard,
+            ModulusSwitchType::DriftTechniqueNoiseReduction(
+                modulus_switch_noise_reduction_params,
+            ) => MSNRKConfiguration::DriftTechniqueNoiseReduction(MSNRKParams {
                 num_needed_noise: amount,
                 noise_bound: bound,
-                params,
-            })
+                params: modulus_switch_noise_reduction_params,
+            }),
+            ModulusSwitchType::CenteredMeanNoiseReduction => {
+                MSNRKConfiguration::CenteredMeanNoiseReduction
+            }
+        }
     }
 
     fn compression_sk_num_bits(&self) -> usize {
@@ -719,6 +787,7 @@ impl DKGParamsBasics for DKGParamsRegular {
                     }
             }
             KeySetConfig::DecompressionOnly => 0,
+            KeySetConfig::AddSnsCompressionKey => 0,
         }
     }
 
@@ -748,6 +817,10 @@ impl DKGParamsBasics for DKGParamsRegular {
                 amount: 0,
                 bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
             },
+            KeySetConfig::AddSnsCompressionKey => NoiseInfo {
+                amount: 0,
+                bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
+            },
         }
     }
 
@@ -760,6 +833,10 @@ impl DKGParamsBasics for DKGParamsRegular {
                 out
             }
             KeySetConfig::DecompressionOnly => NoiseInfo {
+                amount: 0,
+                bound: NoiseBounds::LweHatNoise(self.lwe_hat_tuniform_bound()),
+            },
+            KeySetConfig::AddSnsCompressionKey => NoiseInfo {
                 amount: 0,
                 bound: NoiseBounds::LweHatNoise(self.lwe_hat_tuniform_bound()),
             },
@@ -791,6 +868,10 @@ impl DKGParamsBasics for DKGParamsRegular {
                 let noises = &[self.num_needed_noise_decompression_key()];
                 combine_noise_info(target_bound, noises)
             }
+            KeySetConfig::AddSnsCompressionKey => NoiseInfo {
+                amount: 0,
+                bound: target_bound,
+            },
         }
     }
 
@@ -807,6 +888,10 @@ impl DKGParamsBasics for DKGParamsRegular {
                 out
             }
             KeySetConfig::DecompressionOnly => NoiseInfo {
+                amount: 0,
+                bound: NoiseBounds::CompressionKSKNoise(TUniformBound::default()),
+            },
+            KeySetConfig::AddSnsCompressionKey => NoiseInfo {
                 amount: 0,
                 bound: NoiseBounds::CompressionKSKNoise(TUniformBound::default()),
             },
@@ -858,6 +943,10 @@ impl DKGParamsBasics for DKGParamsRegular {
         }
     }
 
+    fn get_sns_compression_params(&self) -> Option<DistributedSnsCompressionParameters> {
+        None
+    }
+
     fn get_dedicated_pk_params(
         &self,
     ) -> Option<(
@@ -904,14 +993,29 @@ impl DKGParamsBasics for DKGParamsSnS {
     fn total_bits_required(&self, keyset_config: KeySetConfig) -> usize {
         //Need the bits for regular keygen
         let mut num_bits_needed = self.regular_params.total_bits_required(keyset_config);
-        if keyset_config.is_standard() {
-            num_bits_needed +=
-            //And for the additional glwe sk
-            self.glwe_sk_num_bits_sns() +
-            //And for the noise for the bk sns
-            self.all_bk_sns_noise().num_bits_needed() +
-            // Number of bits of the mod switch noise reduction in the SnS key
-            self.num_needed_noise_msnrk_sns().num_bits_needed();
+        match keyset_config {
+            KeySetConfig::Standard(_) => {
+                num_bits_needed +=
+                //And for the additional glwe sk
+                self.glwe_sk_num_bits_sns() +
+                //And for the noise for the bk sns
+                self.all_bk_sns_noise().num_bits_needed() +
+                // Number of bits of the mod switch noise reduction in the SnS key
+                self.num_needed_noise_msnrk_sns().num_bits_needed() +
+                // Number of bits needed for sns compression key
+                self.num_needed_noise_sns_compression_key().num_bits_needed() +
+                self.sns_compression_sk_num_bits();
+            }
+            KeySetConfig::DecompressionOnly => {
+                // do nothing since decompression is handled by regular params
+            }
+            KeySetConfig::AddSnsCompressionKey => {
+                num_bits_needed +=
+                // Number of bits needed for sns compression key
+                // we don't need more than this because the other keys are not generated.
+                self.num_needed_noise_sns_compression_key().num_bits_needed() +
+                self.sns_compression_sk_num_bits();
+            }
         }
 
         num_bits_needed
@@ -919,17 +1023,31 @@ impl DKGParamsBasics for DKGParamsSnS {
 
     fn total_triples_required(&self, keyset_config: KeySetConfig) -> usize {
         let mut num_triples_needed = 0;
-        if keyset_config.is_standard() {
-            num_triples_needed +=
-            // Raw triples necessary for the 2 BK
-            self.lwe_dimension().0 * (self.glwe_sk_num_bits() + self.glwe_sk_num_bits_sns());
-        }
 
-        //Required for the compression BK
-        if let Some(comp_params) = self.regular_params.compression_decompression_parameters {
-            num_triples_needed += self.glwe_sk_num_bits()
-                * (comp_params.packing_ks_glwe_dimension.0
-                    * comp_params.packing_ks_polynomial_size.0)
+        match keyset_config {
+            KeySetConfig::Standard(_) => {
+                num_triples_needed +=
+                // Raw triples necessary for the 2 BK
+                self.lwe_dimension().0 * (self.glwe_sk_num_bits() + self.glwe_sk_num_bits_sns());
+
+                // Required for the compression BK
+                if let Some(comp_params) = self.regular_params.compression_decompression_parameters
+                {
+                    num_triples_needed += self.glwe_sk_num_bits()
+                        * (comp_params.packing_ks_glwe_dimension.0
+                            * comp_params.packing_ks_polynomial_size.0)
+                }
+            }
+            KeySetConfig::DecompressionOnly => {
+                // Required for the compression BK
+                if let Some(comp_params) = self.regular_params.compression_decompression_parameters
+                {
+                    num_triples_needed += self.glwe_sk_num_bits()
+                        * (comp_params.packing_ks_glwe_dimension.0
+                            * comp_params.packing_ks_polynomial_size.0)
+                }
+            }
+            KeySetConfig::AddSnsCompressionKey => {}
         }
 
         self.total_bits_required(keyset_config) + num_triples_needed
@@ -1053,12 +1171,29 @@ impl DKGParamsBasics for DKGParamsSnS {
         self.regular_params.get_bk_params()
     }
 
-    fn get_msnrk_params(&self) -> Option<MSNRKParams> {
-        self.regular_params.get_msnrk_params()
+    fn get_msnrk_configuration(&self) -> MSNRKConfiguration {
+        self.regular_params.get_msnrk_configuration()
     }
 
     fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters> {
         self.regular_params.get_compression_decompression_params()
+    }
+
+    fn get_sns_compression_params(&self) -> Option<DistributedSnsCompressionParameters> {
+        if let Some(comp_params) = self.sns_compression_params {
+            let NoiseInfo {
+                amount: ksk_num_noise,
+                bound: ksk_noisebound,
+            } = self.num_needed_noise_sns_compression_key();
+
+            Some(DistributedSnsCompressionParameters {
+                raw_compression_parameters: comp_params,
+                ksk_num_noise,
+                ksk_noisebound,
+            })
+        } else {
+            None
+        }
     }
 
     fn num_needed_noise_compression_key(&self) -> NoiseInfo {
@@ -1071,10 +1206,12 @@ impl DKGParamsBasics for DKGParamsSnS {
 
     fn num_raw_bits(&self, keyset_config: KeySetConfig) -> usize {
         self.regular_params.num_raw_bits(keyset_config)
-            + if keyset_config.is_standard() {
-                self.glwe_sk_num_bits_sns()
-            } else {
-                0
+            + match keyset_config {
+                KeySetConfig::Standard(_standard_key_set_config) => {
+                    self.glwe_sk_num_bits_sns() + self.sns_compression_sk_num_bits()
+                }
+                KeySetConfig::DecompressionOnly => 0,
+                KeySetConfig::AddSnsCompressionKey => self.sns_compression_sk_num_bits(),
             }
     }
 
@@ -1087,6 +1224,10 @@ impl DKGParamsBasics for DKGParamsSnS {
                 combine_noise_info(target_bound, &[regular_lwe, sns_lwe])
             }
             KeySetConfig::DecompressionOnly => self.regular_params.all_lwe_noise(keyset_config),
+            KeySetConfig::AddSnsCompressionKey => NoiseInfo {
+                amount: 0,
+                bound: NoiseBounds::LweNoise(self.lwe_tuniform_bound()),
+            },
         }
     }
 
@@ -1174,24 +1315,82 @@ impl DKGParamsSnS {
         }
     }
 
+    pub fn sns_compression_sk_num_bits(&self) -> usize {
+        match self.sns_compression_params {
+            Some(param) => param.packing_ks_polynomial_size.0 * param.packing_ks_glwe_dimension.0,
+            None => 0,
+        }
+    }
+
+    fn sns_compression_key_tuniform_bound(&self) -> Option<TUniformBound> {
+        if let Some(params) = self.sns_compression_params {
+            if let DynamicDistribution::TUniform(bound) = params.packing_ks_key_noise_distribution {
+                Some(TUniformBound(bound.bound_log2() as usize))
+            } else {
+                panic!("We do not support non-Tuniform noise distribution")
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn num_needed_noise_sns_compression_key(&self) -> NoiseInfo {
+        // both must exist to make a valid NoiseInfo
+        match (
+            self.sns_compression_params,
+            self.sns_compression_key_tuniform_bound(),
+        ) {
+            (Some(comp_params), Some(compression_key_tuniform_bound)) => {
+                let amount = self.sns_params.glwe_dimension.0
+                    * self.sns_params.polynomial_size.0
+                    * comp_params.packing_ks_level.0
+                    * comp_params.packing_ks_polynomial_size.0;
+                NoiseInfo {
+                    amount,
+                    bound: NoiseBounds::SnsCompressionKSKNoise(compression_key_tuniform_bound),
+                }
+            }
+            _ => {
+                // use a dummy bound
+                NoiseInfo {
+                    amount: 0,
+                    bound: NoiseBounds::SnsCompressionKSKNoise(TUniformBound::default()),
+                }
+            }
+        }
+    }
+
     fn num_needed_noise_msnrk_sns(&self) -> NoiseInfo {
         let amount = match self.sns_params.modulus_switch_noise_reduction_params {
-            Some(param) => param.modulus_switch_zeros_count.0,
-            None => 0,
+            ModulusSwitchType::Standard => 0,
+            ModulusSwitchType::DriftTechniqueNoiseReduction(
+                modulus_switch_noise_reduction_params,
+            ) => {
+                modulus_switch_noise_reduction_params
+                    .modulus_switch_zeros_count
+                    .0
+            }
+            ModulusSwitchType::CenteredMeanNoiseReduction => 0,
         };
         let bound = NoiseBounds::LweNoise(self.lwe_tuniform_bound());
         NoiseInfo { amount, bound }
     }
 
-    pub fn get_msnrk_params_sns(&self) -> Option<MSNRKParams> {
+    pub fn get_msnrk_configuration_sns(&self) -> MSNRKConfiguration {
         let NoiseInfo { amount, bound } = self.num_needed_noise_msnrk_sns();
-        self.sns_params
-            .modulus_switch_noise_reduction_params
-            .map(|params| MSNRKParams {
+        match self.sns_params.modulus_switch_noise_reduction_params {
+            ModulusSwitchType::Standard => MSNRKConfiguration::Standard,
+            ModulusSwitchType::DriftTechniqueNoiseReduction(
+                modulus_switch_noise_reduction_params,
+            ) => MSNRKConfiguration::DriftTechniqueNoiseReduction(MSNRKParams {
                 num_needed_noise: amount,
                 noise_bound: bound,
-                params,
-            })
+                params: modulus_switch_noise_reduction_params,
+            }),
+            ModulusSwitchType::CenteredMeanNoiseReduction => {
+                MSNRKConfiguration::CenteredMeanNoiseReduction
+            }
+        }
     }
 }
 
@@ -1256,7 +1455,8 @@ pub const BC_PARAMS_NO_SNS: DKGParams = DKGParams::WithoutSnS(BC_PARAMS);
 /// and SnS params taken from tfhe-rs as well.
 pub const BC_PARAMS_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: BC_PARAMS,
-    sns_params: V1_1_NOISE_SQUASHING_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
+    sns_params: V1_3_NOISE_SQUASHING_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
+    sns_compression_params: Some(tfhe::shortint::parameters::v1_3::V1_3_NOISE_SQUASHING_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128),
 });
 
 /// Blokchain Parameters (with pfail `2^-64`), using parameters generated by Nigel's script
@@ -1279,7 +1479,8 @@ const BC_PARAMS_NIGEL: DKGParamsRegular = DKGParamsRegular {
         log2_p_fail: -64.0629,
         ciphertext_modulus: CiphertextModulus::new_native(),
         encryption_key_choice: EncryptionKeyChoice::Big,
-        modulus_switch_noise_reduction_params: None,
+        //Note: Not sure about this one
+        modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
     },
     dedicated_compact_public_key_parameters: Some((
         CompactPublicKeyEncryptionParameters {
@@ -1315,11 +1516,12 @@ pub const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
         decomp_base_log: DecompositionBaseLog(24),
         decomp_level_count: DecompositionLevelCount(3),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-        modulus_switch_noise_reduction_params: None,
+        modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
         // we keep the same message and carry modulus
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
     },
+    sns_compression_params: None,
 });
 
 /// __INSECURE__ Used for testing only
@@ -1349,12 +1551,14 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
             log2_p_fail: -64f64,
             ciphertext_modulus: CiphertextModulus::new_native(),
             encryption_key_choice: EncryptionKeyChoice::Big,
-            modulus_switch_noise_reduction_params: Some(ModulusSwitchNoiseReductionParams {
-                modulus_switch_zeros_count: LweCiphertextCount(10),
-                ms_bound: NoiseEstimationMeasureBound(288230376151711744f64),
-                ms_r_sigma_factor: RSigmaFactor(9.75539320076416),
-                ms_input_variance: Variance(1.92631390716519e-10),
-            }),
+            modulus_switch_noise_reduction_params: ModulusSwitchType::DriftTechniqueNoiseReduction(
+                ModulusSwitchNoiseReductionParams {
+                    modulus_switch_zeros_count: LweCiphertextCount(10),
+                    ms_bound: NoiseEstimationMeasureBound(288230376151711744f64),
+                    ms_r_sigma_factor: RSigmaFactor(9.75539320076416),
+                    ms_input_variance: Variance(1.92631390716519e-10),
+                },
+            ),
         },
         compression_decompression_parameters: Some(CompressionParameters {
             br_level: DecompositionLevelCount(1),
@@ -1392,15 +1596,28 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
         decomp_base_log: DecompositionBaseLog(33),
         decomp_level_count: DecompositionLevelCount(2),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-        modulus_switch_noise_reduction_params: Some(ModulusSwitchNoiseReductionParams {
-            modulus_switch_zeros_count: LweCiphertextCount(8),
-            ms_bound: NoiseEstimationMeasureBound(288230376151711744f64),
-            ms_r_sigma_factor: RSigmaFactor(9.2),
-            ms_input_variance: Variance(2.182718682903484e-224),
-        }),
+        modulus_switch_noise_reduction_params: ModulusSwitchType::DriftTechniqueNoiseReduction(
+            ModulusSwitchNoiseReductionParams {
+                modulus_switch_zeros_count: LweCiphertextCount(8),
+                ms_bound: NoiseEstimationMeasureBound(288230376151711744f64),
+                ms_r_sigma_factor: RSigmaFactor(9.2),
+                ms_input_variance: Variance(2.182718682903484e-224),
+            },
+        ),
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
     },
+    sns_compression_params: Some(NoiseSquashingCompressionParameters {
+        packing_ks_level: DecompositionLevelCount(1),
+        packing_ks_base_log: DecompositionBaseLog(61),
+        packing_ks_polynomial_size: PolynomialSize(256),
+        packing_ks_glwe_dimension: GlweDimension(1),
+        lwe_per_glwe: LweCiphertextCount(128),
+        packing_ks_key_noise_distribution: DynamicDistribution::new_t_uniform(3),
+        ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
+        message_modulus: MessageModulus(4),
+        carry_modulus: CarryModulus(4),
+    }),
 });
 
 // Old set of parameters from before we had dedicated pk parameters and PKSK
@@ -1426,7 +1643,7 @@ pub const OLD_PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParams
             log2_p_fail: -80., //most likely not true, but these should be deprecated anyway
             ciphertext_modulus: CiphertextModulus::new_native(),
             encryption_key_choice: EncryptionKeyChoice::Small,
-            modulus_switch_noise_reduction_params: None,
+            modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
         },
         compression_decompression_parameters: None,
         dedicated_compact_public_key_parameters: None,
@@ -1439,10 +1656,11 @@ pub const OLD_PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParams
         decomp_base_log: DecompositionBaseLog(24),
         decomp_level_count: DecompositionLevelCount(3),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-        modulus_switch_noise_reduction_params: None,
+        modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
     },
+    sns_compression_params: None,
 });
 
 pub const NIST_PARAMS_P8_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
@@ -1463,6 +1681,7 @@ pub const NIST_PARAMS_P8_SNS_LWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: NIST_PARAMS_P8_INTERNAL_LWE,
     sns_params:
         super::raw_parameters::NIST_PARAMS_NOISE_SQUASHING_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128,
+    sns_compression_params: None,
 });
 
 pub const NIST_PARAMS_P32_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
@@ -1484,6 +1703,7 @@ pub const NIST_PARAMS_P32_SNS_LWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: NIST_PARAMS_P32_INTERNAL_LWE,
     sns_params:
         super::raw_parameters::NIST_PARAMS_NOISE_SQUASHING_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128,
+    sns_compression_params: None,
 });
 
 pub const NIST_PARAMS_P8_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
@@ -1506,6 +1726,7 @@ pub const NIST_PARAMS_P8_SNS_FGLWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS 
     regular_params: NIST_PARAMS_P8_INTERNAL_FGLWE,
     sns_params:
         super::raw_parameters::NIST_PARAMS_NOISE_SQUASHING_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128,
+    sns_compression_params: None,
 });
 
 pub const NIST_PARAMS_P32_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
@@ -1528,6 +1749,7 @@ pub const NIST_PARAMS_P32_SNS_FGLWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS
     regular_params: NIST_PARAMS_P32_INTERNAL_FGLWE,
     sns_params:
         super::raw_parameters::NIST_PARAMS_NOISE_SQUASHING_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
+    sns_compression_params: None,
 });
 
 #[cfg(test)]
@@ -1571,6 +1793,34 @@ mod tests {
     }
 
     #[test]
+    fn test_required_preproc_sns() {
+        let keyset_config = KeySetConfig::default();
+        let param = BC_PARAMS_SNS;
+        let sns_param = match param {
+            crate::execution::tfhe_internals::parameters::DKGParams::WithSnS(p) => p,
+            _ => panic!("Expected WithSnS parameters"),
+        };
+        let h = param.get_params_basics_handle();
+        let sk_total = h.lwe_dimension().0
+            + h.lwe_hat_dimension().0
+            + h.glwe_sk_num_bits()
+            + h.compression_sk_num_bits()
+            + sns_param.glwe_sk_num_bits_sns()
+            + sns_param.sns_compression_sk_num_bits();
+        assert_eq!(sk_total, h.num_raw_bits(keyset_config));
+        let noise_total = h.all_compression_ksk_noise(keyset_config).num_bits_needed()
+            + h.all_glwe_noise(keyset_config).num_bits_needed()
+            + h.all_lwe_hat_noise(keyset_config).num_bits_needed()
+            + h.all_lwe_noise(keyset_config).num_bits_needed()
+            + sns_param.all_bk_sns_noise().num_bits_needed()
+            + sns_param
+                .num_needed_noise_sns_compression_key()
+                .num_bits_needed();
+
+        assert_eq!(sk_total + noise_total, h.total_bits_required(keyset_config));
+    }
+
+    #[test]
     fn test_required_preproc_decompression() {
         let keyset_config = KeySetConfig::DecompressionOnly;
         for param in [BC_PARAMS_SNS, BC_PARAMS_NO_SNS] {
@@ -1584,6 +1834,33 @@ mod tests {
                 sk_total + noise_total,
                 h.all_glwe_noise(keyset_config).num_bits_needed()
             );
+        }
+    }
+
+    #[test]
+    fn test_required_preproc_sns_compression() {
+        let keyset_config = KeySetConfig::AddSnsCompressionKey;
+        {
+            let param = BC_PARAMS_SNS;
+            let h = param.get_params_basics_handle();
+            let sns_param = match param {
+                crate::execution::tfhe_internals::parameters::DKGParams::WithSnS(p) => p,
+                _ => panic!("Expected WithSnS parameters"),
+            };
+            let sk_total = sns_param.sns_compression_sk_num_bits();
+            assert_eq!(sk_total, h.num_raw_bits(keyset_config));
+
+            let noise_total = sns_param
+                .num_needed_noise_sns_compression_key()
+                .num_bits_needed();
+            assert_eq!(sk_total + noise_total, h.total_bits_required(keyset_config));
+        }
+
+        {
+            let param = BC_PARAMS_NO_SNS;
+            let h = param.get_params_basics_handle();
+            assert_eq!(0, h.num_raw_bits(keyset_config));
+            assert_eq!(0, h.total_bits_required(keyset_config));
         }
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    algebra::structure_traits::{Invert, Ring, RingEmbed},
+    algebra::structure_traits::{Invert, Ring, RingWithExceptionalSequence},
     execution::{
         communication::p2p::send_to_honest_parties,
         large_execution::share_dispute::{
@@ -160,7 +160,7 @@ impl MaliciousShareDisputeRecons {
 
 #[async_trait]
 impl ShareDispute for MaliciousShareDisputeRecons {
-    async fn execute_double<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
+    async fn execute_double<Z: RingWithExceptionalSequence + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -215,7 +215,7 @@ impl ShareDispute for MaliciousShareDisputeRecons {
         send_and_receive_share_dispute_double(session, polypoints_map, secrets.len()).await
     }
 
-    async fn execute<Z: Ring + RingEmbed + Invert, L: LargeSessionHandles>(
+    async fn execute<Z: RingWithExceptionalSequence + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
         secrets: &[Z],

@@ -37,7 +37,7 @@ use tracing::Instrument;
 use crate::{
     anyhow_error_and_log,
     cryptography::{
-        internal_crypto_types::{PrivateSigKey, PublicEncKey},
+        internal_crypto_types::{PrivateSigKey, UnifiedPublicEncKey},
         signcryption::{signcrypt, SigncryptionPayload},
     },
     engine::{
@@ -47,7 +47,7 @@ use crate::{
         },
         threshold::traits::UserDecryptor,
         traits::BaseKms,
-        validation::{validate_user_decrypt_req, DSEP_USER_DECRYPTION},
+        validation::{validate_request_id, validate_user_decrypt_req, DSEP_USER_DECRYPTION},
     },
     tonic_handle_potential_err,
     util::{
@@ -63,10 +63,9 @@ use super::{session::SessionPreparer, ThresholdFheKeys};
 pub struct RealUserDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
 > {
     pub base_kms: BaseKmsStruct,
-    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS, BackS>,
+    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub user_decrypt_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     pub session_preparer: Arc<SessionPreparer>,
     pub tracker: Arc<TaskTracker>,
@@ -74,11 +73,8 @@ pub struct RealUserDecryptor<
     pub decryption_mode: DecryptionMode,
 }
 
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > RealUserDecryptor<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+    RealUserDecryptor<PubS, PrivS>
 {
     /// Helper method for user decryption which carries out the actual threshold decryption using noise
     /// flooding or bit-decomposition.
@@ -92,7 +88,7 @@ impl<
         rng: &mut (impl CryptoRng + RngCore),
         typed_ciphertexts: &[TypedCiphertext],
         link: Vec<u8>,
-        client_enc_key: &PublicEncKey,
+        client_enc_key: &UnifiedPublicEncKey,
         client_address: &alloy_primitives::Address,
         sig_key: Arc<PrivateSigKey>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
@@ -130,6 +126,15 @@ impl<
             let ct = &typed_ciphertext.ciphertext;
             let external_handle = typed_ciphertext.external_handle.clone();
             let session_id = req_id.derive_session_id_with_counter(ctr as u64)?;
+
+            let hex_req_id = hex::encode(req_id.as_bytes());
+            let decimal_req_id: u128 = (*req_id).try_into().unwrap_or(0);
+            tracing::info!(
+                request_id = hex_req_id,
+                request_id_decimal = decimal_req_id,
+                "User Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {session_id}. Handle: {}",
+                hex::encode(&typed_ciphertext.external_handle)
+            );
 
             let low_level_ct =
                 deserialize_to_low_level(fhe_type, ct_format, ct, &keys.decompression_key)?;
@@ -194,7 +199,7 @@ impl<
                         &mut session,
                         &low_level_ct.try_get_small_ct()?,
                         &keys.private_keys,
-                        &keys.integer_server_key.as_ref().key_switching_key,
+                        keys.get_key_switching_key()?,
                         DecryptionMode::BitDecSmall,
                     )
                     .await;
@@ -280,11 +285,8 @@ impl<
 }
 
 #[tonic::async_trait]
-impl<
-        PubS: Storage + Send + Sync + 'static,
-        PrivS: Storage + Send + Sync + 'static,
-        BackS: Storage + Send + Sync + 'static,
-    > UserDecryptor for RealUserDecryptor<PubS, PrivS, BackS>
+impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> UserDecryptor
+    for RealUserDecryptor<PubS, PrivS>
 {
     async fn user_decrypt(
         &self,
@@ -425,16 +427,7 @@ impl<
         request: Request<v1::RequestId>,
     ) -> Result<Response<UserDecryptionResponse>, Status> {
         let request_id: RequestId = request.into_inner().into();
-        if !request_id.is_valid() {
-            tracing::warn!(
-                "The value {} is not a valid request ID!",
-                request_id.to_string()
-            );
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("The value {request_id} is not a valid request ID!"),
-            ));
-        }
+        validate_request_id(&request_id)?;
 
         // Retrieve the UserDecryptMetaStore object
         let status = {

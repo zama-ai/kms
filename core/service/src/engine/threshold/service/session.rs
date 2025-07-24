@@ -52,6 +52,20 @@ impl SessionPreparer {
         Ok(networking)
     }
 
+    pub fn get_session_parameters(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<SessionParameters> {
+        let own_identity = self.own_identity()?;
+        let parameters = SessionParameters::new(
+            self.threshold,
+            session_id,
+            own_identity,
+            self.role_assignments.clone(),
+        )?;
+        Ok(parameters)
+    }
+
     pub async fn make_base_session(
         &self,
         session_id: SessionId,

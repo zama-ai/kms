@@ -4,7 +4,7 @@ use crate::{algebra::poly::lagrange_polynomials, error::error_handler::anyhow_er
 
 use crate::algebra::{
     poly::Poly,
-    structure_traits::{Field, FromU128, One, Ring, Sample, Zero},
+    structure_traits::{Field, FromU128, One, Ring, RingWithExceptionalSequence, Sample, Zero},
 };
 use g2p::{g2p, GaloisField};
 use lazy_static::lazy_static;
@@ -74,6 +74,20 @@ impl Ring for GF64 {
     }
 }
 
+const EXCEPTIONAL_SEQUENCE_SIZE: usize = 1 << GF64::BIT_LENGTH;
+
+impl RingWithExceptionalSequence for GF64 {
+    fn get_from_exceptional_sequence(idx: usize) -> anyhow::Result<Self> {
+        if idx >= EXCEPTIONAL_SEQUENCE_SIZE {
+            Err(anyhow::anyhow!(
+                "Index out of bounds for GF64 exceptional sequence"
+            ))
+        } else {
+            Ok(GF64::from(idx as u8))
+        }
+    }
+}
+
 lazy_static! {
     static ref LAGRANGE_STORE: RwLock<HashMap<Vec<GF64>, Vec<Poly<GF64>>>> =
         RwLock::new(HashMap::new());
@@ -102,10 +116,6 @@ impl Field for GF64 {
                 "Error reading LAGRANGE_STORE".to_string(),
             ))
         }
-    }
-
-    fn invert(&self) -> Self {
-        <GF64 as GaloisField>::ONE / *self
     }
 }
 

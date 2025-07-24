@@ -2,7 +2,9 @@ use crate::anyhow_error_and_log;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::decompression;
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signcryption::{signcrypt, SigncryptionPayload};
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenCallValues, PubDecCallValues, UserDecryptCallValues};
@@ -13,15 +15,13 @@ use crate::engine::Shutdown;
 use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
 use crate::util::rate_limiter::{RateLimiter, RateLimiterConfig};
-#[cfg(feature = "non-wasm")]
-use crate::vault::storage::Storage;
 use crate::vault::storage::{
     crypto_material::CentralizedCryptoMaterialStorage, read_all_data_versioned,
     read_pk_at_request_id,
 };
-use aes_prng::AesRng;
 #[cfg(feature = "non-wasm")]
-use kms_grpc::kms::v1::KeySetAddedInfo;
+use crate::vault::{storage::Storage, Vault};
+use aes_prng::AesRng;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms::v1::TypedSigncryptedCiphertext;
 #[cfg(feature = "non-wasm")]
@@ -74,37 +74,33 @@ use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
 
 #[cfg(feature = "non-wasm")]
-pub(crate) async fn async_generate_fhe_keys<PubS, PrivS, BackS>(
+pub(crate) async fn async_generate_fhe_keys<PubS, PrivS>(
     sk: &PrivateSigKey,
-    storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
+    storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     params: DKGParams,
     keyset_config: StandardKeySetConfig,
-    keyset_added_info: Option<KeySetAddedInfo>,
+    compression_key_id: Option<RequestId>,
     seed: Option<Seed>,
     eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     let eip712_domain_copy = eip712_domain.cloned();
 
-    let existing_key_handle = match keyset_added_info {
-        Some(added_info) => match added_info.compression_keyset_id {
-            Some(key_id) => {
-                let key_id = key_id.into();
-                storage.refresh_centralized_fhe_keys(&key_id).await?;
-                Some(
-                    storage
-                        .read_cloned_centralized_fhe_keys_from_cache(&key_id)
-                        .await?,
-                )
-            }
-            None => None,
-        },
+    let existing_key_handle = match compression_key_id {
+        Some(compression_key_id_inner) => {
+            storage
+                .refresh_centralized_fhe_keys(&compression_key_id_inner)
+                .await?;
+            let existing_key_handle = storage
+                .read_cloned_centralized_fhe_keys_from_cache(&compression_key_id_inner)
+                .await?;
+            Some(existing_key_handle)
+        }
         None => None,
     };
 
@@ -123,27 +119,26 @@ where
 }
 
 #[cfg(feature = "non-wasm")]
-pub(crate) async fn async_generate_decompression_keys<PubS, PrivS, BackS>(
-    storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
+pub(crate) async fn async_generate_decompression_keys<PubS, PrivS>(
+    storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     keyset1_id: &RequestId,
     keyset2_id: &RequestId,
 ) -> anyhow::Result<DecompressionKey>
 where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 {
     storage.refresh_centralized_fhe_keys(keyset1_id).await?;
     storage.refresh_centralized_fhe_keys(keyset2_id).await?;
 
     // we need the private glwe key from keyset 2
-    let (client_key_2, _, _, _, _) = storage
+    let (client_key_2, _, _, _, _, _) = storage
         .read_cloned_centralized_fhe_keys_from_cache(keyset2_id)
         .await?
         .client_key
         .into_raw_parts();
     // we need the private compression key from keyset 1
-    let (_, _, compression_private_key_1, _, _) = storage
+    let (_, _, compression_private_key_1, _, _, _) = storage
         .read_cloned_centralized_fhe_keys_from_cache(keyset1_id)
         .await?
         .client_key
@@ -162,6 +157,110 @@ where
             anyhow::bail!("Compression private key is missing");
         }
     }
+}
+
+#[cfg(feature = "non-wasm")]
+pub(crate) async fn async_generate_sns_compression_keys<PubS, PrivS>(
+    sk: &PrivateSigKey,
+    storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
+    params: DKGParams,
+    exsiting_keyset_id: &RequestId,
+    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+{
+    use tfhe::integer::ciphertext::NoiseSquashingCompressionPrivateKey;
+
+    use crate::vault::storage::read_versioned_at_request_id;
+
+    storage
+        .refresh_centralized_fhe_keys(exsiting_keyset_id)
+        .await?;
+
+    let KmsFheKeyHandles {
+        client_key,
+        decompression_key,
+        public_key_info: _, // this needs to be recomputed
+    } = storage
+        .read_cloned_centralized_fhe_keys_from_cache(exsiting_keyset_id)
+        .await?;
+    let (
+        client_key,
+        compact_private_key,
+        compression_private_key,
+        sns_private_key,
+        _sns_compression_private_key,
+        client_tag,
+    ) = client_key.into_raw_parts();
+
+    let sns_compression_params = match params {
+        DKGParams::WithoutSnS(_) => {
+            anyhow::bail!("SNS compression keys can only be generated with SnS parameters");
+        }
+        DKGParams::WithSnS(dkgparams_sn_s) => match dkgparams_sn_s.sns_compression_params {
+            Some(sns_compression_params) => sns_compression_params,
+            None => {
+                anyhow::bail!(
+                    "SNS compression parameters are required to generate SNS compression keys"
+                );
+            }
+        },
+    };
+
+    let int_sns_compression_private_key =
+        NoiseSquashingCompressionPrivateKey::new(sns_compression_params);
+    let int_sns_compression_key = match &sns_private_key {
+        Some(sns_private_key) => {
+            sns_private_key.new_noise_squashing_compression_key(&int_sns_compression_private_key)
+        }
+        None => {
+            anyhow::bail!(
+                "SNS private key is missing for keyset {}",
+                exsiting_keyset_id
+            );
+        }
+    };
+
+    let new_client_key = ClientKey::from_raw_parts(
+        client_key,
+        compact_private_key,
+        compression_private_key,
+        sns_private_key,
+        Some(int_sns_compression_private_key),
+        client_tag,
+    );
+
+    let pub_storage = storage.inner.public_storage.lock().await;
+    let old_server_key: tfhe::ServerKey = read_versioned_at_request_id(
+        &(*pub_storage),
+        exsiting_keyset_id,
+        &kms_grpc::rpc_types::PubDataType::ServerKey.to_string(),
+    )
+    .await?;
+
+    let kms_grpc::rpc_types::WrappedPublicKeyOwned::Compact(compact_public_key) =
+        read_pk_at_request_id(&(*pub_storage), exsiting_keyset_id).await?;
+
+    let old_parts = old_server_key.into_raw_parts();
+    let new_server_key = tfhe::ServerKey::from_raw_parts(
+        old_parts.0,
+        old_parts.1,
+        old_parts.2,
+        old_parts.3,
+        old_parts.4,
+        Some(int_sns_compression_key),
+        old_parts.6,
+    );
+
+    let pks = FhePubKeySet {
+        public_key: compact_public_key,
+        server_key: new_server_key,
+    };
+    let handles =
+        KmsFheKeyHandles::new(sk, new_client_key, &pks, decompression_key, eip712_domain)?;
+    Ok((pks, handles))
 }
 
 #[cfg(feature = "non-wasm")]
@@ -209,9 +308,9 @@ pub fn generate_fhe_keys(
                         // we generate the client key as usual,
                         // but we replace the compression private key using an existing compression private key
                         let client_key = generate_client_fhe_key(params, seed);
-                        let (client_key, dedicated_compact_private_key, _, _, tag) = client_key.into_raw_parts();
-                        let (_, _, existing_compression_private_key, noise_squashing_key, _) = key_handle.client_key.into_raw_parts();
-                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, noise_squashing_key, tag)
+                        let (client_key, dedicated_compact_private_key, _, _, _, tag) = client_key.into_raw_parts();
+                        let (_, _, existing_compression_private_key, noise_squashing_key, noise_squashing_compression_key, _) = key_handle.client_key.into_raw_parts();
+                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, noise_squashing_key,noise_squashing_compression_key, tag)
                     },
                     None => anyhow::bail!("existing key handle is required when using existing compression key for keygen")
                 }
@@ -228,6 +327,7 @@ pub fn generate_fhe_keys(
             server_key.3,
             server_key.4,
             server_key.5,
+            server_key.6,
         );
         let public_key = FhePublicKey::new(&client_key);
         let pks = FhePubKeySet {
@@ -254,9 +354,9 @@ pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientK
     let compression_params = params
         .get_params_basics_handle()
         .get_compression_decompression_params();
-    let noise_squashing_params = match params {
+    let sns_params = match params {
         DKGParams::WithoutSnS(_) => None,
-        DKGParams::WithSnS(dkg_sns) => Some(dkg_sns.sns_params),
+        DKGParams::WithSnS(dkg_sns) => Some((dkg_sns.sns_params, dkg_sns.sns_compression_params)),
     };
     let config = ConfigBuilder::with_custom_parameters(pbs_params);
     let config = if let Some(dedicated_pk_params) =
@@ -271,8 +371,13 @@ pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientK
     } else {
         config
     };
-    let config = if let Some(params) = noise_squashing_params {
-        config.enable_noise_squashing(params)
+    let config = if let Some((params, compression_params)) = sns_params {
+        let config = config.enable_noise_squashing(params);
+        if let Some(compression_params) = compression_params {
+            config.enable_noise_squashing_compression(compression_params)
+        } else {
+            config
+        }
     } else {
         config
     };
@@ -341,10 +446,9 @@ pub(crate) struct CentralizedTestingKeys {
 pub struct RealCentralizedKms<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
 > {
     pub(crate) base_kms: BaseKmsStruct,
-    pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS, BackS>,
+    pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     // Map storing ongoing key generation requests.
     pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
     // Map storing ongoing public decryption requests.
@@ -367,7 +471,6 @@ pub struct RealCentralizedKms<
 pub fn central_public_decrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
     keys: &KmsFheKeyHandles,
     cts: &Vec<TypedCiphertext>,
@@ -397,7 +500,7 @@ pub fn central_public_decrypt<
             let fhe_type = ct.fhe_type()?;
             let fhe_type_string = ct.fhe_type_string();
             inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
-            RealCentralizedKms::<PubS, PrivS, BackS>::public_decrypt(
+            RealCentralizedKms::<PubS, PrivS>::public_decrypt(
                 keys,
                 &ct.ciphertext,
                 fhe_type,
@@ -413,14 +516,13 @@ pub fn central_public_decrypt<
 pub async fn async_user_decrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    BackS: Storage + Sync + Send + 'static,
 >(
     keys: &KmsFheKeyHandles,
     sig_key: &PrivateSigKey,
     rng: &mut (impl CryptoRng + RngCore),
     typed_ciphertexts: &[TypedCiphertext],
     req_digest: &[u8],
-    client_enc_key: &PublicEncKey,
+    client_enc_key: &UnifiedPublicEncKey,
     client_address: &alloy_primitives::Address,
     server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
@@ -452,7 +554,7 @@ pub async fn async_user_decrypt<
         inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
         let ct_format = typed_ciphertext.ciphertext_format();
         let external_handle = typed_ciphertext.external_handle.clone();
-        let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS, BackS>::user_decrypt(
+        let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS>::user_decrypt(
             keys,
             sig_key,
             rng,
@@ -488,11 +590,8 @@ pub async fn async_user_decrypt<
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output
 #[cfg(feature = "non-wasm")]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > fmt::Debug for RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> fmt::Debug
+    for RealCentralizedKms<PubS, PrivS>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CentralizedKms")
@@ -502,11 +601,8 @@ impl<
 }
 
 #[cfg(feature = "non-wasm")]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > BaseKms for RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> BaseKms
+    for RealCentralizedKms<PubS, PrivS>
 {
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         dsep: &DomainSep,
@@ -557,7 +653,16 @@ macro_rules! deserialize_to_low_level_and_decrypt_helper {
                 $fout(hl_ct.decrypt(&$keys.client_key))
             }
             CiphertextFormat::BigCompressed => {
-                anyhow::bail!("big compressed ciphertexts are not supported yet");
+                let r = safe_deserialize::<tfhe::CompressedSquashedNoiseCiphertextList>(
+                    std::io::Cursor::new($serialized_high_level),
+                    SAFE_SER_SIZE_LIMIT,
+                )
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let ct: tfhe::SquashedNoiseFheUint = r.get(0)?.ok_or(anyhow::anyhow!(
+                    "Failed to get first element from CompressedSquashedNoiseCiphertextList"
+                ))?;
+                let raw_res = ct.decrypt(&$keys.client_key);
+                $fout(raw_res)
             }
             CiphertextFormat::BigExpanded => {
                 let r = safe_deserialize::<tfhe::SquashedNoiseFheUint>(
@@ -595,7 +700,16 @@ fn unsafe_decrypt(
                 TypedPlaintext::from_bool(hl_ct.decrypt(&keys.client_key))
             }
             CiphertextFormat::BigCompressed => {
-                anyhow::bail!("big compressed ciphertexts are not supported yet");
+                let r = safe_deserialize::<tfhe::CompressedSquashedNoiseCiphertextList>(
+                    std::io::Cursor::new(serialized_high_level),
+                    SAFE_SER_SIZE_LIMIT,
+                )
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                let ct: tfhe::SquashedNoiseFheBool = r.get(0)?.ok_or(anyhow::anyhow!(
+                    "Failed to get first element from CompressedSquashedNoiseCiphertextList"
+                ))?;
+                let raw_res = ct.decrypt(&keys.client_key);
+                TypedPlaintext::from_bool(raw_res)
             }
             CiphertextFormat::BigExpanded => {
                 let r = safe_deserialize::<tfhe::SquashedNoiseFheBool>(
@@ -723,11 +837,8 @@ fn unsafe_decrypt(
 }
 
 #[cfg(feature = "non-wasm")]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > Kms for RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Kms
+    for RealCentralizedKms<PubS, PrivS>
 {
     fn public_decrypt(
         keys: &KmsFheKeyHandles,
@@ -753,7 +864,7 @@ impl<
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
         link: &[u8],
-        client_enc_key: &PublicEncKey,
+        client_enc_key: &UnifiedPublicEncKey,
         client_address: &alloy_primitives::Address,
     ) -> anyhow::Result<Vec<u8>> {
         let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
@@ -781,16 +892,13 @@ impl<
 }
 
 #[cfg(feature = "non-wasm")]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    RealCentralizedKms<PubS, PrivS>
 {
     pub async fn new(
         public_storage: PubS,
         private_storage: PrivS,
-        backup_storage: Option<BackS>,
+        backup_vault: Option<Vault>,
         sk: PrivateSigKey,
         rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> anyhow::Result<(Self, HealthServer<impl Health>)> {
@@ -816,7 +924,7 @@ impl<
         let crypto_storage = CentralizedCryptoMaterialStorage::new(
             public_storage,
             private_storage,
-            backup_storage,
+            backup_vault,
             pk_map,
             key_info,
         );
@@ -824,7 +932,7 @@ impl<
         let (health_reporter, health_service) = tonic_health::server::health_reporter();
         // We will serve as soon as the server is started
         health_reporter
-            .set_serving::<CoreServiceEndpointServer<RealCentralizedKms<PubS, PrivS, PrivS>>>()
+            .set_serving::<CoreServiceEndpointServer<RealCentralizedKms<PubS, PrivS>>>()
             .await;
         Ok((
             RealCentralizedKms {
@@ -850,12 +958,34 @@ impl<
     }
 }
 
+#[cfg(feature = "non-wasm")]
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    RealCentralizedKms<PubS, PrivS>
+{
+    /// Get a reference to the key generation MetaStore
+    pub fn get_key_gen_meta_store(&self) -> &Arc<RwLock<MetaStore<KeyGenCallValues>>> {
+        &self.key_meta_map
+    }
+
+    /// Get a reference to the public decryption MetaStore
+    pub fn get_pub_dec_meta_store(&self) -> &Arc<RwLock<MetaStore<PubDecCallValues>>> {
+        &self.pub_dec_meta_store
+    }
+
+    /// Get a reference to the user decryption MetaStore
+    pub fn get_user_dec_meta_store(&self) -> &Arc<RwLock<MetaStore<UserDecryptCallValues>>> {
+        &self.user_decrypt_meta_map
+    }
+
+    /// Get a reference to the CRS generation MetaStore
+    pub fn get_crs_meta_store(&self) -> &Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>> {
+        &self.crs_meta_map
+    }
+}
+
 #[tonic::async_trait]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > Shutdown for RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Shutdown
+    for RealCentralizedKms<PubS, PrivS>
 {
     async fn shutdown(&self) -> anyhow::Result<()> {
         self.health_reporter
@@ -872,11 +1002,8 @@ impl<
 
 #[allow(clippy::let_underscore_future)]
 #[cfg(feature = "non-wasm")]
-impl<
-        PubS: Storage + Sync + Send + 'static,
-        PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
-    > Drop for RealCentralizedKms<PubS, PrivS, BackS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Drop
+    for RealCentralizedKms<PubS, PrivS>
 {
     fn drop(&mut self) {
         if let Some(handles) = Arc::get_mut(&mut self.thread_handles) {
@@ -901,7 +1028,9 @@ pub(crate) mod tests {
     };
     use crate::consts::{DEFAULT_PARAM, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID};
     use crate::consts::{TEST_CENTRAL_KEYS_PATH, TEST_PARAM};
-    use crate::cryptography::internal_crypto_types::{gen_sig_keys, PrivateSigKey};
+    use crate::cryptography::internal_crypto_types::{
+        gen_sig_keys, PrivateSigKey, UnifiedPublicEncKey,
+    };
     use crate::cryptography::signcryption::{
         decrypt_signcryption_with_link, ephemeral_signcryption_key_generation,
     };
@@ -1193,7 +1322,7 @@ pub(crate) mod tests {
                 new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
                     .await
                     .unwrap(),
-                None as Option<RamStorage>,
+                None,
                 keys.centralized_kms_keys.sig_sk.clone(),
                 None,
             )
@@ -1209,13 +1338,12 @@ pub(crate) mod tests {
             .read_cloned_centralized_fhe_keys_from_cache(key_id)
             .await
             .unwrap();
-        let raw_plaintext =
-            RealCentralizedKms::<FileStorage, FileStorage, FileStorage>::public_decrypt(
-                &key_handle,
-                &ct,
-                fhe_type,
-                ct_format,
-            );
+        let raw_plaintext = RealCentralizedKms::<FileStorage, FileStorage>::public_decrypt(
+            &key_handle,
+            &ct,
+            fhe_type,
+            ct_format,
+        );
         // if bad FHE key is used, then it *might* panic
         let plaintext = if sim_type == SimulationType::BadFheKey {
             match raw_plaintext {
@@ -1297,9 +1425,8 @@ pub(crate) mod tests {
     async fn set_wrong_client_key<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
     >(
-        inner: &RealCentralizedKms<PubS, PrivS, BackS>,
+        inner: &RealCentralizedKms<PubS, PrivS>,
         key_handle: &RequestId,
         params: DKGParams,
     ) {
@@ -1318,9 +1445,8 @@ pub(crate) mod tests {
     fn set_wrong_sig_key<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        BackS: Storage + Sync + Send + 'static,
     >(
-        inner: &mut RealCentralizedKms<PubS, PrivS, BackS>,
+        inner: &mut RealCentralizedKms<PubS, PrivS>,
         rng: &mut AesRng,
     ) {
         // move to the next state so ensure we're generating a different ecdsa key
@@ -1359,7 +1485,7 @@ pub(crate) mod tests {
                 new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
                     .await
                     .unwrap(),
-                None as Option<RamStorage>,
+                None,
                 keys.centralized_kms_keys.sig_sk.clone(),
                 None,
             )
@@ -1375,16 +1501,20 @@ pub(crate) mod tests {
         };
         let link = vec![42_u8, 42, 42];
         let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
-        let client_keys = {
-            let mut keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
+        let client_key_pair = {
+            let mut keys = ephemeral_signcryption_key_generation::<ml_kem::MlKem512>(
+                &mut rng,
+                &client_sig_key,
+            );
             if sim_type == SimulationType::BadEphemeralKey {
                 let bad_keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
                 keys.sk = bad_keys.sk;
             }
             keys
         };
+        let unified_client_keys = UnifiedPublicEncKey::MlKem512(client_key_pair.pk.enc_key.clone());
         let mut rng = kms.base_kms.new_rng().await;
-        let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage, FileStorage>::user_decrypt(
+        let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage
                 .read_cloned_centralized_fhe_keys_from_cache(key_handle)
                 .await
@@ -1395,8 +1525,8 @@ pub(crate) mod tests {
             fhe_type,
             ct_format,
             &link,
-            &client_keys.pk.enc_key,
-            &client_keys.pk.client_address,
+            &unified_client_keys,
+            &client_key_pair.pk.client_address,
         );
         // if bad FHE key is used, then it *might* panic
         let raw_cipher = if sim_type == SimulationType::BadFheKey {
@@ -1414,7 +1544,7 @@ pub(crate) mod tests {
             &DSEP_USER_DECRYPTION,
             &raw_cipher,
             &link,
-            &client_keys,
+            &client_key_pair.to_unified(),
             &keys.centralized_kms_keys.sig_pk,
         );
         if sim_type == SimulationType::BadEphemeralKey {
@@ -1467,7 +1597,7 @@ pub(crate) mod tests {
                 new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
                     .await
                     .unwrap(),
-                None as Option<RamStorage>,
+                None,
                 keys.centralized_kms_keys.sig_sk.clone(),
                 None,
             )
@@ -1492,7 +1622,7 @@ pub(crate) mod tests {
                 new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
                     .await
                     .unwrap(),
-                None as Option<RamStorage>,
+                None,
                 keys.centralized_kms_keys.sig_sk.clone(),
                 None,
             )
@@ -1508,5 +1638,26 @@ pub(crate) mod tests {
         let new_val = TestType { i: 33 };
         let wrong_val = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &new_val, None).unwrap();
         assert_ne!(base, wrong_val);
+    }
+
+    #[test]
+    fn sanity_check_sns_compression_test_params() {
+        use tfhe::prelude::{FheDecrypt, FheEncrypt, SquashNoise};
+        let params = TEST_PARAM;
+        let cks = crate::engine::centralized::central_kms::generate_client_fhe_key(params, None);
+        let sks = cks.generate_server_key();
+
+        tfhe::set_server_key(sks);
+        let pt = 12u32;
+        let ct = tfhe::FheUint32::encrypt(pt, &cks);
+        let large_ct = ct.squash_noise().unwrap();
+
+        let compressed_large_ct = tfhe::CompressedSquashedNoiseCiphertextListBuilder::new()
+            .push(large_ct)
+            .build()
+            .unwrap();
+        let new_large_ct: tfhe::SquashedNoiseFheUint = compressed_large_ct.get(0).unwrap().unwrap();
+        let actual_pt: u32 = new_large_ct.decrypt(&cks);
+        assert_eq!(actual_pt, pt);
     }
 }

@@ -13,7 +13,7 @@ aes.workspace = true
 aes-prng.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
-attestation-doc-validation = { version = "=0.10.0", optional = true }
+attestation-doc-validation = { workspace = true, optional = true}
 backoff = { workspace = true, features = ["tokio"], optional = true }
 bincode.workspace = true
 bc2wrap.workspace = true
@@ -31,10 +31,10 @@ derive_more = { version = "=2.0.1", features = ["display"] }
 futures.workspace = true
 g2p = "=1.2.2"
 hex = { version = "=0.4.3", features = ["serde"] }
-hyper-rustls = { version = "=0.27.5", default-features = false, features = ["http2", "ring"] , optional = true }
+hyper-rustls = { version = "=0.27.7", default-features = false, features = ["http2", "ring"] , optional = true }
 itertools.workspace = true
 lazy_static.workspace = true
-minijinja = { version = "=2.9.0", features = ["loader"], optional = true }
+minijinja = { version = "=2.11.0", features = ["loader"], optional = true }
 mockall.workspace = true
 ndarray = { version = "=0.16.1", features = ["serde"] }
 num-integer = "=0.1.46"
@@ -90,12 +90,14 @@ tonic-build.workspace = true
 criterion = "=0.5.1"
 ctor = "=0.4.2"
 proptest = "=1.6.0"
-pprof = { version = "=0.14.0", features = ["flamegraph", "criterion"] }
+pprof = { version = "=0.15.0", features = ["flamegraph", "criterion"] }
 rstest = "=0.25.0"
 serial_test.workspace = true
 tempfile.workspace = true
 tracing-test = "=0.2.5"
 webpki = { version = "=0.22.4", features = ["std"] }
+# we need the experimental feature to simplify some tests
+tfhe-zk-pok = { workspace = true, features = ["experimental"] }
 # "self-import" needed for integration test
 threshold-fhe = { workspace = true, features = ["testing"] }
 

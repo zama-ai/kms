@@ -7,7 +7,7 @@ use crate::{
     algebra::{
         bivariate::{BivariateEval, BivariatePoly},
         poly::Poly,
-        structure_traits::{Ring, RingEmbed},
+        structure_traits::{Ring, RingWithExceptionalSequence},
     },
     execution::{
         communication::broadcast::Broadcast,
@@ -66,7 +66,7 @@ impl ProtocolDescription for DroppingVssAfterR1 {
 #[async_trait]
 impl Vss for DroppingVssAfterR1 {
     //Do round1, and output an empty Vec
-    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+    async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -76,7 +76,7 @@ impl Vss for DroppingVssAfterR1 {
         Ok(Vec::new())
     }
 
-    async fn execute<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+    async fn execute<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secret: &Z,
@@ -114,7 +114,7 @@ impl<BCast: Broadcast> DroppingVssAfterR2<BCast> {
 #[async_trait]
 impl<BCast: Broadcast> Vss for DroppingVssAfterR2<BCast> {
     //Do round1 and round2, and output an empty Vec
-    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+    async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -126,7 +126,7 @@ impl<BCast: Broadcast> Vss for DroppingVssAfterR2<BCast> {
         Ok(Vec::new())
     }
 
-    async fn execute<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+    async fn execute<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secret: &Z,
@@ -167,7 +167,7 @@ impl<BCast: Broadcast> MaliciousVssR1<BCast> {
 
 #[async_trait]
 impl<BCast: Broadcast> Vss for MaliciousVssR1<BCast> {
-    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+    async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -189,7 +189,7 @@ impl<BCast: Broadcast> Vss for MaliciousVssR1<BCast> {
 }
 
 //This code executes a round1 where the party sends malformed double shares for its VSS to parties in roles_to_lie_to
-async fn malicious_round_1<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+async fn malicious_round_1<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
     session: &mut S,
     secrets: &[Z],
     roles_to_lie_to: &[Role],
@@ -206,7 +206,7 @@ async fn malicious_round_1<Z: Ring + RingEmbed, S: BaseSessionHandles>(
         .role_assignments()
         .keys()
         .map(|r| {
-            let embedded_role = Z::embed_exceptional_set(r.one_based()).unwrap();
+            let embedded_role = Z::embed_role_to_exceptional_sequence(r).unwrap();
             let correct_bpolys = (0..num_secrets)
                 .map(|i| DoublePoly {
                     share_in_x: bivariate_poly[i]
@@ -268,7 +268,7 @@ impl<BCast: Broadcast> WrongSecretLenVss<BCast> {
 #[async_trait]
 impl<BCast: Broadcast> Vss for WrongSecretLenVss<BCast> {
     // The adversary will halve the number of secrets
-    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+    async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -318,7 +318,7 @@ impl<BCast: Broadcast> ProtocolDescription for WrongDegreeSharingVss<BCast> {
 }
 
 impl<BCast: Broadcast> WrongDegreeSharingVss<BCast> {
-    fn sample_secret_polys<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+    fn sample_secret_polys<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         session: &mut S,
         secrets: &[Z],
     ) -> anyhow::Result<(Vec<BivariatePoly<Z>>, MapRoleDoublePoly<Z>)> {
@@ -336,7 +336,7 @@ impl<BCast: Broadcast> WrongDegreeSharingVss<BCast> {
             .role_assignments()
             .keys()
             .map(|r| {
-                let embedded_role = Z::embed_exceptional_set(r.one_based())?;
+                let embedded_role = Z::embed_role_to_exceptional_sequence(r)?;
                 let mut vec_map = Vec::with_capacity(bivariate_poly.len());
                 for p in &bivariate_poly {
                     let share_in_x = p.partial_y_evaluation(embedded_role)?;
@@ -355,7 +355,7 @@ impl<BCast: Broadcast> WrongDegreeSharingVss<BCast> {
 
 #[async_trait]
 impl<BCast: Broadcast> Vss for WrongDegreeSharingVss<BCast> {
-    async fn execute_many<Z: Ring + RingEmbed, S: BaseSessionHandles>(
+    async fn execute_many<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
         &self,
         session: &mut S,
         secrets: &[Z],

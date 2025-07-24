@@ -279,6 +279,14 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
     let mut num_bots = session.corrupt_roles().len();
     let num_secrets = sharings.len();
 
+    // OPTIMIZATION: Collect shares concurrently with batched reconstruction
+    // Instead of processing one party at a time, collect multiple responses
+    // and attempt reconstruction less frequently to reduce O(n×m) complexity
+
+    let mut collected_shares = 0;
+    let required_shares = threshold as usize + 1; // Minimum shares needed for reconstruction
+    let mut last_reconstruction_attempt = 0;
+
     //Start awaiting on receive jobs to retrieve the shares
     while let Some(v) = jobs.join_next().await {
         let joined_result = v?;
@@ -286,6 +294,7 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
             Ok((party_id, data)) => {
                 if let Ok(values) = data {
                     fill_indexed_shares(sharings, values, num_secrets, party_id)?;
+                    collected_shares += 1;
                 } else if let Err(e) = data {
                     tracing::warn!(
                         "(Share reconstruction) Received malformed data from {party_id}:  {:?}",
@@ -300,30 +309,48 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
                 num_bots += 1;
             }
         }
-        //Note: here we keep waiting on new shares until we have all of the values opened.
-        let res: Option<Vec<_>> = sharings
-            .par_iter()
+
+        // OPTIMIZATION: Attempt reconstruction strategically to reduce redundant attempts:
+        // 1. First time we reach minimum required shares (threshold + 1)
+        // 2. For each additional share to handle potential corrupt/invalid shares
+        // 3. When no more jobs are pending (final attempt)
+        let should_attempt_reconstruction = collected_shares >= required_shares
+            && (last_reconstruction_attempt == 0  // First time we have enough shares
+                || collected_shares > last_reconstruction_attempt  // Each additional share
+                || jobs.is_empty()); // Final attempt when all responses collected
+
+        if should_attempt_reconstruction {
+            last_reconstruction_attempt = collected_shares;
+
+            let res: Option<Vec<_>> =
+            //Note: here we keep waiting on new shares until we have all of the values opened.
             // Here we want to use par_iter for opening the huge batches
             // present in DKG, but we want to avoid using it for
-            // DKG preproc where we have lots of sessions in parallel
-            // dealing with small batches.
-            // Because for the case with lots of sessions and small batches,
-            // we don't want say P1 to highly parallelize session 1 first
-            // and P2 highly parallelize session 2 first.
-            // For DKG preproc, the prallelization happens through spawning lots of sessions,
-            // which are more likely to distribute workload similarly across the parties
-            // as network call acts as a sync points across parties
-            .with_min_len(2 * BATCH_SIZE_BITS)
-            .map(|sharing| {
-                reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
-                    .unwrap_or_default()
-            })
-            .collect();
+            // other tasks.
+            if num_secrets > 2 * BATCH_SIZE_BITS {
+                 sharings
+                .par_iter()
+                .with_min_len(2 * BATCH_SIZE_BITS)
+                .map(|sharing| {
+                    reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
+                        .unwrap_or_default()
+                })
+                .collect()
+            } else {
+                 sharings
+                .iter()
+                .map(|sharing| {
+                    reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
+                        .unwrap_or_default()
+                })
+                .collect()
+            };
 
-        //Only prematurely shutdown the jobs if we have managed to reconstruct everything
-        if res.is_some() {
-            jobs.shutdown().await;
-            return Ok(res);
+            //Only prematurely shutdown the jobs if we have managed to reconstruct everything
+            if res.is_some() {
+                jobs.shutdown().await;
+                return Ok(res);
+            }
         }
     }
 
@@ -340,7 +367,9 @@ pub(crate) mod test {
     use itertools::Itertools;
     use rand::SeedableRng;
 
-    use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed};
+    use crate::algebra::structure_traits::{
+        ErrorCorrect, Invert, Ring, RingWithExceptionalSequence,
+    };
     use crate::execution::runtime::party::Role;
     use crate::execution::runtime::session::SmallSession;
     use crate::execution::sharing::shamir::InputOp;
@@ -363,7 +392,7 @@ pub(crate) mod test {
     /// they end up with a well-formed sharing of the same secrets
     ///
     /// Returns both the secrets and the shares
-    pub(crate) fn deterministically_compute_my_shares<Z: Ring + RingEmbed>(
+    pub(crate) fn deterministically_compute_my_shares<Z: RingWithExceptionalSequence>(
         num_secrets: usize,
         my_role: Role,
         num_parties: usize,

@@ -3,102 +3,78 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="KMS-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="KMS-light.png">
-  <img width=600 alt="Zama KMS">
+  <img width=500 alt="Zama KMS">
 </picture>
 </p>
 
 
 <p align="center">
-  <a href="https://github.com/zama-ai/fhevm-whitepaper"> 📒 fhevm White paper</a> | <a href="https://eprint.iacr.org/2023/815"> 📚 Noah's Ark (peer-reviewed academic paper)</a>
+   <a href="https://zama.ai/community"> 💛 Community support</a> | <a href="https://github.com/zama-ai/awesome-zama"> 📚 FHE resources by Zama</a> | <a href="https://eprint.iacr.org/2023/815"> 📚 Noah's Ark (peer-reviewed academic paper)</a>
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-BSD--3--Clause--Clear-%23ffb243?style=flat-square"></a>
   <a href="https://github.com/zama-ai/bounty-program"><img src="https://img.shields.io/badge/Contribute-Zama%20Bounty%20Program-%23ffd208?style=flat-square"></a>
+  <a href="https://github.com/zama-ai/kms-core/pkgs/container/kms-service"><img src="https://github.com/zama-ai/kms-core/actions/workflows/global-common-workflow.yml/badge.svg?branch=main"></a>
+  <!-- TODO: add release badge once we made a public release -->
 </p>
 
 ## About
 
-### Status
-[![CI](https://github.com/zama-ai/kms-core/actions/workflows/service-main.yml/badge.svg)](https://github.com/zama-ai/kms-core/pkgs/container/kms-service)
-[![image-badge](https://ghcr-badge.egpl.dev/zama-ai/kms-service/tags?trim=major)](https://github.com/zama-ai/kms-core/pkgs/container/kms-service)
-[![image-size-badge](https://ghcr-badge.egpl.dev/zama-ai/kms-service/size)](https://github.com/zama-ai/kms-core/pkgs/container/kms-service)
-[![license-badge](https://img.shields.io/badge/License-BSD-blue)](LICENSE)
+### What is the KMS
 
+The Zama KMS is a fully decentralized key management solution for TFHE, based on a maliciously secure and robust [MPC protocol](https://eprint.iacr.org/2023/815) based on secret sharing,
+primarily for threshold key generation and threshold decryption.
+We also made the [full specification](https://github.com/zama-ai/threshold-fhe/blob/main/docs/CryptographicDocumentation.pdf)
+available to the public.
 
-### What is KMS
-The Zama KMS is a fully decentralized key management solution for TFHE, more specifically [TFHE-rs](https://github.com/zama-ai/tfhe-rs), based on a maliciously secure and robust [MPC protocol](https://eprint.iacr.org/2023/815).
+The system consists of a core cryptography layer that implements cryptographic primitives and MPC protocols and a service layer that packs everything up and offers an interface for interacting with the components.
 
-The system facilitates this through the use of a blockchain which provides a means of fulfilling payments to the MPC parties, along with providing an immutable audit log.
-
-Interaction with the same KMS will happen either through an external Ethereum blockchain, providing an API via a smart contract, or through the [fhevm gateway service](https://github.com/zama-ai/gateway-l2).
+Interaction with the KMS can either happen via a gRPC interface, or in its deployed form via the [FHEVM](https://github.com/zama-ai/fhevm).
 
 ### Main features
+
+- Threshold key generation for keys that are compatible with [TFHE-rs](https://github.com/zama-ai/tfhe-rs).
+- Threshold decryption of TFHE-rs ciphertexts.
+- Resharing of secret FHE key shares.
+- Distributed setup for CRS (common reference string) for use in ZK proofs.
+
+### Using the KMS
+
 The following describes how the KMS is used in conjunction with fhevm Gateway, including the external components needed.
 While the KMS can be used with multiple L1 EVM host chains, for simplicity, we will in the following document assume there is only a single L1 host chain.
 
-At the highest level, the system consists of multiple subsystems: a *host chain*, an *fhevm Gateway* and a *KMS*. The KMS is in turn composed of the following components, which we illustrate in the pictures below.
+At the highest level, the system consists of multiple subsystems: a *host chain*, an *fhevm Gateway* and a *KMS*.
+The KMS is in turn composed of the following components, which we illustrate in the pictures below.
 
 ![KMS system](./docs/getting-started/overview.png)
 
 We observe that while the standard deployment of the KMS system is in a threshold setting. It can also be deployed in a centralized manner, where it will consist of a single logical Connector, Core and Keychain DA.
-For more details we direct the reader to [the architecture section](https://github.com/zama-ai/tech-spec/tree/main/architecture) of the tech spec.
-
-### Implementation
-
-The KMS is implemented as a gRPC service using the [tonic](https://github.com/hyperium/tonic) crate.
-Communication to the KMS Core service is done using gRPC and is defined by [protobuf](./core/grpc/proto/) messages.
-The rest of the communication is defined by existing standards and uses JSON-RPC.
-
-### Directory overview
-- [`backwards-compatibility`](./backward-compatibility/README.md)
-    - Code needed for testing upgrade compatibility of the system. I.e. ensures any internal format upgrade can be gracefully handled. Not used in production.
-- `ci`
-    - Code related to Continuous Integration (CI). Observe that specific CI scripts for the Github CI can be found in the `.github` folder.
-- `common`
-    - Utility code and macros shared between other source code folders.
-- [`observability`](./observability/README.md)
-    - Code and documentation related to open telemetry tracing; in particular in the situation where multiple KMS Core nodes are running on separate physical machines.
-- `core`: The KMS Core source code
-    - `backup`
-        - Code related to doing encrypted backups of the confidential material constructed by the threshold protocols.
-    - [`grpc`](./core/grpc/README.md)
-        - Protobuf files, API documentation and type conversion files (based on the protobuf) which defines the external interface of a KMS Core.
-    - [`service`](./core/service/README.md)
-        - The code implementing the outward-facing gRPC interface and server implementation along with PKI-related code.
-    - [`threshold`](./core/threshold/README.md)
-        - The code implementing the MPC protocols executing decryption, CRS and key generation, along with server code used by the MPC protocols to communicate together.
-    - [`core-client`](./core-client/README.md)
-        - Code for the CLI client that can be used to manually interact with the KMS Cores.
-    - `docker`
-        - Docker files used to containerize the different binaries in the KMS Core, e.g. the Core Service, Threshold Server and KMS Connector.
-    - [`docs`](./docs/README.md)
-        - High level documentation of the KMS Core system.
-    - [`observability`](./observability/README.md)
-        - Folder containing code, configurations and scripts for observability, such as through prometheus, grafana and loki.
 
 
 ## Installation
-Docker images that are ready for use can be found [here](https://github.com/zama-ai/kms-core/packages).
-Ensure that you have access to the required Docker images:
-  - Either use [this link](https://github.com/settings/tokens) or go to your GitHub, click you profile picture, select "Settings". Then navigate to "Developer Settings" > "Personal Access Tokens" > "Tokens (classic)" > "Generate new token (classic)". The token should have the "read:packages" permission. Afterwards, do `docker login ghcr.io` and use your github ID and the token to login. Note that this token is saved by docker locally in the clear, so it's best to only give it the permissions you need and set the expiration time to a short period of time.
 
-## Getting started
+### Prerequisites
+
 The project requires [Docker](https://docs.docker.com/engine/install/) to be installed and running, along with [Rust](https://www.rust-lang.org/tools/install) with version >= 1.86, the [protobuf compiler, `protoc`](https://protobuf.dev/installation/), [pkgconfig](https://github.com/pkgconf/pkgconf), and [openssl](https://openssl-library.org/).
 Ensure that these are installed on your system.
 
-The project can be build with:
+### Building and testing
+
+For local development, the project can be build with:
 ```bash
 cargo build
 ```
 
 Typical testing can be done using
 ```bash
-cargo test
+cargo test -F testing
 ```
-Some integration tests may require the use of additional tools. In particular some tests require Redis to be running on the local system. Further details can be found in the READMEs in each sub project. To avoid them and only run unit tests, run the following command instead:
+
+Some integration tests may require the use of additional tools. In particular some tests require Redis to be running on the local system.
+To avoid them and only run unit tests, run the following command instead:
 ```bash
-cargo test --lib
+cargo test -F testing --lib
 ```
 
 To run the full test-suite (which may take several hours) run the tests with the `slow_tests` feature:
@@ -106,49 +82,70 @@ To run the full test-suite (which may take several hours) run the tests with the
 cargo test -F slow_tests
 ```
 
-### High level information
+### Running the KMS locally
+
+> [!Warning]
+> Local deployment should not be used in a production environment!
+
+The detailed documentation can be found in the [core-client documentation](./docs/guides/core_client.md).
+We give an overview below.
+
+To run the KMS locally, for development and testing purposes, run
+
+```bash
+docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
+docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up
+```
+
+This will start 4 KMS servers that interact with each other
+to perform threshold operations.
+
+It is possible to run the centralized version by replacing `docker-compose-core-threshold.yml` with `docker-compose-core-centralized.yml`.
+
+Then navigate to the `core-client` directory.
+This is the client that interacts with the KMS service to perform various key management tasks. For example to securely generate a CRS for the zero knowledge proofs the command would be:
+
+```bash
+cargo run -- -f config/client_local_threshold.toml crs-gen
+```
+
+For other available commands, use the following help command or have a look at the [core-client documentation](./docs/guides/core_client.md)
+
+```bash
+cargo run -- --help
+```
+
+
+### Running the KMS as a service
+
+Docker images that are ready for use can be found [here](https://github.com/zama-ai/kms-core/packages).
+But to deploy the KMS securely, we recommend the documentation on [on-prem deployment](docs/guides/on_prem_installation.md).
+
+
+### More information
 For more high-level information about using and deploying the code, check out [this](./docs/README.md) section.
 
-### Development Environment
 
-Read this [section](./config/dev/README.md) for more information.
+## Resources
 
-### Release
+### Theoretical background
+- The blog post about Zama [threshold key management system](https://www.zama.ai/post/introducing-zama-threshold-key-management-system-tkms)
+- The [Noah's ark](https://eprint.iacr.org/2023/815) paper contains the technical details of some of our protocols
+- An [initial, preliminary version of our proposed NIST submission](docs/CryptographicDocumentation.pdf), which contains the detailed specification of all contained protocols
 
-Read this [section](./docs/ci/release.md) for more information.
-
-### Staging environment
-
-Read [this](https://www.notion.so/zamaai/KMS-Environments-2065a7358d5e80e480acdc9ba0ce79b0)
-
-
-## External Resources
-
-### Theoretical Background
-- [Noah's Ark: Efficient Threshold-FHE Using Noise Flooding](https://eprint.iacr.org/2023/815)
-<!--
-- TODO: NIST main submission document, once it's public.
--->
-
-### Technical specification
-- [Tech spec](https://github.com/zama-ai/tech-spec/tree/main/architecture)
-
-### fhevm Application Whitepaper
-- [fhevm Whitepaper](https://github.com/zama-ai/fhevm-whitepaper)
+### FHEVM application whitepaper
+- [FHEVM Whitepaper](https://github.com/zama-ai/fhevm/blob/main/fhevm-whitepaper.pdf)
 
 ### Docker images and high level usage
-- [fhevm Integration](https://github.com/zama-ai/fhevm-test-suite)
+- [Docker images](https://github.com/zama-ai/kms-core/pkgs/container/kms-service)
+- [fhevm Integration](https://github.com/zama-ai/fhevm)
 
 ## Working with the KMS
 
 ### Disclaimers
 
-#### Audits
-The Zama KMS has not yet been audited and should be considered in the alpha stage. Known bugs and security issues are present as reflected by issue tracking.
-However, it is currently in the process of being audited.
-
 #### Parameters
-The default parameters for the Zama KMS are chosen to ensure a failure probability of 2^-64 and symmetric equivalent security of 128 bits.
+The default parameters for the Zama KMS are chosen to ensure a failure probability of 2^-128 and symmetric equivalent security of 128 bits.
 
 #### Side-channel attacks
 
@@ -166,7 +163,7 @@ To cite KMS in academic papers, please use the following entry:
 ```
 
 ### License
-This software is distributed under the **BSD-3-Clause-Clear** license. Read [this](LICENSE.txt) for more details.
+This software is distributed under the **BSD-3-Clause-Clear** license. Read [this](LICENSE) for more details.
 
 #### FAQ
 **Is Zama’s technology free to use?**
