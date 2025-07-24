@@ -99,7 +99,7 @@ impl RecoveryRequest {
             tracing::error!("RecoveryRequest has an invalid backup ID");
             return false;
         }
-        if !self.operator_role.one_based() == 0 {
+        if self.operator_role.one_based() == 0 {
             tracing::error!("RecoveryRequest has an invalid operator role");
             return false;
         }
@@ -343,19 +343,26 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
             } = msg.msg.clone();
 
             if header != HEADER {
-                println!("header probem");
+                tracing::error!("Invalid header in custodian setup message from custodian {custodian_role}. Expected header {HEADER} but got {header}");
                 return Err(BackupError::CustodianSetupError);
             }
 
             if custodian_role != Role::indexed_from_zero(i) {
-                println!("index probem");
+                tracing::error!(
+                    "Invalid custodian role in setup message: expected {} but got {}",
+                    Role::indexed_from_zero(i),
+                    custodian_role
+                );
                 return Err(BackupError::CustodianSetupError);
             }
 
             let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             const ONE_HOUR_SECS: u64 = 3600;
             if !(now - ONE_HOUR_SECS < timestamp && timestamp < now + ONE_HOUR_SECS) {
-                println!("time probem");
+                tracing::error!(
+                    "Invalid timestamp in custodian setup message: expected within one hour of now, but got {}",
+                    timestamp
+                );
                 return Err(BackupError::CustodianSetupError);
             }
 

@@ -3,7 +3,7 @@ use crate::{
     consts::RND_SIZE,
     cryptography::{
         backup_pke::{self, BackupPrivateKey},
-        internal_crypto_types::{gen_sig_keys, PrivateSigKey, PublicSigKey},
+        internal_crypto_types::{gen_sig_keys, PrivateSigKey},
     },
 };
 use aes_prng::AesRng;
@@ -17,15 +17,6 @@ use threshold_fhe::{
 
 pub const DSEP_MNEMONIC_ENC: DomainSep = *b"MNEM_ENC";
 pub const DSEP_MNEMONIC_SIG: DomainSep = *b"MNEM_SIG";
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct CustodianKeySet {
-    pub sig_key: PrivateSigKey,
-    pub verf_key: PublicSigKey,
-    pub nested_dec_key: backup_pke::BackupPrivateKey,
-    pub nested_enc_key: backup_pke::BackupPublicKey,
-}
 
 // Allow the rng to be used even if an error happens later on
 #[allow(unknown_lints)]

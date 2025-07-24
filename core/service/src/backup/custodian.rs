@@ -162,7 +162,10 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
             SAFE_SER_SIZE_LIMIT,
         )
         .map_err(BackupError::SafeDeserializationError)?;
-        tracing::debug!("Deserialized backup material");
+        tracing::debug!(
+            "Deserialized backup material for operator: {}",
+            operator_role
+        );
         if !backup_material.matches_expected_metadata(
             backup_id,
             &self.verification_key,
@@ -170,15 +173,17 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
             operator_verification_key,
             operator_role,
         ) {
-            tracing::error!("Backup material did not match expected metadate");
+            tracing::error!(
+                "Backup material did not match expected metadate for operator: {}",
+                operator_role
+            );
             return Err(BackupError::CustodianRecoveryError);
         }
 
         // re-encrypted share and sign it
         let st_i_j = operator_pk.encrypt(rng, &s_i_j)?;
-        tracing::debug!("Re-encrypted share under operator's public key");
         let sigt_i_j = self.signer.sign(&DSEP_BACKUP_CUSTODIAN, &st_i_j)?;
-        tracing::debug!("Signed re-encrypted share");
+        tracing::debug!("Signed re-encrypted share for operator: {}", operator_role);
         Ok(CustodianRecoveryOutput {
             signature: sigt_i_j,
             ciphertext: st_i_j,
