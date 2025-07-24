@@ -44,7 +44,7 @@ pub fn custodian_from_seed_phrase(
     let mut entropy_arr = [0u8; RND_SIZE];
     entropy_arr.copy_from_slice(&entropy[..RND_SIZE]);
     let mut enc_rng = rng_from_dsep_entropy::<AesRng>(&DSEP_MNEMONIC_ENC, &entropy_arr)?;
-    let (priv_key, pub_key) = backup_pke::keygen(&mut enc_rng)?;
+    let (pub_key, priv_key) = backup_pke::keygen(&mut enc_rng)?;
     let mut sig_rng = rng_from_dsep_entropy::<AesRng>(&DSEP_MNEMONIC_SIG, &entropy_arr)?;
     let (verf_key, sig_key) = gen_sig_keys(&mut sig_rng);
 

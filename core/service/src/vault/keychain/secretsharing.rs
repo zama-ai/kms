@@ -32,7 +32,7 @@ impl SecretShareKeychain {
         signer: PrivateSigKey,
         threshold: usize,
     ) -> anyhow::Result<Self> {
-        let (decryptor, public_key) = backup_pke::keygen(&mut OsRng).unwrap();
+        let (public_key, decryptor) = backup_pke::keygen(&mut OsRng).unwrap();
         let verification_key = PublicSigKey::new(*SigningKey::verifying_key(signer.sk()));
         let num_shares = custodian_messages.len();
         let operator = Operator::new(

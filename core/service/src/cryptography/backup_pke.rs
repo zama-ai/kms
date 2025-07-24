@@ -175,12 +175,12 @@ impl BackupPublicKey {
 pub fn keygen<R: Rng + CryptoRng>(
     //todo change order
     rng: &mut R,
-) -> Result<(BackupPrivateKey, BackupPublicKey), CryptographyError> {
+) -> Result<(BackupPublicKey, BackupPrivateKey), CryptographyError> {
     let (decapsulation_key, encapsulation_key) = hybrid_ml_kem::keygen::<MlKemType, _>(rng);
 
     let sk = InnerBackupPrivateKey { decapsulation_key };
     let pk = InnerBackupPublicKey { encapsulation_key };
-    Ok(((&sk).into(), (&pk).into()))
+    Ok(((&pk).into(), (&sk).into()))
 }
 
 #[cfg(test)]
@@ -195,7 +195,7 @@ mod tests {
     fn nested_pke_sunshine() {
         let msg = vec![1, 2, 3, 4];
         let mut rng = OsRng;
-        let (sk, pk) = keygen(&mut rng).unwrap();
+        let (pk, sk) = keygen(&mut rng).unwrap();
 
         let ct = pk.encrypt(&mut rng, &msg).unwrap();
         let pt = sk.decrypt(&ct).unwrap();
@@ -225,8 +225,8 @@ mod tests {
     fn pke_wrong_kem_key() {
         let msg = vec![1, 2, 3, 4];
         let mut rng = OsRng;
-        let (_sk_orig, pk) = keygen(&mut rng).unwrap();
-        let (sk, _pk) = keygen(&mut rng).unwrap();
+        let (pk, _sk_orig) = keygen(&mut rng).unwrap();
+        let (_pk, sk) = keygen(&mut rng).unwrap();
 
         let ct = pk.encrypt(&mut rng, &msg).unwrap();
         let err = sk.decrypt(&ct).unwrap_err();
@@ -238,7 +238,7 @@ mod tests {
     fn pke_wrong_ct() {
         let msg = vec![1, 2, 3, 4];
         let mut rng = OsRng;
-        let (sk, pk) = keygen(&mut rng).unwrap();
+        let (pk, sk) = keygen(&mut rng).unwrap();
         let mut ct = pk.encrypt(&mut rng, &msg).unwrap();
         ct[0] ^= 1;
         let err = sk.decrypt(&ct).unwrap_err();

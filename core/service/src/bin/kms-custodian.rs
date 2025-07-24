@@ -476,7 +476,7 @@ mod tests {
     ) -> anyhow::Result<Operator<PrivateSigKey, BackupPrivateKey>> {
         // Note that in the actual deployment, the operator keys are generated before the encryption keys
         let (verification_key, signing_key) = gen_sig_keys(rng);
-        let (private_key, public_key) = backup_pke::keygen(rng).unwrap();
+        let (public_key, private_key) = backup_pke::keygen(rng).unwrap();
         Ok(Operator::new(
             role,
             setup_msgs,
