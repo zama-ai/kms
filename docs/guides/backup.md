@@ -23,7 +23,7 @@ $ kms-backup generate --randomness <random string of chars> --custodian-role <1-
 ```
 Observe that the `randomness` supplied is used along with entropy of the current system to derive keys, and thus the command is *not* idempotent. 
 This will generate a fresh pair of keys for the given custodian and store this along with relevant meta-data in the directory pointed to by the path.
-Furthermore, this will print a BIP39 seed phrase on the screen. This seed phrase must be copied _exactly_ until a piece of paper. The paper should be stored securely as this is needed in order to perform recovery.
+Furthermore, this will print a BIP39 seed phrase on the screen. This seed phrase must be copied _exactly_ on to a piece of paper. The paper should be stored securely as this is needed in order to perform recovery.
 
 Observe the seed phrase and the private keys do not get logged or saved to disc; only printed _once_ to stdout. 
 
