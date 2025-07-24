@@ -35,14 +35,15 @@ sudo apt-get update
 
 # Install Docker
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# NOTE: This makes the script stop, not sure how to handle this
 sudo usermod -aG docker $USER
-sudo su $USER
 
 # Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
-# Restart shell
-exec $0
+# Source cargo environment
+. "$HOME/.cargo/env"
 
 # Install Cargo make for Benchmark script
 cargo install --force cargo-make
@@ -52,10 +53,11 @@ REPO_URL="git@github.com:zama-ai/kms.git"
 TARGET_DIR="$HOME/kms"
 
 if [ ! -d "$TARGET_DIR" ]; then
-    git clone -y "$REPO_URL" "$TARGET_DIR"
+    # NOTE: Bit of a pain as this is interactive (maybe once the repo is public we can use https instead)
+    git clone "$REPO_URL" "$TARGET_DIR"
 else
     echo "Directory $TARGET_DIR already exists. Skipping clone."
 fi
 
 cd "$TARGET_DIR"
-
+sudo su $USER
