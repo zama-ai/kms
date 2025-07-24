@@ -60,7 +60,7 @@ pub struct DecryptParams {
     pub custodian_role: usize,
     /// The relative path to the [`RecoveryRequest`] file containing the request of an operator for recovery
     #[clap(long, short = 'b', required = true)]
-    pub recovery_request_path: String,
+    pub recovery_request_path: PathBuf,
     /// The relative path for the reencrypted backup which will be given to the operator.
     #[clap(long, short = 'o', required = true)]
     pub output_path: PathBuf,
@@ -226,10 +226,8 @@ mod tests {
         util::file_handling::{safe_read_element_versioned, safe_write_element_versioned},
     };
     use std::path::MAIN_SEPARATOR;
-    use std::{collections::BTreeMap, fs, path::Path, thread};
+    use std::{collections::BTreeMap, path::Path, thread};
     use threshold_fhe::execution::runtime::party::Role;
-
-    const TEST_DIR: &str = "./temp/custodian-test";
 
     fn run_commands(commands: Vec<String>) -> String {
         let h = thread::spawn(|| {
@@ -245,8 +243,7 @@ mod tests {
         let out = h.join().unwrap().unwrap();
         let output_string = String::from_utf8_lossy(&out.stdout);
         let errors = String::from_utf8_lossy(&out.stderr);
-        tracing::info!("Command output: {}", output_string);
-        tracing::error!("Command errors: {}", errors);
+        println!("Command output: {output_string}");
         assert!(
             out.status.success(),
             "Command did not execute successfully: {} : {}",
@@ -260,9 +257,9 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn sunshine_generate() {
-        purge();
-        let (seed_phrase, _setup_msgs) = generate_custodian_keys_to_file(1);
-        let (seed_phrase2, _setup_msgs) = generate_custodian_keys_to_file(1);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (seed_phrase, _setup_msgs) = generate_custodian_keys_to_file(temp_dir.path(), 1);
+        let (seed_phrase2, _setup_msgs) = generate_custodian_keys_to_file(temp_dir.path(), 1);
 
         // Ensure that randomness is always sampled on top of given randomness
         assert_ne!(seed_phrase, seed_phrase2);
@@ -271,14 +268,17 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn sunshine_verify() {
-        purge();
-        let (seed_phrase, _setup_msgs) = generate_custodian_keys_to_file(1);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir
+            .path()
+            .join(format!("custodian-1{MAIN_SEPARATOR}setup_msg.bin"));
+        let (seed_phrase, _setup_msgs) = generate_custodian_keys_to_file(temp_dir.path(), 1);
         let verf_command = vec![
             "verify".to_string(),
             "--seed-phrase".to_string(),
             seed_phrase.to_string(),
             "--path".to_string(),
-            format!("{TEST_DIR}{MAIN_SEPARATOR}custodian-1{MAIN_SEPARATOR}setup_msg.bin",),
+            path.to_str().unwrap().to_string(),
         ];
         // Note that `run_commands` validate that the command executed successfully
         let _verf_out = run_commands(verf_command);
@@ -288,17 +288,19 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial]
     async fn sunshine_decrypt() {
-        purge();
         let threshold = 1;
         let amount_custodians = 2 * threshold + 1; // Minimum amount of custodians is 2 * threshold + 1
         let amount_operators = 4;
         let backup_id = derive_request_id("backuptest").unwrap();
 
+        let temp_dir = tempfile::tempdir().unwrap();
+
         // Generate custodian keys
         let mut setup_msgs = Vec::new();
         let mut seed_phrases: Vec<_> = Vec::new();
         for custodian_index in 1..=amount_custodians {
-            let (seed_phrase, setup_msg) = generate_custodian_keys_to_file(custodian_index);
+            let (seed_phrase, setup_msg) =
+                generate_custodian_keys_to_file(temp_dir.path(), custodian_index);
             setup_msgs.push(setup_msg);
             seed_phrases.push(seed_phrase);
         }
@@ -308,6 +310,7 @@ mod tests {
         let mut operators = Vec::new();
         for operator_index in 1..=amount_operators {
             let (cur_commitments, operator) = make_backup(
+                temp_dir.path(),
                 threshold,
                 Role::indexed_from_one(operator_index),
                 setup_msgs.clone(),
@@ -322,6 +325,12 @@ mod tests {
         // Decrypt
         for custodian_index in 1..=amount_custodians {
             for operator_index in 1..=amount_operators {
+                let request_path = temp_dir.path().join(format!(
+                    "operator-{operator_index}{MAIN_SEPARATOR}{backup_id}-request.bin"
+                ));
+                let recovery_path = temp_dir.path().join(format!(
+                    "operator-{operator_index}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin"
+                ));
                 let decrypt_command = vec![
                     "decrypt".to_string(),
                     "--seed-phrase".to_string(),
@@ -329,11 +338,9 @@ mod tests {
                     "--custodian-role".to_string(),
                     custodian_index.to_string(),
                     "-b".to_string(),
-                    format!("{TEST_DIR}{MAIN_SEPARATOR}operator-{operator_index}{MAIN_SEPARATOR}{backup_id}-request.bin"),
+                    request_path.to_str().unwrap().to_string(),
                     "-o".to_string(),
-                    format!(
-                        "{TEST_DIR}{MAIN_SEPARATOR}operator-{operator_index}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin",
-                    ),
+                    recovery_path.to_str().unwrap().to_string(),
                 ];
                 let _verf_out = run_commands(decrypt_command);
             }
@@ -341,8 +348,14 @@ mod tests {
 
         // Validate the decryption
         for (operator, commitment) in operators.iter().zip(commitments) {
-            let cur_res =
-                decrypt_recovery(amount_custodians, operator, commitment, backup_id).await;
+            let cur_res = decrypt_recovery(
+                temp_dir.path(),
+                amount_custodians,
+                operator,
+                commitment,
+                backup_id,
+            )
+            .await;
             let expected_res = format!("super secret data{}", operator.role().one_based());
             assert_eq!(
                 cur_res,
@@ -353,18 +366,22 @@ mod tests {
         }
     }
 
-    fn generate_custodian_keys_to_file(custodian_index: usize) -> (String, CustodianSetupMessage) {
+    fn generate_custodian_keys_to_file(
+        root_path: &Path,
+        custodian_index: usize,
+    ) -> (String, CustodianSetupMessage) {
+        let final_dir = root_path.join(format!(
+            "custodian-{custodian_index}{MAIN_SEPARATOR}setup_msg.bin"
+        ));
         let gen_command = vec![
-                "generate".to_string(),
-                "--randomness".to_string(),
-                "123456".to_string(),
-                "--custodian-role".to_string(),
-                custodian_index.to_string(),
-                "--path".to_string(),
-                format!(
-                    "{TEST_DIR}{MAIN_SEPARATOR}custodian-{custodian_index}{MAIN_SEPARATOR}setup_msg.bin",
-                ),
-            ];
+            "generate".to_string(),
+            "--randomness".to_string(),
+            "123456".to_string(),
+            "--custodian-role".to_string(),
+            custodian_index.to_string(),
+            "--path".to_string(),
+            final_dir.to_str().unwrap().to_string(),
+        ];
         let gen_out = run_commands(gen_command.clone());
         let seed_phrase = extract_seed_phrase(gen_out.as_ref());
         let role = Role::indexed_from_one(custodian_index);
@@ -384,6 +401,7 @@ mod tests {
     }
 
     async fn make_backup(
+        root_path: &Path,
         threshold: usize,
         operator_role: Role,
         setup_msgs: Vec<CustodianSetupMessage>,
@@ -393,6 +411,9 @@ mod tests {
         BTreeMap<Role, Vec<u8>>,
         Operator<PrivateSigKey, BackupPrivateKey>,
     ) {
+        let request_path = root_path.join(format!(
+            "operator-{operator_role}{MAIN_SEPARATOR}{backup_id}-request.bin"
+        ));
         let amount_custodians = setup_msgs.len();
         let mut rng = get_rng(Some(&format!("operator{operator_role}").to_string()));
         let operator = operator_key_gen(&mut rng, setup_msgs.clone(), operator_role, threshold)
@@ -417,10 +438,6 @@ mod tests {
             operator_role,
         )
         .unwrap();
-        let request_path = format!(
-            "{TEST_DIR}{MAIN_SEPARATOR}operator-{}{MAIN_SEPARATOR}{backup_id}-request.bin",
-            operator_role.one_based()
-        );
         safe_write_element_versioned(&Path::new(&request_path), &recovery_request)
             .await
             .unwrap();
@@ -428,6 +445,7 @@ mod tests {
     }
 
     async fn decrypt_recovery(
+        root_path: &Path,
         amount_custodians: usize,
         operator: &Operator<PrivateSigKey, BackupPrivateKey>,
         commitment: BTreeMap<Role, Vec<u8>>,
@@ -435,9 +453,12 @@ mod tests {
     ) -> Vec<u8> {
         let mut outputs = BTreeMap::new();
         for custodian_index in 1..=amount_custodians {
-            let recovered_backup_path = format!("{TEST_DIR}{MAIN_SEPARATOR}operator-{}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin", operator.role());
+            let recovery_path = root_path.join(format!(
+                "operator-{}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin",
+                operator.role()
+            ));
             let payload: CustodianRecoveryOutput =
-                safe_read_element_versioned(&Path::new(&recovered_backup_path))
+                safe_read_element_versioned(&Path::new(&recovery_path))
                     .await
                     .unwrap();
             outputs.insert(Role::indexed_from_one(custodian_index), payload);
@@ -465,12 +486,5 @@ mod tests {
             public_key,
             threshold,
         )?)
-    }
-
-    fn purge() {
-        let dir = Path::new(TEST_DIR);
-        if dir.exists() {
-            fs::remove_dir_all(dir).unwrap();
-        }
     }
 }
