@@ -269,13 +269,10 @@ spec:
                      "cid" .Values.kmsCore.nitroEnclave.cid
                      "port" .Values.kmsCore.ports.peer
                 ) | indent 10 | trim }}
+          {{- with .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources }}
           resources:
-            requests:
-              memory: {{ .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources.requests.memory }}
-              cpu: {{ .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources.requests.cpu }}
-            limits:
-              memory: {{ .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources.limits.memory }}
-              cpu: {{ .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources.limits.cpu }}
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
         {{- /* Init GRPC External Peers Proxy Sockets */}}
         {{- if .Values.kmsCore.thresholdMode.peersList }}
           {{- range .Values.kmsCore.thresholdMode.peersList }}
@@ -286,13 +283,10 @@ spec:
                      "address" .host
                      "port" .port
                 ) | indent 10 | trim }}
+          {{- with $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources }}
           resources:
-            requests:
-              memory: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.requests.memory }}
-              cpu: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.requests.cpu }}
-            limits:
-              memory: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.limits.memory }}
-              cpu: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.limits.cpu }}
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
         {{- else }}
           {{- range $i := $peersIDList }}
@@ -303,13 +297,10 @@ spec:
                      "address" (printf "%s-%d" $kmsCoreName (int $i))
                      "port" $.Values.kmsCore.ports.peer
                 ) | indent 10 | trim }}
+          {{- with $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources }}
           resources:
-            requests:
-              memory: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.requests.memory }}
-              cpu: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.requests.cpu }}
-            limits:
-              memory: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.limits.memory }}
-              cpu: {{ $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources.limits.cpu }}
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
         {{- end }}
         {{- end }}
@@ -527,6 +518,7 @@ spec:
           resources:
             requests:
               {{- if .Values.kmsCore.nitroEnclave.enabled }}
+              aws.ec2.nitro/nitro_enclaves_cpus: {{ .Values.kmsCore.nitroEnclave.cpuCount }}
               memory: 2Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
@@ -537,6 +529,7 @@ spec:
             limits:
               ephemeral-storage: {{ .Values.kmsCore.resources.limits.ephemeralStorage }}
               {{- if .Values.kmsCore.nitroEnclave.enabled }}
+              aws.ec2.nitro/nitro_enclaves_cpus: {{ .Values.kmsCore.nitroEnclave.cpuCount }}
               memory: 4Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
