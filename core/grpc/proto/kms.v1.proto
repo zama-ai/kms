@@ -236,13 +236,17 @@ message PublicDecryptionResponsePayload {
   bytes verification_key = 1;
   // Digest of the request validated.
   // Needed to ensure that the response is for the expected request.
-  bytes digest = 2;
+  // THIS IS DEPRECATED AND KMS WILL LEAVE THIS FIELD EMPTY,
+  // instead, we will use request_id to specify the link.
+  bytes digest = 2 [deprecated=true];
   // A list of plaintexts, as little endian byte arrays. One for each
   // ciphertext.
   repeated TypedPlaintext plaintexts = 3;
   // the signature on external_decryption_result for the external recipient
   // (e.g. using EIP712 for fhevm)
   optional bytes external_signature = 4;
+  // Request ID of the request that this response corresponds to.
+  RequestId request_id = 5;
 }
 
 // KMS-internal Public Decryption Response

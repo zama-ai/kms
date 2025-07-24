@@ -177,15 +177,17 @@ impl PublicDecryptor for DummyPublicDecryptor {
 
     async fn get_result(
         &self,
-        _request: Request<RequestId>,
+        request: Request<RequestId>,
     ) -> Result<Response<PublicDecryptionResponse>, Status> {
         Ok(Response::new(PublicDecryptionResponse {
             signature: vec![1, 2],
             payload: Some(PublicDecryptionResponsePayload {
                 verification_key: vec![],
-                digest: "dummy digest".as_bytes().to_vec(),
+                #[allow(deprecated)] // we have to allow to fill the struct
+                digest: vec![],
                 plaintexts: vec![TypedPlaintext::new(42, FheTypes::Uint8)],
                 external_signature: Some(vec![23_u8; 65]),
+                request_id: Some(request.into_inner()),
             }),
         }))
     }
