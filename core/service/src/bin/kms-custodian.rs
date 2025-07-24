@@ -52,8 +52,7 @@ pub struct DecryptParams {
     /// The BIP39 seed phrase needed to recover the custodian keys
     #[clap(long, short = 's')]
     pub seed_phrase: String,
-    /// The optional relative path for storing the generated *public* keys.
-    /// If not provided, the keys will be stored in a key directory in the current folder
+    /// Optional randomness to be used, along with the system entropy, to generate the keys
     #[clap(long, short = 'r', default_value = None)]
     pub randomness: Option<String>,
     /// The custodian role (1-based index) who is doing the decryption.
@@ -162,7 +161,7 @@ async fn main() -> Result<(), anyhow::Error> {
             let mut rng = get_rng(params.randomness.as_ref());
             let custodian_backup: &OperatorBackupOutput = recovery_request
                 .ciphertexts()
-                .get(params.custodian_role - 1)
+                .get(&Role::indexed_from_one(params.custodian_role))
                 .unwrap_or_else(|| {
                     panic!(
                         "No ciphertext found for custodian role: {}",
@@ -403,12 +402,12 @@ mod tests {
             .secret_share_and_encrypt(&mut rng, msg, backup_id)
             .unwrap();
         let mut commitments = BTreeMap::new();
-        let mut ciphertexts = Vec::new();
+        let mut ciphertexts = BTreeMap::new();
         for custodian_index in 1..=amount_custodians {
             let custodian_role = Role::indexed_from_one(custodian_index);
             let ct = ct_map.get(&custodian_role).unwrap();
             commitments.insert(custodian_role, ct.commitment.clone());
-            ciphertexts.push(ct.to_owned());
+            ciphertexts.insert(custodian_role, ct.to_owned());
         }
         let recovery_request = RecoveryRequest::new(
             operator.public_key().to_owned(),

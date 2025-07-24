@@ -1,13 +1,12 @@
-use std::{
-    collections::BTreeMap,
-    fmt::Display,
-    time::{SystemTime, UNIX_EPOCH},
-};
-
 use itertools::Itertools;
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::Display,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tfhe::{named::Named, safe_serialization::safe_serialize, Versionize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
@@ -60,8 +59,9 @@ pub struct RecoveryRequest {
     enc_key: BackupPublicKey,
     /// The public key of the operator that was originally used to sign the backup.
     verification_key: PublicSigKey,
-    /// The ciphertexts that are the backup. Ordered by the custodian role.
-    cts: Vec<OperatorBackupOutput>,
+    /// The ciphertexts that are the backup. Indexed by the custodian role.
+    /// NOTE: since BTreeMap does not implement Versionize, we use a Vec here.
+    cts: Vec<(Role, OperatorBackupOutput)>,
     /// The request ID under which the backup was created.
     backup_id: RequestId,
     /// The role of the operator
@@ -72,14 +72,16 @@ impl RecoveryRequest {
     pub fn new(
         enc_key: BackupPublicKey,
         verification_key: PublicSigKey,
-        cts: Vec<OperatorBackupOutput>,
+        cts: BTreeMap<Role, OperatorBackupOutput>,
         backup_id: RequestId,
         operator_role: Role,
     ) -> anyhow::Result<Self> {
+        // Observe that we use a Vec here instead of a BTreeMap since it does not support Versionize.
+        let inner_cts = cts.into_iter().collect::<Vec<_>>();
         let res = Self {
             enc_key,
             verification_key,
-            cts,
+            cts: inner_cts,
             backup_id,
             operator_role,
         };
@@ -114,8 +116,8 @@ impl RecoveryRequest {
         &self.verification_key
     }
 
-    pub fn ciphertexts(&self) -> &Vec<OperatorBackupOutput> {
-        &self.cts
+    pub fn ciphertexts(&self) -> HashMap<Role, &OperatorBackupOutput> {
+        self.cts.iter().map(|(role, ct)| (*role, ct)).collect()
     }
 
     pub fn backup_id(&self) -> RequestId {
