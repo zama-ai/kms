@@ -562,8 +562,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
         if request_id != retrieved_req_id {
             return Err(Status::not_found(format!(
-                "Request ID mismatch: expected {}, got {}",
-                request_id, retrieved_req_id
+                "Request ID mismatch: expected {request_id}, got {retrieved_req_id}",
             )));
         }
 

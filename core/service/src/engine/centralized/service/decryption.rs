@@ -406,8 +406,7 @@ pub async fn get_public_decryption_result_impl<
 
     if retrieved_req_id != request_id {
         return Err(Status::not_found(format!(
-            "Request ID mismatch: expected {}, got {}",
-            request_id, retrieved_req_id
+            "Request ID mismatch: expected {request_id}, got {retrieved_req_id}",
         )));
     }
 
