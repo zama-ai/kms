@@ -1,4 +1,4 @@
-{{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsCore.thresholdMode.tls.enabled .Values.kmsGenCertAndKeys.enabled -}}
+{{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsGenCertAndKeys.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
