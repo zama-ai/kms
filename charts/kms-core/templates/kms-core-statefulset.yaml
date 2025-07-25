@@ -98,11 +98,25 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
-          {{- if .Values.kmsCore.envFrom.configmap.name }}
-          envFrom:
-            - configMapRef:
-                name: {{ .Values.kmsCore.envFrom.configmap.name }}
-          {{- end }}
+            {{- if .Values.kmsCore.envFrom.configmap.name }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+            {{- if .Values.kmsCore.nitroEnclave.enabled }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+            {{- end }}
+            {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
             - mountPath: /var/lib/kms-core/config
@@ -189,11 +203,23 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
-          {{- if .Values.kmsCore.envFrom.configmap.name }}
-          envFrom:
-            - configMapRef:
-                name: {{ .Values.kmsCore.envFrom.configmap.name }}
-          {{- end }}
+            {{- if .Values.kmsCore.envFrom.configmap.name }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+            {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
             - mountPath: {{ .Values.kmsCore.workdir }}
@@ -243,6 +269,10 @@ spec:
                      "cid" .Values.kmsCore.nitroEnclave.cid
                      "port" .Values.kmsCore.ports.peer
                 ) | indent 10 | trim }}
+          {{- with .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources }}
+          resources:
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
         {{- /* Init GRPC External Peers Proxy Sockets */}}
         {{- if .Values.kmsCore.thresholdMode.peersList }}
           {{- range .Values.kmsCore.thresholdMode.peersList }}
@@ -253,6 +283,10 @@ spec:
                      "address" .host
                      "port" .port
                 ) | indent 10 | trim }}
+          {{- with $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources }}
+          resources:
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
         {{- else }}
           {{- range $i := $peersIDList }}
@@ -263,6 +297,10 @@ spec:
                      "address" (printf "%s-%d" $kmsCoreName (int $i))
                      "port" $.Values.kmsCore.ports.peer
                 ) | indent 10 | trim }}
+          {{- with $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources }}
+          resources:
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
         {{- end }}
         {{- end }}
@@ -307,8 +345,12 @@ spec:
               {{ include "kmsCoreMode" . }} \
               {{- if .Values.kmsCore.thresholdMode.enabled }}
               --signing-key-party-id ${KMS_CORE__THRESHOLD__MY_ID} \
-              --num-parties {{ .Values.kmsPeers.count }} \
-              {{ if .Values.kmsCore.addressOverride }}
+              {{- if .Values.kmsCore.thresholdMode.peersList }}
+              --num-parties {{ len .Values.kmsCore.thresholdMode.peersList }} \
+              {{- else }}
+              --num-parties {{ int .Values.kmsPeers.count }} \
+              {{- end }}
+              {{- if .Values.kmsCore.addressOverride }}
               --tls-subject {{ .Values.kmsCore.addressOverride | quote }}
               {{- else }}
               --tls-subject "{{ include "kmsCoreName" . }}-${KMS_CORE__THRESHOLD__MY_ID}"
@@ -333,11 +375,25 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
-          {{- if .Values.kmsCore.envFrom.configmap.name }}
-          envFrom:
-            - configMapRef:
-                name: {{ .Values.kmsCore.envFrom.configmap.name }}
-          {{- end }}
+            {{- if .Values.kmsCore.envFrom.configmap.name }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+            {{- if .Values.kmsCore.privateVault.awskms.enabled }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+            {{- end }}
+            {{- end }}
           {{- if not .Values.kmsCore.privateVault.s3.enabled }}
           volumeMounts:
             - mountPath: /keys
@@ -415,11 +471,25 @@ spec:
             - name: AWS_SECRET_ACCESS_KEY
               value: {{ (index .Values.minio.provisioning.users 0).password}}
             {{- end }}
-          {{- if .Values.kmsCore.envFrom.configmap.name }}
-          envFrom:
-            - configMapRef:
-                name: {{ .Values.kmsCore.envFrom.configmap.name }}
-          {{- end }}
+            {{- if .Values.kmsCore.envFrom.configmap.name }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageKey }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageKey }}
+            {{- if .Values.kmsCore.privateVault.awskms.enabled }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychain }}
+            {{- end }}
+            {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
             - mountPath: {{ .Values.kmsCore.workdir }}
@@ -448,6 +518,7 @@ spec:
           resources:
             requests:
               {{- if .Values.kmsCore.nitroEnclave.enabled }}
+              aws.ec2.nitro/nitro_enclaves_cpus: {{ .Values.kmsCore.nitroEnclave.cpuCount }}
               memory: 2Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
@@ -458,6 +529,7 @@ spec:
             limits:
               ephemeral-storage: {{ .Values.kmsCore.resources.limits.ephemeralStorage }}
               {{- if .Values.kmsCore.nitroEnclave.enabled }}
+              aws.ec2.nitro/nitro_enclaves_cpus: {{ .Values.kmsCore.nitroEnclave.cpuCount }}
               memory: 4Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
