@@ -4,14 +4,14 @@ We take security seriously. If you discover a vulnerability, please follow the g
 
 ## Supported Versions
 
-Currently only v0.11.0 or newer is supported. 
+Currently only v0.11.0 or newer is supported.
 
 ## Reporting a Vulnerability
 
 If you find a security-related bug in this project, we kindly ask you for responsible disclosure and for giving us
 appropriate time to react, analyze and develop a fix to mitigate the found security vulnerability.
 
-Please report any vulnerability privately using the [GitHub security advisory report](https://github.com/zama-ai/kms-core/security/advisories/new).
+Please report any vulnerability privately using the [GitHub security advisory report](https://github.com/zama-ai/kms/security/advisories/new).
 
 ## Recognition
 

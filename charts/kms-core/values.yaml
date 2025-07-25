@@ -15,7 +15,7 @@ kmsCore:
   addressOverride:
   # Override the image of the core:
   image:
-    name: ghcr.io/zama-ai/kms-core
+    name: ghcr.io/zama-ai/kms/kms-core
     tag: latest
     pullPolicy: Always
   # Define the service account name for the core:

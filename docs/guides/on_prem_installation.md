@@ -145,7 +145,7 @@ helm install kms-service ./charts/kms-service -f ./charts/kms-service/values-exa
 If you want to use the chart from the registry you can log into ghcr.io and run the following with the **version** you want:
 
 ```bash
-helm upgrade --install kms-core oci://ghcr.io/zama-ai/kms-core/kms-service --version <version> -f ./charts/kms-service/values-example-local.yaml -n kms-threshold-staging --create-namespace --dependency-update
+helm upgrade --install kms-core oci://ghcr.io/zama-ai/kms/core-service --version <version> -f ./charts/kms-service/values-example-local.yaml -n kms-threshold-staging --create-namespace --dependency-update
 ```
 
 
