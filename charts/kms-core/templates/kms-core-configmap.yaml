@@ -191,7 +191,6 @@ data:
       {{- end }}
     tracing_otlp_timeout_ms = 10000
     metrics_bind_address = "0.0.0.0:{{ .Values.kmsCore.ports.metrics }}"
-    enable_sys_metrics = true
 
     [telemetry.batch]
     max_queue_size = 8192
