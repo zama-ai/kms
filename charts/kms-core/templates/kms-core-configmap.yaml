@@ -106,7 +106,6 @@ data:
     network_timeout_bk_sns = 1200
     max_en_decode_message_size = 2147483648
     initial_interval_ms = {{ int .Values.kmsCore.thresholdMode.initialIntervalMs }}
-    message_limit = 70
     session_update_interval_secs = 60
     session_cleanup_interval_secs = 3600
     discard_inactive_sessions_interval = 900
