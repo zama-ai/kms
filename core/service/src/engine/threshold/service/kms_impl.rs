@@ -44,6 +44,7 @@ use tonic_tls::rustls::TlsIncoming;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
+    backup::custodian::InternalCustodianContext,
     conf::threshold::{PeerConf, ThresholdPartyConf, TlsCert},
     consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
     cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
@@ -210,6 +211,9 @@ where
         read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
     let mut public_key_info = HashMap::new();
     let mut pk_map = HashMap::new();
+    let custodian_context: HashMap<RequestId, InternalCustodianContext> =
+        read_all_data_versioned(&private_storage, &PrivDataType::CustodianInfo.to_string()).await?;
+
     for (id, info) in key_info_versioned.clone().into_iter() {
         public_key_info.insert(id, info.pk_meta_data.clone());
 
@@ -399,6 +403,7 @@ where
         config.dec_capacity,
         config.min_dec_cache,
     )));
+    let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(custodian_context)));
     let crypto_storage = ThresholdCryptoMaterialStorage::new(
         public_storage,
         private_storage,
@@ -423,6 +428,7 @@ where
         Some(user_decrypt_meta_store.clone()), // user_dec_store
         Some(crs_meta_store.clone()),          // crs_store
         Some(preproc_buckets.clone()),         // preproc_store
+        Some(custodian_meta_store.clone()),    // custodian_context_store
     );
 
     let (core_service_health_reporter, core_service_health_service) =
@@ -530,6 +536,8 @@ where
     let context_manager = RealContextManager {
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
+        custodian_meta_store,
+        tracker: Arc::clone(&tracker),
     };
 
     let backup_operator = RealBackupOperator {

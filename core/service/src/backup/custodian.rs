@@ -2,7 +2,10 @@ use kms_grpc::kms::v1::CustodianSetupMessage;
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tfhe::{named::Named, safe_serialization::safe_deserialize, Versionize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{execution::runtime::party::Role, hashing::DomainSep};
@@ -108,6 +111,25 @@ impl TryFrom<CustodianSetupMessage> for InternalCustodianSetupMessage {
             public_verf_key: payload.verification_key,
         })
     }
+}
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum InternalCustodianContextVersioned {
+    V0(InternalCustodianContext),
+}
+
+/// This is the internal representation of the custodian context.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
+#[versionize(InternalCustodianContextVersioned)]
+pub struct InternalCustodianContext {
+    pub threshold: u32,
+    pub context_id: RequestId,
+    pub previous_context_id: Option<RequestId>,
+    pub custodian_nodes: HashMap<Role, InternalCustodianSetupMessage>,
+}
+
+impl Named for InternalCustodianContext {
+    const NAME: &'static str = "backup::CustodianContext";
 }
 
 pub struct Custodian<S: BackupSigner, D: BackupDecryptor> {

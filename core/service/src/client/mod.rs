@@ -773,6 +773,7 @@ impl Client {
     /// user decryption key pair.
     ///
     /// Note that we only support MlKem512 in the latest version and not other variants of MlKem.
+    #[cfg(feature = "non-wasm")]
     pub fn user_decryption_request(
         &mut self,
         domain: &Eip712Domain,
@@ -2116,7 +2117,7 @@ pub mod test_tools {
                     service_listener,
                     cur_arc_server,
                     Arc::new(crate::grpc::MetaStoreStatusServiceImpl::new(
-                        None, None, None, None, None,
+                        None, None, None, None, None, None,
                     )),
                     cur_health_service,
                     server_shutdown_rx.map(drop),
@@ -2359,7 +2360,7 @@ pub mod test_tools {
                 listener,
                 arc_kms,
                 Arc::new(crate::grpc::MetaStoreStatusServiceImpl::new(
-                    None, None, None, None, None,
+                    None, None, None, None, None, None,
                 )),
                 health_service,
                 rx.map(drop),

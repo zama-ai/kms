@@ -5,7 +5,7 @@ use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::fmt::{self,};
 use strum_macros::EnumIter;
 use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
@@ -281,6 +281,7 @@ pub enum PrivDataType {
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
+    CustodianInfo, // Custodian information for the custodian context
     ContextInfo,
 }
 
@@ -293,6 +294,7 @@ impl fmt::Display for PrivDataType {
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
             PrivDataType::ContextInfo => write!(f, "Context"),
+            PrivDataType::CustodianInfo => write!(f, "CustodianInfo"),
         }
     }
 }

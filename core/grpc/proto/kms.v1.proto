@@ -427,7 +427,7 @@ message CustodianContext {
   // It does not need to match the KMS context threshold
   // and we only need to ensure a majority of custodian nodes are honest
   // since the backup and recovery steps are synchronous.
-  int32 threshold = 4;
+  uint32 threshold = 4;
 }
 
 // Request to create a new KMS context.

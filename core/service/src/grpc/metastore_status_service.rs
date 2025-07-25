@@ -16,7 +16,7 @@
 use std::{collections::HashMap, str::FromStr, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::util::meta_store::MetaStore;
+use crate::{backup::custodian::InternalCustodianContext, util::meta_store::MetaStore};
 use kms_grpc::{
     kms::v1::{Empty, TypedPlaintext, UserDecryptionResponsePayload},
     metastore_status::v1::{
@@ -51,6 +51,9 @@ pub type BucketMetaStore = Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>
 /// MetaStore for preprocessing data, wrapping the bucket store in an Arc<Mutex<>>
 pub type PreprocMetaStore = MetaStore<BucketMetaStore>;
 
+/// MetaStore for custodian context data, storing setup messages needed for backup operations.
+pub type CustodianMetaStore = MetaStore<InternalCustodianContext>;
+
 /// Implementation of the MetaStoreStatusService gRPC service.
 ///
 /// This service provides monitoring and status information about various meta-stores
@@ -69,6 +72,8 @@ pub struct MetaStoreStatusServiceImpl {
     pub crs_store: Option<Arc<RwLock<CrsMetaStore>>>,
     /// Store for preprocessing data buckets
     pub preproc_store: Option<Arc<RwLock<PreprocMetaStore>>>,
+    /// Store for custodian context data used for backup
+    pub custodian_context_store: Option<Arc<RwLock<CustodianMetaStore>>>,
 }
 
 impl MetaStoreStatusServiceImpl {
@@ -89,6 +94,7 @@ impl MetaStoreStatusServiceImpl {
         user_dec_store: Option<Arc<RwLock<UserDecryptMetaStore>>>,
         crs_store: Option<Arc<RwLock<CrsMetaStore>>>,
         preproc_store: Option<Arc<RwLock<PreprocMetaStore>>>,
+        custodian_context_store: Option<Arc<RwLock<CustodianMetaStore>>>,
     ) -> Self {
         Self {
             key_gen_store,
@@ -96,6 +102,7 @@ impl MetaStoreStatusServiceImpl {
             user_dec_store,
             crs_store,
             preproc_store,
+            custodian_context_store,
         }
     }
 
