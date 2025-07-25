@@ -137,13 +137,13 @@ data:
     party_id = {{ int .id }}
           {{- if $.Values.kmsCore.nitroEnclave.enabled }}
             {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
-    address = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}
+    address = {{ .host | quote }}
             {{- else }}
     address = "localhost"
             {{- end }}
     port = {{ add $.Values.kmsCore.nitroEnclave.ports.peer .id }}
           {{- else }}
-    address = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}
+    address = {{ .host | quote }}
     port = {{ int .port }}
           {{- end }}
           {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
