@@ -85,7 +85,6 @@ kmsCore:
     maxElapsedTime: 300
     networkTimeout: 300
     initialIntervalMs: 100
-    cleanupIntervalSecs: 2
 
     thresholdValue: 1
     decCapacity: 10000

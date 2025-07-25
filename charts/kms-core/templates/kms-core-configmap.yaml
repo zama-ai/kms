@@ -106,8 +106,6 @@ data:
     network_timeout_bk_sns = 1200
     max_en_decode_message_size = 2147483648
     initial_interval_ms = {{ int .Values.kmsCore.thresholdMode.initialIntervalMs }}
-    # Background cleanup interval for dead session references in seconds
-    cleanup_interval_secs = {{ int .Values.kmsCore.thresholdMode.cleanupIntervalSecs }}
 
       {{ if $.Values.kmsCore.thresholdMode.tls.enabled }}
         {{- if $.Values.kmsCore.nitroEnclave.enabled }}
