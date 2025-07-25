@@ -111,3 +111,8 @@ args:
 {{- $kmsCoreNameDefault := printf "%s-%s" .Release.Name "gen-key" }}
 {{- default $kmsCoreNameDefault .Values.kmsGenKeys.nameOverride | trunc 52 | trimSuffix "-" -}}
 {{- end -}}
+
+{{- define "kmsGenCertAndKeysJobName" -}}
+{{- $kmsCoreNameDefault := printf "%s-%s" .Release.Name "gen-cert-and-keys" }}
+{{- default $kmsCoreNameDefault .Values.kmsGenCertAndKeys.nameOverride | trunc 52 | trimSuffix "-" -}}
+{{- end -}}

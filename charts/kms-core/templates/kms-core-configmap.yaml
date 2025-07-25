@@ -7,71 +7,74 @@ metadata:
   labels:
     app: kms-core
     app.kubernetes.io/name: {{ include "kmsCoreName" . }}
+  annotations:
+    "helm.sh/hook-weight": "-2"
   name: {{ include "kmsCoreName" . }}-config
 data:
   aws.toml: |
     [aws]
     region = "${AWS_REGION}"
     role_arn = "${AWS_ROLE_ARN}"
-    {{- if .Values.minio.enabled }}
+    {{ if .Values.minio.enabled }}
     s3_endpoint = "http://minio:9000"
-    {{- else }}
-      {{- if .Values.kmsCore.nitroEnclave.enabled }}
-        {{- if .Values.kmsCore.nitroEnclave.ports.imds }}
+    {{ else }}
+      {{ if .Values.kmsCore.nitroEnclave.enabled }}
+        {{ if .Values.kmsCore.nitroEnclave.ports.imds }}
     imds_endpoint = "http://localhost:{{ .Values.kmsCore.nitroEnclave.ports.imds }}"
-        {{- end }}
-        {{- if .Values.kmsCore.nitroEnclave.ports.sts }}
+        {{ end }}
+        {{ if .Values.kmsCore.nitroEnclave.ports.sts }}
     sts_endpoint = "https://localhost:{{ .Values.kmsCore.nitroEnclave.ports.sts }}"
-        {{- end }}
+        {{ end }}
     s3_endpoint = "https://localhost:{{ .Values.kmsCore.nitroEnclave.ports.s3 }}"
     awskms_endpoint = "https://localhost:{{ .Values.kmsCore.nitroEnclave.ports.awskms }}"
-      {{- end }}
-    {{- end }}
+      {{ end }}
+    {{ end }}
   vaults.toml: |
-    {{- if .Values.kmsCore.publicVault.s3.enabled }}
+    {{ if .Values.kmsCore.publicVault.s3.enabled }}
     [public_vault.storage.s3]
     bucket = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}"
-      {{- if .Values.kmsCore.publicVault.s3.path }}
+      {{ if .Values.kmsCore.publicVault.s3.path }}
     prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX}"
-      {{- end }}
-    {{- else }}
+      {{ end }}
+    {{ else }}
     [public_vault.storage.file]
     path = "./keys"
-    {{- end }}
+    {{ end }}
 
-    {{- if .Values.kmsCore.privateVault.s3.enabled -}}
+
+    {{ if .Values.kmsCore.privateVault.s3.enabled }}
     [private_vault.storage.s3]
     bucket = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET}"
-      {{- if .Values.kmsCore.publicVault.s3.path }}
+      {{ if .Values.kmsCore.publicVault.s3.path }}
     prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX}"
-      {{- end }}
-    {{- else }}
+      {{ end }}
+
+    {{ else }}
     [private_vault.storage.file]
     path = "./keys"
-    {{- end }}
-    {{- if .Values.kmsCore.nitroEnclave.enabled }}
+    {{ end }}
+    {{ if .Values.kmsCore.nitroEnclave.enabled }}
     [private_vault.keychain.aws_kms]
     root_key_id = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID}"
     root_key_spec = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC}"
-    {{- end }}
+    {{ end }}
   kms-gen-keys.toml: |
     [keygen]
     enabled = true
-
     {{ if .Values.kmsCore.thresholdMode.enabled }}
     [threshold]
     my_id = "${KMS_CORE__THRESHOLD__MY_ID}"
-      {{- if .Values.kmsCore.thresholdMode.peersList }}
+      {{ if .Values.kmsCore.thresholdMode.peersList }}
     num_parties = {{ len .Values.kmsCore.thresholdMode.peersList }}
-      {{- else }}
+      {{ else }}
     num_parties = {{ int .Values.kmsPeers.count }}
-      {{- end }}
+      {{ end }}
       {{ if .Values.kmsCore.addressOverride }}
-    tls_subject = {{ .Values.kmsCore.addressOverride | quote }}
-      {{- else }}
-    tls_subject = "{{ include "kmsCoreName" . }}-${KMS_CORE__THRESHOLD__MY_ID}"
-      {{- end }}
-    {{- end }}
+    tls_subject = "{{ .Values.kmsCore.addressOverride }}-{{ .Values.kmsPeers.id}}"
+      {{ else }}
+    tls_subject = "{{ include "kmsCoreName" . }}-{{ .Values.kmsPeers.id}}"
+      {{ end }}
+    {{ end }}
   kms-server.toml: |
     [service]
     listen_address = "0.0.0.0"
@@ -95,13 +98,19 @@ data:
 
     [threshold.core_to_core_net]
     message_limit = 70
-    multiplier = 1.1
-    max_interval = 5
-    max_elapsed_time = 300
-    network_timeout = 10
+    multiplier = {{ float64 .Values.kmsCore.thresholdMode.multiplier }}
+    max_interval = {{ int .Values.kmsCore.thresholdMode.maxInterval }}
+    max_elapsed_time = {{ int .Values.kmsCore.thresholdMode.maxElapsedTime }}
+    network_timeout = {{ int .Values.kmsCore.thresholdMode.networkTimeout }}
     network_timeout_bk = 300
     network_timeout_bk_sns = 1200
     max_en_decode_message_size = 2147483648
+    initial_interval_ms = {{ int .Values.kmsCore.thresholdMode.initialIntervalMs }}
+    session_update_interval_secs = 60
+    session_cleanup_interval_secs = 3600
+    discard_inactive_sessions_interval = 900
+    max_waiting_time_for_message_queue = 60
+    max_opened_inactive_sessions_per_party = 100
 
       {{ if $.Values.kmsCore.thresholdMode.tls.enabled }}
         {{- if $.Values.kmsCore.nitroEnclave.enabled }}
@@ -118,7 +127,7 @@ data:
           {{- if .Values.kmsCore.thresholdMode.tls.certificate.path }}
     cert.path = {{ .Values.kmsCore.thresholdMode.tls.certificate.path | quote }}
           {{- else }}
-    cert.pem = {{ .Values.kmsCore.thresholdMode.tls.certificate.pem | toToml }}
+    cert.pem = ${KMS_CA_PEM_{{ .id }}}
           {{- end }}
           {{- if .Values.kmsCore.thresholdMode.tls.privateKey.path }}
     key.path = {{ .Values.kmsCore.thresholdMode.tls.privateKey.path | quote }}
@@ -132,17 +141,22 @@ data:
         {{ range .Values.kmsCore.thresholdMode.peersList }}
     [[threshold.peers]]
     party_id = {{ int .id }}
-    address = {{ .host | quote }}
           {{- if $.Values.kmsCore.nitroEnclave.enabled }}
+            {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
+    address = {{ .host | quote }}
+            {{- else }}
+    address = "localhost"
+            {{- end }}
     port = {{ add $.Values.kmsCore.nitroEnclave.ports.peer .id }}
           {{- else }}
+    address = {{ .host | quote }}
     port = {{ int .port }}
           {{- end }}
           {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
             {{- if $.Values.kmsCore.thresholdMode.tls.ca_certificate.path }}
     tls_cert.path = {{ $.Values.kmsCore.thresholdMode.tls.ca_certificate.path | quote }}
             {{- else }}
-    tls_cert.pem = {{ $.Values.kmsCore.thresholdMode.tls.ca_certificate.pem | toToml }}
+    tls_cert.pem = ${KMS_CA_PEM_{{ .id }}}
             {{- end }}
           {{- end }}
         {{- end }}
@@ -150,10 +164,15 @@ data:
         {{ range $i := $peersIDList }}
     [[threshold.peers]]
     party_id = {{ int $i }}
-    address = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}
           {{- if $.Values.kmsCore.nitroEnclave.enabled }}
+            {{- if $.Values.kmsCore.thresholdMode.tls.enabled }}
+    address = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}
+            {{- else }}
+    address = "localhost"
+            {{- end }}
     port = {{ add $.Values.kmsCore.nitroEnclave.ports.peer $i }}
-          {{ else }}
+            {{- else }}
+    address = {{ (printf "%s-%d" $kmsCoreName $i) | quote }}
     port = {{ int $.Values.kmsCore.ports.peer }}
           {{- end }}
         {{- end }}
@@ -201,7 +220,7 @@ data:
       "eif_path": {{ .Values.kmsCore.nitroEnclave.eifPath | quote }}
     }
       {{- if .Values.kmsCore.thresholdMode.tls.enabled }}
-  party_cert.pem: {{ .Values.kmsCore.thresholdMode.tls.ca_certificate.pem | toYaml | indent 2 }}
+  party_cert.pem: ${KMS_CA_PEM_{{ .Values.kmsPeers.id }}}
       {{- end }}
     {{- end }}
 {{- end -}}
