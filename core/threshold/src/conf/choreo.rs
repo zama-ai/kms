@@ -100,6 +100,7 @@ impl ThresholdTopology {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct ChoreoConf {
     pub threshold_topology: ThresholdTopology,
+    pub malicious_roles: Option<Vec<Role>>,
     pub telemetry: Option<TelemetryConfig>,
 
     pub cert_file: Option<String>,
