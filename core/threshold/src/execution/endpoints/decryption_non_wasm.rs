@@ -29,6 +29,7 @@ use crate::execution::{
 };
 #[cfg(any(test, feature = "testing"))]
 use crate::session_id::SessionId;
+use crate::thread_handles::spawn_compute_bound;
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
@@ -252,13 +253,13 @@ where
         LowLevelCiphertext::BigStandard(ct128) => ct128,
         LowLevelCiphertext::Small(ct64) => match ct64 {
             RadixOrBoolCiphertext::Radix(base_radix_ciphertext) => SnsRadixOrBoolCiphertext::Radix(
-                run_compute_bound(move || {
+                spawn_compute_bound(move || {
                     ck.squash_radix_ciphertext_noise(&server_key, &base_radix_ciphertext)
                 })
                 .await??,
             ),
             RadixOrBoolCiphertext::Bool(boolean_block) => SnsRadixOrBoolCiphertext::Bool(
-                run_compute_bound(move || {
+                spawn_compute_bound(move || {
                     ck.squash_boolean_block_noise(&server_key, &boolean_block)
                 })
                 .await??,
@@ -325,8 +326,8 @@ where
 pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P>(
     parameters: SessionParameters,
     noiseflood_session: &mut P,
-    server_key: &ServerKey,
-    ck: &NoiseSquashingKey,
+    server_key: Arc<ServerKey>,
+    ck: Arc<NoiseSquashingKey>,
     ct: LowLevelCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     _mode: DecryptionMode,
@@ -346,10 +347,16 @@ where
         LowLevelCiphertext::BigStandard(ct128) => ct128,
         LowLevelCiphertext::Small(ct64) => match ct64 {
             RadixOrBoolCiphertext::Radix(base_radix_ciphertext) => SnsRadixOrBoolCiphertext::Radix(
-                ck.squash_radix_ciphertext_noise(server_key, &base_radix_ciphertext)?,
+                spawn_compute_bound(move || {
+                    ck.squash_radix_ciphertext_noise(&server_key, &base_radix_ciphertext)
+                })
+                .await??,
             ),
             RadixOrBoolCiphertext::Bool(boolean_block) => SnsRadixOrBoolCiphertext::Bool(
-                ck.squash_boolean_block_noise(server_key, &boolean_block)?,
+                spawn_compute_bound(move || {
+                    ck.squash_boolean_block_noise(&server_key, &boolean_block)
+                })
+                .await??,
             ),
         },
     };
@@ -866,26 +873,6 @@ where
     Ok(out)
 }
 
-/// Spawn a compute task on rayon and returns its result.
-///
-/// This can be used to offload the tokio executor from CPU bounds tasks.
-pub async fn run_compute_bound<R: Send + 'static, F: FnOnce() -> R + Send + 'static>(
-    compute_fn: F,
-) -> anyhow::Result<R> {
-    let (tx, rx) = tokio::sync::oneshot::channel();
-
-    rayon::spawn(move || {
-        let res = compute_fn();
-        let _ = tx
-            .send(res)
-            .map_err(|_| ())
-            .inspect_err(|_| tracing::error!("compute task receiver dropped"));
-    });
-
-    rx.await
-        .map_err(|_| anyhow_error_and_log("compute task sender dropped"))
-}
-
 #[instrument(
     name = "TFHE.Threshold-Dec-1",
     skip(session, preprocessing, keyshares, ciphertext)
@@ -913,7 +900,7 @@ where
         let keyshares = keyshares.clone();
         let preprocessing = preprocessing.clone();
 
-        run_compute_bound(move || -> anyhow::Result<_> {
+        spawn_compute_bound(move || -> anyhow::Result<_> {
             let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
             for current_ct_block in ciphertext.packed_blocks() {
                 let partial_decrypt =

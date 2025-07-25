@@ -21,10 +21,11 @@ use observability::{
 use tfhe::FheTypes;
 use threshold_fhe::{
     execution::endpoints::decryption::{
-        decrypt_using_noiseflooding, run_compute_bound, secure_decrypt_using_bitdec,
-        DecryptionMode, NoiseFloodSmallSession,
+        decrypt_using_noiseflooding, secure_decrypt_using_bitdec, DecryptionMode,
+        NoiseFloodSmallSession,
     },
     session_id::SessionId,
+    thread_handles::spawn_compute_bound,
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
@@ -93,7 +94,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
         let keys = fhe_keys;
         let decomp_key = keys.decompression_key.clone();
-        let low_level_ct = run_compute_bound(move || {
+        let low_level_ct = spawn_compute_bound(move || {
             deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
         })
         .await??;
@@ -214,7 +215,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         let (ciphertexts, req_digest, key_id, req_id, eip712_domain) = {
             let inner_compute = inner.clone();
             tonic_handle_potential_err(
-                run_compute_bound(move || validate_public_decrypt_req(&inner_compute))
+                spawn_compute_bound(move || validate_public_decrypt_req(&inner_compute))
                     .await
                     .and_then(|res| res),
                 format!("Failed to validate decrypt request {inner:?}"),
@@ -529,7 +530,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // Compute expensive signature OUTSIDE the lock
             let external_sig = if let Some(domain) = eip712_domain {
                 let pts = pts.clone();
-                run_compute_bound(move || {
+                spawn_compute_bound(move || {
                     compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, domain)
                 })
                 .await

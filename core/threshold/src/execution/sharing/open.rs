@@ -13,11 +13,11 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::p2p::{generic_receive_from_all, send_to_all},
-        endpoints::decryption::run_compute_bound,
         online::preprocessing::constants::BATCH_SIZE_BITS,
         runtime::{party::Role, session::BaseSessionHandles},
     },
     networking::value::NetworkValue,
+    thread_handles::spawn_compute_bound,
     ProtocolDescription,
 };
 
@@ -335,7 +335,7 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
             last_reconstruction_attempt = collected_shares;
 
             // Spawn a task on rayon.
-            let res: Option<Vec<_>> = run_compute_bound(move || -> anyhow::Result<_> {
+            let res: Option<Vec<_>> = spawn_compute_bound(move || -> anyhow::Result<_> {
                 //Note: here we keep waiting on new shares until we have all of the values opened.
                 // Here we want to use par_iter for opening the huge batches
                 // present in DKG, but we want to avoid using it for
