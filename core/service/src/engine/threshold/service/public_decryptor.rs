@@ -25,6 +25,7 @@ use threshold_fhe::{
         NoiseFloodSmallSession,
     },
     session_id::SessionId,
+    thread_handles::spawn_compute_bound,
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
@@ -75,7 +76,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     async fn inner_decrypt<T>(
         session_id: SessionId,
         session_prep: Arc<SessionPreparer>,
-        ct: &[u8],
+        ct: Vec<u8>,
         fhe_type: FheTypes,
         ct_format: CiphertextFormat,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
@@ -92,8 +93,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         );
 
         let keys = fhe_keys;
-        let low_level_ct =
-            deserialize_to_low_level(fhe_type, ct_format, ct, &keys.decompression_key)?;
+        let decomp_key = keys.decompression_key.clone();
+        let low_level_ct = spawn_compute_bound(move || {
+            deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
+        })
+        .await??;
 
         let dec = match dec_mode {
             DecryptionMode::NoiseFloodSmall => {
@@ -107,12 +111,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
                 decrypt_using_noiseflooding(
                     &mut noiseflood_session,
-                    &keys.integer_server_key,
+                    keys.integer_server_key.clone(),
                     keys.sns_key
                         .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("missing sns key"))?,
+                        .ok_or_else(|| anyhow::anyhow!("missing sns key"))?
+                        .clone(),
                     low_level_ct,
-                    &keys.private_keys,
+                    keys.private_keys.clone(),
                     dec_mode,
                     session_prep.own_identity()?,
                 )
@@ -201,16 +206,21 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             .await
             .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
 
-        let inner = request.into_inner();
+        let inner = Arc::new(request.into_inner());
         tracing::info!(
             request_id = ?inner.request_id,
             "Received new decryption request"
         );
 
-        let (ciphertexts, req_digest, key_id, req_id, eip712_domain) = tonic_handle_potential_err(
-            validate_public_decrypt_req(&inner),
-            format!("Failed to validate decrypt request {inner:?}"),
-        )
+        let (ciphertexts, req_digest, key_id, req_id, eip712_domain) = {
+            let inner_compute = inner.clone();
+            tonic_handle_potential_err(
+                spawn_compute_bound(move || validate_public_decrypt_req(&inner_compute))
+                    .await
+                    .and_then(|res| res),
+                format!("Failed to validate decrypt request {inner:?}"),
+            )
+        }
         .map_err(|e| {
             tracing::error!(
                 error = ?e,
@@ -338,8 +348,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     .as_mut()
                     .map(|b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
 
-                let ciphertext = &typed_ciphertext.ciphertext;
                 let ct_format = typed_ciphertext.ciphertext_format();
+                let ciphertext = typed_ciphertext.ciphertext;
                 let fhe_keys_rlock = crypto_storage
                     .read_guarded_threshold_fhe_keys_from_cache(&key_id)
                     .await?;
@@ -519,14 +529,20 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
             // Compute expensive signature OUTSIDE the lock
             let external_sig = if let Some(domain) = eip712_domain {
-                compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, domain)
+                let pts = pts.clone();
+                spawn_compute_bound(move || {
+                    compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, domain)
+                })
+                .await
+                .map_err(|e| format!("Failed to compute sig: {e:?}"))
             } else {
                 tracing::warn!("Skipping external signature computation due to missing domain");
-                vec![]
+                Ok(vec![])
             };
 
             // Single success update with minimal lock hold time
-            let success_result = Ok((req_digest.clone(), pts.clone(), external_sig));
+            let pts_len = pts.len();
+            let success_result = external_sig.map(|sig| (req_digest.clone(), pts, sig));
             let (lock_acquired_time, total_lock_time) = {
                 let lock_start = std::time::Instant::now();
                 let mut guarded_meta_store = meta_store.write().await;
@@ -538,7 +554,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // Log after lock is released
             tracing::info!(
                 "MetaStore SUCCESS update - req_id={}, key_id={}, party_id={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-                req_id, key_id, party_id, pts.len(), lock_acquired_time, total_lock_time
+                req_id, key_id, party_id, pts_len, lock_acquired_time, total_lock_time
             );
         };
         self.tracker
