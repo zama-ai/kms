@@ -1,0 +1,250 @@
+{{- if and .Values.kmsCore.nitroEnclave.enabled .Values.kmsGenCertAndKeys.enabled -}}
+{{- $kmsCoreName := include "kmsCoreName" . }}
+{{- $kmsGenCertAndKeysName := include "kmsGenCertAndKeysJobName" . }}
+{{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app: kms-core
+    app.kubernetes.io/name: {{ $kmsGenCertAndKeysName }}
+  annotations:
+    "helm.sh/hook-weight": "-2"
+  name: {{ $kmsGenCertAndKeysName }}
+spec:
+  template:
+    metadata:
+      labels:
+        app: kms-core-gen-cert-and-keys
+        app.kubernetes.io/name: {{ $kmsGenCertAndKeysName }}
+    spec:
+      serviceAccountName: {{ .Values.kmsCore.serviceAccountName }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContextForEnclave | nindent 8 }}
+      restartPolicy: Never
+      initContainers:
+        - image: {{ .Values.kubeUtils.image.name }}:{{ .Values.kubeUtils.image.tag }}
+          imagePullPolicy: {{ .Values.kubeUtils.image.pullPolicy }}
+          name: kms-core-init-load-env
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              export AWS_REGION="${AWS_REGION:={{ .Values.kmsCore.aws.region }}}"
+              export AWS_ROLE_ARN="${AWS_ROLE_ARN:={{ .Values.kmsCore.aws.roleArn }}}"
+              {{ if .Values.kmsCore.publicVault.s3.enabled }}
+              export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET="${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.publicVault.s3.bucket }}}"
+              {{ if .Values.kmsCore.publicVault.s3.path }}
+              export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.path }}}"
+              {{ end }}
+              {{ end }}
+              {{ if .Values.kmsCore.privateVault.s3.enabled }}
+              export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.privateVault.s3.bucket }}}"
+              {{ if .Values.kmsCore.privateVault.s3.path }}
+              export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.privateVault.s3.path }}}"
+              {{ end }}
+              {{ end }}
+              export KMS_CORE__THRESHOLD__MY_ID="${KMS_CORE__THRESHOLD__MY_ID:={{ .Values.kmsPeers.id }}}"
+              {{ if .Values.kmsCore.nitroEnclave.enabled }}
+              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID:={{ .Values.kmsCore.privateVault.awskms.rootKeyId }}}"
+              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC:={{ .Values.kmsCore.privateVault.awskms.rootKeySpec }}}"
+              {{ end }}
+              envsubst < /var/lib/kms-core/config/aws.toml > aws.toml
+              envsubst < /var/lib/kms-core/config/vaults.toml > vaults.toml
+              envsubst < /var/lib/kms-core/config/kms-gen-keys.toml > kms-gen-keys.toml
+              envsubst < /var/lib/kms-core/config/kms-server.toml > kms-server.toml
+              cat aws.toml vaults.toml >> kms-gen-keys.toml
+              cat aws.toml vaults.toml >> kms-server.toml
+              {{- if .Values.kmsCore.nitroEnclave.debug }}
+              echo "### BEGIN - env ###"
+              env
+              echo "### END - env ###"
+              echo "### BEGIN - kms-gen-keys.toml ###"
+              cat kms-gen-keys.toml
+              echo "### END - kms-gen-keys.toml ###"
+              echo "### BEGIN - kms-server.toml ###"
+              cat kms-server.toml
+              echo "### END - kms-server.toml ###"
+              {{- end }}
+          env:
+            - name: KMS_CORE__THRESHOLD__MY_ID
+              value: "{{ .Values.kmsPeers.id }}"
+            - name: NO_COLOR
+              value: "true"
+            - name: RUN_MODE
+              value: {{ .Values.runMode }}
+            - name: RUST_LOG
+              value: {{ .Values.rustLog }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
+          workingDir: {{ .Values.kmsCore.workdir }}
+          volumeMounts:
+            - mountPath: /var/lib/kms-core/config
+              name: config-files
+            - mountPath: {{ .Values.kmsCore.workdir }}
+              name: workdir
+        {{- /* Init Enclave Config Socket, hardcoded to 4000 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
+        - {{ include "proxyFromEnclave"
+               (dict "name" "enclave-config"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" 4000
+                     "to" (printf "OPEN:kms-gen-keys.toml,rdonly")
+                ) | indent 10 | trim }}
+          workingDir: {{ .Values.kmsCore.workdir }}
+          volumeMounts:
+            - mountPath: {{ .Values.kmsCore.workdir }}
+              name: workdir
+        {{- /* Init Enclave Logger Socket, hardcoded to 3000 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
+        - {{ include "proxyFromEnclave"
+               (dict "name" "kms-core-enclave-logger"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" 3000
+                     "to" "STDOUT"
+               ) | indent 10 | trim }}
+        {{- /* Init AWS IMDS Proxy Socket */}}
+        - {{ include "proxyFromEnclaveTcp"
+               (dict "name" "aws-imds-proxy"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.imds
+                     "address" "169.254.169.254"
+                     "port" 80
+                ) | indent 10 | trim }}
+        {{- /* Init Enclave Web Identity Token Socket, hardcoded to 4100 in https://github.com/zama-ai/kms-core/blob/main/docker/core/service/init_enclave.sh */}}
+        - {{ include "proxyFromEnclave"
+               (dict "name" "enclave-web-identity-token"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" 4100
+          "to" "OPEN:/var/run/secrets/eks.amazonaws.com/serviceaccount/token,rdonly"
+          ) | indent 10 | trim }}
+        {{- /* Init AWS STS Proxy Socket */}}
+        - {{ include "proxyFromEnclaveTcp"
+               (dict "name" "aws-sts-proxy"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.sts
+                     "address" (printf "sts.%s.amazonaws.com" .Values.kmsCore.aws.region)
+                     "port" 443
+                ) | indent 10 | trim }}
+        {{- /* Init AWS S3 Proxy Socket */}}
+        - {{ include "proxyFromEnclaveTcp"
+               (dict "name" "aws-s3-proxy"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.s3
+                     "address" (printf "s3.%s.amazonaws.com" .Values.kmsCore.aws.region)
+                     "port" 443
+                ) | indent 10 | trim }}
+        {{- /* Init AWS KMS Proxy Socket */}}
+        - {{ include "proxyFromEnclaveTcp"
+               (dict "name" "aws-kms-proxy"
+                     "image" .Values.kubeUtils.image
+                     "vsockPort" .Values.kmsCore.nitroEnclave.ports.awskms
+                     "address" (printf "kms.%s.amazonaws.com" .Values.kmsCore.aws.region)
+                     "port" 443
+                ) | indent 10 | trim }}
+        {{- /* Generate signing key and CA certificate */}}
+      containers:
+        - image: {{ .Values.kmsCore.image.name }}:{{ .Values.kmsCore.image.tag }}
+          imagePullPolicy: {{ .Values.kmsCore.image.pullPolicy }}
+          name: kms-core-enclave-gen-cert-and-keys
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              {{- if .Values.kmsCore.nitroEnclave.debug }}
+              echo "### BEGIN - enclave.json ###"
+              cat /var/lib/kms-core/config/enclave.json
+              echo "### END - enclave.json ###"
+              echo "### BEGIN - describe-eif ###"
+              nitro-cli describe-eif --eif-path {{ .Values.kmsCore.nitroEnclave.eifPath }}
+              echo "### END - describe-eif ###"
+              {{- end }}
+              # enclave config vsock is hardcoded to 4000 in init_enclave.sh
+              # it can't be a separate container
+              # because we need to serve kms-gen-keys.toml on the same port later
+              nitro-cli run-enclave --config /var/lib/kms-core/config/enclave.json
+              sleep 60
+          env:
+            - name: "NO_COLOR"
+              value: "true"
+            - name: RUN_MODE
+              value: {{ .Values.runMode }}
+            - name: RUST_LOG
+              value: {{ .Values.rustLog }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.kmsCore.envFrom.configmap.name }}
+          workingDir: {{ .Values.kmsCore.workdir }}
+          volumeMounts:
+            - mountPath: {{ .Values.kmsCore.workdir }}
+              name: workdir
+            - mountPath: /var/lib/kms-core/config
+              name: config-files
+            - mountPath: /hugepages
+              name: hugepage
+            - name: nitro-device
+              mountPath: /dev/nitro_enclaves
+          ports:
+            - containerPort: {{ .Values.kmsCore.ports.client }}
+              protocol: TCP
+            - containerPort: {{ .Values.kmsCore.ports.peer }}
+              protocol: TCP
+            - containerPort: {{ .Values.kmsCore.ports.metrics }}
+              protocol: TCP
+          resources:
+            requests:
+              memory: 2Gi
+              aws.ec2.nitro/nitro_enclaves: "1"
+              hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
+            limits:
+              ephemeral-storage: {{ .Values.kmsCore.resources.limits.ephemeralStorage }}
+              memory: 4Gi
+              aws.ec2.nitro/nitro_enclaves: "1"
+              hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
+          # lifecycle:
+          #   preStop:
+          #     exec:
+          #       command: [ "nitro-cli", "terminate-enclave", "--all" ]
+      imagePullSecrets:
+        - name: registry-credentials
+      nodeSelector:
+        {{- toYaml .Values.kmsCore.nodeSelector | nindent 8 }}
+      affinity:
+        {{- toYaml .Values.kmsCore.affinity | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.kmsCore.tolerations | nindent 8 }}
+      volumes:
+        - name: keygen
+          emptyDir: {}
+        - name: workdir
+          emptyDir: {}
+        - name: config-files
+          configMap:
+            name: {{ include "kmsCoreName" . }}-config
+            defaultMode: 0664
+        - name: hugepage
+          emptyDir:
+            medium: HugePages
+        - name: nitro-device
+          hostPath:
+            path: /dev/nitro_enclaves
+            type: CharDevice
+{{- end -}}

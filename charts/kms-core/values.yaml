@@ -26,16 +26,19 @@ kmsCore:
     configmap:
       name:
       key:
-        privateVaultStorageKey:
-        publicVaultStorageKey:
-        privateVaultKeychain:
+        coreClientS3Endpoint: CORE_CLIENT__S3_ENDPOINT
+        privateVaultStorageBucket: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
+        publicVaultStorageBucket: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
+        privateVaultKeychainAWSKMSRootKeySpec: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
+        privateVaultKeychainAWSKMSRootKeyID: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
+
   rateLimiter:
     bucketSize: 50000
   # Add the following to enable threshold mode:
   thresholdMode:
     enabled: false
     # If left unset, the chart will generate the list automatically based on pod replicas of the statefulset
-    peersList:
+    peersList: []
     #  - id: 1
     #    host: kms-core-1
     #    port: 50001
@@ -60,11 +63,11 @@ kmsCore:
       ca_certificate:
         # You have to define either `path` or `pem`
         # Certificate: path to the certificate file
-        path: /my/very/secret/cert.pem
+        path:
         # Certificate: PEM block
-        pem: |
-          -----BEGIN CERTIFICATE-----
-          -----END CERTIFICATE-----
+        pem:
+        #   -----BEGIN CERTIFICATE-----
+        #   -----END CERTIFICATE-----
       # Nitro enclaves will ignore this value since they generate their own
       # attested ephemeral keypairs
       privateKey:
@@ -87,6 +90,7 @@ kmsCore:
     thresholdValue: 1
     decCapacity: 10000
     minDecCache: 6000
+    # Number of sessions to pre-process should be equal to number of vCPUs
     numSessionsPreproc: 2
     decryptionMode: "NoiseFloodSmall"
   # Add the following to enable nitro enclave:
@@ -142,8 +146,8 @@ kmsCore:
       path: kms
     awskms:
       enabled: false
-      root_key_id: 00000000-0000-0000-0000-000000000000
-      root_key_spec: symm
+      rootKeyId: 00000000-0000-0000-0000-000000000000
+      rootKeySpec: symm
   aws:
     roleArn:
     region: eu-west-1
@@ -210,6 +214,10 @@ kmsInit:
   nodeSelector:
   affinity:
   tolerations:
+
+kmsGenCertAndKeys:
+  enabled: false
+  nameOverride:
 
 # Automatic Key Generation job
 kmsGenKeys:
