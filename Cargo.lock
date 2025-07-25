@@ -3906,7 +3906,7 @@ dependencies = [
  "signature 2.2.0",
  "strum",
  "strum_macros",
- "sysinfo",
+ "sysinfo 0.35.1",
  "tempfile",
  "tests-utils",
  "tfhe",
@@ -4527,6 +4527,7 @@ dependencies = [
  "serde",
  "strum",
  "strum_macros",
+ "sysinfo 0.36.1",
  "thiserror 2.0.12",
  "tokio",
  "tonic 0.13.1",
@@ -6861,6 +6862,20 @@ name = "sysinfo"
 version = "0.35.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79251336d17c72d9762b8b54be4befe38d2db56fbbc0241396d70f173c39d47a"
+dependencies = [
+ "libc",
+ "memchr",
+ "ntapi",
+ "objc2-core-foundation",
+ "objc2-io-kit",
+ "windows",
+]
+
+[[package]]
+name = "sysinfo"
+version = "0.36.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "252800745060e7b9ffb7b2badbd8b31cfa4aa2e61af879d0a3bf2a317c20217d"
 dependencies = [
  "libc",
  "memchr",

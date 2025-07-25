@@ -1,5 +1,6 @@
 use crate::conf::{ExecutionEnvironment, TelemetryConfig, ENVIRONMENT};
 use crate::metrics::METRICS;
+use crate::sys_metrics::start_sys_metrics_collection;
 use anyhow::Context;
 use axum::{
     extract::State,
@@ -392,6 +393,10 @@ pub async fn init_telemetry(
     println!("Initializing metrics subsystem...");
     let meter_provider = init_metrics(settings)?;
     info!("Metrics initialization completed successfully");
+
+    if settings.enable_sys_metrics() {
+        start_sys_metrics_collection(settings.refresh_interval())?;
+    }
 
     info!("Telemetry stack initialization completed");
     Ok((tracer_provider, meter_provider))
