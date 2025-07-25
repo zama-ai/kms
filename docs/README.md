@@ -21,6 +21,6 @@ Ask technical questions and discuss with the community. Our team of experts usua
 Collaborate with us to advance the FHE spaces and drive innovation together.
 
 - [Contribute to KMS](developer/contributing.md)
-- [Check the latest release note](https://github.com/zama-ai/kms-core/releases)
-- [Request a feature](https://github.com/zama-ai/kms-core/issues/new?assignees=&labels=feature&projects=&template=feature_request.md)
-- [Report a bug](https://github.com/zama-ai/kms-core/issues/new?assignees=&labels=bug&projects=&template=bug_report.md)
+- [Check the latest release note](https://github.com/zama-ai/kms/releases)
+- [Request a feature](https://github.com/zama-ai/kms/issues/new?assignees=&labels=feature&projects=&template=feature_request.md)
+- [Report a bug](https://github.com/zama-ai/kms/issues/new?assignees=&labels=bug&projects=&template=bug_report.md)

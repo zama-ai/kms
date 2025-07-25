@@ -20,6 +20,8 @@
 .pre-commit-config.yaml
 kms-core.sublime-project
 kms-core.sublime-workspace
+kms.sublime-project
+kms.sublime-workspace
 /artifacts
 **/logs/*.log.*
 .idea/

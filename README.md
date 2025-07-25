@@ -15,7 +15,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-BSD--3--Clause--Clear-%23ffb243?style=flat-square"></a>
   <a href="https://github.com/zama-ai/bounty-program"><img src="https://img.shields.io/badge/Contribute-Zama%20Bounty%20Program-%23ffd208?style=flat-square"></a>
-  <a href="https://github.com/zama-ai/kms-core/pkgs/container/kms-service"><img src="https://github.com/zama-ai/kms-core/actions/workflows/global-common-workflow.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/zama-ai/kms/pkgs/container/kms-service"><img src="https://github.com/zama-ai/kms/actions/workflows/global-common-workflow.yml/badge.svg?branch=main"></a>
   <!-- TODO: add release badge once we made a public release -->
 </p>
 
@@ -118,7 +118,7 @@ cargo run -- --help
 
 ### Running the KMS as a service
 
-Docker images that are ready for use can be found [here](https://github.com/zama-ai/kms-core/packages).
+Docker images that are ready for use can be found [here](https://github.com/zama-ai/kms/packages).
 But to deploy the KMS securely, we recommend the documentation on [on-prem deployment](docs/guides/on_prem_installation.md).
 
 
@@ -137,7 +137,7 @@ For more high-level information about using and deploying the code, check out [t
 - [FHEVM Whitepaper](https://github.com/zama-ai/fhevm/blob/main/fhevm-whitepaper.pdf)
 
 ### Docker images and high level usage
-- [Docker images](https://github.com/zama-ai/kms-core/pkgs/container/kms-service)
+- [Docker images](https://github.com/zama-ai/kms/pkgs/container/kms-service)
 - [fhevm Integration](https://github.com/zama-ai/fhevm)
 
 ## Working with the KMS
@@ -158,7 +158,7 @@ To cite KMS in academic papers, please use the following entry:
   title={{Zama KMS: A Pure Rust Implementation of a Threshold Key Management System for TFHE}},
   author={Zama},
   year={2025},
-  note={\url{https://github.com/zama-ai/kms-core}},
+  note={\url{https://github.com/zama-ai/kms}},
 }
 ```
 
