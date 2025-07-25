@@ -320,6 +320,7 @@ async fn crs_gen_command(
             params.params,
             choreo_conf.threshold_topology.threshold,
             params.seed,
+            choreo_conf.malicious_roles.unwrap_or_default(),
         )
         .await?;
 
@@ -331,10 +332,14 @@ async fn crs_gen_command(
 
 async fn crs_gen_result_command(
     runtime: ChoreoRuntime,
+    choreo_conf: ChoreoConf,
     params: CrsGenResultArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let crs = runtime
-        .initiate_crs_gen_result(SessionId::from(params.session_id_crs))
+        .initiate_crs_gen_result(
+            SessionId::from(params.session_id_crs),
+            choreo_conf.malicious_roles.unwrap_or_default(),
+        )
         .await?;
 
     let serialized_crs = bc2wrap::serialize(&crs)?;
@@ -345,7 +350,7 @@ async fn crs_gen_result_command(
 
 async fn prss_init_command(
     runtime: &ChoreoRuntime,
-    choreo_conf: &ChoreoConf,
+    choreo_conf: ChoreoConf,
     params: PrssInitArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let session_id = params.session_id.unwrap_or(random());
@@ -356,6 +361,7 @@ async fn prss_init_command(
             params.ring,
             choreo_conf.threshold_topology.threshold,
             params.seed,
+            choreo_conf.malicious_roles.unwrap_or_default(),
         )
         .await?;
 
@@ -380,6 +386,7 @@ async fn preproc_keygen_command(
             params.percentage_offline,
             choreo_conf.threshold_topology.threshold,
             params.seed,
+            choreo_conf.malicious_roles.unwrap_or_default(),
         )
         .await?;
 
@@ -404,6 +411,7 @@ async fn threshold_keygen_command(
                 .map_or_else(|| None, |id| Some(SessionId::from(id))),
             choreo_conf.threshold_topology.threshold,
             params.seed,
+            choreo_conf.malicious_roles.unwrap_or_default(),
         )
         .await?;
 
@@ -414,6 +422,7 @@ async fn threshold_keygen_command(
 
 async fn threshold_keygen_result_command(
     runtime: ChoreoRuntime,
+    choreo_conf: ChoreoConf,
     params: ThresholdKeyGenResultArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let keys = runtime
@@ -421,6 +430,7 @@ async fn threshold_keygen_result_command(
             SessionId::from(params.session_id),
             params.params,
             params.seed,
+            choreo_conf.malicious_roles.unwrap_or_default(),
         )
         .await?;
 
@@ -449,6 +459,7 @@ async fn preproc_decrypt_command(
             ctxt_type,
             choreo_conf.threshold_topology.threshold,
             params.seed,
+            choreo_conf.malicious_roles.unwrap_or_default(),
         )
         .await?;
     println!("Preprocessing for Distributed Decryption started.\n  The correlated randomness will be stored under session ID: {session_id}");
@@ -643,6 +654,7 @@ async fn threshold_decrypt_command(
             tfhe_type,
             choreo_conf.threshold_topology.threshold,
             params.seed,
+            choreo_conf.malicious_roles.unwrap_or_default(),
         )
         .await?;
 
@@ -655,10 +667,14 @@ async fn threshold_decrypt_command(
 
 async fn threshold_decrypt_result_command(
     runtime: ChoreoRuntime,
+    choreo_conf: ChoreoConf,
     params: ThresholdDecryptResultArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ptxts = runtime
-        .initiate_threshold_decrypt_result(SessionId::from(params.session_id_decrypt))
+        .initiate_threshold_decrypt_result(
+            SessionId::from(params.session_id_decrypt),
+            choreo_conf.malicious_roles.unwrap_or_default(),
+        )
         .await?;
 
     println!(
@@ -681,6 +697,7 @@ async fn reshare_command(
             new_key_id,
             params.session_type,
             params.seed,
+            choreo_conf.malicious_roles.unwrap_or_default(),
         )
         .await?;
 
@@ -691,6 +708,7 @@ async fn reshare_command(
 
 async fn status_check_command(
     runtime: ChoreoRuntime,
+    choreo_conf: ChoreoConf,
     params: StatusCheckArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let session_id = SessionId::from(params.session_id);
@@ -700,7 +718,12 @@ async fn status_check_command(
         tokio::time::Duration::from_secs,
     );
     let mut results = runtime
-        .initiate_status_check(session_id, retry, interval)
+        .initiate_status_check(
+            session_id,
+            retry,
+            interval,
+            choreo_conf.malicious_roles.unwrap_or_default(),
+        )
         .await?;
 
     results.sort_by_key(|(role, _)| role.one_based());
@@ -721,6 +744,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .init_conf()?;
 
+    println!("Malicious roles: {:?}", conf.malicious_roles);
+
     let telemetry = conf.telemetry.clone().unwrap_or_else(|| {
         TelemetryConfig::builder()
             .tracing_service_name("mobygo".to_string())
@@ -732,7 +757,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = ChoreoRuntime::new_from_conf(&conf)?;
     match args.command {
         Commands::PrssInit(params) => {
-            prss_init_command(&runtime, &conf, params).await?;
+            prss_init_command(&runtime, conf, params).await?;
         }
         Commands::PreprocKeyGen(params) => {
             preproc_keygen_command(runtime, conf, params).await?;
@@ -741,7 +766,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             threshold_keygen_command(runtime, conf, params).await?;
         }
         Commands::ThresholdKeyGenResult(params) => {
-            threshold_keygen_result_command(runtime, params).await?;
+            threshold_keygen_result_command(runtime, conf, params).await?;
         }
         Commands::PreprocDecrypt(params) => {
             preproc_decrypt_command(runtime, conf, params).await?;
@@ -750,16 +775,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             threshold_decrypt_command(runtime, conf, params).await?;
         }
         Commands::ThresholdDecryptResult(params) => {
-            threshold_decrypt_result_command(runtime, params).await?;
+            threshold_decrypt_result_command(runtime, conf, params).await?;
         }
         Commands::CrsGen(params) => {
             crs_gen_command(runtime, conf, params).await?;
         }
         Commands::CrsGenResult(params) => {
-            crs_gen_result_command(runtime, params).await?;
+            crs_gen_result_command(runtime, conf, params).await?;
         }
         Commands::StatusCheck(params) => {
-            status_check_command(runtime, params).await?;
+            status_check_command(runtime, conf, params).await?;
         }
         Commands::Reshare(params) => {
             reshare_command(runtime, conf, params).await?;
