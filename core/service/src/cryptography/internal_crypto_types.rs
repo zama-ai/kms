@@ -103,6 +103,10 @@ impl<C: KemCore> Serialize for PublicEncKey<C> {
     }
 }
 
+impl<C: KemCore> Named for PublicEncKey<C> {
+    const NAME: &'static str = "PublicEncKey";
+}
+
 // workaround because clone doesn't get derived for this type
 impl<C: KemCore> Clone for PublicEncKey<C> {
     fn clone(&self) -> Self {

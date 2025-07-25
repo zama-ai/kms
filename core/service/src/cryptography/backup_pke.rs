@@ -21,12 +21,12 @@ struct InnerBackupPrivateKey {
     decapsulation_key: <ml_kem::kem::Kem<MlKemParams> as ml_kem::KemCore>::DecapsulationKey,
 }
 
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum BackupPrivateKeyVersioned {
     V0(BackupPrivateKey),
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(BackupPrivateKeyVersioned)]
 pub struct BackupPrivateKey {
     decapsulation_key: Vec<u8>,
@@ -85,12 +85,12 @@ impl InnerBackupPrivateKey {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum BackupPublicKeyVersioned {
     V0(BackupPublicKey),
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(BackupPublicKeyVersioned)]
 pub struct BackupPublicKey {
     pub(crate) encapsulation_key: Vec<u8>,
@@ -173,13 +173,14 @@ impl BackupPublicKey {
 #[allow(unknown_lints)]
 #[allow(non_local_effect_before_error_return)]
 pub fn keygen<R: Rng + CryptoRng>(
+    //todo change order
     rng: &mut R,
-) -> Result<(BackupPrivateKey, BackupPublicKey), CryptographyError> {
+) -> Result<(BackupPublicKey, BackupPrivateKey), CryptographyError> {
     let (decapsulation_key, encapsulation_key) = hybrid_ml_kem::keygen::<MlKemType, _>(rng);
 
     let sk = InnerBackupPrivateKey { decapsulation_key };
     let pk = InnerBackupPublicKey { encapsulation_key };
-    Ok(((&sk).into(), (&pk).into()))
+    Ok(((&pk).into(), (&sk).into()))
 }
 
 #[cfg(test)]
@@ -194,7 +195,7 @@ mod tests {
     fn nested_pke_sunshine() {
         let msg = vec![1, 2, 3, 4];
         let mut rng = OsRng;
-        let (sk, pk) = keygen(&mut rng).unwrap();
+        let (pk, sk) = keygen(&mut rng).unwrap();
 
         let ct = pk.encrypt(&mut rng, &msg).unwrap();
         let pt = sk.decrypt(&ct).unwrap();
@@ -224,8 +225,8 @@ mod tests {
     fn pke_wrong_kem_key() {
         let msg = vec![1, 2, 3, 4];
         let mut rng = OsRng;
-        let (_sk_orig, pk) = keygen(&mut rng).unwrap();
-        let (sk, _pk) = keygen(&mut rng).unwrap();
+        let (pk, _sk_orig) = keygen(&mut rng).unwrap();
+        let (_pk, sk) = keygen(&mut rng).unwrap();
 
         let ct = pk.encrypt(&mut rng, &msg).unwrap();
         let err = sk.decrypt(&ct).unwrap_err();
@@ -237,7 +238,7 @@ mod tests {
     fn pke_wrong_ct() {
         let msg = vec![1, 2, 3, 4];
         let mut rng = OsRng;
-        let (sk, pk) = keygen(&mut rng).unwrap();
+        let (pk, sk) = keygen(&mut rng).unwrap();
         let mut ct = pk.encrypt(&mut rng, &msg).unwrap();
         ct[0] ^= 1;
         let err = sk.decrypt(&ct).unwrap_err();

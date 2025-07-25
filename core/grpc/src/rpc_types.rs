@@ -247,6 +247,7 @@ pub enum PubDataType {
     DecompressionKey,
     CACert,                // Certificate that signs TLS certificates used by MPC nodes
     CustodianSetupMessage, // Backup custodian public keys (self-signed)
+    PublicEncKey,          // Classical non-FHE Public encryption key, e.g. used for backup
 }
 
 impl fmt::Display for PubDataType {
@@ -261,6 +262,7 @@ impl fmt::Display for PubDataType {
             PubDataType::DecompressionKey => write!(f, "DecompressionKey"),
             PubDataType::CACert => write!(f, "CACert"),
             PubDataType::CustodianSetupMessage => write!(f, "CustodianSetupMessage"),
+            PubDataType::PublicEncKey => write!(f, "PublicEncKey"),
         }
     }
 }
