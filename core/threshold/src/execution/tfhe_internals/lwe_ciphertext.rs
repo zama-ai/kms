@@ -176,8 +176,11 @@ where
         encoded.len()
     );
 
-    let gen_iter =
-        generator.fork_lwe_list_to_lwe(LweCiphertextCount(output.len()), output[0].lwe_size())?;
+    let gen_iter = generator.fork_lwe_list_to_lwe(
+        LweCiphertextCount(output.len()),
+        output[0].lwe_size(),
+        EncryptionType::Bits64,
+    )?;
 
     for ((encoded_plaintext, ciphertext), mut loop_generator) in
         encoded.iter().zip_eq(output.iter_mut()).zip_eq(gen_iter)
