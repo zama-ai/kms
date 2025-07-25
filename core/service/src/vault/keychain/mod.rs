@@ -1,7 +1,7 @@
 use crate::{
     anyhow_error_and_log,
     backup::{
-        custodian::{CustodianRecoveryOutput, CustodianSetupMessage},
+        custodian::{CustodianRecoveryOutput, InternalCustodianSetupMessage},
         operator::OperatorBackupOutput,
     },
     conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain as KeychainConf, SecretSharingKeychain},
@@ -131,18 +131,18 @@ pub async fn make_keychain(
                 .iter()
                 .map(|ck| ck.into_request_id())
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            let custodian_messages: Vec<CustodianSetupMessage> = try_join_all(
+            let custodian_messages: Vec<InternalCustodianSetupMessage> = try_join_all(
                 custodian_key_hashes
                     .iter()
                     .map(|ck_hash| read_versioned_at_request_id(public_vault, ck_hash, &ck_type)),
             )
             .await?;
             for (ck, cm) in custodian_keys.iter().zip(custodian_messages.iter()) {
-                let cm_key_der = cm.verification_key.pk().to_public_key_der()?;
+                let cm_key_der = cm.public_verf_key.pk().to_public_key_der()?;
                 if cm_key_der.as_bytes() != ck.into_pem()?.contents {
                     return Err(anyhow_error_and_log(format!(
                         "Verification key in the setup message does not match the trusted key for custodian {}",
-                        cm.msg.custodian_role,
+                        cm.custodian_role,
                     )));
                 }
             }

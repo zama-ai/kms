@@ -1,7 +1,7 @@
 use super::{EnvelopeLoad, EnvelopeStore, Keychain};
 use crate::{
     anyhow_error_and_log,
-    backup::{custodian::CustodianSetupMessage, operator::Operator},
+    backup::{custodian::InternalCustodianSetupMessage, operator::Operator},
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         backup_pke::{self, BackupPrivateKey},
@@ -27,7 +27,7 @@ pub struct SecretShareKeychain {
 
 impl SecretShareKeychain {
     pub fn new(
-        custodian_messages: Vec<CustodianSetupMessage>,
+        custodian_messages: Vec<InternalCustodianSetupMessage>,
         my_role: Role,
         signer: PrivateSigKey,
         threshold: usize,

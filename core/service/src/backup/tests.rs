@@ -52,7 +52,10 @@ fn full_flow() {
             .collect();
         let custodian_messages: Vec<_> = custodians
             .iter()
-            .map(|c| c.generate_setup_message(&mut rng).unwrap())
+            .map(|c| {
+                c.generate_setup_message(&mut rng, "Custodian test name".to_string())
+                    .unwrap()
+            })
             .collect();
         let operators: Vec<_> = (0..operator_count)
             .map(|i| {
@@ -188,13 +191,17 @@ fn operator_setup() {
         .collect();
     let custodian_messages: Vec<_> = custodians
         .iter()
-        .map(|c| c.generate_setup_message(&mut rng).unwrap())
+        .enumerate()
+        .map(|(i, c)| {
+            c.generate_setup_message(&mut rng, format!("Operator test name {i}"))
+                .unwrap()
+        })
         .collect();
 
     // use the wrong operator ID
     {
         let mut wrong_custodian_messages = custodian_messages.clone();
-        wrong_custodian_messages[0].msg.custodian_role = Role::indexed_from_zero(1);
+        wrong_custodian_messages[0].custodian_role = Role::indexed_from_zero(1);
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
         let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
         let operator = Operator::new(
@@ -219,7 +226,7 @@ fn operator_setup() {
             *signing_key.verifying_key()
         });
         let mut wrong_custodian_messages = custodian_messages.clone();
-        wrong_custodian_messages[0].verification_key = wrong_verification_key;
+        wrong_custodian_messages[0].public_verf_key = wrong_verification_key;
 
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
         let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
@@ -241,7 +248,7 @@ fn operator_setup() {
     // use the wrong header, setup should fail
     {
         let mut wrong_custodian_messages = custodian_messages.clone();
-        wrong_custodian_messages[0].msg.header.push('z');
+        wrong_custodian_messages[0].header.push('z');
 
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
         let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
@@ -263,7 +270,7 @@ fn operator_setup() {
     // use the wrong timestamp, setup should fail
     {
         let mut wrong_custodian_messages = custodian_messages.clone();
-        wrong_custodian_messages[0].msg.timestamp += 3700;
+        wrong_custodian_messages[0].timestamp += 3700;
 
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
         let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
@@ -326,7 +333,11 @@ fn custodian_reencrypt() {
         .collect();
     let custodian_messages: Vec<_> = custodians
         .iter()
-        .map(|c| c.generate_setup_message(&mut rng).unwrap())
+        .enumerate()
+        .map(|(i, c)| {
+            c.generate_setup_message(&mut rng, format!("Custodian test name {i}"))
+                .unwrap()
+        })
         .collect();
     let operators: Vec<_> = (0..operator_count)
         .map(|i| {

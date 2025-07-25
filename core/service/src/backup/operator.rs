@@ -20,8 +20,7 @@ use threshold_fhe::{
 
 use super::{
     custodian::{
-        CustodianRecoveryOutput, CustodianSetupMessage, InnerCustodianSetupMessage,
-        DSEP_BACKUP_CUSTODIAN, HEADER,
+        CustodianRecoveryOutput, InternalCustodianSetupMessage, DSEP_BACKUP_CUSTODIAN, HEADER,
     },
     error::BackupError,
     secretsharing,
@@ -29,7 +28,6 @@ use super::{
 };
 use crate::{
     anyhow_error_and_log,
-    backup::custodian::DSEP_BACKUP_SETUP,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         backup_pke::BackupPublicKey,
@@ -325,24 +323,26 @@ impl Named for BackupMaterial {
 impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
     pub fn new(
         my_role: Role,
-        custodian_messages: Vec<CustodianSetupMessage>,
+        custodian_messages: Vec<InternalCustodianSetupMessage>,
         signer: S,
-        verification_key: PublicSigKey,
+        operator_verf_key: PublicSigKey,
         decryptor: D,
-        public_key: BackupPublicKey,
+        operator_enc_key: BackupPublicKey,
         threshold: usize,
     ) -> Result<Self, BackupError> {
         verify_n_t(custodian_messages.len(), threshold)?;
 
         let mut custodian_keys = vec![];
         for (i, msg) in custodian_messages.into_iter().enumerate() {
-            let InnerCustodianSetupMessage {
+            let InternalCustodianSetupMessage {
                 header,
                 custodian_role,
                 random_value: _,
                 timestamp,
-                public_key,
-            } = msg.msg.clone();
+                name: _,
+                public_enc_key,
+                public_verf_key,
+            } = msg;
 
             if header != HEADER {
                 tracing::error!("Invalid header in custodian setup message from custodian {custodian_role}. Expected header {HEADER} but got {header}");
@@ -368,28 +368,16 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
                 return Err(BackupError::CustodianSetupError);
             }
 
-            let msg_buf = bc2wrap::serialize(&msg.msg)?;
-            let signature = Signature {
-                sig: k256::ecdsa::Signature::from_slice(&msg.signature)?,
-            };
-            internal_verify_sig(
-                &DSEP_BACKUP_SETUP,
-                &msg_buf,
-                &signature,
-                &msg.verification_key,
-            )
-            .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
-
-            custodian_keys.push((public_key, msg.verification_key));
+            custodian_keys.push((public_enc_key, public_verf_key));
         }
 
         Ok(Self {
             my_role,
             custodian_keys,
             signer,
-            verification_key,
+            verification_key: operator_verf_key,
             decryptor,
-            public_key,
+            public_key: operator_enc_key,
             threshold,
         })
     }

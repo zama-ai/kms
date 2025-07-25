@@ -2,7 +2,7 @@ use aes_prng::AesRng;
 use clap::Parser;
 use kms_lib::{
     backup::{
-        custodian::{Custodian, CustodianSetupMessage},
+        custodian::{Custodian, InternalCustodianSetupMessage},
         operator::{OperatorBackupOutput, RecoveryRequest},
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
@@ -30,6 +30,9 @@ pub struct GenerateParams {
     /// The custodian role (1-based index) who is generating the keys.
     #[clap(long, short = 'c', required = true)]
     pub custodian_role: usize,
+    /// The human readable name of the custodian.
+    #[clap(long, short = 'n', required = true)]
+    pub custodian_name: String,
     /// The relative path for storing the generated *public* keys.
     #[clap(long, short = 'p', required = true)]
     pub path: PathBuf,
@@ -105,7 +108,9 @@ async fn main() -> Result<(), anyhow::Error> {
             let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
             let custodian: Custodian<PrivateSigKey, BackupPrivateKey> =
                 custodian_from_seed_phrase(&mnemonic, role).unwrap();
-            let setup_msg = custodian.generate_setup_message(&mut rng).unwrap();
+            let setup_msg = custodian
+                .generate_setup_message(&mut rng, params.custodian_name)
+                .unwrap();
             safe_write_element_versioned(&params.path, &setup_msg).await?;
             tracing::info!("Custodian keys generated successfully! Mnemonic will now be printed:");
             println!("{SEED_PHRASE_DESC}{mnemonic}",);
@@ -114,16 +119,16 @@ async fn main() -> Result<(), anyhow::Error> {
             // Logic for recovering keys
             tracing::info!("Validating custodian keys. Any validation errors will be printed below as warnings.");
             let mut validation_ok = true;
-            let setup_msg: CustodianSetupMessage =
+            let setup_msg: InternalCustodianSetupMessage =
                 safe_read_element_versioned(&params.path).await?;
             let recovered_keys =
-                custodian_from_seed_phrase(&params.seed_phrase, setup_msg.msg.custodian_role)
+                custodian_from_seed_phrase(&params.seed_phrase, setup_msg.custodian_role)
                     .expect("Failed to recover keys");
-            if &setup_msg.verification_key != recovered_keys.verification_key() {
+            if &setup_msg.public_verf_key != recovered_keys.verification_key() {
                 tracing::warn!("Verification failed: Public verification key does not match the generated key!");
                 validation_ok = false;
             }
-            if &setup_msg.msg.public_key != recovered_keys.public_key() {
+            if &setup_msg.public_enc_key != recovered_keys.public_key() {
                 tracing::warn!(
                     "Verification failed: Public encryption key does not match the generated key!"
                 );
@@ -132,12 +137,12 @@ async fn main() -> Result<(), anyhow::Error> {
             if validation_ok {
                 tracing::info!(
                     "Custodian keys verified successfully for custodian {}!",
-                    setup_msg.msg.custodian_role
+                    setup_msg.custodian_role
                 );
             } else {
                 tracing::warn!(
                     "Custodian keys verification failed for custodian {}. Please check the logs for details.",
-                    setup_msg.msg.custodian_role
+                    setup_msg.custodian_role
                 );
             }
         }
@@ -214,7 +219,7 @@ mod tests {
     use kms_grpc::RequestId;
     use kms_lib::{
         backup::{
-            custodian::{CustodianRecoveryOutput, CustodianSetupMessage},
+            custodian::{CustodianRecoveryOutput, InternalCustodianSetupMessage},
             operator::{Operator, RecoveryRequest},
             seed_phrase::custodian_from_seed_phrase,
         },
@@ -369,7 +374,7 @@ mod tests {
     fn generate_custodian_keys_to_file(
         root_path: &Path,
         custodian_index: usize,
-    ) -> (String, CustodianSetupMessage) {
+    ) -> (String, InternalCustodianSetupMessage) {
         let final_dir = root_path.join(format!(
             "custodian-{custodian_index}{MAIN_SEPARATOR}setup_msg.bin"
         ));
@@ -387,7 +392,9 @@ mod tests {
         let role = Role::indexed_from_one(custodian_index);
         let custodian = custodian_from_seed_phrase(seed_phrase, role).unwrap();
         let mut rng = get_rng(Some(&format!("custodian{custodian_index}").to_string()));
-        let setup_msg = custodian.generate_setup_message(&mut rng).unwrap();
+        let setup_msg = custodian
+            .generate_setup_message(&mut rng, "Homer Simpson".to_string())
+            .unwrap();
         (seed_phrase.to_string(), setup_msg)
     }
 
@@ -404,7 +411,7 @@ mod tests {
         root_path: &Path,
         threshold: usize,
         operator_role: Role,
-        setup_msgs: Vec<CustodianSetupMessage>,
+        setup_msgs: Vec<InternalCustodianSetupMessage>,
         backup_id: RequestId,
         msg: &[u8],
     ) -> (
@@ -470,7 +477,7 @@ mod tests {
 
     async fn operator_key_gen(
         rng: &mut AesRng,
-        setup_msgs: Vec<CustodianSetupMessage>,
+        setup_msgs: Vec<InternalCustodianSetupMessage>,
         role: Role,
         threshold: usize,
     ) -> anyhow::Result<Operator<PrivateSigKey, BackupPrivateKey>> {

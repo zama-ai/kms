@@ -398,22 +398,22 @@ message KmsContext {
   int32 threshold = 5;
 }
 
-// The information held by the custodian nodes in a custodian context.
-message CustodianNode {
-  // The human-readable name of the custodian node.
-  string name = 1;
-  // The public encryption key of the custodian node,
-  // that the KMS parties use to back their shares to the custodian.
-  bytes public_encryption_key = 2;
+message CustodianSetupMessage {
+  // The 1-indexed role of the custodian
+  uint64 custodian_role = 1;
+  // Human readable name and unique identifier of the given custodian
+  string name = 2;
+  // Binary blob containing keys and other information in a versioned, universal binary format
+  bytes payload = 3;
 }
 
 // The context of the custodian nodes.
 message CustodianContext {
-  // The list of custodian nodes in the context that are
+  // The list of setup messages of the custodian nodes in the context that are
   // responsible for backing up and recovering key materials.
   // The number of custodian nodes does not need to match the number of KMS nodes,
   // they are operated independently.
-  repeated CustodianNode custodian_nodes = 1;
+  repeated CustodianSetupMessage custodian_nodes = 1;
 
   // A monotonically increasing counter stored on the Gateway
   // that is increased by 1 every time a new context of a specific type is generated.
