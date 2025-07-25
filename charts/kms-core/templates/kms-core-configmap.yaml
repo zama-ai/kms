@@ -98,13 +98,16 @@ data:
 
     [threshold.core_to_core_net]
     message_limit = 70
-    multiplier = 1.1
-    max_interval = 5
-    max_elapsed_time = 300
-    network_timeout = 10
+    multiplier = {{ float64 .Values.kmsCore.thresholdMode.multiplier }}
+    max_interval = {{ int .Values.kmsCore.thresholdMode.maxInterval }}
+    max_elapsed_time = {{ int .Values.kmsCore.thresholdMode.maxElapsedTime }}
+    network_timeout = {{ int .Values.kmsCore.thresholdMode.networkTimeout }}
     network_timeout_bk = 300
     network_timeout_bk_sns = 1200
     max_en_decode_message_size = 2147483648
+    initial_interval_ms = {{ int .Values.kmsCore.thresholdMode.initialIntervalMs }}
+    # Background cleanup interval for dead session references in seconds
+    cleanup_interval_secs = {{ int .Values.kmsCore.thresholdMode.cleanupIntervalSecs }}
 
       {{ if $.Values.kmsCore.thresholdMode.tls.enabled }}
         {{- if $.Values.kmsCore.nitroEnclave.enabled }}
@@ -188,6 +191,7 @@ data:
       {{- end }}
     tracing_otlp_timeout_ms = 10000
     metrics_bind_address = "0.0.0.0:{{ .Values.kmsCore.ports.metrics }}"
+    enable_sys_metrics = true
 
     [telemetry.batch]
     max_queue_size = 8192

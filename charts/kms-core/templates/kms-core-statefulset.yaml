@@ -228,6 +228,10 @@ spec:
                      "cid" .Values.kmsCore.nitroEnclave.cid
                      "port" .Values.kmsCore.ports.peer
                 ) | indent 10 | trim }}
+          {{- with .Values.kmsCore.nitroEnclave.grpcPeerProxy.resources }}
+          resources:
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
         {{- /* Init GRPC External Peers Proxy Sockets */}}
         {{- if .Values.kmsCore.thresholdMode.peersList }}
           {{- range .Values.kmsCore.thresholdMode.peersList }}
@@ -238,6 +242,10 @@ spec:
                      "address" .host
                      "port" .port
                 ) | indent 10 | trim }}
+          {{- with $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources }}
+          resources:
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
         {{- else }}
           {{- range $i := $peersIDList }}
@@ -248,6 +256,10 @@ spec:
                      "address" (printf "%s-%d" $kmsCoreName (int $i))
                      "port" $.Values.kmsCore.ports.peer
                 ) | indent 10 | trim }}
+          {{- with $.Values.kmsCore.nitroEnclave.enclavePeerProxy.resources }}
+          resources:
+          {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
         {{- end }}
         {{- end }}
@@ -292,8 +304,12 @@ spec:
               {{ include "kmsCoreMode" . }} \
               {{- if .Values.kmsCore.thresholdMode.enabled }}
               --signing-key-party-id ${KMS_CORE__THRESHOLD__MY_ID} \
-              --num-parties {{ .Values.kmsPeers.count }} \
-              {{- if .Values.kmsCore.addressOverride }}
+              {{- if .Values.kmsCore.thresholdMode.peersList }}
+              --num-parties {{ len .Values.kmsCore.thresholdMode.peersList }} \
+              {{- else }}
+              --num-parties {{ int .Values.kmsPeers.count }} \
+              {{- end }}
+              {{-- if .Values.kmsCore.addressOverride }}
               --tls-subject {{ .Values.kmsCore.addressOverride | quote }}
               {{- else }}
               --tls-subject "{{ include "kmsCoreName" . }}-${KMS_CORE__THRESHOLD__MY_ID}"
@@ -466,6 +482,7 @@ spec:
           resources:
             requests:
               {{- if .Values.kmsCore.nitroEnclave.enabled }}
+              aws.ec2.nitro/nitro_enclaves_cpus: {{ .Values.kmsCore.nitroEnclave.cpuCount }}
               memory: 2Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
@@ -476,6 +493,7 @@ spec:
             limits:
               ephemeral-storage: {{ .Values.kmsCore.resources.limits.ephemeralStorage }}
               {{- if .Values.kmsCore.nitroEnclave.enabled }}
+              aws.ec2.nitro/nitro_enclaves_cpus: {{ .Values.kmsCore.nitroEnclave.cpuCount }}
               memory: 4Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
