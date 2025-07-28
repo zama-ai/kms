@@ -80,6 +80,7 @@ struct RawPubKeySet {
     pub compression_keys: Option<(CompressionKey, DecompressionKey)>,
     pub msnrk: ModulusSwitchConfiguration<u64>,
     pub msnrk_sns: Option<ModulusSwitchConfiguration<u64>>,
+    pub seed: u128,
     pub sns_compression_key: Option<NoiseSquashingCompressionKey>,
 }
 
@@ -1252,6 +1253,7 @@ where
         compression_keys,
         msnrk,
         msnrk_sns,
+        seed,
         sns_compression_key,
     };
 
@@ -1518,6 +1520,8 @@ pub mod tests {
         },
         tests::helper::tests_and_benches::execute_protocol_small,
     };
+
+    const DUMMY_PREPROC_SEED: u64 = 42;
 
     #[cfg(not(target_arch = "aarch64"))]
     #[test]
@@ -2517,7 +2521,10 @@ pub mod tests {
                 // we use dummy preprocessing to generate the existing compression sk
                 // because it won't consume our preprocessing materials
                 let mut dummy_preproc =
-                    DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(0_u64, &session);
+                    DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
+                        DUMMY_PREPROC_SEED,
+                        &session,
+                    );
                 let params_basics_handles = params.get_params_basics_handle();
                 Some(
                     CompressionPrivateKeyShares::new_from_preprocessing(
@@ -2643,7 +2650,7 @@ pub mod tests {
     {
         let mut task = |mut session: LargeSession| async move {
             let my_role = session.my_role();
-            let mut large_preproc = DummyPreprocessing::new(0_u64, &session);
+            let mut large_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
 
             let (pk, sk) = super::distributed_keygen::<Z128, _, _, EXTENSION_DEGREE>(
                 &mut session,

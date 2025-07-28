@@ -43,6 +43,7 @@ where
         output.decomposition_level_count(),
         output.glwe_size(),
         output.polynomial_size(),
+        encryption_type,
     )?;
 
     let encoded_input_key_elements = ggsw_encode_messages(

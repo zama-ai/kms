@@ -1,18 +1,23 @@
-use crate::algebra::{galois_rings::common::ResiduePoly, structure_traits::BaseRing};
+use crate::{
+    algebra::{galois_rings::common::ResiduePoly, structure_traits::BaseRing},
+    hashing::DomainSep,
+};
 
 use itertools::Itertools;
 use tfhe::{
     core_crypto::commons::{
-        math::random::RandomGenerator,
+        math::random::{RandomGenerable, RandomGenerator, Uniform},
         parameters::{GlweSize, LweCiphertextCount, LweSize},
         traits::ByteRandomGenerator,
     },
     shortint::parameters::{DecompositionLevelCount, GlweDimension, LweDimension, PolynomialSize},
-    Seed,
 };
-use tfhe_csprng::generators::ForkError;
+use tfhe_csprng::{generators::ForkError, seeders::XofSeed};
 
 use super::parameters::EncryptionType;
+
+const KG_DSEP: DomainSep = *b"TFHE_GEN";
+
 //Question:
 //For now there's a single noise vector which should be filled with the values we want
 //however different parts of the protocol require different noise distribution
@@ -107,7 +112,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
 impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
     pub fn new_from_seed(seed: u128) -> Self {
         Self {
-            gen: RandomGenerator::<Gen>::new(Seed(seed)),
+            gen: RandomGenerator::<Gen>::new(XofSeed::new_u128(seed, KG_DSEP)),
         }
     }
     pub fn fill_slice_with_random_mask_custom_mod<Z: BaseRing>(
@@ -115,54 +120,59 @@ impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
         output_mask: &mut [Z],
         randomness_type: EncryptionType,
     ) {
-        let num_bytes_needed = match randomness_type {
-            EncryptionType::Bits64 => 8,
-            EncryptionType::Bits128 => 16,
-        };
-
         for element in output_mask.iter_mut() {
-            for _ in 0..num_bytes_needed {
-                *element = (*element << 8) + (Z::from_u128(self.gen.generate_next() as u128));
-            }
+            let randomness = match randomness_type {
+                EncryptionType::Bits64 => u64::generate_one(&mut self.gen, Uniform) as u128,
+                EncryptionType::Bits128 => u128::generate_one(&mut self.gen, Uniform),
+            };
+            *element = Z::from_u128(randomness);
         }
     }
 
-    pub(crate) fn fork_bsk_to_ggsw<Z: BaseRing>(
+    pub(crate) fn fork_bsk_to_ggsw(
         &mut self,
         lwe_dimension: LweDimension,
         level: DecompositionLevelCount,
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
+        encryption_type: EncryptionType,
     ) -> Result<impl Iterator<Item = Self>, ForkError> {
-        let mask_bytes = mask_bytes_per_ggsw::<Z>(level, glwe_size, polynomial_size);
+        let mask_bytes = mask_bytes_per_ggsw(level, glwe_size, polynomial_size, encryption_type);
         self.try_fork(lwe_dimension.0, mask_bytes)
     }
 
-    pub(crate) fn fork_lwe_list_to_lwe<Z: BaseRing>(
+    pub(crate) fn fork_lwe_list_to_lwe(
         &mut self,
         lwe_count: LweCiphertextCount,
         lwe_size: LweSize,
+        encryption_type: EncryptionType,
     ) -> Result<impl Iterator<Item = Self>, ForkError> {
-        let mask_bytes = mask_bytes_per_lwe::<Z>(lwe_size.to_lwe_dimension());
+        let mask_bytes = mask_bytes_per_lwe(lwe_size.to_lwe_dimension(), encryption_type);
         self.try_fork(lwe_count.0, mask_bytes)
     }
 
-    pub(crate) fn fork_ggsw_level_to_glwe<Z: BaseRing>(
+    pub(crate) fn fork_ggsw_level_to_glwe(
         &mut self,
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
+        encryption_type: EncryptionType,
     ) -> Result<impl Iterator<Item = Self>, ForkError> {
-        let mask_bytes = mask_bytes_per_glwe::<Z>(glwe_size.to_glwe_dimension(), polynomial_size);
+        let mask_bytes = mask_bytes_per_glwe(
+            glwe_size.to_glwe_dimension(),
+            polynomial_size,
+            encryption_type,
+        );
         self.try_fork(glwe_size.0, mask_bytes)
     }
 
-    pub(crate) fn fork_ggsw_to_ggsw_levels<Z: BaseRing>(
+    pub(crate) fn fork_ggsw_to_ggsw_levels(
         &mut self,
         level: DecompositionLevelCount,
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
+        encryption_type: EncryptionType,
     ) -> Result<impl Iterator<Item = Self>, ForkError> {
-        let mask_bytes = mask_bytes_per_ggsw_level::<Z>(glwe_size, polynomial_size);
+        let mask_bytes = mask_bytes_per_ggsw_level(glwe_size, polynomial_size, encryption_type);
         self.try_fork(level.0, mask_bytes)
     }
 
@@ -225,10 +235,15 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
         level: DecompositionLevelCount,
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
+        encryption_type: EncryptionType,
     ) -> Result<impl Iterator<Item = Self>, ForkError> {
-        let mask_iter =
-            self.mask
-                .fork_bsk_to_ggsw::<Z>(lwe_dimension, level, glwe_size, polynomial_size)?;
+        let mask_iter = self.mask.fork_bsk_to_ggsw(
+            lwe_dimension,
+            level,
+            glwe_size,
+            polynomial_size,
+            encryption_type,
+        )?;
         let noise_iter =
             self.noise
                 .fork_bsk_to_ggsw(lwe_dimension, level, glwe_size, polynomial_size);
@@ -239,8 +254,11 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
         &mut self,
         lwe_count: LweCiphertextCount,
         lwe_size: LweSize,
+        encryption_type: EncryptionType,
     ) -> Result<impl Iterator<Item = Self>, ForkError> {
-        let mask_iter = self.mask.fork_lwe_list_to_lwe::<Z>(lwe_count, lwe_size)?;
+        let mask_iter = self
+            .mask
+            .fork_lwe_list_to_lwe(lwe_count, lwe_size, encryption_type)?;
         let noise_iter = self.noise.fork_lwe_list_to_lwe(lwe_count);
         Ok(map_to_encryption_generator(mask_iter, noise_iter))
     }
@@ -249,10 +267,11 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
         &mut self,
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
+        encryption_type: EncryptionType,
     ) -> Result<impl Iterator<Item = Self>, ForkError> {
-        let mask_iter = self
-            .mask
-            .fork_ggsw_level_to_glwe::<Z>(glwe_size, polynomial_size)?;
+        let mask_iter =
+            self.mask
+                .fork_ggsw_level_to_glwe(glwe_size, polynomial_size, encryption_type)?;
 
         let noise_iter = self
             .noise
@@ -265,10 +284,14 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
         level: DecompositionLevelCount,
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
+        encryption_type: EncryptionType,
     ) -> Result<impl Iterator<Item = Self>, ForkError> {
-        let mask_iter =
-            self.mask
-                .fork_ggsw_to_ggsw_levels::<Z>(level, glwe_size, polynomial_size)?;
+        let mask_iter = self.mask.fork_ggsw_to_ggsw_levels(
+            level,
+            glwe_size,
+            polynomial_size,
+            encryption_type,
+        )?;
 
         let noise_iter = self
             .noise
@@ -293,45 +316,51 @@ fn map_to_encryption_generator<
         .map(|(mask, noise)| MPCEncryptionRandomGenerator { mask, noise })
 }
 
-fn mask_bytes_per_ggsw<Z: BaseRing>(
+fn mask_bytes_per_ggsw(
     level: DecompositionLevelCount,
     glwe_size: GlweSize,
     poly_size: PolynomialSize,
+    encryption_type: EncryptionType,
 ) -> usize {
-    level.0 * mask_bytes_per_ggsw_level::<Z>(glwe_size, poly_size)
+    level.0 * mask_bytes_per_ggsw_level(glwe_size, poly_size, encryption_type)
 }
 
 ///How many bytes to fill the mask part of a ggsw row
-fn mask_bytes_per_ggsw_level<Z: BaseRing>(glwe_size: GlweSize, poly_size: PolynomialSize) -> usize {
-    glwe_size.0 * mask_bytes_per_glwe::<Z>(glwe_size.to_glwe_dimension(), poly_size)
+fn mask_bytes_per_ggsw_level(
+    glwe_size: GlweSize,
+    poly_size: PolynomialSize,
+    encryption_type: EncryptionType,
+) -> usize {
+    glwe_size.0 * mask_bytes_per_glwe(glwe_size.to_glwe_dimension(), poly_size, encryption_type)
 }
 
 ///How many bytes to fill the mask part of an lwe encryption
-fn mask_bytes_per_lwe<Z: BaseRing>(lwe_dimension: LweDimension) -> usize {
-    lwe_dimension.0 * mask_bytes_per_coef::<Z>()
+fn mask_bytes_per_lwe(lwe_dimension: LweDimension, encryption_type: EncryptionType) -> usize {
+    lwe_dimension.0 * mask_bytes_per_coef(encryption_type)
 }
 
 ///How many bytes to fill the mask part of a glwe encryption
-fn mask_bytes_per_glwe<Z: BaseRing>(
+fn mask_bytes_per_glwe(
     glwe_dimension: GlweDimension,
     poly_size: PolynomialSize,
+    encryption_type: EncryptionType,
 ) -> usize {
-    glwe_dimension.0 * mask_bytes_per_polynomial::<Z>(poly_size)
+    glwe_dimension.0 * mask_bytes_per_polynomial(poly_size, encryption_type)
 }
 
 ///How many bytes to fill a polynomial with coefs in Z
-fn mask_bytes_per_polynomial<Z: BaseRing>(poly_size: PolynomialSize) -> usize {
-    poly_size.0 * mask_bytes_per_coef::<Z>()
+fn mask_bytes_per_polynomial(poly_size: PolynomialSize, encryption_type: EncryptionType) -> usize {
+    poly_size.0 * mask_bytes_per_coef(encryption_type)
 }
-
-//WARNING: IDK yet if it's a big deal, but we may be asking more bytes from our XOF than we actually need
-//as we ask enough bytes to fill up a full element from the ring even if we actually require less
-//e.g. if the sharing domain is Z128 but we are generating the Z64 key material.
 
 ///How many bytes to fill an element in Z
-fn mask_bytes_per_coef<Z: BaseRing>() -> usize {
-    Z::BIT_LENGTH / 8
+fn mask_bytes_per_coef(encryption_type: EncryptionType) -> usize {
+    match encryption_type {
+        EncryptionType::Bits64 => 8,
+        EncryptionType::Bits128 => 16,
+    }
 }
+
 fn noise_elements_per_ggsw(
     level: DecompositionLevelCount,
     glwe_size: GlweSize,

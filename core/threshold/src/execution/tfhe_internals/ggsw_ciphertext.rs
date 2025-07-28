@@ -247,7 +247,12 @@ pub fn encrypt_constant_ggsw_ciphertext<Z, Gen, const EXTENSION_DEGREE: usize>(
 {
     let max_level = output.decomposition_level_count();
     let gen_iter = generator
-        .fork_ggsw_to_ggsw_levels(max_level, output.glwe_size(), output.polynomial_size())
+        .fork_ggsw_to_ggsw_levels(
+            max_level,
+            output.glwe_size(),
+            output.polynomial_size(),
+            encryption_type,
+        )
         .expect("Failed to split generator into ggsw levels");
 
     let output_glwe_size = output.glwe_size();
@@ -270,7 +275,7 @@ pub fn encrypt_constant_ggsw_ciphertext<Z, Gen, const EXTENSION_DEGREE: usize>(
         };
 
         let gen_iter = generator
-            .fork_ggsw_level_to_glwe(output_glwe_size, output_polynomial_size)
+            .fork_ggsw_level_to_glwe(output_glwe_size, output_polynomial_size, encryption_type)
             .expect("Failed to split generator into glwe");
 
         let last_row_index = level_matrix.glwe_size().0 - 1;
