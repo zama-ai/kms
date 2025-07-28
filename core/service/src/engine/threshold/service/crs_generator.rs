@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
 // === External Crates ===
 use aes_prng::AesRng;
@@ -12,13 +12,10 @@ use observability::{
     metrics,
     metrics_names::{OP_CRS_GEN, OP_INSECURE_CRS_GEN, TAG_PARTY_ID},
 };
-use threshold_fhe::{
-    algebra::base_ring::Z64,
-    execution::{
-        runtime::session::{BaseSession, ParameterHandles, ToBaseSession},
-        tfhe_internals::parameters::DKGParams,
-        zk::ceremony::{compute_witness_dim, Ceremony, SecureCeremony},
-    },
+use threshold_fhe::execution::{
+    runtime::session::{BaseSession, ParameterHandles, ToBaseSession},
+    tfhe_internals::parameters::DKGParams,
+    zk::ceremony::compute_witness_dim,
 };
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -31,7 +28,10 @@ use crate::{
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
         base::{compute_info, retrieve_parameters, BaseKmsStruct, DSEP_PUBDATA_CRS},
-        threshold::traits::CrsGenerator,
+        threshold::{
+            service::threshold_traits::{DummyThresholdCrsProtocol, ThresholdCrsProtocol},
+            traits::CrsGenerator,
+        },
         validation::validate_request_id,
     },
     tonic_handle_potential_err,
@@ -39,7 +39,7 @@ use crate::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
     },
-    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
+    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, ram, Storage},
 };
 
 // === Current Module Imports ===
@@ -56,6 +56,7 @@ cfg_if::cfg_if! {
 pub struct RealCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    Proto: ThresholdCrsProtocol + Send + Sync + 'static,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -66,10 +67,40 @@ pub struct RealCrsGenerator<
     // Map of ongoing crs generation tasks
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
+    pub(crate) proto: PhantomData<Proto>,
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    RealCrsGenerator<PubS, PrivS>
+impl RealCrsGenerator<ram::RamStorage, ram::RamStorage, DummyThresholdCrsProtocol> {
+    async fn test_new(session_preparer: SessionPreparer) -> Self {
+        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+            ram::RamStorage::new(),
+            ram::RamStorage::new(),
+            None,
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let tracker = Arc::new(TaskTracker::new());
+        let ongoing = Arc::new(Mutex::new(HashMap::new()));
+        let rate_limiter = RateLimiter::default();
+        Self {
+            base_kms: session_preparer.base_kms.new_instance().await,
+            crypto_storage,
+            crs_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+            session_preparer,
+            tracker,
+            ongoing,
+            rate_limiter,
+            proto: PhantomData,
+        }
+    }
+}
+
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        Proto: ThresholdCrsProtocol + Send + Sync + 'static,
+    > RealCrsGenerator<PubS, PrivS, Proto>
 {
     async fn inner_crs_gen_from_request(
         &self,
@@ -294,10 +325,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             }
         } else {
             // secure ceremony (insecure = false)
-            let real_ceremony = SecureCeremony::default();
-            let internal_pp = real_ceremony
-                .execute::<Z64, _>(&mut base_session, witness_dim, max_num_bits)
-                .await;
+            let internal_pp = Proto::execute(&mut base_session, witness_dim, max_num_bits).await;
             internal_pp.and_then(|internal| {
                 internal.try_into_tfhe_zk_pok_pp(&pke_params, base_session.session_id())
             })
@@ -331,8 +359,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> CrsGenerator
-    for RealCrsGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        Proto: ThresholdCrsProtocol + Send + Sync + 'static,
+    > CrsGenerator for RealCrsGenerator<PubS, PrivS, Proto>
 {
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         self.inner_crs_gen_from_request(request, false).await
@@ -350,15 +381,19 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 pub struct RealInsecureCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    Proto: ThresholdCrsProtocol + Send + Sync + 'static,
 > {
-    pub real_crs_generator: RealCrsGenerator<PubS, PrivS>,
+    pub real_crs_generator: RealCrsGenerator<PubS, PrivS, Proto>,
 }
 
 #[cfg(feature = "insecure")]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    RealInsecureCrsGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        Proto: ThresholdCrsProtocol + Send + Sync + 'static,
+    > RealInsecureCrsGenerator<PubS, PrivS, Proto>
 {
-    pub async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS>) -> Self {
+    pub async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS, Proto>) -> Self {
         Self {
             real_crs_generator: RealCrsGenerator {
                 base_kms: value.base_kms.new_instance().await,
@@ -368,6 +403,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
+                proto: PhantomData::<Proto>,
             },
         }
     }
@@ -375,8 +411,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        Proto: ThresholdCrsProtocol + Send + Sync + 'static,
+    > InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS, Proto>
 {
     async fn insecure_crs_gen(
         &self,
@@ -393,5 +432,32 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         self.real_crs_generator.inner_get_result(request).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_pre_post_conditions() {
+        // This session preparer should not be used when using a dummy threshold protocol
+        let session_preparer = todo!();
+
+        let crs_gen = RealCrsGenerator::<ram::RamStorage, ram::RamStorage, DummyThresholdCrsProtocol>::test_new(
+                session_preparer,
+            )
+            .await;
+
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req = CrsGenRequest {
+            params: 0, // 0 is the default params
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: None,
+        };
+
+        let request = Request::new(req);
+        crs_gen.crs_gen(request);
     }
 }
