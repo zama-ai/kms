@@ -18,7 +18,7 @@ set -e
 sudo apt-get update
 
 # Install essential packages
-sudo apt-get install -y git protobuf-compiler ca-certificates curl pkg-config openssl gcc
+sudo apt-get install -y git protobuf-compiler ca-certificates curl pkg-config openssl libssl-dev gcc
 
 
 # Add Docker's official GPG key:
@@ -49,7 +49,7 @@ cargo install --force cargo-make
 
 # Clone the repository (replace with submission's repo URL)
 REPO_URL="https://github.com/zama-ai/kms.git"
-TARGET_DIR="$HOME/kms"
+TARGET_DIR="$HOME/kms/core/service"
 
 if [ ! -d "$TARGET_DIR" ]; then
     git clone "$REPO_URL" "$TARGET_DIR"
