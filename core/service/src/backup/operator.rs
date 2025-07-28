@@ -20,7 +20,7 @@ use threshold_fhe::{
 
 use super::{
     custodian::{
-        CustodianRecoveryOutput, InternalCustodianSetupMessage, DSEP_BACKUP_CUSTODIAN, HEADER, CustodianSetupMessage,
+        CustodianRecoveryOutput, InternalCustodianSetupMessage, DSEP_BACKUP_CUSTODIAN, HEADER,
     },
     error::BackupError,
     secretsharing,
@@ -28,17 +28,6 @@ use super::{
 };
 use crate::{
     anyhow_error_and_log,
-    consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::{
-        backup_pke::BackupPublicKey,
-        internal_crypto_types::{PublicSigKey, Signature},
-        signcryption::internal_verify_sig,
-    },
-    engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY},
-};
-use crate::{
-    anyhow_error_and_log,
-    backup::custodian::DSEP_BACKUP_SETUP,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         backup_pke::BackupPublicKey,
