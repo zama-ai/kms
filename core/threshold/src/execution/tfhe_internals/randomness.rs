@@ -353,12 +353,6 @@ fn mask_bytes_per_polynomial(poly_size: PolynomialSize, encryption_type: Encrypt
     poly_size.0 * mask_bytes_per_coef(encryption_type)
 }
 
-//WARNING: IDK yet if it's a big deal, but we may be asking more bytes from our XOF than we actually need
-//as we ask enough bytes to fill up a full element from the ring even if we actually require less
-//e.g. if the sharing domain is Z128 but we are generating the Z64 key material.
-//ANSWER: Turned out to be a big deal for compatibility with tfhe-rs when generating seeded struct.
-//Fixed now.
-
 ///How many bytes to fill an element in Z
 fn mask_bytes_per_coef(encryption_type: EncryptionType) -> usize {
     match encryption_type {
