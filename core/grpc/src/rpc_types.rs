@@ -346,8 +346,9 @@ fn string_to_fhe_types(value: &str) -> anyhow::Result<FheTypes> {
 pub fn fhe_types_to_num_blocks(
     fhe_type: FheTypes,
     params: &ClassicPBSParameters,
+    packing_factor: u32,
 ) -> anyhow::Result<usize> {
-    let msg_modulus = params.message_modulus.0.ilog2() as usize;
+    let msg_modulus = (params.message_modulus.0.ilog2() * packing_factor) as usize;
     match fhe_type {
         FheTypes::Bool => Ok(1_usize.div_ceil(msg_modulus)),
         FheTypes::Uint4 => Ok(4_usize.div_ceil(msg_modulus)),
