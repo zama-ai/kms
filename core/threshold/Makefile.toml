@@ -151,14 +151,14 @@ command = "docker"
 args = ["compose", "--progress=quiet", "-f", "temp/${EXPERIMENT_NAME}.yml", "up", "--quiet-pull", "--wait"]
 
 #Run the full test suite for tfhe with real dkg
-[tasks.tfhe-test-real-dkg]
+[tasks.tfhe-test-small]
 command = "sh"
-args = ["test_scripts/tfhe_test_script_real_dkg.sh", "temp/${EXPERIMENT_NAME}.toml"]
+args = ["test_scripts/tfhe_test_small_session.sh", "temp/${EXPERIMENT_NAME}.toml"]
 
 #Run the full test suite for tfhe with centralized dkg
-[tasks.tfhe-test-fake-dkg]
+[tasks.tfhe-test-large]
 command = "sh"
-args = ["test_scripts/tfhe_test_script_fake_dkg.sh", "temp/${EXPERIMENT_NAME}.toml"]
+args = ["test_scripts/tfhe_test_large_session.sh", "temp/${EXPERIMENT_NAME}.toml"]
 
 #Run the full test suite for tfhe with real dkg
 [tasks.bgv-test-real-dkg]
@@ -178,14 +178,15 @@ run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experime
 env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="bgv-bench-run"}
 run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
 
-##For TFHE we set NUM_PARTIES to 5 to be able to test both small and large sessions
-[tasks.tfhe-bench-fake-dkg]
-env = {"NUM_PARTIES" = "5", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-fake-dkg-bench"}
-run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-fake-dkg"], fork = true, cleanup_task = "shutdown" }
+# For small session we run with N=4,t=1
+[tasks.tfhe-run-small-session]
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-fake-dkg-bench"}
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-small"], fork = true, cleanup_task = "shutdown" }
 
-[tasks.tfhe-bench-real-dkg]
+# For large session we run with N=5,t=1
+[tasks.tfhe-run-large-session]
 env = {"NUM_PARTIES" = "5", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-real-dkg-bench"}
-run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-real-dkg"], fork = true, cleanup_task = "shutdown" }
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-large"], fork = true, cleanup_task = "shutdown" }
 
 ##For BGV we set NUM_PARTIES to 4 as we only need small sessions
 [tasks.bgv-bench-fake-dkg]
