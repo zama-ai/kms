@@ -766,14 +766,15 @@ impl Client {
         Ok(req)
     }
 
-    /// Creates a user decryption request to send to the KMS servers. This generates
-    /// an ephemeral user decryption key pair, signature payload containing the ciphertext,
-    /// required number of shares, and other metadata. It signs this payload with
-    /// the users's wallet private key. Returns the full [UserDecryptionRequest] containing
-    /// the signed payload to send to the servers, along with the generated
+    /// Creates a user decryption request to send to the KMS servers.
+    /// Returns the full [UserDecryptionRequest] containing
+    /// the payload to send to the servers, along with the generated
     /// user decryption key pair.
+    /// The private key is used to decrypt the responses from the servers,
+    /// and must be kept to process the responses.
     ///
     /// Note that we only support MlKem512 in the latest version and not other variants of MlKem.
+    #[cfg(feature = "non-wasm")]
     pub fn user_decryption_request(
         &mut self,
         domain: &Eip712Domain,
@@ -828,6 +829,7 @@ impl Client {
     /// where the encryption key is MlKem1024 serialized using bincode2.
     /// The normal version [Self::user_decryption_request] uses MlKem512 uses safe serialization.
     #[cfg(test)]
+    #[cfg(feature = "non-wasm")]
     fn user_decryption_request_legacy(
         &mut self,
         domain: &Eip712Domain,
