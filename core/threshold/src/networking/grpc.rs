@@ -276,6 +276,15 @@ impl GrpcNetworkingManager {
         tls_conf: Option<SendingServiceTLSConfig>,
         conf: Option<CoreToCoreNetworkConfig>,
     ) -> anyhow::Result<Self> {
+        #[cfg(feature = "testing")]
+        let force_tls = tls_conf.is_some();
+
+        #[cfg(not(feature = "testing"))]
+        assert!(
+            tls_conf.is_some(),
+            "TLS configuration must be provided in non-testing environments",
+        );
+
         let conf = OptionConfigWrapper { conf };
         let session_store = Arc::new(SessionStore::default());
 
@@ -290,9 +299,6 @@ impl GrpcNetworkingManager {
             cleanup_interval,
             discard_inactive_interval,
         );
-
-        #[cfg(feature = "testing")]
-        let force_tls = tls_conf.is_some();
 
         Ok(GrpcNetworkingManager {
             session_store,
