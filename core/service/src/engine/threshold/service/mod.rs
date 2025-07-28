@@ -23,5 +23,4 @@ mod key_generator;
 mod preprocessor;
 mod public_decryptor;
 mod session;
-mod threshold_traits;
 mod user_decryptor;

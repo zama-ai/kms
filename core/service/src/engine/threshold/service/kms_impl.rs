@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 // === External Crates ===
 use kms_grpc::{
@@ -50,9 +50,7 @@ use crate::{
     engine::{
         base::{compute_info, BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY},
         prepare_shutdown_signals,
-        threshold::{
-            service::threshold_traits::RealThresholdCrsProtocol, threshold_kms::ThresholdKms,
-        },
+        threshold::threshold_kms::ThresholdKms,
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     tonic_some_or_err,
@@ -178,8 +176,8 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealKeyGenerator<PubS, PrivS>,
     RealInsecureKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
-    RealCrsGenerator<PubS, PrivS, RealThresholdCrsProtocol>,
-    RealInsecureCrsGenerator<PubS, PrivS, RealThresholdCrsProtocol>,
+    RealCrsGenerator<PubS, PrivS>,
+    RealInsecureCrsGenerator<PubS, PrivS>,
     RealContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
 >;
@@ -524,7 +522,6 @@ where
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
-        proto: PhantomData::default(),
     };
 
     #[cfg(feature = "insecure")]
