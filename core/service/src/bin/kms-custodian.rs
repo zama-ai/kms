@@ -2,7 +2,7 @@ use aes_prng::AesRng;
 use clap::Parser;
 use kms_lib::{
     backup::{
-        custodian::{Custodian, InternalCustodianSetupMessage},
+        custodian::{Custodian, CustodianSetupMessage, InternalCustodianSetupMessage},
         operator::{OperatorBackupOutput, RecoveryRequest},
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
@@ -219,7 +219,7 @@ mod tests {
     use kms_grpc::RequestId;
     use kms_lib::{
         backup::{
-            custodian::{CustodianRecoveryOutput, InternalCustodianSetupMessage},
+            custodian::{CustodianRecoveryOutput, CustodianSetupMessage, InternalCustodianSetupMessage},
             operator::{BackupCommitments, Operator, RecoveryRequest},
             seed_phrase::custodian_from_seed_phrase,
         },

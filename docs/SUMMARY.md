@@ -33,6 +33,6 @@
 ## Developers
 
 - [Contributing](developer/contributing.md)
-- [Release note](https://github.com/zama-ai/kms-core/releases)
-- [Feature request](https://github.com/zama-ai/kms-core/issues/new?assignees=&labels=feature&projects=&template=feature_request.md)
-- [Bug report](https://github.com/zama-ai/kms-core/issues/new?assignees=&labels=bug&projects=&template=bug_report.md)
+- [Release note](https://github.com/zama-ai/kms/releases)
+- [Feature request](https://github.com/zama-ai/kms/issues/new?assignees=&labels=feature&projects=&template=feature_request.md)
+- [Bug report](https://github.com/zama-ai/kms/issues/new?assignees=&labels=bug&projects=&template=bug_report.md)

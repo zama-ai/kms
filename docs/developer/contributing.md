@@ -16,7 +16,7 @@ Start by [forking](https://docs.github.com/en/pull-requests/collaborating-with-p
 - **Performance**: For optimal performance, it is highly recommended to run **TKMS** code in release mode with cargo's `--release` flag.
 {% endhint %}
 
-To get more details about the library, please refer to the [documentation](https://github.com/zama-ai/kms-core/tree/main/docs).
+To get more details about the library, please refer to the [documentation](https://github.com/zama-ai/kms/tree/main/docs).
 
 ## 2. Creating a new branch
 

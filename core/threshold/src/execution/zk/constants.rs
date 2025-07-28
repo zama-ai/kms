@@ -18,3 +18,4 @@ pub const ZK_DSEP_PHI: DomainSep = *b"ZKHA_PHI";
 pub const ZK_DSEP_XI: DomainSep = *b"ZKHAS_XI";
 pub const ZK_DSEP_CHI: DomainSep = *b"ZKHA_CHI";
 pub const ZK_DSEP_GAMMA: DomainSep = *b"VCProve2";
+pub const ZK_DSEP_CRS_UPDA: DomainSep = *b"CRS_UPDA";

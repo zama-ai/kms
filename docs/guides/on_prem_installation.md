@@ -139,13 +139,13 @@ Be sure to target the cluster and the right context.
 
 ```bash
 # From the kms-core directory
-helm install kms-service ./charts/kms-service -f ./charts/kms-service/values-example-local.yaml -n kms-threshold-staging
+helm install kms-core ./charts/kms-core -f ./charts/kms-core/values-example-local.yaml -n kms-threshold-staging
 ```
 
 If you want to use the chart from the registry you can log into ghcr.io and run the following with the **version** you want:
 
 ```bash
-helm upgrade --install kms-core oci://ghcr.io/zama-ai/kms-core/kms-service --version <version> -f ./charts/kms-service/values-example-local.yaml -n kms-threshold-staging --create-namespace --dependency-update
+helm upgrade --install kms-core oci://ghcr.io/zama-ai/kms/helm-charts/kms-service --version <version> -f ./charts/kms-core/values-example-local.yaml -n kms-threshold-staging --create-namespace --dependency-update
 ```
 
 
