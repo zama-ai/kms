@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
 // === External Crates ===
 use aes_prng::AesRng;
@@ -17,7 +17,7 @@ use threshold_fhe::{
     execution::{
         runtime::session::{BaseSession, ParameterHandles, ToBaseSession},
         tfhe_internals::parameters::DKGParams,
-        zk::ceremony::{compute_witness_dim, Ceremony, SecureCeremony},
+        zk::ceremony::{compute_witness_dim, Ceremony},
     },
 };
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
@@ -53,9 +53,17 @@ cfg_if::cfg_if! {
     }
 }
 
+cfg_if::cfg_if! {
+    if #[cfg(test)] {
+        use crate::vault::storage::ram;
+        use threshold_fhe::execution::zk::ceremony::InsecureCeremony;
+    }
+}
+
 pub struct RealCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    C: Ceremony + Send + Sync + 'static,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -66,10 +74,14 @@ pub struct RealCrsGenerator<
     // Map of ongoing crs generation tasks
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
+    pub(crate) _ceremony: PhantomData<C>,
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    RealCrsGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        C: Ceremony + Send + Sync + 'static,
+    > RealCrsGenerator<PubS, PrivS, C>
 {
     async fn inner_crs_gen_from_request(
         &self,
@@ -294,7 +306,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             }
         } else {
             // secure ceremony (insecure = false)
-            let real_ceremony = SecureCeremony::default();
+            let real_ceremony = C::default();
             let internal_pp = real_ceremony
                 .execute::<Z64, _>(&mut base_session, witness_dim, max_num_bits)
                 .await;
@@ -328,11 +340,52 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             (elapsed_time).as_millis()
         );
     }
+
+    #[cfg(test)]
+    async fn init_test(
+        pub_storage: PubS,
+        priv_storage: PrivS,
+        session_preparer: SessionPreparer,
+    ) -> Self {
+        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+            pub_storage,
+            priv_storage,
+            None,
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let tracker = Arc::new(TaskTracker::new());
+        let ongoing = Arc::new(Mutex::new(HashMap::new()));
+        let rate_limiter = RateLimiter::default();
+        Self {
+            base_kms: session_preparer.base_kms.new_instance().await,
+            crypto_storage,
+            crs_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+            session_preparer,
+            tracker,
+            ongoing,
+            rate_limiter,
+            _ceremony: PhantomData,
+        }
+    }
+
+    #[cfg(test)]
+    fn set_bucket_size(&mut self, bucket_size: usize) {
+        let config = crate::util::rate_limiter::RateLimiterConfig {
+            bucket_size,
+            ..Default::default()
+        };
+        self.rate_limiter = RateLimiter::new(config);
+    }
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> CrsGenerator
-    for RealCrsGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        C: Ceremony + Send + Sync + 'static,
+    > CrsGenerator for RealCrsGenerator<PubS, PrivS, C>
 {
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         self.inner_crs_gen_from_request(request, false).await
@@ -350,15 +403,19 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 pub struct RealInsecureCrsGenerator<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    C: Ceremony + Send + Sync + 'static,
 > {
-    pub real_crs_generator: RealCrsGenerator<PubS, PrivS>,
+    pub real_crs_generator: RealCrsGenerator<PubS, PrivS, C>,
 }
 
 #[cfg(feature = "insecure")]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    RealInsecureCrsGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        C: Ceremony + Send + Sync + 'static,
+    > RealInsecureCrsGenerator<PubS, PrivS, C>
 {
-    pub async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS>) -> Self {
+    pub async fn from_real_crsgen(value: &RealCrsGenerator<PubS, PrivS, C>) -> Self {
         Self {
             real_crs_generator: RealCrsGenerator {
                 base_kms: value.base_kms.new_instance().await,
@@ -368,6 +425,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
+                _ceremony: PhantomData,
             },
         }
     }
@@ -375,8 +433,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        C: Ceremony + Send + Sync + 'static,
+    > InsecureCrsGenerator for RealInsecureCrsGenerator<PubS, PrivS, C>
 {
     async fn insecure_crs_gen(
         &self,
@@ -393,5 +454,308 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         self.real_crs_generator.inner_get_result(request).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use threshold_fhe::{
+        algebra::structure_traits::Ring,
+        execution::{
+            runtime::session::BaseSessionHandles, zk::ceremony::FinalizedInternalPublicParameter,
+        },
+    };
+
+    use super::*;
+
+    #[derive(Clone, Default)]
+    pub struct BrokenCeremony {}
+
+    #[tonic::async_trait]
+    impl Ceremony for BrokenCeremony {
+        async fn execute<Z: Ring, S: BaseSessionHandles>(
+            &self,
+            _session: &mut S,
+            _witness_dim: usize,
+            _max_num_bits: Option<u32>,
+        ) -> anyhow::Result<FinalizedInternalPublicParameter> {
+            Err(anyhow::anyhow!("this is a broken ceremony"))
+        }
+    }
+
+    #[derive(Clone, Default)]
+    pub struct SlowCeremony {}
+
+    #[tonic::async_trait]
+    impl Ceremony for SlowCeremony {
+        async fn execute<Z: Ring, S: BaseSessionHandles>(
+            &self,
+            session: &mut S,
+            witness_dim: usize,
+            max_num_bits: Option<u32>,
+        ) -> anyhow::Result<FinalizedInternalPublicParameter> {
+            // We need to sleep for more than 60 seconds because
+            // the get response call blocks for 60 seconds if there is potentially a result
+            tokio::time::sleep(Duration::from_secs(70)).await;
+            let ceremony = InsecureCeremony {};
+            ceremony
+                .execute::<Z64, _>(session, witness_dim, max_num_bits)
+                .await
+        }
+    }
+
+    impl RealCrsGenerator<ram::RamStorage, ram::RamStorage, InsecureCeremony> {
+        async fn init_test_insecure_ceremony(session_preparer: SessionPreparer) -> Self {
+            let pub_storage = ram::RamStorage::new();
+            let priv_storage = ram::RamStorage::new();
+            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test(
+                pub_storage,
+                priv_storage,
+                session_preparer,
+            )
+            .await
+        }
+    }
+
+    impl RealCrsGenerator<ram::RamStorage, ram::RamStorage, BrokenCeremony> {
+        async fn init_test_broken_ceremony(session_preparer: SessionPreparer) -> Self {
+            let pub_storage = ram::RamStorage::new();
+            let priv_storage = ram::RamStorage::new();
+            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, BrokenCeremony>::init_test(
+                pub_storage,
+                priv_storage,
+                session_preparer,
+            )
+            .await
+        }
+    }
+
+    impl RealCrsGenerator<ram::RamStorage, ram::RamStorage, SlowCeremony> {
+        async fn init_test_slow_ceremony(session_preparer: SessionPreparer) -> Self {
+            let pub_storage = ram::RamStorage::new();
+            let priv_storage = ram::RamStorage::new();
+            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, SlowCeremony>::init_test(
+                pub_storage,
+                priv_storage,
+                session_preparer,
+            )
+            .await
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_argument() {
+        let session_preparer = SessionPreparer::new_test_session(true);
+
+        let crs_gen =
+            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
+                session_preparer,
+            )
+            .await;
+
+        // `InvalidArgument` - If the request ID is not present, valid or does not match the expected format.
+        let req = CrsGenRequest {
+            params: 0, // 0 is the default params
+            max_num_bits: None,
+            request_id: None,
+            domain: None,
+        };
+
+        let request = Request::new(req);
+        let res = crs_gen.crs_gen(request).await;
+
+        assert_eq!(res.unwrap_err().code(), tonic::Code::InvalidArgument);
+
+        // same for the result, should give us an error with a bad request ID
+        assert_eq!(
+            crs_gen
+                .get_result(Request::new(kms_grpc::kms::v1::RequestId {
+                    request_id: "xyz".to_string(),
+                }))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
+        );
+    }
+
+    #[tokio::test]
+    async fn not_found() {
+        let session_preparer = SessionPreparer::new_test_session(true);
+
+        let crs_gen =
+            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
+                session_preparer,
+            )
+            .await;
+
+        // `NotFound` - If the parameters in the request are not valid.
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req = CrsGenRequest {
+            params: 2,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: None,
+        };
+
+        let request = Request::new(req);
+        let res = crs_gen.crs_gen(request).await;
+
+        assert_eq!(res.unwrap_err().code(), tonic::Code::NotFound);
+
+        // `NotFound` - If the CRS generation does not exist for `request`.
+        assert_eq!(
+            crs_gen
+                .get_result(Request::new(req_id.into()))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::NotFound
+        );
+    }
+
+    #[tokio::test]
+    async fn resource_exhausted() {
+        let session_preparer = SessionPreparer::new_test_session(true);
+
+        let mut crs_gen =
+            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
+                session_preparer,
+            )
+            .await;
+        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
+        crs_gen.set_bucket_size(1);
+
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req = CrsGenRequest {
+            params: 0,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: None,
+        };
+
+        let request = Request::new(req);
+        let res = crs_gen.crs_gen(request).await;
+
+        assert_eq!(res.unwrap_err().code(), tonic::Code::ResourceExhausted);
+    }
+
+    #[tokio::test]
+    async fn aborted() {
+        // We use non existing PRSS to simulate an abort failure
+        let session_preparer = SessionPreparer::new_test_session(false);
+
+        let crs_gen =
+            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
+                session_preparer,
+            )
+            .await;
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req = CrsGenRequest {
+            params: 0,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: None,
+        };
+
+        let request = Request::new(req);
+        assert_eq!(
+            crs_gen.crs_gen(request).await.unwrap_err().code(),
+            tonic::Code::Aborted
+        );
+    }
+
+    #[tokio::test]
+    async fn internal_failure() {
+        // Even if the CRS ceremony fails, we should not return an error
+        // because it's happening in the background.
+        let session_preparer = SessionPreparer::new_test_session(true);
+
+        let crs_gen =
+                RealCrsGenerator::<ram::RamStorage, ram::RamStorage, BrokenCeremony>::init_test_broken_ceremony(
+                    session_preparer,
+                )
+                .await;
+
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req = CrsGenRequest {
+            params: 0,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: None,
+        };
+
+        // we expect the CRS generation call to pass, but only get an error when we try to retrieve the result
+        crs_gen.crs_gen(Request::new(req)).await.unwrap();
+
+        assert_eq!(
+            crs_gen
+                .get_result(Request::new(req_id.into()))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Internal
+        );
+    }
+
+    #[tokio::test]
+    async fn unavailable() {
+        let session_preparer = SessionPreparer::new_test_session(true);
+
+        let crs_gen =
+            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, SlowCeremony>::init_test_slow_ceremony(
+                session_preparer,
+            )
+            .await;
+
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+
+        // start the ceremony but immediately fetch the result, it should be not found too
+        let req = CrsGenRequest {
+            params: 0,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: None,
+        };
+
+        let request = Request::new(req);
+        crs_gen.crs_gen(request).await.unwrap();
+        assert_eq!(
+            crs_gen
+                .get_result(Request::new(req_id.into()))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unavailable
+        );
+    }
+
+    #[tokio::test]
+    async fn sunshine() {
+        let session_preparer = SessionPreparer::new_test_session(true);
+
+        let crs_gen =
+            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
+                session_preparer,
+            )
+            .await;
+
+        // Test that we can successfully generate a CRS
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req = CrsGenRequest {
+            params: 0,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: None,
+        };
+
+        let request = Request::new(req);
+        crs_gen.crs_gen(request).await.unwrap();
+        let _crs = crs_gen
+            .get_result(Request::new(req_id.into()))
+            .await
+            .unwrap();
     }
 }

@@ -811,7 +811,7 @@ fn verify_wellformedness(new_pp: &InternalPublicParameter, sid: SessionId) -> an
 }
 
 #[async_trait]
-pub trait Ceremony: Send + Sync + Clone {
+pub trait Ceremony: Send + Sync + Clone + Default {
     async fn execute<Z: Ring, S: BaseSessionHandles>(
         &self,
         session: &mut S,
@@ -821,12 +821,12 @@ pub trait Ceremony: Send + Sync + Clone {
 }
 
 #[derive(Default, Clone)]
-pub struct RealCeremony<BCast: Broadcast> {
+pub struct RealCeremony<BCast: Broadcast + Default> {
     broadcast: BCast,
 }
 
 #[async_trait]
-impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
+impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
     #[instrument(name = "CRS-Ceremony", skip_all, fields(sid=?session.session_id(),own_identity=?session.own_identity()))]
     async fn execute<Z: Ring, S: BaseSessionHandles>(
         &self,
@@ -958,6 +958,34 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
     }
 }
 
+#[cfg(any(feature = "testing", test))]
+#[derive(Clone, Default)]
+pub struct InsecureCeremony {}
+
+#[async_trait]
+#[cfg(any(feature = "testing", test))]
+impl Ceremony for InsecureCeremony {
+    async fn execute<Z: Ring, S: BaseSessionHandles>(
+        &self,
+        session: &mut S,
+        witness_dim: usize,
+        max_num_bits: Option<u32>,
+    ) -> anyhow::Result<FinalizedInternalPublicParameter> {
+        let max_num_bits = max_num_bits.unwrap_or(ZK_DEFAULT_MAX_NUM_BITS as u32) as usize;
+        Ok(FinalizedInternalPublicParameter {
+            inner: InternalPublicParameter {
+                round: session.num_parties() as u64,
+                max_num_bits,
+                g1g2list: WrappedG1G2s::new(
+                    vec![curve::G1::GENERATOR; witness_dim * 2],
+                    vec![curve::G2::GENERATOR; witness_dim],
+                ),
+            },
+            sid: session.session_id(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -982,32 +1010,6 @@ mod tests {
     use std::collections::HashMap;
     use tfhe_zk_pok::{curve_api::Bls12_446, proofs, proofs::LEGACY_HASH_DS_LEN_BYTES};
     use tokio::task::JoinSet;
-
-    #[derive(Clone, Default)]
-    struct InsecureCeremony {}
-
-    #[async_trait]
-    impl Ceremony for InsecureCeremony {
-        async fn execute<Z: Ring, S: BaseSessionHandles>(
-            &self,
-            session: &mut S,
-            witness_dim: usize,
-            max_num_bits: Option<u32>,
-        ) -> anyhow::Result<FinalizedInternalPublicParameter> {
-            let max_num_bits = max_num_bits.unwrap_or(ZK_DEFAULT_MAX_NUM_BITS as u32) as usize;
-            Ok(FinalizedInternalPublicParameter {
-                inner: InternalPublicParameter {
-                    round: session.num_parties() as u64,
-                    max_num_bits,
-                    g1g2list: WrappedG1G2s::new(
-                        vec![curve::G1::GENERATOR; witness_dim * 2],
-                        vec![curve::G2::GENERATOR; witness_dim],
-                    ),
-                },
-                sid: session.session_id(),
-            })
-        }
-    }
 
     #[test]
     fn test_honest_crs_ceremony_secure() {
@@ -1147,7 +1149,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl<BCast: Broadcast> Ceremony for BadProofCeremony<BCast> {
+    impl<BCast: Broadcast + Default> Ceremony for BadProofCeremony<BCast> {
         async fn execute<Z: Ring, S: BaseSessionHandles>(
             &self,
             session: &mut S,
@@ -1203,7 +1205,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl<BCast: Broadcast> Ceremony for RushingCeremony<BCast> {
+    impl<BCast: Broadcast + Default> Ceremony for RushingCeremony<BCast> {
         // this implements an adversary that rushes the protocol,
         // i.e., it starts before it is his turn to do run
         async fn execute<Z: Ring, S: BaseSessionHandles>(
@@ -1321,7 +1323,7 @@ mod tests {
     #[rstest]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
-    fn test_bad_proof_ceremony<BCast: Broadcast + 'static>(
+    fn test_bad_proof_ceremony<BCast: Broadcast + Default + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
@@ -1339,7 +1341,7 @@ mod tests {
     #[rstest]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
-    fn test_rushing_ceremony<BCast: Broadcast + 'static>(
+    fn test_rushing_ceremony<BCast: Broadcast + Default + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,

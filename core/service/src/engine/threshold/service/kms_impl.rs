@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
 use kms_grpc::{
@@ -19,6 +19,7 @@ use threshold_fhe::{
         endpoints::keygen::{FhePubKeySet, PrivateKeySet},
         online::preprocessing::{create_memory_factory, create_redis_factory, DKGPreprocessing},
         runtime::party::{Role, RoleAssignment},
+        zk::ceremony::SecureCeremony,
     },
     networking::{
         grpc::{GrpcNetworkingManager, GrpcServer},
@@ -163,7 +164,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealPublicDecryptor<PubS, PrivS>,
     RealKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
-    RealCrsGenerator<PubS, PrivS>,
+    RealCrsGenerator<PubS, PrivS, SecureCeremony>,
     RealContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
 >;
@@ -176,8 +177,8 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealKeyGenerator<PubS, PrivS>,
     RealInsecureKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
-    RealCrsGenerator<PubS, PrivS>,
-    RealInsecureCrsGenerator<PubS, PrivS>,
+    RealCrsGenerator<PubS, PrivS, SecureCeremony>,
+    RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
     RealContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
 >;
@@ -522,6 +523,7 @@ where
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
+        _ceremony: PhantomData,
     };
 
     #[cfg(feature = "insecure")]

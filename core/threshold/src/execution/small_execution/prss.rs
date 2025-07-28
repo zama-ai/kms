@@ -393,6 +393,13 @@ impl<Z: Default + Clone + Serialize> Named for PRSSSetup<Z> {
     const NAME: &'static str = "PRSSSetup";
 }
 
+#[cfg(feature = "testing")]
+impl<Z: Default + Clone + Serialize> PRSSSetup<Z> {
+    pub fn new_testing_prss(sets: Vec<PrssSet<Z>>, alpha_powers: Vec<Vec<Z>>) -> Self {
+        Self { sets, alpha_powers }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PRSSCounters {
     pub mask_ctr: u128,
