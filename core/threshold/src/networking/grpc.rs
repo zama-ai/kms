@@ -613,7 +613,7 @@ impl Gnetworking for NetworkingImpl {
         // since we're using self-signed certificates at the moment.
         let valid_tls_sender = request
             .extensions()
-            .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
+            .get::<tonic::transport::server::TlsConnectInfo<TcpConnectInfo>>()
             .and_then(|i| {
                 i.peer_certs().map(|certs| {
                     if certs.len() != 1 {
@@ -665,7 +665,15 @@ impl Gnetworking for NetworkingImpl {
                 ));
             }
         } else {
-            tracing::warn!("No valid TLS senders known.");
+            tracing::warn!(
+                "Could not find a TLS certificate in the request to verify user's identity."
+            );
+            #[cfg(not(feature = "testing"))]
+            return Err(tonic::Status::new(
+                tonic::Code::Unauthenticated,
+                "Could not find a TLS certificate in the request to verify user's identity."
+                    .to_string(),
+            ));
         }
         tracing::debug!("passed sender verification, tag is {:?}", tag);
 
