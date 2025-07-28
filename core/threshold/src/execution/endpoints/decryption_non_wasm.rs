@@ -15,6 +15,7 @@ use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use crate::execution::runtime::party::Identity;
 use crate::execution::runtime::session::BaseSession;
 use crate::execution::runtime::session::ParameterHandles;
+#[cfg(any(test, feature = "testing"))]
 use crate::execution::runtime::session::SessionParameters;
 use crate::execution::runtime::session::SmallSessionHandles;
 use crate::execution::runtime::session::ToBaseSession;

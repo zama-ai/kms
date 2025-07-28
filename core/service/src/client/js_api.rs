@@ -178,7 +178,6 @@ pub fn new_client(
     let server_identities = ServerIdentities::Addrs(addrs_hash_map);
 
     Ok(Client {
-        rng: Box::new(AesRng::from_entropy()),
         server_identities,
         client_address,
         client_sk: None,
@@ -277,7 +276,6 @@ pub fn transcript_to_enc_pk(transcript: &TestingUserDecryptionTranscript) -> Pub
 #[cfg(feature = "wasm_tests")]
 pub fn transcript_to_client(transcript: &TestingUserDecryptionTranscript) -> Client {
     Client {
-        rng: Box::new(AesRng::from_entropy()),
         server_identities: ServerIdentities::Addrs(transcript.server_addrs.clone()),
         client_address: transcript.client_address,
         client_sk: transcript.client_sk.clone(),
