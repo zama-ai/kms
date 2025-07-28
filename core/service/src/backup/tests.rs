@@ -1,14 +1,18 @@
 use std::collections::BTreeMap;
 
+use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::RequestId;
 use proptest::prelude::*;
-use rand::rngs::OsRng;
+use rand::{rngs::OsRng, SeedableRng};
 use threshold_fhe::execution::runtime::party::Role;
 
-use crate::cryptography::{
-    backup_pke,
-    internal_crypto_types::{gen_sig_keys, PublicSigKey},
+use crate::{
+    backup::seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
+    cryptography::{
+        backup_pke,
+        internal_crypto_types::{gen_sig_keys, PublicSigKey},
+    },
 };
 
 use super::{custodian, error::BackupError, operator::Operator};
@@ -35,24 +39,15 @@ fn full_flow() {
         let secret_len = 32usize;
         let backup_id = RequestId::from_bytes([8u8; crate::consts::ID_LENGTH]);
 
-        let mut rng = OsRng;
-
+        let mut rng = AesRng::seed_from_u64(1337);
         // *setup*
         // custodians generate signing keys and encryption keys
         // those are sent to the operators
         let custodians: Vec<_> = (0..custodian_count)
             .map(|i| {
                 let custodian_role = Role::indexed_from_zero(i);
-                let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-                let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
-                custodian::Custodian::new(
-                    custodian_role,
-                    signing_key,
-                    verification_key,
-                    private_key,
-                    public_key,
-                )
-                .unwrap()
+                let mnemonic = seed_phrase_from_rng(&mut rng).unwrap();
+                custodian_from_seed_phrase(&mnemonic, custodian_role).unwrap()
             })
             .collect();
         let custodian_messages: Vec<_> = custodians
@@ -63,7 +58,7 @@ fn full_flow() {
             .map(|i| {
                 let operator_role = Role::indexed_from_zero(i);
                 let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-                let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
+                let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
                 Operator::new(
                     operator_role,
                     custodian_messages.clone(),
@@ -159,7 +154,7 @@ fn full_flow() {
                     }
                 }
                 operator
-                    .verify_and_recover(reencrypted_ct, commitments, backup_id)
+                    .verify_and_recover(&reencrypted_ct, &commitments, backup_id)
                     .unwrap()
             })
             .collect();
@@ -180,7 +175,7 @@ fn operator_setup() {
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
             let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
+            let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
             custodian::Custodian::new(
                 custodian_role,
                 signing_key,
@@ -201,7 +196,7 @@ fn operator_setup() {
         let mut wrong_custodian_messages = custodian_messages.clone();
         wrong_custodian_messages[0].msg.custodian_role = Role::indexed_from_zero(1);
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
         let operator = Operator::new(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
@@ -227,7 +222,7 @@ fn operator_setup() {
         wrong_custodian_messages[0].verification_key = wrong_verification_key;
 
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
         let operator = Operator::new(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
@@ -249,7 +244,7 @@ fn operator_setup() {
         wrong_custodian_messages[0].msg.header.push('z');
 
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
         let operator = Operator::new(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
@@ -271,7 +266,7 @@ fn operator_setup() {
         wrong_custodian_messages[0].msg.timestamp += 3700;
 
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
         let operator = Operator::new(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
@@ -290,7 +285,7 @@ fn operator_setup() {
     // no tweaks, all should pass
     {
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
         let _ = Operator::new(
             Role::indexed_from_zero(0),
             custodian_messages,
@@ -318,7 +313,7 @@ fn custodian_reencrypt() {
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
             let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
+            let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
             custodian::Custodian::new(
                 custodian_role,
                 signing_key,
@@ -337,7 +332,7 @@ fn custodian_reencrypt() {
         .map(|i| {
             let operator_role = Role::indexed_from_zero(i);
             let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
+            let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
             Operator::new(
                 operator_role,
                 custodian_messages.clone(),

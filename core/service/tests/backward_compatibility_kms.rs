@@ -246,7 +246,7 @@ fn test_custodian_setup_message(
 
     let mut rng = AesRng::seed_from_u64(test.seed);
     let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-    let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
+    let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
     let custodian = Custodian::new(
         Role::indexed_from_zero(0),
         signing_key,
@@ -288,7 +288,7 @@ fn test_operator_backup_output(
         .map(|i| {
             let custodian_role = Role::indexed_from_zero(i);
             let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
+            let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
             Custodian::new(
                 custodian_role,
                 signing_key,
@@ -306,7 +306,7 @@ fn test_operator_backup_output(
 
     let operator = {
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (private_key, public_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
         Operator::new(
             Role::indexed_from_zero(0),
             custodian_messages,
