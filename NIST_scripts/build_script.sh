@@ -36,7 +36,6 @@ sudo apt-get update
 # Install Docker
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-# NOTE: This makes the script stop, not sure how to handle this
 sudo usermod -aG docker $USER
 
 # Install Rust
@@ -49,15 +48,16 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 cargo install --force cargo-make
 
 # Clone the repository (replace with submission's repo URL)
-REPO_URL="git@github.com:zama-ai/kms.git"
+REPO_URL="https://github.com/zama-ai/kms.git"
 TARGET_DIR="$HOME/kms"
 
 if [ ! -d "$TARGET_DIR" ]; then
-    # NOTE: Bit of a pain as this is interactive (maybe once the repo is public we can use https instead)
     git clone "$REPO_URL" "$TARGET_DIR"
 else
     echo "Directory $TARGET_DIR already exists. Skipping clone."
 fi
 
 cd "$TARGET_DIR"
+
+# NOTE: This makes the script stop
 sudo su $USER
