@@ -5,7 +5,7 @@ use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
-use std::fmt::{self,};
+use std::fmt::{self};
 use strum_macros::EnumIter;
 use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
@@ -247,6 +247,8 @@ pub enum PubDataType {
     DecompressionKey,
     CACert,                // Certificate that signs TLS certificates used by MPC nodes
     CustodianSetupMessage, // Backup custodian public keys (self-signed)
+    RecoveryRequest,       // Recovery request for backup vault
+    Commitments,           // Commitments for the backup vault
     PublicEncKey,          // Classical non-FHE Public encryption key, e.g. used for backup
 }
 
@@ -262,6 +264,8 @@ impl fmt::Display for PubDataType {
             PubDataType::DecompressionKey => write!(f, "DecompressionKey"),
             PubDataType::CACert => write!(f, "CACert"),
             PubDataType::CustodianSetupMessage => write!(f, "CustodianSetupMessage"),
+            PubDataType::RecoveryRequest => write!(f, "RecoveryRequest"),
+            PubDataType::Commitments => write!(f, "Commitments"),
             PubDataType::PublicEncKey => write!(f, "PublicEncKey"),
         }
     }
@@ -282,6 +286,7 @@ pub enum PrivDataType {
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
     CustodianInfo, // Custodian information for the custodian context
+    PrivDecKey,    // Decryption key for a public key system, e.g. used for backup
     ContextInfo,
 }
 
@@ -293,8 +298,9 @@ impl fmt::Display for PrivDataType {
             PrivDataType::CrsInfo => write!(f, "CrsInfo"),
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
-            PrivDataType::ContextInfo => write!(f, "Context"),
             PrivDataType::CustodianInfo => write!(f, "CustodianInfo"),
+            PrivDataType::PrivDecKey => write!(f, "PrivDecKey"),
+            PrivDataType::ContextInfo => write!(f, "Context"),
         }
     }
 }

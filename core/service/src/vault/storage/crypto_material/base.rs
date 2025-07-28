@@ -6,6 +6,7 @@ use crate::{
     anyhow_error_and_warn_log,
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{base::KmsFheKeyHandles, context::ContextInfo, threshold::service::ThresholdFheKeys},
+    grpc::metastore_status_service::CustodianMetaStore,
     util::meta_store::MetaStore,
     vault::{
         storage::{
@@ -663,6 +664,110 @@ where
             tracing::error!("Failed to remove crs cached data for request {}", req_id);
         } else {
             tracing::info!("Removed all crs cached data for request {}", req_id);
+        }
+    }
+
+    pub async fn purge_backup_material(
+        &self,
+        req_id: &RequestId,
+        mut guarded_meta_store: RwLockWriteGuard<'_, CustodianMetaStore>,
+    ) {
+        let priv_pruge = async {
+            let mut priv_storage = self.private_storage.lock().await;
+            let result = delete_at_request_id(
+                &mut (*priv_storage),
+                req_id,
+                &PrivDataType::PrivDecKey.to_string(),
+            )
+            .await;
+            if let Err(e) = &result {
+                tracing::warn!(
+                    "Failed to delete private backup key material for request {}: {}",
+                    req_id,
+                    e
+                );
+            }
+            result.is_err()
+        };
+        let pub_purge = async {
+            let mut pub_storage = self.public_storage.lock().await;
+            let result = delete_at_request_id(
+                &mut (*pub_storage),
+                req_id,
+                &PubDataType::PublicEncKey.to_string(),
+            )
+            .await;
+            if let Err(e) = &result {
+                tracing::warn!(
+                    "Failed to delete public backup key material for request {}: {}",
+                    req_id,
+                    e
+                );
+            }
+            result.is_err()
+        };
+        let vault_purge = async {
+            let mut vault_storage = match &self.backup_vault {
+                Some(vault_storage) => vault_storage.lock().await,
+                None => return false, // No backup vault to purge, so no problem
+            };
+            let recovery_res = delete_at_request_id(
+                &mut (*vault_storage),
+                req_id,
+                &PubDataType::RecoveryRequest.to_string(),
+            )
+            .await;
+            if let Err(e) = &recovery_res {
+                tracing::warn!(
+                    "Failed to delete recovery request material for request {}: {}",
+                    req_id,
+                    e
+                );
+            }
+            let commit_res = delete_at_request_id(
+                &mut (*vault_storage),
+                req_id,
+                &PubDataType::Commitments.to_string(),
+            )
+            .await;
+            if let Err(e) = &commit_res {
+                tracing::warn!(
+                    "Failed to delete commitment material for request {}: {}",
+                    req_id,
+                    e
+                );
+            }
+            recovery_res.is_err() || commit_res.is_err()
+        };
+        let (priv_purge_res, pub_purge_res, vault_purge_res) =
+            tokio::join!(priv_pruge, pub_purge, vault_purge);
+        if priv_purge_res || pub_purge_res || vault_purge_res {
+            tracing::error!("Failed to delete backup material for request {}", req_id);
+        } else {
+            tracing::info!("Deleted all backup material for request {}", req_id);
+        }
+        // We cannot do much if updating the meta store fails at this point,
+        // so just log an error.
+        let meta_update_result = guarded_meta_store.update(
+            req_id,
+            Err(format!("Failed to store backup data for ID {req_id}")),
+        );
+        let meta_res = if let Err(e) = &meta_update_result {
+            tracing::error!("Removing backup from meta store failed with error: {}", e);
+            true
+        } else {
+            false
+        };
+
+        // We cannot do much if updating the cache fails at this point,
+        // so just log an error.
+        if meta_res {
+            tracing::error!("Failed to remove backup meta data for request {}", req_id);
+        } else {
+            tracing::info!(
+                "Removed all orphaned backup meta data for request {}",
+                req_id
+            );
         }
     }
 

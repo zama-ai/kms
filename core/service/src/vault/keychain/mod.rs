@@ -2,7 +2,7 @@ use crate::{
     anyhow_error_and_log,
     backup::{
         custodian::{CustodianRecoveryOutput, InternalCustodianSetupMessage},
-        operator::OperatorBackupOutput,
+        operator::{BackupCommitments, OperatorBackupOutput},
     },
     conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain as KeychainConf, SecretSharingKeychain},
     cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
@@ -76,10 +76,7 @@ pub enum KeychainProxy {
 #[derive(EnumTryAs, Clone)]
 pub enum EnvelopeLoad {
     AppKeyBlob(AppKeyBlob),
-    OperatorRecoveryInput(
-        BTreeMap<Role, CustodianRecoveryOutput>,
-        BTreeMap<Role, Vec<u8>>,
-    ),
+    OperatorRecoveryInput(BTreeMap<Role, CustodianRecoveryOutput>, BackupCommitments),
 }
 
 #[derive(EnumTryAs)]

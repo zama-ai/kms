@@ -8,7 +8,10 @@ use rand::{rngs::OsRng, SeedableRng};
 use threshold_fhe::execution::runtime::party::Role;
 
 use crate::{
-    backup::seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
+    backup::{
+        operator::BackupCommitments,
+        seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
+    },
     cryptography::{
         backup_pke,
         internal_crypto_types::{gen_sig_keys, PublicSigKey},
@@ -157,7 +160,11 @@ fn full_flow() {
                     }
                 }
                 operator
-                    .verify_and_recover(&reencrypted_ct, &commitments, backup_id)
+                    .verify_and_recover(
+                        &reencrypted_ct,
+                        &BackupCommitments::from_btree(commitments),
+                        backup_id,
+                    )
                     .unwrap()
             })
             .collect();

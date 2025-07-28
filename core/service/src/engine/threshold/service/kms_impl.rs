@@ -537,6 +537,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         custodian_meta_store,
+        my_role: Role::indexed_from_one(config.my_id),
         tracker: Arc::clone(&tracker),
     };
 

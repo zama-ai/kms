@@ -220,7 +220,7 @@ mod tests {
     use kms_lib::{
         backup::{
             custodian::{CustodianRecoveryOutput, InternalCustodianSetupMessage},
-            operator::{Operator, RecoveryRequest},
+            operator::{BackupCommitments, Operator, RecoveryRequest},
             seed_phrase::custodian_from_seed_phrase,
         },
         cryptography::{
@@ -352,7 +352,7 @@ mod tests {
         }
 
         // Validate the decryption
-        for (operator, commitment) in operators.iter().zip(commitments) {
+        for (operator, commitment) in operators.iter().zip(&commitments) {
             let cur_res = decrypt_recovery(
                 temp_dir.path(),
                 amount_custodians,
@@ -414,10 +414,7 @@ mod tests {
         setup_msgs: Vec<InternalCustodianSetupMessage>,
         backup_id: RequestId,
         msg: &[u8],
-    ) -> (
-        BTreeMap<Role, Vec<u8>>,
-        Operator<PrivateSigKey, BackupPrivateKey>,
-    ) {
+    ) -> (BackupCommitments, Operator<PrivateSigKey, BackupPrivateKey>) {
         let request_path = root_path.join(format!(
             "operator-{operator_role}{MAIN_SEPARATOR}{backup_id}-request.bin"
         ));
@@ -448,14 +445,14 @@ mod tests {
         safe_write_element_versioned(&Path::new(&request_path), &recovery_request)
             .await
             .unwrap();
-        (commitments, operator)
+        (BackupCommitments::from_btree(commitments), operator)
     }
 
     async fn decrypt_recovery(
         root_path: &Path,
         amount_custodians: usize,
         operator: &Operator<PrivateSigKey, BackupPrivateKey>,
-        commitment: BTreeMap<Role, Vec<u8>>,
+        commitment: &BackupCommitments,
         backup_id: RequestId,
     ) -> Vec<u8> {
         let mut outputs = BTreeMap::new();
@@ -471,7 +468,7 @@ mod tests {
             outputs.insert(Role::indexed_from_one(custodian_index), payload);
         }
         operator
-            .verify_and_recover(&outputs, &commitment, backup_id)
+            .verify_and_recover(&outputs, commitment, backup_id)
             .unwrap()
     }
 

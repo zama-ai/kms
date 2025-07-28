@@ -4,6 +4,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use tfhe::{named::Named, Unversionize, Versionize};
 
+use crate::backup::operator::BackupCommitments;
 use keychain::{EnvelopeLoad, EnvelopeStore, Keychain, KeychainProxy};
 use storage::{Storage, StorageForBytes, StorageProxy, StorageReader};
 
@@ -44,7 +45,7 @@ impl StorageReader for Vault {
                             rs.insert(*id, recovery);
                             cs.insert(*id, commitment);
                         }
-                        EnvelopeLoad::OperatorRecoveryInput(rs, cs)
+                        EnvelopeLoad::OperatorRecoveryInput(rs, BackupCommitments::from_btree(cs))
                     }
                     None => {
                         EnvelopeLoad::AppKeyBlob(self.storage.read_data(data_id, data_type).await?)

@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use threshold_fhe::hashing::DomainSep;
 
 use crate::cryptography::{
@@ -11,6 +12,14 @@ pub trait BackupSigner {
 }
 
 impl BackupSigner for PrivateSigKey {
+    fn sign(&self, dsep: &DomainSep, msg: &[u8]) -> Result<Vec<u8>, BackupError> {
+        signcryption::internal_sign(dsep, msg, self)
+            .map(|sig| sig.sig.to_vec())
+            .map_err(|e| BackupError::SigningError(e.to_string()))
+    }
+}
+
+impl BackupSigner for Arc<PrivateSigKey> {
     fn sign(&self, dsep: &DomainSep, msg: &[u8]) -> Result<Vec<u8>, BackupError> {
         signcryption::internal_sign(dsep, msg, self)
             .map(|sig| sig.sig.to_vec())

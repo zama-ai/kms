@@ -1,4 +1,6 @@
 use crate::backup::custodian::{InternalCustodianContext, InternalCustodianSetupMessage};
+use crate::backup::operator::{BackupCommitments, Operator, RecoveryRequest};
+use crate::cryptography::backup_pke;
 use crate::{
     engine::{
         base::BaseKmsStruct, threshold::traits::ContextManager, validation::validate_request_id,
@@ -6,9 +8,12 @@ use crate::{
     grpc::metastore_status_service::CustodianMetaStore,
     vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
 };
+use aes_prng::AesRng;
+use itertools::Itertools;
 use kms_grpc::kms::v1::CustodianContext;
 use kms_grpc::RequestId;
 use kms_grpc::{kms::v1::Empty, utils::tonic_result::tonic_handle_potential_err};
+use std::collections::BTreeMap;
 use std::{collections::HashMap, sync::Arc};
 use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::RwLock;
@@ -22,6 +27,7 @@ pub struct RealContextManager<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
+    pub my_role: Role,
     pub tracker: Arc<TaskTracker>,
 }
 
@@ -92,6 +98,41 @@ where
         };
         validate_request_id(&context_id)?;
 
+        // Generate new backup keys and recovery request
+        let mut node_map = HashMap::new();
+        for setup_message in context.custodian_nodes.iter() {
+            let internal_msg: InternalCustodianSetupMessage =
+                setup_message.to_owned().try_into()?;
+            node_map.insert(
+                Role::indexed_from_one(setup_message.custodian_role as usize),
+                internal_msg,
+            );
+        }
+        let custodian_context = InternalCustodianContext {
+            context_id,
+            threshold: context.threshold,
+            previous_context_id: context.previous_context_id.map(Into::into),
+            custodian_nodes: node_map,
+        };
+        let mut rng = &mut self.base_kms.new_rng().await;
+        // Generate asymmetric keys for the operator to use to encrypt the backup
+        let (pub_enc_key, priv_key) = backup_pke::keygen(&mut rng)?;
+        let (_recovery_request, _commitments) = self
+            .gen_backup_keys(
+                rng,
+                &custodian_context,
+                self.my_role,
+                context_id,
+                pub_enc_key,
+                priv_key,
+            )
+            .await?;
+        // Store keys
+
+        // TODO reencrypt everything if context new
+        // update key gen to backup or update private storage to take an aes key which is then encrypted under public key
+
+        // todo should be done externally
         // Below we write to the meta-store.
         // After writing, the the meta-store on this [req_id] will be in the "Started" state
         // So we need to update it everytime something bad happens,
@@ -106,23 +147,15 @@ where
                 custodian_meta_store.insert(&context_id),
                 format!("Could not insert new custodian context {context_id} into meta store"),
             )?;
-            let mut node_map = HashMap::new();
-            for setup_message in context.custodian_nodes.iter() {
-                let internal_msg: InternalCustodianSetupMessage =
-                    setup_message.to_owned().try_into()?;
-                node_map.insert(
-                    Role::indexed_from_one(setup_message.custodian_role as usize),
-                    internal_msg,
-                );
-            }
-            let custodian_context = InternalCustodianContext {
-                context_id,
-                threshold: context.threshold,
-                previous_context_id: context.previous_context_id.map(Into::into),
-                custodian_nodes: node_map,
-            };
+
             // We don't need to check the result of this write, since insert above fails if an element already exists
-            let _ = custodian_meta_store.update(&context_id, Ok(custodian_context))?;
+            custodian_meta_store.update(&context_id, Ok(custodian_context))?;
+
+            if custodian_meta_store.get_current_count() > 0 {
+                // First time we make a context
+            } else {
+                // A context already exists
+            }
 
             let total_lock_time = lock_start.elapsed();
             (lock_acquired_time, total_lock_time)
@@ -132,6 +165,67 @@ where
             "MetaStore INITIAL insert for custodian context - context_id={}, lock_acquired_in={:?}, total_lock_held={:?}",
             context_id, lock_acquired_time, total_lock_time
         );
+        Ok(())
+    }
+
+    /// Generate a recovery request to the backup vault.
+    async fn gen_backup_keys(
+        &self,
+        rng: &mut AesRng,
+        custodian_context: &InternalCustodianContext,
+        my_role: Role,
+        backup_id: RequestId,
+        pub_enc_key: backup_pke::BackupPublicKey,
+        priv_key: backup_pke::BackupPrivateKey,
+    ) -> anyhow::Result<(RecoveryRequest, BackupCommitments)> {
+        let verification_key = self.base_kms.sig_key.clone().into();
+        let operator = Operator::new(
+            my_role,
+            custodian_context
+                .custodian_nodes
+                .values()
+                .cloned()
+                .collect_vec(),
+            Arc::clone(&self.base_kms.sig_key),
+            verification_key,
+            priv_key.clone(),
+            pub_enc_key,
+            custodian_context.threshold.try_into().unwrap(),
+        )?;
+        // TODO should commitments be moved into secret_share_and_encrypt?
+        let ct_map = operator
+            .secret_share_and_encrypt(rng, &bc2wrap::serialize(&priv_key)?, backup_id)
+            .unwrap();
+        let mut commitments = Vec::new();
+        let mut ciphertexts = BTreeMap::new();
+        for custodian_index in 1..=custodian_context.custodian_nodes.keys().len() {
+            let custodian_role = Role::indexed_from_one(custodian_index);
+            let ct = ct_map.get(&custodian_role).unwrap();
+            commitments.push(ct.commitment.clone());
+            ciphertexts.insert(custodian_role, ct.to_owned());
+        }
+        let recovery_request = RecoveryRequest::new(
+            operator.public_key().to_owned(),
+            operator.verification_key().to_owned(),
+            ciphertexts,
+            backup_id,
+            my_role,
+        )?;
+
+        tracing::info!(
+            "Generated recovery request for backup_id/context_id={}",
+            backup_id
+        );
+        Ok((recovery_request, BackupCommitments { commitments }))
+    }
+
+    #[allow(dead_code)]
+    async fn rewrite_private_data(
+        &self,
+        _context_id: RequestId,
+        _custodian_context: InternalCustodianContext,
+    ) -> anyhow::Result<()> {
+        // todo update backuped data with new custodian context
         Ok(())
     }
 }

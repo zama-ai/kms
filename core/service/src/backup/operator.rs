@@ -209,6 +209,46 @@ fn verify_n_t(n: usize, t: usize) -> Result<(), BackupError> {
     Ok(())
 }
 
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum BackupCommitmentsVersioned {
+    V0(BackupCommitments),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(BackupCommitmentsVersioned)]
+pub struct BackupCommitments {
+    // Note that ideally we want to use a BTreeMap here,
+    // but it does not implement Versionize yet.
+    pub(crate) commitments: Vec<Vec<u8>>,
+}
+
+impl Named for BackupCommitments {
+    const NAME: &'static str = "backup::BackupCommitments";
+}
+
+impl BackupCommitments {
+    pub fn new(commitments: Vec<Vec<u8>>) -> Self {
+        Self { commitments }
+    }
+
+    pub fn from_btree(commitments: BTreeMap<Role, Vec<u8>>) -> Self {
+        let mut commitments_vec = Vec::new();
+        for i in 1..=commitments.len() {
+            commitments_vec.push(commitments[&Role::indexed_from_one(i)].to_owned());
+        }
+        Self {
+            commitments: commitments_vec,
+        }
+    }
+
+    pub fn get(&self, role: &Role) -> anyhow::Result<&[u8]> {
+        if role.one_based() > self.commitments.len() {
+            anyhow::bail!("Role {} is out of bounds for commitments", role);
+        }
+        Ok(self.commitments[role.one_based() - 1].as_slice())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn checked_decryption_deserialize<D: BackupDecryptor>(
     sk: &D,
@@ -508,7 +548,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
     pub fn verify_and_recover(
         &self,
         custodian_recovery_output: &BTreeMap<Role, CustodianRecoveryOutput>,
-        commitments: &BTreeMap<Role, Vec<u8>>,
+        commitments: &BackupCommitments,
         backup_id: RequestId,
     ) -> Result<Vec<u8>, BackupError> {
         // the output is ordered by custodian ID, from 0 to n-1
@@ -528,7 +568,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
                 };
                 let commitment = commitments
                     .get(custodian_role)
-                    .ok_or(BackupError::OperatorError("missing commitment".to_string()))?;
+                    .map_err(|_| BackupError::OperatorError("missing commitment".to_string()))?;
                 internal_verify_sig(&DSEP_BACKUP_CUSTODIAN, &ct.ciphertext, &signature, &key.1)
                     .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
                 // st_ij
