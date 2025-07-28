@@ -18,20 +18,22 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg};
 use tfhe::{
-    core_crypto::prelude::LweCiphertextCount,
+    core_crypto::{commons::math::random::RandomGenerator, prelude::LweCiphertextCount},
     prelude::CastInto,
     shortint::parameters::{CompactPublicKeyEncryptionParameters, SupportedCompactPkeZkScheme},
     zk::{
         CompactPkeCrs, CompactPkeZkScheme, ZkCompactPkeV1PublicParams, ZkCompactPkeV2PublicParams,
     },
 };
+use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 use tfhe_zk_pok::curve_api::{bls12_446 as curve, CurveGroupOps};
 use tracing::instrument;
 use zeroize::Zeroize;
 
 use super::constants::{
-    ZK_DEFAULT_MAX_NUM_BITS, ZK_DSEP_AGG, ZK_DSEP_CHI, ZK_DSEP_GAMMA, ZK_DSEP_HASH, ZK_DSEP_HASH_P,
-    ZK_DSEP_LMAP, ZK_DSEP_PHI, ZK_DSEP_R, ZK_DSEP_T, ZK_DSEP_W, ZK_DSEP_XI, ZK_DSEP_Z,
+    ZK_DEFAULT_MAX_NUM_BITS, ZK_DSEP_AGG, ZK_DSEP_CHI, ZK_DSEP_CRS_UPDA, ZK_DSEP_GAMMA,
+    ZK_DSEP_HASH, ZK_DSEP_HASH_P, ZK_DSEP_LMAP, ZK_DSEP_PHI, ZK_DSEP_R, ZK_DSEP_T, ZK_DSEP_W,
+    ZK_DSEP_XI, ZK_DSEP_Z,
 };
 
 pub type SecureCeremony = RealCeremony<SyncReliableBroadcast>;
@@ -427,13 +429,13 @@ impl InternalPublicParameter {
         // 16 bytes for sid
         // 8 bytes for round
         // 8 bytes for inner.g1s length
-        // 2*b1 * G1 point length
+        // (2*b1 - 1) * G1 point length (minus 1 since we skip the punctured element)
         // 8 bytes for inner.g2s length
         // b1 * G2 point length
         let capacity = 16
             + 8
             + 8
-            + self.g1g2list.g1s.len() * curve::G1::BYTE_SIZE
+            + (self.g1g2list.g1s.len() - 1) * curve::G1::BYTE_SIZE
             + 8
             + self.g1g2list.g2s.len() * curve::G2::BYTE_SIZE;
 
@@ -445,8 +447,14 @@ impl InternalPublicParameter {
         debug_assert_eq!(sid_buf.len(), 16);
         buf.extend(sid_buf);
         buf.extend(self.round.to_le_bytes());
-        buf.extend((self.g1g2list.g1s.len() as u64).to_le_bytes());
-        for elem in &self.g1g2list.g1s {
+        buf.extend((self.g1g2list.g1s.len() as u64 - 1).to_le_bytes());
+        let b1 = self.witness_dim();
+        for (i, elem) in self.g1g2list.g1s.iter().enumerate() {
+            if i == b1 {
+                // We skip the punctured element
+                debug_assert!(elem == &curve::G1::ZERO);
+                continue;
+            }
             buf.extend(elem.to_le_bytes());
         }
         buf.extend((self.g1g2list.g2s.len() as u64).to_le_bytes());
@@ -845,12 +853,16 @@ impl<BCast: Broadcast> Ceremony for RealCeremony<BCast> {
             // i.e., Role, and internally Role stores u64
             let round = round as u64 + 1; // round starts at 1, round 0 is the trivial CRS, i.e., pp_0
             if role == &my_role {
+                let mut xof = RandomGenerator::<SoftwareRandomGenerator>::new(XofSeed::new_u128(
+                    session.rng().gen::<u128>(),
+                    ZK_DSEP_CRS_UPDA,
+                ));
                 // We use the rayon's threadpool for handling CPU-intensive tasks
                 // like creating the CRS. This is recommended over tokio::task::spawn_blocking
                 // since the tokio threadpool has a very high default upper limit.
                 // More info: https://ryhl.io/blog/async-what-is-blocking/
-                let mut tau = curve::Zp::rand(&mut session.rng());
-                let mut r = curve::Zp::rand(&mut session.rng());
+                let mut tau = curve::Zp::rand(&mut xof);
+                let mut r = curve::Zp::rand(&mut xof);
                 let (send, recv) = tokio::sync::oneshot::channel();
                 rayon::spawn_fifo(move || {
                     // [tau] and [r] are copied into [make_partial_proof_deterministic] since Zp is a Copy
