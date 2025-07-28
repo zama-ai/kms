@@ -204,6 +204,8 @@ pub struct GrpcNetworkingManager {
     owner: Identity,
     conf: OptionConfigWrapper,
     pub sending_service: GrpcSendingService,
+    #[cfg(feature = "testing")]
+    pub force_tls: bool,
 }
 
 pub type GrpcServer = GnetworkingServer<NetworkingImpl>;
@@ -218,6 +220,8 @@ impl GrpcNetworkingManager {
             self.conf.get_message_limit(),
             self.conf.get_max_opened_inactive_sessions_per_party(),
             self.conf.get_max_waiting_time_for_message_queue(),
+            #[cfg(feature = "testing")]
+            self.force_tls,
         ))
         .max_decoding_message_size(self.conf.get_max_en_decode_message_size())
         .max_encoding_message_size(self.conf.get_max_en_decode_message_size())
@@ -287,12 +291,17 @@ impl GrpcNetworkingManager {
             discard_inactive_interval,
         );
 
+        #[cfg(feature = "testing")]
+        let force_tls = tls_conf.is_some();
+
         Ok(GrpcNetworkingManager {
             session_store,
             opened_sessions_tracker: Arc::new(DashMap::new()),
             owner,
             conf,
             sending_service: GrpcSendingService::new(tls_conf, conf)?,
+            #[cfg(feature = "testing")]
+            force_tls,
         })
     }
 
@@ -464,6 +473,10 @@ pub struct NetworkingImpl {
     channel_size_limit: usize,
     max_opened_inactive_sessions: u64,
     max_waiting_time_for_message_queue: Duration,
+    // We gate this behind the testing feature because in non-testing environments
+    // we want to ALWAYS use TLS for security reasons.
+    #[cfg(feature = "testing")]
+    force_tls: bool,
 }
 
 impl NetworkingImpl {
@@ -473,6 +486,7 @@ impl NetworkingImpl {
         channel_size_limit: usize,
         max_opened_inactive_sessions: u64,
         max_waiting_time_for_message_queue: Duration,
+        #[cfg(feature = "testing")] force_tls: bool,
     ) -> Self {
         Self {
             session_store: session_store.clone(),
@@ -480,6 +494,8 @@ impl NetworkingImpl {
             channel_size_limit,
             max_opened_inactive_sessions,
             max_waiting_time_for_message_queue,
+            #[cfg(feature = "testing")]
+            force_tls,
         }
     }
 
@@ -668,12 +684,39 @@ impl Gnetworking for NetworkingImpl {
             tracing::warn!(
                 "Could not find a TLS certificate in the request to verify user's identity."
             );
+
+            // With testing feature, TLS is optional
+            #[cfg(feature = "testing")]
+            {
+                if self.force_tls {
+                    // If force_tls is enabled, we require a TLS certificate
+                    tracing::error!(
+                        "Force TLS is enabled, but no certificate found in the request."
+                    );
+                    return Err(tonic::Status::new(
+                        tonic::Code::Unauthenticated,
+                        "Could not find a TLS certificate in the request to verify user's identity."
+                            .to_string(),
+                    ));
+                } else {
+                    tracing::warn!(
+                        "Force TLS is disabled, and no certificate found in the request."
+                    );
+                }
+            }
+
+            // Without testing feature, TLS is mandatory
             #[cfg(not(feature = "testing"))]
-            return Err(tonic::Status::new(
-                tonic::Code::Unauthenticated,
-                "Could not find a TLS certificate in the request to verify user's identity."
-                    .to_string(),
-            ));
+            {
+                tracing::error!(
+                    "Could not find a TLS certificate in the request to verify user's identity."
+                );
+                return Err(tonic::Status::new(
+                    tonic::Code::Unauthenticated,
+                    "Could not find a TLS certificate in the request to verify user's identity."
+                        .to_string(),
+                ));
+            }
         }
         tracing::debug!("passed sender verification, tag is {:?}", tag);
 
