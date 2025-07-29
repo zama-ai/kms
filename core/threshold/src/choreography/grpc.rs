@@ -465,7 +465,6 @@ where
 
         let mut base_sessions = Vec::new();
         for (idx, session_id) in sids.into_iter().enumerate() {
-            //We are executing offline phase, so requires Sync network
             let networking = self
                 .networking_manager
                 .make_network_session(
