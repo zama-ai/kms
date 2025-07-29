@@ -285,10 +285,11 @@ impl GrpcNetworkingManager {
         let force_tls = tls_conf.is_some();
 
         #[cfg(not(feature = "testing"))]
-        assert!(
-            tls_conf.is_some(),
-            "TLS configuration must be provided in non-testing environments",
-        );
+        if tls_conf.is_none() {
+            return Err(crate::error::error_handler::anyhow_error_and_log(
+                "TLS configuration must be provided in non-testing environments",
+            ));
+        }
 
         let conf = OptionConfigWrapper { conf };
         let session_store = Arc::new(SessionStore::default());
