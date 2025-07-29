@@ -17,6 +17,7 @@ jobs:
       npm-release: true
       app-cache-dir: 'kms'
     permissions:
+      packages: read
       contents: read
       id-token: write
     secrets:
