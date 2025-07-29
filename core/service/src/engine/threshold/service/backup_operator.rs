@@ -1,14 +1,9 @@
-use std::collections::HashMap;
-
-use kms_grpc::{
-    kms::v1::{Empty, OperatorPublicKey},
-    rpc_types::PrivDataType,
-    RequestId,
-};
-use tonic::{Code, Request, Response, Status};
-
 use crate::{
-    cryptography::attestation::{SecurityModule, SecurityModuleProxy},
+    anyhow_error_and_log,
+    cryptography::{
+        attestation::{SecurityModule, SecurityModuleProxy},
+        internal_crypto_types::PrivateSigKey,
+    },
     engine::threshold::{service::ThresholdFheKeys, traits::BackupOperator},
     vault::{
         keychain::KeychainProxy,
@@ -16,8 +11,18 @@ use crate::{
             crypto_material::ThresholdCryptoMaterialStorage, read_all_data_versioned,
             store_versioned_at_request_id, Storage,
         },
+        Vault,
     },
 };
+use kms_grpc::{
+    kms::v1::{Empty, OperatorPublicKey},
+    rpc_types::{PrivDataType, SignedPubDataHandleInternal},
+    utils::tonic_result::tonic_handle_potential_err,
+    RequestId,
+};
+use std::collections::HashMap;
+use tokio::sync::MutexGuard;
+use tonic::{Code, Request, Response, Status};
 
 pub struct RealBackupOperator<
     PubS: Storage + Sync + Send + 'static,
@@ -73,21 +78,11 @@ where
             Some(ref backup_vault) => {
                 let private_storage = self.crypto_storage.get_private_storage().clone();
                 let mut private_storage = private_storage.lock().await;
-                let backup_vault = backup_vault.lock().await;
-                let key_info_versioned: HashMap<RequestId, ThresholdFheKeys> =
-                    read_all_data_versioned(&*backup_vault, &PrivDataType::FheKeyInfo.to_string())
-                        .await
-                        .map_err(|e| {
-                            Status::new(
-                                tonic::Code::Internal,
-                                format!("Failed to read FHE keys from backup: {e}"),
-                            )
-                        })?;
-                for (request_id, fhe_keys) in key_info_versioned.iter() {
-                    store_versioned_at_request_id(&mut (*private_storage), request_id, fhe_keys, &PrivDataType::FheKeyInfo.to_string()).await.map_err(|e| {
-                        Status::new(tonic::Code::Internal, format!("Failed to write FHE keys to private storage during backup recovery: {e}"))
-                    })?;
-                }
+                let backup_vault: tokio::sync::MutexGuard<'_, Vault> = backup_vault.lock().await;
+                tonic_handle_potential_err(
+                    restore_data(&backup_vault, &mut private_storage).await,
+                    "Failed to restore".to_string(),
+                )?;
                 Ok(Response::new(Empty {}))
             }
             None => Err(Status::new(
@@ -96,4 +91,70 @@ where
             )),
         }
     }
+}
+
+async fn restore_data<PrivS>(
+    backup_vault: &MutexGuard<'_, Vault>,
+    priv_storage: &mut MutexGuard<'_, PrivS>,
+) -> anyhow::Result<()>
+where
+    PrivS: Storage + Sync + Send + 'static,
+{
+    // TODO do as macro
+    // Restore FHE keys
+    let versioned_data: HashMap<RequestId, ThresholdFheKeys> =
+        read_all_data_versioned(&**backup_vault, &PrivDataType::FheKeyInfo.to_string()).await?;
+    for (request_id, data) in versioned_data.iter() {
+        if priv_storage
+            .data_exists(request_id, &PrivDataType::FheKeyInfo.to_string())
+            .await?
+        {
+            return Err(anyhow_error_and_log(format!("Data for {:?} with request ID {request_id} already exists. Cancelling restore to avoid overwriting existing data.", PrivDataType::FheKeyInfo)));
+        }
+        store_versioned_at_request_id(
+            &mut **priv_storage,
+            request_id,
+            data,
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await?;
+    }
+
+    // Restore Signing key
+    let versioned_data: HashMap<RequestId, PrivateSigKey> =
+        read_all_data_versioned(&**backup_vault, &PrivDataType::SigningKey.to_string()).await?;
+    for (request_id, data) in versioned_data.iter() {
+        if priv_storage
+            .data_exists(request_id, &PrivDataType::SigningKey.to_string())
+            .await?
+        {
+            return Err(anyhow_error_and_log(format!("Data for {:?} with request ID {request_id} already exists. Cancelling restore to avoid overwriting existing data.", PrivDataType::SigningKey)));
+        }
+        store_versioned_at_request_id(
+            &mut **priv_storage,
+            request_id,
+            data,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await?;
+    }
+    // Restore CRS info
+    let versioned_data: HashMap<RequestId, SignedPubDataHandleInternal> =
+        read_all_data_versioned(&**backup_vault, &PrivDataType::CrsInfo.to_string()).await?;
+    for (request_id, data) in versioned_data.iter() {
+        if priv_storage
+            .data_exists(request_id, &PrivDataType::CrsInfo.to_string())
+            .await?
+        {
+            return Err(anyhow_error_and_log(format!("Data for {:?} with request ID {request_id} already exists. Cancelling restore to avoid overwriting existing data.", PrivDataType::CrsInfo)));
+        }
+        store_versioned_at_request_id(
+            &mut **priv_storage,
+            request_id,
+            data,
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await?;
+    }
+    Ok(())
 }
