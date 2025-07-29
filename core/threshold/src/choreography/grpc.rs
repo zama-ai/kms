@@ -433,7 +433,6 @@ where
                 role_assignments.clone(),
             )
             .unwrap();
-            //We are executing offline phase, so requires Sync network
             let networking =
                 (self.networking_strategy)(session_id, role_assignments.clone(), network_mode)
                     .await
