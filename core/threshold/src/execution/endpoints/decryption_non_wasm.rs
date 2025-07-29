@@ -30,6 +30,7 @@ use crate::execution::{
 };
 #[cfg(any(test, feature = "testing"))]
 use crate::session_id::SessionId;
+use crate::thread_handles::spawn_compute_bound;
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
@@ -53,8 +54,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::num::Wrapping;
 use std::ops::Mul;
-#[cfg(any(test, feature = "testing"))]
 use std::sync::Arc;
+use std::sync::Mutex;
 use tfhe::core_crypto::prelude::{keyswitch_lwe_ciphertext, LweCiphertext, LweKeyswitchKey};
 use tfhe::integer::noise_squashing::NoiseSquashingKey;
 use tfhe::integer::ServerKey;
@@ -233,10 +234,10 @@ where
 #[instrument(skip_all, fields(sid, own_identity = %_own_identity, mode = %_mode))]
 pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, T>(
     noiseflood_session: &mut P,
-    server_key: &ServerKey,
-    ck: &NoiseSquashingKey,
+    server_key: Arc<ServerKey>,
+    ck: Arc<NoiseSquashingKey>,
     ct: LowLevelCiphertext,
-    secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
+    secret_key_share: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
     _mode: DecryptionMode,
     _own_identity: Identity,
 ) -> anyhow::Result<(HashMap<String, T>, Duration)>
@@ -253,25 +254,31 @@ where
         LowLevelCiphertext::BigStandard(ct128) => ct128,
         LowLevelCiphertext::Small(ct64) => match ct64 {
             RadixOrBoolCiphertext::Radix(base_radix_ciphertext) => SnsRadixOrBoolCiphertext::Radix(
-                ck.squash_radix_ciphertext_noise(server_key, &base_radix_ciphertext)?,
+                spawn_compute_bound(move || {
+                    ck.squash_radix_ciphertext_noise(&server_key, &base_radix_ciphertext)
+                })
+                .await??,
             ),
             RadixOrBoolCiphertext::Bool(boolean_block) => SnsRadixOrBoolCiphertext::Bool(
-                ck.squash_boolean_block_noise(server_key, &boolean_block)?,
+                spawn_compute_bound(move || {
+                    ck.squash_boolean_block_noise(&server_key, &boolean_block)
+                })
+                .await??,
             ),
         },
     };
 
     let mut results = HashMap::with_capacity(1);
     let len = ct_large.len();
-    let mut preprocessing = noiseflood_session.init_prep_noiseflooding(len).await?;
+    let preprocessing = noiseflood_session.init_prep_noiseflooding(len).await?;
     let session = noiseflood_session.get_mut_base_session();
     let sid: u128 = session.session_id().into();
     tracing::Span::current().record("sid", sid);
     let outputs = run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, T>(
         session,
-        &mut preprocessing,
+        Arc::new(Mutex::new(preprocessing)),
         secret_key_share,
-        &ct_large,
+        Arc::new(ct_large),
         ddec_key_type,
     )
     .await?;
@@ -319,8 +326,8 @@ where
 #[instrument(skip_all, fields(sid, own_identity, mode = %_mode))]
 pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P>(
     noiseflood_session: &mut P,
-    server_key: &ServerKey,
-    ck: &NoiseSquashingKey,
+    server_key: Arc<ServerKey>,
+    ck: Arc<NoiseSquashingKey>,
     ct: LowLevelCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     _mode: DecryptionMode,
@@ -349,10 +356,16 @@ where
         LowLevelCiphertext::BigStandard(ct128) => ct128,
         LowLevelCiphertext::Small(ct64) => match ct64 {
             RadixOrBoolCiphertext::Radix(base_radix_ciphertext) => SnsRadixOrBoolCiphertext::Radix(
-                ck.squash_radix_ciphertext_noise(server_key, &base_radix_ciphertext)?,
+                spawn_compute_bound(move || {
+                    ck.squash_radix_ciphertext_noise(&server_key, &base_radix_ciphertext)
+                })
+                .await??,
             ),
             RadixOrBoolCiphertext::Bool(boolean_block) => SnsRadixOrBoolCiphertext::Bool(
-                ck.squash_boolean_block_noise(server_key, &boolean_block)?,
+                spawn_compute_bound(move || {
+                    ck.squash_boolean_block_noise(&server_key, &boolean_block)
+                })
+                .await??,
             ),
         },
     };
@@ -729,15 +742,15 @@ where
                             .await;
 
                     let mut session_noiseflood = NoiseFloodSmallSession::new(session);
-                    let mut noiseflood_preprocessing = session_noiseflood
+                    let noiseflood_preprocessing = session_noiseflood
                         .init_prep_noiseflooding(ct.len())
                         .await
                         .unwrap();
                     let out = run_decryption_noiseflood_64(
                         session_noiseflood.session.get_mut(),
-                        &mut noiseflood_preprocessing,
-                        &party_keyshare,
-                        &large_ct,
+                        Arc::new(Mutex::new(noiseflood_preprocessing)),
+                        Arc::new(party_keyshare),
+                        Arc::new(large_ct),
                         SnsDecryptionKeyType::SnsKey,
                     )
                     .await
@@ -751,15 +764,15 @@ where
                 set.spawn(async move {
                     let session = LargeSession::new(base_session);
                     let mut session_noiseflood = SecureNoiseFloodLargeSession::new(session);
-                    let mut noiseflood_preprocessing = session_noiseflood
+                    let noiseflood_preprocessing = session_noiseflood
                         .init_prep_noiseflooding(ct.len())
                         .await
                         .unwrap();
                     let out = run_decryption_noiseflood_64(
                         session_noiseflood.session.get_mut(),
-                        &mut noiseflood_preprocessing,
-                        &party_keyshare,
-                        &large_ct,
+                        Arc::new(Mutex::new(noiseflood_preprocessing)),
+                        Arc::new(party_keyshare),
+                        Arc::new(large_ct),
                         SnsDecryptionKeyType::SnsKey,
                     )
                     .await
@@ -873,13 +886,13 @@ where
 pub async fn run_decryption_noiseflood<
     const EXTENSION_DEGREE: usize,
     S: BaseSessionHandles,
-    P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
+    P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + 'static,
     T,
 >(
     session: &mut S,
-    preprocessing: &mut P,
-    keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
-    ciphertext: &SnsRadixOrBoolCiphertext,
+    preprocessing: Arc<Mutex<P>>,
+    keyshares: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
+    ciphertext: Arc<SnsRadixOrBoolCiphertext>,
     ddec_key_type: SnsDecryptionKeyType,
 ) -> anyhow::Result<T>
 where
@@ -887,14 +900,32 @@ where
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
 {
-    let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
-    for current_ct_block in ciphertext.packed_blocks() {
-        let partial_decrypt = partial_decrypt128(keyshares, current_ct_block, ddec_key_type)?;
-        let res = partial_decrypt + preprocessing.next_mask()?;
+    let shared_masked_ptxts = {
+        let ciphertext = ciphertext.clone();
+        let keyshares = keyshares.clone();
+        let preprocessing = preprocessing.clone();
 
-        shared_masked_ptxts.push(res);
-    }
-    let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, keyshares).await?;
+        spawn_compute_bound(move || -> anyhow::Result<_> {
+            let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
+            for current_ct_block in ciphertext.packed_blocks() {
+                let partial_decrypt =
+                    partial_decrypt128(&keyshares, current_ct_block, ddec_key_type)?;
+                let res = partial_decrypt
+                    + preprocessing
+                        .lock()
+                        .map_err(|_| anyhow_error_and_log("Poisoned mutex guard"))?
+                        .next_mask()?;
+
+                shared_masked_ptxts.push(res);
+            }
+            Ok(shared_masked_ptxts)
+        })
+        .await?
+    }?;
+
+    let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, &keyshares).await?;
+    let _span = info_span!("reconstruct").entered();
+
     let usable_message_bits =
         ciphertext.packing_factor() * keyshares.parameters.message_modulus_log() as usize;
     let shared_partial_decrypt = BlocksPartialDecrypt {
@@ -907,12 +938,12 @@ where
 pub async fn run_decryption_noiseflood_64<
     const EXTENSION_DEGREE: usize,
     S: BaseSessionHandles,
-    P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
+    P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + 'static,
 >(
     session: &mut S,
-    preprocessing: &mut P,
-    keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
-    ciphertext: &SnsRadixOrBoolCiphertext,
+    preprocessing: Arc<Mutex<P>>,
+    keyshares: Arc<PrivateKeySet<EXTENSION_DEGREE>>,
+    ciphertext: Arc<SnsRadixOrBoolCiphertext>,
     ddec_key_type: SnsDecryptionKeyType,
 ) -> anyhow::Result<Z64>
 where

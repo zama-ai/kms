@@ -1,5 +1,9 @@
 // === Standard Library ===
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    ops::DerefMut,
+    sync::{Arc, Mutex},
+};
 
 // === External Crates ===
 use anyhow::anyhow;
@@ -24,6 +28,7 @@ use threshold_fhe::{
         partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec, DecryptionMode,
         NoiseFloodSmallSession,
     },
+    thread_handles::spawn_compute_bound,
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
@@ -82,11 +87,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     async fn inner_user_decrypt(
         req_id: &RequestId,
         session_prep: Arc<SessionPreparer>,
-        rng: &mut (impl CryptoRng + RngCore),
-        typed_ciphertexts: &[TypedCiphertext],
+        rng: impl CryptoRng + RngCore + Send + 'static,
+        typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
-        client_enc_key: &UnifiedPublicEncKey,
-        client_address: &alloy_primitives::Address,
+        client_enc_key: UnifiedPublicEncKey,
+        client_address: alloy_primitives::Address,
         sig_key: Arc<PrivateSigKey>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
         server_verf_key: Vec<u8>,
@@ -98,9 +103,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
         let mut all_signcrypted_cts = vec![];
 
+        let rng = Arc::new(Mutex::new(rng));
+        let client_enc_key = Arc::new(client_enc_key);
+        let client_address = Arc::new(client_address);
+
         // TODO: Each iteration of this loop should probably happen
         // inside its own tokio task
-        for (ctr, typed_ciphertext) in typed_ciphertexts.iter().enumerate() {
+        for (ctr, typed_ciphertext) in typed_ciphertexts.into_iter().enumerate() {
             // Create and start a the timer, it'll be dropped and thus
             // exported at the end of the iteration
             let mut inner_timer = metrics::METRICS
@@ -120,8 +129,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 .as_mut()
                 .map(|b| b.tag(TAG_TFHE_TYPE, fhe_type_str));
             let ct_format = typed_ciphertext.ciphertext_format();
-            let ct = &typed_ciphertext.ciphertext;
             let external_handle = typed_ciphertext.external_handle.clone();
+            let ct = typed_ciphertext.ciphertext;
             let session_id = req_id.derive_session_id_with_counter(ctr as u64)?;
 
             let hex_req_id = hex::encode(req_id.as_bytes());
@@ -133,8 +142,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 hex::encode(&typed_ciphertext.external_handle)
             );
 
-            let low_level_ct =
-                deserialize_to_low_level(fhe_type, ct_format, ct, &keys.decompression_key)?;
+            let decomp_key = keys.decompression_key.clone();
+            let low_level_ct = spawn_compute_bound(move || {
+                deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
+            })
+            .await??;
 
             let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
@@ -148,9 +160,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
                     let pdec = partial_decrypt_using_noiseflooding(
                         &mut noiseflood_session,
-                        &keys.integer_server_key,
+                        keys.integer_server_key.clone(),
                         keys.sns_key
-                            .as_ref()
+                            .clone()
                             .ok_or_else(|| anyhow::anyhow!("missing sns key"))?,
                         low_level_ct,
                         &keys.private_keys,
@@ -236,14 +248,26 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                         plaintext: TypedPlaintext::from_bytes(pdec_serialized, fhe_type),
                         link: link.clone(),
                     };
-                    let enc_res = signcrypt(
-                        rng,
-                        &DSEP_USER_DECRYPTION,
-                        &bc2wrap::serialize(&signcryption_msg)?,
-                        client_enc_key,
-                        client_address,
-                        &sig_key,
-                    )?;
+
+                    let rng = rng.clone();
+                    let sig_key = sig_key.clone();
+                    let client_enc_key = client_enc_key.clone();
+                    let client_address = client_address.clone();
+
+                    let enc_res = spawn_compute_bound(move || {
+                        let mut rng = rng
+                            .lock()
+                            .map_err(|_| anyhow_error_and_log("Poisoned mutex guard"))?;
+                        signcrypt(
+                            rng.deref_mut(),
+                            &DSEP_USER_DECRYPTION,
+                            &bc2wrap::serialize(&signcryption_msg)?,
+                            &client_enc_key,
+                            &client_address,
+                            &sig_key,
+                        )
+                    })
+                    .await??;
                     let res = bc2wrap::serialize(&enc_res)?;
 
                     tracing::info!(
@@ -274,7 +298,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         };
 
         let external_signature =
-            compute_external_user_decrypt_signature(&sig_key, &payload, domain, client_enc_key)?;
+            compute_external_user_decrypt_signature(&sig_key, &payload, domain, &client_enc_key)?;
         Ok((payload, external_signature))
     }
 }
@@ -315,11 +339,15 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             self.session_preparer.own_identity(),
             inner.request_id
         );
-        let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) =
+        let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) = {
+            let inner_compute = inner.clone();
             tonic_handle_potential_err(
-                validate_user_decrypt_req(&inner),
+                spawn_compute_bound(move || validate_user_decrypt_req(&inner_compute))
+                    .await
+                    .and_then(|res| res),
                 format!("Failed to validate user decryption request: {inner:?}"),
-            )?;
+            )?
+        };
 
         if let Some(b) = timer.as_mut() {
             //We log but we don't want to return early because timer failed
@@ -330,7 +358,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
-        let mut rng = self.base_kms.new_rng().await;
+        let rng = self.base_kms.new_rng().await;
         let sig_key = Arc::clone(&self.base_kms.sig_key);
 
         // Below we write to the meta-store.
@@ -383,11 +411,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                         Self::inner_user_decrypt(
                             &req_id,
                             prep,
-                            &mut rng,
-                            &typed_ciphertexts,
+                            rng,
+                            typed_ciphertexts,
                             link.clone(),
-                            &client_enc_key,
-                            &client_address,
+                            client_enc_key,
+                            client_address,
                             sig_key,
                             k,
                             server_verf_key,

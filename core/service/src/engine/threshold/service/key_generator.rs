@@ -1012,14 +1012,16 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             .read_guarded_threshold_fhe_keys_from_cache(base_key_id)
             .await?;
 
-        let mut new_threshold_fhe_keys = (*threshold_fhe_keys).clone();
-        new_threshold_fhe_keys
-            .private_keys
-            .glwe_sns_compression_key_as_lwe = Some(
+        let mut new_private_keys = (*threshold_fhe_keys.private_keys).clone();
+        new_private_keys.glwe_sns_compression_key_as_lwe = Some(
             sns_compression_sk_shares
                 .post_packing_ks_key
                 .into_lwe_secret_key(),
         );
+        let new_threshold_fhe_keys = ThresholdFheKeys {
+            private_keys: Arc::new(new_private_keys),
+            ..(*threshold_fhe_keys).clone()
+        };
 
         // update the server keys
         let pub_storage = crypto_storage.inner.public_storage.clone();
@@ -1216,10 +1218,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         };
 
         let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys,
-            integer_server_key,
-            sns_key,
-            decompression_key,
+            private_keys: Arc::new(private_keys),
+            integer_server_key: Arc::new(integer_server_key),
+            sns_key: sns_key.map(Arc::new),
+            decompression_key: decompression_key.map(Arc::new),
             pk_meta_data: info.clone(),
         };
         crypto_storage

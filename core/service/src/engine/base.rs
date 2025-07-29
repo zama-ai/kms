@@ -269,7 +269,7 @@ pub fn deserialize_to_low_level(
     fhe_type: FheTypes,
     ct_format: CiphertextFormat,
     serialized_high_level: &[u8],
-    decompression_key: &Option<DecompressionKey>,
+    decompression_key: Option<&DecompressionKey>,
 ) -> anyhow::Result<LowLevelCiphertext> {
     let radix_ct = match fhe_type {
         FheTypes::Bool => match ct_format {
@@ -978,7 +978,7 @@ pub(crate) mod tests {
             FheTypes::Bool,
             CiphertextFormat::SmallExpanded,
             &ct_buf,
-            &None,
+            None,
         )
         .is_err());
 
@@ -987,7 +987,7 @@ pub(crate) mod tests {
             FheTypes::Uint32,
             CiphertextFormat::SmallExpanded,
             &ct_buf,
-            &None,
+            None,
         )
         .is_ok());
     }
@@ -1021,7 +1021,7 @@ pub(crate) mod tests {
                 FheTypes::Uint32,
                 CiphertextFormat::BigExpanded,
                 &ct_buf,
-                &None,
+                None,
             )
             .is_err());
 
@@ -1030,7 +1030,7 @@ pub(crate) mod tests {
                 FheTypes::Uint32,
                 CiphertextFormat::SmallExpanded,
                 &ct_buf,
-                &None,
+                None,
             )
             .unwrap();
         }
@@ -1045,7 +1045,7 @@ pub(crate) mod tests {
                 FheTypes::Uint32,
                 CiphertextFormat::SmallExpanded,
                 &ct_buf,
-                &None,
+                None,
             )
             .is_err());
 
@@ -1054,7 +1054,7 @@ pub(crate) mod tests {
                 FheTypes::Uint32,
                 CiphertextFormat::BigExpanded,
                 &ct_buf,
-                &None,
+                None,
             )
             .unwrap();
         }
@@ -1100,7 +1100,7 @@ pub(crate) mod tests {
                 FheTypes::Uint32,
                 CiphertextFormat::SmallCompressed,
                 &ct_buf,
-                &None,
+                None,
             )
             .is_err());
         }
@@ -1111,7 +1111,7 @@ pub(crate) mod tests {
                 FheTypes::Uint32,
                 CiphertextFormat::SmallCompressed,
                 &ct_buf,
-                &decompression_key,
+                decompression_key.as_ref(),
             )
             .unwrap();
         }
