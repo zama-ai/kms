@@ -1,5 +1,8 @@
+use crate::conf::FileStorage as FileStorageConf;
+use crate::conf::Storage as StorageConf;
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::storage::file::FileStorage;
+use crate::vault::storage::make_storage;
 use crate::vault::storage::{
     delete_all_at_request_id, read_versioned_at_request_id, StorageReader,
 };
@@ -491,6 +494,7 @@ pub async fn compute_cipher_from_stored_key(
 pub async fn purge(
     pub_path: Option<&Path>,
     priv_path: Option<&Path>,
+    backup_path: Option<&Path>,
     id: &RequestId,
     amount_parties: usize,
 ) {
@@ -498,7 +502,11 @@ pub async fn purge(
     delete_all_at_request_id(&mut pub_storage, id).await;
     let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
     delete_all_at_request_id(&mut priv_storage, id).await;
-
+    let vault_storage_option = backup_path.map(|path| {
+        StorageConf::File(FileStorageConf {
+            path: path.to_path_buf(),
+        })
+    });
     for i in 1..=amount_parties {
         let mut threshold_pub =
             FileStorage::new(pub_path, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap();
@@ -508,6 +516,15 @@ pub async fn purge(
             Some(Role::indexed_from_one(i)),
         )
         .unwrap();
+        let mut backup_storage = make_storage(
+            vault_storage_option.clone(),
+            StorageType::BACKUP,
+            Some(Role::indexed_from_one(i)),
+            None,
+            None,
+        )
+        .unwrap();
+        delete_all_at_request_id(&mut backup_storage, id).await;
         delete_all_at_request_id(&mut threshold_pub, id).await;
         delete_all_at_request_id(&mut threshold_priv, id).await;
     }
@@ -755,6 +772,7 @@ async fn test_purge() {
         .unwrap();
     assert_eq!(priv_ids.len(), 1);
     purge(
+        test_prefix,
         test_prefix,
         test_prefix,
         &pub_ids.into_iter().next().unwrap(),
