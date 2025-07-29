@@ -211,6 +211,7 @@ kmsCoreClient:
 # Threshold Init job
 kmsInit:
   enabled: false
+  timeoutSeconds: 300
   nameOverride:
   nodeSelector:
   affinity:
