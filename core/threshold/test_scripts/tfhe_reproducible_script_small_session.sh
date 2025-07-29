@@ -29,8 +29,8 @@ SEED=$(( SEED + 1 ))
 ##KEY GEN
 #Create preproc for dkg with test parameters
 $MOBYGO_EXEC -c $1 preproc-key-gen --dkg-params $PARAMS --num-sessions 5 --session-type small --sid $CURR_SID --seed $SEED
-#Checking every half hour
-$MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true --interval 300
+#Checking every 1mn
+$MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true --interval 60
 CURR_SID=$(( CURR_SID + 1 ))
 SEED=$(( SEED + 1 ))
 #Execute DKG using the produced preproc
