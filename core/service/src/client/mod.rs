@@ -1,17 +1,11 @@
-use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::internal_crypto_types::{
     PrivateSigKey, PublicSigKey, SigncryptionKeyPair, SigncryptionPrivKey, SigncryptionPubKey,
     UnifiedPrivateEncKey, UnifiedSigncryptionKeyPair, UnifiedSigncryptionKeyPairOwned,
 };
 use crate::cryptography::internal_crypto_types::{Signature, UnifiedPublicEncKey};
 use crate::cryptography::signcryption::{
-    decrypt_signcryption_with_link, ephemeral_encryption_key_generation,
-    insecure_decrypt_ignoring_signature, internal_verify_sig,
+    decrypt_signcryption_with_link, insecure_decrypt_ignoring_signature, internal_verify_sig,
 };
-#[cfg(feature = "non-wasm")]
-use crate::engine::base::DSEP_PUBDATA_KEY;
-#[cfg(feature = "non-wasm")]
-use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
 use crate::engine::validation::{
     check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
     DSEP_USER_DECRYPTION,
@@ -24,13 +18,9 @@ use alloy_sol_types::SolStruct;
 use futures_util::future::{try_join_all, TryFutureExt};
 use itertools::Itertools;
 use kms_grpc::kms::v1::{
-    TypedCiphertext, TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse,
-    UserDecryptionResponsePayload,
+    TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
 };
-use kms_grpc::rpc_types::{
-    alloy_to_protobuf_domain, fhe_types_to_num_blocks, UserDecryptionLinker,
-};
-use kms_grpc::RequestId;
+use kms_grpc::rpc_types::{fhe_types_to_num_blocks, UserDecryptionLinker};
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::num::Wrapping;
@@ -55,28 +45,40 @@ use wasm_bindgen::prelude::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
-        use crate::engine::base::{compute_handle};
-        use crate::engine::base::DSEP_PUBDATA_CRS;
-        use threshold_fhe::hashing::DomainSep;
-        use crate::engine::traits::BaseKms;
+        use crate::consts::SAFE_SER_SIZE_LIMIT;
+        use crate::consts::{DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES};
+        use crate::cryptography::signcryption::ephemeral_encryption_key_generation;
+        use crate::engine::base::compute_handle;
         use crate::engine::base::BaseKmsStruct;
-        use crate::vault::storage::{Storage, StorageReader, crypto_material::{get_core_verification_key, get_client_verification_key, get_client_signing_key}};
-        use kms_grpc::kms::v1::{
-            KeySetAddedInfo, CrsGenRequest, CrsGenResult, PublicDecryptionRequest,
-            PublicDecryptionResponse, FheParameter, KeyGenPreprocRequest,
-            KeyGenRequest, KeyGenResult, KeySetConfig,
+        use crate::engine::base::DSEP_PUBDATA_CRS;
+        use crate::engine::base::DSEP_PUBDATA_KEY;
+        use crate::engine::traits::BaseKms;
+        use crate::engine::validation::validate_public_decrypt_responses_against_request;
+        use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
+        use crate::vault::storage::{
+            crypto_material::{
+                get_client_signing_key, get_client_verification_key, get_core_verification_key,
+            },
+            Storage, StorageReader,
         };
-        use kms_grpc::rpc_types::{PubDataType, PublicKeyType, WrappedPublicKeyOwned};
+        use kms_grpc::kms::v1::{
+            CrsGenRequest, CrsGenResult, FheParameter, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
+            KeySetAddedInfo, KeySetConfig, PublicDecryptionRequest, PublicDecryptionResponse,
+            TypedCiphertext,
+        };
+        use kms_grpc::rpc_types::{
+            alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
+        };
+        use kms_grpc::RequestId;
         use std::fmt;
         use tfhe::zk::CompactPkeCrs;
         use tfhe::ServerKey;
         use tfhe_versionable::{Unversionize, Versionize};
+        use threshold_fhe::hashing::DomainSep;
         use tonic::transport::Channel;
         use tonic_health::pb::health_client::HealthClient;
-        use tonic_health::ServingStatus;
         use tonic_health::pb::HealthCheckRequest;
-        use crate::consts::{DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES};
-        use crate::engine::validation::validate_public_decrypt_responses_against_request;
+        use tonic_health::ServingStatus;
     }
 }
 
@@ -153,6 +155,8 @@ impl ServerIdentities {
 /// distributed across the aggregator/proxy and smart contracts.
 #[wasm_bindgen]
 pub struct Client {
+    // rng is never used when compiled to wasm
+    #[cfg(feature = "non-wasm")]
     rng: Box<AesRng>,
     server_identities: ServerIdentities,
     client_address: alloy_primitives::Address,
@@ -423,6 +427,7 @@ impl Client {
     ) -> Self {
         let decryption_mode = decryption_mode.unwrap_or_default();
         Client {
+            #[cfg(feature = "non-wasm")]
             rng: Box::new(AesRng::from_entropy()), // todo should be argument
             server_identities: ServerIdentities::Pks(server_pks),
             client_address,
@@ -766,14 +771,15 @@ impl Client {
         Ok(req)
     }
 
-    /// Creates a user decryption request to send to the KMS servers. This generates
-    /// an ephemeral user decryption key pair, signature payload containing the ciphertext,
-    /// required number of shares, and other metadata. It signs this payload with
-    /// the users's wallet private key. Returns the full [UserDecryptionRequest] containing
-    /// the signed payload to send to the servers, along with the generated
+    /// Creates a user decryption request to send to the KMS servers.
+    /// Returns the full [UserDecryptionRequest] containing
+    /// the payload to send to the servers, along with the generated
     /// user decryption key pair.
+    /// The private key is used to decrypt the responses from the servers,
+    /// and must be kept to process the responses.
     ///
     /// Note that we only support MlKem512 in the latest version and not other variants of MlKem.
+    #[cfg(feature = "non-wasm")]
     pub fn user_decryption_request(
         &mut self,
         domain: &Eip712Domain,
@@ -828,6 +834,7 @@ impl Client {
     /// where the encryption key is MlKem1024 serialized using bincode2.
     /// The normal version [Self::user_decryption_request] uses MlKem512 uses safe serialization.
     #[cfg(test)]
+    #[cfg(feature = "non-wasm")]
     fn user_decryption_request_legacy(
         &mut self,
         domain: &Eip712Domain,
