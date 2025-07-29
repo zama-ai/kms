@@ -346,6 +346,7 @@ impl fmt::Display for StorageType {
 #[cfg(feature = "non-wasm")]
 #[allow(clippy::large_enum_variant)]
 #[enum_dispatch(StorageReader, Storage, StorageForBytes)]
+#[derive(Debug, Clone)]
 pub enum StorageProxy {
     File(file::FileStorage),
     #[allow(dead_code)]
@@ -384,6 +385,7 @@ pub fn make_storage(
     Ok(storage)
 }
 
+#[derive(Debug, Clone)]
 pub struct StorageCache {
     cache: OrderMap<(String, String), Vec<u8>>,
     max_cache_size: usize,

@@ -57,6 +57,7 @@ const AWS_KMS_ENVELOPED_DATA_RECIPIENT_VERSION: isize = 2;
 
 pub trait RootKey {}
 
+#[derive(Debug, Clone)]
 pub struct Symm {
     pub key_id: String,
 }
@@ -69,6 +70,7 @@ impl Symm {
 
 impl RootKey for Symm {}
 
+#[derive(Debug, Clone)]
 pub struct Asymm {
     pub key_id: String,
     pub pk: RsaPublicKey,
@@ -119,6 +121,7 @@ impl RootKey for Asymm {}
 /// AWS KMS and never leaves it. Encrypted application keys (together with the
 /// corresponding data keys) are stored on S3. The enclave keypair permits
 /// secure decryption of data keys by AWS KMS.
+#[derive(Debug, Clone)]
 pub struct AWSKMSKeychain<S: SecurityModule, K: RootKey> {
     awskms_client: AWSKMSClient,
     security_module: S,

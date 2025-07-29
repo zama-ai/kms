@@ -180,7 +180,7 @@ pub trait SecurityModule {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[enum_dispatch(SecurityModule)]
 pub enum SecurityModuleProxy {
     Nitro(nitro::Nitro),

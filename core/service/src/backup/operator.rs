@@ -143,6 +143,7 @@ impl Display for RecoveryRequest {
     }
 }
 
+#[derive(Clone)]
 pub struct Operator<S: BackupSigner, D: BackupDecryptor> {
     my_role: Role,
     custodian_keys: Vec<(BackupPublicKey, PublicSigKey)>,

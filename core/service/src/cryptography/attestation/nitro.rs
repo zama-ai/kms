@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 
 const ATTESTATION_NONCE_SIZE: usize = 8;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Nitro {
     nsm_fd: Arc<Mutex<i32>>,
 }

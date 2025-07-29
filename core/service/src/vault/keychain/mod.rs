@@ -67,6 +67,7 @@ pub trait Keychain {
 
 #[allow(clippy::large_enum_variant)]
 #[enum_dispatch(Keychain)]
+#[derive(Debug, Clone)]
 pub enum KeychainProxy {
     AwsKmsSymm(awskms::AWSKMSKeychain<SecurityModuleProxy, awskms::Symm>),
     AwsKmsAsymm(awskms::AWSKMSKeychain<SecurityModuleProxy, awskms::Asymm>),
