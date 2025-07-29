@@ -21,7 +21,7 @@ use threshold_fhe::{
         runtime::party::{Role, RoleAssignment},
     },
     networking::{
-        grpc::{GrpcNetworkingManager, GrpcServer},
+        grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
         tls::{
             build_ca_certs_map, AttestedClientVerifier, BasicTLSConfig, SendingServiceTLSConfig,
         },
@@ -287,7 +287,10 @@ where
         config.core_to_core_net,
     )?));
     let manager_clone = Arc::clone(&networking_manager);
-    let networking_server = networking_manager.write().await.new_server();
+    let networking_server = networking_manager
+        .write()
+        .await
+        .new_server(TlsExtensionGetter::SslConnectInfo);
     // we won't be setting TLS configuration through tonic::transport knobs here
     // since it doesn't permit setting rustls configuration directly, and we
     // need to supply a custom certificate verifier to enable AWS Nitro

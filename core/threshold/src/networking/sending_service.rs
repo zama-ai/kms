@@ -614,6 +614,7 @@ impl Networking for NetworkSession {
 
 #[cfg(test)]
 mod tests {
+    use crate::networking::grpc::TlsExtensionGetter;
     use crate::thread_handles::OsThreadGroup;
     use crate::{
         execution::runtime::party::{Identity, Role, RoleAssignment},
@@ -648,7 +649,7 @@ mod tests {
                 let runtime = tokio::runtime::Runtime::new().unwrap();
                 let _guard = runtime.enter();
                 let networking = GrpcNetworkingManager::new(id.clone(), None, None).unwrap();
-                let networking_server = networking.new_server();
+                let networking_server = networking.new_server(TlsExtensionGetter::default());
 
                 let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(3));
 
@@ -703,7 +704,7 @@ mod tests {
             let runtime = tokio::runtime::Runtime::new().unwrap();
             let _guard = runtime.enter();
             let networking = GrpcNetworkingManager::new(id.clone(), None, None).unwrap();
-            let networking_server = networking.new_server();
+            let networking_server = networking.new_server(TlsExtensionGetter::default());
 
             let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(3));
 

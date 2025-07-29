@@ -28,6 +28,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
 use tokio::time::{Duration, Instant};
 use tonic::transport::server::TcpConnectInfo;
+use tonic::transport::CertificateDer;
 use x509_parser::parse_x509_certificate;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -213,13 +214,17 @@ pub type GrpcServer = GnetworkingServer<NetworkingImpl>;
 impl GrpcNetworkingManager {
     /// Create a new server from the networking manager.
     /// The server can be used as a tower Service.
-    pub fn new_server(&self) -> GnetworkingServer<impl Gnetworking> {
+    pub fn new_server(
+        &self,
+        tls_extension: TlsExtensionGetter,
+    ) -> GnetworkingServer<NetworkingImpl> {
         GnetworkingServer::new(NetworkingImpl::new(
             Arc::clone(&self.session_store),
             Arc::clone(&self.opened_sessions_tracker),
             self.conf.get_message_limit(),
             self.conf.get_max_opened_inactive_sessions_per_party(),
             self.conf.get_max_waiting_time_for_message_queue(),
+            tls_extension,
             #[cfg(feature = "testing")]
             self.force_tls,
         ))
@@ -472,6 +477,15 @@ pub enum SessionStatus {
     Active(Weak<NetworkSession>),
 }
 
+// Because we can use a custom TCP Incoming, we need to specify how
+// to extract the TLS extension from the incoming connection
+#[derive(Default)]
+pub enum TlsExtensionGetter {
+    #[default]
+    TlsConnectInfo,
+    SslConnectInfo,
+}
+
 #[derive(Default)]
 pub struct NetworkingImpl {
     session_store: Arc<SessionStore>,
@@ -479,6 +493,7 @@ pub struct NetworkingImpl {
     channel_size_limit: usize,
     max_opened_inactive_sessions: u64,
     max_waiting_time_for_message_queue: Duration,
+    tls_extension: TlsExtensionGetter,
     // We gate this behind the testing feature because in non-testing environments
     // we want to ALWAYS use TLS for security reasons.
     #[cfg(feature = "testing")]
@@ -492,6 +507,7 @@ impl NetworkingImpl {
         channel_size_limit: usize,
         max_opened_inactive_sessions: u64,
         max_waiting_time_for_message_queue: Duration,
+        tls_extension: TlsExtensionGetter,
         #[cfg(feature = "testing")] force_tls: bool,
     ) -> Self {
         Self {
@@ -500,6 +516,7 @@ impl NetworkingImpl {
             channel_size_limit,
             max_opened_inactive_sessions,
             max_waiting_time_for_message_queue,
+            tls_extension,
             #[cfg(feature = "testing")]
             force_tls,
         }
@@ -620,6 +637,24 @@ lazy_static::lazy_static! {
         DashMap::new();
 }
 
+fn parse_identity_from_cert(
+    certs: Arc<Vec<CertificateDer<'static>>>,
+) -> Result<String, Box<tonic::Status>> {
+    if certs.len() != 1 {
+        // it shouldn't happen because we expect TLS certificates to
+        // be signed by party CA certificates directly, without any
+        // intermediate CAs
+        tracing::warn!("Received more than one certificate from peer, checking the first one only");
+    }
+
+    parse_x509_certificate(certs[0].as_ref())
+        .map_err(|e| Box::new(tonic::Status::new(tonic::Code::Aborted, e.to_string())))
+        .and_then(|(_rem, cert)| {
+            extract_subject_from_cert(&cert)
+                .map_err(|e| Box::new(tonic::Status::new(tonic::Code::Aborted, e.to_string())))
+        })
+}
+
 #[async_trait]
 impl Gnetworking for NetworkingImpl {
     async fn send_value(
@@ -633,30 +668,18 @@ impl Gnetworking for NetworkingImpl {
         // in this case it's party1.com.
         // We also require party1.com to be the subject and the issuer CN too,
         // since we're using self-signed certificates at the moment.
-        let valid_tls_sender = request
-            .extensions()
-            .get::<tonic::transport::server::TlsConnectInfo<TcpConnectInfo>>()
-            .and_then(|i| {
-                i.peer_certs().map(|certs| {
-                    if certs.len() != 1 {
-                        // it shouldn't happen because we expect TLS certificates to
-                        // be signed by party CA certificates directly, without any
-                        // intermediate CAs
-                        tracing::warn!(
-                        "Received more than one certificate from peer, checking the first one only"
-                    );
-                    }
-
-                    parse_x509_certificate(certs[0].as_ref())
-                        .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))
-                        .and_then(|(_rem, cert)| {
-                            extract_subject_from_cert(&cert).map_err(|e| {
-                                tonic::Status::new(tonic::Code::Aborted, e.to_string())
-                            })
-                        })
-                })
-            })
-            .transpose()?;
+        let valid_tls_sender = match self.tls_extension {
+            TlsExtensionGetter::TlsConnectInfo => request
+                .extensions()
+                .get::<tonic::transport::server::TlsConnectInfo<TcpConnectInfo>>()
+                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
+            TlsExtensionGetter::SslConnectInfo => request
+                .extensions()
+                .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
+                .and_then(|i| i.peer_certs().map(parse_identity_from_cert)),
+        }
+        .transpose()
+        .map_err(|boxed| *boxed)?;
 
         let request = request.into_inner();
         let tag = bc2wrap::deserialize::<Tag>(&request.tag).map_err(|_e| {
@@ -686,6 +709,7 @@ impl Gnetworking for NetworkingImpl {
                     format!("wrong sender: expected {host:?} to be in {sender:?}"),
                 ));
             }
+            tracing::warn!("TLS Check went fine for sender: {:?}", sender);
         } else {
             tracing::warn!(
                 "Could not find a TLS certificate in the request to verify user's identity."
