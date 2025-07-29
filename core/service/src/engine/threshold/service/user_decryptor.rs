@@ -20,12 +20,9 @@ use observability::{
 use rand::{CryptoRng, RngCore};
 use threshold_fhe::{
     algebra::galois_rings::common::pack_residue_poly,
-    execution::{
-        endpoints::decryption::{
-            partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec,
-            DecryptionMode, NoiseFloodSmallSession,
-        },
-        runtime::session::ParameterHandles,
+    execution::endpoints::decryption::{
+        partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec, DecryptionMode,
+        NoiseFloodSmallSession,
     },
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
@@ -147,11 +144,9 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                             .await,
                         "Could not prepare ddec data for noiseflood decryption".to_string(),
                     )?;
-                    let session_parameters = session.to_parameters();
                     let mut noiseflood_session = NoiseFloodSmallSession::new(session);
 
                     let pdec = partial_decrypt_using_noiseflooding(
-                        session_parameters,
                         &mut noiseflood_session,
                         &keys.integer_server_key,
                         keys.sns_key

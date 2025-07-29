@@ -15,6 +15,7 @@ use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use crate::execution::runtime::party::Identity;
 use crate::execution::runtime::session::BaseSession;
 use crate::execution::runtime::session::ParameterHandles;
+#[cfg(any(test, feature = "testing"))]
 use crate::execution::runtime::session::SessionParameters;
 use crate::execution::runtime::session::SmallSessionHandles;
 use crate::execution::runtime::session::ToBaseSession;
@@ -315,9 +316,8 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-#[instrument(skip_all, fields(sid = ?parameters.session_id(), own_identity = %parameters.own_identity(), mode = %_mode))]
+#[instrument(skip_all, fields(sid, own_identity, mode = %_mode))]
 pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P>(
-    parameters: SessionParameters,
     noiseflood_session: &mut P,
     server_key: &ServerKey,
     ck: &NoiseSquashingKey,
@@ -333,6 +333,15 @@ where
     P: NoiseFloodPreparation<EXTENSION_DEGREE>,
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
+    let sid = {
+        let session = noiseflood_session.get_mut_base_session();
+        let sid: u128 = session.session_id().into();
+        tracing::Span::current().record("sid", sid);
+        let own_identity = session.own_identity();
+        tracing::Span::current().record("own_identity", own_identity.to_string());
+        sid
+    };
+
     let execution_start_timer = Instant::now();
     let ddec_key_type = ct.decryption_key_type();
     let ct_large = match ct {
@@ -372,12 +381,8 @@ where
         shared_masked_ptxts.push(res);
     }
 
-    tracing::info!(
-        "Noiseflood result in session {:?} is ready, got {} blocks",
-        parameters.session_id(),
-        len
-    );
-    results.insert(format!("{}", parameters.session_id()), shared_masked_ptxts);
+    tracing::info!("Noiseflood result in session {sid} is ready, got {len} blocks");
+    results.insert(format!("{sid}"), shared_masked_ptxts);
 
     let execution_stop_timer = Instant::now();
     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
