@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
 use anyhow::anyhow;
@@ -21,8 +21,7 @@ use observability::{
 use tfhe::FheTypes;
 use threshold_fhe::{
     execution::endpoints::decryption::{
-        decrypt_using_noiseflooding, secure_decrypt_using_bitdec, DecryptionMode,
-        NoiseFloodSmallSession,
+        secure_decrypt_using_bitdec, DecryptionMode, NoiseFloodSmallSession, NoisefloodDecryptor,
     },
     session_id::SessionId,
 };
@@ -57,6 +56,7 @@ use super::{session::SessionPreparer, ThresholdFheKeys};
 pub struct RealPublicDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    Dec: NoisefloodDecryptor + 'static,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -65,10 +65,14 @@ pub struct RealPublicDecryptor<
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
     pub decryption_mode: DecryptionMode,
+    pub(crate) _dec: PhantomData<Dec>,
 }
 
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
-    RealPublicDecryptor<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        Dec: NoisefloodDecryptor + 'static,
+    > RealPublicDecryptor<PubS, PrivS, Dec>
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
     /// flooding or bit-decomposition
@@ -105,7 +109,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 )?;
                 let mut noiseflood_session = NoiseFloodSmallSession::new(session);
 
-                decrypt_using_noiseflooding(
+                Dec::decrypt(
                     &mut noiseflood_session,
                     &keys.integer_server_key,
                     keys.sns_key
@@ -113,8 +117,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                         .ok_or_else(|| anyhow::anyhow!("missing sns key"))?,
                     low_level_ct,
                     &keys.private_keys,
-                    dec_mode,
-                    session_prep.own_identity()?,
                 )
                 .await
             }
@@ -131,7 +133,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     &low_level_ct.try_get_small_ct()?,
                     &keys.private_keys,
                     keys.get_key_switching_key()?,
-                    dec_mode,
                     session_prep.own_identity()?,
                 )
                 .await
@@ -165,11 +166,52 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         };
         Ok(raw_decryption)
     }
+
+    #[cfg(test)]
+    async fn init_test(
+        pub_storage: PubS,
+        priv_storage: PrivS,
+        session_preparer: SessionPreparer,
+    ) -> Self {
+        let crypto_storage = ThresholdCryptoMaterialStorage::new(
+            pub_storage,
+            priv_storage,
+            None,
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let tracker = Arc::new(TaskTracker::new());
+        let rate_limiter = RateLimiter::default();
+
+        Self {
+            base_kms: session_preparer.base_kms.new_instance().await,
+            crypto_storage,
+            pub_dec_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+            session_preparer: Arc::new(session_preparer.new_instance().await),
+            tracker,
+            rate_limiter,
+            decryption_mode: DecryptionMode::NoiseFloodSmall,
+            _dec: PhantomData,
+        }
+    }
+
+    #[cfg(test)]
+    fn set_bucket_size(&mut self, bucket_size: usize) {
+        let config = crate::util::rate_limiter::RateLimiterConfig {
+            bucket_size,
+            ..Default::default()
+        };
+        self.rate_limiter = RateLimiter::new(config);
+    }
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static> PublicDecryptor
-    for RealPublicDecryptor<PubS, PrivS>
+impl<
+        PubS: Storage + Send + Sync + 'static,
+        PrivS: Storage + Send + Sync + 'static,
+        Dec: NoisefloodDecryptor + 'static,
+    > PublicDecryptor for RealPublicDecryptor<PubS, PrivS, Dec>
 {
     #[tracing::instrument(skip(self, request), fields(
         party_id = ?self.session_preparer.my_id,
@@ -582,5 +624,175 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             signature: sig.sig.to_vec(),
             payload: Some(sig_payload),
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use kms_grpc::kms::v1::TypedCiphertext;
+    use threshold_fhe::execution::endpoints::decryption::DummyNoisefloodDecryptor;
+
+    use crate::{
+        consts::TEST_PARAM,
+        cryptography::{
+            decompression::test_tools::safe_serialize_versioned,
+            internal_crypto_types::gen_sig_keys,
+        },
+        engine::threshold::service::compute_all_info,
+        vault::storage::ram,
+    };
+
+    use super::*;
+
+    impl RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor> {
+        pub async fn init_test_dummy_decryptor(session_preparer: SessionPreparer) -> Self {
+            let pub_storage = ram::RamStorage::new();
+            let priv_storage = ram::RamStorage::new();
+            Self::init_test(pub_storage, priv_storage, session_preparer).await
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pre_post_condition() {
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let param = TEST_PARAM;
+        let session_preparer = SessionPreparer::new_test_session(false);
+        let mut public_decryptor =
+            RealPublicDecryptor::init_test_dummy_decryptor(session_preparer).await;
+
+        let key_id = RequestId::new_random(&mut rand::rngs::OsRng);
+
+        // make a dummy private keyset
+        let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param);
+
+        let ct = tfhe::CompactCiphertextList::builder(&fhe_key_set.public_key)
+            .push(255u8)
+            .build();
+        let ct_buf = safe_serialize_versioned(&ct);
+
+        let info = compute_all_info(&sk, &fhe_key_set, None).unwrap();
+
+        let dummy_meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+        {
+            // initialize the dummy meta store
+            let meta_store = dummy_meta_store.clone();
+            let mut guard = meta_store.write().await;
+            guard.insert(&key_id).unwrap();
+        }
+        public_decryptor
+            .crypto_storage
+            .write_threshold_keys_with_meta_store(
+                &key_id,
+                threshold_fhe_keys,
+                fhe_key_set,
+                info,
+                dummy_meta_store,
+            )
+            .await;
+
+        {
+            // check existance
+            let _guard = public_decryptor
+                .crypto_storage
+                .read_guarded_threshold_fhe_keys_from_cache(&key_id)
+                .await
+                .unwrap();
+        }
+
+        // `Aborted` - If an internal error occured in starting the public decryption
+        // _or_ if an invalid argument was given.
+        // here we use the wrong key ID
+        {
+            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let bad_key_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallCompressed as i32,
+                }],
+                key_id: Some(bad_key_id.into()),
+                domain: None,
+            });
+            // NOTE: should probably be NotFound
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::Aborted
+            );
+
+            // use an existing request ID should also abort
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallCompressed as i32,
+                }],
+                key_id: Some(key_id.into()),
+                domain: None,
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::Aborted
+            );
+        }
+
+        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
+        {
+            // Set bucket size to zero, so no operations are allowed
+            public_decryptor.set_bucket_size(0);
+
+            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallCompressed as i32,
+                }],
+                key_id: Some(key_id.into()),
+                domain: None,
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::ResourceExhausted
+            );
+
+            // finally reset the bucket size to a non-zero value
+            public_decryptor.set_bucket_size(100);
+        }
+
+        // should work ok
+        {
+            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf,
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallCompressed as i32,
+                }],
+                key_id: Some(key_id.into()),
+                domain: None,
+            });
+            public_decryptor.public_decrypt(request).await.unwrap();
+        }
     }
 }

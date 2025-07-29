@@ -203,6 +203,91 @@ where
     }
 }
 
+#[async_trait]
+pub trait NoisefloodDecryptor: Send + Sync {
+    async fn decrypt<const EXTENSION_DEGREE: usize, P, T>(
+        noiseflood_session: &mut P,
+        server_key: &ServerKey,
+        ck: &NoiseSquashingKey,
+        ct: LowLevelCiphertext,
+        secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
+    ) -> anyhow::Result<(HashMap<String, T>, Duration)>
+    where
+        P: NoiseFloodPreparation<EXTENSION_DEGREE> + Send,
+        T: tfhe::integer::block_decomposition::Recomposable
+            + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve;
+}
+
+#[async_trait]
+pub trait NoisefloodPartialDecryptor: Send + Sync {
+    async fn partial_decrypt<const EXTENSION_DEGREE: usize, P>(
+        noiseflood_session: &mut P,
+        server_key: &ServerKey,
+        ck: &NoiseSquashingKey,
+        ct: LowLevelCiphertext,
+        secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
+    ) -> anyhow::Result<(
+        HashMap<String, Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
+        u32,
+        Duration,
+    )>
+    where
+        P: NoiseFloodPreparation<EXTENSION_DEGREE>,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve;
+}
+
+pub struct SecureNoisefloodDecryptor;
+
+#[async_trait]
+impl NoisefloodDecryptor for SecureNoisefloodDecryptor {
+    async fn decrypt<const EXTENSION_DEGREE: usize, P, T>(
+        noiseflood_session: &mut P,
+        server_key: &ServerKey,
+        ck: &NoiseSquashingKey,
+        ct: LowLevelCiphertext,
+        secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
+    ) -> anyhow::Result<(HashMap<String, T>, Duration)>
+    where
+        P: NoiseFloodPreparation<EXTENSION_DEGREE> + Send,
+        T: tfhe::integer::block_decomposition::Recomposable
+            + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
+        decrypt_using_noiseflooding::<EXTENSION_DEGREE, P, T>(
+            noiseflood_session,
+            server_key,
+            ck,
+            ct,
+            secret_key_share,
+        )
+        .await
+    }
+}
+
+pub struct DummyNoisefloodDecryptor;
+
+#[async_trait]
+impl NoisefloodDecryptor for DummyNoisefloodDecryptor {
+    async fn decrypt<const EXTENSION_DEGREE: usize, P, T>(
+        _noiseflood_session: &mut P,
+        _server_key: &ServerKey,
+        _ck: &NoiseSquashingKey,
+        _ct: LowLevelCiphertext,
+        _secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
+    ) -> anyhow::Result<(HashMap<String, T>, Duration)>
+    where
+        P: NoiseFloodPreparation<EXTENSION_DEGREE>,
+        T: tfhe::integer::block_decomposition::Recomposable
+            + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
+        let results = HashMap::new();
+        let elapsed_time = Duration::from_secs(0);
+        Ok((results, elapsed_time))
+    }
+}
+
 /// Decrypts a ciphertext using noise flooding.
 ///
 /// Returns the plaintext plus some timing information.
@@ -215,7 +300,6 @@ where
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
 /// * `_mode` - The decryption mode. This is used only for tracing purposes
-/// * `_own_identity` - The identity of the party_keyshare. This is used only for tracing purposes
 ///
 /// # Returns
 /// * A tuple containing the results of the decryption and the time it took to execute the decryption
@@ -230,15 +314,13 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip_all, fields(sid, own_identity = %_own_identity, mode = %_mode))]
-pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, T>(
+#[instrument(skip_all, fields(sid, own_identity))]
+async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, T>(
     noiseflood_session: &mut P,
     server_key: &ServerKey,
     ck: &NoiseSquashingKey,
     ct: LowLevelCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
-    _mode: DecryptionMode,
-    _own_identity: Identity,
 ) -> anyhow::Result<(HashMap<String, T>, Duration)>
 where
     P: NoiseFloodPreparation<EXTENSION_DEGREE>,
@@ -267,6 +349,9 @@ where
     let session = noiseflood_session.get_mut_base_session();
     let sid: u128 = session.session_id().into();
     tracing::Span::current().record("sid", sid);
+    let own_identity = session.own_identity();
+    tracing::Span::current().record("own_identity", own_identity.to_string());
+
     let outputs = run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, T>(
         session,
         &mut preprocessing,
@@ -316,14 +401,13 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-#[instrument(skip_all, fields(sid, own_identity, mode = %_mode))]
+#[instrument(skip_all, fields(sid, own_identity))]
 pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P>(
     noiseflood_session: &mut P,
     server_key: &ServerKey,
     ck: &NoiseSquashingKey,
     ct: LowLevelCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
-    _mode: DecryptionMode,
 ) -> anyhow::Result<(
     HashMap<String, Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
     u32,
@@ -415,13 +499,12 @@ where
 /// 3. The results are returned
 ///
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), own_identity = %_own_identity, mode = %_mode))]
+#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), own_identity = %_own_identity))]
 pub async fn secure_decrypt_using_bitdec<const EXTENSION_DEGREE: usize, T>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     ct: &RadixOrBoolCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
-    _mode: DecryptionMode,
     _own_identity: Identity,
 ) -> anyhow::Result<(HashMap<String, T>, Duration)>
 where
@@ -481,13 +564,12 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity(), mode = %_mode))]
+#[instrument(skip(session, ct, secret_key_share, ksk), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub async fn secure_partial_decrypt_using_bitdec<const EXTENSION_DEGREE: usize>(
     session: &mut SmallSession<ResiduePoly<Z64, EXTENSION_DEGREE>>,
     ct: &RadixOrBoolCiphertext,
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
     ksk: &LweKeyswitchKey<Vec<u64>>,
-    _mode: DecryptionMode,
 ) -> anyhow::Result<(
     HashMap<String, Vec<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
     Duration,

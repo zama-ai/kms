@@ -154,7 +154,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                             .ok_or_else(|| anyhow::anyhow!("missing sns key"))?,
                         low_level_ct,
                         &keys.private_keys,
-                        DecryptionMode::NoiseFloodSmall,
                     )
                     .await;
 
@@ -195,7 +194,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                         &low_level_ct.try_get_small_ct()?,
                         &keys.private_keys,
                         keys.get_key_switching_key()?,
-                        DecryptionMode::BitDecSmall,
                     )
                     .await;
 

@@ -74,7 +74,7 @@ mod non_wasm {
     pub fn tonic_some_ref_or_err<T>(input: Option<&T>, error: String) -> TonicResult<&T> {
         input.ok_or_else(|| {
             tracing::warn!(error);
-            BoxedStatus::from(tonic::Status::new(tonic::Code::Aborted, top_n_chars(error)))
+            BoxedStatus::from(tonic::Status::new(tonic::Code::Aborted, error))
         })
     }
 
@@ -88,7 +88,7 @@ mod non_wasm {
         resp.map_err(|e| {
             let msg = format!("{}: {}", error, e.to_string());
             tracing::warn!(msg);
-            BoxedStatus::from(tonic::Status::new(tonic::Code::Aborted, top_n_chars(msg)))
+            BoxedStatus::from(tonic::Status::new(tonic::Code::Aborted, msg))
         })
     }
 }

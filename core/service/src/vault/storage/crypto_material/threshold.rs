@@ -226,6 +226,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 "Failed to ensure existence of threshold key material for request with ID: {}",
                 key_id
             );
+            println!("Purge!!");
             self.purge_key_material(key_id, guarded_meta_storage).await;
         }
     }

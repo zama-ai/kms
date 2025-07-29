@@ -16,7 +16,10 @@ use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
     execution::{
-        endpoints::keygen::{FhePubKeySet, PrivateKeySet},
+        endpoints::{
+            decryption::SecureNoisefloodDecryptor,
+            keygen::{FhePubKeySet, PrivateKeySet},
+        },
         online::preprocessing::{create_memory_factory, create_redis_factory, DKGPreprocessing},
         runtime::party::{Role, RoleAssignment},
         zk::ceremony::SecureCeremony,
@@ -111,6 +114,38 @@ impl ThresholdFheKeys {
             }
         }
     }
+
+    #[cfg(feature = "testing")]
+    pub fn init_dummy(
+        param: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
+    ) -> (Self, FhePubKeySet) {
+        let keyset = threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set(
+            param,
+            &mut rand::rngs::OsRng,
+        );
+
+        let server_key = keyset.public_keys.server_key.clone();
+        let integer_server_key = keyset.public_keys.server_key.into_raw_parts().0;
+
+        let pub_key_set = FhePubKeySet {
+            public_key: keyset.public_keys.public_key,
+            server_key,
+        };
+
+        let priv_key_set = PrivateKeySet::init_dummy(param);
+
+        // let info = compute_all_info(sig_key, fhe_key_set, domain)
+
+        let priv_key_set = Self {
+            private_keys: priv_key_set,
+            integer_server_key,
+            sns_key: None,
+            decompression_key: None,
+            pk_meta_data: HashMap::new(),
+        };
+
+        (priv_key_set, pub_key_set)
+    }
 }
 
 impl Named for ThresholdFheKeys {
@@ -161,7 +196,7 @@ pub fn compute_all_info(
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInitiator<PrivS>,
     RealUserDecryptor<PubS, PrivS>,
-    RealPublicDecryptor<PubS, PrivS>,
+    RealPublicDecryptor<PubS, PrivS, SecureNoisefloodDecryptor>,
     RealKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
@@ -173,7 +208,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInitiator<PrivS>,
     RealUserDecryptor<PubS, PrivS>,
-    RealPublicDecryptor<PubS, PrivS>,
+    RealPublicDecryptor<PubS, PrivS, SecureNoisefloodDecryptor>,
     RealKeyGenerator<PubS, PrivS>,
     RealInsecureKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
@@ -491,6 +526,7 @@ where
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         decryption_mode: config.decryption_mode,
+        _dec: PhantomData,
     };
 
     let keygenerator = RealKeyGenerator {
