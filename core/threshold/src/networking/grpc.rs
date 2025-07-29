@@ -709,7 +709,7 @@ impl Gnetworking for NetworkingImpl {
                     format!("wrong sender: expected {host:?} to be in {sender:?}"),
                 ));
             }
-            tracing::warn!("TLS Check went fine for sender: {:?}", sender);
+            tracing::debug!("TLS Check went fine for sender: {:?}", sender);
         } else {
             tracing::warn!(
                 "Could not find a TLS certificate in the request to verify user's identity."
