@@ -9,8 +9,8 @@ use observability::{
 };
 use rand::{distributions::Uniform, random, Rng};
 use tfhe::{
-    integer::BooleanBlock, set_server_key, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048,
-    FheUint256, FheUint32, FheUint4, FheUint64, FheUint8,
+    integer::BooleanBlock, set_server_key, CompactPublicKey, FheBool, FheUint128, FheUint16,
+    FheUint160, FheUint2048, FheUint256, FheUint32, FheUint4, FheUint64, FheUint8,
 };
 use threshold_fhe::{
     choreography::{
@@ -142,6 +142,55 @@ struct PreprocDecryptArgs {
     /// Optional argument to force the session ID to be used. (Sampled at random if nothing is given)
     #[clap(long = "sid")]
     session_id: Option<u128>,
+
+    /// Optional argument to set the master seed used by the parties.
+    /// Parties will then add their party index to the seed.
+    /// Sampled at random if nothing is given
+    #[clap(long = "seed")]
+    seed: Option<u64>,
+}
+
+#[derive(Args, Debug)]
+struct EncryptArgs {
+    /// Path to the public key file
+    #[clap(long = "path-pubkey", default_value = "./temp/pk.bin")]
+    pub_key_file: String,
+
+    /// TFHE-rs type to use
+    #[clap(long = "tfhe-type", value_enum)]
+    tfhe_type: TfheType,
+
+    /// Value to encrypt
+    #[clap(long = "value")]
+    value: u64,
+
+    /// Optional path to output file
+    #[clap(long = "output-file", default_value = "./temp/ctxt.bin")]
+    output_file: String,
+}
+
+#[derive(Args, Debug)]
+struct ThresholdDecryptFromFileArgs {
+    /// Decryption Mode to use for the threshold decryption.
+    #[clap(long, value_enum)]
+    decryption_mode: DecryptionMode,
+
+    /// Path to the public key file
+    #[clap(long = "path-pubkey", default_value = "./temp/pk.bin")]
+    pub_key_file: String,
+
+    /// Path to ciphertext file
+    #[clap(long = "input-file", default_value = "./temp/ctxt.bin")]
+    input_file: String,
+
+    /// Optional argument to force the session ID to be used. (Sampled at random if nothing is given)
+    #[clap(long = "sid")]
+    session_id: Option<u128>,
+
+    /// Session ID that corresponds to the correlated randomness to be consumed during the Distributed Decryption
+    /// (If no ID is given, we use dummy preprocessing)
+    #[clap(long = "preproc-sid")]
+    session_id_preproc: Option<u128>,
 
     /// Optional argument to set the master seed used by the parties.
     /// Parties will then add their party index to the seed.
@@ -291,10 +340,13 @@ enum Commands {
     /// Retrieve the public key to be used for encryption.
     /// (Can also generate a key for testing purposes)
     ThresholdKeyGenResult(ThresholdKeyGenResultArgs),
+    Encrypt(EncryptArgs),
     /// Start DDec preprocessing on cluster of mobys
     PreprocDecrypt(PreprocDecryptArgs),
     /// Start DDec on cluster of mobys
     ThresholdDecrypt(ThresholdDecryptArgs),
+    /// Start DDec on cluster of mobys with ciphertexts from a file
+    ThresholdDecryptFromFile(ThresholdDecryptFromFileArgs),
     /// Retrieve DDec result from cluster
     ThresholdDecryptResult(ThresholdDecryptResultArgs),
     /// Start CRS generation
@@ -466,6 +518,144 @@ async fn preproc_decrypt_command(
     Ok(())
 }
 
+fn encrypt_messages(
+    messages: Vec<u64>,
+    tfhe_type: TfheType,
+    compact_key: &CompactPublicKey,
+) -> Vec<RadixOrBoolCiphertext> {
+    match tfhe_type {
+        TfheType::Bool => messages
+            .iter()
+            .map(|msg| {
+                let ct: FheBool = expanded_encrypt(compact_key, *msg, 1).unwrap();
+                RadixOrBoolCiphertext::Bool(BooleanBlock::new_unchecked(ct.into_raw_parts()))
+            })
+            .collect_vec(),
+        TfheType::U4 => messages
+            .iter()
+            .map(|msg| {
+                let ct: FheUint4 = expanded_encrypt(compact_key, *msg, 4).unwrap();
+                RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
+            })
+            .collect_vec(),
+        TfheType::U8 => messages
+            .iter()
+            .map(|msg| {
+                let ct: FheUint8 = expanded_encrypt(compact_key, *msg, 8).unwrap();
+                RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
+            })
+            .collect_vec(),
+        TfheType::U16 => messages
+            .iter()
+            .map(|msg| {
+                let ct: FheUint16 = expanded_encrypt(compact_key, *msg, 16).unwrap();
+                RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
+            })
+            .collect_vec(),
+        TfheType::U32 => messages
+            .iter()
+            .map(|msg| {
+                let ct: FheUint32 = expanded_encrypt(compact_key, *msg, 32).unwrap();
+                RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
+            })
+            .collect_vec(),
+        TfheType::U64 => messages
+            .iter()
+            .map(|msg| {
+                let ct: FheUint64 = expanded_encrypt(compact_key, *msg, 64).unwrap();
+                RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
+            })
+            .collect_vec(),
+        TfheType::U128 => messages
+            .iter()
+            .map(|msg| {
+                let ct: FheUint128 = expanded_encrypt(compact_key, *msg, 128).unwrap();
+                RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
+            })
+            .collect_vec(),
+        TfheType::U160 => messages
+            .iter()
+            .map(|msg| {
+                let ct: FheUint160 = expanded_encrypt(compact_key, *msg, 160).unwrap();
+                RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
+            })
+            .collect_vec(),
+        TfheType::U256 => messages
+            .iter()
+            .map(|msg| {
+                let ct: FheUint256 = expanded_encrypt(compact_key, *msg, 256).unwrap();
+                RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
+            })
+            .collect_vec(),
+        TfheType::U2048 => messages
+            .iter()
+            .map(|msg| {
+                let ct: FheUint2048 = expanded_encrypt(compact_key, *msg, 2048).unwrap();
+                RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
+            })
+            .collect_vec(),
+    }
+}
+
+async fn encrypt_command(params: EncryptArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let pk_serialized = std::fs::read(params.pub_key_file)?;
+    let (_key_sid, pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize(&pk_serialized)?;
+    let compact_key = pk.public_key;
+
+    set_server_key(pk.server_key);
+    let ctxt = encrypt_messages(vec![params.value], params.tfhe_type.clone(), &compact_key)
+        .pop()
+        .unwrap();
+
+    println!(
+        "Writing resulting ciphertext to file: {}",
+        params.output_file
+    );
+
+    let serialized_ctxt = bc2wrap::serialize(&(params.tfhe_type, ctxt))?;
+
+    tokio::fs::write(params.output_file, serialized_ctxt).await?;
+
+    Ok(())
+}
+
+async fn threshold_decrypt_from_file_command(
+    runtime: ChoreoRuntime,
+    choreo_conf: ChoreoConf,
+    params: ThresholdDecryptFromFileArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let pk_serialized = std::fs::read(params.pub_key_file)?;
+    let (key_sid, _pk): (SessionId, FhePubKeySet) = bc2wrap::deserialize(&pk_serialized)?;
+
+    let ctxt_serialized = tokio::fs::read(params.input_file).await?;
+    let (tfhe_type, ctxt): (TfheType, RadixOrBoolCiphertext) =
+        bc2wrap::deserialize(&ctxt_serialized)?;
+
+    let session_id = params.session_id.unwrap_or(random());
+    let session_id = runtime
+        .initiate_threshold_decrypt(
+            SessionId::from(session_id),
+            key_sid,
+            params.decryption_mode,
+            params
+                .session_id_preproc
+                .map_or_else(|| None, |id| Some(SessionId::from(id))),
+            vec![ctxt],
+            None,
+            tfhe_type,
+            choreo_conf.threshold_topology.threshold,
+            params.seed,
+            choreo_conf.malicious_roles.unwrap_or_default(),
+        )
+        .await?;
+
+    println!(
+        "Distributed Decryption started. The resulting plaintexts will be stored under session ID: {session_id:?}"
+    );
+
+    Ok(())
+}
+
 async fn threshold_decrypt_command(
     runtime: ChoreoRuntime,
     choreo_conf: ChoreoConf,
@@ -480,154 +670,17 @@ async fn threshold_decrypt_command(
     //Required to be able to expand the CompactCiphertextList if the encryption and compute keys
     //are different (i.e. need access to PKSK)
     set_server_key(pk.server_key);
-    let messages;
-    //Encrypt messages one by one, not taking advantage of the compact ciphertext list
-    let ctxts = match tfhe_type {
-        TfheType::Bool => {
-            messages = rand::thread_rng()
-                .sample_iter(Uniform::<u128>::from(0..=1))
-                .take(num_messages)
-                .collect_vec();
-
-            messages
-                .iter()
-                .map(|msg| {
-                    let ct: FheBool = expanded_encrypt(&compact_key, *msg, 1).unwrap();
-                    RadixOrBoolCiphertext::Bool(BooleanBlock::new_unchecked(ct.into_raw_parts()))
-                })
-                .collect_vec()
-        }
-        TfheType::U4 => {
-            messages = rand::thread_rng()
-                .sample_iter(Uniform::<u128>::from(0..16))
-                .take(num_messages)
-                .collect_vec();
-
-            messages
-                .iter()
-                .map(|msg| {
-                    let ct: FheUint4 = expanded_encrypt(&compact_key, *msg, 4).unwrap();
-                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
-                })
-                .collect_vec()
-        }
-        TfheType::U8 => {
-            messages = rand::thread_rng()
-                .sample_iter(Uniform::<u128>::from(0..(u8::MAX as u128)))
-                .take(num_messages)
-                .collect_vec();
-
-            messages
-                .iter()
-                .map(|msg| {
-                    let ct: FheUint8 = expanded_encrypt(&compact_key, *msg, 8).unwrap();
-                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
-                })
-                .collect_vec()
-        }
-        TfheType::U16 => {
-            messages = rand::thread_rng()
-                .sample_iter(Uniform::<u128>::from(0..(u16::MAX as u128)))
-                .take(num_messages)
-                .collect_vec();
-
-            messages
-                .iter()
-                .map(|msg| {
-                    let ct: FheUint16 = expanded_encrypt(&compact_key, *msg, 16).unwrap();
-                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
-                })
-                .collect_vec()
-        }
-        TfheType::U32 => {
-            messages = rand::thread_rng()
-                .sample_iter(Uniform::<u128>::from(0..(u32::MAX as u128)))
-                .take(num_messages)
-                .collect_vec();
-
-            messages
-                .iter()
-                .map(|msg| {
-                    let ct: FheUint32 = expanded_encrypt(&compact_key, *msg, 32).unwrap();
-                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
-                })
-                .collect_vec()
-        }
-        TfheType::U64 => {
-            messages = rand::thread_rng()
-                .sample_iter(Uniform::<u128>::from(0..(u64::MAX as u128)))
-                .take(num_messages)
-                .collect_vec();
-
-            messages
-                .iter()
-                .map(|msg| {
-                    let ct: FheUint64 = expanded_encrypt(&compact_key, *msg, 64).unwrap();
-                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
-                })
-                .collect_vec()
-        }
-        TfheType::U128 => {
-            //Limiting to u64 because otherwise there is wrap around at decryption
-            messages = rand::thread_rng()
-                .sample_iter(Uniform::<u128>::from(0..u64::MAX as u128))
-                .take(num_messages)
-                .collect_vec();
-
-            messages
-                .iter()
-                .map(|msg| {
-                    let ct: FheUint128 = expanded_encrypt(&compact_key, *msg, 128).unwrap();
-                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
-                })
-                .collect_vec()
-        }
-        TfheType::U160 => {
-            //Limiting to u64 because otherwise there is wrap around at decryption
-            messages = rand::thread_rng()
-                .sample_iter(Uniform::<u128>::from(0..u64::MAX as u128))
-                .take(num_messages)
-                .collect_vec();
-
-            messages
-                .iter()
-                .map(|msg| {
-                    let ct: FheUint160 = expanded_encrypt(&compact_key, *msg, 160).unwrap();
-                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
-                })
-                .collect_vec()
-        }
-        TfheType::U256 => {
-            //Limiting to u64 because otherwise there is wrap around at decryption
-            messages = rand::thread_rng()
-                .sample_iter(Uniform::<u128>::from(0..u64::MAX as u128))
-                .take(num_messages)
-                .collect_vec();
-
-            messages
-                .iter()
-                .map(|msg| {
-                    let ct: FheUint256 = expanded_encrypt(&compact_key, *msg, 256).unwrap();
-                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
-                })
-                .collect_vec()
-        }
-        TfheType::U2048 => {
-            //Limiting to u64 because otherwise there is wrap around at decryption
-            messages = rand::thread_rng()
-                .sample_iter(Uniform::<u128>::from(0..u64::MAX as u128))
-                .take(num_messages)
-                .collect_vec();
-
-            messages
-                .iter()
-                .map(|msg| {
-                    let ct: FheUint2048 = expanded_encrypt(&compact_key, *msg, 2048).unwrap();
-                    RadixOrBoolCiphertext::Radix(ct.into_raw_parts().0)
-                })
-                .collect_vec()
-        }
+    let max_value = if tfhe_type.get_num_bits_rep() >= 64 {
+        u64::MAX
+    } else {
+        (1 << tfhe_type.get_num_bits_rep()) - 1
     };
+    let messages = rand::thread_rng()
+        .sample_iter(Uniform::<u64>::from(0..max_value))
+        .take(num_messages)
+        .collect_vec();
+
+    let ctxts = encrypt_messages(messages.clone(), tfhe_type.clone(), &compact_key);
 
     println!("Encrypted the following message : {messages:?}");
 
@@ -788,6 +841,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Reshare(params) => {
             reshare_command(runtime, conf, params).await?;
+        }
+        Commands::Encrypt(encrypt_args) => {
+            encrypt_command(encrypt_args).await?;
+        }
+        Commands::ThresholdDecryptFromFile(threshold_decrypt_from_file_args) => {
+            threshold_decrypt_from_file_command(runtime, conf, threshold_decrypt_from_file_args)
+                .await?;
         }
     };
 
