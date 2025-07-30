@@ -19,6 +19,11 @@ bucket = "kms"
 [private_vault.storage.file]
 path = "./keys"
 
+# Only this party has the backup vault configured.
+[backup_vault]
+[backup_vault.storage.file]
+path = "./backup_vault"
+
 [threshold]
 listen_address = "dev-kms-core-1"
 listen_port = 50001
