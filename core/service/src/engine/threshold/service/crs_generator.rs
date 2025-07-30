@@ -468,6 +468,8 @@ mod tests {
         },
     };
 
+    use crate::consts::DURATION_WAITING_ON_RESULT_SECONDS;
+
     use super::*;
 
     #[derive(Clone, Default)]
@@ -498,7 +500,7 @@ mod tests {
         ) -> anyhow::Result<FinalizedInternalPublicParameter> {
             // We need to sleep for more than 60 seconds because
             // the get response call blocks for 60 seconds if there is potentially a result
-            tokio::time::sleep(Duration::from_secs(70)).await;
+            tokio::time::sleep(Duration::from_secs(DURATION_WAITING_ON_RESULT_SECONDS + 10)).await;
             let ceremony = InsecureCeremony {};
             ceremony
                 .execute::<Z64, _>(session, witness_dim, max_num_bits)
