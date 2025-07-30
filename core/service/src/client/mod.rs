@@ -2474,6 +2474,7 @@ pub(crate) mod tests {
     };
     use crate::util::rate_limiter::RateLimiterConfig;
     use crate::vault::storage::crypto_material::get_core_signing_key;
+    #[cfg(feature = "insecure")]
     use crate::vault::storage::delete_all_at_request_id;
     use crate::vault::storage::{file::FileStorage, StorageType};
     use crate::vault::storage::{make_storage, StorageReader};
