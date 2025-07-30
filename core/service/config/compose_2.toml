@@ -19,6 +19,10 @@ bucket = "kms"
 [private_vault.storage.file]
 path = "./keys"
 
+[backup_vault]
+[backup_vault.storage.file]
+path = "./backup_vault"
+
 [threshold]
 listen_address = "dev-kms-core-2"
 listen_port = 50002

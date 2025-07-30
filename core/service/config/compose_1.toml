@@ -19,7 +19,6 @@ bucket = "kms"
 [private_vault.storage.file]
 path = "./keys"
 
-# Only this party has the backup vault configured.
 [backup_vault]
 [backup_vault.storage.file]
 path = "./backup_vault"

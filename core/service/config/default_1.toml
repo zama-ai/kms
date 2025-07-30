@@ -60,9 +60,9 @@ path = "./keys"
 # If configured, most operations that writes to the private vault
 # will also be written to the backup vault.
 # We do not write PrssState to the backup vault since it can be regenerated easily
-# [backup_vault]
-# [backup_vault.storage.file]
-# path = "./backup_vault"
+[backup_vault]
+[backup_vault.storage.file]
+path = "./backup_vault"
 
 # The section below contains the relevant configuration for communicating with
 # other TKMS nodes. This section is not needed when running TKMS in the

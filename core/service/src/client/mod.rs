@@ -6041,7 +6041,6 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "insecure")]
-    #[tracing_test::traced_test]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_insecure_dkg_backup() {
@@ -6177,7 +6176,6 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "insecure")]
-    #[tracing_test::traced_test]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_insecure_autobackup_after_deletion() {
@@ -6213,8 +6211,8 @@ pub(crate) mod tests {
         )
         .await;
         // check that we have the new mod switch key
-        let (client_key_1, _, server_key_1) = keys.clone().get_standard();
-        check_conformance(server_key_1, client_key_1);
+        let (client_key, _, server_key) = keys.clone().get_standard();
+        check_conformance(server_key, client_key);
         let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
         assert!(panic_res.is_err());
 
@@ -6254,7 +6252,6 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "insecure")]
-    #[tracing_test::traced_test]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_insecure_crs_backup() {

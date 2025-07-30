@@ -16,9 +16,9 @@ path = "./keys"
 [private_vault.storage.file]
 path = "./keys"
 
-[private_vault.keychain.aws_kms]
-root_key_id = "root_key_id"
-root_key_spec = "symm"
+[backup_vault]
+[backup_vault.storage.file]
+path = "./backup_vault"
 
 [threshold]
 listen_address = "0.0.0.0"
