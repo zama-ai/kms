@@ -294,7 +294,7 @@ impl From<PublicDecryptionResponsePayload> for PublicDecryptionResponseInvariant
     }
 }
 
-fn select_most_common_public_dec(
+pub(crate) fn select_most_common_public_dec(
     min_occurence: usize,
     agg_resp: &[PublicDecryptionResponse],
 ) -> Option<PublicDecryptionResponsePayload> {

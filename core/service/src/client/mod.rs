@@ -1101,6 +1101,8 @@ impl Client {
         agg_resp: &[PublicDecryptionResponse],
         min_agree_count: u32,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        use crate::engine::validation::select_most_common_public_dec;
+
         validate_public_decrypt_responses_against_request(
             self.get_server_pks()?,
             request,
@@ -1108,11 +1110,9 @@ impl Client {
             min_agree_count,
         )?;
 
-        // TODO pivot should actually be picked as the most common response instead of just an
-        // arbitrary one.
-        let pivot = some_or_err(
-            agg_resp.last(),
-            "No elements in user decryption response".to_string(),
+        let pivot_payload = some_or_err(
+            select_most_common_public_dec(min_agree_count as usize, agg_resp),
+            "No elements in public decryption response".to_string(),
         )?;
 
         for cur_resp in agg_resp {
@@ -1137,13 +1137,7 @@ impl Client {
                 tracing::warn!("Signature on received response is not valid! {}", e);
             })?;
         }
-        let pts = some_or_err(
-            pivot.payload.to_owned(),
-            "No payload in pivot response for decryption".to_owned(),
-        )?
-        .plaintexts;
-
-        Ok(pts)
+        Ok(pivot_payload.plaintexts)
     }
 
     /// Processes the aggregated user decryption responses to attempt to decrypt
