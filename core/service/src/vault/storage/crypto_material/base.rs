@@ -545,6 +545,11 @@ where
 
         let f1 = async {
             let mut priv_storage = self.private_storage.lock().await;
+            let back_vault = match self.backup_vault {
+                Some(ref vault) => Some(vault.lock().await),
+                None => None,
+            };
+
             let result = store_versioned_at_request_id(
                 &mut (*priv_storage),
                 req_id,
@@ -559,7 +564,30 @@ where
                     e
                 );
             }
-            result.is_ok()
+            let priv_storage_ok = result.is_ok();
+
+            let backup_is_ok = match back_vault {
+                Some(mut vault) => {
+                    let backup_result = store_versioned_at_request_id(
+                        &mut (*vault),
+                        req_id,
+                        &crs_info,
+                        &PrivDataType::CrsInfo.to_string(),
+                    )
+                    .await;
+
+                    if let Err(e) = &backup_result {
+                        tracing::error!(
+                        "Failed to store threshold CRS info to backup storage for request {}: {}",
+                        req_id,
+                        e
+                    );
+                    }
+                    backup_result.is_ok()
+                }
+                None => true,
+            };
+            priv_storage_ok && backup_is_ok
         };
         let f2 = async {
             let mut pub_storage = self.public_storage.lock().await;
@@ -579,6 +607,7 @@ where
             }
             result.is_ok()
         };
+
         let (r1, r2) = tokio::join!(f1, f2);
 
         if r1
@@ -621,20 +650,44 @@ where
         };
         let f2 = async {
             let mut priv_storage = self.private_storage.lock().await;
-            let result = delete_at_request_id(
+            let back_vault = match self.backup_vault {
+                Some(ref vault) => Some(vault.lock().await),
+                None => None,
+            };
+
+            let priv_result = delete_at_request_id(
                 &mut (*priv_storage),
                 req_id,
                 &PrivDataType::CrsInfo.to_string(),
             )
             .await;
-            if let Err(e) = &result {
+            if let Err(e) = &priv_result {
                 tracing::warn!(
                     "Failed to delete CRS info from private storage for request {}: {}",
                     req_id,
                     e
                 );
             }
-            result.is_err()
+            let vault_result_is_err = match back_vault {
+                Some(mut back_vault) => {
+                    let vault_result = delete_at_request_id(
+                        &mut (*back_vault),
+                        req_id,
+                        &PrivDataType::CrsInfo.to_string(),
+                    )
+                    .await;
+                    if let Err(e) = &vault_result {
+                        tracing::warn!(
+                            "Failed to delete CRS info from backup storage for request {}: {}",
+                            req_id,
+                            e
+                        );
+                    }
+                    vault_result.is_err()
+                }
+                None => false, // No backup vault, so no error
+            };
+            priv_result.is_err() || vault_result_is_err
         };
         let (r1, r2) = tokio::join!(f1, f2);
         if r1 || r2 {

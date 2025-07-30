@@ -9,7 +9,7 @@ use crate::{
         keychain::KeychainProxy,
         storage::{
             crypto_material::ThresholdCryptoMaterialStorage, read_all_data_versioned,
-            store_versioned_at_request_id, Storage,
+            store_versioned_at_request_id, Storage, StorageReader,
         },
         Vault,
     },
@@ -157,4 +157,80 @@ where
         .await?;
     }
     Ok(())
+}
+
+impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+{
+    pub async fn update_backup_vault(&self) -> anyhow::Result<()> {
+        match self.crypto_storage.inner.backup_vault {
+            Some(ref backup_vault) => {
+                let private_storage = self.crypto_storage.get_private_storage().clone();
+                let private_storage = private_storage.lock().await;
+                let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
+                    backup_vault.lock().await;
+                // For each data type in the private storage check if the data is in the backup vault.
+                // If not, restore it.
+                let versioned_data: HashMap<RequestId, ThresholdFheKeys> = read_all_data_versioned(
+                    &*private_storage,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await?;
+                for (request_id, data) in versioned_data.iter() {
+                    if !backup_vault
+                        .data_exists(request_id, &PrivDataType::FheKeyInfo.to_string())
+                        .await?
+                    {
+                        store_versioned_at_request_id(
+                            &mut *backup_vault,
+                            request_id,
+                            data,
+                            &PrivDataType::FheKeyInfo.to_string(),
+                        )
+                        .await?;
+                    }
+                }
+                let versioned_data: HashMap<RequestId, PrivateSigKey> = read_all_data_versioned(
+                    &*private_storage,
+                    &PrivDataType::SigningKey.to_string(),
+                )
+                .await?;
+                for (request_id, data) in versioned_data.iter() {
+                    if !backup_vault
+                        .data_exists(request_id, &PrivDataType::SigningKey.to_string())
+                        .await?
+                    {
+                        store_versioned_at_request_id(
+                            &mut *backup_vault,
+                            request_id,
+                            data,
+                            &PrivDataType::SigningKey.to_string(),
+                        )
+                        .await?;
+                    }
+                }
+                let versioned_data: HashMap<RequestId, SignedPubDataHandleInternal> =
+                    read_all_data_versioned(&*private_storage, &PrivDataType::CrsInfo.to_string())
+                        .await?;
+                for (request_id, data) in versioned_data.iter() {
+                    if !backup_vault
+                        .data_exists(request_id, &PrivDataType::CrsInfo.to_string())
+                        .await?
+                    {
+                        store_versioned_at_request_id(
+                            &mut *backup_vault,
+                            request_id,
+                            data,
+                            &PrivDataType::CrsInfo.to_string(),
+                        )
+                        .await?;
+                    }
+                }
+                Ok(())
+            }
+            None => Ok(()),
+        }
+    }
 }

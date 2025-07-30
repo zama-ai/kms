@@ -2467,6 +2467,8 @@ pub(crate) mod tests {
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
     use crate::util::key_setup::max_threshold;
+    #[cfg(feature = "insecure")]
+    use crate::util::key_setup::test_tools::purge_backup;
     use crate::util::key_setup::test_tools::{
         compute_cipher_from_stored_key, purge, EncryptionConfig, TestingPlaintext,
     };
@@ -5930,7 +5932,6 @@ pub(crate) mod tests {
         // NOTE: amount_parties must not be too high
         // because every party will load all the keys and each ServerKey is 1.5 GB
         // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
-        use crate::engine::base::derive_request_id;
 
         let param = FheParameter::Default;
         let dkg_param: WrappedDKGParams = param.into();
@@ -6046,26 +6047,51 @@ pub(crate) mod tests {
         // NOTE: amount_parties must not be too high
         // because every party will load all the keys and each ServerKey is 1.5 GB
         // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
-        use crate::engine::base::derive_request_id;
 
         let amount_parties = 4;
         let param = FheParameter::Default;
         let dkg_param: WrappedDKGParams = param.into();
 
-        let key_id: RequestId = derive_request_id(&format!(
-            "default_insecure_dkg_backup_{amount_parties}_{param:?}",
+        let key_id_1: RequestId = derive_request_id(&format!(
+            "default_insecure_dkg_backup_1_{amount_parties}_{param:?}",
         ))
         .unwrap();
+        let key_id_2: RequestId = derive_request_id(&format!(
+            "default_insecure_dkg_backup_2_{amount_parties}_{param:?}",
+        ))
+        .unwrap();
+
         let test_path = None;
-        purge(test_path, test_path, test_path, &key_id, amount_parties).await;
+        purge(test_path, test_path, test_path, &key_id_1, amount_parties).await;
+        purge(test_path, test_path, test_path, &key_id_2, amount_parties).await;
         let (_kms_servers, kms_clients, internal_client) =
             threshold_handles(*dkg_param, amount_parties, true, None, None).await;
-        let keys = run_threshold_keygen(
+
+        // Purge the backup after booting the server to ensure nothing is backeup automatically during boot
+        purge_backup(test_path, amount_parties).await;
+        let keys_1 = run_threshold_keygen(
             param,
             &kms_clients,
             &internal_client,
             None,
-            &key_id,
+            &key_id_1,
+            None,
+            None,
+            true,
+        )
+        .await;
+        // check that we have the new mod switch key
+        let (client_key_1, _, server_key_1) = keys_1.clone().get_standard();
+        check_conformance(server_key_1, client_key_1);
+        let panic_res = std::panic::catch_unwind(|| keys_1.get_decompression_only());
+        assert!(panic_res.is_err());
+
+        let keys_2 = run_threshold_keygen(
+            param,
+            &kms_clients,
+            &internal_client,
+            None,
+            &key_id_2,
             None,
             None,
             true,
@@ -6073,10 +6099,9 @@ pub(crate) mod tests {
         .await;
 
         // check that we have the new mod switch key
-        let (client_key, _, server_key) = keys.clone().get_standard();
-        check_conformance(server_key, client_key);
-
-        let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
+        let (client_key_2, _, server_key_2) = keys_2.clone().get_standard();
+        check_conformance(server_key_2, client_key_2);
+        let panic_res = std::panic::catch_unwind(|| keys_2.get_decompression_only());
         assert!(panic_res.is_err());
 
         // Generated key, delete private storage
@@ -6087,11 +6112,12 @@ pub(crate) mod tests {
                 Some(Role::indexed_from_one(i)),
             )
             .unwrap();
-            delete_all_at_request_id(&mut priv_storage, &key_id).await;
+            delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
+            delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
         }
         // Make sure file is actually deleted
         tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-        // Now try to restore
+        // Now try to restore both keys
         let mut resp_tasks = JoinSet::new();
         for i in 1..=amount_parties as u32 {
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
@@ -6121,7 +6147,7 @@ pub(crate) mod tests {
         // And validate that we can still decrypt
         decryption_threshold(
             DEFAULT_PARAM,
-            &key_id,
+            &key_id_1,
             vec![TestingPlaintext::U8(42)],
             EncryptionConfig {
                 compression: true,
@@ -6133,6 +6159,191 @@ pub(crate) mod tests {
             Some(DecryptionMode::NoiseFloodSmall),
         )
         .await;
+        decryption_threshold(
+            DEFAULT_PARAM,
+            &key_id_2,
+            vec![TestingPlaintext::U8(42)],
+            EncryptionConfig {
+                compression: true,
+                precompute_sns: false,
+            },
+            1,
+            amount_parties,
+            None,
+            Some(DecryptionMode::NoiseFloodSmall),
+        )
+        .await;
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tracing_test::traced_test]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn default_insecure_autobackup_after_deletion() {
+        // NOTE: amount_parties must not be too high
+        // because every party will load all the keys and each ServerKey is 1.5 GB
+        // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
+        use crate::conf::FileStorage as FileStorageConf;
+        use crate::conf::Storage as StorageConf;
+
+        let amount_parties = 4;
+        let param = FheParameter::Default;
+        let dkg_param: WrappedDKGParams = param.into();
+
+        let key_id: RequestId = derive_request_id(&format!(
+            "default_insecure_autobackup_after_deletion_{amount_parties}_{param:?}",
+        ))
+        .unwrap();
+        let test_path = None;
+
+        purge(test_path, test_path, test_path, &key_id, amount_parties).await;
+        let (kms_servers, kms_clients, internal_client) =
+            threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+
+        let keys = run_threshold_keygen(
+            param,
+            &kms_clients,
+            &internal_client,
+            None,
+            &key_id,
+            None,
+            None,
+            true,
+        )
+        .await;
+        // check that we have the new mod switch key
+        let (client_key_1, _, server_key_1) = keys.clone().get_standard();
+        check_conformance(server_key_1, client_key_1);
+        let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
+        assert!(panic_res.is_err());
+
+        // Purge the backup
+        purge_backup(test_path, amount_parties).await;
+
+        // Reboot the servers
+        drop(kms_servers);
+        drop(kms_clients);
+        drop(internal_client);
+        // Sleep to ensure the servers are properly shut down
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // Start the servers again
+        let (_kms_servers, _kms_clients, _internal_client) =
+            threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+        // Check the storage
+        let vault_storage_option = test_path.map(|path| {
+            StorageConf::File(FileStorageConf {
+                path: path.to_path_buf(),
+            })
+        });
+        for cur_party in 1..=amount_parties {
+            let backup_storage = make_storage(
+                vault_storage_option.clone(),
+                StorageType::BACKUP,
+                Some(Role::indexed_from_one(cur_party)),
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(backup_storage
+                .data_exists(&key_id, &PrivDataType::FheKeyInfo.to_string())
+                .await
+                .unwrap());
+        }
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tracing_test::traced_test]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn default_insecure_crs_backup() {
+        let amount_parties = 4;
+        let param = FheParameter::Default;
+        let dkg_param: WrappedDKGParams = param.into();
+
+        let req_id: RequestId = derive_request_id(&format!(
+            "default_insecure_crs_backup{amount_parties}_{param:?}",
+        ))
+        .unwrap();
+        let test_path = None;
+        purge(test_path, test_path, test_path, &req_id, amount_parties).await;
+        let (_kms_servers, kms_clients, internal_client) =
+            threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+        // Purge the backup after booting the server to ensure nothing is backeup automatically during boot
+        purge_backup(test_path, amount_parties).await;
+
+        run_crs(
+            param,
+            &kms_clients,
+            &internal_client,
+            true, // insecure execution
+            &req_id,
+            Some(16),
+        )
+        .await;
+
+        // Generated crs, delete it from private storage
+        for i in 1..=amount_parties {
+            let mut priv_storage: FileStorage =
+                FileStorage::new(None, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap();
+            delete_all_at_request_id(&mut priv_storage, &req_id).await;
+        }
+
+        // Make sure file is actually deleted
+        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
+        // Now try to restore
+        let mut resp_tasks = JoinSet::new();
+        for i in 1..=amount_parties as u32 {
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            resp_tasks.spawn(async move {
+                let req = Empty {};
+                // send query
+                cur_client
+                    .custodian_backup_restore(tonic::Request::new(req))
+                    .await
+            });
+        }
+        while let Some(res) = resp_tasks.join_next().await {
+            match res {
+                Ok(res) => match res {
+                    Ok(resp) => {
+                        println!("Custodian backup restore response: {resp:?}");
+                    }
+                    Err(e) => {
+                        panic!("Error while restoring: {e}");
+                    }
+                },
+                Err(e) => {
+                    panic!("Error while joining threads: {e}");
+                }
+            }
+        }
+
+        // Trying to restore again will fail since the file is already restored
+        let mut resp_tasks = JoinSet::new();
+        for i in 1..=amount_parties as u32 {
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            resp_tasks.spawn(async move {
+                let req = Empty {};
+                // send query
+                cur_client
+                    .custodian_backup_restore(tonic::Request::new(req))
+                    .await
+            });
+        }
+        while let Some(res) = resp_tasks.join_next().await {
+            match res {
+                Ok(res) => {
+                    if res.is_ok() {
+                        panic!("Expected a failure");
+                    }
+                }
+                Err(e) => {
+                    panic!("Error while joning threads: {e}");
+                }
+            }
+        }
     }
 
     #[cfg(all(feature = "slow_tests", feature = "insecure"))]

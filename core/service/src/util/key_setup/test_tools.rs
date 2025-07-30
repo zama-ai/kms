@@ -530,6 +530,20 @@ pub async fn purge(
     }
 }
 
+pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
+    for cur_party in 1..=amount_parties {
+        let final_path = match backup_path {
+            Some(path) => path.to_path_buf(),
+            None => FileStorage::default_path(
+                StorageType::BACKUP,
+                Some(Role::indexed_from_one(cur_party)),
+            )
+            .unwrap(),
+        };
+        tokio::fs::remove_dir_all(&final_path).await.unwrap();
+    }
+}
+
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod setup {
     #[cfg(feature = "slow_tests")]
