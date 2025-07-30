@@ -67,6 +67,7 @@
 //! ```
 //! node --test tests/js
 //! ```
+use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::hybrid_ml_kem;
 use crate::cryptography::internal_crypto_types::{PrivateEncKey, PublicEncKey};
 use bc2wrap::{deserialize, serialize};
@@ -324,7 +325,14 @@ pub fn ml_kem_pke_get_pk(sk: &PrivateEncKeyMlKem512) -> PublicEncKeyMlKem512 {
 
 #[wasm_bindgen]
 pub fn ml_kem_pke_pk_to_u8vec(pk: &PublicEncKeyMlKem512) -> Result<Vec<u8>, JsError> {
-    serialize(&pk.0).map_err(|e| JsError::new(&e.to_string()))
+    let mut enc_key_buf = Vec::new();
+    tfhe::safe_serialization::safe_serialize(
+        &UnifiedPublicEncKey::MlKem512(pk.0.clone()),
+        &mut enc_key_buf,
+        SAFE_SER_SIZE_LIMIT,
+    )
+    .map_err(|e| JsError::new(&e.to_string()))?;
+    Ok(enc_key_buf)
 }
 
 #[wasm_bindgen]
@@ -334,9 +342,12 @@ pub fn ml_kem_pke_sk_to_u8vec(sk: &PrivateEncKeyMlKem512) -> Result<Vec<u8>, JsE
 
 #[wasm_bindgen]
 pub fn u8vec_to_ml_kem_pke_pk(v: &[u8]) -> Result<PublicEncKeyMlKem512, JsError> {
-    deserialize::<PublicEncKey<ml_kem::MlKem512>>(v)
-        .map(PublicEncKeyMlKem512)
-        .map_err(|e| JsError::new(&e.to_string()))
+    tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
+        std::io::Cursor::new(v),
+        SAFE_SER_SIZE_LIMIT,
+    )
+    .map(|x| PublicEncKeyMlKem512(x.unwrap_ml_kem_512()))
+    .map_err(|e| JsError::new(&e.to_string()))
 }
 
 #[wasm_bindgen]

@@ -40,8 +40,12 @@ test('pke', (_t) => {
 
     // there is extra 8 bytes in the bincode encoding to encode the vector length
     // see https://github.com/bincode-org/bincode/blob/trunk/docs/spec.md#linear-collections-vec-arrays-etc
-    assert.deepEqual(ml_kem_pke_pk_len() + 8, pk_buf.length);
     assert.deepEqual(ml_kem_pke_sk_len() + 8, sk_buf.length);
+
+    // since this is serialized using safe_serialization,
+    // we just checke that the length is within a certain range
+    assert(pk_buf.length > ml_kem_pke_pk_len());
+    assert(pk_buf.length < ml_kem_pke_pk_len() + 100); // the metadata should not be more than 100 bytes
 
     // try to deserialize
     let sk_2 = u8vec_to_ml_kem_pke_sk(sk_buf);
