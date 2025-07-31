@@ -42,6 +42,8 @@ mkdir -p $KEY_PATH
 $MOBYGO_EXEC -c $1 threshold-key-gen-result --sid $CURR_SID  --storage-path $KEY_PATH
 CURR_SID=$(( CURR_SID + 1 ))
 
+exit 1
+
 if [ $2 = "GEN" ]; then
     echo "Generating ctxts"
     mkdir -p $CTXT_PATH
