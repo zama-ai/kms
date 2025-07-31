@@ -92,6 +92,33 @@ where
         }
     }
 }
+macro_rules! restore_data_type {
+    ($priv_storage:expr, $backup_vault:expr, $data_type_enum:expr, $data_type:ty) => {{
+        let req_ids = $backup_vault
+            .all_data_ids(&$data_type_enum.to_string().to_string())
+            .await?;
+        for request_id in req_ids.iter() {
+            if $priv_storage
+                .data_exists(request_id, &$data_type_enum.to_string())
+                .await?
+            {
+                tracing::warn!(
+                    "Data for {:?} with request ID {request_id} already exists. I am NOT overwriting it!", $data_type_enum);
+                    continue;
+            }
+            let cur_data: $data_type = $backup_vault
+                .read_data(request_id, &$data_type_enum.to_string())
+                .await?;
+            store_versioned_at_request_id(
+                &mut **$priv_storage,
+                request_id,
+                &cur_data,
+                &$data_type_enum.to_string(),
+            )
+            .await?;
+        }
+    }};
+}
 
 async fn restore_data<PrivS>(
     backup_vault: &MutexGuard<'_, Vault>,
@@ -100,63 +127,50 @@ async fn restore_data<PrivS>(
 where
     PrivS: Storage + Sync + Send + 'static,
 {
-    // TODO do as macro
-    // Restore FHE keys
-    let versioned_data: HashMap<RequestId, ThresholdFheKeys> =
-        read_all_data_versioned(&**backup_vault, &PrivDataType::FheKeyInfo.to_string()).await?;
-    for (request_id, data) in versioned_data.iter() {
-        if priv_storage
-            .data_exists(request_id, &PrivDataType::FheKeyInfo.to_string())
-            .await?
-        {
-            return Err(anyhow_error_and_log(format!("Data for {:?} with request ID {request_id} already exists. Cancelling restore to avoid overwriting existing data.", PrivDataType::FheKeyInfo)));
-        }
-        store_versioned_at_request_id(
-            &mut **priv_storage,
-            request_id,
-            data,
-            &PrivDataType::FheKeyInfo.to_string(),
-        )
-        .await?;
-    }
-
-    // Restore Signing key
-    let versioned_data: HashMap<RequestId, PrivateSigKey> =
-        read_all_data_versioned(&**backup_vault, &PrivDataType::SigningKey.to_string()).await?;
-    for (request_id, data) in versioned_data.iter() {
-        if priv_storage
-            .data_exists(request_id, &PrivDataType::SigningKey.to_string())
-            .await?
-        {
-            return Err(anyhow_error_and_log(format!("Data for {:?} with request ID {request_id} already exists. Cancelling restore to avoid overwriting existing data.", PrivDataType::SigningKey)));
-        }
-        store_versioned_at_request_id(
-            &mut **priv_storage,
-            request_id,
-            data,
-            &PrivDataType::SigningKey.to_string(),
-        )
-        .await?;
-    }
-    // Restore CRS info
-    let versioned_data: HashMap<RequestId, SignedPubDataHandleInternal> =
-        read_all_data_versioned(&**backup_vault, &PrivDataType::CrsInfo.to_string()).await?;
-    for (request_id, data) in versioned_data.iter() {
-        if priv_storage
-            .data_exists(request_id, &PrivDataType::CrsInfo.to_string())
-            .await?
-        {
-            return Err(anyhow_error_and_log(format!("Data for {:?} with request ID {request_id} already exists. Cancelling restore to avoid overwriting existing data.", PrivDataType::CrsInfo)));
-        }
-        store_versioned_at_request_id(
-            &mut **priv_storage,
-            request_id,
-            data,
-            &PrivDataType::CrsInfo.to_string(),
-        )
-        .await?;
-    }
+    restore_data_type!(
+        priv_storage,
+        backup_vault,
+        PrivDataType::FheKeyInfo,
+        ThresholdFheKeys
+    );
+    restore_data_type!(
+        priv_storage,
+        backup_vault,
+        PrivDataType::SigningKey,
+        PrivateSigKey
+    );
+    restore_data_type!(
+        priv_storage,
+        backup_vault,
+        PrivDataType::CrsInfo,
+        SignedPubDataHandleInternal
+    );
     Ok(())
+}
+
+macro_rules! update_specific_backup_vault {
+    ($priv_storage:expr, $backup_vault:expr, $data_type_enum:expr, $serialized_data_type:ty) => {{
+        let req_ids = $priv_storage
+            .all_data_ids(&$data_type_enum.to_string().to_string())
+            .await?;
+        for request_id in req_ids.iter() {
+            if !$backup_vault
+                .data_exists(request_id, &$data_type_enum.to_string())
+                .await?
+            {
+                let cur_data: $serialized_data_type = $priv_storage
+                    .read_data(request_id, &$data_type_enum.to_string())
+                    .await?;
+                store_versioned_at_request_id(
+                    &mut *$backup_vault,
+                    request_id,
+                    &cur_data,
+                    &$data_type_enum.to_string(),
+                )
+                .await?;
+            }
+        }
+    }};
 }
 
 impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
@@ -171,63 +185,25 @@ where
                 let private_storage = private_storage.lock().await;
                 let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
                     backup_vault.lock().await;
-                // For each data type in the private storage check if the data is in the backup vault.
-                // If not, restore it.
-                let versioned_data: HashMap<RequestId, ThresholdFheKeys> = read_all_data_versioned(
-                    &*private_storage,
-                    &PrivDataType::FheKeyInfo.to_string(),
-                )
-                .await?;
-                for (request_id, data) in versioned_data.iter() {
-                    if !backup_vault
-                        .data_exists(request_id, &PrivDataType::FheKeyInfo.to_string())
-                        .await?
-                    {
-                        store_versioned_at_request_id(
-                            &mut *backup_vault,
-                            request_id,
-                            data,
-                            &PrivDataType::FheKeyInfo.to_string(),
-                        )
-                        .await?;
-                    }
-                }
-                let versioned_data: HashMap<RequestId, PrivateSigKey> = read_all_data_versioned(
-                    &*private_storage,
-                    &PrivDataType::SigningKey.to_string(),
-                )
-                .await?;
-                for (request_id, data) in versioned_data.iter() {
-                    if !backup_vault
-                        .data_exists(request_id, &PrivDataType::SigningKey.to_string())
-                        .await?
-                    {
-                        store_versioned_at_request_id(
-                            &mut *backup_vault,
-                            request_id,
-                            data,
-                            &PrivDataType::SigningKey.to_string(),
-                        )
-                        .await?;
-                    }
-                }
-                let versioned_data: HashMap<RequestId, SignedPubDataHandleInternal> =
-                    read_all_data_versioned(&*private_storage, &PrivDataType::CrsInfo.to_string())
-                        .await?;
-                for (request_id, data) in versioned_data.iter() {
-                    if !backup_vault
-                        .data_exists(request_id, &PrivDataType::CrsInfo.to_string())
-                        .await?
-                    {
-                        store_versioned_at_request_id(
-                            &mut *backup_vault,
-                            request_id,
-                            data,
-                            &PrivDataType::CrsInfo.to_string(),
-                        )
-                        .await?;
-                    }
-                }
+
+                update_specific_backup_vault!(
+                    *private_storage,
+                    backup_vault,
+                    PrivDataType::FheKeyInfo,
+                    ThresholdFheKeys
+                );
+                update_specific_backup_vault!(
+                    *private_storage,
+                    backup_vault,
+                    PrivDataType::SigningKey,
+                    PrivateSigKey
+                );
+                update_specific_backup_vault!(
+                    *private_storage,
+                    backup_vault,
+                    PrivDataType::CrsInfo,
+                    SignedPubDataHandleInternal
+                );
                 Ok(())
             }
             None => Ok(()),
