@@ -1213,7 +1213,7 @@ mod tests {
         let results_dec = threshold_decrypt64::<
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(&runtime, &raw_ct, DecryptionMode::NoiseFloodSmall)
+        >(&runtime, &raw_ct, DecryptionMode::NoiseFloodSmall, &[])
         .unwrap();
         let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
         let ref_res = std::num::Wrapping(msg as u64);
@@ -1243,7 +1243,7 @@ mod tests {
         let results_dec = threshold_decrypt64::<
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(&runtime, &raw_ct, DecryptionMode::NoiseFloodSmall)
+        >(&runtime, &raw_ct, DecryptionMode::NoiseFloodSmall, &[])
         .unwrap();
         let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
         let ref_res = std::num::Wrapping(msg as u64);

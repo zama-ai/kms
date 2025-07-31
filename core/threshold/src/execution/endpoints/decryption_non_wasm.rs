@@ -255,6 +255,34 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
     }
 }
 
+#[cfg(any(feature = "testing", test))]
+pub struct MaliciousOnlineNoiseFloodDecryption;
+
+#[cfg(any(feature = "testing", test))]
+#[async_trait]
+impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
+    for MaliciousOnlineNoiseFloodDecryption
+{
+    async fn decrypt<
+        S: BaseSessionHandles,
+        P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
+        T,
+    >(
+        _session: &mut S,
+        _preprocessing: &mut P,
+        _keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
+        _ciphertext: &SnsRadixOrBoolCiphertext,
+        _ddec_key_type: SnsDecryptionKeyType,
+    ) -> anyhow::Result<T>
+    where
+        T: tfhe::integer::block_decomposition::Recomposable
+            + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
+    {
+        Ok(T::ZERO)
+    }
+}
+
 /// Decrypts a ciphertext using noise flooding.
 ///
 /// Returns the plaintext plus some timing information.
@@ -368,6 +396,8 @@ where
 /// 3. The local decryption is executed, without opening the result resulting in a partial decryption
 /// 4. The results are returned
 ///
+/// There is no "online" phase for partial decryption because all computation is local,
+/// that's why there are no traits similar to [OnlineNoiseFloodDecryption].
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 #[instrument(skip_all, fields(sid, own_identity))]
 pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P>(
@@ -710,6 +740,7 @@ pub fn threshold_decrypt64<Z: Ring, const EXTENSION_DEGREE: usize>(
     runtime: &DistributedTestRuntime<Z, EXTENSION_DEGREE>,
     ct: &RadixOrBoolCiphertext,
     mode: DecryptionMode,
+    malicious_set: &[usize],
 ) -> anyhow::Result<HashMap<Identity, Z64>>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -748,6 +779,7 @@ where
         let net = Arc::clone(&runtime.user_nets[index_id]);
         let threshold = runtime.threshold;
         let ct = ct.clone();
+        let malicious_set = malicious_set.to_vec();
 
         let party_keyshare = runtime
             .keyshares
@@ -783,15 +815,37 @@ where
                         .init_prep_noiseflooding(ct.len())
                         .await
                         .unwrap();
-                    let out = run_decryption_noiseflood_64(
-                        session_noiseflood.session.get_mut(),
-                        &mut noiseflood_preprocessing,
-                        &party_keyshare,
-                        &large_ct,
-                        SnsDecryptionKeyType::SnsKey,
-                    )
-                    .await
-                    .unwrap();
+                    let out = if malicious_set.contains(&index_id) {
+                        run_decryption_noiseflood_64::<
+                            EXTENSION_DEGREE,
+                            _,
+                            _,
+                            MaliciousOnlineNoiseFloodDecryption,
+                        >(
+                            session_noiseflood.session.get_mut(),
+                            &mut noiseflood_preprocessing,
+                            &party_keyshare,
+                            &large_ct,
+                            SnsDecryptionKeyType::SnsKey,
+                        )
+                        .await
+                        .unwrap()
+                    } else {
+                        run_decryption_noiseflood_64::<
+                            EXTENSION_DEGREE,
+                            _,
+                            _,
+                            SecureOnlineNoiseFloodDecryption,
+                        >(
+                            session_noiseflood.session.get_mut(),
+                            &mut noiseflood_preprocessing,
+                            &party_keyshare,
+                            &large_ct,
+                            SnsDecryptionKeyType::SnsKey,
+                        )
+                        .await
+                        .unwrap()
+                    };
 
                     (identity, out)
                 });
@@ -805,15 +859,37 @@ where
                         .init_prep_noiseflooding(ct.len())
                         .await
                         .unwrap();
-                    let out = run_decryption_noiseflood_64(
-                        session_noiseflood.session.get_mut(),
-                        &mut noiseflood_preprocessing,
-                        &party_keyshare,
-                        &large_ct,
-                        SnsDecryptionKeyType::SnsKey,
-                    )
-                    .await
-                    .unwrap();
+                    let out = if malicious_set.contains(&index_id) {
+                        run_decryption_noiseflood_64::<
+                            EXTENSION_DEGREE,
+                            _,
+                            _,
+                            MaliciousOnlineNoiseFloodDecryption,
+                        >(
+                            session_noiseflood.session.get_mut(),
+                            &mut noiseflood_preprocessing,
+                            &party_keyshare,
+                            &large_ct,
+                            SnsDecryptionKeyType::SnsKey,
+                        )
+                        .await
+                        .unwrap()
+                    } else {
+                        run_decryption_noiseflood_64::<
+                            EXTENSION_DEGREE,
+                            _,
+                            _,
+                            SecureOnlineNoiseFloodDecryption,
+                        >(
+                            session_noiseflood.session.get_mut(),
+                            &mut noiseflood_preprocessing,
+                            &party_keyshare,
+                            &large_ct,
+                            SnsDecryptionKeyType::SnsKey,
+                        )
+                        .await
+                        .unwrap()
+                    };
 
                     (identity, out)
                 });
@@ -825,15 +901,19 @@ where
                     let mut prep = secure_init_prep_bitdec_large_session(&mut session, ct.len())
                         .await
                         .unwrap();
-                    let out = run_decryption_bitdec_64(
-                        &mut session,
-                        &mut prep,
-                        &party_keyshare,
-                        &ks_key,
-                        &ct,
-                    )
-                    .await
-                    .unwrap();
+                    let out = if malicious_set.contains(&index_id) {
+                        unimplemented!("malicious unimplemented")
+                    } else {
+                        run_decryption_bitdec_64(
+                            &mut session,
+                            &mut prep,
+                            &party_keyshare,
+                            &ks_key,
+                            &ct,
+                        )
+                        .await
+                        .unwrap()
+                    };
 
                     (identity, out)
                 });
@@ -847,15 +927,19 @@ where
                     let mut prep = secure_init_prep_bitdec_small_session(&mut session, ct.len())
                         .await
                         .unwrap();
-                    let out = run_decryption_bitdec_64(
-                        &mut session,
-                        &mut prep,
-                        &party_keyshare,
-                        &ks_key,
-                        &ct,
-                    )
-                    .await
-                    .unwrap();
+                    let out = if malicious_set.contains(&index_id) {
+                        unimplemented!("malicious unimplemented")
+                    } else {
+                        run_decryption_bitdec_64(
+                            &mut session,
+                            &mut prep,
+                            &party_keyshare,
+                            &ks_key,
+                            &ct,
+                        )
+                        .await
+                        .unwrap()
+                    };
                     (identity, out)
                 });
             }
@@ -958,6 +1042,7 @@ pub async fn run_decryption_noiseflood_64<
     const EXTENSION_DEGREE: usize,
     S: BaseSessionHandles,
     P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
+    O: OnlineNoiseFloodDecryption<EXTENSION_DEGREE>,
 >(
     session: &mut S,
     preprocessing: &mut P,
@@ -968,14 +1053,8 @@ pub async fn run_decryption_noiseflood_64<
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
 {
-    let res = run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, u64>(
-        session,
-        preprocessing,
-        keyshares,
-        ciphertext,
-        ddec_key_type,
-    )
-    .await?;
+    let res = O::decrypt::<_, _, u64>(session, preprocessing, keyshares, ciphertext, ddec_key_type)
+        .await?;
     Ok(Wrapping(res))
 }
 
@@ -1306,46 +1385,47 @@ mod tests {
 
     #[test]
     fn test_large_threshold_decrypt_f4() {
-        test_large_threshold_decrypt::<4>()
+        test_large_threshold_decrypt::<4>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[test]
     fn test_large_threshold_decrypt_f3() {
-        test_large_threshold_decrypt::<3>()
+        test_large_threshold_decrypt::<3>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_5")]
     #[test]
     fn test_large_threshold_decrypt_f5() {
-        test_large_threshold_decrypt::<5>()
+        test_large_threshold_decrypt::<5>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_6")]
     #[test]
     fn test_large_threshold_decrypt_f6() {
-        test_large_threshold_decrypt::<6>()
+        test_large_threshold_decrypt::<6>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_7")]
     #[test]
     fn test_large_threshold_decrypt_f7() {
-        test_large_threshold_decrypt::<7>()
+        test_large_threshold_decrypt::<7>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_large_threshold_decrypt_f8() {
-        test_large_threshold_decrypt::<8>()
+        test_large_threshold_decrypt::<8>(1, 5, &[])
     }
 
-    fn test_large_threshold_decrypt<const EXTENSION_DEGREE: usize>()
-    where
+    fn test_large_threshold_decrypt<const EXTENSION_DEGREE: usize>(
+        threshold: usize,
+        num_parties: usize,
+        malicious_set: &[usize],
+    ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
     {
-        let threshold = 1;
-        let num_parties = 5;
         let msg: u8 = 3;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let params = keyset.get_cpu_params().unwrap();
@@ -1368,8 +1448,13 @@ mod tests {
         runtime.setup_sks(key_shares);
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
-        let results_dec =
-            threshold_decrypt64(&runtime, &ct, DecryptionMode::NoiseFloodLarge).unwrap();
+        let results_dec = threshold_decrypt64(
+            &runtime,
+            &ct,
+            DecryptionMode::NoiseFloodLarge,
+            malicious_set,
+        )
+        .unwrap();
         let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
 
         let ref_res = std::num::Wrapping(msg as u64);
@@ -1378,46 +1463,52 @@ mod tests {
 
     #[test]
     fn test_small_threshold_decrypt_f4() {
-        test_small_threshold_decrypt::<4>()
+        test_small_threshold_decrypt::<4>(1, 4, &[])
+    }
+
+    #[test]
+    fn test_small_threshold_decrypt_malicious_f4() {
+        test_small_threshold_decrypt::<4>(1, 4, &[1])
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[test]
     fn test_small_threshold_decrypt_f3() {
-        test_small_threshold_decrypt::<3>()
+        test_small_threshold_decrypt::<3>(1, 4, &[])
     }
 
     #[cfg(feature = "extension_degree_5")]
     #[test]
     fn test_small_threshold_decrypt_f5() {
-        test_small_threshold_decrypt::<5>()
+        test_small_threshold_decrypt::<5>(1, 4, &[])
     }
 
     #[cfg(feature = "extension_degree_6")]
     #[test]
     fn test_small_threshold_decrypt_f6() {
-        test_small_threshold_decrypt::<6>()
+        test_small_threshold_decrypt::<6>(1, 4, &[])
     }
 
     #[cfg(feature = "extension_degree_7")]
     #[test]
     fn test_small_threshold_decrypt_f7() {
-        test_small_threshold_decrypt::<7>()
+        test_small_threshold_decrypt::<7>(1, 4, &[])
     }
 
     #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_small_threshold_decrypt_f8() {
-        test_small_threshold_decrypt::<8>()
+        test_small_threshold_decrypt::<8>(1, 4, &[])
     }
 
-    fn test_small_threshold_decrypt<const EXTENSION_DEGREE: usize>()
-    where
+    fn test_small_threshold_decrypt<const EXTENSION_DEGREE: usize>(
+        threshold: usize,
+        num_parties: usize,
+        malicious_set: &[usize],
+    ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
     {
-        let threshold = 1;
-        let num_parties = 4;
         let msg: u8 = 3;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let params = keyset.get_cpu_params().unwrap();
@@ -1440,8 +1531,13 @@ mod tests {
         runtime.setup_server_key(Arc::new(keyset.public_keys.server_key.clone()));
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
-        let results_dec =
-            threshold_decrypt64(&runtime, &ct, DecryptionMode::NoiseFloodSmall).unwrap();
+        let results_dec = threshold_decrypt64(
+            &runtime,
+            &ct,
+            DecryptionMode::NoiseFloodSmall,
+            malicious_set,
+        )
+        .unwrap();
         let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
 
         let ref_res = std::num::Wrapping(msg as u64);
@@ -1450,46 +1546,47 @@ mod tests {
 
     #[test]
     fn test_small_bitdec_threshold_decrypt_f4() {
-        test_small_bitdec_threshold_decrypt::<4>()
+        test_small_bitdec_threshold_decrypt::<4>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[test]
     fn test_small_bitdec_threshold_decrypt_f3() {
-        test_small_bitdec_threshold_decrypt::<3>()
+        test_small_bitdec_threshold_decrypt::<3>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_5")]
     #[test]
     fn test_small_bitdec_threshold_decrypt_f5() {
-        test_small_bitdec_threshold_decrypt::<5>()
+        test_small_bitdec_threshold_decrypt::<5>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_6")]
     #[test]
     fn test_small_bitdec_threshold_decrypt_f6() {
-        test_small_bitdec_threshold_decrypt::<6>()
+        test_small_bitdec_threshold_decrypt::<6>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_7")]
     #[test]
     fn test_small_bitdec_threshold_decrypt_f7() {
-        test_small_bitdec_threshold_decrypt::<7>()
+        test_small_bitdec_threshold_decrypt::<7>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_small_bitdec_threshold_decrypt_f8() {
-        test_small_bitdec_threshold_decrypt::<8>()
+        test_small_bitdec_threshold_decrypt::<8>(1, 5, &[])
     }
 
-    fn test_small_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>()
-    where
+    fn test_small_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>(
+        threshold: usize,
+        num_parties: usize,
+        malicious_set: &[usize],
+    ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
     {
-        let threshold = 1;
-        let num_parties = 5;
         let msg: u8 = 3;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let params = keyset.get_cpu_params().unwrap();
@@ -1528,7 +1625,8 @@ mod tests {
         );
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
-        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmall).unwrap();
+        let results_dec =
+            threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmall, malicious_set).unwrap();
         let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
 
         let ref_res = std::num::Wrapping(msg as u64);
@@ -1537,46 +1635,47 @@ mod tests {
 
     #[test]
     fn test_large_bitdec_threshold_decrypt_f4() {
-        test_large_bitdec_threshold_decrypt::<4>()
+        test_large_bitdec_threshold_decrypt::<4>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[test]
     fn test_large_bitdec_threshold_decrypt_f3() {
-        test_large_bitdec_threshold_decrypt::<3>()
+        test_large_bitdec_threshold_decrypt::<3>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_5")]
     #[test]
     fn test_large_bitdec_threshold_decrypt_f5() {
-        test_large_bitdec_threshold_decrypt::<5>()
+        test_large_bitdec_threshold_decrypt::<5>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_6")]
     #[test]
     fn test_large_bitdec_threshold_decrypt_f6() {
-        test_large_bitdec_threshold_decrypt::<6>()
+        test_large_bitdec_threshold_decrypt::<6>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_7")]
     #[test]
     fn test_large_bitdec_threshold_decrypt_f7() {
-        test_large_bitdec_threshold_decrypt::<7>()
+        test_large_bitdec_threshold_decrypt::<7>(1, 5, &[])
     }
 
     #[cfg(feature = "extension_degree_8")]
     #[test]
     fn test_large_bitdec_threshold_decrypt_f8() {
-        test_large_bitdec_threshold_decrypt::<8>()
+        test_large_bitdec_threshold_decrypt::<8>(1, 5, &[])
     }
 
-    fn test_large_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>()
-    where
+    fn test_large_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>(
+        threshold: usize,
+        num_parties: usize,
+        malicious_set: &[usize],
+    ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
     {
-        let threshold = 1;
-        let num_parties = 5;
         let msg: u8 = 15;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH).unwrap();
         let params = keyset.get_cpu_params().unwrap();
@@ -1615,7 +1714,8 @@ mod tests {
         );
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
-        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecLarge).unwrap();
+        let results_dec =
+            threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecLarge, malicious_set).unwrap();
         let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
 
         let ref_res = std::num::Wrapping(msg as u64);
