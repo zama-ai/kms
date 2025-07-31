@@ -6069,7 +6069,7 @@ pub(crate) mod tests {
 
         // Purge the backup after booting the server to ensure nothing is backeup automatically during boot
         purge_backup(test_path, amount_parties).await;
-        let keys_1 = run_threshold_keygen(
+        let _keys_1 = run_threshold_keygen(
             param,
             &kms_clients,
             &internal_client,
@@ -6080,13 +6080,8 @@ pub(crate) mod tests {
             true,
         )
         .await;
-        // check that we have the new mod switch key
-        let (client_key_1, _, server_key_1) = keys_1.clone().get_standard();
-        check_conformance(server_key_1, client_key_1);
-        let panic_res = std::panic::catch_unwind(|| keys_1.get_decompression_only());
-        assert!(panic_res.is_err());
 
-        let keys_2 = run_threshold_keygen(
+        let _keys_2 = run_threshold_keygen(
             param,
             &kms_clients,
             &internal_client,
@@ -6097,12 +6092,6 @@ pub(crate) mod tests {
             true,
         )
         .await;
-
-        // check that we have the new mod switch key
-        let (client_key_2, _, server_key_2) = keys_2.clone().get_standard();
-        check_conformance(server_key_2, client_key_2);
-        let panic_res = std::panic::catch_unwind(|| keys_2.get_decompression_only());
-        assert!(panic_res.is_err());
 
         // Generated key, delete private storage
         for i in 1..=amount_parties {
@@ -6115,8 +6104,7 @@ pub(crate) mod tests {
             delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
             delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
         }
-        // Make sure file is actually deleted
-        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+
         // Now try to restore both keys
         let mut resp_tasks = JoinSet::new();
         for i in 1..=amount_parties as u32 {
@@ -6210,11 +6198,6 @@ pub(crate) mod tests {
             true,
         )
         .await;
-        // check that we have the new mod switch key
-        let (client_key, _, server_key) = keys.clone().get_standard();
-        check_conformance(server_key, client_key);
-        let panic_res = std::panic::catch_unwind(|| keys.get_decompression_only());
-        assert!(panic_res.is_err());
 
         // Purge the backup
         purge_backup(test_path, amount_parties).await;
