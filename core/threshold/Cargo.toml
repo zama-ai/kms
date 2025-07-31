@@ -71,6 +71,7 @@ tfhe = { workspace = true, features = [
     "shortint",
     "integer",
     "zk-pok",
+    "experimental-force_fft_algo_dif4"
 ] }
 tfhe-csprng.workspace = true
 tracing = { workspace = true, features = ["log"] }
