@@ -337,6 +337,25 @@ fn string_to_fhe_types(value: &str) -> anyhow::Result<FheTypes> {
     }
 }
 
+pub fn fhe_type_to_num_bits(fhe_type: FheTypes) -> anyhow::Result<usize> {
+    match fhe_type {
+        FheTypes::Bool => Ok(1_usize),
+        FheTypes::Uint4 => Ok(4_usize),
+        FheTypes::Uint8 => Ok(8_usize),
+        FheTypes::Uint16 => Ok(16_usize),
+        FheTypes::Uint32 => Ok(32_usize),
+        FheTypes::Uint64 => Ok(64_usize),
+        FheTypes::Uint80 => Ok(80_usize),
+        FheTypes::Uint128 => Ok(128_usize),
+        FheTypes::Uint160 => Ok(160_usize),
+        FheTypes::Uint256 => Ok(256_usize),
+        FheTypes::Uint512 => Ok(512_usize),
+        FheTypes::Uint1024 => Ok(1024_usize),
+        FheTypes::Uint2048 => Ok(2048_usize),
+        _ => anyhow::bail!("Unsupported fhe_type: {:?}", fhe_type),
+    }
+}
+
 /// Calculates the number of blocks needed to encode a message of the given FHE
 /// type, based on the usable message modulus log from the
 /// parameters. Rounds up to ensure enough blocks.
@@ -346,24 +365,11 @@ fn string_to_fhe_types(value: &str) -> anyhow::Result<FheTypes> {
 pub fn fhe_types_to_num_blocks(
     fhe_type: FheTypes,
     params: &ClassicPBSParameters,
+    packing_factor: u32,
 ) -> anyhow::Result<usize> {
-    let msg_modulus = params.message_modulus.0.ilog2() as usize;
-    match fhe_type {
-        FheTypes::Bool => Ok(1_usize.div_ceil(msg_modulus)),
-        FheTypes::Uint4 => Ok(4_usize.div_ceil(msg_modulus)),
-        FheTypes::Uint8 => Ok(8_usize.div_ceil(msg_modulus)),
-        FheTypes::Uint16 => Ok(16_usize.div_ceil(msg_modulus)),
-        FheTypes::Uint32 => Ok(32_usize.div_ceil(msg_modulus)),
-        FheTypes::Uint64 => Ok(64_usize.div_ceil(msg_modulus)),
-        FheTypes::Uint80 => Ok(80_usize.div_ceil(msg_modulus)),
-        FheTypes::Uint128 => Ok(128_usize.div_ceil(msg_modulus)),
-        FheTypes::Uint160 => Ok(160_usize.div_ceil(msg_modulus)),
-        FheTypes::Uint256 => Ok(256_usize.div_ceil(msg_modulus)),
-        FheTypes::Uint512 => Ok(512_usize.div_ceil(msg_modulus)),
-        FheTypes::Uint1024 => Ok(1024_usize.div_ceil(msg_modulus)),
-        FheTypes::Uint2048 => Ok(2048_usize.div_ceil(msg_modulus)),
-        _ => anyhow::bail!("Unsupported fhe_type: {:?}", fhe_type),
-    }
+    let num_bits = fhe_type_to_num_bits(fhe_type)?;
+    let msg_modulus = (params.message_modulus.0.ilog2() * packing_factor) as usize;
+    Ok(num_bits.div_ceil(msg_modulus))
 }
 
 #[cfg(feature = "non-wasm")]
@@ -433,10 +439,12 @@ fn sub_slice<const N: usize>(vec: &[u8]) -> [u8; N] {
 /// Little endian encoding for easy serialization by allowing most significant bytes to be 0
 impl TypedPlaintext {
     /// Make a new plaintext from a 128 bit integer.
-    /// Note that the upper bits will be set to 0 if the FHE type holds more than 128 bits.
+    /// Note that the we truncate the we may truncate the byte resulting from the u128 vector depending on the provided [`FheTypes`] .
     pub fn new(value: u128, fhe_type: FheTypes) -> Self {
+        // If the FHE type is not supported, we default to using the whole u128
+        let num_bytes = fhe_type_to_num_bits(fhe_type).unwrap_or(128).div_ceil(8);
         Self {
-            bytes: value.to_le_bytes().to_vec(),
+            bytes: value.to_le_bytes()[0..num_bytes].to_vec(),
             fhe_type: fhe_type as i32,
         }
     }
