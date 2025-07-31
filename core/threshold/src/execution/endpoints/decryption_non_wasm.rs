@@ -204,87 +204,54 @@ where
 }
 
 #[async_trait]
-pub trait NoisefloodDecryptor: Send + Sync {
-    async fn decrypt<const EXTENSION_DEGREE: usize, P, T>(
-        noiseflood_session: &mut P,
-        server_key: &ServerKey,
-        ck: &NoiseSquashingKey,
-        ct: LowLevelCiphertext,
-        secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
-    ) -> anyhow::Result<(HashMap<String, T>, Duration)>
+pub trait OnlineNoiseFloodDecryption<const EXTENSION_DEGREE: usize> {
+    async fn decrypt<
+        S: BaseSessionHandles,
+        P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
+        T,
+    >(
+        session: &mut S,
+        preprocessing: &mut P,
+        keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
+        ciphertext: &SnsRadixOrBoolCiphertext,
+        ddec_key_type: SnsDecryptionKeyType,
+    ) -> anyhow::Result<T>
     where
-        P: NoiseFloodPreparation<EXTENSION_DEGREE> + Send,
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve;
+        ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect;
 }
 
-#[async_trait]
-pub trait NoisefloodPartialDecryptor: Send + Sync {
-    async fn partial_decrypt<const EXTENSION_DEGREE: usize, P>(
-        noiseflood_session: &mut P,
-        server_key: &ServerKey,
-        ck: &NoiseSquashingKey,
-        ct: LowLevelCiphertext,
-        secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
-    ) -> anyhow::Result<(
-        HashMap<String, Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>,
-        u32,
-        Duration,
-    )>
-    where
-        P: NoiseFloodPreparation<EXTENSION_DEGREE>,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve;
-}
-
-pub struct SecureNoisefloodDecryptor;
+pub struct SecureOnlineNoiseFloodDecryption;
 
 #[async_trait]
-impl NoisefloodDecryptor for SecureNoisefloodDecryptor {
-    async fn decrypt<const EXTENSION_DEGREE: usize, P, T>(
-        noiseflood_session: &mut P,
-        server_key: &ServerKey,
-        ck: &NoiseSquashingKey,
-        ct: LowLevelCiphertext,
-        secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
-    ) -> anyhow::Result<(HashMap<String, T>, Duration)>
+impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
+    for SecureOnlineNoiseFloodDecryption
+{
+    async fn decrypt<
+        S: BaseSessionHandles,
+        P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
+        T,
+    >(
+        session: &mut S,
+        preprocessing: &mut P,
+        keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
+        ciphertext: &SnsRadixOrBoolCiphertext,
+        ddec_key_type: SnsDecryptionKeyType,
+    ) -> anyhow::Result<T>
     where
-        P: NoiseFloodPreparation<EXTENSION_DEGREE> + Send,
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+        ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
     {
-        decrypt_using_noiseflooding::<EXTENSION_DEGREE, P, T>(
-            noiseflood_session,
-            server_key,
-            ck,
-            ct,
-            secret_key_share,
+        run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, T>(
+            session,
+            preprocessing,
+            keyshares,
+            ciphertext,
+            ddec_key_type,
         )
         .await
-    }
-}
-
-pub struct DummyNoisefloodDecryptor;
-
-#[async_trait]
-impl NoisefloodDecryptor for DummyNoisefloodDecryptor {
-    async fn decrypt<const EXTENSION_DEGREE: usize, P, T>(
-        _noiseflood_session: &mut P,
-        _server_key: &ServerKey,
-        _ck: &NoiseSquashingKey,
-        _ct: LowLevelCiphertext,
-        _secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
-    ) -> anyhow::Result<(HashMap<String, T>, Duration)>
-    where
-        P: NoiseFloodPreparation<EXTENSION_DEGREE>,
-        T: tfhe::integer::block_decomposition::Recomposable
-            + tfhe::core_crypto::commons::traits::CastFrom<u128>,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
-    {
-        let results = HashMap::new();
-        let elapsed_time = Duration::from_secs(0);
-        Ok((results, elapsed_time))
     }
 }
 
@@ -315,7 +282,7 @@ impl NoisefloodDecryptor for DummyNoisefloodDecryptor {
 ///
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip_all, fields(sid, own_identity))]
-async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, T>(
+pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, O, T>(
     noiseflood_session: &mut P,
     server_key: &ServerKey,
     ck: &NoiseSquashingKey,
@@ -324,6 +291,7 @@ async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, T>(
 ) -> anyhow::Result<(HashMap<String, T>, Duration)>
 where
     P: NoiseFloodPreparation<EXTENSION_DEGREE>,
+    O: OnlineNoiseFloodDecryption<EXTENSION_DEGREE>,
     T: tfhe::integer::block_decomposition::Recomposable
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
@@ -352,7 +320,7 @@ where
     let own_identity = session.own_identity();
     tracing::Span::current().record("own_identity", own_identity.to_string());
 
-    let outputs = run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, T>(
+    let outputs = O::decrypt::<_, _, T>(
         session,
         &mut preprocessing,
         secret_key_share,
@@ -952,7 +920,7 @@ where
     skip(session, preprocessing, keyshares, ciphertext)
     fields(sid=?session.session_id(),batch_size=?ciphertext.len())
 )]
-pub async fn run_decryption_noiseflood<
+async fn run_decryption_noiseflood<
     const EXTENSION_DEGREE: usize,
     S: BaseSessionHandles,
     P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,

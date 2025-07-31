@@ -16,10 +16,7 @@ use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
     execution::{
-        endpoints::{
-            decryption::SecureNoisefloodDecryptor,
-            keygen::{FhePubKeySet, PrivateKeySet},
-        },
+        endpoints::keygen::{FhePubKeySet, PrivateKeySet},
         online::preprocessing::{create_memory_factory, create_redis_factory, DKGPreprocessing},
         runtime::party::{Role, RoleAssignment},
         zk::ceremony::SecureCeremony,
@@ -54,7 +51,9 @@ use crate::{
     engine::{
         base::{compute_info, BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY},
         prepare_shutdown_signals,
-        threshold::threshold_kms::ThresholdKms,
+        threshold::{
+            service::public_decryptor::SecureNoiseFloodDecryptor, threshold_kms::ThresholdKms,
+        },
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
     tonic_some_or_err,
@@ -196,7 +195,7 @@ pub fn compute_all_info(
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInitiator<PrivS>,
     RealUserDecryptor<PubS, PrivS>,
-    RealPublicDecryptor<PubS, PrivS, SecureNoisefloodDecryptor>,
+    RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
@@ -208,7 +207,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInitiator<PrivS>,
     RealUserDecryptor<PubS, PrivS>,
-    RealPublicDecryptor<PubS, PrivS, SecureNoisefloodDecryptor>,
+    RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<PubS, PrivS>,
     RealInsecureKeyGenerator<PubS, PrivS>,
     RealPreprocessor,

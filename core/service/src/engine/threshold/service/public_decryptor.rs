@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
 
 // === External Crates ===
 use anyhow::anyhow;
@@ -20,8 +20,18 @@ use observability::{
 };
 use tfhe::FheTypes;
 use threshold_fhe::{
-    execution::endpoints::decryption::{
-        secure_decrypt_using_bitdec, DecryptionMode, NoiseFloodSmallSession, NoisefloodDecryptor,
+    algebra::{
+        base_ring::Z128,
+        galois_rings::common::ResiduePoly,
+        structure_traits::{ErrorCorrect, Invert, Solve},
+    },
+    execution::endpoints::{
+        decryption::{
+            decrypt_using_noiseflooding, secure_decrypt_using_bitdec, DecryptionMode,
+            LowLevelCiphertext, NoiseFloodPreparation, NoiseFloodSmallSession,
+            SecureOnlineNoiseFloodDecryption,
+        },
+        keygen::PrivateKeySet,
     },
     session_id::SessionId,
 };
@@ -52,6 +62,89 @@ use crate::{
 
 // === Current Module Imports ===
 use super::{session::SessionPreparer, ThresholdFheKeys};
+
+#[tonic::async_trait]
+pub trait NoisefloodDecryptor: Send + Sync {
+    async fn decrypt<P, T>(
+        noiseflood_session: &mut P,
+        server_key: &tfhe::integer::ServerKey,
+        ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+        ct: LowLevelCiphertext,
+        secret_key_share: &PrivateKeySet<4>,
+    ) -> anyhow::Result<(HashMap<String, T>, Duration)>
+    where
+        P: NoiseFloodPreparation<4> + Send,
+        T: tfhe::integer::block_decomposition::Recomposable
+            + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+        ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve;
+}
+
+// #[tonic::async_trait]
+// pub trait NoisefloodPartialDecryptor: Send + Sync {
+//     async fn partial_decrypt<P, O>(
+//         noiseflood_session: &mut P,
+//         server_key: &tfhe::integer::ServerKey,
+//         ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+//         ct: LowLevelCiphertext,
+//         secret_key_share: &PrivateKeySet<4>,
+//     ) -> anyhow::Result<(HashMap<String, Vec<ResiduePoly<Z128, 4>>>, u32, Duration)>
+//     where
+//         P: NoiseFloodPreparation<4>,
+//         ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve;
+// }
+
+pub struct SecureNoiseFloodDecryptor;
+
+#[tonic::async_trait]
+impl NoisefloodDecryptor for SecureNoiseFloodDecryptor {
+    async fn decrypt<P, T>(
+        noiseflood_session: &mut P,
+        server_key: &tfhe::integer::ServerKey,
+        ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+        ct: LowLevelCiphertext,
+        secret_key_share: &PrivateKeySet<4>,
+    ) -> anyhow::Result<(HashMap<String, T>, Duration)>
+    where
+        P: NoiseFloodPreparation<4> + Send,
+        T: tfhe::integer::block_decomposition::Recomposable
+            + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+        ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve,
+    {
+        decrypt_using_noiseflooding::<4, P, SecureOnlineNoiseFloodDecryption, T>(
+            noiseflood_session,
+            server_key,
+            ck,
+            ct,
+            secret_key_share,
+        )
+        .await
+    }
+}
+
+#[cfg(test)]
+pub struct DummyNoisefloodDecryptor;
+
+#[cfg(test)]
+#[tonic::async_trait]
+impl NoisefloodDecryptor for DummyNoisefloodDecryptor {
+    async fn decrypt<P, T>(
+        _noiseflood_session: &mut P,
+        _server_key: &tfhe::integer::ServerKey,
+        _ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+        _ct: LowLevelCiphertext,
+        _secret_key_share: &PrivateKeySet<4>,
+    ) -> anyhow::Result<(HashMap<String, T>, Duration)>
+    where
+        P: NoiseFloodPreparation<4>,
+        T: tfhe::integer::block_decomposition::Recomposable
+            + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+        ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve,
+    {
+        let results = HashMap::new();
+        let elapsed_time = Duration::from_secs(0);
+        Ok((results, elapsed_time))
+    }
+}
 
 pub struct RealPublicDecryptor<
     PubS: Storage + Send + Sync + 'static,
@@ -630,7 +723,6 @@ impl<
 #[cfg(test)]
 mod tests {
     use kms_grpc::kms::v1::TypedCiphertext;
-    use threshold_fhe::execution::endpoints::decryption::DummyNoisefloodDecryptor;
 
     use crate::{
         consts::TEST_PARAM,
