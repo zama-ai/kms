@@ -4,7 +4,7 @@ ARG RUST_IMAGE_VERSION=stable
 # Install essential tools and dependencies
 USER root
 
-RUN apk add --no-cache \
+RUN apk update && apk add --no-cache \
     curl \
     wget \
     bash \
