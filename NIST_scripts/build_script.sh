@@ -49,10 +49,10 @@ cargo install --force cargo-make
 
 # Clone the repository (replace with submission's repo URL)
 REPO_URL="https://github.com/zama-ai/kms.git"
-TARGET_DIR="$HOME/kms/core/service"
+TARGET_DIR="$HOME/kms/core/threshold"
 
 if [ ! -d "$TARGET_DIR" ]; then
-    git clone "$REPO_URL" "$TARGET_DIR"
+    git clone "$REPO_URL" "$HOME"
 else
     echo "Directory $TARGET_DIR already exists. Skipping clone."
 fi
