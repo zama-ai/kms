@@ -252,7 +252,7 @@ pub async fn public_decrypt_impl<
     let start = tokio::time::Instant::now();
     let inner = request.into_inner();
 
-    let (ciphertexts, req_digest, key_id, request_id, eip712_domain) = tonic_handle_potential_err(
+    let (ciphertexts, key_id, request_id, eip712_domain) = tonic_handle_potential_err(
         validate_public_decrypt_req(&inner),
         format!("Failed to validate decrypt request {inner:?}"),
     )?;
@@ -350,8 +350,8 @@ pub async fn public_decrypt_impl<
                     };
 
                     let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store
-                        .update(&request_id, Ok((req_digest.clone(), pts, external_sig)));
+                    let _ =
+                        guarded_meta_store.update(&request_id, Ok((request_id, pts, external_sig)));
                     tracing::info!(
                         "⏱️ Core Event Time for decryption computation: {:?}",
                         start.elapsed()
@@ -401,8 +401,14 @@ pub async fn get_public_decryption_result_impl<
         let guarded_meta_store = service.pub_dec_meta_store.read().await;
         guarded_meta_store.retrieve(&request_id)
     };
-    let (req_digest, plaintexts, external_signature) =
+    let (retrieved_req_id, plaintexts, external_signature) =
         handle_res_mapping(status, &request_id, "Decryption").await?;
+
+    if retrieved_req_id != request_id {
+        return Err(Status::not_found(format!(
+            "Request ID mismatch: expected {request_id}, got {retrieved_req_id}",
+        )));
+    }
 
     tracing::debug!(
         "Returning plaintext(s) for request ID {}: {:?}. External signature: {:x?}",
@@ -417,8 +423,10 @@ pub async fn get_public_decryption_result_impl<
     let kms_sig_payload = PublicDecryptionResponsePayload {
         plaintexts,
         verification_key: server_verf_key,
-        digest: req_digest,
+        #[allow(deprecated)] // we have to allow to fill the struct
+        digest: vec![],
         external_signature: Some(external_signature),
+        request_id: Some(retrieved_req_id.into()),
     };
 
     let kms_sig_payload_vec = tonic_handle_potential_err(

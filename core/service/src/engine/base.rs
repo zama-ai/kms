@@ -748,10 +748,10 @@ pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> anyhow::Result<DKGParam
 pub type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
 
 // Values that need to be stored temporarily as part of an async decryption call.
-// Represents the digest of the request and the result of the decryption (a batch of plaintests),
+// Represents the request ID of the request and the result of the decryption (a batch of plaintests),
 // as well as an external signature on the batch.
 #[cfg(feature = "non-wasm")]
-pub type PubDecCallValues = (Vec<u8>, Vec<TypedPlaintext>, Vec<u8>);
+pub type PubDecCallValues = (RequestId, Vec<TypedPlaintext>, Vec<u8>);
 
 // Values that need to be stored temporarily as part of an async user decryption call.
 // Represents UserDecryptionResponsePayload, external_handles, external_signature.
