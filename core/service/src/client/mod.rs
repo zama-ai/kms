@@ -6187,7 +6187,7 @@ pub(crate) mod tests {
         let (kms_servers, kms_clients, internal_client) =
             threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
-        let keys = run_threshold_keygen(
+        let _keys = run_threshold_keygen(
             param,
             &kms_clients,
             &internal_client,

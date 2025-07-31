@@ -1,5 +1,4 @@
 use crate::{
-    anyhow_error_and_log,
     cryptography::{
         attestation::{SecurityModule, SecurityModuleProxy},
         internal_crypto_types::PrivateSigKey,
@@ -8,8 +7,8 @@ use crate::{
     vault::{
         keychain::KeychainProxy,
         storage::{
-            crypto_material::ThresholdCryptoMaterialStorage, read_all_data_versioned,
-            store_versioned_at_request_id, Storage, StorageReader,
+            crypto_material::ThresholdCryptoMaterialStorage, store_versioned_at_request_id,
+            Storage, StorageReader,
         },
         Vault,
     },
@@ -18,9 +17,7 @@ use kms_grpc::{
     kms::v1::{Empty, OperatorPublicKey},
     rpc_types::{PrivDataType, SignedPubDataHandleInternal},
     utils::tonic_result::tonic_handle_potential_err,
-    RequestId,
 };
-use std::collections::HashMap;
 use tokio::sync::MutexGuard;
 use tonic::{Code, Request, Response, Status};
 
