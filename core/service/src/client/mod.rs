@@ -1108,6 +1108,8 @@ impl Client {
         agg_resp: &[PublicDecryptionResponse],
         min_agree_count: u32,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
+        use crate::engine::validation::select_most_common_public_dec;
+
         validate_public_decrypt_responses_against_request(
             self.get_server_pks()?,
             request,
@@ -1115,16 +1117,11 @@ impl Client {
             min_agree_count,
         )?;
 
-        // TODO pivot should actually be picked as the most common response instead of just an
-        // arbitrary one.
-        let pivot = some_or_err(
-            agg_resp.last(),
-            "No elements in user decryption response".to_string(),
-        )?;
         let pivot_payload = some_or_err(
-            pivot.payload.to_owned(),
-            "No payload in pivot response".to_string(),
+            select_most_common_public_dec(min_agree_count as usize, agg_resp),
+            "No elements in public decryption response".to_string(),
         )?;
+
         for cur_resp in agg_resp {
             let cur_payload = some_or_err(
                 cur_resp.payload.to_owned(),
@@ -1133,16 +1130,7 @@ impl Client {
             let sig = Signature {
                 sig: k256::ecdsa::Signature::from_slice(&cur_resp.signature)?,
             };
-            // Observe that the values contained in the pivot has already been validated to be
-            // correct
-            // TODO I think this is redundant
-            if cur_payload.digest != pivot_payload.digest
-                || cur_payload.plaintexts != pivot_payload.plaintexts
-            {
-                return Err(anyhow_error_and_log(
-                    "Some server did not provide the proper response!",
-                ));
-            }
+
             // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissible keys
             let cur_verf_key: PublicSigKey = bc2wrap::deserialize(&cur_payload.verification_key)?;
@@ -1156,13 +1144,7 @@ impl Client {
                 tracing::warn!("Signature on received response is not valid! {}", e);
             })?;
         }
-        let pts = some_or_err(
-            pivot.payload.to_owned(),
-            "No payload in pivot response for decryption".to_owned(),
-        )?
-        .plaintexts;
-
-        Ok(pts)
+        Ok(pivot_payload.plaintexts)
     }
 
     /// Processes the aggregated user decryption responses to attempt to decrypt

@@ -13,19 +13,22 @@
 //! 2. `ListRequests` - List requests with filtering and pagination
 //! 3. `GetMetaStoreInfo` - Get meta-store capacity and current counts
 
-use std::{collections::HashMap, str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::util::meta_store::MetaStore;
+use crate::{
+    engine::base::{KeyGenCallValues, PubDecCallValues, UserDecryptCallValues},
+    util::meta_store::MetaStore,
+};
 use kms_grpc::{
-    kms::v1::{Empty, TypedPlaintext, UserDecryptionResponsePayload},
+    kms::v1::Empty,
     metastore_status::v1::{
         meta_store_status_service_server::MetaStoreStatusService, GetMetaStoreInfoResponse,
         GetRequestStatusesRequest, GetRequestStatusesResponse, ListRequestsRequest,
         ListRequestsResponse, MetaStoreInfo, MetaStoreType, RequestProcessingStatus,
         RequestStatusInfo,
     },
-    rpc_types::{PubDataType, SignedPubDataHandleInternal},
+    rpc_types::SignedPubDataHandleInternal,
 };
 
 use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
@@ -34,13 +37,13 @@ use threshold_fhe::execution::online::preprocessing::DKGPreprocessing;
 // Type aliases for the different MetaStore types used in the system
 
 /// MetaStore for Key Generation data, mapping request IDs to public data handles
-pub type KeyGenMetaStore = MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>;
+pub type KeyGenMetaStore = MetaStore<KeyGenCallValues>;
 
 /// MetaStore for Public Decryption data, storing (ciphertext, plaintext, signature) tuples
-pub type PubDecMetaStore = MetaStore<(Vec<u8>, Vec<TypedPlaintext>, Vec<u8>)>;
+pub type PubDecMetaStore = MetaStore<PubDecCallValues>;
 
 /// MetaStore for User Decryption responses, storing response payloads with signatures
-pub type UserDecryptMetaStore = MetaStore<(UserDecryptionResponsePayload, Vec<u8>)>;
+pub type UserDecryptMetaStore = MetaStore<UserDecryptCallValues>;
 
 /// MetaStore for CRS (Common Reference String) data
 pub type CrsMetaStore = MetaStore<SignedPubDataHandleInternal>;

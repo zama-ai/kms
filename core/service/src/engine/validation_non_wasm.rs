@@ -20,8 +20,7 @@ use crate::{
         internal_crypto_types::{PublicEncKey, PublicSigKey, Signature},
         signcryption::internal_verify_sig,
     },
-    engine::{base::BaseKmsStruct, traits::BaseKms},
-    tonic_handle_potential_err, tonic_some_or_err,
+    tonic_some_or_err,
 };
 
 pub(crate) const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
@@ -44,6 +43,10 @@ const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT: &str =
     "The number of ciphertexts in the public decryption response is wrong";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK: &str =
     "The public decryption response is not linked to the correct public decryption request";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_MISSING_REQ_ID: &str =
+    "Request ID is not set in public decryption response";
+const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE: &str =
+    "Plaintext type mismatch in public decryption response";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_REQUEST: &str =
     "Public decryption request is None while validating public decryption responses";
 
@@ -55,8 +58,6 @@ const ERR_VALIDATE_USER_DECRYPTION_BAD_REQ_ID: &str =
 const ERR_VALIDATE_USER_DECRYPTION_BAD_KEY_ID: &str =
     "Key ID is invalid in user decryption request";
 const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user decryption request";
-
-pub(crate) const DSEP_REQ_RESP: DomainSep = *b"REQ_RESP";
 
 /// Validates a request ID and returns an appropriate tonic error if it is invalid.
 pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), BoxedStatus> {
@@ -180,7 +181,6 @@ pub fn validate_public_decrypt_req(
     req: &PublicDecryptionRequest,
 ) -> anyhow::Result<(
     Vec<TypedCiphertext>,
-    Vec<u8>,
     RequestId,
     RequestId,
     Option<Eip712Domain>,
@@ -213,24 +213,9 @@ pub fn validate_public_decrypt_req(
         )));
     }
 
-    let serialized_req = tonic_handle_potential_err(
-        bc2wrap::serialize(&req),
-        format!("Could not serialize payload {req:?}"),
-    )?;
-    let req_digest = tonic_handle_potential_err(
-        BaseKmsStruct::digest(&DSEP_REQ_RESP, &serialized_req),
-        format!("Could not hash payload {req:?}"),
-    )?;
-
     let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
 
-    Ok((
-        req.ciphertexts.clone(),
-        req_digest,
-        key_id,
-        request_id,
-        eip712_domain,
-    ))
+    Ok((req.ciphertexts.clone(), key_id, request_id, eip712_domain))
 }
 
 /// Verify the EIP-712 encoded payload in the request.
@@ -250,12 +235,12 @@ fn validate_public_decrypt_meta_data(
     other_resp: &PublicDecryptionResponsePayload,
     signature: &[u8],
 ) -> anyhow::Result<bool> {
-    if pivot_resp.digest != other_resp.digest {
+    if pivot_resp.request_id != other_resp.request_id {
         tracing::warn!(
-                    "Response from server with verification key {:?} gave digest {:?}, whereas the pivot server gave digest {:?}, and its verification key is {:?}",
+                    "Response from server with verification key {:?} gave request ID {:?}, whereas the pivot server gave request ID {:?}, and its verification key is {:?}",
                     pivot_resp.verification_key,
-                    pivot_resp.digest,
-                    other_resp.digest,
+                    pivot_resp.request_id,
+                    other_resp.request_id,
                     other_resp.verification_key
                 );
         return Ok(false);
@@ -296,20 +281,20 @@ fn validate_public_decrypt_meta_data(
 /// for the same request.
 #[derive(Hash, PartialEq, Eq)]
 struct PublicDecryptionResponseInvariants {
-    digest: Vec<u8>,
+    request_id: Option<RequestId>,
     plaintexts: Vec<TypedPlaintext>,
 }
 
 impl From<PublicDecryptionResponsePayload> for PublicDecryptionResponseInvariants {
     fn from(value: PublicDecryptionResponsePayload) -> Self {
         Self {
-            digest: value.digest,
+            request_id: value.request_id.clone().map(|id| id.into()),
             plaintexts: value.plaintexts.clone(),
         }
     }
 }
 
-fn select_most_common_public_dec(
+pub(crate) fn select_most_common_public_dec(
     min_occurence: usize,
     agg_resp: &[PublicDecryptionResponse],
 ) -> Option<PublicDecryptionResponsePayload> {
@@ -417,13 +402,33 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
                 ));
             }
 
-            if BaseKmsStruct::digest(&DSEP_REQ_RESP, &bc2wrap::serialize(&req)?)?
-                != pivot_payload.digest
+            for (ct, pt) in req
+                .ciphertexts
+                .iter()
+                .zip_eq(pivot_payload.plaintexts.iter())
             {
-                return Err(anyhow_error_and_log(
-                    ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
-                ));
+                if ct.fhe_type != pt.fhe_type {
+                    return Err(anyhow_error_and_log(
+                        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
+                    ));
+                }
             }
+
+            match (req.request_id, pivot_payload.request_id) {
+                (Some(expected), Some(actual)) => {
+                    if expected != actual {
+                        return Err(anyhow_error_and_log(
+                            ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK,
+                        ));
+                    }
+                }
+                _ => {
+                    return Err(anyhow_error_and_log(
+                        ERR_VALIDATE_PUBLIC_DECRYPTION_MISSING_REQ_ID,
+                    ));
+                }
+            }
+
             Ok(())
         }
         None => {
@@ -448,7 +453,6 @@ mod tests {
     };
 
     use rand::SeedableRng;
-    use threshold_fhe::hashing::serialize_hash_element;
 
     use crate::{
         cryptography::{
@@ -467,7 +471,7 @@ mod tests {
         validate_public_decrypt_meta_data, validate_public_decrypt_req,
         validate_public_decrypt_responses_against_request, validate_request_id,
         validate_user_decrypt_req, verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
-        DSEP_REQ_RESP, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID,
         ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
         ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID,
@@ -564,7 +568,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
             };
-            let (_, _, _, _, domain) = validate_public_decrypt_req(&req).unwrap();
+            let (_, _, _, domain) = validate_public_decrypt_req(&req).unwrap();
             assert!(domain.is_some());
         }
     }
@@ -814,14 +818,21 @@ mod tests {
                 .map(|(i, k)| (i as u32 + 1, k)),
         );
 
+        let request_id = Some(
+            derive_request_id("test_validate_public_decrypt_meta_response")
+                .unwrap()
+                .into(),
+        );
         let pivot = PublicDecryptionResponsePayload {
-            digest: vec![1, 2, 3, 4],
+            #[allow(deprecated)] // we have to allow to fill the struct
+            digest: vec![],
             verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
             plaintexts: vec![TypedPlaintext {
                 bytes: vec![1],
                 fhe_type: 1,
             }],
             external_signature: None,
+            request_id: request_id.clone(),
         };
 
         let pivot_buf = bc2wrap::serialize(&pivot).unwrap();
@@ -859,14 +870,21 @@ mod tests {
 
         // use a bad signature (signing the wrong value)
         {
+            let bad_request_id = Some(
+                derive_request_id("bad_test_validate_public_decrypt_meta_response")
+                    .unwrap()
+                    .into(),
+            );
             let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                digest: vec![1, 2, 3, 4, 5], // Original digest does not contain the 5
+                #[allow(deprecated)] // we have to allow to fill the struct
+                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
                 external_signature: None,
+                request_id: bad_request_id,
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
@@ -886,14 +904,21 @@ mod tests {
 
         // use a bad response (digest mismatch)
         {
+            let bad_request_id = Some(
+                derive_request_id("bad_test_validate_public_decrypt_meta_response")
+                    .unwrap()
+                    .into(),
+            );
             let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                digest: vec![1, 2, 3, 4, 5], // Original digest does not contain the 5
+                #[allow(deprecated)] // we have to allow to fill the struct
+                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
                 external_signature: None,
+                request_id: bad_request_id,
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
@@ -916,12 +941,14 @@ mod tests {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
             let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&vk).unwrap(),
-                digest: vec![1, 2, 3, 4],
+                #[allow(deprecated)] // we have to allow to fill the struct
+                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
                 external_signature: None,
+                request_id: request_id.clone(),
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
@@ -944,12 +971,14 @@ mod tests {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
             let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&vk).unwrap(),
-                digest: vec![1, 2, 3, 4],
+                #[allow(deprecated)] // we have to allow to fill the struct
+                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![0], // normally this is vec![1]
                     fhe_type: 1,
                 }],
                 external_signature: None,
+                request_id,
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
@@ -997,15 +1026,22 @@ mod tests {
                 .map(|(i, k)| (i as u32 + 1, k)),
         );
 
+        let request_id = Some(
+            derive_request_id("test_validate_public_decrypt_responses")
+                .unwrap()
+                .into(),
+        );
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                digest: vec![1, 2, 3, 4],
+                #[allow(deprecated)] // we have to allow to fill the struct
+                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
                 external_signature: Some(vec![]),
+                request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
@@ -1024,12 +1060,14 @@ mod tests {
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                digest: vec![1, 2, 3, 4],
+                #[allow(deprecated)] // we have to allow to fill the struct
+                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
                 external_signature: Some(vec![]),
+                request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
@@ -1090,7 +1128,8 @@ mod tests {
             let bad_resp = {
                 let payload = PublicDecryptionResponsePayload {
                     verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                    digest: vec![1, 2, 3, 4],
+                    #[allow(deprecated)] // we have to allow to fill the struct
+                    digest: vec![],
                     plaintexts: vec![
                         TypedPlaintext {
                             bytes: vec![1],
@@ -1102,6 +1141,7 @@ mod tests {
                         },
                     ],
                     external_signature: Some(vec![]),
+                    request_id,
                 };
                 let payload_buf = bc2wrap::serialize(&payload).unwrap();
                 let signature = &crate::cryptography::signcryption::internal_sign(
@@ -1154,8 +1194,9 @@ mod tests {
                 .map(|(i, k)| (i as u32 + 1, k)),
         );
 
+        let request_id = Some(derive_request_id("PublicDecryptionRequest").unwrap().into());
         let request = PublicDecryptionRequest {
-            request_id: Some(derive_request_id("PublicDecryptionRequest").unwrap().into()),
+            request_id: request_id.clone(),
             ciphertexts: vec![TypedCiphertext {
                 ciphertext: vec![1, 2, 3, 4],
                 fhe_type: 1,
@@ -1170,17 +1211,17 @@ mod tests {
             domain: None,
         };
 
-        let digest = serialize_hash_element(&DSEP_REQ_RESP, &request).unwrap();
-
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                digest: digest.clone(),
+                #[allow(deprecated)] // we have to allow to fill the struct
+                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
                 external_signature: Some(vec![]),
+                request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
@@ -1199,12 +1240,14 @@ mod tests {
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                digest: digest.clone(),
+                #[allow(deprecated)] // we have to allow to fill the struct
+                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
                 external_signature: Some(vec![]),
+                request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
@@ -1287,7 +1330,7 @@ mod tests {
             .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT));
         }
 
-        // link is wrong
+        // plaintext type is wrong
         {
             let agg_resp = vec![resp0.clone(), resp1.clone()];
             let bad_request = PublicDecryptionRequest {
@@ -1295,6 +1338,40 @@ mod tests {
                 ciphertexts: vec![TypedCiphertext {
                     ciphertext: vec![1, 2, 3, 4],
                     fhe_type: 2, // we change the fhe_type so it's the wrong request
+                    external_handle: vec![1, 2, 3, 4],
+                    ciphertext_format: 1,
+                }],
+                key_id: Some(
+                    derive_request_id("PublicDecryptionRequest key_id")
+                        .unwrap()
+                        .into(),
+                ),
+                domain: None,
+            };
+            assert!(validate_public_decrypt_responses_against_request(
+                &pks,
+                Some(bad_request),
+                &agg_resp,
+                2
+            )
+            .unwrap_err()
+            .to_string()
+            .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE));
+        }
+
+        // request ID
+        {
+            let agg_resp = vec![resp0.clone(), resp1.clone()];
+            let bad_request = PublicDecryptionRequest {
+                // wrong request ID
+                request_id: Some(
+                    derive_request_id("bad PublicDecryptionRequest")
+                        .unwrap()
+                        .into(),
+                ),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: vec![1, 2, 3, 4],
+                    fhe_type: 1,
                     external_handle: vec![1, 2, 3, 4],
                     ciphertext_format: 1,
                 }],
@@ -1337,7 +1414,11 @@ mod tests {
 
     #[test]
     fn test_select_most_common_dec() {
-        let digest = vec![1, 2, 3, 4];
+        let request_id = Some(
+            derive_request_id("test_select_most_common_dec")
+                .unwrap()
+                .into(),
+        );
         let plaintexts = vec![TypedPlaintext {
             bytes: vec![1],
             fhe_type: 1,
@@ -1345,9 +1426,11 @@ mod tests {
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: vec![],
-                digest: digest.clone(),
+                #[allow(deprecated)] // we have to allow to fill the struct
+                digest: vec![],
                 plaintexts: plaintexts.clone(),
                 external_signature: Some(vec![]),
+                request_id: request_id.clone(),
             };
             PublicDecryptionResponse {
                 signature: vec![],
@@ -1358,10 +1441,13 @@ mod tests {
         // two responses, second response has modified digest
         {
             let mut resp1 = resp0.clone();
-            resp1
-                .payload
-                .iter_mut()
-                .for_each(|x| x.digest = vec![5, 6, 7, 8]);
+            resp1.payload.iter_mut().for_each(|x| {
+                x.request_id = Some(
+                    derive_request_id("bad_select_most_common_dec")
+                        .unwrap()
+                        .into(),
+                )
+            });
             let agg_resp = vec![resp0.clone(), resp1];
             assert_eq!(select_most_common_public_dec(2, &agg_resp), None);
         }
@@ -1391,11 +1477,18 @@ mod tests {
 
         let resp1 = resp0.clone();
         let resp2 = {
+            let bad_request_id = Some(
+                derive_request_id("bad_select_most_common_dec")
+                    .unwrap()
+                    .into(),
+            );
             let payload = PublicDecryptionResponsePayload {
                 verification_key: vec![],
-                digest: vec![5, 6, 7, 8], // different from resp1 and resp0
+                #[allow(deprecated)] // we have to allow to fill the struct
+                digest: vec![],
                 plaintexts: plaintexts.clone(),
                 external_signature: Some(vec![]),
+                request_id: bad_request_id,
             };
             PublicDecryptionResponse {
                 signature: vec![],
