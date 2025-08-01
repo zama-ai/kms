@@ -40,8 +40,13 @@ pub const ERR_KEY_EXISTS: &str = "key_already_exists";
 pub const ERR_KEY_NOT_FOUND: &str = "key_not_found";
 pub const ERR_PUBLIC_DECRYPTION_FAILED: &str = "public_decryption_failed";
 pub const ERR_USER_DECRYPTION_FAILED: &str = "user_decryption_failed";
+pub const ERR_USER_PREPROC_FAILED: &str = "preproc_failed";
+pub const ERR_KEYGEN_FAILED: &str = "keygen_failed";
 pub const ERR_VERIFICATION_FAILED: &str = "verification_failed";
 pub const ERR_CRS_GEN_FAILED: &str = "crs_gen_failed";
+pub const ERR_WITH_META_STORAGE: &str = "meta_storage_error";
+pub const ERR_INVALID_REQUEST: &str = "invalid_request";
+pub const ERR_CANCELLED: &str = "cancelled";
 
 // Common operation type values
 pub const OP_TYPE_TOTAL: &str = "total";

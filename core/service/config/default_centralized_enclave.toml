@@ -10,6 +10,7 @@ grpc_max_message_size = 104857600 # 100 MiB
 tracing_service_name = "kms-centralized"
 # tracing_endpoint = "http://localhost:4317"
 metrics_bind_address = "0.0.0.0:9646"
+enable_sys_metrics = true
 
 [telemetry.batch]
 max_queue_size = 8192

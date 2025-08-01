@@ -71,11 +71,16 @@ pub struct CoreMetrics {
     // Counters
     request_counter: TaggedMetric<Counter<u64>>,
     error_counter: TaggedMetric<Counter<u64>>,
+    network_rx_counter: TaggedMetric<Counter<u64>>, //Note: Because we use counter we need to increment from last seen value.
+    network_tx_counter: TaggedMetric<Counter<u64>>, //Note: Because we use counter we need to increment from last seen value.
+
     // Histograms
     duration_histogram: TaggedMetric<Histogram<f64>>,
     size_histogram: TaggedMetric<Histogram<f64>>,
     // Gauges
     gauge: TaggedMetric<Gauge<i64>>,
+    cpu_load_gauge: TaggedMetric<Gauge<f64>>,
+    memory_usage_gauge: TaggedMetric<Gauge<u64>>,
     // Trace guard for file-based logging
     trace_guard: Arc<Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>>,
 }
@@ -95,6 +100,13 @@ impl CoreMetrics {
         let duration_metric: Cow<'static, str> =
             format!("{}_operation_duration_ms", config.prefix).into();
         let size_metric: Cow<'static, str> = format!("{}_payload_size_bytes", config.prefix).into();
+        let cpu_load_metric: Cow<'static, str> = format!("{}_cpu_load", config.prefix).into();
+        let memory_usage_metric: Cow<'static, str> =
+            format!("{}_memory_usage", config.prefix).into();
+        let network_rx_metric: Cow<'static, str> =
+            format!("{}_network_rx_bytes", config.prefix).into();
+        let network_tx_metric: Cow<'static, str> =
+            format!("{}_network_tx_bytes", config.prefix).into();
         let gauge: Cow<'static, str> = format!("{}_gauge", config.prefix).into();
 
         let request_counter = meter
@@ -113,6 +125,22 @@ impl CoreMetrics {
         //Increment by 0 just to make sure the counter is exported
         error_counter.add(0, &[]);
 
+        let network_rx_counter = meter
+            .u64_counter(network_rx_metric)
+            .with_description("Total number of bytes received over the network")
+            .with_unit("bytes")
+            .build();
+        //Increment by 0 just to make sure the counter is exported
+        network_rx_counter.add(0, &[]);
+
+        let network_tx_counter = meter
+            .u64_counter(network_tx_metric)
+            .with_description("Total number of bytes sent over the network")
+            .with_unit("bytes")
+            .build();
+        //Increment by 0 just to make sure the counter is exported
+        network_tx_counter.add(0, &[]);
+
         let duration_histogram = meter
             .f64_histogram(duration_metric)
             .with_description("Duration of KMS operations")
@@ -129,6 +157,22 @@ impl CoreMetrics {
         //Record 0 just to make sure the histogram is exported
         size_histogram.record(0.0, &[]);
 
+        let cpu_gauge = meter
+            .f64_gauge(cpu_load_metric)
+            .with_description("CPU load for KMS (averaged over all CPUs)")
+            .with_unit("percentage")
+            .build();
+        //Record 0 just to make sure the histogram is exported
+        cpu_gauge.record(0.0, &[]);
+
+        let memory_gauge = meter
+            .u64_gauge(memory_usage_metric)
+            .with_description("Memory used for KMS")
+            .with_unit("bytes")
+            .build();
+        //Record 0 just to make sure the histogram is exported
+        memory_gauge.record(0, &[]);
+
         let gauge = meter
             .i64_gauge(gauge)
             .with_description("An instrument that records independent values")
@@ -140,8 +184,12 @@ impl CoreMetrics {
         Ok(Self {
             request_counter: TaggedMetric::new(request_counter, "operations")?,
             error_counter: TaggedMetric::new(error_counter, "errors")?,
+            network_rx_counter: TaggedMetric::new(network_rx_counter, "network_rx")?,
+            network_tx_counter: TaggedMetric::new(network_tx_counter, "network_tx")?,
             duration_histogram: TaggedMetric::new(duration_histogram, "duration")?,
             size_histogram: TaggedMetric::new(size_histogram, "size")?,
+            cpu_load_gauge: TaggedMetric::new(cpu_gauge, "cpu_load")?,
+            memory_usage_gauge: TaggedMetric::new(memory_gauge, "memory_usage")?,
             gauge: TaggedMetric::new(gauge, "active_operations")?,
             trace_guard: Arc::new(Mutex::new(None)),
         })
@@ -180,6 +228,20 @@ impl CoreMetrics {
         self.error_counter
             .metric
             .add(1, &self.error_counter.with_tags(&tags));
+        Ok(())
+    }
+
+    pub fn increment_network_rx_counter(&self, bytes: u64) -> Result<(), MetricError> {
+        self.network_rx_counter
+            .metric
+            .add(bytes, &self.network_rx_counter.with_tags(&[]));
+        Ok(())
+    }
+
+    pub fn increment_network_tx_counter(&self, bytes: u64) -> Result<(), MetricError> {
+        self.network_tx_counter
+            .metric
+            .add(bytes, &self.network_tx_counter.with_tags(&[]));
         Ok(())
     }
 
@@ -246,6 +308,22 @@ impl CoreMetrics {
             operation: operation.into(),
             tags: Vec::new(),
         })
+    }
+
+    /// Record the current CPU load into the gauge
+    pub fn record_cpu_load(&self, load: f64) -> Result<(), MetricError> {
+        self.cpu_load_gauge
+            .metric
+            .record(load, &self.cpu_load_gauge.with_tags(&[]));
+        Ok(())
+    }
+
+    /// Record the current memory usage into the gauge
+    pub fn record_memory_usage(&self, usage: u64) -> Result<(), MetricError> {
+        self.memory_usage_gauge
+            .metric
+            .record(usage, &self.memory_usage_gauge.with_tags(&[]));
+        Ok(())
     }
 }
 

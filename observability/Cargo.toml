@@ -24,6 +24,7 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net"
 serde = { workspace = true, features = ["derive", "rc"] }
 strum.workspace = true
 strum_macros.workspace = true
+sysinfo = "0.36.1"
 thiserror.workspace = true
 tonic.workspace = true
 tracing = { workspace = true, features = ["log", "async-await"] }
