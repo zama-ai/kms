@@ -72,6 +72,10 @@ spec:
                   key: KMS_CRS_ID
                   optional: true
             {{- end }}
+          {{- with .Values.kmsGenKeys.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           volumeMounts:
             - mountPath: /app/core-client-gen-keys.sh
               subPath: core-client-gen-keys.sh
