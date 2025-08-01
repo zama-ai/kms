@@ -1,6 +1,7 @@
 use crate::backup::custodian::{InternalCustodianContext, InternalCustodianSetupMessage};
 use crate::backup::operator::{BackupCommitments, Operator, RecoveryRequest};
 use crate::cryptography::backup_pke;
+use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::{
     engine::{
         base::BaseKmsStruct, threshold::traits::ContextManager, validation::validate_request_id,
@@ -11,10 +12,12 @@ use crate::{
 use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::kms::v1::CustodianContext;
+use kms_grpc::rpc_types::{BackupDataType, PrivDataType};
 use kms_grpc::RequestId;
 use kms_grpc::{kms::v1::Empty, utils::tonic_result::tonic_handle_potential_err};
 use std::collections::BTreeMap;
 use std::{collections::HashMap, sync::Arc};
+use strum::IntoEnumIterator;
 use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
@@ -97,7 +100,10 @@ where
             }
         };
         validate_request_id(&context_id)?;
-
+        let mut backup_vault = match self.crypto_storage.inner.backup_vault {
+            Some(ref backup_vault) => backup_vault,
+            None => return Err(anyhow::anyhow!("Backup vault is not configured")),
+        };
         // Generate new backup keys and recovery request
         let mut node_map = HashMap::new();
         for setup_message in context.custodian_nodes.iter() {
@@ -117,20 +123,102 @@ where
         let mut rng = &mut self.base_kms.new_rng().await;
         // Generate asymmetric keys for the operator to use to encrypt the backup
         let (pub_enc_key, priv_key) = backup_pke::keygen(&mut rng)?;
-        let (_recovery_request, _commitments) = self
+        let (recovery_request, commitments) = self
             .gen_backup_keys(
                 rng,
                 &custodian_context,
                 self.my_role,
                 context_id,
-                pub_enc_key,
+                pub_enc_key.clone(),
                 priv_key,
             )
             .await?;
-        // Store keys
+
+        // Reencrypt everything
+        // Basically we want to ensure the recovery request contains the decryption key and everything else is encrypted using the public encryption key
+        {
+            let mut guarded_priv_storage = self.crypto_storage.inner.private_storage.lock().await;
+            let mut guarded_backup_vault = backup_vault.lock().await;
+            for cur_type in PrivDataType::iter() {
+                let data_ids = guarded_priv_storage
+                    .all_data_ids(&cur_type.to_string())
+                    .await?;
+                for data_id in data_ids {
+                    // TODO make macro to avoid code duplication and go through all types
+                    let data: ThresholdFheKeys = guarded_priv_storage
+                        .read_data(&data_id, &cur_type.to_string())
+                        .await?;
+                    // Observe that the vault automatically encrypts or secret shares the data as long as a keychain is configured
+                    guarded_backup_vault
+                        .store_data(&data, &data_id, &BackupDataType::Ciphertext.to_string())
+                        .await;
+                }
+            }
+        }
+        // Then store the results
+
+        // let mut guarded_priv_storage = self.crypto_storage.inner.private_storage.lock().await;
+        // // let mut guarded_backup_storage = backup_vault.lock().await;
+        // let mut guarded_pub_storage = self.crypto_storage.inner.public_storage.lock().await;
+
+        // TODO I am unsure what should be stored in the backup vault and what should be in the public storage.
+        // Basically everything can be released publicly and have build in ways of protecting against tampering.
+        // Hence for now I store everything in the public storage since the backup vault is now used for export
+
+        // Store public backup encryption key in the private storage
+        // as it is crucial that it cannot be maliciously replaced and
+        // no-one besides the operator needs to be able to read it.
+        // let priv_storage_future = async move {
+        //     let store_result = store_versioned_at_request_id(
+        //         &mut (*guarded_priv_storage),
+        //         &context_id,
+        //         &pub_enc_key,
+        //         &PrivDataType::PubBackupKey.to_string(),
+        //     )
+        //     .await;
+        //     if let Err(e) = &store_result {
+        //         tracing::error!(
+        //             "Failed to store public backup encryption key to private storage for request {}: {}",
+        //             context_id,
+        //             e
+        //         );
+        //     }
+        //     store_result.is_ok()
+        // };
+
+        // let pub_storage_future = async move {
+        //     let recovery_store_result = store_versioned_at_request_id(
+        //         &mut (*guarded_pub_storage),
+        //         &context_id,
+        //         &recovery_request,
+        //         &PubDataType::RecoveryRequest.to_string(),
+        //     )
+        //     .await;
+        //     if let Err(e) = &recovery_store_result {
+        //         tracing::error!(
+        //             "Failed to store recovery request to the public storage for request {}: {}",
+        //             context_id,
+        //             e
+        //         );
+        //     }
+        //     let commit_store_result = store_versioned_at_request_id(
+        //         &mut (*guarded_pub_storage),
+        //         &context_id,
+        //         &commitments,
+        //         &PubDataType::Commitments.to_string(),
+        //     )
+        //     .await;
+        //     if let Err(e) = &recovery_store_result {
+        //         tracing::error!(
+        //             "Failed to store commitments to the public storage for request {}: {}",
+        //             context_id,
+        //             e
+        //         );
+        //     }
+        //     recovery_store_result.is_ok() && commit_store_result.is_ok()
+        // };
 
         // TODO reencrypt everything if context new
-        // update key gen to backup or update private storage to take an aes key which is then encrypted under public key
 
         // todo should be done externally
         // Below we write to the meta-store.
@@ -141,21 +229,21 @@ where
         // Optimize lock hold time by minimizing operations under lock
         let (lock_acquired_time, total_lock_time) = {
             let lock_start = std::time::Instant::now();
-            let mut custodian_meta_store = self.custodian_meta_store.write().await;
+            // let mut custodian_meta_store = self.custodian_meta_store.write().await;
             let lock_acquired_time = lock_start.elapsed();
-            tonic_handle_potential_err(
-                custodian_meta_store.insert(&context_id),
-                format!("Could not insert new custodian context {context_id} into meta store"),
-            )?;
+            // tonic_handle_potential_err(
+            //     custodian_meta_store.insert(&context_id),
+            //     format!("Could not insert new custodian context {context_id} into meta store"),
+            // )?;
 
-            // We don't need to check the result of this write, since insert above fails if an element already exists
-            custodian_meta_store.update(&context_id, Ok(custodian_context))?;
+            // // We don't need to check the result of this write, since insert above fails if an element already exists
+            // custodian_meta_store.update(&context_id, Ok(custodian_context))?;
 
-            if custodian_meta_store.get_current_count() > 0 {
-                // First time we make a context
-            } else {
-                // A context already exists
-            }
+            // if custodian_meta_store.get_current_count() > 0 {
+            //     // First time we make a context
+            // } else {
+            //     // A context already exists
+            // }
 
             let total_lock_time = lock_start.elapsed();
             (lock_acquired_time, total_lock_time)
@@ -178,7 +266,7 @@ where
         pub_enc_key: backup_pke::BackupPublicKey,
         priv_key: backup_pke::BackupPrivateKey,
     ) -> anyhow::Result<(RecoveryRequest, BackupCommitments)> {
-        let verification_key = self.base_kms.sig_key.clone().into();
+        let verification_key = (*self.base_kms.sig_key).clone().into();
         let operator = Operator::new(
             my_role,
             custodian_context
@@ -216,7 +304,13 @@ where
             "Generated recovery request for backup_id/context_id={}",
             backup_id
         );
-        Ok((recovery_request, BackupCommitments { commitments }))
+        Ok((
+            recovery_request,
+            BackupCommitments {
+                commitments,
+                signature: todo!(),
+            },
+        ))
     }
 
     #[allow(dead_code)]

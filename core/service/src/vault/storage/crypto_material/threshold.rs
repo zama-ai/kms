@@ -181,6 +181,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             result.is_ok()
         };
 
+        // TODO since each thread is locking a storage component and they are run concurrently in a single thread
+        // don't we risk deadlocks with parallel executions since we have no guaranteed on the lock order?
         let (r1, r2, r3) = tokio::join!(f1, f2, f3);
 
         // Try to store the new data
@@ -286,99 +288,112 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         req_id: &RequestId,
         pub_key: BackupPublicKey,
-        priv_key: BackupPrivateKey, // TODO is this needed? We should actually only encrypt after construction
         recovery_request: RecoveryRequest,
         custodian_context: InternalCustodianContext,
         commitments: BackupCommitments,
         meta_store: Arc<RwLock<CustodianMetaStore>>,
     ) {
+        // Lock the storage needed in correct order to avoid deadlocks.
+        let mut private_storage_guard = self.inner.private_storage.lock().await;
+        let mut public_storage_guard = self.inner.public_storage.lock().await;
+
         let priv_storage_future = async {
-            let priv_storage = self.get_private_storage();
-            let mut private_storage_guard = priv_storage.lock().await;
-            match store_versioned_at_request_id(
+            let store_result = store_versioned_at_request_id(
                 &mut (*private_storage_guard),
                 req_id,
-                &priv_key,
-                &PrivDataType::PrivDecKey.to_string(),
+                &pub_key,
+                &PrivDataType::PubBackupKey.to_string(),
             )
-            .await
-            {
-                Ok(_) => None,
-                Err(e) => Some(format!(
-                    "Failed to store private backup key for request {req_id}: {e}",
-                )),
+            .await;
+            if let Err(e) = &store_result {
+                tracing::error!(
+                    "Failed to store public backup encryption key to private storage for request {}: {}",
+                    req_id,
+                    e
+                );
             }
+            store_result.is_ok()
         };
         let pub_storage_future = async {
-            let mut public_storage_guard = self.inner.public_storage.lock().await;
-            match store_versioned_at_request_id(
+            let recovery_store_result = store_versioned_at_request_id(
                 &mut (*public_storage_guard),
                 req_id,
-                &pub_key,
-                &PubDataType::PublicEncKey.to_string(),
+                &recovery_request,
+                &PubDataType::RecoveryRequest.to_string(),
             )
-            .await
-            {
-                Ok(_) => None,
-                Err(e) => Some(format!(
-                    "Failed to store public backup key for request {req_id}: {e}",
-                )),
+            .await;
+            if let Err(e) = &recovery_store_result {
+                tracing::error!(
+                    "Failed to store recovery request to the public storage for request {}: {}",
+                    req_id,
+                    e
+                );
             }
-        };
-        let backup_storage_recovery_future = async {
-            // Store in backup vault
-            match &self.inner.backup_vault {
-                // TODO the vault is actually private so not really needed here
-                Some(vault) => {
-                    let mut backup_vault_guard = vault.lock().await;
-                    match store_versioned_at_request_id(
-                        &mut (*backup_vault_guard),
-                        req_id,
-                        &recovery_request,
-                        &PubDataType::RecoveryRequest.to_string(),
-                    )
-                    .await
-                    {
-                        Ok(_) => None,
-                        Err(e) => Some(format!(
-                            "Failed to store recovery request in backup vault for request {req_id}: {e}",
-                        )),
-                    }
-                }
-                // If there's no backup vault, we don't store anything
-                None => None,
+            let commit_store_result = store_versioned_at_request_id(
+                &mut (*public_storage_guard),
+                &req_id,
+                &commitments,
+                &PubDataType::Commitments.to_string(),
+            )
+            .await;
+            if let Err(e) = &recovery_store_result {
+                tracing::error!(
+                    "Failed to store commitments to the public storage for request {}: {}",
+                    req_id,
+                    e
+                );
             }
+            recovery_store_result.is_ok() && commit_store_result.is_ok()
         };
-        let backup_storage_commitment_future = async {
-            // Store in backup vault
-            match &self.inner.backup_vault {
-                Some(vault) => {
-                    let mut backup_vault_guard = vault.lock().await;
-                    // Write to the other part
-                    match store_versioned_at_request_id(
-                        &mut (*backup_vault_guard),
-                        req_id,
-                        &commitments,
-                        &PubDataType::Commitments.to_string(),
-                    )
-                    .await
-                    {
-                        Ok(_) => None,
-                        Err(e) => Some(format!(
-                            "Failed to store commitments in backup vault for request {req_id}: {e}",
-                        )),
-                    }
-                }
-                // If there's no backup vault, we don't store anything
-                None => None,
-            }
-        };
-        let (priv_res, pub_res, backup_recovery_res, backup_comm_res) = tokio::join!(
-            priv_storage_future,
-            pub_storage_future,
-            backup_storage_recovery_future,
-            backup_storage_commitment_future
-        );
+        // let backup_storage_recovery_future = async {
+        //     // Store in backup vault
+        //     match &self.inner.backup_vault {
+        //         // TODO the vault is actually private so not really needed here
+        //         Some(vault) => {
+        //             let mut backup_vault_guard = vault.lock().await;
+        //             match store_versioned_at_request_id(
+        //                 &mut (*backup_vault_guard),
+        //                 req_id,
+        //                 &recovery_request,
+        //                 &PubDataType::RecoveryRequest.to_string(),
+        //             )
+        //             .await
+        //             {
+        //                 Ok(_) => None,
+        //                 Err(e) => Some(format!(
+        //                     "Failed to store recovery request in backup vault for request {req_id}: {e}",
+        //                 )),
+        //             }
+        //         }
+        //         // If there's no backup vault, we don't store anything
+        //         None => None,
+        //     }
+        // };
+        // let backup_storage_commitment_future = async {
+        //     // Store in backup vault
+        //     match &self.inner.backup_vault {
+        //         Some(vault) => {
+        //             let mut backup_vault_guard = vault.lock().await;
+        //             // Write to the other part
+        //             match store_versioned_at_request_id(
+        //                 &mut (*backup_vault_guard),
+        //                 req_id,
+        //                 &commitments,
+        //                 &PubDataType::Commitments.to_string(),
+        //             )
+        //             .await
+        //             {
+        //                 Ok(_) => None,
+        //                 Err(e) => Some(format!(
+        //                     "Failed to store commitments in backup vault for request {req_id}: {e}",
+        //                 )),
+        //             }
+        //         }
+        //         // If there's no backup vault, we don't store anything
+        //         None => None,
+        //     }
+        // };
+        let (priv_res, pub_res) = tokio::join!(priv_storage_future, pub_storage_future);
         {
             // Update meta store
             // First we insert the request ID
@@ -393,11 +408,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 }
             };
             // If everything is ok, we update the meta store with a success
-            if priv_res.is_none()
-                && pub_res.is_none()
-                && backup_recovery_res.is_none()
-                && backup_comm_res.is_none()
-            {
+            if priv_res && pub_res {
                 if let Err(e) = guarded_meta_store.update(req_id, Ok(custodian_context)) {
                     tracing::error!("Failed to update meta store for request {req_id}: {e}");
                     self.purge_backup_material(req_id, guarded_meta_store).await;
@@ -405,16 +416,13 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             } else {
                 self.purge_backup_material(req_id, guarded_meta_store).await;
                 tracing::error!(
-                    "Failed to store backup keys for request {}: priv_res: {}, pub_res: {}, backup_recovery: {}, backup_comm: {}",
+                    "Failed to store backup keys for request {}: priv_res: {}, pub_res: {}",
                     req_id,
-                    priv_res.unwrap_or_default(),
-                    pub_res.unwrap_or_default(),
-                    backup_recovery_res.unwrap_or_default(),
-                    backup_comm_res.unwrap_or_default()
+                    priv_res,
+                    pub_res,
                 );
             }
         }
-        // update cache
     }
 
     pub async fn purge_backup_material(

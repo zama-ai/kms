@@ -31,8 +31,8 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         backup_pke::BackupPublicKey,
-        internal_crypto_types::{PublicSigKey, Signature},
-        signcryption::internal_verify_sig,
+        internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature},
+        signcryption::{internal_sign, internal_verify_sig},
     },
     engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY},
 };
@@ -209,6 +209,7 @@ fn verify_n_t(n: usize, t: usize) -> Result<(), BackupError> {
     Ok(())
 }
 
+const DSEP_HASH_COMM: DomainSep = *b"HASH_COM";
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum BackupCommitmentsVersioned {
     V0(BackupCommitments),
@@ -220,6 +221,7 @@ pub struct BackupCommitments {
     // Note that ideally we want to use a BTreeMap here,
     // but it does not implement Versionize yet.
     pub(crate) commitments: Vec<Vec<u8>>,
+    pub(crate) signature: Vec<u8>,
 }
 
 impl Named for BackupCommitments {
@@ -227,18 +229,29 @@ impl Named for BackupCommitments {
 }
 
 impl BackupCommitments {
-    pub fn new(commitments: Vec<Vec<u8>>) -> Self {
-        Self { commitments }
+    pub fn new(commitments: Vec<Vec<u8>>, sig_key: &PrivateSigKey) -> anyhow::Result<Self> {
+        let commitments_bytes = bc2wrap::serialize(&commitments)?;
+        let signature = internal_sign(&DSEP_HASH_COMM, &commitments_bytes, sig_key)?;
+        Ok(Self {
+            commitments,
+            signature: signature.sig.to_vec(),
+        })
     }
 
-    pub fn from_btree(commitments: BTreeMap<Role, Vec<u8>>) -> Self {
+    pub fn from_btree(
+        commitments: BTreeMap<Role, Vec<u8>>,
+        sig_key: &PrivateSigKey,
+    ) -> anyhow::Result<Self> {
         let mut commitments_vec = Vec::new();
         for i in 1..=commitments.len() {
             commitments_vec.push(commitments[&Role::indexed_from_one(i)].to_owned());
         }
-        Self {
+        let commitments_bytes = bc2wrap::serialize(&commitments)?;
+        let signature = internal_sign(&DSEP_HASH_COMM, &commitments_bytes, sig_key)?;
+        Ok(Self {
             commitments: commitments_vec,
-        }
+            signature: signature.sig.to_vec(),
+        })
     }
 
     pub fn get(&self, role: &Role) -> anyhow::Result<&[u8]> {

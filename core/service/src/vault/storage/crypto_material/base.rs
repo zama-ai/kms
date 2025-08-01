@@ -667,17 +667,18 @@ where
         }
     }
 
+    //todo is this still needed?
     pub async fn purge_backup_material(
         &self,
         req_id: &RequestId,
         mut guarded_meta_store: RwLockWriteGuard<'_, CustodianMetaStore>,
     ) {
-        let priv_pruge = async {
+        let priv_purge = async {
             let mut priv_storage = self.private_storage.lock().await;
             let result = delete_at_request_id(
                 &mut (*priv_storage),
                 req_id,
-                &PrivDataType::PrivDecKey.to_string(),
+                &PrivDataType::PubBackupKey.to_string(),
             )
             .await;
             if let Err(e) = &result {
@@ -694,7 +695,7 @@ where
             let result = delete_at_request_id(
                 &mut (*pub_storage),
                 req_id,
-                &PubDataType::PublicEncKey.to_string(),
+                &PubDataType::RecoveryRequest.to_string(),
             )
             .await;
             if let Err(e) = &result {
@@ -706,6 +707,7 @@ where
             }
             result.is_err()
         };
+        // TODO should delete commitments in pub and ciphertexts in vault
         let vault_purge = async {
             let mut vault_storage = match &self.backup_vault {
                 Some(vault_storage) => vault_storage.lock().await,
@@ -740,7 +742,7 @@ where
             recovery_res.is_err() || commit_res.is_err()
         };
         let (priv_purge_res, pub_purge_res, vault_purge_res) =
-            tokio::join!(priv_pruge, pub_purge, vault_purge);
+            tokio::join!(priv_purge, pub_purge, vault_purge);
         if priv_purge_res || pub_purge_res || vault_purge_res {
             tracing::error!("Failed to delete backup material for request {}", req_id);
         } else {

@@ -13,7 +13,7 @@ use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
 use futures_util::future::try_join_all;
 use k256::pkcs8::EncodePublicKey;
-use kms_grpc::{rpc_types::PubDataType, RequestId};
+use kms_grpc::{rpc_types::PrivDataType, RequestId};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -121,9 +121,10 @@ pub async fn make_keychain(
             // that my_id is 0
             let my_role = my_role.unwrap_or(Role::indexed_from_zero(0));
             let signer = signer.expect("Signing key must be loaded");
+            // TODO should be stored in private vault
             let public_vault = public_vault
                 .expect("Public vault must be provided to load custodian setup messages");
-            let ck_type = PubDataType::CustodianSetupMessage.to_string();
+            let ck_type = PrivDataType::CustodianSetupMessage.to_string();
             let custodian_key_hashes = custodian_keys
                 .iter()
                 .map(|ck| ck.into_request_id())

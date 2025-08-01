@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::consts::{DEFAULT_PARAM, SIG_SIZE, TEST_PARAM};
 use crate::cryptography::hybrid_ml_kem::{self};
 use k256::ecdsa::{SigningKey, VerifyingKey};
@@ -6,7 +8,6 @@ use ml_kem::{EncodedSizeUser, KemCore};
 use nom::AsBytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::sync::Arc;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -337,7 +338,6 @@ impl From<PrivateSigKey> for PublicSigKey {
         }
     }
 }
-
 impl From<Arc<PrivateSigKey>> for PublicSigKey {
     fn from(value: Arc<PrivateSigKey>) -> Self {
         let pk = SigningKey::verifying_key(&value.sk.0).to_owned();
