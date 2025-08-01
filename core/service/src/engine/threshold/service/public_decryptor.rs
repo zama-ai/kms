@@ -222,14 +222,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             e
         })?;
 
-        // CRITICAL FIX: Release permit immediately after validation
-        // Don't hold permits during expensive multi-party coordination
-        drop(permit);
-        tracing::debug!(
-            request_id = ?req_id,
-            "Rate limiter permit released after validation - proceeding with async coordination"
-        );
-
         if let Some(b) = timer.as_mut() {
             //We log but we don't want to return early because timer failed
             let _ = b
@@ -459,11 +451,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
         let party_id = self.session_preparer.my_id;
-        let dec_sig_future = || async move {
+        let dec_sig_future = |_permit| async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
             let _timer = timer;
-            // NOTE: Rate limiter permit was already released after validation
+            // NOTE: _permit should be dropped at the end of this function
             let mut decs = HashMap::new();
             let error_msg: Option<String> = None;
 
@@ -542,7 +534,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             );
         };
         self.tracker
-            .spawn(dec_sig_future().instrument(tracing::Span::current()));
+            .spawn(dec_sig_future(permit).instrument(tracing::Span::current()));
 
         Ok(Response::new(Empty {}))
     }
