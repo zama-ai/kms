@@ -266,6 +266,25 @@ pub struct PrivateKeySet<const EXTENSION_DEGREE: usize> {
     pub parameters: ClassicPBSParameters,
 }
 
+#[cfg(feature = "testing")]
+impl<const EXTENSION_DEGREE: usize> PrivateKeySet<EXTENSION_DEGREE> {
+    pub fn init_dummy(param: DKGParams) -> Self {
+        let params_basic_handle = param.get_params_basics_handle();
+        Self {
+            lwe_compute_secret_key_share: LweSecretKeyShare { data: vec![] },
+            lwe_encryption_secret_key_share: LweSecretKeyShare { data: vec![] },
+            glwe_secret_key_share: GlweSecretKeyShareEnum::Z128(GlweSecretKeyShare {
+                data: vec![],
+                polynomial_size: params_basic_handle.polynomial_size(),
+            }),
+            glwe_secret_key_share_sns_as_lwe: None,
+            parameters: params_basic_handle.to_classic_pbs_parameters(),
+            glwe_secret_key_share_compression: None,
+            glwe_sns_compression_key_as_lwe: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Version)]
 pub struct PrivateKeySetV0<const EXTENSION_DEGREE: usize> {
     //The two Lwe keys are the same if there's no dedicated pk parameters

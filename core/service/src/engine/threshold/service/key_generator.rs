@@ -983,7 +983,6 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             }
         };
 
-        // NOTE: we store the result in base key ID and not the req_id
         crypto_storage
             .write_threshold_keys_with_meta_store(
                 req_id,
