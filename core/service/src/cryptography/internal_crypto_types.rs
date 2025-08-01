@@ -78,17 +78,12 @@ impl UnifiedPublicEncKey {
                 )?;
                 Ok(enc_key_buf)
             }
-            UnifiedPublicEncKey::MlKem1024(user_pk) => {
-                let mut enc_key_buf = Vec::new();
-                tfhe::safe_serialization::safe_serialize(
-                    &UnifiedPublicEncKey::MlKem1024(user_pk.clone()),
-                    &mut enc_key_buf,
-                    SAFE_SER_SIZE_LIMIT,
-                )?;
-                Ok(enc_key_buf)
-            }
+            // TODO: The following bincode serialization is done to be backward compatible
+            // with the old serialization format, used in relayer-sdk v0.2.0-0 and older (tkms v0.11.0-rc20 and older).
+            // It should be replaced with safe serialization (as above) in the future.
+            UnifiedPublicEncKey::MlKem1024(user_pk) => bc2wrap::serialize(user_pk),
         }
-        .map_err(|e: anyhow::Error| anyhow::anyhow!("serialization error: {e}"))
+        .map_err(|e| anyhow::anyhow!("serialization error: {e}"))
     }
 }
 
