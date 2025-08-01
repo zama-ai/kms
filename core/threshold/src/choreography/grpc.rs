@@ -30,7 +30,8 @@ use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcas
 use crate::execution::endpoints::decryption::{
     combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
     task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, NoiseFloodPreparation,
-    RadixOrBoolCiphertext, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
+    RadixOrBoolCiphertext, SecureOnlineNoiseFloodDecryption, SnsDecryptionKeyType,
+    SnsRadixOrBoolCiphertext,
 };
 use crate::execution::endpoints::decryption::{NoiseFloodLargeSession, NoiseFloodSmallSession};
 use crate::execution::endpoints::keygen::FhePubKeySet;
@@ -1643,7 +1644,12 @@ where
                                     let mut res = Vec::new();
                                     for ctxt in ctxts.into_iter() {
                                         res.push(
-                                            run_decryption_noiseflood_64(
+                                            run_decryption_noiseflood_64::<
+                                                EXTENSION_DEGREE,
+                                                _,
+                                                _,
+                                                SecureOnlineNoiseFloodDecryption,
+                                            >(
                                                 &mut base_session,
                                                 &mut noiseflood_preprocessing,
                                                 &key_ref.1,
@@ -2114,7 +2120,12 @@ where
                                 panic!("Missing key (it was there just before)")
                             };
                             res.push(
-                                run_decryption_noiseflood_64(
+                                run_decryption_noiseflood_64::<
+                                    EXTENSION_DEGREE,
+                                    _,
+                                    _,
+                                    SecureOnlineNoiseFloodDecryption,
+                                >(
                                     &mut base_session,
                                     &mut preprocessing,
                                     &key_ref.1,

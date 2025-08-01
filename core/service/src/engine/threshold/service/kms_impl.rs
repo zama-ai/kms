@@ -114,7 +114,7 @@ impl ThresholdFheKeys {
         }
     }
 
-    #[cfg(feature = "testing")]
+    #[cfg(test)]
     pub fn init_dummy(
         param: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
     ) -> (Self, FhePubKeySet) {

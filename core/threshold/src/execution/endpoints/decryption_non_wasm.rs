@@ -67,6 +67,7 @@ use tokio::time::{Duration, Instant};
 use tracing::info_span;
 use tracing::instrument;
 
+#[cfg(any(test, feature = "testing"))]
 use super::decryption::DecryptionMode;
 use super::decryption::LowLevelCiphertext;
 use super::keygen::PrivateKeySet;

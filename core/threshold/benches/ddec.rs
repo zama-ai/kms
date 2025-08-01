@@ -90,8 +90,12 @@ fn ddec_nsmall(c: &mut Criterion) {
             &(config, ctc, runtime),
             |b, (_config, cti, runtime)| {
                 b.iter(|| {
-                    let _ =
-                        threshold_decrypt64(runtime, cti.as_ref(), DecryptionMode::NoiseFloodSmall);
+                    let _ = threshold_decrypt64(
+                        runtime,
+                        cti.as_ref(),
+                        DecryptionMode::NoiseFloodSmall,
+                        &[],
+                    );
                 });
             },
         );
@@ -143,7 +147,8 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
             &(config, ctc, runtime),
             |b, (_config, ct, runtime)| {
                 b.iter(|| {
-                    let _ = threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::BitDecSmall);
+                    let _ =
+                        threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::BitDecSmall, &[]);
                 })
             },
         );
@@ -199,8 +204,12 @@ fn ddec_nlarge(c: &mut Criterion) {
             &(config, ctc, runtime),
             |b, (_config, ct, runtime)| {
                 b.iter(|| {
-                    let _ =
-                        threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::NoiseFloodLarge);
+                    let _ = threshold_decrypt64(
+                        runtime,
+                        ct.as_ref(),
+                        DecryptionMode::NoiseFloodLarge,
+                        &[],
+                    );
                 });
             },
         );
@@ -249,7 +258,8 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
             &(config, ctc, runtime),
             |b, (_config, ct, runtime)| {
                 b.iter(|| {
-                    let _ = threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::BitDecLarge);
+                    let _ =
+                        threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::BitDecLarge, &[]);
                 })
             },
         );
