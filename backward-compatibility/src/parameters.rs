@@ -9,6 +9,7 @@ use std::borrow::Cow;
 pub struct DKGParamsSnSTest {
     pub regular_params: DKGParamsRegularTest,
     pub sns_params: SwitchAndSquashParametersTest,
+    pub sns_compression_parameters: SwitchAndSquashCompressionParametersTest,
 }
 
 // Parameters `dedicated_compact_public_key_parameters` and `compression_decompression_parameters`
@@ -48,6 +49,18 @@ pub struct SwitchAndSquashParametersTest {
     pub polynomial_size: usize,
     pub pbs_base_log: usize,
     pub pbs_level: usize,
+    pub message_modulus: u64,
+    pub carry_modulus: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SwitchAndSquashCompressionParametersTest {
+    pub packing_ks_level: usize,
+    pub packing_ks_base_log: usize,
+    pub packing_ks_polynomial_size: usize,
+    pub packing_ks_glwe_dimension: usize,
+    pub lwe_per_glwe: usize,
+    pub packing_ks_key_noise_distribution: u32,
     pub message_modulus: u64,
     pub carry_modulus: u64,
 }

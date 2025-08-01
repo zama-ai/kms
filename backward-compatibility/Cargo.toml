@@ -10,17 +10,17 @@ license = "BSD-3-Clause-Clear"
 # This is a list of kms-core versions we will generate data for. This list will grow over time.
 # They are only activated when generating data, with the binary target and the "generate" feature.
 # TODO update to public repo, once we have a public release
-kms_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "kms", rev = "v0.11.0-rc17", optional = true }
-kms_grpc_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "kms-grpc", rev = "v0.11.0-rc17", optional = true }
-threshold_fhe_0_11 = { git = "ssh://git@github.com/zama-ai/kms-core.git", package = "threshold-fhe", rev = "v0.11.0-rc17", optional = true, features = [
+kms_0_11 = { git = "https://github.com/zama-ai/kms.git", package = "kms", rev = "v0.11.0-22", optional = true }
+kms_grpc_0_11 = { git = "https://github.com/zama-ai/kms.git", package = "kms-grpc", rev = "v0.11.0-22", optional = true }
+threshold_fhe_0_11 = { git = "https://github.com/zama-ai/kms.git", package = "threshold-fhe", rev = "v0.11.0-22", optional = true, features = [
     "testing",
 ] }
 
 # Dependencies for the 0.11 version
 # Note: these dependencies should match the versions used by the KMS and distributed decryption
 # modules as much as possible to avoid serialization differences
-tfhe_versionable_0_5 = { package = "tfhe-versionable", version = "0.5.0", optional = true }
-tfhe_1_1 = { package = "tfhe", version = "1.1.3", optional = true, features = [
+tfhe_versionable_0_6 = { package = "tfhe-versionable", version = "=0.6.0", optional = true }
+tfhe_1_3 = { package = "tfhe", version = "=1.3.2", optional = true, features = [
     "shortint",
 ] }
 alloy-sol-types-1_1_2 = { package = "alloy-sol-types", version = "=1.1.2", optional = true }
@@ -33,6 +33,7 @@ bincode = "=1.3.3"
 aes-prng = "=0.2.1"
 rand = "=0.8.5"
 tokio = { version = "1.44.2", features = ["full"] }
+cfg-if = "=1.0.1"
 
 [[bin]]
 name = "backward-compatibility"
@@ -44,8 +45,8 @@ generate = [
     "dep:kms_0_11",
     "dep:kms_grpc_0_11",
     "dep:threshold_fhe_0_11",
-    "dep:tfhe_versionable_0_5",
-    "dep:tfhe_1_1",
+    "dep:tfhe_versionable_0_6",
+    "dep:tfhe_1_3",
     "dep:alloy-sol-types-1_1_2",
     "dep:alloy-primitives-1_1_2",
 ]
