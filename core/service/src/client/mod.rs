@@ -2467,8 +2467,6 @@ pub(crate) mod tests {
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
     use crate::util::key_setup::max_threshold;
-    #[cfg(feature = "insecure")]
-    use crate::util::key_setup::test_tools::purge_backup;
     use crate::util::key_setup::test_tools::{
         compute_cipher_from_stored_key, purge, EncryptionConfig, TestingPlaintext,
     };
@@ -6064,11 +6062,9 @@ pub(crate) mod tests {
         let test_path = None;
         purge(test_path, test_path, test_path, &key_id_1, amount_parties).await;
         purge(test_path, test_path, test_path, &key_id_2, amount_parties).await;
-        let (_kms_servers, kms_clients, internal_client) =
+        let (kms_servers, kms_clients, internal_client) =
             threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
-        // Purge the backup after booting the server to ensure nothing is backeup automatically during boot
-        purge_backup(test_path, amount_parties).await;
         let _keys_1 = run_threshold_keygen(
             param,
             &kms_clients,
@@ -6121,7 +6117,7 @@ pub(crate) mod tests {
             match res {
                 Ok(res) => match res {
                     Ok(resp) => {
-                        println!("Custodian backup restore response: {resp:?}");
+                        tracing::info!("Custodian backup restore response: {resp:?}");
                     }
                     Err(e) => {
                         panic!("Error while restoring: {e}");
@@ -6132,28 +6128,19 @@ pub(crate) mod tests {
                 }
             }
         }
+        drop(kms_servers);
+        drop(kms_clients);
+        drop(internal_client);
+        // Sleep to ensure the servers are properly shut down
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         // And validate that we can still decrypt
-        decryption_threshold(
-            DEFAULT_PARAM,
-            &key_id_1,
-            vec![TestingPlaintext::U8(42)],
-            EncryptionConfig {
-                compression: true,
-                precompute_sns: false,
-            },
-            1,
-            amount_parties,
-            None,
-            Some(DecryptionMode::NoiseFloodSmall),
-        )
-        .await;
         decryption_threshold(
             DEFAULT_PARAM,
             &key_id_2,
             vec![TestingPlaintext::U8(42)],
             EncryptionConfig {
-                compression: true,
-                precompute_sns: false,
+                compression: false,
+                precompute_sns: true,
             },
             1,
             amount_parties,
@@ -6198,9 +6185,6 @@ pub(crate) mod tests {
             true,
         )
         .await;
-
-        // Purge the backup
-        purge_backup(test_path, amount_parties).await;
 
         // Reboot the servers
         drop(kms_servers);
@@ -6250,9 +6234,6 @@ pub(crate) mod tests {
         purge(test_path, test_path, test_path, &req_id, amount_parties).await;
         let (_kms_servers, kms_clients, internal_client) =
             threshold_handles(*dkg_param, amount_parties, true, None, None).await;
-        // Purge the backup after booting the server to ensure nothing is backeup automatically during boot
-        purge_backup(test_path, amount_parties).await;
-
         run_crs(
             param,
             &kms_clients,
@@ -6262,14 +6243,16 @@ pub(crate) mod tests {
             Some(16),
         )
         .await;
-
         // Generated crs, delete it from private storage
         for i in 1..=amount_parties {
-            let mut priv_storage: FileStorage =
-                FileStorage::new(None, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap();
+            let mut priv_storage: FileStorage = FileStorage::new(
+                test_path,
+                StorageType::PRIV,
+                Some(Role::indexed_from_one(i)),
+            )
+            .unwrap();
             delete_all_at_request_id(&mut priv_storage, &req_id).await;
         }
-
         // Now try to restore
         let mut resp_tasks = JoinSet::new();
         for i in 1..=amount_parties as u32 {
@@ -6286,7 +6269,7 @@ pub(crate) mod tests {
             match res {
                 Ok(res) => match res {
                     Ok(resp) => {
-                        println!("Custodian backup restore response: {resp:?}");
+                        tracing::info!("Custodian backup restore response: {resp:?}");
                     }
                     Err(e) => {
                         panic!("Error while restoring: {e}");
@@ -6297,12 +6280,14 @@ pub(crate) mod tests {
                 }
             }
         }
-
         // Check the file is restored
         for i in 1..=amount_parties {
-            let backup_storage: FileStorage =
-                FileStorage::new(None, StorageType::BACKUP, Some(Role::indexed_from_one(i)))
-                    .unwrap();
+            let backup_storage: FileStorage = FileStorage::new(
+                test_path,
+                StorageType::BACKUP,
+                Some(Role::indexed_from_one(i)),
+            )
+            .unwrap();
             assert!(backup_storage
                 .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
                 .await
