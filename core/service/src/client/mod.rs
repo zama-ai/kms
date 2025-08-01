@@ -6270,9 +6270,6 @@ pub(crate) mod tests {
             delete_all_at_request_id(&mut priv_storage, &req_id).await;
         }
 
-        // Make sure file is actually deleted
-        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-
         // Now try to restore
         let mut resp_tasks = JoinSet::new();
         for i in 1..=amount_parties as u32 {
@@ -6301,29 +6298,15 @@ pub(crate) mod tests {
             }
         }
 
-        // Trying to restore again will fail since the file is already restored
-        let mut resp_tasks = JoinSet::new();
-        for i in 1..=amount_parties as u32 {
-            let mut cur_client = kms_clients.get(&i).unwrap().clone();
-            resp_tasks.spawn(async move {
-                let req = Empty {};
-                // send query
-                cur_client
-                    .custodian_backup_restore(tonic::Request::new(req))
-                    .await
-            });
-        }
-        while let Some(res) = resp_tasks.join_next().await {
-            match res {
-                Ok(res) => {
-                    if res.is_ok() {
-                        panic!("Expected a failure");
-                    }
-                }
-                Err(e) => {
-                    panic!("Error while joning threads: {e}");
-                }
-            }
+        // Check the file is restored
+        for i in 1..=amount_parties {
+            let backup_storage: FileStorage =
+                FileStorage::new(None, StorageType::BACKUP, Some(Role::indexed_from_one(i)))
+                    .unwrap();
+            assert!(backup_storage
+                .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+                .await
+                .unwrap());
         }
     }
 
