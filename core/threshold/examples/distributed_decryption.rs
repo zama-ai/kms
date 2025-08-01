@@ -58,8 +58,7 @@ fn main() {
     runtime.setup_sks(key_shares);
 
     // Perform distributed decryption.
-    let result =
-        threshold_decrypt64(&runtime, &raw_ct, DecryptionMode::NoiseFloodSmall, &[]).unwrap();
+    let result = threshold_decrypt64(&runtime, &raw_ct, DecryptionMode::NoiseFloodSmall).unwrap();
 
     for (_, v) in result {
         assert_eq!(v.0 as u8, message);

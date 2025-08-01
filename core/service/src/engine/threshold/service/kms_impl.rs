@@ -52,7 +52,8 @@ use crate::{
         base::{compute_info, BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY},
         prepare_shutdown_signals,
         threshold::{
-            service::public_decryptor::SecureNoiseFloodDecryptor, threshold_kms::ThresholdKms,
+            service::public_decryptor::SecureNoiseFloodDecryptor,
+            service::user_decryptor::SecureNoiseFloodPartialDecryptor, threshold_kms::ThresholdKms,
         },
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
@@ -194,7 +195,7 @@ pub fn compute_all_info(
 #[cfg(not(feature = "insecure"))]
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInitiator<PrivS>,
-    RealUserDecryptor<PubS, PrivS>,
+    RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
@@ -206,7 +207,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
 #[cfg(feature = "insecure")]
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInitiator<PrivS>,
-    RealUserDecryptor<PubS, PrivS>,
+    RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<PubS, PrivS>,
     RealInsecureKeyGenerator<PubS, PrivS>,
@@ -515,6 +516,7 @@ where
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         decryption_mode: config.decryption_mode,
+        _dec: PhantomData,
     };
 
     let public_decryptor = RealPublicDecryptor {

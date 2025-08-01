@@ -256,34 +256,6 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
     }
 }
 
-#[cfg(any(feature = "testing", test))]
-pub struct MaliciousOnlineNoiseFloodDecryption;
-
-#[cfg(any(feature = "testing", test))]
-#[async_trait]
-impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
-    for MaliciousOnlineNoiseFloodDecryption
-{
-    async fn decrypt<
-        S: BaseSessionHandles,
-        P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
-        T,
-    >(
-        _session: &mut S,
-        _preprocessing: &mut P,
-        _keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
-        _ciphertext: &SnsRadixOrBoolCiphertext,
-        _ddec_key_type: SnsDecryptionKeyType,
-    ) -> anyhow::Result<T>
-    where
-        T: tfhe::integer::block_decomposition::Recomposable
-            + tfhe::core_crypto::commons::traits::CastFrom<u128>,
-        ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
-    {
-        Ok(T::ZERO)
-    }
-}
-
 /// Decrypts a ciphertext using noise flooding.
 ///
 /// Returns the plaintext plus some timing information.
@@ -732,12 +704,37 @@ where
     .await
 }
 
-/// test the threshold decryption for a given 64-bit TFHE-rs ciphertext
+#[cfg(any(test, feature = "testing"))]
+pub fn threshold_decrypt64<Z: Ring, const EXTENSION_DEGREE: usize>(
+    runtime: &DistributedTestRuntime<Z, EXTENSION_DEGREE>,
+    ct: &RadixOrBoolCiphertext,
+    mode: DecryptionMode,
+) -> anyhow::Result<HashMap<Identity, Z64>>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
+{
+    threshold_decrypt64_maybe_malicious::<Z, SecureOnlineNoiseFloodDecryption, EXTENSION_DEGREE>(
+        runtime,
+        ct,
+        mode,
+        &[],
+    )
+}
+
+/// Test the threshold decryption for a given 64-bit TFHE-rs ciphertext
 ///
 /// NOTE: Trait bounds are a bit odd here because this function does a bit too many things
 /// at once
+///
+/// The malicious set is a list of party indices (starting at 0)
+/// that will run (potentially) decryption protocol defined by the MalDec trait.
 #[cfg(any(test, feature = "testing"))]
-pub fn threshold_decrypt64<Z: Ring, const EXTENSION_DEGREE: usize>(
+fn threshold_decrypt64_maybe_malicious<
+    Z: Ring,
+    MalDec: OnlineNoiseFloodDecryption<EXTENSION_DEGREE>,
+    const EXTENSION_DEGREE: usize,
+>(
     runtime: &DistributedTestRuntime<Z, EXTENSION_DEGREE>,
     ct: &RadixOrBoolCiphertext,
     mode: DecryptionMode,
@@ -817,12 +814,7 @@ where
                         .await
                         .unwrap();
                     let out = if malicious_set.contains(&index_id) {
-                        run_decryption_noiseflood_64::<
-                            EXTENSION_DEGREE,
-                            _,
-                            _,
-                            MaliciousOnlineNoiseFloodDecryption,
-                        >(
+                        run_decryption_noiseflood_64::<EXTENSION_DEGREE, _, _, MalDec>(
                             session_noiseflood.session.get_mut(),
                             &mut noiseflood_preprocessing,
                             &party_keyshare,
@@ -861,12 +853,7 @@ where
                         .await
                         .unwrap();
                     let out = if malicious_set.contains(&index_id) {
-                        run_decryption_noiseflood_64::<
-                            EXTENSION_DEGREE,
-                            _,
-                            _,
-                            MaliciousOnlineNoiseFloodDecryption,
-                        >(
+                        run_decryption_noiseflood_64::<EXTENSION_DEGREE, _, _, MalDec>(
                             session_noiseflood.session.get_mut(),
                             &mut noiseflood_preprocessing,
                             &party_keyshare,
@@ -1321,19 +1308,20 @@ where
 mod tests {
     use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve};
     use crate::execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
+    use crate::execution::endpoints::decryption_non_wasm::threshold_decrypt64_maybe_malicious;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::test_feature::{
         keygen_all_party_shares_from_keyset, KeySet,
     };
+    use crate::malicious_execution::endpoints::decryption::DroppingOnlineNoiseFloodDecryption;
     use crate::networking::NetworkMode;
     use crate::{
         algebra::base_ring::{Z128, Z64},
         algebra::galois_rings::common::ResiduePoly,
         execution::{
             constants::SMALL_TEST_KEY_PATH,
-            endpoints::decryption::threshold_decrypt64,
             runtime::{
-                party::{Identity, Role},
+                party::Role,
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
             sharing::{shamir::ShamirSharings, share::Share},
@@ -1443,20 +1431,28 @@ mod tests {
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
             EXTENSION_DEGREE,
-        >::new(identities, threshold as u8, NetworkMode::Sync, None);
+        >::new(
+            identities.clone(), threshold as u8, NetworkMode::Sync, None
+        );
 
         runtime.setup_server_key(Arc::new(keyset.public_keys.server_key.clone()));
         runtime.setup_sks(key_shares);
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
-        let results_dec = threshold_decrypt64(
+        let results_dec = threshold_decrypt64_maybe_malicious::<
+            _,
+            DroppingOnlineNoiseFloodDecryption,
+            EXTENSION_DEGREE,
+        >(
             &runtime,
             &ct,
             DecryptionMode::NoiseFloodLarge,
             malicious_set,
         )
         .unwrap();
-        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
+        let identity_0 = &identities[0];
+        assert!(!malicious_set.contains(&0));
+        let out_dec = &results_dec[identity_0];
 
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
@@ -1526,20 +1522,28 @@ mod tests {
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
             EXTENSION_DEGREE,
-        >::new(identities, threshold as u8, NetworkMode::Sync, None);
+        >::new(
+            identities.clone(), threshold as u8, NetworkMode::Sync, None
+        );
 
         runtime.setup_sks(key_shares);
         runtime.setup_server_key(Arc::new(keyset.public_keys.server_key.clone()));
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
-        let results_dec = threshold_decrypt64(
+        let results_dec = threshold_decrypt64_maybe_malicious::<
+            _,
+            DroppingOnlineNoiseFloodDecryption,
+            EXTENSION_DEGREE,
+        >(
             &runtime,
             &ct,
             DecryptionMode::NoiseFloodSmall,
             malicious_set,
         )
         .unwrap();
-        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
+        let identity_0 = &identities[0];
+        assert!(!malicious_set.contains(&0));
+        let out_dec = &results_dec[identity_0];
 
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
@@ -1604,7 +1608,9 @@ mod tests {
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
             EXTENSION_DEGREE,
-        >::new(identities, threshold as u8, NetworkMode::Sync, None);
+        >::new(
+            identities.clone(), threshold as u8, NetworkMode::Sync, None
+        );
 
         runtime.setup_sks(key_shares);
         runtime.setup_ks(
@@ -1626,9 +1632,15 @@ mod tests {
         );
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
-        let results_dec =
-            threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmall, malicious_set).unwrap();
-        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
+        let results_dec = threshold_decrypt64_maybe_malicious::<
+            _,
+            DroppingOnlineNoiseFloodDecryption,
+            EXTENSION_DEGREE,
+        >(&runtime, &ct, DecryptionMode::BitDecSmall, malicious_set)
+        .unwrap();
+        let identity_0 = &identities[0];
+        assert!(!malicious_set.contains(&0));
+        let out_dec = &results_dec[identity_0];
 
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);
@@ -1693,7 +1705,9 @@ mod tests {
         let mut runtime = DistributedTestRuntime::<
             ResiduePoly<Z64, EXTENSION_DEGREE>,
             EXTENSION_DEGREE,
-        >::new(identities, threshold as u8, NetworkMode::Sync, None);
+        >::new(
+            identities.clone(), threshold as u8, NetworkMode::Sync, None
+        );
 
         runtime.setup_sks(key_shares);
         runtime.setup_ks(
@@ -1715,9 +1729,15 @@ mod tests {
         );
 
         let ct = RadixOrBoolCiphertext::Radix(ct);
-        let results_dec =
-            threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecLarge, malicious_set).unwrap();
-        let out_dec = &results_dec[&Identity("localhost".to_string(), 5000)];
+        let results_dec = threshold_decrypt64_maybe_malicious::<
+            _,
+            DroppingOnlineNoiseFloodDecryption,
+            EXTENSION_DEGREE,
+        >(&runtime, &ct, DecryptionMode::BitDecLarge, malicious_set)
+        .unwrap();
+        let identity_0 = &identities[0];
+        assert!(!malicious_set.contains(&0));
+        let out_dec = &results_dec[identity_0];
 
         let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(*out_dec, ref_res);

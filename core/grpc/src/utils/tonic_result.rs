@@ -9,7 +9,7 @@ mod non_wasm {
 
     /// Truncates a string to a maximum of 128 chars to limit error message size.
     pub(crate) fn top_n_chars(mut s: String) -> String {
-        s.truncate(128);
+        s.truncate(1024);
         s
     }
 

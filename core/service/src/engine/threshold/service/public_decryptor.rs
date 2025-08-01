@@ -64,7 +64,7 @@ use crate::{
 use super::{session::SessionPreparer, ThresholdFheKeys};
 
 #[tonic::async_trait]
-pub trait NoisefloodDecryptor: Send + Sync {
+pub trait NoiseFloodDecryptor: Send + Sync {
     async fn decrypt<P, T>(
         noiseflood_session: &mut P,
         server_key: &tfhe::integer::ServerKey,
@@ -79,24 +79,10 @@ pub trait NoisefloodDecryptor: Send + Sync {
         ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve;
 }
 
-// #[tonic::async_trait]
-// pub trait NoisefloodPartialDecryptor: Send + Sync {
-//     async fn partial_decrypt<P, O>(
-//         noiseflood_session: &mut P,
-//         server_key: &tfhe::integer::ServerKey,
-//         ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
-//         ct: LowLevelCiphertext,
-//         secret_key_share: &PrivateKeySet<4>,
-//     ) -> anyhow::Result<(HashMap<String, Vec<ResiduePoly<Z128, 4>>>, u32, Duration)>
-//     where
-//         P: NoiseFloodPreparation<4>,
-//         ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve;
-// }
-
 pub struct SecureNoiseFloodDecryptor;
 
 #[tonic::async_trait]
-impl NoisefloodDecryptor for SecureNoiseFloodDecryptor {
+impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
     async fn decrypt<P, T>(
         noiseflood_session: &mut P,
         server_key: &tfhe::integer::ServerKey,
@@ -126,7 +112,7 @@ pub struct DummyNoisefloodDecryptor;
 
 #[cfg(test)]
 #[tonic::async_trait]
-impl NoisefloodDecryptor for DummyNoisefloodDecryptor {
+impl NoiseFloodDecryptor for DummyNoisefloodDecryptor {
     async fn decrypt<P, T>(
         _noiseflood_session: &mut P,
         _server_key: &tfhe::integer::ServerKey,
@@ -149,7 +135,7 @@ impl NoisefloodDecryptor for DummyNoisefloodDecryptor {
 pub struct RealPublicDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    Dec: NoisefloodDecryptor + 'static,
+    Dec: NoiseFloodDecryptor + 'static,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -164,7 +150,7 @@ pub struct RealPublicDecryptor<
 impl<
         PubS: Storage + Send + Sync + 'static,
         PrivS: Storage + Send + Sync + 'static,
-        Dec: NoisefloodDecryptor + 'static,
+        Dec: NoiseFloodDecryptor + 'static,
     > RealPublicDecryptor<PubS, PrivS, Dec>
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
@@ -303,7 +289,7 @@ impl<
 impl<
         PubS: Storage + Send + Sync + 'static,
         PrivS: Storage + Send + Sync + 'static,
-        Dec: NoisefloodDecryptor + 'static,
+        Dec: NoiseFloodDecryptor + 'static,
     > PublicDecryptor for RealPublicDecryptor<PubS, PrivS, Dec>
 {
     #[tracing::instrument(skip(self, request), fields(
