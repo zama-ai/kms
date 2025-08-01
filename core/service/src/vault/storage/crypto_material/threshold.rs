@@ -17,7 +17,13 @@ use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
 
 use crate::{
+    backup::{
+        custodian::InternalCustodianContext,
+        operator::{BackupCommitments, RecoveryRequest},
+    },
+    cryptography::backup_pke::{BackupPrivateKey, BackupPublicKey},
     engine::threshold::service::ThresholdFheKeys,
+    grpc::metastore_status_service::CustodianMetaStore,
     util::meta_store::MetaStore,
     vault::{
         storage::{store_pk_at_request_id, store_versioned_at_request_id, Storage},
@@ -175,6 +181,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             result.is_ok()
         };
 
+        // TODO since each thread is locking a storage component and they are run concurrently in a single thread
+        // don't we risk deadlocks with parallel executions since we have no guaranteed on the lock order?
         let (r1, r2, r3) = tokio::join!(f1, f2, f3);
 
         // Try to store the new data
@@ -265,6 +273,166 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             self.inner.private_storage.clone(),
         )
         .await
+    }
+
+    /// Write the backup keys to the storage and update the meta store.
+    /// This methods writes all the material associated with backups to storage,
+    /// and updates the meta store accordingly.
+    ///
+    /// This means that the public encryption key for backup is written to the public storage.
+    /// The same goes for the commitments to the custodian shares and the recovery request.
+    /// Finally the custodian context, with the information about the custodian nodes, is also written to public storage.
+    /// The private key for decrypting backups is written to the private storage.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn write_backup_keys_with_meta_store(
+        &self,
+        req_id: &RequestId,
+        pub_key: BackupPublicKey,
+        recovery_request: RecoveryRequest,
+        custodian_context: InternalCustodianContext,
+        commitments: BackupCommitments,
+        meta_store: Arc<RwLock<CustodianMetaStore>>,
+    ) {
+        // Lock the storage needed in correct order to avoid deadlocks.
+        let mut private_storage_guard = self.inner.private_storage.lock().await;
+        let mut public_storage_guard = self.inner.public_storage.lock().await;
+
+        let priv_storage_future = async {
+            let store_result = store_versioned_at_request_id(
+                &mut (*private_storage_guard),
+                req_id,
+                &pub_key,
+                &PrivDataType::PubBackupKey.to_string(),
+            )
+            .await;
+            if let Err(e) = &store_result {
+                tracing::error!(
+                    "Failed to store public backup encryption key to private storage for request {}: {}",
+                    req_id,
+                    e
+                );
+            }
+            store_result.is_ok()
+        };
+        let pub_storage_future = async {
+            let recovery_store_result = store_versioned_at_request_id(
+                &mut (*public_storage_guard),
+                req_id,
+                &recovery_request,
+                &PubDataType::RecoveryRequest.to_string(),
+            )
+            .await;
+            if let Err(e) = &recovery_store_result {
+                tracing::error!(
+                    "Failed to store recovery request to the public storage for request {}: {}",
+                    req_id,
+                    e
+                );
+            }
+            let commit_store_result = store_versioned_at_request_id(
+                &mut (*public_storage_guard),
+                &req_id,
+                &commitments,
+                &PubDataType::Commitments.to_string(),
+            )
+            .await;
+            if let Err(e) = &recovery_store_result {
+                tracing::error!(
+                    "Failed to store commitments to the public storage for request {}: {}",
+                    req_id,
+                    e
+                );
+            }
+            recovery_store_result.is_ok() && commit_store_result.is_ok()
+        };
+        // let backup_storage_recovery_future = async {
+        //     // Store in backup vault
+        //     match &self.inner.backup_vault {
+        //         // TODO the vault is actually private so not really needed here
+        //         Some(vault) => {
+        //             let mut backup_vault_guard = vault.lock().await;
+        //             match store_versioned_at_request_id(
+        //                 &mut (*backup_vault_guard),
+        //                 req_id,
+        //                 &recovery_request,
+        //                 &PubDataType::RecoveryRequest.to_string(),
+        //             )
+        //             .await
+        //             {
+        //                 Ok(_) => None,
+        //                 Err(e) => Some(format!(
+        //                     "Failed to store recovery request in backup vault for request {req_id}: {e}",
+        //                 )),
+        //             }
+        //         }
+        //         // If there's no backup vault, we don't store anything
+        //         None => None,
+        //     }
+        // };
+        // let backup_storage_commitment_future = async {
+        //     // Store in backup vault
+        //     match &self.inner.backup_vault {
+        //         Some(vault) => {
+        //             let mut backup_vault_guard = vault.lock().await;
+        //             // Write to the other part
+        //             match store_versioned_at_request_id(
+        //                 &mut (*backup_vault_guard),
+        //                 req_id,
+        //                 &commitments,
+        //                 &PubDataType::Commitments.to_string(),
+        //             )
+        //             .await
+        //             {
+        //                 Ok(_) => None,
+        //                 Err(e) => Some(format!(
+        //                     "Failed to store commitments in backup vault for request {req_id}: {e}",
+        //                 )),
+        //             }
+        //         }
+        //         // If there's no backup vault, we don't store anything
+        //         None => None,
+        //     }
+        // };
+        let (priv_res, pub_res) = tokio::join!(priv_storage_future, pub_storage_future);
+        {
+            // Update meta store
+            // First we insert the request ID
+            let mut guarded_meta_store = meta_store.write().await;
+            // Whether things fail or not we can't do much
+            match guarded_meta_store.insert(req_id) {
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!("Failed to insert request ID {req_id} into meta store: {e}",);
+                    self.purge_backup_material(req_id, guarded_meta_store).await;
+                    return;
+                }
+            };
+            // If everything is ok, we update the meta store with a success
+            if priv_res && pub_res {
+                if let Err(e) = guarded_meta_store.update(req_id, Ok(custodian_context)) {
+                    tracing::error!("Failed to update meta store for request {req_id}: {e}");
+                    self.purge_backup_material(req_id, guarded_meta_store).await;
+                }
+            } else {
+                self.purge_backup_material(req_id, guarded_meta_store).await;
+                tracing::error!(
+                    "Failed to store backup keys for request {}: priv_res: {}, pub_res: {}",
+                    req_id,
+                    priv_res,
+                    pub_res,
+                );
+            }
+        }
+    }
+
+    pub async fn purge_backup_material(
+        &self,
+        req_id: &RequestId,
+        guarded_meta_store: RwLockWriteGuard<'_, CustodianMetaStore>,
+    ) {
+        self.inner
+            .purge_backup_material(req_id, guarded_meta_store)
+            .await
     }
 
     pub async fn purge_key_material(

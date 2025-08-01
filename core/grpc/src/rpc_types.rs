@@ -5,7 +5,7 @@ use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::fmt::{self};
 use strum_macros::EnumIter;
 use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
@@ -245,9 +245,9 @@ pub enum PubDataType {
     VerfKey,     // Type for the servers public verification keys
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
-    CACert,                // Certificate that signs TLS certificates used by MPC nodes
-    CustodianSetupMessage, // Backup custodian public keys (self-signed)
-    PublicEncKey,          // Classical non-FHE Public encryption key, e.g. used for backup
+    CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO I think this should be in private since we don't trust the public to never be modified
+    RecoveryRequest, // Recovery request for backup vault // TODO shoulde these be in the backup vault?
+    Commitments,     // Commitments for the backup vault
 }
 
 impl fmt::Display for PubDataType {
@@ -261,8 +261,8 @@ impl fmt::Display for PubDataType {
             PubDataType::VerfAddress => write!(f, "VerfAddress"),
             PubDataType::DecompressionKey => write!(f, "DecompressionKey"),
             PubDataType::CACert => write!(f, "CACert"),
-            PubDataType::CustodianSetupMessage => write!(f, "CustodianSetupMessage"),
-            PubDataType::PublicEncKey => write!(f, "PublicEncKey"),
+            PubDataType::RecoveryRequest => write!(f, "RecoveryRequest"),
+            PubDataType::Commitments => write!(f, "Commitments"),
         }
     }
 }
@@ -274,6 +274,10 @@ impl fmt::Display for PubDataType {
 /// signatures. Data of this type is supposed to only be readable, writable and modifiable by a
 /// single entity and stored on a medium that is not readable, writable or modifiable by any other
 /// entity (without detection).
+///
+/// Data stored with this type must either be need to kept secret and/or need to be kept authentic.
+/// Thus some data may indeed be safe to release publicly, but a malicious replacement could completely
+/// compromise the entire system.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
 pub enum PrivDataType {
     SigningKey,
@@ -281,6 +285,10 @@ pub enum PrivDataType {
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
+    CustodianInfo,         // Custodian information for the custodian context
+    CustodianSetupMessage, // Backup custodian public keys (self-signed) TODO should be in private
+    // PrivDecKey,    // Decryption key for a public key system, e.g. used for backup TODO not needed
+    PubBackupKey, // Public key for encrypting backup data, does not need to be private, but must be authentic
     ContextInfo,
 }
 
@@ -292,7 +300,22 @@ impl fmt::Display for PrivDataType {
             PrivDataType::CrsInfo => write!(f, "CrsInfo"),
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
+            PrivDataType::CustodianInfo => write!(f, "CustodianInfo"),
+            PrivDataType::CustodianSetupMessage => write!(f, "CustodianSetupMessage"),
             PrivDataType::ContextInfo => write!(f, "Context"),
+            PrivDataType::PubBackupKey => write!(f, "PubBackupKey"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
+pub enum BackupDataType {
+    Ciphertext, // Backed up ciphertext, encrypted with the public key for the custodians
+}
+impl fmt::Display for BackupDataType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BackupDataType::Ciphertext => write!(f, "Ciphertext"),
         }
     }
 }

@@ -1,8 +1,8 @@
 use crate::{
     anyhow_error_and_log,
     backup::{
-        custodian::{CustodianRecoveryOutput, CustodianSetupMessage},
-        operator::OperatorBackupOutput,
+        custodian::{CustodianRecoveryOutput, InternalCustodianSetupMessage},
+        operator::{BackupCommitments, OperatorBackupOutput},
     },
     conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain as KeychainConf, SecretSharingKeychain},
     cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
@@ -13,7 +13,7 @@ use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
 use futures_util::future::try_join_all;
 use k256::pkcs8::EncodePublicKey;
-use kms_grpc::{rpc_types::PubDataType, RequestId};
+use kms_grpc::{rpc_types::PrivDataType, RequestId};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -77,10 +77,7 @@ pub enum KeychainProxy {
 #[derive(EnumTryAs, Clone)]
 pub enum EnvelopeLoad {
     AppKeyBlob(AppKeyBlob),
-    OperatorRecoveryInput(
-        BTreeMap<Role, CustodianRecoveryOutput>,
-        BTreeMap<Role, Vec<u8>>,
-    ),
+    OperatorRecoveryInput(BTreeMap<Role, CustodianRecoveryOutput>, BackupCommitments),
 }
 
 #[derive(EnumTryAs)]
@@ -125,25 +122,26 @@ pub async fn make_keychain(
             // that my_id is 0
             let my_role = my_role.unwrap_or(Role::indexed_from_zero(0));
             let signer = signer.expect("Signing key must be loaded");
+            // TODO should be stored in private vault
             let public_vault = public_vault
                 .expect("Public vault must be provided to load custodian setup messages");
-            let ck_type = PubDataType::CustodianSetupMessage.to_string();
+            let ck_type = PrivDataType::CustodianSetupMessage.to_string();
             let custodian_key_hashes = custodian_keys
                 .iter()
                 .map(|ck| ck.into_request_id())
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            let custodian_messages: Vec<CustodianSetupMessage> = try_join_all(
+            let custodian_messages: Vec<InternalCustodianSetupMessage> = try_join_all(
                 custodian_key_hashes
                     .iter()
                     .map(|ck_hash| read_versioned_at_request_id(public_vault, ck_hash, &ck_type)),
             )
             .await?;
             for (ck, cm) in custodian_keys.iter().zip(custodian_messages.iter()) {
-                let cm_key_der = cm.verification_key.pk().to_public_key_der()?;
+                let cm_key_der = cm.public_verf_key.pk().to_public_key_der()?;
                 if cm_key_der.as_bytes() != ck.into_pem()?.contents {
                     return Err(anyhow_error_and_log(format!(
                         "Verification key in the setup message does not match the trusted key for custodian {}",
-                        cm.msg.custodian_role,
+                        cm.custodian_role,
                     )));
                 }
             }

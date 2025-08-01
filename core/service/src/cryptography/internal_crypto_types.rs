@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::consts::{DEFAULT_PARAM, SIG_SIZE, TEST_PARAM};
 use crate::cryptography::hybrid_ml_kem::{self};
 use k256::ecdsa::{SigningKey, VerifyingKey};
@@ -330,6 +332,14 @@ impl std::hash::Hash for WrappedVerifyingKey {
 
 impl From<PrivateSigKey> for PublicSigKey {
     fn from(value: PrivateSigKey) -> Self {
+        let pk = SigningKey::verifying_key(&value.sk.0).to_owned();
+        PublicSigKey {
+            pk: WrappedVerifyingKey(pk),
+        }
+    }
+}
+impl From<Arc<PrivateSigKey>> for PublicSigKey {
+    fn from(value: Arc<PrivateSigKey>) -> Self {
         let pk = SigningKey::verifying_key(&value.sk.0).to_owned();
         PublicSigKey {
             pk: WrappedVerifyingKey(pk),

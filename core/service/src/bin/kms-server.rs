@@ -446,6 +446,7 @@ async fn main() -> anyhow::Result<()> {
                 Some(Arc::clone(kms.get_user_dec_meta_store())), // user_dec_store
                 Some(Arc::clone(kms.get_crs_meta_store())),     // crs_store
                 None, // preproc_store - not available in centralized mode
+                Some(Arc::clone(kms.get_custodian_meta_store())), // custodian_store
             ));
             run_server(
                 core_config.service,

@@ -20,8 +20,7 @@ use threshold_fhe::{
 
 use super::{
     custodian::{
-        CustodianRecoveryOutput, CustodianSetupMessage, InnerCustodianSetupMessage,
-        DSEP_BACKUP_CUSTODIAN, HEADER,
+        CustodianRecoveryOutput, InternalCustodianSetupMessage, DSEP_BACKUP_CUSTODIAN, HEADER,
     },
     error::BackupError,
     secretsharing,
@@ -29,12 +28,11 @@ use super::{
 };
 use crate::{
     anyhow_error_and_log,
-    backup::custodian::DSEP_BACKUP_SETUP,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         backup_pke::BackupPublicKey,
-        internal_crypto_types::{PublicSigKey, Signature},
-        signcryption::internal_verify_sig,
+        internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature},
+        signcryption::{internal_sign, internal_verify_sig},
     },
     engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY},
 };
@@ -212,6 +210,59 @@ fn verify_n_t(n: usize, t: usize) -> Result<(), BackupError> {
     Ok(())
 }
 
+const DSEP_HASH_COMM: DomainSep = *b"HASH_COM";
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum BackupCommitmentsVersioned {
+    V0(BackupCommitments),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(BackupCommitmentsVersioned)]
+pub struct BackupCommitments {
+    // Note that ideally we want to use a BTreeMap here,
+    // but it does not implement Versionize yet.
+    pub(crate) commitments: Vec<Vec<u8>>,
+    pub(crate) signature: Vec<u8>,
+}
+
+impl Named for BackupCommitments {
+    const NAME: &'static str = "backup::BackupCommitments";
+}
+
+impl BackupCommitments {
+    pub fn new(commitments: Vec<Vec<u8>>, sig_key: &PrivateSigKey) -> anyhow::Result<Self> {
+        let commitments_bytes = bc2wrap::serialize(&commitments)?;
+        let signature = internal_sign(&DSEP_HASH_COMM, &commitments_bytes, sig_key)?;
+        Ok(Self {
+            commitments,
+            signature: signature.sig.to_vec(),
+        })
+    }
+
+    pub fn from_btree(
+        commitments: BTreeMap<Role, Vec<u8>>,
+        sig_key: &PrivateSigKey,
+    ) -> anyhow::Result<Self> {
+        let mut commitments_vec = Vec::new();
+        for i in 1..=commitments.len() {
+            commitments_vec.push(commitments[&Role::indexed_from_one(i)].to_owned());
+        }
+        let commitments_bytes = bc2wrap::serialize(&commitments)?;
+        let signature = internal_sign(&DSEP_HASH_COMM, &commitments_bytes, sig_key)?;
+        Ok(Self {
+            commitments: commitments_vec,
+            signature: signature.sig.to_vec(),
+        })
+    }
+
+    pub fn get(&self, role: &Role) -> anyhow::Result<&[u8]> {
+        if role.one_based() > self.commitments.len() {
+            anyhow::bail!("Role {} is out of bounds for commitments", role);
+        }
+        Ok(self.commitments[role.one_based() - 1].as_slice())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn checked_decryption_deserialize<D: BackupDecryptor>(
     sk: &D,
@@ -326,24 +377,26 @@ impl Named for BackupMaterial {
 impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
     pub fn new(
         my_role: Role,
-        custodian_messages: Vec<CustodianSetupMessage>,
+        custodian_messages: Vec<InternalCustodianSetupMessage>,
         signer: S,
-        verification_key: PublicSigKey,
+        operator_verf_key: PublicSigKey,
         decryptor: D,
-        public_key: BackupPublicKey,
+        operator_enc_key: BackupPublicKey,
         threshold: usize,
     ) -> Result<Self, BackupError> {
         verify_n_t(custodian_messages.len(), threshold)?;
 
         let mut custodian_keys = vec![];
         for (i, msg) in custodian_messages.into_iter().enumerate() {
-            let InnerCustodianSetupMessage {
+            let InternalCustodianSetupMessage {
                 header,
                 custodian_role,
                 random_value: _,
                 timestamp,
-                public_key,
-            } = msg.msg.clone();
+                name: _,
+                public_enc_key,
+                public_verf_key,
+            } = msg;
 
             if header != HEADER {
                 tracing::error!("Invalid header in custodian setup message from custodian {custodian_role}. Expected header {HEADER} but got {header}");
@@ -369,28 +422,16 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
                 return Err(BackupError::CustodianSetupError);
             }
 
-            let msg_buf = bc2wrap::serialize(&msg.msg)?;
-            let signature = Signature {
-                sig: k256::ecdsa::Signature::from_slice(&msg.signature)?,
-            };
-            internal_verify_sig(
-                &DSEP_BACKUP_SETUP,
-                &msg_buf,
-                &signature,
-                &msg.verification_key,
-            )
-            .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
-
-            custodian_keys.push((public_key, msg.verification_key));
+            custodian_keys.push((public_enc_key, public_verf_key));
         }
 
         Ok(Self {
             my_role,
             custodian_keys,
             signer,
-            verification_key,
+            verification_key: operator_verf_key,
             decryptor,
-            public_key,
+            public_key: operator_enc_key,
             threshold,
         })
     }
@@ -521,7 +562,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
     pub fn verify_and_recover(
         &self,
         custodian_recovery_output: &BTreeMap<Role, CustodianRecoveryOutput>,
-        commitments: &BTreeMap<Role, Vec<u8>>,
+        commitments: &BackupCommitments,
         backup_id: RequestId,
     ) -> Result<Vec<u8>, BackupError> {
         // the output is ordered by custodian ID, from 0 to n-1
@@ -541,7 +582,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
                 };
                 let commitment = commitments
                     .get(custodian_role)
-                    .ok_or(BackupError::OperatorError("missing commitment".to_string()))?;
+                    .map_err(|_| BackupError::OperatorError("missing commitment".to_string()))?;
                 internal_verify_sig(&DSEP_BACKUP_CUSTODIAN, &ct.ciphertext, &signature, &key.1)
                     .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
                 // st_ij

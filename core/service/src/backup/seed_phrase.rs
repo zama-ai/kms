@@ -84,8 +84,9 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let mnemonic = seed_phrase_from_rng(&mut rng).unwrap();
         let custodian = custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(1)).unwrap();
+        // Observe that keys don't depend directly on name or role
         let regenerated_custodian =
-            custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(1)).unwrap();
+            custodian_from_seed_phrase(&mnemonic, Role::indexed_from_one(2)).unwrap();
         assert_eq!(custodian.public_key(), regenerated_custodian.public_key());
         assert_eq!(
             custodian.verification_key(),
