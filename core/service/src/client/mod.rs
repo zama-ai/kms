@@ -1942,6 +1942,7 @@ pub mod test_tools {
     use crate::vault::storage::{
         crypto_material::get_core_signing_key, file::FileStorage, Storage, StorageType,
     };
+    use crate::vault::Vault;
     use crate::{
         conf::{
             threshold::{PeerConf, ThresholdPartyConf},
@@ -1974,6 +1975,7 @@ pub mod test_tools {
         threshold: u8,
         pub_storage: Vec<PubS>,
         priv_storage: Vec<PrivS>,
+        vaults: Vec<Option<Vault>>,
         run_prss: bool,
         rate_limiter_conf: Option<RateLimiterConfig>,
         decryption_mode: Option<DecryptionMode>,
@@ -2021,7 +2023,9 @@ pub mod test_tools {
         // a vector of sender that will trigger shutdown of core/threshold servers
         let mut mpc_shutdown_txs = Vec::new();
 
-        for (i, (mpc_listener, _mpc_port)) in (1..=num_parties).zip_eq(mpc_listeners.into_iter()) {
+        for (i, (mpc_listener, _mpc_port), cur_vault) in
+            itertools::izip!(1..=num_parties, mpc_listeners.into_iter(), vaults)
+        {
             let cur_pub_storage = pub_storage[i - 1].to_owned();
             let cur_priv_storage = priv_storage[i - 1].to_owned();
             let service_config = ServiceEndpoint {
@@ -2060,7 +2064,7 @@ pub mod test_tools {
                     threshold_party_config,
                     cur_pub_storage,
                     cur_priv_storage,
-                    None,
+                    cur_vault,
                     None,
                     mpc_listener,
                     sk,
@@ -2273,6 +2277,7 @@ pub mod test_tools {
         threshold: u8,
         pub_storage: Vec<PubS>,
         priv_storage: Vec<PrivS>,
+        vaults: Vec<Option<Vault>>,
         run_prss: bool,
         rate_limiter_conf: Option<RateLimiterConfig>,
         decryption_mode: Option<DecryptionMode>,
@@ -2286,6 +2291,7 @@ pub mod test_tools {
             threshold,
             pub_storage,
             priv_storage,
+            vaults,
             run_prss,
             rate_limiter_conf,
             decryption_mode,
@@ -2418,6 +2424,8 @@ pub(crate) mod tests {
     use crate::client::{await_server_ready, get_health_client, get_status};
     use crate::client::{ParsedUserDecryptionRequest, ServerIdentities};
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
+    use crate::consts::DEFAULT_PARAM;
+    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use crate::consts::MAX_TRIES;
     use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
     use crate::consts::{DEFAULT_AMOUNT_PARTIES, TEST_CENTRAL_KEY_ID};
@@ -2446,8 +2454,11 @@ pub(crate) mod tests {
     };
     use crate::util::rate_limiter::RateLimiterConfig;
     use crate::vault::storage::crypto_material::get_core_signing_key;
-    use crate::vault::storage::StorageReader;
+    #[cfg(feature = "insecure")]
+    use crate::vault::storage::delete_all_at_request_id;
     use crate::vault::storage::{file::FileStorage, StorageType};
+    use crate::vault::storage::{make_storage, StorageReader};
+    use crate::vault::Vault;
     #[cfg(any(feature = "slow_tests", feature = "insecure"))]
     use kms_grpc::kms::v1::CrsGenRequest;
     use kms_grpc::kms::v1::{
@@ -2526,6 +2537,7 @@ pub(crate) mod tests {
         let threshold = max_threshold(amount_parties);
         let mut pub_storage = Vec::new();
         let mut priv_storage = Vec::new();
+        let mut vaults = Vec::new();
         for i in 1..=amount_parties {
             priv_storage.push(
                 FileStorage::new(None, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap(),
@@ -2533,11 +2545,24 @@ pub(crate) mod tests {
             pub_storage.push(
                 FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap(),
             );
+            let public_storage = make_storage(
+                None,
+                StorageType::BACKUP,
+                Some(Role::indexed_from_one(i)),
+                None,
+                None,
+            )
+            .unwrap();
+            vaults.push(Some(Vault {
+                storage: public_storage,
+                keychain: None,
+            }));
         }
         let (kms_servers, kms_clients) = super::test_tools::setup_threshold(
             threshold as u8,
             pub_storage,
             priv_storage,
+            vaults,
             run_prss,
             rate_limiter_conf,
             decryption_mode,
@@ -2602,7 +2627,7 @@ pub(crate) mod tests {
             "PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_{DEFAULT_AMOUNT_PARTIES}_{DEFAULT_THRESHOLD}"
         ))
         .unwrap();
-        purge(None, None, req_id, DEFAULT_AMOUNT_PARTIES).await;
+        purge(None, None, None, req_id, DEFAULT_AMOUNT_PARTIES).await;
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
         // DON'T setup PRSS in order to ensure the server is not ready yet
@@ -2965,7 +2990,7 @@ pub(crate) mod tests {
     async fn test_key_gen_centralized() {
         let request_id = derive_request_id("test_key_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &request_id, 1).await;
+        purge(None, None, None, &request_id, 1).await;
         key_gen_centralized(&request_id, FheParameter::Test, None, None).await;
     }
 
@@ -2976,9 +3001,9 @@ pub(crate) mod tests {
         let request_id_2 = derive_request_id("test_key_gen_centralized-2").unwrap();
         let request_id_3 = derive_request_id("test_decompression_key_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &request_id_1, 1).await;
-        purge(None, None, &request_id_2, 1).await;
-        purge(None, None, &request_id_3, 1).await;
+        purge(None, None, None, &request_id_1, 1).await;
+        purge(None, None, None, &request_id_2, 1).await;
+        purge(None, None, None, &request_id_3, 1).await;
 
         key_gen_centralized(&request_id_1, FheParameter::Default, None, None).await;
         key_gen_centralized(&request_id_2, FheParameter::Default, None, None).await;
@@ -3008,7 +3033,7 @@ pub(crate) mod tests {
     async fn test_sns_compression_key_gen_centralized() {
         let request_id = derive_request_id("test_sns_compression_key_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &request_id, 1).await;
+        purge(None, None, None, &request_id, 1).await;
         key_gen_centralized(
             &request_id,
             FheParameter::Test,
@@ -3029,7 +3054,7 @@ pub(crate) mod tests {
     async fn default_key_gen_centralized() {
         let request_id = derive_request_id("default_key_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &request_id, 1).await;
+        purge(None, None, None, &request_id, 1).await;
         key_gen_centralized(&request_id, FheParameter::Default, None, None).await;
     }
 
@@ -3041,9 +3066,9 @@ pub(crate) mod tests {
         let request_id_2 = derive_request_id("default_key_gen_centralized-2").unwrap();
         let request_id_3 = derive_request_id("default_decompression_key_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &request_id_1, 1).await;
-        purge(None, None, &request_id_2, 1).await;
-        purge(None, None, &request_id_3, 1).await;
+        purge(None, None, None, &request_id_1, 1).await;
+        purge(None, None, None, &request_id_2, 1).await;
+        purge(None, None, None, &request_id_3, 1).await;
 
         key_gen_centralized(&request_id_1, FheParameter::Default, None, None).await;
         key_gen_centralized(&request_id_2, FheParameter::Default, None, None).await;
@@ -3074,7 +3099,7 @@ pub(crate) mod tests {
     async fn default_sns_compression_key_gen_centralized() {
         let request_id = derive_request_id("default_sns_compression_key_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &request_id, 1).await;
+        purge(None, None, None, &request_id, 1).await;
         key_gen_centralized(
             &request_id,
             FheParameter::Test,
@@ -3298,7 +3323,7 @@ pub(crate) mod tests {
     async fn test_crs_gen_manual() {
         let crs_req_id = derive_request_id("test_crs_gen_manual").unwrap();
         // Delete potentially old data
-        purge(None, None, &crs_req_id, 1).await;
+        purge(None, None, None, &crs_req_id, 1).await;
         // TEST_PARAM uses V1 CRS
         crs_gen_centralized_manual(&TEST_PARAM, &crs_req_id, Some(FheParameter::Test)).await;
     }
@@ -3381,7 +3406,7 @@ pub(crate) mod tests {
     async fn test_crs_gen_centralized() {
         let crs_req_id = derive_request_id("test_crs_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &crs_req_id, 1).await;
+        purge(None, None, None, &crs_req_id, 1).await;
         // TEST_PARAM uses V1 CRS
         crs_gen_centralized(&crs_req_id, FheParameter::Test, false).await;
     }
@@ -3392,7 +3417,7 @@ pub(crate) mod tests {
     async fn test_insecure_crs_gen_centralized() {
         let crs_req_id = derive_request_id("test_insecure_crs_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(None, None, &crs_req_id, 1).await;
+        purge(None, None, None, &crs_req_id, 1).await;
         // TEST_PARAM uses V1 CRS
         crs_gen_centralized(&crs_req_id, FheParameter::Test, true).await;
     }
@@ -3619,7 +3644,7 @@ pub(crate) mod tests {
                 "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}_{insecure}"
             ))
             .unwrap();
-            purge(None, None, &req_crs, amount_parties).await;
+            purge(None, None, None, &req_crs, amount_parties).await;
         }
         let dkg_param: WrappedDKGParams = parameter.into();
 
@@ -4016,8 +4041,6 @@ pub(crate) mod tests {
         #[case] msgs: Vec<TestingPlaintext>,
         #[case] parallelism: usize,
     ) {
-        use crate::consts::DEFAULT_PARAM;
-
         decryption_centralized(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
@@ -4040,8 +4063,6 @@ pub(crate) mod tests {
         #[case] msgs: Vec<TestingPlaintext>,
         #[case] parallelism: usize,
     ) {
-        use crate::consts::DEFAULT_PARAM;
-
         decryption_centralized(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
@@ -4302,8 +4323,6 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_user_decryption_centralized_and_write_transcript() {
-        use crate::consts::DEFAULT_PARAM;
-
         let msg = TestingPlaintext::U8(u8::MAX);
         user_decryption_centralized(
             &DEFAULT_PARAM,
@@ -4326,8 +4345,6 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn default_user_decryption_centralized(#[values(true, false)] secure: bool) {
-        use crate::consts::DEFAULT_PARAM;
-
         let msg = TestingPlaintext::U8(u8::MAX);
         let parallelism = 1;
         user_decryption_centralized(
@@ -4353,8 +4370,6 @@ pub(crate) mod tests {
     async fn default_user_decryption_centralized_no_compression(
         #[values(true, false)] secure: bool,
     ) {
-        use crate::consts::DEFAULT_PARAM;
-
         let msg = TestingPlaintext::U8(u8::MAX);
         let parallelism = 1;
         user_decryption_centralized(
@@ -4381,8 +4396,6 @@ pub(crate) mod tests {
         #[values(true, false)] secure: bool,
         #[values(true, false)] compression: bool,
     ) {
-        use crate::consts::DEFAULT_PARAM;
-
         let msg = TestingPlaintext::U8(u8::MAX);
         let parallelism = 1;
         user_decryption_centralized(
@@ -4747,8 +4760,6 @@ pub(crate) mod tests {
         #[case] amount_parties: usize,
         #[case] key_id: &RequestId,
     ) {
-        use crate::consts::DEFAULT_PARAM;
-
         decryption_threshold(
             DEFAULT_PARAM,
             key_id,
@@ -4777,8 +4788,6 @@ pub(crate) mod tests {
         #[case] key_id: &RequestId,
         #[values(true, false)] compression: bool,
     ) {
-        use crate::consts::DEFAULT_PARAM;
-
         decryption_threshold(
             DEFAULT_PARAM,
             key_id,
@@ -4807,8 +4816,6 @@ pub(crate) mod tests {
         #[case] party_ids_to_crash: Option<Vec<usize>>,
         #[case] key_id: &RequestId,
     ) {
-        use crate::consts::DEFAULT_PARAM;
-
         decryption_threshold(
             DEFAULT_PARAM,
             key_id,
@@ -5240,8 +5247,6 @@ pub(crate) mod tests {
         #[case] key_id: &RequestId,
         #[values(true, false)] secure: bool,
     ) {
-        use crate::consts::DEFAULT_PARAM;
-
         user_decryption_threshold(
             DEFAULT_PARAM,
             key_id,
@@ -5275,8 +5280,6 @@ pub(crate) mod tests {
         #[case] key_id: &RequestId,
         #[values(true)] secure: bool,
     ) {
-        use crate::consts::DEFAULT_PARAM;
-
         user_decryption_threshold(
             DEFAULT_PARAM,
             key_id,
@@ -5309,8 +5312,6 @@ pub(crate) mod tests {
         #[case] key_id: &RequestId,
         #[values(true)] secure: bool,
     ) {
-        use crate::consts::DEFAULT_PARAM;
-
         user_decryption_threshold(
             DEFAULT_PARAM,
             key_id,
@@ -5344,8 +5345,6 @@ pub(crate) mod tests {
         #[case] key_id: &RequestId,
         #[values(true, false)] secure: bool,
     ) {
-        use crate::consts::DEFAULT_PARAM;
-
         user_decryption_threshold(
             DEFAULT_PARAM,
             key_id,
@@ -5843,7 +5842,7 @@ pub(crate) mod tests {
     #[serial]
     async fn test_ratelimiter() {
         let req_id: RequestId = derive_request_id("test_ratelimiter").unwrap();
-        purge(None, None, &req_id, 4).await;
+        purge(None, None, None, &req_id, 4).await;
         let rate_limiter_conf = RateLimiterConfig {
             bucket_size: 100,
             pub_decrypt: 1,
@@ -5885,7 +5884,7 @@ pub(crate) mod tests {
             "test_inscure_dkg_key_{amount_parties}_{TEST_PARAM:?}"
         ))
         .unwrap();
-        purge(None, None, &key_id, amount_parties).await;
+        purge(None, None, None, &key_id, amount_parties).await;
         let (_kms_servers, kms_clients, internal_client) =
             threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
         let keys = run_threshold_keygen(
@@ -5914,7 +5913,6 @@ pub(crate) mod tests {
         // NOTE: amount_parties must not be too high
         // because every party will load all the keys and each ServerKey is 1.5 GB
         // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
-        use crate::engine::base::derive_request_id;
 
         let param = FheParameter::Default;
         let dkg_param: WrappedDKGParams = param.into();
@@ -5923,7 +5921,7 @@ pub(crate) mod tests {
             "default_insecure_dkg_key_{amount_parties}_{param:?}",
         ))
         .unwrap();
-        purge(None, None, &key_id, amount_parties).await;
+        purge(None, None, None, &key_id, amount_parties).await;
         let (_kms_servers, kms_clients, internal_client) =
             threshold_handles(*dkg_param, amount_parties, true, None, None).await;
         let keys = run_threshold_keygen(
@@ -6022,6 +6020,263 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(feature = "insecure")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn default_insecure_dkg_backup() {
+        // NOTE: amount_parties must not be too high
+        // because every party will load all the keys and each ServerKey is 1.5 GB
+        // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
+
+        let amount_parties = 4;
+        let param = FheParameter::Default;
+        let dkg_param: WrappedDKGParams = param.into();
+
+        let key_id_1: RequestId = derive_request_id(&format!(
+            "default_insecure_dkg_backup_1_{amount_parties}_{param:?}",
+        ))
+        .unwrap();
+        let key_id_2: RequestId = derive_request_id(&format!(
+            "default_insecure_dkg_backup_2_{amount_parties}_{param:?}",
+        ))
+        .unwrap();
+
+        let test_path = None;
+        purge(test_path, test_path, test_path, &key_id_1, amount_parties).await;
+        purge(test_path, test_path, test_path, &key_id_2, amount_parties).await;
+        let (kms_servers, kms_clients, internal_client) =
+            threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+
+        let _keys_1 = run_threshold_keygen(
+            param,
+            &kms_clients,
+            &internal_client,
+            None,
+            &key_id_1,
+            None,
+            None,
+            true,
+        )
+        .await;
+
+        let _keys_2 = run_threshold_keygen(
+            param,
+            &kms_clients,
+            &internal_client,
+            None,
+            &key_id_2,
+            None,
+            None,
+            true,
+        )
+        .await;
+
+        // Generated key, delete private storage
+        for i in 1..=amount_parties {
+            let mut priv_storage: FileStorage = FileStorage::new(
+                test_path,
+                StorageType::PRIV,
+                Some(Role::indexed_from_one(i)),
+            )
+            .unwrap();
+            delete_all_at_request_id(&mut priv_storage, &key_id_1).await;
+            delete_all_at_request_id(&mut priv_storage, &key_id_2).await;
+        }
+
+        // Now try to restore both keys
+        let mut resp_tasks = JoinSet::new();
+        for i in 1..=amount_parties as u32 {
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            resp_tasks.spawn(async move {
+                let req = Empty {};
+                // send query
+                cur_client
+                    .custodian_backup_restore(tonic::Request::new(req))
+                    .await
+            });
+        }
+        while let Some(res) = resp_tasks.join_next().await {
+            match res {
+                Ok(res) => match res {
+                    Ok(resp) => {
+                        tracing::info!("Custodian backup restore response: {resp:?}");
+                    }
+                    Err(e) => {
+                        panic!("Error while restoring: {e}");
+                    }
+                },
+                Err(e) => {
+                    panic!("Error while restoring: {e}");
+                }
+            }
+        }
+        drop(kms_servers);
+        drop(kms_clients);
+        drop(internal_client);
+        // Sleep to ensure the servers are properly shut down
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        // And validate that we can still decrypt
+        decryption_threshold(
+            DEFAULT_PARAM,
+            &key_id_2,
+            vec![TestingPlaintext::U8(42)],
+            EncryptionConfig {
+                compression: false,
+                precompute_sns: true,
+            },
+            1,
+            amount_parties,
+            None,
+            Some(DecryptionMode::NoiseFloodSmall),
+        )
+        .await;
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn default_insecure_autobackup_after_deletion() {
+        // NOTE: amount_parties must not be too high
+        // because every party will load all the keys and each ServerKey is 1.5 GB
+        // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
+        use crate::conf::FileStorage as FileStorageConf;
+        use crate::conf::Storage as StorageConf;
+
+        let amount_parties = 4;
+        let param = FheParameter::Default;
+        let dkg_param: WrappedDKGParams = param.into();
+
+        let key_id: RequestId = derive_request_id(&format!(
+            "default_insecure_autobackup_after_deletion_{amount_parties}_{param:?}",
+        ))
+        .unwrap();
+        let test_path = None;
+
+        purge(test_path, test_path, test_path, &key_id, amount_parties).await;
+        let (kms_servers, kms_clients, internal_client) =
+            threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+
+        let _keys = run_threshold_keygen(
+            param,
+            &kms_clients,
+            &internal_client,
+            None,
+            &key_id,
+            None,
+            None,
+            true,
+        )
+        .await;
+
+        // Reboot the servers
+        drop(kms_servers);
+        drop(kms_clients);
+        drop(internal_client);
+        // Sleep to ensure the servers are properly shut down
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // Start the servers again
+        let (_kms_servers, _kms_clients, _internal_client) =
+            threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+        // Check the storage
+        let vault_storage_option = test_path.map(|path| {
+            StorageConf::File(FileStorageConf {
+                path: path.to_path_buf(),
+            })
+        });
+        for cur_party in 1..=amount_parties {
+            let backup_storage = make_storage(
+                vault_storage_option.clone(),
+                StorageType::BACKUP,
+                Some(Role::indexed_from_one(cur_party)),
+                None,
+                None,
+            )
+            .unwrap();
+            assert!(backup_storage
+                .data_exists(&key_id, &PrivDataType::FheKeyInfo.to_string())
+                .await
+                .unwrap());
+        }
+    }
+
+    #[cfg(feature = "insecure")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn default_insecure_crs_backup() {
+        let amount_parties = 4;
+        let param = FheParameter::Default;
+        let dkg_param: WrappedDKGParams = param.into();
+
+        let req_id: RequestId = derive_request_id(&format!(
+            "default_insecure_crs_backup{amount_parties}_{param:?}",
+        ))
+        .unwrap();
+        let test_path = None;
+        purge(test_path, test_path, test_path, &req_id, amount_parties).await;
+        let (_kms_servers, kms_clients, internal_client) =
+            threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+        run_crs(
+            param,
+            &kms_clients,
+            &internal_client,
+            true, // insecure execution
+            &req_id,
+            Some(16),
+        )
+        .await;
+        // Generated crs, delete it from private storage
+        for i in 1..=amount_parties {
+            let mut priv_storage: FileStorage = FileStorage::new(
+                test_path,
+                StorageType::PRIV,
+                Some(Role::indexed_from_one(i)),
+            )
+            .unwrap();
+            delete_all_at_request_id(&mut priv_storage, &req_id).await;
+        }
+        // Now try to restore
+        let mut resp_tasks = JoinSet::new();
+        for i in 1..=amount_parties as u32 {
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            resp_tasks.spawn(async move {
+                let req = Empty {};
+                // send query
+                cur_client
+                    .custodian_backup_restore(tonic::Request::new(req))
+                    .await
+            });
+        }
+        while let Some(res) = resp_tasks.join_next().await {
+            match res {
+                Ok(res) => match res {
+                    Ok(resp) => {
+                        tracing::info!("Custodian backup restore response: {resp:?}");
+                    }
+                    Err(e) => {
+                        panic!("Error while restoring: {e}");
+                    }
+                },
+                Err(e) => {
+                    panic!("Error while joining threads: {e}");
+                }
+            }
+        }
+        // Check the file is restored
+        for i in 1..=amount_parties {
+            let backup_storage: FileStorage = FileStorage::new(
+                test_path,
+                StorageType::BACKUP,
+                Some(Role::indexed_from_one(i)),
+            )
+            .unwrap();
+            assert!(backup_storage
+                .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+                .await
+                .unwrap());
+        }
+    }
+
     #[cfg(all(feature = "slow_tests", feature = "insecure"))]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
@@ -6048,7 +6303,7 @@ pub(crate) mod tests {
         };
         let key_id_1: RequestId =
             derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_1")).unwrap();
-        purge(None, None, &key_id_1, amount_parties).await;
+        purge(None, None, None, &key_id_1, amount_parties).await;
 
         let preproc_id_2 = if insecure {
             None
@@ -6062,7 +6317,7 @@ pub(crate) mod tests {
         };
         let key_id_2: RequestId =
             derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_2")).unwrap();
-        purge(None, None, &key_id_2, amount_parties).await;
+        purge(None, None, None, &key_id_2, amount_parties).await;
 
         let preproc_id_3 = derive_request_id(&format!(
             "decom_dkg_preproc_{amount_parties}_{parameter:?}_3"
@@ -6070,7 +6325,7 @@ pub(crate) mod tests {
         .unwrap();
         let key_id_3: RequestId =
             derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_3")).unwrap();
-        purge(None, None, &key_id_3, amount_parties).await;
+        purge(None, None, None, &key_id_3, amount_parties).await;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let dkg_param: WrappedDKGParams = parameter.into();
@@ -6222,7 +6477,7 @@ pub(crate) mod tests {
         };
         let sns_compression_req_id: RequestId =
             derive_request_id(&format!("sns_com_dkg_key_{amount_parties}_{parameter:?}")).unwrap();
-        purge(None, None, &sns_compression_req_id, amount_parties).await;
+        purge(None, None, None, &sns_compression_req_id, amount_parties).await;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
         let dkg_param: WrappedDKGParams = parameter.into();
@@ -6317,11 +6572,11 @@ pub(crate) mod tests {
                 "full_dkg_preproc_{amount_parties}_{parameter:?}_{i}"
             ))
             .unwrap();
-            purge(None, None, &req_preproc, amount_parties).await;
+            purge(None, None, None, &req_preproc, amount_parties).await;
             let req_key: RequestId =
                 derive_request_id(&format!("full_dkg_key_{amount_parties}_{parameter:?}_{i}"))
                     .unwrap();
-            purge(None, None, &req_key, amount_parties).await;
+            purge(None, None, None, &req_key, amount_parties).await;
         }
 
         let dkg_param: WrappedDKGParams = parameter.into();

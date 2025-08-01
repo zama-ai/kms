@@ -20,6 +20,7 @@ use tfhe::{
 };
 use threshold_fhe::execution::runtime::party::Role;
 
+#[derive(Debug, Clone)]
 pub struct SecretShareKeychain {
     operator: Operator<PrivateSigKey, BackupPrivateKey>,
     num_shares: usize,

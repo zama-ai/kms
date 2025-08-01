@@ -541,6 +541,11 @@ where
         crypto_storage: crypto_storage.clone(),
         security_module,
     };
+    // Update backup vault if it exists
+    // This ensures that all files in the private storage are also in the backup vault
+    // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
+    // Note however that the data in the vault is not checked for corruption.
+    backup_operator.update_backup_vault().await?;
 
     let kms = ThresholdKms::new(
         initiator,

@@ -29,6 +29,7 @@ use url::Url;
 
 const PREALLOCATED_BLOB_SIZE: usize = 32768;
 
+#[derive(Debug, Clone)]
 pub struct S3Storage {
     pub s3_client: S3Client,
     pub bucket: String,
