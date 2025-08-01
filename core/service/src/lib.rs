@@ -115,7 +115,7 @@ pub fn compute_user_decrypt_message_hash(
     Ok(message_hash)
 }
 
-// ree-export DecryptionMode
+// re-export DecryptionMode
 pub use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
