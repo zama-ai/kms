@@ -207,7 +207,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             "Received new decryption request"
         );
 
-        let (ciphertexts, req_digest, key_id, req_id, eip712_domain) = tonic_handle_potential_err(
+        let (ciphertexts, key_id, req_id, eip712_domain) = tonic_handle_potential_err(
             validate_public_decrypt_req(&inner),
             format!("Failed to validate decrypt request {inner:?}"),
         )
@@ -221,14 +221,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_PUBLIC_DECRYPTION_FAILED);
             e
         })?;
-
-        // CRITICAL FIX: Release permit immediately after validation
-        // Don't hold permits during expensive multi-party coordination
-        drop(permit);
-        tracing::debug!(
-            request_id = ?req_id,
-            "Rate limiter permit released after validation - proceeding with async coordination"
-        );
 
         if let Some(b) = timer.as_mut() {
             //We log but we don't want to return early because timer failed
@@ -459,11 +451,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
         let party_id = self.session_preparer.my_id;
-        let dec_sig_future = || async move {
+        let dec_sig_future = |_permit| async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
             let _timer = timer;
-            // NOTE: Rate limiter permit was already released after validation
+            // NOTE: _permit should be dropped at the end of this function
             let mut decs = HashMap::new();
             let error_msg: Option<String> = None;
 
@@ -526,7 +518,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             };
 
             // Single success update with minimal lock hold time
-            let success_result = Ok((req_digest.clone(), pts.clone(), external_sig));
+            let success_result = Ok((req_id, pts.clone(), external_sig));
             let (lock_acquired_time, total_lock_time) = {
                 let lock_start = std::time::Instant::now();
                 let mut guarded_meta_store = meta_store.write().await;
@@ -542,7 +534,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             );
         };
         self.tracker
-            .spawn(dec_sig_future().instrument(tracing::Span::current()));
+            .spawn(dec_sig_future(permit).instrument(tracing::Span::current()));
 
         Ok(Response::new(Empty {}))
     }
@@ -557,15 +549,23 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             let guarded_meta_store = self.pub_dec_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
-        let (req_digest, plaintexts, external_signature) =
+        let (retrieved_req_id, plaintexts, external_signature) =
             handle_res_mapping(status, &request_id, "Decryption").await?;
+
+        if request_id != retrieved_req_id {
+            return Err(Status::not_found(format!(
+                "Request ID mismatch: expected {request_id}, got {retrieved_req_id}",
+            )));
+        }
 
         let server_verf_key = self.base_kms.get_serialized_verf_key();
         let sig_payload = PublicDecryptionResponsePayload {
             plaintexts,
             verification_key: server_verf_key,
-            digest: req_digest,
+            #[allow(deprecated)] // we have to allow to fill the struct
+            digest: vec![],
             external_signature: Some(external_signature),
+            request_id: Some(retrieved_req_id.into()),
         };
 
         let sig_payload_vec = tonic_handle_potential_err(

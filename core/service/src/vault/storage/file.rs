@@ -55,6 +55,18 @@ impl FileStorage {
         })
     }
 
+    /// Return the default path for the storage type.
+    pub fn default_path(
+        storage_type: StorageType,
+        party_role: Option<Role>,
+    ) -> anyhow::Result<PathBuf> {
+        let extra_prefix = match party_role {
+            Some(party_role) => format!("{storage_type}-p{party_role}"),
+            None => storage_type.to_string(),
+        };
+        Ok(env::current_dir()?.join(KEY_PATH_PREFIX).join(extra_prefix))
+    }
+
     // Check if a path already exists and create it if not.
     pub async fn setup_dirs(&self, url_path: &Path) -> anyhow::Result<()> {
         if url_path.try_exists().is_ok_and(|res| res) {

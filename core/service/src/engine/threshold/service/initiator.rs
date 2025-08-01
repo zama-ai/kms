@@ -240,6 +240,9 @@ mod tests {
 
         let mut pub_storage = Vec::new();
         let mut priv_storage = Vec::new();
+        let mut vaults = Vec::new();
+        let mut vaults2 = Vec::new();
+        // TODO use clone instead
         for i in 1..=PRSS_AMOUNT_PARTIES {
             let cur_pub =
                 FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap();
@@ -252,15 +255,17 @@ mod tests {
                 "PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}"
             ))
             .unwrap();
-            purge(None, None, &req_id, PRSS_AMOUNT_PARTIES).await;
+            purge(None, None, None, &req_id, PRSS_AMOUNT_PARTIES).await;
 
             let req_id = derive_request_id(&format!(
                 "PRSSSetup_Z64_ID_{PRSS_INIT_REQ_ID}_{PRSS_AMOUNT_PARTIES}_{PRSS_THRESHOLD}"
             ))
             .unwrap();
-            purge(None, None, &req_id, PRSS_AMOUNT_PARTIES).await;
+            purge(None, None, None, &req_id, PRSS_AMOUNT_PARTIES).await;
 
             priv_storage.push(cur_priv);
+            vaults.push(None);
+            vaults2.push(None);
         }
 
         // create parties and run PrssSetup
@@ -268,6 +273,7 @@ mod tests {
             PRSS_THRESHOLD as u8,
             pub_storage.clone(),
             priv_storage.clone(),
+            vaults,
             true,
             None,
             None,
@@ -294,6 +300,7 @@ mod tests {
             PRSS_THRESHOLD as u8,
             pub_storage,
             priv_storage,
+            vaults2,
             false,
             None,
             None,

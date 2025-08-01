@@ -277,13 +277,6 @@ mod tests {
                 path: PathBuf::from("./keys")
             })
         );
-        assert_eq!(
-            private_vault.keychain,
-            Some(Keychain::AwsKms(AwsKmsKeychain {
-                root_key_id: "root_key_id".to_string(),
-                root_key_spec: AwsKmsKeySpec::Symm
-            }))
-        );
 
         assert_eq!(
             core_config.public_vault.unwrap().storage,

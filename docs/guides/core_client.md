@@ -159,6 +159,22 @@ $ cargo run -- -f <path-to-toml-config-file> crs-gen-result --request-id <REQUES
 
 Upon success, both the command to request to generate a CRS _and_ the command to fetch the result, will save the CRS produced by the core in the `object_folder` given in the configuration file.
 
+#### Backup restoring
+
+If a backup vault is specified in the in the server configuration toml file, then all non-volatile private key material (i.e. what is stored in the private vault) is backed up to this location. This also means that it is possible to restore this content in case access to the private vault is lost, or that the private vault needs to be moved.
+This is done through the backup recovery command:
+
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> custodian-backup-restore
+```
+
+Note that this operation will copy the content from the backup vault to the private vault. In case any of the backed up content already exists in the private vault, then the request will fail.
+After a restoring you *must* reboot the KMS server before the restored data can be used. 
+
+This can be used to move private information from one node to another. More specifically; by constructing a temporary backup vault shared between the old and new node will ensure the relevant private information gets placed in the vault. Then we the new node wish to take over, they use the backup restoring command to move the private information into their own private storage. Afterwards they can construct a new, private, backup vault and the shared backup vault can be destroyed. 
+
+WARNING: The backup vault is NOT encrypted by default, unless a relevant AWS KMS configuration is used. 
+
 #### Arguments
 `<max-num-bits>` refers to the maximum bit length of the FHE types to be used in the KMS and is set to `2048` by default since 2048 is the largest number that is needed with the current types.
 

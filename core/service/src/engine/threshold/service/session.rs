@@ -139,4 +139,64 @@ impl SessionPreparer {
             prss_setup_z64: self.prss_setup_z64.clone(),
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn new_test_session(with_prss: bool) -> Self {
+        use threshold_fhe::networking::{grpc::GrpcNetworkingManager, Networking};
+
+        use crate::cryptography::internal_crypto_types::gen_sig_keys;
+
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+
+        let role_assignments = RoleAssignment::from_iter((1..=4).map(|i| {
+            (
+                Role::indexed_from_one(i),
+                Identity("localhost".to_string(), 8080 + i as u16),
+            )
+        }));
+        let own_identity = role_assignments
+            .get(&Role::indexed_from_one(1))
+            .cloned()
+            .unwrap();
+
+        let networking_manager = Arc::new(RwLock::new(
+            GrpcNetworkingManager::new(own_identity.to_owned(), None, None).unwrap(),
+        ));
+
+        let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
+            move |session_id, roles, network_mode| {
+                let nm = networking_manager.clone();
+                Box::pin(async move {
+                    let manager = nm.read().await;
+                    let impl_networking = manager.make_session(session_id, roles, network_mode)?;
+                    Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
+                })
+            },
+        )));
+
+        let (prss_setup_z128, prss_setup_z64) = if with_prss {
+            (
+                Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+                    vec![],
+                    vec![],
+                )))),
+                Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+                    vec![],
+                    vec![],
+                )))),
+            )
+        } else {
+            (Arc::new(RwLock::new(None)), Arc::new(RwLock::new(None)))
+        };
+
+        Self {
+            base_kms: BaseKmsStruct::new(sk).unwrap(),
+            threshold: 1,
+            my_id: 1,
+            role_assignments,
+            networking_strategy,
+            prss_setup_z128,
+            prss_setup_z64,
+        }
+    }
 }

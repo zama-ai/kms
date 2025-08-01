@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
 use kms_grpc::{
@@ -19,9 +19,10 @@ use threshold_fhe::{
         endpoints::keygen::{FhePubKeySet, PrivateKeySet},
         online::preprocessing::{create_memory_factory, create_redis_factory, DKGPreprocessing},
         runtime::party::{Role, RoleAssignment},
+        zk::ceremony::SecureCeremony,
     },
     networking::{
-        grpc::{GrpcNetworkingManager, GrpcServer},
+        grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
         tls::{
             build_ca_certs_map, AttestedClientVerifier, BasicTLSConfig, SendingServiceTLSConfig,
         },
@@ -164,7 +165,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealPublicDecryptor<PubS, PrivS>,
     RealKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
-    RealCrsGenerator<PubS, PrivS>,
+    RealCrsGenerator<PubS, PrivS, SecureCeremony>,
     RealContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
 >;
@@ -177,8 +178,8 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealKeyGenerator<PubS, PrivS>,
     RealInsecureKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
-    RealCrsGenerator<PubS, PrivS>,
-    RealInsecureCrsGenerator<PubS, PrivS>,
+    RealCrsGenerator<PubS, PrivS, SecureCeremony>,
+    RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
     RealContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
 >;
@@ -291,7 +292,10 @@ where
         config.core_to_core_net,
     )?));
     let manager_clone = Arc::clone(&networking_manager);
-    let networking_server = networking_manager.write().await.new_server();
+    let networking_server = networking_manager
+        .write()
+        .await
+        .new_server(TlsExtensionGetter::SslConnectInfo);
     // we won't be setting TLS configuration through tonic::transport knobs here
     // since it doesn't permit setting rustls configuration directly, and we
     // need to supply a custom certificate verifier to enable AWS Nitro
@@ -528,6 +532,7 @@ where
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
+        _ceremony: PhantomData,
     };
 
     #[cfg(feature = "insecure")]
@@ -545,6 +550,11 @@ where
         crypto_storage: crypto_storage.clone(),
         security_module,
     };
+    // Update backup vault if it exists
+    // This ensures that all files in the private storage are also in the backup vault
+    // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
+    // Note however that the data in the vault is not checked for corruption.
+    backup_operator.update_backup_vault().await?;
 
     let kms = ThresholdKms::new(
         initiator,
