@@ -961,10 +961,13 @@ where
                 }
 
                 let my_future = || async move {
-                    let keys =
-                        distributed_keygen_z64(&mut base_session, preproc.as_mut(), dkg_params)
-                            .await
-                            .unwrap();
+                    let keys = distributed_keygen_z64::<_, _, EXTENSION_DEGREE>(
+                        &mut base_session,
+                        preproc.as_mut(),
+                        dkg_params,
+                    )
+                    .await
+                    .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
                     fill_network_memory_info_single_session(base_session);
                 };
@@ -977,9 +980,13 @@ where
                 let sid_u128: u128 = session_id.into();
                 let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
-                    let keys = distributed_keygen_z64(&mut base_session, &mut preproc, dkg_params)
-                        .await
-                        .unwrap();
+                    let keys = distributed_keygen_z64::<_, _, EXTENSION_DEGREE>(
+                        &mut base_session,
+                        &mut preproc,
+                        dkg_params,
+                    )
+                    .await
+                    .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
                     fill_network_memory_info_single_session(base_session);
                 };
@@ -1004,10 +1011,13 @@ where
                 }
 
                 let my_future = || async move {
-                    let keys =
-                        distributed_keygen_z128(&mut base_session, preproc.as_mut(), dkg_params)
-                            .await
-                            .unwrap();
+                    let keys = distributed_keygen_z128::<_, _, EXTENSION_DEGREE>(
+                        &mut base_session,
+                        preproc.as_mut(),
+                        dkg_params,
+                    )
+                    .await
+                    .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
                     fill_network_memory_info_single_session(base_session);
                 };
@@ -1020,9 +1030,13 @@ where
                 let sid_u128: u128 = session_id.into();
                 let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
-                    let keys = distributed_keygen_z128(&mut base_session, &mut preproc, dkg_params)
-                        .await
-                        .unwrap();
+                    let keys = distributed_keygen_z128::<_, _, EXTENSION_DEGREE>(
+                        &mut base_session,
+                        &mut preproc,
+                        dkg_params,
+                    )
+                    .await
+                    .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
                     fill_network_memory_info_single_session(base_session);
                 };

@@ -13,7 +13,7 @@ use threshold_fhe::execution::sharing::share::Share;
 #[cfg(feature = "testing")]
 use threshold_fhe::{
     execution::{
-        endpoints::keygen::distributed_keygen_z64,
+        endpoints::keygen::{OnlineDistributedKeyGen64, SecureOnlineDistributedKeyGen64},
         runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         tfhe_internals::parameters::DKGParams,
     },
@@ -269,7 +269,7 @@ fn test_dkg_orchestrator_large(
             let dkg_session = sessions.get_mut(0).unwrap();
 
             let (pk, sk) = rt_handle.block_on(async {
-                distributed_keygen_z64(dkg_session, preproc.as_mut(), params)
+                SecureOnlineDistributedKeyGen64::keygen(dkg_session, preproc.as_mut(), params)
                     .await
                     .unwrap()
             });

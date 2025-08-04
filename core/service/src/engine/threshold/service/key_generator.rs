@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
 // === External Crates ===
 use kms_grpc::{
@@ -26,9 +26,9 @@ use threshold_fhe::{
     execution::{
         endpoints::keygen::{
             distributed_decompression_keygen_z128,
-            distributed_keygen_from_optional_compression_sk_z128, distributed_keygen_z128,
+            distributed_keygen_from_optional_compression_sk_z128,
             distributed_sns_compression_keygen_z128, CompressionPrivateKeySharesEnum, FhePubKeySet,
-            GlweSecretKeyShareEnum, PrivateKeySet,
+            GlweSecretKeyShareEnum, OnlineDistributedKeyGen128, PrivateKeySet,
         },
         keyset_config as ddec_keyset_config,
         online::preprocessing::DKGPreprocessing,
@@ -90,6 +90,7 @@ use threshold_fhe::execution::tfhe_internals::{
 pub struct RealKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    KG: OnlineDistributedKeyGen128 + 'static,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -102,21 +103,26 @@ pub struct RealKeyGenerator<
     // Map of ongoing key generation tasks
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
+    pub(crate) _kg: PhantomData<KG>,
 }
 
 #[cfg(feature = "insecure")]
 pub struct RealInsecureKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    KG: OnlineDistributedKeyGen128 + 'static,
 > {
-    pub real_key_generator: RealKeyGenerator<PubS, PrivS>,
+    pub real_key_generator: RealKeyGenerator<PubS, PrivS, KG>,
 }
 
 #[cfg(feature = "insecure")]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
-    RealInsecureKeyGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        KG: OnlineDistributedKeyGen128,
+    > RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
-    pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS>) -> Self {
+    pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, KG>) -> Self {
         Self {
             real_key_generator: RealKeyGenerator {
                 base_kms: value.base_kms.new_instance().await,
@@ -127,6 +133,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
+                _kg: std::marker::PhantomData,
             },
         }
     }
@@ -134,8 +141,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
-    InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        KG: OnlineDistributedKeyGen128 + 'static,
+    > InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
     async fn insecure_key_gen(
         &self,
@@ -177,8 +187,11 @@ fn convert_to_bit(input: Vec<ResiduePoly<Z128, 4>>) -> anyhow::Result<Vec<u64>> 
     Ok(out)
 }
 
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
-    RealKeyGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        KG: OnlineDistributedKeyGen128 + 'static,
+    > RealKeyGenerator<PubS, PrivS, KG>
 {
     #[allow(clippy::too_many_arguments)]
     async fn launch_dkg(
@@ -1153,8 +1166,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                         ddec_keyset_config::KeySetCompressionConfig::Generate,
                         ddec_keyset_config::ComputeKeyType::Cpu,
                     ) => {
-                        distributed_keygen_z128(&mut base_session, preproc_handle.as_mut(), params)
-                            .await
+                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params).await
                     }
                     (
                         ddec_keyset_config::KeySetCompressionConfig::UseExisting,
@@ -1239,8 +1251,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> KeyGenerator
-    for RealKeyGenerator<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        KG: OnlineDistributedKeyGen128 + 'static,
+    > KeyGenerator for RealKeyGenerator<PubS, PrivS, KG>
 {
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         self.inner_key_gen(request, false).await
@@ -1251,5 +1266,201 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         request: tonic::Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
         self.inner_get_result(request).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aes_prng::AesRng;
+    use rand::{rngs::OsRng, SeedableRng};
+    use threshold_fhe::{
+        algebra::{
+            base_ring::Z64,
+            structure_traits::{ErrorCorrect, Ring},
+        },
+        execution::{
+            online::preprocessing::dummy::DummyPreprocessing, runtime::session::BaseSessionHandles,
+        },
+    };
+
+    use crate::vault::storage::ram;
+
+    use super::*;
+
+    impl<
+            PubS: Storage + Sync + Send + 'static,
+            PrivS: Storage + Sync + Send + 'static,
+            KG: OnlineDistributedKeyGen128 + 'static,
+        > RealKeyGenerator<PubS, PrivS, KG>
+    {
+        async fn init_test(
+            pub_storage: PubS,
+            priv_storage: PrivS,
+            session_preparer: SessionPreparer,
+        ) -> Self {
+            let crypto_storage = ThresholdCryptoMaterialStorage::new(
+                pub_storage,
+                priv_storage,
+                None,
+                HashMap::new(),
+                HashMap::new(),
+            );
+
+            let tracker = Arc::new(TaskTracker::new());
+            let rate_limiter = RateLimiter::default();
+            let ongoing = Arc::new(Mutex::new(HashMap::new()));
+            Self {
+                base_kms: session_preparer.base_kms.new_instance().await,
+                crypto_storage,
+                preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+                dkg_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+                session_preparer: session_preparer.new_instance().await,
+                tracker,
+                ongoing,
+                rate_limiter,
+                _kg: PhantomData,
+            }
+        }
+
+        fn set_bucket_size(&mut self, bucket_size: usize) {
+            let config = crate::util::rate_limiter::RateLimiterConfig {
+                bucket_size,
+                ..Default::default()
+            };
+            self.rate_limiter = RateLimiter::new(config);
+        }
+    }
+
+    struct DroppingOnlineDistributedKeyGen128;
+
+    #[tonic::async_trait]
+    impl OnlineDistributedKeyGen128 for DroppingOnlineDistributedKeyGen128 {
+        async fn keygen<
+            S: BaseSessionHandles,
+            P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+            const EXTENSION_DEGREE: usize,
+        >(
+            _base_session: &mut S,
+            _preprocessing: &mut P,
+            _params: DKGParams,
+        ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+        where
+            ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+            ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+        {
+            let param = crate::consts::TEST_PARAM;
+            let mut rng = AesRng::seed_from_u64(42);
+
+            // NOTE: we can't use the generated [_threshold_fhe_keys] because it is not generic over EXTENSION_DEGREE
+            let (_threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, &mut rng);
+            let private_key_set = PrivateKeySet::<EXTENSION_DEGREE>::init_dummy(param);
+
+            Ok((fhe_key_set, private_key_set))
+        }
+    }
+
+    impl RealKeyGenerator<ram::RamStorage, ram::RamStorage, DroppingOnlineDistributedKeyGen128> {
+        pub async fn init_test_dropping_keygen(session_preparer: SessionPreparer) -> Self {
+            let pub_storage = ram::RamStorage::new();
+            let priv_storage = ram::RamStorage::new();
+            Self::init_test(pub_storage, priv_storage, session_preparer).await
+        }
+    }
+
+    async fn setup_key_generator() -> (
+        RequestId,
+        RealKeyGenerator<ram::RamStorage, ram::RamStorage, DroppingOnlineDistributedKeyGen128>,
+    ) {
+        let session_preparer = SessionPreparer::new_test_session(false);
+        let kg = RealKeyGenerator::<
+            ram::RamStorage,
+            ram::RamStorage,
+            DroppingOnlineDistributedKeyGen128,
+        >::init_test_dropping_keygen(session_preparer.new_instance().await)
+        .await;
+
+        let prep_id = RequestId::new_random(&mut OsRng);
+
+        // We need to setup the preprocessor metastore so that keygen will pass
+        {
+            let session_id = prep_id.derive_session_id().unwrap();
+            let dummy_prep = Box::new(DummyPreprocessing::<ResiduePolyF4Z128>::new(
+                42,
+                &session_preparer
+                    .make_base_session(session_id, NetworkMode::Sync)
+                    .await
+                    .unwrap(),
+            ));
+            let mut guarded_prep_bucket = kg.preproc_buckets.write().await;
+            (*guarded_prep_bucket).insert(&prep_id).unwrap();
+            (*guarded_prep_bucket)
+                .update(&prep_id, Ok(Arc::new(Mutex::new(dummy_prep))))
+                .unwrap();
+        }
+        (prep_id, kg)
+    }
+
+    #[tokio::test]
+    async fn test_invalid_argument() {
+        //`InvalidArgument` - If the request ID is not valid or does not match the expected format.
+        let (prep_id, kg) = setup_key_generator().await;
+        let bad_key_id = kms_grpc::kms::v1::RequestId {
+            request_id: "badformat".to_string(),
+        };
+
+        let request = tonic::Request::new(KeyGenRequest {
+            request_id: Some(bad_key_id),
+            params: 1, // TEST params
+            preproc_id: Some(prep_id.into()),
+            domain: None,
+            keyset_config: None,
+            keyset_added_info: None,
+        });
+
+        assert_eq!(
+            kg.key_gen(request).await.unwrap_err().code(),
+            tonic::Code::InvalidArgument
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_exhausted() {
+        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
+        let (prep_id, mut kg) = setup_key_generator().await;
+        let key_id = RequestId::new_random(&mut OsRng);
+
+        // Set bucket size to zero, so no operations are allowed
+        kg.set_bucket_size(0);
+
+        let request = tonic::Request::new(KeyGenRequest {
+            request_id: Some(key_id.into()),
+            params: 1, // TEST params
+            preproc_id: Some(prep_id.into()),
+            domain: None,
+            keyset_config: None,
+            keyset_added_info: None,
+        });
+
+        assert_eq!(
+            kg.key_gen(request).await.unwrap_err().code(),
+            tonic::Code::ResourceExhausted
+        );
+    }
+
+    #[tokio::test]
+    async fn sunshine() {
+        let (prep_id, kg) = setup_key_generator().await;
+        let key_id = RequestId::new_random(&mut OsRng);
+
+        let request = tonic::Request::new(KeyGenRequest {
+            request_id: Some(key_id.into()),
+            params: 1, // TEST params
+            preproc_id: Some(prep_id.into()),
+            domain: None,
+            keyset_config: None,
+            keyset_added_info: None,
+        });
+
+        kg.key_gen(request).await.unwrap();
     }
 }
