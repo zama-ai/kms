@@ -1,11 +1,9 @@
-use std::sync::Arc;
-use threshold_fhe::hashing::DomainSep;
-
+use super::error::BackupError;
 use crate::cryptography::{
     backup_pke::BackupPrivateKey, internal_crypto_types::PrivateSigKey, signcryption,
 };
-
-use super::error::BackupError;
+use std::sync::Arc;
+use threshold_fhe::hashing::DomainSep;
 
 pub trait BackupSigner {
     fn sign<T>(&self, dsep: &DomainSep, msg: &T) -> Result<Vec<u8>, BackupError>

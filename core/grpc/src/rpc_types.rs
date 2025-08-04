@@ -267,6 +267,11 @@ impl fmt::Display for PubDataType {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum PrivDataTypeVersioned {
+    V0(PrivDataType),
+}
+
 /// PrivDataType
 ///
 /// Enum which represents the different kinds of private information that can be stored as part of
@@ -278,7 +283,8 @@ impl fmt::Display for PubDataType {
 /// Data stored with this type must either be need to kept secret and/or need to be kept authentic.
 /// Thus some data may indeed be safe to release publicly, but a malicious replacement could completely
 /// compromise the entire system.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Versionize)]
+#[versionize(PrivDataTypeVersioned)]
 pub enum PrivDataType {
     SigningKey,
     FheKeyInfo,
@@ -287,7 +293,7 @@ pub enum PrivDataType {
     PrssSetup,
     CustodianInfo,         // Custodian information for the custodian context
     CustodianSetupMessage, // Backup custodian public keys (self-signed) TODO should be in private
-    // PrivDecKey,    // Decryption key for a public key system, e.g. used for backup TODO not needed
+    // PrivDecKeyShare,       // Decryption key share for a public key system used for operator backup
     PubBackupKey, // Public key for encrypting backup data, does not need to be private, but must be authentic
     ContextInfo,
 }
@@ -303,19 +309,30 @@ impl fmt::Display for PrivDataType {
             PrivDataType::CustodianInfo => write!(f, "CustodianInfo"),
             PrivDataType::CustodianSetupMessage => write!(f, "CustodianSetupMessage"),
             PrivDataType::ContextInfo => write!(f, "Context"),
+            // PrivDataType::PrivDecKeyShare => write!(f, "PrivDecKeyShare"),
             PrivDataType::PubBackupKey => write!(f, "PubBackupKey"),
         }
     }
 }
 
+#[allow(clippy::derivable_impls)]
+impl Default for PrivDataType {
+    fn default() -> Self {
+        PrivDataType::FheKeyInfo // Default is private FHE key material
+    }
+}
+
+// TODO is this needed or should we just use privdatatype instead for encrypted private data?
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
 pub enum BackupDataType {
-    Ciphertext, // Backed up ciphertext, encrypted with the public key for the custodians
+    PrivDecKey(RequestId), // Backed up ciphertext, encrypted with the public key for the custodians
+    PrivData(PrivDataType), // Backup of a piece of private data
 }
 impl fmt::Display for BackupDataType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            BackupDataType::Ciphertext => write!(f, "Ciphertext"),
+            BackupDataType::PrivDecKey(id) => write!(f, "PrivDataKey({id})"),
+            BackupDataType::PrivData(data_type) => write!(f, "PrivData({data_type})"),
         }
     }
 }

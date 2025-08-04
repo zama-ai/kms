@@ -1,3 +1,21 @@
+use super::{
+    custodian::{
+        CustodianRecoveryOutput, InternalCustodianSetupMessage, DSEP_BACKUP_CUSTODIAN, HEADER,
+    },
+    error::BackupError,
+    secretsharing,
+    traits::{BackupDecryptor, BackupSigner},
+};
+use crate::{
+    anyhow_error_and_log,
+    consts::SAFE_SER_SIZE_LIMIT,
+    cryptography::{
+        backup_pke::BackupPublicKey,
+        internal_crypto_types::{PublicSigKey, Signature},
+        signcryption::internal_verify_sig,
+    },
+    engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY},
+};
 use itertools::Itertools;
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
@@ -18,26 +36,7 @@ use threshold_fhe::{
     hashing::{hash_element, DomainSep},
 };
 
-use super::{
-    custodian::{
-        CustodianRecoveryOutput, InternalCustodianSetupMessage, DSEP_BACKUP_CUSTODIAN, HEADER,
-    },
-    error::BackupError,
-    secretsharing,
-    traits::{BackupDecryptor, BackupSigner},
-};
-use crate::{
-    anyhow_error_and_log,
-    consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::{
-        backup_pke::BackupPublicKey,
-        internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature},
-        signcryption::{internal_sign, internal_verify_sig},
-    },
-    engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY},
-};
-
-const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
+pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
 pub(crate) const DSEP_BACKUP_OPERATOR: DomainSep = *b"BKUPOPER";
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -56,7 +55,7 @@ pub struct RecoveryRequest {
     /// The ephemeral key used to signcrypt the recovered data during transit to the operator.
     enc_key: BackupPublicKey,
     /// The public key of the operator that was originally used to sign the backup.
-    verification_key: PublicSigKey,
+    verification_key: PublicSigKey, // todo should be a signature  st request can be validated according to blockchain. and each operator output then don't need to be signed but instead the whole payload is
     /// The ciphertexts that are the backup. Indexed by the custodian role.
     /// NOTE: since BTreeMap does not implement Versionize, we use a Vec here.
     cts: Vec<(Role, OperatorBackupOutput)>,
@@ -179,7 +178,7 @@ pub enum OperatorBackupOutputVersioned {
 #[versionize(OperatorBackupOutputVersioned)]
 pub struct OperatorBackupOutput {
     /// Ciphertext under the custodian's public key, using nested encryption.
-    pub ciphertext: Vec<u8>,
+    pub ciphertext: Vec<u8>, // TODO should be made to ciphertext type
     /// Signature by the operator.
     pub signature: Vec<u8>,
     /// Commitment by the operator, which is a hash of [BackupMaterial].
@@ -210,7 +209,6 @@ fn verify_n_t(n: usize, t: usize) -> Result<(), BackupError> {
     Ok(())
 }
 
-const DSEP_HASH_COMM: DomainSep = *b"HASH_COM";
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum BackupCommitmentsVersioned {
     V0(BackupCommitments),
@@ -222,7 +220,6 @@ pub struct BackupCommitments {
     // Note that ideally we want to use a BTreeMap here,
     // but it does not implement Versionize yet.
     pub(crate) commitments: Vec<Vec<u8>>,
-    pub(crate) signature: Vec<u8>,
 }
 
 impl Named for BackupCommitments {
@@ -230,29 +227,18 @@ impl Named for BackupCommitments {
 }
 
 impl BackupCommitments {
-    pub fn new(commitments: Vec<Vec<u8>>, sig_key: &PrivateSigKey) -> anyhow::Result<Self> {
-        let commitments_bytes = bc2wrap::serialize(&commitments)?;
-        let signature = internal_sign(&DSEP_HASH_COMM, &commitments_bytes, sig_key)?;
-        Ok(Self {
-            commitments,
-            signature: signature.sig.to_vec(),
-        })
+    pub fn new(commitments: Vec<Vec<u8>>) -> Self {
+        Self { commitments }
     }
 
-    pub fn from_btree(
-        commitments: BTreeMap<Role, Vec<u8>>,
-        sig_key: &PrivateSigKey,
-    ) -> anyhow::Result<Self> {
+    pub fn from_btree(commitments: BTreeMap<Role, Vec<u8>>) -> Self {
         let mut commitments_vec = Vec::new();
         for i in 1..=commitments.len() {
             commitments_vec.push(commitments[&Role::indexed_from_one(i)].to_owned());
         }
-        let commitments_bytes = bc2wrap::serialize(&commitments)?;
-        let signature = internal_sign(&DSEP_HASH_COMM, &commitments_bytes, sig_key)?;
-        Ok(Self {
+        Self {
             commitments: commitments_vec,
-            signature: signature.sig.to_vec(),
-        })
+        }
     }
 
     pub fn get(&self, role: &Role) -> anyhow::Result<&[u8]> {

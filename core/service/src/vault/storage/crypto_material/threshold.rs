@@ -21,7 +21,7 @@ use crate::{
         custodian::InternalCustodianContext,
         operator::{BackupCommitments, RecoveryRequest},
     },
-    cryptography::backup_pke::{BackupPrivateKey, BackupPublicKey},
+    cryptography::backup_pke::BackupPublicKey,
     engine::threshold::service::ThresholdFheKeys,
     grpc::metastore_status_service::CustodianMetaStore,
     util::meta_store::MetaStore,
@@ -331,7 +331,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             }
             let commit_store_result = store_versioned_at_request_id(
                 &mut (*public_storage_guard),
-                &req_id,
+                req_id,
                 &commitments,
                 &PubDataType::Commitments.to_string(),
             )

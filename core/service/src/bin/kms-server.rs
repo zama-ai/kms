@@ -253,7 +253,7 @@ async fn main() -> anyhow::Result<()> {
                     k,
                     awskms_client.clone(),
                     security_module.clone(),
-                    Some(&public_vault),
+                    Some(&private_vault),
                     party_role,
                     Some(sk.clone()),
                 )

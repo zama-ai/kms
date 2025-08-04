@@ -40,6 +40,12 @@ pub struct KeyId([u8; ID_LENGTH]);
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
 pub struct RequestId([u8; ID_LENGTH]);
 
+impl Default for RequestId {
+    fn default() -> Self {
+        Self([0u8; ID_LENGTH])
+    }
+}
+
 impl Versionize for RequestId {
     type Versioned<'vers> = &'vers RequestId;
 

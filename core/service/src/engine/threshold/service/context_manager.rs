@@ -1,6 +1,8 @@
 use crate::backup::custodian::{InternalCustodianContext, InternalCustodianSetupMessage};
 use crate::backup::operator::{BackupCommitments, Operator, RecoveryRequest};
-use crate::cryptography::backup_pke;
+use crate::consts::SAFE_SER_SIZE_LIMIT;
+use crate::cryptography::backup_pke::{self, BackupCiphertext, BackupPublicKey};
+use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::{
     engine::{
@@ -12,12 +14,14 @@ use crate::{
 use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::kms::v1::CustodianContext;
-use kms_grpc::rpc_types::{BackupDataType, PrivDataType};
+use kms_grpc::rpc_types::{BackupDataType, PrivDataType, SignedPubDataHandleInternal};
 use kms_grpc::RequestId;
 use kms_grpc::{kms::v1::Empty, utils::tonic_result::tonic_handle_potential_err};
 use std::collections::BTreeMap;
 use std::{collections::HashMap, sync::Arc};
 use strum::IntoEnumIterator;
+use tfhe::safe_serialization::safe_serialize;
+use tfhe::ClientKey;
 use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
@@ -85,6 +89,39 @@ where
     }
 }
 
+macro_rules! backup_priv_data {
+    ($rng:expr, $guarded_priv_storage:expr, $guarded_backup_vault:expr, $cur_type:expr, $data_type:ty, $pub_enc_key:expr) => {
+        let data_ids = $guarded_priv_storage
+            .all_data_ids(&$cur_type.to_string())
+            .await?;
+        for data_id in data_ids {
+            let data: $data_type = $guarded_priv_storage
+                .read_data(&data_id, &$cur_type.to_string())
+                .await?;
+            let mut serialized_data = Vec::new();
+            safe_serialize(&data, &mut serialized_data, SAFE_SER_SIZE_LIMIT)?;
+            let encrypted_data = $pub_enc_key.encrypt($rng, &serialized_data)?;
+            let enc_ct = BackupCiphertext {
+                ciphertext: encrypted_data,
+                priv_data_type: $cur_type,
+            };
+
+            // Delete the old backup data
+            // Observe that no backups from previous contexts are deleted, only current context.
+            $guarded_backup_vault
+                .delete_data(&data_id, &$cur_type.to_string())
+                .await?;
+            $guarded_backup_vault
+                .store_data(
+                    &enc_ct,
+                    &data_id,
+                    &BackupDataType::PrivData($cur_type).to_string(),
+                )
+                .await?;
+        }
+    };
+}
+
 impl<PubS, PrivS> RealContextManager<PubS, PrivS>
 where
     PubS: Storage + Sync + Send + 'static,
@@ -100,10 +137,11 @@ where
             }
         };
         validate_request_id(&context_id)?;
-        let mut backup_vault = match self.crypto_storage.inner.backup_vault {
+        let backup_vault = match self.crypto_storage.inner.backup_vault {
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
         };
+
         // Generate new backup keys and recovery request
         let mut node_map = HashMap::new();
         for setup_message in context.custodian_nodes.iter() {
@@ -136,123 +174,118 @@ where
 
         // Reencrypt everything
         // Basically we want to ensure the recovery request contains the decryption key and everything else is encrypted using the public encryption key
-        {
-            let mut guarded_priv_storage = self.crypto_storage.inner.private_storage.lock().await;
+        let (lock_acquired_time, total_lock_time) = {
+            let lock_start = std::time::Instant::now();
+            let lock_acquired_time = lock_start.elapsed();
+            let guarded_priv_storage = self.crypto_storage.inner.private_storage.lock().await;
             let mut guarded_backup_vault = backup_vault.lock().await;
             for cur_type in PrivDataType::iter() {
-                let data_ids = guarded_priv_storage
-                    .all_data_ids(&cur_type.to_string())
-                    .await?;
-                for data_id in data_ids {
-                    // TODO make macro to avoid code duplication and go through all types
-                    let data: ThresholdFheKeys = guarded_priv_storage
-                        .read_data(&data_id, &cur_type.to_string())
-                        .await?;
-                    // Observe that the vault automatically encrypts or secret shares the data as long as a keychain is configured
-                    guarded_backup_vault
-                        .store_data(&data, &data_id, &BackupDataType::Ciphertext.to_string())
-                        .await;
+                // We need to match on each type to manually specify the data type and to ensure that we do not forget anything in case the enum is extended
+                match cur_type {
+                    PrivDataType::CustodianSetupMessage => {
+                        backup_priv_data!(
+                            &mut rng,
+                            guarded_priv_storage,
+                            guarded_backup_vault,
+                            cur_type,
+                            InternalCustodianSetupMessage, // todo right type?
+                            pub_enc_key
+                        );
+                    }
+                    PrivDataType::SigningKey => {
+                        backup_priv_data!(
+                            &mut rng,
+                            guarded_priv_storage,
+                            guarded_backup_vault,
+                            cur_type,
+                            PrivateSigKey,
+                            pub_enc_key
+                        );
+                    }
+                    PrivDataType::FheKeyInfo => {
+                        backup_priv_data!(
+                            &mut rng,
+                            guarded_priv_storage,
+                            guarded_backup_vault,
+                            cur_type,
+                            ThresholdFheKeys,
+                            pub_enc_key
+                        );
+                    }
+                    PrivDataType::CrsInfo => {
+                        backup_priv_data!(
+                            &mut rng,
+                            guarded_priv_storage,
+                            guarded_backup_vault,
+                            cur_type,
+                            SignedPubDataHandleInternal,
+                            pub_enc_key
+                        );
+                    }
+                    PrivDataType::FhePrivateKey => {
+                        backup_priv_data!(
+                            &mut rng,
+                            guarded_priv_storage,
+                            guarded_backup_vault,
+                            cur_type,
+                            ClientKey,
+                            pub_enc_key
+                        );
+                    }
+                    PrivDataType::PrssSetup => {
+                        // We will not back up PRSS setup data
+                        continue;
+                    }
+                    PrivDataType::CustodianInfo => {
+                        // TODO Types for custodians are not finalized yet
+                        tracing::warn!(
+                            "CustodianInfo type is not backed up, please implement it if needed"
+                        );
+                        continue;
+                    }
+                    PrivDataType::PubBackupKey => {
+                        backup_priv_data!(
+                            &mut rng,
+                            guarded_priv_storage,
+                            guarded_backup_vault,
+                            cur_type,
+                            BackupPublicKey,
+                            pub_enc_key
+                        );
+                    }
+                    PrivDataType::ContextInfo => {
+                        tracing::warn!("Types for context are not finalized yet, skipping backup");
+                        continue;
+                    }
                 }
             }
-        }
-        // Then store the results
+            let total_lock_time = lock_start.elapsed();
+            (lock_acquired_time, total_lock_time)
+        };
+        tracing::info!(
+            "New context storage - context_id={}, lock_acquired_in={:?}, total_lock_held={:?}",
+            context_id,
+            lock_acquired_time,
+            total_lock_time
+        );
 
-        // let mut guarded_priv_storage = self.crypto_storage.inner.private_storage.lock().await;
-        // // let mut guarded_backup_storage = backup_vault.lock().await;
-        // let mut guarded_pub_storage = self.crypto_storage.inner.public_storage.lock().await;
+        // Then store the results
+        self.crypto_storage
+            .write_backup_keys_with_meta_store(
+                &context_id,
+                pub_enc_key,
+                recovery_request,
+                custodian_context,
+                commitments,
+                Arc::clone(&self.custodian_meta_store),
+            )
+            .await;
 
         // TODO I am unsure what should be stored in the backup vault and what should be in the public storage.
         // Basically everything can be released publicly and have build in ways of protecting against tampering.
         // Hence for now I store everything in the public storage since the backup vault is now used for export
-
-        // Store public backup encryption key in the private storage
-        // as it is crucial that it cannot be maliciously replaced and
-        // no-one besides the operator needs to be able to read it.
-        // let priv_storage_future = async move {
-        //     let store_result = store_versioned_at_request_id(
-        //         &mut (*guarded_priv_storage),
-        //         &context_id,
-        //         &pub_enc_key,
-        //         &PrivDataType::PubBackupKey.to_string(),
-        //     )
-        //     .await;
-        //     if let Err(e) = &store_result {
-        //         tracing::error!(
-        //             "Failed to store public backup encryption key to private storage for request {}: {}",
-        //             context_id,
-        //             e
-        //         );
-        //     }
-        //     store_result.is_ok()
-        // };
-
-        // let pub_storage_future = async move {
-        //     let recovery_store_result = store_versioned_at_request_id(
-        //         &mut (*guarded_pub_storage),
-        //         &context_id,
-        //         &recovery_request,
-        //         &PubDataType::RecoveryRequest.to_string(),
-        //     )
-        //     .await;
-        //     if let Err(e) = &recovery_store_result {
-        //         tracing::error!(
-        //             "Failed to store recovery request to the public storage for request {}: {}",
-        //             context_id,
-        //             e
-        //         );
-        //     }
-        //     let commit_store_result = store_versioned_at_request_id(
-        //         &mut (*guarded_pub_storage),
-        //         &context_id,
-        //         &commitments,
-        //         &PubDataType::Commitments.to_string(),
-        //     )
-        //     .await;
-        //     if let Err(e) = &recovery_store_result {
-        //         tracing::error!(
-        //             "Failed to store commitments to the public storage for request {}: {}",
-        //             context_id,
-        //             e
-        //         );
-        //     }
-        //     recovery_store_result.is_ok() && commit_store_result.is_ok()
-        // };
-
-        // TODO reencrypt everything if context new
-
-        // todo should be done externally
-        // Below we write to the meta-store.
-        // After writing, the the meta-store on this [req_id] will be in the "Started" state
-        // So we need to update it everytime something bad happens,
-        // or put all the code that may error before the first write to the meta-store,
-        // otherwise it'll be in the "Started" state forever.
-        // Optimize lock hold time by minimizing operations under lock
-        let (lock_acquired_time, total_lock_time) = {
-            let lock_start = std::time::Instant::now();
-            // let mut custodian_meta_store = self.custodian_meta_store.write().await;
-            let lock_acquired_time = lock_start.elapsed();
-            // tonic_handle_potential_err(
-            //     custodian_meta_store.insert(&context_id),
-            //     format!("Could not insert new custodian context {context_id} into meta store"),
-            // )?;
-
-            // // We don't need to check the result of this write, since insert above fails if an element already exists
-            // custodian_meta_store.update(&context_id, Ok(custodian_context))?;
-
-            // if custodian_meta_store.get_current_count() > 0 {
-            //     // First time we make a context
-            // } else {
-            //     // A context already exists
-            // }
-
-            let total_lock_time = lock_start.elapsed();
-            (lock_acquired_time, total_lock_time)
-        };
         // Log after lock is released
-        tracing::info!(
-            "MetaStore INITIAL insert for custodian context - context_id={}, lock_acquired_in={:?}, total_lock_held={:?}",
-            context_id, lock_acquired_time, total_lock_time
-        );
+
         Ok(())
     }
 
@@ -280,9 +313,11 @@ where
             pub_enc_key,
             custodian_context.threshold.try_into().unwrap(),
         )?;
-        // TODO should commitments be moved into secret_share_and_encrypt?
+        // TODO should commitments be moved into secret_share_and_encrypt? Since this should basically just be used to share the private key
+        let mut serialized_priv_key = Vec::new();
+        safe_serialize(&priv_key, &mut serialized_priv_key, SAFE_SER_SIZE_LIMIT)?;
         let ct_map = operator
-            .secret_share_and_encrypt(rng, &bc2wrap::serialize(&priv_key)?, backup_id)
+            .secret_share_and_encrypt(rng, &serialized_priv_key, backup_id)
             .unwrap();
         let mut commitments = Vec::new();
         let mut ciphertexts = BTreeMap::new();
@@ -304,22 +339,6 @@ where
             "Generated recovery request for backup_id/context_id={}",
             backup_id
         );
-        Ok((
-            recovery_request,
-            BackupCommitments {
-                commitments,
-                signature: todo!(),
-            },
-        ))
-    }
-
-    #[allow(dead_code)]
-    async fn rewrite_private_data(
-        &self,
-        _context_id: RequestId,
-        _custodian_context: InternalCustodianContext,
-    ) -> anyhow::Result<()> {
-        // todo update backuped data with new custodian context
-        Ok(())
+        Ok((recovery_request, BackupCommitments { commitments }))
     }
 }
