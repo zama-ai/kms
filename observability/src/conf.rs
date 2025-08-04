@@ -16,6 +16,7 @@ const TRACER_DEFAULT_RETRY_COUNT: u32 = 3;
 const TRACER_DEFAULT_SCHEDULED_DELAY_MS: u64 = 500;
 const TRACER_DEFAULT_RETRY_INITIAL_DELAY_MS: u64 = 100;
 const TRACER_DEFAULT_RETRY_MAX_DELAY_MS: u64 = 1000;
+const SYS_METRIC_REFRESH_INTERVAL_MS: u64 = 5000;
 
 lazy_static::lazy_static! {
     pub(crate) static ref ENVIRONMENT: ExecutionEnvironment = mode();
@@ -49,6 +50,13 @@ pub struct TelemetryConfig {
     /// Batch configuration for tracing
     #[builder(default, setter(strip_option))]
     pub batch: Option<Batch>,
+
+    #[builder(default)]
+    pub enable_sys_metrics: Option<bool>,
+
+    #[validate(range(min = 1))]
+    #[builder(default, setter(strip_option))]
+    pub refresh_interval_ms: Option<u64>,
 }
 
 impl TelemetryConfig {
@@ -69,6 +77,13 @@ impl TelemetryConfig {
         Duration::from_millis(
             self.tracing_otlp_timeout_ms
                 .unwrap_or(TRACER_OTLP_TIMEOUT_MS),
+        )
+    }
+
+    pub fn refresh_interval(&self) -> Duration {
+        Duration::from_millis(
+            self.refresh_interval_ms
+                .unwrap_or(SYS_METRIC_REFRESH_INTERVAL_MS),
         )
     }
 
@@ -96,6 +111,10 @@ impl TelemetryConfig {
             }
         }
         Ok(())
+    }
+
+    pub fn enable_sys_metrics(&self) -> bool {
+        self.enable_sys_metrics.unwrap_or(false)
     }
 }
 
