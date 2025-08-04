@@ -457,11 +457,6 @@ impl Networking for NetworkSession {
 
     /// Receives messages from other parties, assuming the grpc server filled the [`MessageQueueStores`] correctly
     async fn receive(&self, sender: &Identity) -> anyhow::Result<Vec<u8>> {
-        let network_round = *self
-            .round_counter
-            .read()
-            .map_err(|e| anyhow_error_and_log(format!("Locking error: {e:?}")))?;
-
         let rx = self.receiving_channels.get(sender).ok_or_else(|| {
             anyhow_error_and_log(format!(
                 "couldn't retrieve receiving channel for P:{sender:?}"
@@ -475,6 +470,12 @@ impl Networking for NetworkSession {
             .recv()
             .await
             .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
+        let network_round = {
+            *self
+                .round_counter
+                .read()
+                .map_err(|e| anyhow_error_and_log(format!("Locking error: {e:?}")))?
+        };
 
         // drop old messages
         while local_packet.round_counter < network_round {
