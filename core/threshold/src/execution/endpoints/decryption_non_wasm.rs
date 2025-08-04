@@ -84,44 +84,24 @@ pub struct NoiseFloodSmallSession<
     pub session: RefCell<Ses>,
 }
 
-impl<
-        const EXTENSION_DEGREE: usize,
-        Ses: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>>,
-    > NoiseFloodSmallSession<EXTENSION_DEGREE, Ses>
-where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
-{
-    pub fn new(session: Ses) -> Self {
-        NoiseFloodSmallSession {
-            session: RefCell::new(session),
-        }
-    }
-}
-
 pub struct NoiseFloodLargeSession<PreprocStrat> {
     pub session: RefCell<LargeSession>,
     _marker: std::marker::PhantomData<PreprocStrat>,
-}
-
-impl<PreprocStrat> NoiseFloodLargeSession<PreprocStrat> {
-    pub fn new(session: LargeSession) -> Self {
-        NoiseFloodLargeSession {
-            session: RefCell::new(session),
-            _marker: std::marker::PhantomData,
-        }
-    }
 }
 
 pub type SecureNoiseFloodLargeSession<Z> = NoiseFloodLargeSession<SecureLargePreprocessing<Z>>;
 
 #[async_trait]
 pub trait NoiseFloodPreparation<const EXTENSION_DEGREE: usize> {
+    type SessionType: BaseSessionHandles;
     async fn init_prep_noiseflooding(
         &mut self,
         num_ctxt: usize,
     ) -> anyhow::Result<InMemoryNoiseFloodPreprocessing<EXTENSION_DEGREE>>;
 
     fn get_mut_base_session(&mut self) -> &mut BaseSession;
+
+    fn new(session: Self::SessionType) -> Self;
 }
 
 #[async_trait]
@@ -132,6 +112,14 @@ impl<
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
+    type SessionType = Ses;
+
+    fn new(session: Self::SessionType) -> Self {
+        NoiseFloodSmallSession {
+            session: RefCell::new(session),
+        }
+    }
+
     /// Load precomputed init data for noise flooding.
     ///
     /// Note: this is actually a synchronous function. It just needs to be async to implement the trait (which is async in the Large case)
@@ -173,6 +161,15 @@ impl<
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
 {
+    type SessionType = LargeSession;
+
+    fn new(session: Self::SessionType) -> Self {
+        NoiseFloodLargeSession {
+            session: RefCell::new(session),
+            _marker: std::marker::PhantomData,
+        }
+    }
+
     /// Compute precomputed init data for noise flooding.
     async fn init_prep_noiseflooding(
         &mut self,
@@ -229,6 +226,11 @@ pub struct SecureOnlineNoiseFloodDecryption;
 impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
     for SecureOnlineNoiseFloodDecryption
 {
+    #[instrument(
+        name = "TFHE.Threshold-Dec-1",
+        skip(session, preprocessing, keyshares, ciphertext)
+        fields(sid=?session.session_id(),batch_size=?ciphertext.len())
+    )]
     async fn decrypt<
         S: BaseSessionHandles,
         P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
@@ -245,14 +247,21 @@ impl<const EXTENSION_DEGREE: usize> OnlineNoiseFloodDecryption<EXTENSION_DEGREE>
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
         ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
     {
-        run_decryption_noiseflood::<EXTENSION_DEGREE, _, _, T>(
-            session,
-            preprocessing,
-            keyshares,
-            ciphertext,
-            ddec_key_type,
-        )
-        .await
+        let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
+        for current_ct_block in ciphertext.packed_blocks() {
+            let partial_decrypt = partial_decrypt128(keyshares, current_ct_block, ddec_key_type)?;
+            let res = partial_decrypt + preprocessing.next_mask()?;
+
+            shared_masked_ptxts.push(res);
+        }
+        let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, keyshares).await?;
+        let usable_message_bits =
+            ciphertext.packing_factor() * keyshares.parameters.message_modulus_log() as usize;
+        let shared_partial_decrypt = BlocksPartialDecrypt {
+            bits_in_block: usable_message_bits as u32,
+            partial_decryptions: partial_decrypted,
+        };
+        combine_plaintext_blocks(shared_partial_decrypt)
     }
 }
 
@@ -985,45 +994,6 @@ where
         }
     };
     Ok(out)
-}
-
-#[instrument(
-    name = "TFHE.Threshold-Dec-1",
-    skip(session, preprocessing, keyshares, ciphertext)
-    fields(sid=?session.session_id(),batch_size=?ciphertext.len())
-)]
-async fn run_decryption_noiseflood<
-    const EXTENSION_DEGREE: usize,
-    S: BaseSessionHandles,
-    P: NoiseFloodPreprocessing<EXTENSION_DEGREE> + ?Sized,
-    T,
->(
-    session: &mut S,
-    preprocessing: &mut P,
-    keyshares: &PrivateKeySet<EXTENSION_DEGREE>,
-    ciphertext: &SnsRadixOrBoolCiphertext,
-    ddec_key_type: SnsDecryptionKeyType,
-) -> anyhow::Result<T>
-where
-    T: tfhe::integer::block_decomposition::Recomposable
-        + tfhe::core_crypto::commons::traits::CastFrom<u128>,
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Invert + Solve + ErrorCorrect,
-{
-    let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
-    for current_ct_block in ciphertext.packed_blocks() {
-        let partial_decrypt = partial_decrypt128(keyshares, current_ct_block, ddec_key_type)?;
-        let res = partial_decrypt + preprocessing.next_mask()?;
-
-        shared_masked_ptxts.push(res);
-    }
-    let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, keyshares).await?;
-    let usable_message_bits =
-        ciphertext.packing_factor() * keyshares.parameters.message_modulus_log() as usize;
-    let shared_partial_decrypt = BlocksPartialDecrypt {
-        bits_in_block: usable_message_bits as u32,
-        partial_decryptions: partial_decrypted,
-    };
-    combine_plaintext_blocks(shared_partial_decrypt)
 }
 
 pub async fn run_decryption_noiseflood_64<

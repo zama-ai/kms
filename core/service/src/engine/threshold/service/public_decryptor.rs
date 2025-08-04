@@ -22,16 +22,19 @@ use tfhe::FheTypes;
 use threshold_fhe::{
     algebra::{
         base_ring::Z128,
-        galois_rings::common::ResiduePoly,
+        galois_rings::{common::ResiduePoly, degree_4::ResiduePolyF4Z128},
         structure_traits::{ErrorCorrect, Invert, Solve},
     },
-    execution::endpoints::{
-        decryption::{
-            decrypt_using_noiseflooding, secure_decrypt_using_bitdec, DecryptionMode,
-            LowLevelCiphertext, NoiseFloodPreparation, NoiseFloodSmallSession,
-            SecureOnlineNoiseFloodDecryption,
+    execution::{
+        endpoints::{
+            decryption::{
+                decrypt_using_noiseflooding, secure_decrypt_using_bitdec, DecryptionMode,
+                LowLevelCiphertext, NoiseFloodPreparation, NoiseFloodSmallSession,
+                SecureOnlineNoiseFloodDecryption,
+            },
+            keygen::PrivateKeySet,
         },
-        keygen::PrivateKeySet,
+        runtime::session::SmallSession,
     },
     session_id::SessionId,
 };
@@ -65,15 +68,16 @@ use super::{session::SessionPreparer, ThresholdFheKeys};
 
 #[tonic::async_trait]
 pub trait NoiseFloodDecryptor: Send + Sync {
-    async fn decrypt<P, T>(
-        noiseflood_session: &mut P,
+    type Prep: NoiseFloodPreparation<4> + Send;
+
+    async fn decrypt<T>(
+        noiseflood_session: &mut Self::Prep,
         server_key: &tfhe::integer::ServerKey,
         ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
         ct: LowLevelCiphertext,
         secret_key_share: &PrivateKeySet<4>,
     ) -> anyhow::Result<(HashMap<String, T>, Duration)>
     where
-        P: NoiseFloodPreparation<4> + Send,
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
         ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve;
@@ -83,20 +87,24 @@ pub struct SecureNoiseFloodDecryptor;
 
 #[tonic::async_trait]
 impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
-    async fn decrypt<P, T>(
-        noiseflood_session: &mut P,
+    type Prep = NoiseFloodSmallSession<
+        4,
+        threshold_fhe::execution::runtime::session::SmallSession<ResiduePolyF4Z128>,
+    >;
+
+    async fn decrypt<T>(
+        noiseflood_session: &mut Self::Prep,
         server_key: &tfhe::integer::ServerKey,
         ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
         ct: LowLevelCiphertext,
         secret_key_share: &PrivateKeySet<4>,
     ) -> anyhow::Result<(HashMap<String, T>, Duration)>
     where
-        P: NoiseFloodPreparation<4> + Send,
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
         ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve,
     {
-        decrypt_using_noiseflooding::<4, P, SecureOnlineNoiseFloodDecryption, T>(
+        decrypt_using_noiseflooding::<4, Self::Prep, SecureOnlineNoiseFloodDecryption, T>(
             noiseflood_session,
             server_key,
             ck,
@@ -107,35 +115,11 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
     }
 }
 
-#[cfg(test)]
-pub struct DummyNoisefloodDecryptor;
-
-#[cfg(test)]
-#[tonic::async_trait]
-impl NoiseFloodDecryptor for DummyNoisefloodDecryptor {
-    async fn decrypt<P, T>(
-        _noiseflood_session: &mut P,
-        _server_key: &tfhe::integer::ServerKey,
-        _ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
-        _ct: LowLevelCiphertext,
-        _secret_key_share: &PrivateKeySet<4>,
-    ) -> anyhow::Result<(HashMap<String, T>, Duration)>
-    where
-        P: NoiseFloodPreparation<4>,
-        T: tfhe::integer::block_decomposition::Recomposable
-            + tfhe::core_crypto::commons::traits::CastFrom<u128>,
-        ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve,
-    {
-        let results = HashMap::new();
-        let elapsed_time = Duration::from_secs(0);
-        Ok((results, elapsed_time))
-    }
-}
-
 pub struct RealPublicDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    Dec: NoiseFloodDecryptor + 'static,
+    Dec: NoiseFloodDecryptor<Prep = NoiseFloodSmallSession<4, SmallSession<ResiduePolyF4Z128>>>
+        + 'static,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -150,7 +134,8 @@ pub struct RealPublicDecryptor<
 impl<
         PubS: Storage + Send + Sync + 'static,
         PrivS: Storage + Send + Sync + 'static,
-        Dec: NoiseFloodDecryptor + 'static,
+        Dec: NoiseFloodDecryptor<Prep = NoiseFloodSmallSession<4, SmallSession<ResiduePolyF4Z128>>>
+            + 'static,
     > RealPublicDecryptor<PubS, PrivS, Dec>
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
@@ -245,51 +230,14 @@ impl<
         };
         Ok(raw_decryption)
     }
-
-    #[cfg(test)]
-    async fn init_test(
-        pub_storage: PubS,
-        priv_storage: PrivS,
-        session_preparer: SessionPreparer,
-    ) -> Self {
-        let crypto_storage = ThresholdCryptoMaterialStorage::new(
-            pub_storage,
-            priv_storage,
-            None,
-            HashMap::new(),
-            HashMap::new(),
-        );
-
-        let tracker = Arc::new(TaskTracker::new());
-        let rate_limiter = RateLimiter::default();
-
-        Self {
-            base_kms: session_preparer.base_kms.new_instance().await,
-            crypto_storage,
-            pub_dec_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-            session_preparer: Arc::new(session_preparer.new_instance().await),
-            tracker,
-            rate_limiter,
-            decryption_mode: DecryptionMode::NoiseFloodSmall,
-            _dec: PhantomData,
-        }
-    }
-
-    #[cfg(test)]
-    fn set_bucket_size(&mut self, bucket_size: usize) {
-        let config = crate::util::rate_limiter::RateLimiterConfig {
-            bucket_size,
-            ..Default::default()
-        };
-        self.rate_limiter = RateLimiter::new(config);
-    }
 }
 
 #[tonic::async_trait]
 impl<
         PubS: Storage + Send + Sync + 'static,
         PrivS: Storage + Send + Sync + 'static,
-        Dec: NoiseFloodDecryptor + 'static,
+        Dec: NoiseFloodDecryptor<Prep = NoiseFloodSmallSession<4, SmallSession<ResiduePolyF4Z128>>>
+            + 'static,
     > PublicDecryptor for RealPublicDecryptor<PubS, PrivS, Dec>
 {
     #[tracing::instrument(skip(self, request), fields(
@@ -722,26 +670,102 @@ mod tests {
 
     use super::*;
 
+    pub struct DummyNoisefloodDecryptor;
+
+    #[tonic::async_trait]
+    impl NoiseFloodDecryptor for DummyNoisefloodDecryptor {
+        type Prep = NoiseFloodSmallSession<
+            4,
+            threshold_fhe::execution::runtime::session::SmallSession<ResiduePolyF4Z128>,
+        >;
+
+        async fn decrypt<T>(
+            _noiseflood_session: &mut Self::Prep,
+            _server_key: &tfhe::integer::ServerKey,
+            _ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+            _ct: LowLevelCiphertext,
+            _secret_key_share: &PrivateKeySet<4>,
+        ) -> anyhow::Result<(HashMap<String, T>, Duration)>
+        where
+            T: tfhe::integer::block_decomposition::Recomposable
+                + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+            ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve,
+        {
+            let results = HashMap::new();
+            let elapsed_time = Duration::from_secs(0);
+            Ok((results, elapsed_time))
+        }
+    }
+
+    impl<
+            PubS: Storage + Send + Sync + 'static,
+            PrivS: Storage + Send + Sync + 'static,
+            Dec: NoiseFloodDecryptor<
+                    Prep = NoiseFloodSmallSession<4, SmallSession<ResiduePolyF4Z128>>,
+                > + 'static,
+        > RealPublicDecryptor<PubS, PrivS, Dec>
+    {
+        async fn init_test(
+            pub_storage: PubS,
+            priv_storage: PrivS,
+            session_preparer: SessionPreparer,
+        ) -> Self {
+            let crypto_storage = ThresholdCryptoMaterialStorage::new(
+                pub_storage,
+                priv_storage,
+                None,
+                HashMap::new(),
+                HashMap::new(),
+            );
+
+            let tracker = Arc::new(TaskTracker::new());
+            let rate_limiter = RateLimiter::default();
+
+            Self {
+                base_kms: session_preparer.base_kms.new_instance().await,
+                crypto_storage,
+                pub_dec_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+                session_preparer: Arc::new(session_preparer.new_instance().await),
+                tracker,
+                rate_limiter,
+                decryption_mode: DecryptionMode::NoiseFloodSmall,
+                _dec: PhantomData,
+            }
+        }
+
+        fn set_bucket_size(&mut self, bucket_size: usize) {
+            let config = crate::util::rate_limiter::RateLimiterConfig {
+                bucket_size,
+                ..Default::default()
+            };
+            self.rate_limiter = RateLimiter::new(config);
+        }
+    }
+
     impl RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor> {
-        pub async fn init_test_dummy_decryptor(session_preparer: SessionPreparer) -> Self {
+        async fn init_test_dummy_decryptor(session_preparer: SessionPreparer) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
             Self::init_test(pub_storage, priv_storage, session_preparer).await
         }
     }
 
-    #[tokio::test]
-    async fn test_pre_post_condition() {
-        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+    async fn setup_public_decryptor() -> (
+        RequestId,
+        Vec<u8>,
+        RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
+    ) {
+        let mut rng = rand::rngs::OsRng;
+        let (_pk, sk) = gen_sig_keys(&mut rng);
         let param = TEST_PARAM;
         let session_preparer = SessionPreparer::new_test_session(false);
-        let mut public_decryptor =
+        let public_decryptor =
             RealPublicDecryptor::init_test_dummy_decryptor(session_preparer).await;
 
-        let key_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let key_id = RequestId::new_random(&mut rng);
 
         // make a dummy private keyset
-        let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param);
+        let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, &mut rng);
 
         let ct = tfhe::CompactCiphertextList::builder(&fhe_key_set.public_key)
             .push(255u8)
@@ -777,100 +801,110 @@ mod tests {
                 .unwrap();
         }
 
+        (key_id, ct_buf, public_decryptor)
+    }
+
+    #[tokio::test]
+    async fn test_aborted() {
         // `Aborted` - If an internal error occured in starting the public decryption
         // _or_ if an invalid argument was given.
         // here we use the wrong key ID
-        {
-            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
-            let bad_key_id = RequestId::new_random(&mut rand::rngs::OsRng);
-            let request = Request::new(PublicDecryptionRequest {
-                request_id: Some(req_id.into()),
-                ciphertexts: vec![TypedCiphertext {
-                    ciphertext: ct_buf.clone(),
-                    fhe_type: FheTypes::Uint8 as i32,
-                    external_handle: vec![],
-                    ciphertext_format: CiphertextFormat::SmallCompressed as i32,
-                }],
-                key_id: Some(bad_key_id.into()),
-                domain: None,
-            });
-            // NOTE: should probably be NotFound
-            assert_eq!(
-                public_decryptor
-                    .public_decrypt(request)
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::Aborted
-            );
 
-            // use an existing request ID should also abort
-            let request = Request::new(PublicDecryptionRequest {
-                request_id: Some(req_id.into()),
-                ciphertexts: vec![TypedCiphertext {
-                    ciphertext: ct_buf.clone(),
-                    fhe_type: FheTypes::Uint8 as i32,
-                    external_handle: vec![],
-                    ciphertext_format: CiphertextFormat::SmallCompressed as i32,
-                }],
-                key_id: Some(key_id.into()),
-                domain: None,
-            });
-            assert_eq!(
-                public_decryptor
-                    .public_decrypt(request)
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::Aborted
-            );
-        }
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor().await;
 
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let bad_key_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let request = Request::new(PublicDecryptionRequest {
+            request_id: Some(req_id.into()),
+            ciphertexts: vec![TypedCiphertext {
+                ciphertext: ct_buf.clone(),
+                fhe_type: FheTypes::Uint8 as i32,
+                external_handle: vec![],
+                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
+            }],
+            key_id: Some(bad_key_id.into()),
+            domain: None,
+        });
+        // NOTE: should probably be NotFound
+        assert_eq!(
+            public_decryptor
+                .public_decrypt(request)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Aborted
+        );
+
+        // use an existing request ID should also abort
+        let request = Request::new(PublicDecryptionRequest {
+            request_id: Some(req_id.into()),
+            ciphertexts: vec![TypedCiphertext {
+                ciphertext: ct_buf.clone(),
+                fhe_type: FheTypes::Uint8 as i32,
+                external_handle: vec![],
+                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
+            }],
+            key_id: Some(key_id.into()),
+            domain: None,
+        });
+        assert_eq!(
+            public_decryptor
+                .public_decrypt(request)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Aborted
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resource_exhausted() {
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        {
-            // Set bucket size to zero, so no operations are allowed
-            public_decryptor.set_bucket_size(0);
+        let (key_id, ct_buf, mut public_decryptor) = setup_public_decryptor().await;
 
-            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
-            let request = Request::new(PublicDecryptionRequest {
-                request_id: Some(req_id.into()),
-                ciphertexts: vec![TypedCiphertext {
-                    ciphertext: ct_buf.clone(),
-                    fhe_type: FheTypes::Uint8 as i32,
-                    external_handle: vec![],
-                    ciphertext_format: CiphertextFormat::SmallCompressed as i32,
-                }],
-                key_id: Some(key_id.into()),
-                domain: None,
-            });
-            assert_eq!(
-                public_decryptor
-                    .public_decrypt(request)
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::ResourceExhausted
-            );
+        // Set bucket size to zero, so no operations are allowed
+        public_decryptor.set_bucket_size(0);
 
-            // finally reset the bucket size to a non-zero value
-            public_decryptor.set_bucket_size(100);
-        }
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let request = Request::new(PublicDecryptionRequest {
+            request_id: Some(req_id.into()),
+            ciphertexts: vec![TypedCiphertext {
+                ciphertext: ct_buf.clone(),
+                fhe_type: FheTypes::Uint8 as i32,
+                external_handle: vec![],
+                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
+            }],
+            key_id: Some(key_id.into()),
+            domain: None,
+        });
+        assert_eq!(
+            public_decryptor
+                .public_decrypt(request)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::ResourceExhausted
+        );
 
-        // should work ok
-        {
-            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
-            let request = Request::new(PublicDecryptionRequest {
-                request_id: Some(req_id.into()),
-                ciphertexts: vec![TypedCiphertext {
-                    ciphertext: ct_buf,
-                    fhe_type: FheTypes::Uint8 as i32,
-                    external_handle: vec![],
-                    ciphertext_format: CiphertextFormat::SmallCompressed as i32,
-                }],
-                key_id: Some(key_id.into()),
-                domain: None,
-            });
-            public_decryptor.public_decrypt(request).await.unwrap();
-        }
+        // finally reset the bucket size to a non-zero value
+        public_decryptor.set_bucket_size(100);
+    }
+
+    #[tokio::test]
+    async fn sunshine() {
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor().await;
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let request = Request::new(PublicDecryptionRequest {
+            request_id: Some(req_id.into()),
+            ciphertexts: vec![TypedCiphertext {
+                ciphertext: ct_buf,
+                fhe_type: FheTypes::Uint8 as i32,
+                external_handle: vec![],
+                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
+            }],
+            key_id: Some(key_id.into()),
+            domain: None,
+        });
+        public_decryptor.public_decrypt(request).await.unwrap();
     }
 }

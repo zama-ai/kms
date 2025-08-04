@@ -114,38 +114,6 @@ impl ThresholdFheKeys {
             }
         }
     }
-
-    #[cfg(test)]
-    pub fn init_dummy(
-        param: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
-    ) -> (Self, FhePubKeySet) {
-        let keyset = threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set(
-            param,
-            &mut rand::rngs::OsRng,
-        );
-
-        let server_key = keyset.public_keys.server_key.clone();
-        let integer_server_key = keyset.public_keys.server_key.into_raw_parts().0;
-
-        let pub_key_set = FhePubKeySet {
-            public_key: keyset.public_keys.public_key,
-            server_key,
-        };
-
-        let priv_key_set = PrivateKeySet::init_dummy(param);
-
-        // let info = compute_all_info(sig_key, fhe_key_set, domain)
-
-        let priv_key_set = Self {
-            private_keys: priv_key_set,
-            integer_server_key,
-            sns_key: None,
-            decompression_key: None,
-            pk_meta_data: HashMap::new(),
-        };
-
-        (priv_key_set, pub_key_set)
-    }
 }
 
 impl Named for ThresholdFheKeys {
@@ -641,5 +609,43 @@ async fn extract_tls_certs(
         }))
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl ThresholdFheKeys {
+        /// Initializes a dummy private keyset with the given parameters and returns it along with a public key set.
+        /// The keyset is *not* meant to be used for any computation or protocol,
+        /// it's only used during testing with a mocked decryption protocol that does not actually load the keys.
+        pub fn init_dummy<R: rand::Rng + rand::CryptoRng>(
+            param: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
+            rng: &mut R,
+        ) -> (Self, FhePubKeySet) {
+            let keyset =
+                threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set(param, rng);
+
+            let server_key = keyset.public_keys.server_key.clone();
+            let integer_server_key = keyset.public_keys.server_key.into_raw_parts().0;
+
+            let pub_key_set = FhePubKeySet {
+                public_key: keyset.public_keys.public_key,
+                server_key,
+            };
+
+            let priv_key_set = PrivateKeySet::init_dummy(param);
+
+            let priv_key_set = Self {
+                private_keys: priv_key_set,
+                integer_server_key,
+                sns_key: None,
+                decompression_key: None,
+                pk_meta_data: HashMap::new(),
+            };
+
+            (priv_key_set, pub_key_set)
+        }
     }
 }
