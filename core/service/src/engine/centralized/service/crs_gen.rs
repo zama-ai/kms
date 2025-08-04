@@ -33,13 +33,8 @@ pub async fn crs_gen_impl<
     request: Request<CrsGenRequest>,
 ) -> Result<Response<Empty>, Status> {
     tracing::info!("Received CRS generation request");
-    let _timer = METRICS
-        .time_operation(OP_CRS_GEN)
-        .map_err(|e| Status::internal(format!("Failed to start metrics: {e}")))?
-        .start();
-    METRICS
-        .increment_request_counter(OP_CRS_GEN)
-        .map_err(|e| Status::internal(format!("Failed to increment counter: {e}")))?;
+    let _timer = METRICS.time_operation(OP_CRS_GEN).start();
+    METRICS.increment_request_counter(OP_CRS_GEN);
 
     let permit = service
         .rate_limiter
@@ -166,9 +161,7 @@ pub(crate) async fn crs_gen_background<
                     "Failed CRS generation for CRS with ID {req_id}: {e}"
                 )),
             );
-            METRICS
-                .increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED)
-                .ok();
+            METRICS.increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED);
             return Err(anyhow::anyhow!("Failed CRS generation: {}", e));
         }
     };

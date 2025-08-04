@@ -263,18 +263,10 @@ impl<
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
-            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-            .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
-                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            })
-            .map(|b| b.start())
-            .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-            .ok();
+            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+            .start();
 
-        let _request_counter = metrics::METRICS
-            .increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST)
-            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
+        metrics::METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
 
         let permit = self
             .rate_limiter
@@ -302,12 +294,8 @@ impl<
                 .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_INVALID_REQUEST);
         })?;
 
-        if let Some(b) = timer.as_mut() {
-            //We log but we don't want to return early because timer failed
-            let _ = b
-                .tags([(TAG_KEY_ID, key_id.as_str())])
-                .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
-        }
+        timer.tags([(TAG_KEY_ID, key_id.as_str())]);
+
         tracing::debug!(
             request_id = ?req_id,
             key_id = ?key_id,
@@ -365,23 +353,15 @@ impl<
         for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
             let inner_timer = metrics::METRICS
                 .time_operation(OP_PUBLIC_DECRYPT_INNER)
-                .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-                .and_then(|b| {
-                    b.tags([
-                        (TAG_PARTY_ID, self.session_preparer.my_id.to_string()),
-                        (TAG_KEY_ID, key_id.as_str()),
-                        (
-                            TAG_PUBLIC_DECRYPTION_KIND,
-                            dec_mode.as_str_name().to_string(),
-                        ),
-                    ])
-                    .map_err(|e| {
-                        tracing::warn!("Failed to a tag in party_id, key_id or request_id : {}", e)
-                    })
-                })
-                .map(|b| b.start())
-                .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-                .ok();
+                .tags([
+                    (TAG_PARTY_ID, self.session_preparer.my_id.to_string()),
+                    (TAG_KEY_ID, key_id.as_str()),
+                    (
+                        TAG_PUBLIC_DECRYPTION_KIND,
+                        dec_mode.as_str_name().to_string(),
+                    ),
+                ])
+                .start();
             let internal_sid = tonic_handle_potential_err(
                 req_id.derive_session_id_with_counter(ctr as u64),
                 "failed to derive session ID from counter".to_string(),
@@ -420,9 +400,7 @@ impl<
                 // Capture the inner_timer inside the decryption tasks, such that when the task
                 // exits, the timer is dropped and thus exported
                 let mut inner_timer = inner_timer;
-                inner_timer
-                    .as_mut()
-                    .map(|b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
+                inner_timer.tag(TAG_TFHE_TYPE, fhe_type_string);
 
                 let ciphertext = &typed_ciphertext.ciphertext;
                 let ct_format = typed_ciphertext.ciphertext_format();

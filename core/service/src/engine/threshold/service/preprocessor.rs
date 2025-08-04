@@ -76,30 +76,23 @@ impl RealPreprocessor {
         // that runs the computation
         let timer = metrics::METRICS
             .time_operation(OP_KEYGEN_PREPROC)
-            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-            .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
-                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            });
+            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string());
         {
             let mut guarded_meta_store = self.preproc_buckets.write().await;
             guarded_meta_store.insert(&request_id).inspect_err(|_| {
-                let _ = metrics::METRICS
-                    .increment_error_counter(OP_KEYGEN_PREPROC, ERR_WITH_META_STORAGE);
+                metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC, ERR_WITH_META_STORAGE);
             })?;
         }
         // Derive a sequence of sessionId from request_id
         let own_identity = self.session_preparer.own_identity().inspect_err(|_| {
-            let _ = metrics::METRICS
-                .increment_error_counter(OP_KEYGEN_PREPROC, ERR_USER_PREPROC_FAILED);
+            metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC, ERR_USER_PREPROC_FAILED);
         })?;
 
         let sids = (0..self.num_sessions_preproc)
             .map(|ctr| request_id.derive_session_id_with_counter(ctr as u64))
             .collect::<anyhow::Result<Vec<_>>>()
             .inspect_err(|_| {
-                let _ = metrics::METRICS
-                    .increment_error_counter(OP_KEYGEN_PREPROC, ERR_INVALID_REQUEST);
+                metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC, ERR_INVALID_REQUEST);
             })?;
 
         let base_sessions = {
@@ -110,7 +103,7 @@ impl RealPreprocessor {
                     .make_base_session(sid, NetworkMode::Sync)
                     .await
                     .inspect_err(|_| {
-                        let _ = metrics::METRICS
+                        metrics::METRICS
                             .increment_error_counter(OP_KEYGEN_PREPROC, ERR_USER_PREPROC_FAILED);
                     })?;
                 res.push(base_session)
@@ -127,8 +120,7 @@ impl RealPreprocessor {
             "No PRSS setup exists".to_string(),
         )
         .inspect_err(|_| {
-            let _ = metrics::METRICS
-                .increment_error_counter(OP_KEYGEN_PREPROC, ERR_USER_PREPROC_FAILED);
+            metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC, ERR_USER_PREPROC_FAILED);
         })?;
 
         let token = CancellationToken::new();
@@ -139,7 +131,7 @@ impl RealPreprocessor {
         self.tracker.spawn(
             async move {
                 //Start the metric timer, it will end on drop
-                let _timer = timer.map(|b| b.start());
+                let _timer = timer.start();
                  tokio::select! {
                     () = Self::preprocessing_background(&request_id, base_sessions, bucket_store, prss_setup, own_identity, dkg_params, keyset_config, factory, permit) => {
                         // Remove cancellation token since generation is now done.
@@ -151,7 +143,7 @@ impl RealPreprocessor {
                         // Delete any stored data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let mut guarded_bucket_store = bucket_store_cancellation.write().await;
                         let _ = guarded_bucket_store.delete(&request_id);
-                        let _ = metrics::METRICS
+                        metrics::METRICS
                 .increment_error_counter(OP_KEYGEN_PREPROC, ERR_CANCELLED);
                         tracing::info!("Trying to clean up any already written material.")
                     },
@@ -234,7 +226,7 @@ impl RealPreprocessor {
         } else {
             if handle_update.is_err() {
                 tracing::info!("Preproc Failed P[{:?}]", own_identity);
-                let _ = metrics::METRICS
+                metrics::METRICS
                     .increment_error_counter(OP_KEYGEN_PREPROC, ERR_USER_PREPROC_FAILED);
                 return;
             }
@@ -244,8 +236,7 @@ impl RealPreprocessor {
                     "Preproc Failed due to meta store issue P[{:?}]",
                     own_identity
                 );
-                let _ = metrics::METRICS
-                    .increment_error_counter(OP_KEYGEN_PREPROC, ERR_WITH_META_STORAGE);
+                metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC, ERR_WITH_META_STORAGE);
             }
         }
     }
@@ -257,9 +248,7 @@ impl KeyGenPreprocessor for RealPreprocessor {
         &self,
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let _request_counter = metrics::METRICS
-            .increment_request_counter(OP_KEYGEN_PREPROC)
-            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
+        metrics::METRICS.increment_request_counter(OP_KEYGEN_PREPROC);
 
         let permit = self
             .rate_limiter

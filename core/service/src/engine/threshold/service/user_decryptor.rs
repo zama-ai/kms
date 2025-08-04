@@ -188,20 +188,11 @@ impl<
             // exported at the end of the iteration
             let mut inner_timer = metrics::METRICS
                 .time_operation(OP_USER_DECRYPT_INNER)
-                .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-                .and_then(|b| {
-                    b.tags(metric_tags.clone()).map_err(|e| {
-                        tracing::warn!("Failed to a tag in party_id, key_id or request_id : {}", e)
-                    })
-                })
-                .map(|b| b.start())
-                .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-                .ok();
+                .tags(metric_tags.clone())
+                .start();
             let fhe_type = typed_ciphertext.fhe_type()?;
             let fhe_type_str = typed_ciphertext.fhe_type_string();
-            inner_timer
-                .as_mut()
-                .map(|b| b.tag(TAG_TFHE_TYPE, fhe_type_str));
+            inner_timer.tag(TAG_TFHE_TYPE, fhe_type_str);
             let ct_format = typed_ciphertext.ciphertext_format();
             let ct = &typed_ciphertext.ciphertext;
             let external_handle = typed_ciphertext.external_handle.clone();
@@ -425,18 +416,10 @@ impl<
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_REQUEST)
-            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-            .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
-                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            })
-            .map(|b| b.start())
-            .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-            .ok();
+            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+            .start();
 
-        let _request_counter = metrics::METRICS
-            .increment_request_counter(OP_USER_DECRYPT_REQUEST)
-            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
+        metrics::METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
 
         let permit = self.rate_limiter.start_user_decrypt().await.map_err(|e| {
             let _ = metrics::METRICS
@@ -463,12 +446,7 @@ impl<
                     .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_INVALID_REQUEST);
             })?;
 
-        if let Some(b) = timer.as_mut() {
-            //We log but we don't want to return early because timer failed
-            let _ = b
-                .tags([(TAG_KEY_ID, key_id.as_str())])
-                .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
-        }
+        timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();

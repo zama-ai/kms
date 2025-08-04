@@ -37,18 +37,11 @@ pub async fn key_gen_impl<
     service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<KeyGenRequest>,
 ) -> Result<Response<Empty>, Status> {
-    let _timer = METRICS
-        .time_operation(OP_KEYGEN)
-        .map_err(|e| Status::internal(format!("Failed to start metrics: {e}")))?
-        .start();
-    METRICS
-        .increment_request_counter(OP_KEYGEN)
-        .map_err(|e| Status::internal(format!("Failed to increment counter: {e}")))?;
+    let _timer = METRICS.time_operation(OP_KEYGEN).start();
+    METRICS.increment_request_counter(OP_KEYGEN);
 
     let permit = service.rate_limiter.start_keygen().await.map_err(|e| {
-        if let Err(e) = METRICS.increment_error_counter(OP_KEYGEN, ERR_RATE_LIMIT_EXCEEDED) {
-            tracing::warn!("Failed to increment error counter: {:?}", e);
-        }
+        METRICS.increment_error_counter(OP_KEYGEN, ERR_RATE_LIMIT_EXCEEDED);
         Status::resource_exhausted(e.to_string())
     })?;
     let inner = request.into_inner();
@@ -164,12 +157,7 @@ pub(crate) async fn key_gen_background<
             .is_ok()
         {
             let mut guarded_meta_store = meta_store.write().await;
-            METRICS
-                .increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS)
-                .map_err(|e| {
-                    tracing::warn!("Failed to increment error counter: {:?}", e);
-                    anyhow::anyhow!("Failed to increment error counter: {:?}", e)
-                })?;
+            METRICS.increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS);
             let _ = guarded_meta_store.update(
                 req_id,
                 Err(format!(

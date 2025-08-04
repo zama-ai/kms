@@ -220,37 +220,31 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             ) => OP_INSECURE_SNS_COMPRESSION_KEYGEN,
         };
 
-        let _request_counter = metrics::METRICS
-            .increment_request_counter(op_tag)
-            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
+        metrics::METRICS.increment_request_counter(op_tag);
 
         // Prepare the timer before giving it to the tokio task
         // that runs the computation
         let timer = metrics::METRICS
             .time_operation(op_tag)
-            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-            .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
-                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            });
+            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string());
         // Update status
         {
             let mut guarded_meta_store = self.dkg_pubinfo_meta_store.write().await;
             guarded_meta_store.insert(&req_id).inspect_err(|_| {
-                let _ = metrics::METRICS.increment_error_counter(op_tag, ERR_WITH_META_STORAGE);
+                metrics::METRICS.increment_error_counter(op_tag, ERR_WITH_META_STORAGE);
             })?;
         }
 
         // Create the base session necessary to run the DKG
         let base_session = {
             let session_id = req_id.derive_session_id().inspect_err(|_| {
-                let _ = metrics::METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
+                metrics::METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
             })?;
             self.session_preparer
                 .make_base_session(session_id, NetworkMode::Async)
                 .await
                 .inspect_err(|_| {
-                    let _ = metrics::METRICS.increment_error_counter(op_tag, ERR_KEYGEN_FAILED);
+                    metrics::METRICS.increment_error_counter(op_tag, ERR_KEYGEN_FAILED);
                 })?
         };
 
@@ -325,7 +319,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         self.tracker
             .spawn(async move {
                 //Start the metric timer, it will end on drop
-                let _timer = timer.map(|b| b.start());
+                let _timer = timer.start();
                 tokio::select! {
                     () = keygen_background => {
                         // Remove cancellation token since generation is now done.
@@ -337,7 +331,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                         // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let guarded_meta_store = meta_store_cancelled.write().await;
                         crypto_storage_cancelled.purge_key_material(&req_id, guarded_meta_store).await;
-                        let _ = metrics::METRICS.increment_error_counter(op_tag, ERR_CANCELLED);
+                        metrics::METRICS.increment_error_counter(op_tag, ERR_CANCELLED);
                         tracing::info!("Trying to clean up any already written material.")
                     },
                 }
@@ -842,7 +836,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let decompression_key = match dkg_res {
             Ok(k) => k,
             Err(e) => {
-                let _ = metrics::METRICS
+                metrics::METRICS
                     .increment_error_counter(OP_DECOMPRESSION_KEYGEN, ERR_KEYGEN_FAILED);
                 // If dkg errored out, update status
                 let mut guarded_meta_storage = meta_store.write().await;
@@ -861,7 +855,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         ) {
             Ok(info) => HashMap::from_iter(vec![(PubDataType::DecompressionKey, info)]),
             Err(_) => {
-                let _ = metrics::METRICS
+                metrics::METRICS
                     .increment_error_counter(OP_DECOMPRESSION_KEYGEN, ERR_KEYGEN_FAILED);
                 let mut guarded_meta_storage = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
@@ -1147,7 +1141,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                         ) => initialize_key_material(&mut base_session, params).await,
                         _ => {
                             // TODO insecure keygen from existing compression key is not supported
-                            let _ = metrics::METRICS
+                            metrics::METRICS
                                 .increment_error_counter(OP_INSECURE_KEYGEN, ERR_INVALID_REQUEST);
                             let mut guarded_meta_storage = meta_store.write().await;
                             let _ = guarded_meta_storage.update(
@@ -1196,7 +1190,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let (pub_key_set, private_keys) = match dkg_res {
             Ok((pk, sk)) => (pk, sk),
             Err(e) => {
-                let _ = metrics::METRICS.increment_error_counter(OP_KEYGEN, ERR_KEYGEN_FAILED);
+                metrics::METRICS.increment_error_counter(OP_KEYGEN, ERR_KEYGEN_FAILED);
                 //If dkg errored out, update status
                 let mut guarded_meta_storage = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
@@ -1209,7 +1203,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let info = match compute_all_info(&sk, &pub_key_set, eip712_domain.as_ref()) {
             Ok(info) => info,
             Err(_) => {
-                let _ = metrics::METRICS.increment_error_counter(OP_KEYGEN, ERR_KEYGEN_FAILED);
+                metrics::METRICS.increment_error_counter(OP_KEYGEN, ERR_KEYGEN_FAILED);
                 let mut guarded_meta_storage = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_storage

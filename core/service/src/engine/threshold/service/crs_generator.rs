@@ -162,23 +162,17 @@ impl<
             OP_CRS_GEN
         };
 
-        let _request_counter = metrics::METRICS
-            .increment_request_counter(op_tag)
-            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
+        metrics::METRICS.increment_request_counter(op_tag);
 
         // Prepare the timer before giving it to the tokio task
         // that runs the computation
         let timer = metrics::METRICS
             .time_operation(op_tag)
-            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-            .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
-                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            });
+            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string());
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
             guarded_meta_store.insert(&req_id).map_err(|e| {
-                let _ = metrics::METRICS.increment_error_counter(op_tag, ERR_WITH_META_STORAGE);
+                metrics::METRICS.increment_error_counter(op_tag, ERR_WITH_META_STORAGE);
                 anyhow_error_and_log(format!(
                     "failed to insert to meta store in inner_crs_gen with error: {e}"
                 ))
@@ -186,14 +180,14 @@ impl<
         }
 
         let session_id = req_id.derive_session_id().inspect_err(|_| {
-            let _ = metrics::METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
+            metrics::METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
         })?;
         let session = self
             .session_preparer
             .prepare_ddec_data_from_sessionid_z128(session_id)
             .await
             .inspect_err(|_| {
-                let _ = metrics::METRICS.increment_error_counter(op_tag, ERR_CRS_GEN_FAILED);
+                metrics::METRICS.increment_error_counter(op_tag, ERR_CRS_GEN_FAILED);
             })?
             .to_base_session();
 
@@ -219,7 +213,7 @@ impl<
         self.tracker
             .spawn(async move {
                 //Start the metric timer, it will end on drop
-                let _timer = timer.map(|b| b.start());
+                let _timer = timer.start();
                 tokio::select! {
                     () = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, permit, insecure) => {
                         // Remove cancellation token since generation is now done.
@@ -231,7 +225,7 @@ impl<
                         // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let guarded_meta_store= meta_store_cancelled.write().await;
                         crypto_storage_cancelled.purge_crs_material(&req_id, guarded_meta_store).await;
-                        let _ = metrics::METRICS.increment_error_counter(op_tag, ERR_CANCELLED);
+                        metrics::METRICS.increment_error_counter(op_tag, ERR_CANCELLED);
                         tracing::info!("Trying to clean up any already written material.")
                     },
                 }
@@ -306,7 +300,7 @@ impl<
                         Err(e) => {
                             let mut guarded_meta_store = meta_store.write().await;
                             let _ = guarded_meta_store.update(req_id, Err(e.to_string()));
-                            let _ = metrics::METRICS
+                            metrics::METRICS
                                 .increment_error_counter(OP_INSECURE_CRS_GEN, ERR_CRS_GEN_FAILED);
                             return;
                         }
@@ -336,7 +330,7 @@ impl<
                 let mut guarded_meta_store = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_store.update(req_id, Err(e.to_string()));
-                let _ = metrics::METRICS.increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED);
+                metrics::METRICS.increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED);
                 return;
             }
         };
