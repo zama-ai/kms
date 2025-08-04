@@ -1555,12 +1555,13 @@ dependencies = [
 
 [[package]]
 name = "backward-compatibility"
-version = "0.11.0-rc17"
+version = "0.11.0-22"
 dependencies = [
  "aes-prng",
  "alloy-primitives",
  "alloy-sol-types",
  "bincode 1.3.3",
+ "cfg-if",
  "kms",
  "kms-grpc",
  "rand 0.8.5",
@@ -1623,7 +1624,7 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 [[package]]
 name = "bc2wrap"
 version = "2.0.1"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=v0.11.0-rc17#3844e4e3f8f0606ab69a00506c81e10013506177"
+source = "git+https://github.com/zama-ai/kms.git?rev=v0.11.0-22#c19b826769cff3fa585d1ce7186ed6c58a2b2325"
 dependencies = [
  "bincode 2.0.1",
  "serde",
@@ -1682,6 +1683,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bip39"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43d193de1f7487df1914d3a568b772458861d33f9c54249612cc2893d6915054"
+dependencies = [
+ "bitcoin_hashes 0.13.0",
+ "serde",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1697,10 +1709,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
+name = "bitcoin-internals"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9425c3bf7089c983facbae04de54513cce73b41c7f9ff8c845b54e7bc64ebbfb"
+
+[[package]]
 name = "bitcoin-io"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b47c4ab7a93edb0c7198c5535ed9b52b63095f4e9b45279c6736cec4b856baf"
+
+[[package]]
+name = "bitcoin_hashes"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1930a4dabfebb8d7d9992db18ebe3ae2876f0a305fab206fd168df931ede293b"
+dependencies = [
+ "bitcoin-internals",
+ "hex-conservative 0.1.2",
+]
 
 [[package]]
 name = "bitcoin_hashes"
@@ -1709,7 +1737,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb18c03d0db0247e147a21a6faafd5a7eb851c743db062de72018b6b7e8e4d16"
 dependencies = [
  "bitcoin-io",
- "hex-conservative",
+ "hex-conservative 0.2.1",
 ]
 
 [[package]]
@@ -1868,9 +1896,9 @@ dependencies = [
 
 [[package]]
 name = "cfg-if"
-version = "1.0.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
+checksum = "9555578bc9e57714c812a1f84e4fc5b4d21fcb063490c624de019f7464c91268"
 
 [[package]]
 name = "chrono"
@@ -1910,9 +1938,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.38"
+version = "4.5.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed93b9805f8ba930df42c2590f05453d5ec36cbb85d018868a5b24d31f6ac000"
+checksum = "be92d32e80243a54711e5d7ce823c35c41c9d929dc4ab58e1276f625841aadf9"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -1920,9 +1948,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.38"
+version = "4.5.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "379026ff283facf611b0ea629334361c4211d1b12ee01024eec1591133b04120"
+checksum = "707eab41e9622f9139419d573eca0900137718000c517d47da73045f54331c3d"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1932,9 +1960,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.32"
+version = "4.5.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09176aae279615badda0765c0c0b3f6ed53f4709118af73cf4655d85d1530cd7"
+checksum = "ef4f52386a59ca4c860f7393bcf8abd8dfd91ecccc0f774635ff68e92eeef491"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -1971,39 +1999,6 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
-]
-
-[[package]]
-name = "conf-trace"
-version = "0.11.0-rc17"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=v0.11.0-rc17#3844e4e3f8f0606ab69a00506c81e10013506177"
-dependencies = [
- "anyhow",
- "axum",
- "config",
- "http 1.3.1",
- "lazy_static",
- "opentelemetry",
- "opentelemetry-http",
- "opentelemetry-otlp",
- "opentelemetry-prometheus",
- "opentelemetry-semantic-conventions",
- "opentelemetry-stdout",
- "opentelemetry_sdk",
- "prometheus",
- "serde",
- "strum",
- "strum_macros",
- "thiserror 2.0.12",
- "tokio",
- "tonic 0.13.1",
- "tracing",
- "tracing-appender",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "tracing-test",
- "typed-builder",
- "uuid",
 ]
 
 [[package]]
@@ -2597,6 +2592,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "enum_dispatch"
+version = "0.3.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa18ce2bc66555b3218614519ac839ddb759a7d6720732f979ef8d13be147ecd"
+dependencies = [
+ "once_cell",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.103",
+]
+
+[[package]]
 name = "equator"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3058,6 +3065,12 @@ dependencies = [
 
 [[package]]
 name = "hex-conservative"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "212ab92002354b4819390025006c897e8140934349e8635c9b077f47b4dcbd20"
+
+[[package]]
+name = "hex-conservative"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5313b072ce3c597065a808dbf612c4c8e8590bdbf8b579508bf7a762c5eae6cd"
@@ -3232,11 +3245,10 @@ dependencies = [
 
 [[package]]
 name = "hyper-rustls"
-version = "0.27.5"
+version = "0.27.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d191583f3da1305256f22463b9bb0471acad48a4e534a5218b9963e9c1f59b2"
+checksum = "e3c93eb611681b207e1fe55d5a71ecf91572ec8a6705cdb6857f7d8d5242cf58"
 dependencies = [
- "futures-util",
  "http 1.3.1",
  "hyper 1.6.0",
  "hyper-util",
@@ -3483,6 +3495,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-uring"
+version = "0.7.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d93587f37623a1a17d94ef2bc9ada592f5465fe7732084ab7beefabe5c77c0c4"
+dependencies = [
+ "bitflags 2.9.1",
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3623,8 +3646,8 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.11.0-rc17"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=v0.11.0-rc17#3844e4e3f8f0606ab69a00506c81e10013506177"
+version = "0.11.0-22"
+source = "git+https://github.com/zama-ai/kms.git?rev=v0.11.0-22#c19b826769cff3fa585d1ce7186ed6c58a2b2325"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3646,12 +3669,13 @@ dependencies = [
  "aws-smithy-types",
  "bc2wrap",
  "bincode 2.0.1",
+ "bip39",
  "bytes",
  "cbc",
  "cfg-if",
  "clap",
- "conf-trace",
  "console_error_panic_hook",
+ "enum_dispatch",
  "futures-util",
  "hex",
  "http 0.2.12",
@@ -3662,6 +3686,7 @@ dependencies = [
  "lazy_static",
  "ml-kem",
  "nom 8.0.0",
+ "observability",
  "ordermap",
  "rand 0.8.5",
  "rasn",
@@ -3673,6 +3698,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "signature 2.2.0",
  "strum",
+ "strum_macros",
  "tfhe",
  "tfhe-versionable",
  "thiserror 2.0.12",
@@ -3687,15 +3713,17 @@ dependencies = [
  "tower 0.5.2",
  "tower-http",
  "tracing",
+ "trait-variant",
  "url",
+ "validator",
  "wasm-bindgen",
  "x509-parser 0.17.0",
 ]
 
 [[package]]
 name = "kms-grpc"
-version = "0.11.0-rc17"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=v0.11.0-rc17#3844e4e3f8f0606ab69a00506c81e10013506177"
+version = "0.11.0-22"
+source = "git+https://github.com/zama-ai/kms.git?rev=v0.11.0-22#c19b826769cff3fa585d1ce7186ed6c58a2b2325"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -4162,6 +4190,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62948e14d923ea95ea2c7c86c71013138b66525b86bdc08d2dcc262bdb497b87"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "observability"
+version = "0.11.0-22"
+source = "git+https://github.com/zama-ai/kms.git?rev=v0.11.0-22#c19b826769cff3fa585d1ce7186ed6c58a2b2325"
+dependencies = [
+ "anyhow",
+ "axum",
+ "config",
+ "http 1.3.1",
+ "lazy_static",
+ "opentelemetry",
+ "opentelemetry-http",
+ "opentelemetry-otlp",
+ "opentelemetry-prometheus",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry-stdout",
+ "opentelemetry_sdk",
+ "prometheus",
+ "serde",
+ "strum",
+ "strum_macros",
+ "thiserror 2.0.12",
+ "tokio",
+ "tonic 0.13.1",
+ "tracing",
+ "tracing-appender",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "tracing-test",
+ "typed-builder",
+ "uuid",
+ "validator",
 ]
 
 [[package]]
@@ -5664,7 +5726,7 @@ version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b50c5943d326858130af85e049f2661ba3c78b26589b8ab98e65e80ae44a1252"
 dependencies = [
- "bitcoin_hashes",
+ "bitcoin_hashes 0.14.0",
  "rand 0.8.5",
  "secp256k1-sys",
  "serde",
@@ -6227,9 +6289,9 @@ checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
 
 [[package]]
 name = "tfhe"
-version = "1.1.3"
+version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93b0a605b5e2a18e84d50e718b6dd880817c731912778b2596693675f881ee06"
+checksum = "67bb534e32676812f15855fe6eee497c7f3e8346057783895cd0eadf9d1a1f6b"
 dependencies = [
  "aligned-vec",
  "bincode 1.3.3",
@@ -6252,9 +6314,9 @@ dependencies = [
 
 [[package]]
 name = "tfhe-csprng"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b1a0b71a91c9e36e9e1e8e6a528a056086b01e193e173472ae59cfaac56fdad"
+checksum = "06450766ae375cd305281c5d691a41d8877e40d3cc7510a33244775d62f60ad4"
 dependencies = [
  "aes",
  "libc",
@@ -6289,9 +6351,9 @@ dependencies = [
 
 [[package]]
 name = "tfhe-versionable"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af3a2785eb45d8bbb1cf26eb19277a7398b2fc818ad5136b57f5ee280bf0c430"
+checksum = "d853f69b5e95332fa76424525cc403f34645838927212609776e26f8beab52c5"
 dependencies = [
  "aligned-vec",
  "num-complex",
@@ -6301,9 +6363,9 @@ dependencies = [
 
 [[package]]
 name = "tfhe-versionable-derive"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f221336486fd08a09dcfd035845f18ae4b742bbf6b6c21dc2121f6b3322705f7"
+checksum = "d916462cab867a9d95fe6097ed20ed491fc37cdac766e8c736b84b09859d4afd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6312,9 +6374,9 @@ dependencies = [
 
 [[package]]
 name = "tfhe-zk-pok"
-version = "0.5.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66fda633050c992c5db1723c116eec7bd27a32884c1db16ff1b914d46101e708"
+checksum = "7ed6d29772b0f7e6021b7d2c3fe789cad26e3e8e49ef6f8a18887f16a6a5bfa7"
 dependencies = [
  "ark-bls12-381",
  "ark-ec",
@@ -6389,8 +6451,8 @@ dependencies = [
 
 [[package]]
 name = "threshold-fhe"
-version = "0.11.0-rc17"
-source = "git+ssh://git@github.com/zama-ai/kms-core.git?rev=v0.11.0-rc17#3844e4e3f8f0606ab69a00506c81e10013506177"
+version = "0.11.0-22"
+source = "git+https://github.com/zama-ai/kms.git?rev=v0.11.0-22#c19b826769cff3fa585d1ce7186ed6c58a2b2325"
 dependencies = [
  "aes",
  "aes-prng",
@@ -6402,7 +6464,6 @@ dependencies = [
  "bincode 2.0.1",
  "cfg-if",
  "clap",
- "conf-trace",
  "const_format",
  "dashmap",
  "derive_more",
@@ -6410,13 +6471,14 @@ dependencies = [
  "g2p",
  "getrandom 0.2.15",
  "hex",
- "hyper-rustls 0.27.5",
+ "hyper-rustls 0.27.7",
  "itertools 0.14.0",
  "lazy_static",
  "mockall",
  "ndarray",
  "num-integer",
  "num-traits",
+ "observability",
  "oid-registry 0.8.1",
  "opentelemetry",
  "paste",
@@ -6500,18 +6562,35 @@ dependencies = [
 ]
 
 [[package]]
-name = "tokio"
-version = "1.45.0"
+name = "tinyvec"
+version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2513ca694ef9ede0fb23fe71a4ee4107cb102b9dc1930f6d0fd77aae068ae165"
+checksum = "09b3661f17e86524eccd4371ab0429194e0d7c008abb45f7a7495b1719463c71"
+dependencies = [
+ "tinyvec_macros",
+]
+
+[[package]]
+name = "tinyvec_macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "tokio"
+version = "1.46.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc3a2344dafbe23a245241fe8b09735b521110d30fcefbbd5feb1797ca35d17"
 dependencies = [
  "backtrace",
  "bytes",
+ "io-uring",
  "libc",
  "mio",
  "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
+ "slab",
  "socket2",
  "tokio-macros",
  "windows-sys 0.52.0",
@@ -6785,9 +6864,9 @@ dependencies = [
 
 [[package]]
 name = "tower-http"
-version = "0.6.4"
+version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fdb0c213ca27a9f57ab69ddb290fd80d970922355b83ae380b395d3986b8a2e"
+checksum = "adc82fd73de2a9722ac5da747f12383d2bfdb93591ee6c58486e0097890f05f2"
 dependencies = [
  "bitflags 2.9.1",
  "bytes",
@@ -6941,6 +7020,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "trait-variant"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70977707304198400eb4835a78f6a9f928bf41bba420deb8fdb175cd965d77a7"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.103",
+]
+
+[[package]]
 name = "trim-in-place"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7024,6 +7114,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a5f39404a5da50712a4c1eecf25e90dd62b613502b7e925fd4e4d19b5c96512"
 
 [[package]]
+name = "unicode-normalization"
+version = "0.1.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5033c97c4262335cded6d6fc3e5c18ab755e1a3dc96376350f3d8e9f009ad956"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
 name = "unicode-segmentation"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7095,6 +7194,36 @@ checksum = "458f7a779bf54acc9f347480ac654f68407d3aab21269a6e3c9f922acd9e2da9"
 dependencies = [
  "getrandom 0.3.3",
  "rand 0.9.1",
+]
+
+[[package]]
+name = "validator"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43fb22e1a008ece370ce08a3e9e4447a910e92621bb49b85d6e48a45397e7cfa"
+dependencies = [
+ "idna",
+ "once_cell",
+ "regex",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "url",
+ "validator_derive",
+]
+
+[[package]]
+name = "validator_derive"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7df16e474ef958526d1205f6dda359fdfab79d9aa6d54bafcb92dcd07673dca"
+dependencies = [
+ "darling",
+ "once_cell",
+ "proc-macro-error2",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.103",
 ]
 
 [[package]]

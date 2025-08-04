@@ -8,13 +8,13 @@ use std::{
 
 use bincode::Options;
 use serde::Serialize;
-use tfhe_versionable_0_5::Versionize as Versionize_0_5;
+use tfhe_versionable_0_6::Versionize as Versionize_0_6;
 
 use crate::{
     data_dir, dir_for_version,
     parameters::{
         ClassicPBSParametersTest, DKGParamsRegularTest, DKGParamsSnSTest,
-        SwitchAndSquashParametersTest,
+        SwitchAndSquashCompressionParametersTest, SwitchAndSquashParametersTest,
     },
     TestMetadataDD, TestMetadataKMS, TestMetadataKmsGrpc,
 };
@@ -54,6 +54,16 @@ pub const TEST_DKG_PARAMS_SNS: DKGParamsSnSTest = DKGParamsSnSTest {
         message_modulus: 4,
         carry_modulus: 4,
     },
+    sns_compression_parameters: SwitchAndSquashCompressionParametersTest {
+        packing_ks_level: 1,
+        packing_ks_base_log: 16,
+        packing_ks_polynomial_size: 256,
+        packing_ks_glwe_dimension: 1,
+        lwe_per_glwe: 10,
+        packing_ks_key_noise_distribution: 0,
+        message_modulus: 4,
+        carry_modulus: 4,
+    },
 };
 
 pub fn save_bcode<Data: Serialize, P: AsRef<Path>>(msg: &Data, path: P) {
@@ -78,7 +88,7 @@ macro_rules! define_store_versioned_test_fn {
         }
     };
 }
-define_store_versioned_test_fn!(store_versioned_test_05, Versionize_0_5);
+define_store_versioned_test_fn!(store_versioned_test_05, Versionize_0_6);
 
 /// Stores the auxiliary data in `dir`, encoded in bincode, using the right tfhe-versionable version
 macro_rules! define_store_versioned_auxiliary_fn {
@@ -103,7 +113,7 @@ macro_rules! define_store_versioned_auxiliary_fn {
         }
     };
 }
-define_store_versioned_auxiliary_fn!(store_versioned_auxiliary_05, Versionize_0_5);
+define_store_versioned_auxiliary_fn!(store_versioned_auxiliary_05, Versionize_0_6);
 
 pub fn store_metadata<Meta: Serialize, P: AsRef<Path>>(value: &Meta, path: P) {
     let serialized = ron::ser::to_string_pretty(value, ron::ser::PrettyConfig::default()).unwrap();

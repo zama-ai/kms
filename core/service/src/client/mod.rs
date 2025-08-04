@@ -29,7 +29,7 @@ use tfhe::FheTypes;
 use threshold_fhe::algebra::base_ring::{Z128, Z64};
 use threshold_fhe::algebra::error_correction::MemoizedExceptionals;
 use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4;
-use threshold_fhe::algebra::structure_traits::{BaseRing, ErrorCorrect};
+use threshold_fhe::algebra::structure_traits::{BaseRing, ErrorCorrect, Ring};
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::endpoints::reconstruct::{
     combine_decryptions, reconstruct_packed_message,
@@ -1434,6 +1434,7 @@ impl Client {
 
         let res = match self.decryption_mode {
             DecryptionMode::BitDecSmall => {
+                // Note: We will create way too many shares here, if we use BitDec kind of decryption we can actually fit 4*64 bits of actual data in a single share.
                 let all_sharings = self.recover_sharings::<Z64>(&validated_resps, client_keys)?;
 
                 let mut out = vec![];
@@ -1534,8 +1535,8 @@ impl Client {
                                     .params
                                     .get_params_basics_handle()
                                     .to_classic_pbs_parameters(),
-                            )?
-                            .div_ceil(packing_factor as usize),
+                                packing_factor,
+                            )?,
                         )?,
                     ));
                 }
@@ -1703,6 +1704,7 @@ impl Client {
             Self::insecure_threshold_user_decryption_resp_to_blocks::<Z128>(agg_resp, client_keys)?;
 
         let mut out = vec![];
+
         for (fhe_type, packing_factor, decrypted_blocks) in all_decrypted_blocks {
             let pbs_params = self
                 .params
@@ -1718,8 +1720,8 @@ impl Client {
                         .params
                         .get_params_basics_handle()
                         .to_classic_pbs_parameters(),
-                )?
-                .div_ceil(packing_factor as usize),
+                    packing_factor,
+                )?,
             )?;
 
             out.push(decrypted_blocks_to_plaintext(
@@ -1786,23 +1788,35 @@ impl Client {
             .signcrypted_ciphertexts
             .len();
 
+        let intra_share_packing = match self.decryption_mode {
+            DecryptionMode::BitDecSmall => 1, //TODO: For now we don't use intra share packing for BitDecSmall
+            DecryptionMode::NoiseFloodSmall => ResiduePolyF4::<Z>::EXTENSION_DEGREE,
+            _ => {
+                return Err(anyhow_error_and_log(format!(
+                    "Unsupported decryption mode: {}",
+                    self.decryption_mode
+                )));
+            }
+        };
         let mut out = vec![];
         for batch_i in 0..batch_count {
+            // It is ok to use the first packing factor because this is checked by [self.validate_user_decrypt_responses_against_request]
+            let packing_factor = agg_resp[0].signcrypted_ciphertexts[batch_i].packing_factor;
             // taking agg_resp[0] is safe since batch_count before exists
             let fhe_type = agg_resp[0].signcrypted_ciphertexts[batch_i].fhe_type()?;
-            let num_blocks = fhe_types_to_num_blocks(
+            let num_shares = fhe_types_to_num_blocks(
                 fhe_type,
                 &self
                     .params
                     .get_params_basics_handle()
                     .to_classic_pbs_parameters(),
-            )?;
+                packing_factor,
+            )?
+            .div_ceil(intra_share_packing);
             let mut sharings = Vec::new();
-            for _i in 0..num_blocks {
+            for _i in 0..num_shares {
                 sharings.push(ShamirSharings::new());
             }
-            // It is ok to use the first packing factor because this is checked by [self.validate_user_decrypt_responses_against_request]
-            let packing_factor = agg_resp[0].signcrypted_ciphertexts[batch_i].packing_factor;
             // the number of recovery errors in this block (e.g. due to failed signcryption)
             let mut recovery_errors = 0;
             for cur_resp in agg_resp {
@@ -1829,7 +1843,7 @@ impl Client {
                         fill_indexed_shares(
                             &mut sharings,
                             cur_blocks,
-                            num_blocks,
+                            num_shares,
                             Role::indexed_from_one(cur_resp.party_id as usize),
                         )?;
                     }
@@ -5022,7 +5036,7 @@ pub(crate) mod tests {
                 compression: true,
                 precompute_sns: false,
             },
-            4,
+            1,
             secure,
             amount_parties,
             None,
@@ -5805,34 +5819,43 @@ pub(crate) mod tests {
             .get_params_basics_handle()
             .to_classic_pbs_parameters();
         // 2 bits per block, using Ebool as internal representation
-        assert_eq!(fhe_types_to_num_blocks(FheTypes::Bool, params).unwrap(), 1);
+        assert_eq!(
+            fhe_types_to_num_blocks(FheTypes::Bool, params, 1).unwrap(),
+            1
+        );
         // 2 bits per block, using Euint4 as internal representation
-        assert_eq!(fhe_types_to_num_blocks(FheTypes::Uint4, params).unwrap(), 2);
-        // 2 bits per block
-        assert_eq!(fhe_types_to_num_blocks(FheTypes::Uint8, params).unwrap(), 4);
+        assert_eq!(
+            fhe_types_to_num_blocks(FheTypes::Uint4, params, 1).unwrap(),
+            2
+        );
         // 2 bits per block
         assert_eq!(
-            fhe_types_to_num_blocks(FheTypes::Uint16, params).unwrap(),
+            fhe_types_to_num_blocks(FheTypes::Uint8, params, 1).unwrap(),
+            4
+        );
+        // 2 bits per block
+        assert_eq!(
+            fhe_types_to_num_blocks(FheTypes::Uint16, params, 1).unwrap(),
             8
         );
         // 2 bits per block
         assert_eq!(
-            fhe_types_to_num_blocks(FheTypes::Uint32, params).unwrap(),
+            fhe_types_to_num_blocks(FheTypes::Uint32, params, 1).unwrap(),
             16
         );
         // 2 bits per block
         assert_eq!(
-            fhe_types_to_num_blocks(FheTypes::Uint64, params).unwrap(),
+            fhe_types_to_num_blocks(FheTypes::Uint64, params, 1).unwrap(),
             32
         );
         // 2 bits per block
         assert_eq!(
-            fhe_types_to_num_blocks(FheTypes::Uint128, params).unwrap(),
+            fhe_types_to_num_blocks(FheTypes::Uint128, params, 1).unwrap(),
             64
         );
         // 2 bits per block
         assert_eq!(
-            fhe_types_to_num_blocks(FheTypes::Uint160, params).unwrap(),
+            fhe_types_to_num_blocks(FheTypes::Uint160, params, 1).unwrap(),
             80
         );
     }
