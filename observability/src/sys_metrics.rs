@@ -31,14 +31,10 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
 
             tracing::debug!("CPU Load Average within 1 min {cpus_load_avg}");
 
-            if METRICS.record_cpu_load(cpus_load_avg).is_err() {
-                tracing::warn!("Failed to record CPU load average for 1 minute");
-            };
+            METRICS.record_cpu_load(cpus_load_avg);
 
             // Update memory metrics
-            if METRICS.record_memory_usage(system.used_memory()).is_err() {
-                tracing::warn!("Failed to record used memory");
-            };
+            METRICS.record_memory_usage(system.used_memory());
 
             // Update network metrics
             networks.refresh(true);
@@ -48,12 +44,8 @@ pub fn start_sys_metrics_collection(refresh_interval: Duration) -> anyhow::Resul
             let tx_delta = total_tx - last_tx_bytes;
             let rx_delta = total_rx - last_rx_bytes;
 
-            if METRICS.increment_network_rx_counter(rx_delta).is_err() {
-                tracing::warn!("Failed to increment network RX counter");
-            };
-            if METRICS.increment_network_tx_counter(tx_delta).is_err() {
-                tracing::warn!("Failed to increment network TX counter");
-            }
+            METRICS.increment_network_rx_counter(rx_delta);
+            METRICS.increment_network_tx_counter(tx_delta);
 
             last_rx_bytes = total_rx;
             last_tx_bytes = total_tx;

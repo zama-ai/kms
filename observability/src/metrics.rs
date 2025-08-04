@@ -231,18 +231,16 @@ impl CoreMetrics {
         Ok(())
     }
 
-    pub fn increment_network_rx_counter(&self, bytes: u64) -> Result<(), MetricError> {
+    pub fn increment_network_rx_counter(&self, bytes: u64) {
         self.network_rx_counter
             .metric
             .add(bytes, &self.network_rx_counter.with_tags(&[]));
-        Ok(())
     }
 
-    pub fn increment_network_tx_counter(&self, bytes: u64) -> Result<(), MetricError> {
+    pub fn increment_network_tx_counter(&self, bytes: u64) {
         self.network_tx_counter
             .metric
             .add(bytes, &self.network_tx_counter.with_tags(&[]));
-        Ok(())
     }
 
     // Histogram methods
@@ -311,19 +309,17 @@ impl CoreMetrics {
     }
 
     /// Record the current CPU load into the gauge
-    pub fn record_cpu_load(&self, load: f64) -> Result<(), MetricError> {
+    pub fn record_cpu_load(&self, load: f64) {
         self.cpu_load_gauge
             .metric
             .record(load, &self.cpu_load_gauge.with_tags(&[]));
-        Ok(())
     }
 
     /// Record the current memory usage into the gauge
-    pub fn record_memory_usage(&self, usage: u64) -> Result<(), MetricError> {
+    pub fn record_memory_usage(&self, usage: u64) {
         self.memory_usage_gauge
             .metric
             .record(usage, &self.memory_usage_gauge.with_tags(&[]));
-        Ok(())
     }
 }
 
