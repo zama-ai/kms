@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
 use itertools::Itertools;
@@ -16,7 +16,10 @@ use threshold_fhe::{
     execution::{
         keyset_config as ddec_keyset_config,
         online::preprocessing::{
-            orchestration::dkg_orchestrator::PreprocessingOrchestrator, PreprocessorFactory,
+            orchestration::{
+                dkg_orchestrator::PreprocessingOrchestrator, producer_traits::ProducerFactory,
+            },
+            PreprocessorFactory,
         },
         runtime::{
             party::Identity,
@@ -48,7 +51,8 @@ use crate::{
 // === Current Module Imports ===
 use super::{session::SessionPreparer, BucketMetaStore};
 
-pub struct RealPreprocessor {
+pub struct RealPreprocessor<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>>
+{
     // TODO eventually add mode to allow for nlarge as well.
     pub prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
@@ -59,9 +63,10 @@ pub struct RealPreprocessor {
     pub tracker: Arc<TaskTracker>,
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
+    pub(crate) _producer_factory: PhantomData<P>,
 }
 
-impl RealPreprocessor {
+impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
     async fn launch_dkg_preproc(
         &self,
         dkg_params: DKGParams,
@@ -186,7 +191,7 @@ impl RealPreprocessor {
                 tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);
                 // Execute the orchestration with the successfully created orchestrator
                 match orchestrator
-                    .orchestrate_dkg_processing_secure_small_session(sessions)
+                    .orchestrate_dkg_processing_secure_session::<P>(sessions)
                     .await
                 {
                     Ok((_, preproc_handle)) => Ok(Arc::new(Mutex::new(preproc_handle))),
@@ -217,7 +222,9 @@ impl RealPreprocessor {
 }
 
 #[tonic::async_trait]
-impl KeyGenPreprocessor for RealPreprocessor {
+impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Send + Sync>
+    KeyGenPreprocessor for RealPreprocessor<P>
+{
     async fn key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
@@ -282,5 +289,145 @@ impl KeyGenPreprocessor for RealPreprocessor {
         let _preproc_data = handle_res_mapping(status, &request_id, "Preprocessing").await?;
 
         Ok(Response::new(KeyGenPreprocResult {}))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aes_prng::AesRng;
+    use kms_grpc::kms::v1::FheParameter;
+    use rand::SeedableRng;
+    use threshold_fhe::{
+        execution::online::preprocessing::create_memory_factory,
+        malicious_execution::online::preprocessing::orchestration::producer::{
+            malicious_bit_producer::DummySmallSessionBitProducer,
+            malicious_random_producer::DummySmallSessionRandomProducer,
+            malicious_triple_producer::DummySmallSessionTripleProducer,
+        },
+    };
+
+    use super::*;
+
+    struct DummyProducerFactory;
+
+    impl ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> for DummyProducerFactory {
+        type TripleProducer = DummySmallSessionTripleProducer<ResiduePolyF4Z128>;
+        type RandomProducer = DummySmallSessionRandomProducer<ResiduePolyF4Z128>;
+        type BitProducer = DummySmallSessionBitProducer<ResiduePolyF4Z128>;
+    }
+
+    impl RealPreprocessor<DummyProducerFactory> {
+        fn init_test(session_preparer: SessionPreparer) -> Self {
+            let tracker = Arc::new(TaskTracker::new());
+            let rate_limiter = RateLimiter::default();
+            let ongoing = Arc::new(Mutex::new(HashMap::new()));
+            let prss_setup = session_preparer.prss_setup_z128.clone();
+            Self {
+                prss_setup,
+                preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+                preproc_factory: Arc::new(Mutex::new(create_memory_factory())),
+                num_sessions_preproc: 2,
+                session_preparer,
+                tracker,
+                ongoing,
+                rate_limiter,
+                _producer_factory: PhantomData,
+            }
+        }
+
+        fn set_bucket_size(&mut self, bucket_size: usize) {
+            let config = crate::util::rate_limiter::RateLimiterConfig {
+                bucket_size,
+                ..Default::default()
+            };
+            self.rate_limiter = RateLimiter::new(config);
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_argument() {
+        // `InvalidArgument` - If the request ID is not valid or does not match the expected format.
+        let session_preparer = SessionPreparer::new_test_session(true);
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+
+        let request = KeyGenPreprocRequest {
+            request_id: Some(kms_grpc::kms::v1::RequestId {
+                request_id: "invalid_id".to_string(),
+            }),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+        };
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
+        );
+    }
+
+    #[tokio::test]
+    async fn resource_exhausted() {
+        // `ResourceExhausted` - If the KMS is currently busy with too many requests.
+        let session_preparer = SessionPreparer::new_test_session(true);
+        let mut prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+        prep.set_bucket_size(0);
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+        };
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::ResourceExhausted
+        );
+    }
+
+    #[tokio::test]
+    async fn aborted() {
+        // `Aborted` - If the request ID is not given, the values in the request are not valid, or an internal problem occured.
+        let session_preparer = SessionPreparer::new_test_session(true);
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+
+        let request = KeyGenPreprocRequest {
+            request_id: None, // Aborted because request_id is None
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+        };
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Aborted
+        );
+    }
+
+    #[tokio::test]
+    async fn sunshine() {
+        let session_preparer = SessionPreparer::new_test_session(true);
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+        };
+        prep.key_gen_preproc(tonic::Request::new(request))
+            .await
+            .unwrap();
+
+        // no need to wait because [get_result] is semi-blocking
+        prep.get_result(tonic::Request::new(req_id.into()))
+            .await
+            .unwrap();
     }
 }

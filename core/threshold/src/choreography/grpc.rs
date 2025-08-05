@@ -42,6 +42,7 @@ use crate::execution::endpoints::keygen::{
 };
 use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::large_execution::offline::SecureLargePreprocessing;
+use crate::execution::online::gen_bits::RealBitGenEven;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
 use crate::execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
@@ -725,6 +726,7 @@ where
                                 _,
                                 _,
                                 SmallOfflineStrategy,
+                                RealBitGenEven,
                             >>(sessions)
                             .instrument(tracing::info_span!("orchestrate"))
                             .await
@@ -768,6 +770,7 @@ where
                                 _,
                                 _,
                                 LargeOfflineStrategyZ64,
+                                RealBitGenEven,
                             >>(sessions)
                             .instrument(tracing::info_span!("orchestrate"))
                             .await
@@ -821,6 +824,7 @@ where
                                 _,
                                 _,
                                 SmallOfflineStrategy,
+                                RealBitGenEven,
                             >>(sessions)
                             .await
                             .unwrap()
@@ -862,6 +866,7 @@ where
                                 _,
                                 _,
                                 LargeOfflineStrategyZ128,
+                                RealBitGenEven,
                             >>(sessions)
                             .await
                             .unwrap()

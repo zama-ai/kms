@@ -61,31 +61,4 @@ pub trait ProducerFactory<Z: Clone, S> {
     type TripleProducer: TripleProducerTrait<Z, S>;
     type RandomProducer: RandomProducerTrait<Z, S>;
     type BitProducer: BitProducerTrait<Z, S>;
-
-    fn create_triple_producer(
-        &self,
-        batch_size: usize,
-        total_size: usize,
-        sessions: Vec<S>,
-        channels: Vec<tokio::sync::mpsc::Sender<Vec<Triple<Z>>>>,
-        progress_tracker: Option<ProgressTracker>,
-    ) -> anyhow::Result<Self::TripleProducer>;
-
-    fn create_random_producer(
-        &self,
-        batch_size: usize,
-        total_size: usize,
-        sessions: Vec<S>,
-        channels: Vec<tokio::sync::mpsc::Sender<Vec<Share<Z>>>>,
-        progress_tracker: Option<ProgressTracker>,
-    ) -> anyhow::Result<Self::RandomProducer>;
-
-    fn create_bit_producer(
-        &self,
-        batch_size: usize,
-        total_size: usize,
-        sessions: Vec<S>,
-        channels: Vec<tokio::sync::mpsc::Sender<Vec<Share<Z>>>>,
-        progress_tracker: Option<ProgressTracker>,
-    ) -> anyhow::Result<Self::BitProducer>;
 }

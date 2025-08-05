@@ -17,7 +17,10 @@ use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
     execution::{
         endpoints::keygen::{FhePubKeySet, PrivateKeySet, SecureOnlineDistributedKeyGen128},
-        online::preprocessing::{create_memory_factory, create_redis_factory, DKGPreprocessing},
+        online::preprocessing::{
+            create_memory_factory, create_redis_factory,
+            orchestration::dkg_orchestrator::SecureSmallProducerFactory, DKGPreprocessing,
+        },
         runtime::party::{Role, RoleAssignment},
         zk::ceremony::SecureCeremony,
     },
@@ -166,7 +169,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<PubS, PrivS, SecureOnlineDistributedKeyGen128>,
-    RealPreprocessor,
+    RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
     RealContextManager<PubS, PrivS>,
     RealBackupOperator<PubS, PrivS>,
@@ -179,7 +182,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<PubS, PrivS, SecureOnlineDistributedKeyGen128>,
     RealInsecureKeyGenerator<PubS, PrivS, SecureOnlineDistributedKeyGen128>,
-    RealPreprocessor,
+    RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
     RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here
     RealContextManager<PubS, PrivS>,
@@ -522,6 +525,7 @@ where
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
+        _producer_factory: PhantomData,
     };
 
     let crs_generator = RealCrsGenerator {

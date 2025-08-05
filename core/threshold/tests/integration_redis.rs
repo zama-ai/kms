@@ -14,6 +14,7 @@ use threshold_fhe::execution::sharing::share::Share;
 use threshold_fhe::{
     execution::{
         endpoints::keygen::{OnlineDistributedKeyGen64, SecureOnlineDistributedKeyGen64},
+        online::preprocessing::orchestration::dkg_orchestrator::SecureLargeProducerFactory,
         runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         tfhe_internals::parameters::DKGParams,
     },
@@ -259,8 +260,9 @@ fn test_dkg_orchestrator_large(
             .unwrap();
 
             let (mut sessions, mut preproc) = rt_handle.block_on(async {
+
                 orchestrator
-                    .orchestrate_dkg_processing_secure_large_session(sessions)
+                    .orchestrate_dkg_processing_large_session::<SecureLargeProducerFactory<ResiduePolyF4Z64>>(sessions)
                     .await
                     .unwrap()
             });

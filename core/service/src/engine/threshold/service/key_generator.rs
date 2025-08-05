@@ -1272,6 +1272,7 @@ impl<
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
+    use kms_grpc::kms::v1::FheParameter;
     use rand::{rngs::OsRng, SeedableRng};
     use threshold_fhe::{
         algebra::{
@@ -1410,7 +1411,7 @@ mod tests {
 
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(bad_key_id),
-            params: 1, // TEST params
+            params: FheParameter::Test as i32,
             preproc_id: Some(prep_id.into()),
             domain: None,
             keyset_config: None,
@@ -1434,7 +1435,7 @@ mod tests {
 
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
-            params: 1, // TEST params
+            params: FheParameter::Test as i32,
             preproc_id: Some(prep_id.into()),
             domain: None,
             keyset_config: None,
@@ -1454,7 +1455,7 @@ mod tests {
 
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
-            params: 1, // TEST params
+            params: FheParameter::Test as i32,
             preproc_id: Some(prep_id.into()),
             domain: None,
             keyset_config: None,
@@ -1462,5 +1463,10 @@ mod tests {
         });
 
         kg.key_gen(request).await.unwrap();
+
+        // no need to wait because [get_result] is semi-blocking
+        kg.get_result(tonic::Request::new(key_id.into()))
+            .await
+            .unwrap();
     }
 }

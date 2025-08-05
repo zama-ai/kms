@@ -461,6 +461,7 @@ impl<
 mod tests {
     use std::time::Duration;
 
+    use kms_grpc::kms::v1::FheParameter;
     use threshold_fhe::{
         algebra::structure_traits::Ring,
         execution::{
@@ -559,7 +560,7 @@ mod tests {
 
         // `InvalidArgument` - If the request ID is not present, valid or does not match the expected format.
         let req = CrsGenRequest {
-            params: 0, // 0 is the default params
+            params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: None,
             domain: None,
@@ -632,7 +633,7 @@ mod tests {
 
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
         let req = CrsGenRequest {
-            params: 0,
+            params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: None,
@@ -656,7 +657,7 @@ mod tests {
             .await;
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
         let req = CrsGenRequest {
-            params: 0,
+            params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: None,
@@ -683,7 +684,7 @@ mod tests {
 
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
         let req = CrsGenRequest {
-            params: 0,
+            params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: None,
@@ -716,7 +717,7 @@ mod tests {
 
         // start the ceremony but immediately fetch the result, it should be not found too
         let req = CrsGenRequest {
-            params: 0,
+            params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: None,
@@ -747,7 +748,7 @@ mod tests {
         // Test that we can successfully generate a CRS
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
         let req = CrsGenRequest {
-            params: 0,
+            params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: None,
