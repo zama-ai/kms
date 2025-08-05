@@ -261,6 +261,20 @@ impl Default for InternalPublicParameter {
     }
 }
 
+#[cfg(any(test, feature = "malicious_strategies"))]
+impl InternalPublicParameter {
+    pub(crate) fn new_insecure(round: u64, max_num_bits: usize, witness_dim: usize) -> Self {
+        Self {
+            round,
+            max_num_bits,
+            g1g2list: WrappedG1G2s::new(
+                vec![curve::G1::GENERATOR; witness_dim * 2],
+                vec![curve::G2::GENERATOR; witness_dim],
+            ),
+        }
+    }
+}
+
 pub struct FinalizedInternalPublicParameter {
     pub inner: InternalPublicParameter,
     pub sid: SessionId,
@@ -479,7 +493,7 @@ struct ZeroizeForPartialProof {
 /// Compute a new proof round.
 ///
 /// Note that this function is deterministic, i.e. the parameters `tau` and `r` (r_{pok, j}) must be generated freshly at random outside this function.
-fn make_partial_proof_deterministic(
+pub(crate) fn make_partial_proof_deterministic(
     current_pp: &InternalPublicParameter,
     tau: curve::Zp,
     round: u64,
@@ -958,34 +972,6 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
     }
 }
 
-#[cfg(any(feature = "testing", test))]
-#[derive(Clone, Default)]
-pub struct InsecureCeremony {}
-
-#[async_trait]
-#[cfg(any(feature = "testing", test))]
-impl Ceremony for InsecureCeremony {
-    async fn execute<Z: Ring, S: BaseSessionHandles>(
-        &self,
-        session: &mut S,
-        witness_dim: usize,
-        max_num_bits: Option<u32>,
-    ) -> anyhow::Result<FinalizedInternalPublicParameter> {
-        let max_num_bits = max_num_bits.unwrap_or(ZK_DEFAULT_MAX_NUM_BITS as u32) as usize;
-        Ok(FinalizedInternalPublicParameter {
-            inner: InternalPublicParameter {
-                round: session.num_parties() as u64,
-                max_num_bits,
-                g1g2list: WrappedG1G2s::new(
-                    vec![curve::G1::GENERATOR; witness_dim * 2],
-                    vec![curve::G2::GENERATOR; witness_dim],
-                ),
-            },
-            sid: session.session_id(),
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -998,6 +984,7 @@ mod tests {
             },
             tfhe_internals::parameters::BC_PARAMS_NO_SNS,
         },
+        malicious_execution::zk::ceremony::InsecureCeremony,
         networking::NetworkMode,
         session_id::SessionId,
         tests::helper::tests::{
@@ -1125,25 +1112,6 @@ mod tests {
     }
 
     #[derive(Clone, Default)]
-    struct DroppingCeremony {}
-
-    #[async_trait]
-    impl Ceremony for DroppingCeremony {
-        async fn execute<Z: Ring, S: BaseSessionHandles>(
-            &self,
-            session: &mut S,
-            _crs_size: usize,
-            _max_num_bits: Option<u32>,
-        ) -> anyhow::Result<FinalizedInternalPublicParameter> {
-            // do nothing
-            Ok(FinalizedInternalPublicParameter {
-                inner: InternalPublicParameter::new(session.num_parties(), Some(1)),
-                sid: session.session_id(),
-            })
-        }
-    }
-
-    #[derive(Clone, Default)]
     struct BadProofCeremony<BCast: Broadcast> {
         broadcast: BCast,
     }
@@ -1189,63 +1157,6 @@ mod tests {
                     if let BroadcastValue::PartialProof(proof) = msg {
                         pp = proof.new_pp.clone();
                     }
-                }
-            }
-
-            Ok(FinalizedInternalPublicParameter {
-                inner: pp,
-                sid: session.session_id(),
-            })
-        }
-    }
-
-    #[derive(Clone, Default)]
-    struct RushingCeremony<BCast: Broadcast> {
-        broadcast: BCast,
-    }
-
-    #[async_trait]
-    impl<BCast: Broadcast + Default> Ceremony for RushingCeremony<BCast> {
-        // this implements an adversary that rushes the protocol,
-        // i.e., it starts before it is his turn to do run
-        async fn execute<Z: Ring, S: BaseSessionHandles>(
-            &self,
-            session: &mut S,
-            witness_dim: usize,
-            _max_num_bits: Option<u32>,
-        ) -> anyhow::Result<FinalizedInternalPublicParameter> {
-            let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
-            all_roles_sorted.sort();
-            let my_role = session.my_role();
-
-            let pp = InternalPublicParameter {
-                round: 0,
-                max_num_bits: 1,
-                g1g2list: WrappedG1G2s::new(
-                    vec![curve::G1::GENERATOR; witness_dim * 2],
-                    vec![curve::G2::GENERATOR; witness_dim],
-                ),
-            };
-
-            let sid = session.session_id();
-            for (round, role) in all_roles_sorted.iter().enumerate() {
-                let round = round as u64;
-                let tau = curve::Zp::rand(&mut session.rng());
-                let r = curve::Zp::rand(&mut session.rng());
-                let proof: PartialProof =
-                    make_partial_proof_deterministic(&pp, tau, round + 1, r, sid);
-                let vi = BroadcastValue::PartialProof::<Z>(proof);
-                if role == &my_role {
-                    let _ = self
-                        .broadcast
-                        .broadcast_w_corrupt_set_update(session, vec![my_role], Some(vi))
-                        .await?;
-                } else {
-                    // the message sent by `my_role`, the adversary, should be ignored
-                    let _ = self
-                        .broadcast
-                        .broadcast_w_corrupt_set_update(session, vec![my_role, *role], Some(vi))
-                        .await?;
                 }
             }
 
@@ -1312,7 +1223,9 @@ mod tests {
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     fn test_dropping_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
-        let malicious_party = DroppingCeremony::default();
+        use crate::malicious_execution::zk::ceremony::DroppingCeremony;
+
+        let malicious_party = DroppingCeremony;
         test_ceremony_strategies_large::<_, ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
             params.clone(),
             witness_dim,
@@ -1346,6 +1259,8 @@ mod tests {
         #[case] witness_dim: usize,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
     ) {
+        use crate::malicious_execution::zk::ceremony::RushingCeremony;
+
         let malicious_party = RushingCeremony {
             broadcast: broadcast_strategy,
         };

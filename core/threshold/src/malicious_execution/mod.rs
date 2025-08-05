@@ -20,6 +20,12 @@ pub mod open {
 pub mod runtime {
     pub mod malicious_session;
 }
+pub mod endpoints {
+    pub mod decryption;
+}
+pub mod zk {
+    pub mod ceremony;
+}
 
 #[cfg(all(feature = "choreographer", not(feature = "experimental")))]
 pub mod malicious_moby;

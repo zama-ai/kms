@@ -135,7 +135,8 @@ pub fn validate_user_decrypt_req(
         }
         Err(e) => {
             return Err(anyhow_error_and_log(format!(
-                "Signature verification failed with error {e} for request: {req:?}"
+                "Signature verification failed with error {e} for request: {:?}",
+                req.request_id,
             )));
         }
     };
