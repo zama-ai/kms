@@ -1082,6 +1082,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: vec![],
                 domain: None,
+                extra_data: vec![],
             };
             assert!(req
                 .compute_link_checked()
@@ -1099,6 +1100,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: vec![],
                 domain: Some(domain.clone()),
+                extra_data: vec![],
             };
             assert!(req
                 .compute_link_checked()
@@ -1119,6 +1121,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: vec![],
                 domain: Some(bad_domain),
+                extra_data: vec![],
             };
 
             assert!(req
@@ -1137,6 +1140,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: vec![],
                 domain: Some(domain.clone()),
+                extra_data: vec![],
             };
             assert!(req.compute_link_checked().is_ok());
         }

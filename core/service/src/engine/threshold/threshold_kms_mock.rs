@@ -160,6 +160,7 @@ impl UserDecryptor for DummyUserDecryptor {
             signature: vec![1, 2],
             external_signature: vec![1, 2, 3],
             payload: Some(payload),
+            extra_data: vec![],
         }))
     }
 }
@@ -188,6 +189,7 @@ impl PublicDecryptor for DummyPublicDecryptor {
                 plaintexts: vec![TypedPlaintext::new(42, FheTypes::Uint8)],
                 external_signature: Some(vec![23_u8; 65]),
                 request_id: Some(request.into_inner()),
+                extra_data: vec![],
             }),
         }))
     }

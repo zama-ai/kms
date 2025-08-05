@@ -135,6 +135,8 @@ pub async fn user_decrypt_impl<
                 &key_id,
                 &request_id
             );
+            // NOTE: extra_data is not used in the current implementation
+            let extra_data = vec![];
             match async_user_decrypt::<PubS, PrivS>(
                 &keys,
                 &sig_key,
@@ -146,13 +148,14 @@ pub async fn user_decrypt_impl<
                 server_verf_key,
                 &domain,
                 metric_tags,
+                extra_data.clone(),
             )
             .await
             {
                 Ok((payload, external_signature)) => {
                     let mut guarded_meta_store = meta_store.write().await;
-                    let _ =
-                        guarded_meta_store.update(&request_id, Ok((payload, external_signature)));
+                    let _ = guarded_meta_store
+                        .update(&request_id, Ok((payload, external_signature, extra_data)));
                 }
                 Result::Err(e) => {
                     let mut guarded_meta_store = meta_store.write().await;
@@ -190,7 +193,7 @@ pub async fn get_user_decryption_result_impl<
         guarded_meta_store.retrieve(&request_id)
     };
 
-    let (payload, external_signature) =
+    let (payload, external_signature, extra_data) =
         handle_res_mapping(status, &request_id, "UserDecryption").await?;
 
     // sign the response
@@ -208,6 +211,7 @@ pub async fn get_user_decryption_result_impl<
         signature: sig.sig.to_vec(),
         external_signature,
         payload: Some(payload),
+        extra_data,
     }))
 }
 
@@ -337,11 +341,18 @@ pub async fn public_decrypt_impl<
             });
             let decryptions = recv.await;
 
+            let extra_data = vec![]; // NOTE: extra_data is not used in the current implementation
             match decryptions {
                 Ok(Ok(pts)) => {
                     // sign the plaintexts and handles for external verification (in fhevm)
                     let external_sig = if let Some(domain) = eip712_domain {
-                        compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, domain)
+                        compute_external_pt_signature(
+                            &sigkey,
+                            ext_handles_bytes,
+                            &pts,
+                            extra_data.clone(),
+                            domain,
+                        )
                     } else {
                         tracing::warn!(
                             "Skipping external signature computation due to missing domain"
@@ -350,8 +361,8 @@ pub async fn public_decrypt_impl<
                     };
 
                     let mut guarded_meta_store = meta_store.write().await;
-                    let _ =
-                        guarded_meta_store.update(&request_id, Ok((request_id, pts, external_sig)));
+                    let _ = guarded_meta_store
+                        .update(&request_id, Ok((request_id, pts, external_sig, extra_data)));
                     tracing::info!(
                         "⏱️ Core Event Time for decryption computation: {:?}",
                         start.elapsed()
@@ -401,7 +412,7 @@ pub async fn get_public_decryption_result_impl<
         let guarded_meta_store = service.pub_dec_meta_store.read().await;
         guarded_meta_store.retrieve(&request_id)
     };
-    let (retrieved_req_id, plaintexts, external_signature) =
+    let (retrieved_req_id, plaintexts, external_signature, extra_data) =
         handle_res_mapping(status, &request_id, "Decryption").await?;
 
     if retrieved_req_id != request_id {
@@ -427,6 +438,7 @@ pub async fn get_public_decryption_result_impl<
         digest: vec![],
         external_signature: Some(external_signature),
         request_id: Some(retrieved_req_id.into()),
+        extra_data,
     };
 
     let kms_sig_payload_vec = tonic_handle_potential_err(

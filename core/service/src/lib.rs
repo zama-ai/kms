@@ -85,6 +85,7 @@ pub fn compute_user_decrypt_message_hash(
     payload: &UserDecryptionResponsePayload,
     eip712_domain: &Eip712Domain,
     user_pk: &UnifiedPublicEncKey,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<B256> {
     use alloy_sol_types::SolStruct;
     // convert external_handles back to bytes32 to be signed
@@ -105,9 +106,7 @@ pub fn compute_user_decrypt_message_hash(
         publicKey: user_pk_buf.into(),
         ctHandles: external_handles,
         userDecryptedShare: user_decrypted_share_buf.into(),
-        // according to the spec, "extraData field will be empty when introduced in the protocol"
-        // so we'll leave it empty until we have a use case for it
-        extraData: vec![].into(),
+        extraData: extra_data.into(),
     };
 
     let message_hash = message.eip712_signing_hash(eip712_domain);
