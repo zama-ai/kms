@@ -730,6 +730,9 @@ pub fn compute_pt_message_hash(
     let message = PublicDecryptVerification {
         ctHandles: external_handles,
         decryptedResult: pt_bytes,
+        // according to the spec, "extraData field will be empty when introduced in the protocol"
+        // so we'll leave it empty until we have a use case for it
+        extraData: vec![].into(),
     };
 
     let message_hash = message.eip712_signing_hash(&eip712_domain);

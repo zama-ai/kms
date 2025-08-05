@@ -105,6 +105,9 @@ pub fn compute_user_decrypt_message_hash(
         publicKey: user_pk_buf.into(),
         ctHandles: external_handles,
         userDecryptedShare: user_decrypted_share_buf.into(),
+        // according to the spec, "extraData field will be empty when introduced in the protocol"
+        // so we'll leave it empty until we have a use case for it
+        extraData: vec![].into(),
     };
 
     let message_hash = message.eip712_signing_hash(eip712_domain);

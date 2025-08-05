@@ -41,6 +41,7 @@ alloy_sol_types::sol! {
         bytes publicKey;
         bytes32[] ctHandles;
         bytes userDecryptedShare;
+        bytes extraData;
     }
 }
 
@@ -61,6 +62,7 @@ alloy_sol_types::sol! {
     struct PublicDecryptVerification {
         bytes32[] ctHandles;
         bytes decryptedResult;
+        bytes extraData;
     }
 }
 
