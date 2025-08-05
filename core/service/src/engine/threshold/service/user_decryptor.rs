@@ -25,13 +25,14 @@ use threshold_fhe::{
             common::{pack_residue_poly, ResiduePoly},
             degree_4::ResiduePolyF4Z128,
         },
-        structure_traits::{ErrorCorrect, Invert, Solve},
+        structure_traits::{ErrorCorrect, Invert, Ring, Solve},
     },
     execution::{
         endpoints::{
             decryption::{
                 partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec,
-                DecryptionMode, LowLevelCiphertext, NoiseFloodPreparation, NoiseFloodSmallSession,
+                DecryptionMode, LowLevelCiphertext, OfflineNoiseFloodSession,
+                SmallOfflineNoiseFloodSession,
             },
             keygen::PrivateKeySet,
         },
@@ -72,41 +73,44 @@ use super::{session::SessionPreparer, ThresholdFheKeys};
 
 #[tonic::async_trait]
 pub trait NoiseFloodPartialDecryptor: Send + Sync {
-    type Prep: NoiseFloodPreparation<4> + Send;
+    type Prep: OfflineNoiseFloodSession<{ ResiduePolyF4Z128::EXTENSION_DEGREE }> + Send;
     async fn partial_decrypt(
         noiseflood_session: &mut Self::Prep,
         server_key: &tfhe::integer::ServerKey,
         ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
         ct: LowLevelCiphertext,
-        secret_key_share: &PrivateKeySet<4>,
+        secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
-        HashMap<String, Vec<ResiduePoly<Z128, 4>>>,
+        HashMap<String, Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
         u32,
         std::time::Duration,
     )>
     where
-        ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve;
+        ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>: ErrorCorrect + Invert + Solve;
 }
 
 pub struct SecureNoiseFloodPartialDecryptor;
 
 #[tonic::async_trait]
 impl NoiseFloodPartialDecryptor for SecureNoiseFloodPartialDecryptor {
-    type Prep = NoiseFloodSmallSession<4, SmallSession<ResiduePolyF4Z128>>;
+    type Prep = SmallOfflineNoiseFloodSession<
+        { ResiduePolyF4Z128::EXTENSION_DEGREE },
+        SmallSession<ResiduePolyF4Z128>,
+    >;
 
     async fn partial_decrypt(
         noiseflood_session: &mut Self::Prep,
         server_key: &tfhe::integer::ServerKey,
         ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
         ct: LowLevelCiphertext,
-        secret_key_share: &PrivateKeySet<4>,
+        secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
-        HashMap<String, Vec<ResiduePoly<Z128, 4>>>,
+        HashMap<String, Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
         u32,
         std::time::Duration,
     )>
     where
-        ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve,
+        ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>: ErrorCorrect + Invert + Solve,
     {
         partial_decrypt_using_noiseflooding(
             noiseflood_session,
@@ -123,7 +127,10 @@ pub struct RealUserDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
     Dec: NoiseFloodPartialDecryptor<
-            Prep = NoiseFloodSmallSession<4, SmallSession<ResiduePolyF4Z128>>,
+            Prep = SmallOfflineNoiseFloodSession<
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                SmallSession<ResiduePolyF4Z128>,
+            >,
         > + 'static,
 > {
     pub base_kms: BaseKmsStruct,
@@ -140,7 +147,10 @@ impl<
         PubS: Storage + Send + Sync + 'static,
         PrivS: Storage + Send + Sync + 'static,
         Dec: NoiseFloodPartialDecryptor<
-                Prep = NoiseFloodSmallSession<4, SmallSession<ResiduePolyF4Z128>>,
+                Prep = SmallOfflineNoiseFloodSession<
+                    { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                    SmallSession<ResiduePolyF4Z128>,
+                >,
             > + 'static,
     > RealUserDecryptor<PubS, PrivS, Dec>
 {
@@ -399,7 +409,10 @@ impl<
         PubS: Storage + Send + Sync + 'static,
         PrivS: Storage + Send + Sync + 'static,
         Dec: NoiseFloodPartialDecryptor<
-                Prep = NoiseFloodSmallSession<4, SmallSession<ResiduePolyF4Z128>>,
+                Prep = SmallOfflineNoiseFloodSession<
+                    { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                    SmallSession<ResiduePolyF4Z128>,
+                >,
             > + 'static,
     > UserDecryptor for RealUserDecryptor<PubS, PrivS, Dec>
 {
@@ -593,8 +606,8 @@ mod tests {
 
     #[tonic::async_trait]
     impl NoiseFloodPartialDecryptor for DummyNoiseFloodPartialDecryptor {
-        type Prep = NoiseFloodSmallSession<
-            4,
+        type Prep = SmallOfflineNoiseFloodSession<
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
             threshold_fhe::execution::runtime::session::SmallSession<ResiduePolyF4Z128>,
         >;
 
@@ -603,9 +616,9 @@ mod tests {
             _server_key: &tfhe::integer::ServerKey,
             _ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
             _ct: LowLevelCiphertext,
-            _secret_key_share: &PrivateKeySet<4>,
+            _secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         ) -> anyhow::Result<(
-            HashMap<String, Vec<ResiduePoly<Z128, 4>>>,
+            HashMap<String, Vec<ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>>>,
             u32,
             std::time::Duration,
         )> {

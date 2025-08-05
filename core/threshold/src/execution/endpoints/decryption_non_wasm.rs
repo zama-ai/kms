@@ -75,7 +75,7 @@ use super::reconstruct::{combine_decryptions, reconstruct_message};
 
 // NOTE: This whole trait system for noiseflood preproc is
 // a bit convoluted and could probably be refactored to be simpler.
-pub struct NoiseFloodSmallSession<
+pub struct SmallOfflineNoiseFloodSession<
     const EXTENSION_DEGREE: usize,
     Ses: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>>,
 > where
@@ -84,15 +84,16 @@ pub struct NoiseFloodSmallSession<
     pub session: RefCell<Ses>,
 }
 
-pub struct NoiseFloodLargeSession<PreprocStrat> {
+pub struct LargeOfflineNoiseFloodSession<PreprocStrat> {
     pub session: RefCell<LargeSession>,
     _marker: std::marker::PhantomData<PreprocStrat>,
 }
 
-pub type SecureNoiseFloodLargeSession<Z> = NoiseFloodLargeSession<SecureLargePreprocessing<Z>>;
+pub type SecureNoiseFloodLargeSession<Z> =
+    LargeOfflineNoiseFloodSession<SecureLargePreprocessing<Z>>;
 
 #[async_trait]
-pub trait NoiseFloodPreparation<const EXTENSION_DEGREE: usize> {
+pub trait OfflineNoiseFloodSession<const EXTENSION_DEGREE: usize> {
     type SessionType: BaseSessionHandles;
     async fn init_prep_noiseflooding(
         &mut self,
@@ -108,14 +109,15 @@ pub trait NoiseFloodPreparation<const EXTENSION_DEGREE: usize> {
 impl<
         const EXTENSION_DEGREE: usize,
         Ses: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>> + ToBaseSession,
-    > NoiseFloodPreparation<EXTENSION_DEGREE> for NoiseFloodSmallSession<EXTENSION_DEGREE, Ses>
+    > OfflineNoiseFloodSession<EXTENSION_DEGREE>
+    for SmallOfflineNoiseFloodSession<EXTENSION_DEGREE, Ses>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
     type SessionType = Ses;
 
     fn new(session: Self::SessionType) -> Self {
-        NoiseFloodSmallSession {
+        SmallOfflineNoiseFloodSession {
             session: RefCell::new(session),
         }
     }
@@ -157,14 +159,14 @@ where
 impl<
         const EXTENSION_DEGREE: usize,
         PreprocStrat: Preprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>, LargeSession> + Default,
-    > NoiseFloodPreparation<EXTENSION_DEGREE> for NoiseFloodLargeSession<PreprocStrat>
+    > OfflineNoiseFloodSession<EXTENSION_DEGREE> for LargeOfflineNoiseFloodSession<PreprocStrat>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
 {
     type SessionType = LargeSession;
 
     fn new(session: Self::SessionType) -> Self {
-        NoiseFloodLargeSession {
+        LargeOfflineNoiseFloodSession {
             session: RefCell::new(session),
             _marker: std::marker::PhantomData,
         }
@@ -300,7 +302,7 @@ pub async fn decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, P, O, T>
     secret_key_share: &PrivateKeySet<EXTENSION_DEGREE>,
 ) -> anyhow::Result<(HashMap<String, T>, Duration)>
 where
-    P: NoiseFloodPreparation<EXTENSION_DEGREE>,
+    P: OfflineNoiseFloodSession<EXTENSION_DEGREE>,
     O: OnlineNoiseFloodDecryption<EXTENSION_DEGREE>,
     T: tfhe::integer::block_decomposition::Recomposable
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
@@ -394,7 +396,7 @@ pub async fn partial_decrypt_using_noiseflooding<const EXTENSION_DEGREE: usize, 
     Duration,
 )>
 where
-    P: NoiseFloodPreparation<EXTENSION_DEGREE>,
+    P: OfflineNoiseFloodSession<EXTENSION_DEGREE>,
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
 {
     let sid = {
@@ -817,7 +819,7 @@ where
                         setup_small_session::<ResiduePoly<Z128, EXTENSION_DEGREE>>(base_session)
                             .await;
 
-                    let mut session_noiseflood = NoiseFloodSmallSession::new(session);
+                    let mut session_noiseflood = SmallOfflineNoiseFloodSession::new(session);
                     let mut noiseflood_preprocessing = session_noiseflood
                         .init_prep_noiseflooding(ct.len())
                         .await

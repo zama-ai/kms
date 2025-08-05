@@ -23,14 +23,14 @@ use threshold_fhe::{
     algebra::{
         base_ring::Z128,
         galois_rings::{common::ResiduePoly, degree_4::ResiduePolyF4Z128},
-        structure_traits::{ErrorCorrect, Invert, Solve},
+        structure_traits::{ErrorCorrect, Invert, Ring, Solve},
     },
     execution::{
         endpoints::{
             decryption::{
                 decrypt_using_noiseflooding, secure_decrypt_using_bitdec, DecryptionMode,
-                LowLevelCiphertext, NoiseFloodPreparation, NoiseFloodSmallSession,
-                SecureOnlineNoiseFloodDecryption,
+                LowLevelCiphertext, OfflineNoiseFloodSession, SecureOnlineNoiseFloodDecryption,
+                SmallOfflineNoiseFloodSession,
             },
             keygen::PrivateKeySet,
         },
@@ -68,27 +68,27 @@ use super::{session::SessionPreparer, ThresholdFheKeys};
 
 #[tonic::async_trait]
 pub trait NoiseFloodDecryptor: Send + Sync {
-    type Prep: NoiseFloodPreparation<4> + Send;
+    type Prep: OfflineNoiseFloodSession<{ ResiduePolyF4Z128::EXTENSION_DEGREE }> + Send;
 
     async fn decrypt<T>(
         noiseflood_session: &mut Self::Prep,
         server_key: &tfhe::integer::ServerKey,
         ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
         ct: LowLevelCiphertext,
-        secret_key_share: &PrivateKeySet<4>,
+        secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(HashMap<String, T>, Duration)>
     where
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
-        ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve;
+        ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>: ErrorCorrect + Invert + Solve;
 }
 
 pub struct SecureNoiseFloodDecryptor;
 
 #[tonic::async_trait]
 impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
-    type Prep = NoiseFloodSmallSession<
-        4,
+    type Prep = SmallOfflineNoiseFloodSession<
+        { ResiduePolyF4Z128::EXTENSION_DEGREE },
         threshold_fhe::execution::runtime::session::SmallSession<ResiduePolyF4Z128>,
     >;
 
@@ -97,20 +97,19 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
         server_key: &tfhe::integer::ServerKey,
         ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
         ct: LowLevelCiphertext,
-        secret_key_share: &PrivateKeySet<4>,
+        secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(HashMap<String, T>, Duration)>
     where
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
-        ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve,
+        ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>: ErrorCorrect + Invert + Solve,
     {
-        decrypt_using_noiseflooding::<4, Self::Prep, SecureOnlineNoiseFloodDecryption, T>(
-            noiseflood_session,
-            server_key,
-            ck,
-            ct,
-            secret_key_share,
-        )
+        decrypt_using_noiseflooding::<
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
+            Self::Prep,
+            SecureOnlineNoiseFloodDecryption,
+            T,
+        >(noiseflood_session, server_key, ck, ct, secret_key_share)
         .await
     }
 }
@@ -118,8 +117,12 @@ impl NoiseFloodDecryptor for SecureNoiseFloodDecryptor {
 pub struct RealPublicDecryptor<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    Dec: NoiseFloodDecryptor<Prep = NoiseFloodSmallSession<4, SmallSession<ResiduePolyF4Z128>>>
-        + 'static,
+    Dec: NoiseFloodDecryptor<
+            Prep = SmallOfflineNoiseFloodSession<
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                SmallSession<ResiduePolyF4Z128>,
+            >,
+        > + 'static,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -134,8 +137,12 @@ pub struct RealPublicDecryptor<
 impl<
         PubS: Storage + Send + Sync + 'static,
         PrivS: Storage + Send + Sync + 'static,
-        Dec: NoiseFloodDecryptor<Prep = NoiseFloodSmallSession<4, SmallSession<ResiduePolyF4Z128>>>
-            + 'static,
+        Dec: NoiseFloodDecryptor<
+                Prep = SmallOfflineNoiseFloodSession<
+                    { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                    SmallSession<ResiduePolyF4Z128>,
+                >,
+            > + 'static,
     > RealPublicDecryptor<PubS, PrivS, Dec>
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
@@ -171,7 +178,7 @@ impl<
                         .await,
                     "Could not prepare ddec data for noiseflood decryption".to_string(),
                 )?;
-                let mut noiseflood_session = NoiseFloodSmallSession::new(session);
+                let mut noiseflood_session = SmallOfflineNoiseFloodSession::new(session);
 
                 Dec::decrypt(
                     &mut noiseflood_session,
@@ -236,8 +243,12 @@ impl<
 impl<
         PubS: Storage + Send + Sync + 'static,
         PrivS: Storage + Send + Sync + 'static,
-        Dec: NoiseFloodDecryptor<Prep = NoiseFloodSmallSession<4, SmallSession<ResiduePolyF4Z128>>>
-            + 'static,
+        Dec: NoiseFloodDecryptor<
+                Prep = SmallOfflineNoiseFloodSession<
+                    { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                    SmallSession<ResiduePolyF4Z128>,
+                >,
+            > + 'static,
     > PublicDecryptor for RealPublicDecryptor<PubS, PrivS, Dec>
 {
     #[tracing::instrument(skip(self, request), fields(
@@ -674,8 +685,8 @@ mod tests {
 
     #[tonic::async_trait]
     impl NoiseFloodDecryptor for DummyNoisefloodDecryptor {
-        type Prep = NoiseFloodSmallSession<
-            4,
+        type Prep = SmallOfflineNoiseFloodSession<
+            { ResiduePolyF4Z128::EXTENSION_DEGREE },
             threshold_fhe::execution::runtime::session::SmallSession<ResiduePolyF4Z128>,
         >;
 
@@ -684,12 +695,13 @@ mod tests {
             _server_key: &tfhe::integer::ServerKey,
             _ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
             _ct: LowLevelCiphertext,
-            _secret_key_share: &PrivateKeySet<4>,
+            _secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         ) -> anyhow::Result<(HashMap<String, T>, Duration)>
         where
             T: tfhe::integer::block_decomposition::Recomposable
                 + tfhe::core_crypto::commons::traits::CastFrom<u128>,
-            ResiduePoly<Z128, 4>: ErrorCorrect + Invert + Solve,
+            ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>:
+                ErrorCorrect + Invert + Solve,
         {
             let results = HashMap::new();
             let elapsed_time = Duration::from_secs(0);
@@ -701,7 +713,10 @@ mod tests {
             PubS: Storage + Send + Sync + 'static,
             PrivS: Storage + Send + Sync + 'static,
             Dec: NoiseFloodDecryptor<
-                    Prep = NoiseFloodSmallSession<4, SmallSession<ResiduePolyF4Z128>>,
+                    Prep = SmallOfflineNoiseFloodSession<
+                        { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                        SmallSession<ResiduePolyF4Z128>,
+                    >,
                 > + 'static,
         > RealPublicDecryptor<PubS, PrivS, Dec>
     {
