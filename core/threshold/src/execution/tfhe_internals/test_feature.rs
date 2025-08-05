@@ -200,6 +200,7 @@ pub fn gen_key_set<R: Rng + CryptoRng>(params: DKGParams, rng: &mut R) -> KeySet
     let public_keys = FhePubKeySet {
         public_key,
         server_key,
+        seed: seed.0,
     };
     KeySet {
         client_key,

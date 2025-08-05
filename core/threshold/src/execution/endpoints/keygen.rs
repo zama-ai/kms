@@ -14,6 +14,7 @@ use crate::execution::tfhe_internals::parameters::{
     BKParams, DKGParams, DistributedCompressionParameters, DistributedSnsCompressionParameters,
     EncryptionType, KSKParams, MSNRKConfiguration, MSNRKParams, NoiseInfo,
 };
+use crate::execution::tfhe_internals::randomness::DSEP_KG;
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
@@ -48,7 +49,7 @@ use tfhe::shortint::list_compression::{
 use tfhe::shortint::noise_squashing::NoiseSquashingKey;
 use tfhe::shortint::server_key::{ModulusSwitchConfiguration, ModulusSwitchNoiseReductionKey};
 use tfhe::shortint::ClassicPBSParameters;
-use tfhe::Versionize;
+use tfhe::xof_key_set::CompressedXofKeySet;
 use tfhe::{
     core_crypto::{
         algorithms::par_convert_standard_lwe_bootstrap_key_to_fourier,
@@ -60,6 +61,7 @@ use tfhe::{
         server_key::ShortintBootstrappingKey,
     },
 };
+use tfhe::{Versionize, XofSeed};
 use tfhe_csprng::generators::SoftwareRandomGenerator;
 use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use tracing::instrument;
@@ -68,6 +70,27 @@ use tracing::instrument;
 pub struct FhePubKeySet {
     pub public_key: tfhe::CompactPublicKey,
     pub server_key: tfhe::ServerKey,
+    pub seed: u128,
+}
+
+impl FhePubKeySet {
+    pub fn compress(&self) -> CompressedXofKeySet {
+        let cpk = self.public_key.compress();
+        let csk = self.server_key.compress();
+        CompressedXofKeySet::from_raw_parts(XofSeed::new_u128(self.seed, DSEP_KG), cpk, csk)
+    }
+
+    pub fn from_compressed_keyset(compressed: CompressedXofKeySet) -> Self {
+        let (seed, cpk, csk) = compressed.into_raw_parts();
+        let seed_u128 = u128::from_ne_bytes(seed.seed().try_into().unwrap());
+        let compressed = CompressedXofKeySet::from_raw_parts(seed, cpk, csk);
+        let (pk, sk) = compressed.decompress().into_raw_parts();
+        Self {
+            public_key: pk,
+            server_key: sk,
+            seed: seed_u128,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -227,6 +250,7 @@ impl RawPubKeySet {
         FhePubKeySet {
             public_key: self.compute_tfhe_hl_api_compact_public_key(params),
             server_key: self.compute_tfhe_hl_api_server_key(params),
+            seed: self.seed,
         }
     }
 }
@@ -772,14 +796,14 @@ where
     par_convert_standard_lwe_bootstrap_key_to_fourier(&blind_rotate_key, &mut fourier_bsk);
 
     // TODO implement `modulus_switch_noise_reduction_key` keygen
-    let blind_rotate_key = ShortintBootstrappingKey::Classic {
-        bsk: fourier_bsk,
-        // NOTE: Not sure if it should be standard or CenteredMean
-        modulus_switch_noise_reduction_key: ModulusSwitchConfiguration::Standard,
-    };
+    //let blind_rotate_key = ShortintBootstrappingKey::Classic {
+    //    bsk: fourier_bsk,
+    //    // NOTE: Not sure if it should be standard or CenteredMean
+    //    modulus_switch_noise_reduction_key: ModulusSwitchConfiguration::Standard,
+    //};
 
     let decompression_key = DecompressionKey {
-        blind_rotate_key,
+        blind_rotate_key: fourier_bsk,
         lwe_per_glwe: params.raw_compression_parameters.lwe_per_glwe,
     };
     Ok(decompression_key)
@@ -1461,6 +1485,7 @@ pub mod tests {
             structure_traits::{ErrorCorrect, Invert, Ring, Solve},
         },
         execution::{
+            endpoints::keygen::FhePubKeySet,
             online::preprocessing::dummy::DummyPreprocessing,
             runtime::session::{LargeSession, ParameterHandles},
             tfhe_internals::{
@@ -2906,9 +2931,17 @@ pub mod tests {
             prefix_path,
         );
 
-        let pub_key_set = pk.to_pubkeyset(params);
+        let mut pub_key_set = pk.to_pubkeyset(params);
 
-        set_server_key(pub_key_set.server_key);
+        //pub_key_set.seed += 1;
+        let compressed_keyset = pub_key_set.compress();
+        let new_pub_key_set = FhePubKeySet::from_compressed_keyset(compressed_keyset);
+        println!("CHECKING KEYS");
+        check_keys(pub_key_set.clone(), new_pub_key_set.clone());
+
+        println!("CHECKING KEYS DONE");
+
+        set_server_key(new_pub_key_set.server_key);
 
         let shortint_pk = pk.compute_tfhe_shortint_server_key(params);
         for _ in 0..100 {
@@ -2930,6 +2963,9 @@ pub mod tests {
         if do_compression_test {
             try_tfhe_compression_computation(&tfhe_sk);
         }
+
+        println!("ALL FINE");
+        assert!(false);
     }
 
     ///Read files created by [`run_dkg_and_save`] and reconstruct the secret keys
@@ -3105,5 +3141,104 @@ pub mod tests {
         let decompressed: FheUint8 = compressed.get(2).unwrap().unwrap();
         let decrypted: u8 = decompressed.decrypt(client_key);
         assert_eq!(decrypted, clear_c);
+    }
+
+    fn check_keys(key_1: FhePubKeySet, key_2: FhePubKeySet) {
+        let pk_1 = key_1.public_key.into_raw_parts().0.into_raw_parts();
+        let pk_2 = key_2.public_key.into_raw_parts().0.into_raw_parts();
+
+        if pk_1 != pk_2 {
+            println!("Public keys do not match");
+        }
+
+        let (
+            server_key_1,
+            ksk_material_1,
+            compression_key_1,
+            decompression_key_1,
+            noise_squash_key_1,
+            noise_squash_comp_key_1,
+            tag_1,
+        ) = key_1.server_key.into_raw_parts();
+
+        let (
+            server_key_2,
+            ksk_material_2,
+            compression_key_2,
+            decompression_key_2,
+            noise_squash_key_2,
+            noise_squash_comp_key_2,
+            tag_2,
+        ) = key_2.server_key.into_raw_parts();
+
+        let (ksk_1, pbs_1) = match server_key_1.into_raw_parts().atomic_pattern {
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Standard(
+                standard_atomic_pattern_server_key,
+            ) => (
+                standard_atomic_pattern_server_key.key_switching_key,
+                standard_atomic_pattern_server_key.bootstrapping_key,
+            ),
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::KeySwitch32(
+                ks32_atomic_pattern_server_key,
+            ) => todo!(),
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Dynamic(
+                dynamic_atomic_pattern,
+            ) => {
+                todo!()
+            }
+        };
+
+        let (ksk_2, pbs_2) = match server_key_2.into_raw_parts().atomic_pattern {
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Standard(
+                standard_atomic_pattern_server_key,
+            ) => (
+                standard_atomic_pattern_server_key.key_switching_key,
+                standard_atomic_pattern_server_key.bootstrapping_key,
+            ),
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::KeySwitch32(
+                ks32_atomic_pattern_server_key,
+            ) => todo!(),
+            tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Dynamic(
+                dynamic_atomic_pattern,
+            ) => {
+                todo!()
+            }
+        };
+
+        if ksk_1 != ksk_2 {
+            println!("server ksk do not match");
+        }
+
+        if pbs_1 != pbs_2 {
+            println!("server pbs do not match");
+        }
+
+        if ksk_material_1 != ksk_material_2 {
+            println!("KSK materials do not match")
+        };
+
+        let compression_key_1 = compression_key_1.map(|s| s.into_raw_parts());
+        let compression_key_2 = compression_key_2.map(|s| s.into_raw_parts());
+        if compression_key_1 != compression_key_2 {
+            println!("Compression keys do not match");
+        }
+
+        let decompression_key_1 = decompression_key_1.map(|s| s.into_raw_parts());
+        let decompression_key_2 = decompression_key_2.map(|s| s.into_raw_parts());
+        if decompression_key_1 != decompression_key_2 {
+            println!("Decompression keys do not match");
+        }
+
+        let noise_squash_key_1 = noise_squash_key_1.map(|s| s.into_raw_parts());
+        let noise_squash_key_2 = noise_squash_key_2.map(|s| s.into_raw_parts());
+        if noise_squash_key_1 != noise_squash_key_2 {
+            println!("Noise squash keys do not match");
+        }
+
+        let noise_squash_comp_key_1 = noise_squash_comp_key_1.map(|s| s.into_raw_pars());
+        let noise_squash_comp_key_2 = noise_squash_comp_key_2.map(|s| s.into_raw_pars());
+        if noise_squash_comp_key_1 != noise_squash_comp_key_2 {
+            println!(" Noise squash compression keys do not match");
+        }
     }
 }
