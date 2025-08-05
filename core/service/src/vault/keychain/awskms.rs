@@ -23,8 +23,7 @@ use aws_sdk_kms::{
 use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
 use hyper_rustls::HttpsConnectorBuilder;
 use kms_grpc::RequestId;
-#[cfg(feature = "non-wasm")]
-use rand::rngs::OsRng;
+use rand::{CryptoRng, Rng};
 use rasn::{
     ber::de::{Decoder, DecoderOptions},
     de::Decode,
@@ -122,7 +121,8 @@ impl RootKey for Asymm {}
 /// corresponding data keys) are stored on S3. The enclave keypair permits
 /// secure decryption of data keys by AWS KMS.
 #[derive(Debug, Clone)]
-pub struct AWSKMSKeychain<S: SecurityModule, K: RootKey> {
+pub struct AWSKMSKeychain<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> {
+    rng: R,
     awskms_client: AWSKMSClient,
     security_module: S,
     recipient_sk: RsaPrivateKey,
@@ -130,15 +130,17 @@ pub struct AWSKMSKeychain<S: SecurityModule, K: RootKey> {
     root_key: K,
 }
 
-impl<S: SecurityModule, K: RootKey> AWSKMSKeychain<S, K> {
+impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> {
     pub fn new(
+        mut rng: R,
         awskms_client: AWSKMSClient,
         security_module: S,
         root_key: K,
     ) -> anyhow::Result<Self> {
-        let recipient_sk = RsaPrivateKey::new(&mut OsRng, RECIPIENT_KEYPAIR_SIZE)?;
+        let recipient_sk = RsaPrivateKey::new(&mut rng, RECIPIENT_KEYPAIR_SIZE)?;
         let recipient_pk = RsaPublicKey::from(&recipient_sk);
         Ok(AWSKMSKeychain {
+            rng,
             awskms_client,
             security_module,
             recipient_sk,
@@ -196,7 +198,7 @@ impl<S: SecurityModule, K: RootKey> AWSKMSKeychain<S, K> {
 }
 
 //#[tonic::async_trait]
-impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Symm> {
+impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKeychain<S, Symm, R> {
     fn envelope_share_ids(&self) -> Option<BTreeSet<Role>> {
         None::<BTreeSet<Role>>
     }
@@ -266,7 +268,7 @@ impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Symm> {
         _payload_id: &RequestId,
         envelope: &mut EnvelopeLoad,
     ) -> anyhow::Result<T> {
-        AWSKMSKeychain::<S, Symm>::decrypt(
+        AWSKMSKeychain::<S, Symm, R>::decrypt(
             self,
             &mut envelope
                 .clone()
@@ -278,7 +280,7 @@ impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Symm> {
 }
 
 //#[tonic::async_trait]
-impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Asymm> {
+impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKeychain<S, Asymm, R> {
     fn envelope_share_ids(&self) -> Option<BTreeSet<Role>> {
         None::<BTreeSet<Role>>
     }
@@ -293,7 +295,7 @@ impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Asymm> {
         let enc_data_key = self
             .root_key
             .pk
-            .encrypt(&mut OsRng, Oaep::new::<Sha256>(), data_key.as_ref())
+            .encrypt(&mut self.rng, Oaep::new::<Sha256>(), data_key.as_ref())
             .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt data key: {e}")))?;
 
         // encrypt the app key under the data key
@@ -315,7 +317,7 @@ impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Asymm> {
         _payload_id: &RequestId,
         envelope: &mut EnvelopeLoad,
     ) -> anyhow::Result<T> {
-        AWSKMSKeychain::<S, Asymm>::decrypt(
+        AWSKMSKeychain::<S, Asymm, R>::decrypt(
             self,
             &mut envelope
                 .clone()

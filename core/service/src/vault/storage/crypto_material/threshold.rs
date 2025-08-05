@@ -8,7 +8,7 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 use kms_grpc::{
     rpc_types::{
-        PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
+        BackupDataType, PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
         WrappedPublicKeyOwned,
     },
     RequestId,
@@ -26,6 +26,7 @@ use crate::{
     grpc::metastore_status_service::CustodianMetaStore,
     util::meta_store::MetaStore,
     vault::{
+        keychain::KeychainProxy,
         storage::{store_pk_at_request_id, store_versioned_at_request_id, Storage},
         Vault,
     },
@@ -51,6 +52,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
+        // current_backup_key: Option<BackupPublicKey>,
         pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
         fhe_keys: HashMap<RequestId, ThresholdFheKeys>,
     ) -> Self {
@@ -60,6 +62,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 private_storage: Arc::new(Mutex::new(private_storage)),
                 backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
                 pk_cache: Arc::new(RwLock::new(pk_cache)),
+                // current_backup_key: Arc::new(RwLock::new(current_backup_key)),
             },
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }
@@ -109,10 +112,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         let f1 = async {
             let mut priv_storage = self.inner.private_storage.lock().await;
             // can't map() because async closures aren't stable in Rust
-            let back_vault = match self.inner.backup_vault {
-                Some(ref x) => Some(x.lock().await),
-                None => None,
-            };
+            // let back_vault = match self.inner.backup_vault {
+            //     Some(ref x) => Some(x.lock().await),
+            //     None => None,
+            // };
 
             let store_result = store_versioned_at_request_id(
                 &mut (*priv_storage),
@@ -129,27 +132,27 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     e
                 );
             }
-            let store_is_ok = store_result.is_ok();
+            store_result.is_ok()
 
-            let backup_is_ok = match back_vault {
-                Some(mut x) => {
-                    let backup_result = store_versioned_at_request_id(
-                        &mut (*x),
-                        key_id,
-                        &threshold_fhe_keys,
-                        &PrivDataType::FheKeyInfo.to_string(),
-                    )
-                    .await;
+            // let backup_is_ok = match back_vault {
+            //     Some(mut x) => {
+            //         let backup_result = store_versioned_at_request_id(
+            //             &mut (*x),
+            //             key_id,
+            //             &threshold_fhe_keys,
+            //             &PrivDataType::FheKeyInfo.to_string(),
+            //         )
+            //         .await;
 
-                    if let Err(e) = &backup_result {
-                        tracing::error!("Failed to store threshold FHE keys to backup storage for request {}: {}", key_id, e);
-                    }
-                    backup_result.is_ok()
-                }
-                None => true,
-            };
+            //         if let Err(e) = &backup_result {
+            //             tracing::error!("Failed to store threshold FHE keys to backup storage for request {}: {}", key_id, e);
+            //         }
+            //         backup_result.is_ok()
+            //     }
+            //     None => true,
+            // };
 
-            store_is_ok && backup_is_ok
+            // store_is_ok && backup_is_ok
         };
         let f2 = async {
             let mut pub_storage = self.inner.public_storage.lock().await;
@@ -180,10 +183,71 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             }
             result.is_ok()
         };
+        let threshold_key_clone = threshold_fhe_keys.clone();
+        let f4 = async move {
+            // TODO this should happen in the backup vault storage, i.e. it should have the public encryption key
+            // Construct a backup of the key material
+            // let backup_key_guard = self.inner.current_backup_key.read().await;
+            // let backup_key = match &*backup_key_guard {
+            //     Some(backup_key) => backup_key.clone(),
+            //     None => {
+            //         tracing::warn!("No backup vault configured, skipping backup key material storage for request {key_id}");
+            //         return true;
+            //     }
+            // };
+            // drop(backup_key_guard);
+            // // TODO ciphertext should be versioned
+            // let mut serialized_keys = Vec::new();
+            // safe_serialize(
+            //     &threshold_fhe_keys,
+            //     &mut serialized_keys,
+            //     SAFE_SER_SIZE_LIMIT,
+            // )
+            // .is_err_and(|e| {
+            //     tracing::error!(
+            //         "Failed to serialize threshold FHE keys for request {key_id}: {e:?}",
+            //     );
+            //     return false;
+            // });
+            // let enc_key = match backup_key.encrypt(rng, &serialized_keys) {
+            //     Ok(encrypted_key) => encrypted_key,
+            //     Err(e) => {
+            //         tracing::error!(
+            //             "Failed to encrypt threshold FHE keys for request {key_id}: {e:?}",
+            //         );
+            //         return false;
+            //     }
+            // };
+            // let ct_key = BackupCiphertext {
+            //     ciphertext: enc_key,
+            //     priv_data_type: PrivDataType::FheKeyInfo,
+            // };
+            match self.inner.backup_vault {
+                Some(ref back_vault) => {
+                    let mut guarded_backup_vault = back_vault.lock().await;
+                    let backup_result = store_versioned_at_request_id(
+                        &mut (*guarded_backup_vault),
+                        key_id,
+                        &threshold_key_clone,
+                        &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
+                    )
+                    .await;
+
+                    if let Err(e) = &backup_result {
+                        tracing::error!("Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}");
+                    }
+                    backup_result.is_ok()
+                }
+                None => {
+                    tracing::error!("No backup vault configured despite a current backup key being set! This should never happen! Skipping backup key material storage for request {key_id}");
+                    return false;
+                }
+            }
+        };
 
         // TODO since each thread is locking a storage component and they are run concurrently in a single thread
         // don't we risk deadlocks with parallel executions since we have no guaranteed on the lock order?
-        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
+        let (r1, r2, r3, r4) = tokio::join!(f1, f2, f3, f4);
 
         // Try to store the new data
         tracing::info!("Storing DKG objects for key ID {}", key_id);
@@ -197,7 +261,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             );
         }
 
-        if r1 && r2 && r3 && meta_update_result.is_ok() {
+        if r1 && r2 && r3 && r4 && meta_update_result.is_ok() {
             // updating the cache is not critical to system functionality,
             // so we do not consider it as an error
             {
@@ -298,21 +362,35 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         let mut public_storage_guard = self.inner.public_storage.lock().await;
 
         let priv_storage_future = async {
-            let store_result = store_versioned_at_request_id(
+            let pub_key_store_res = store_versioned_at_request_id(
                 &mut (*private_storage_guard),
                 req_id,
                 &pub_key,
                 &PrivDataType::PubBackupKey.to_string(),
             )
             .await;
-            if let Err(e) = &store_result {
+            if let Err(e) = &pub_key_store_res {
                 tracing::error!(
                     "Failed to store public backup encryption key to private storage for request {}: {}",
                     req_id,
                     e
                 );
             }
-            store_result.is_ok()
+            let custodian_context_store_res = store_versioned_at_request_id(
+                &mut (*private_storage_guard),
+                req_id,
+                &custodian_context,
+                &PrivDataType::CustodianInfo.to_string(),
+            )
+            .await;
+            if let Err(e) = &custodian_context_store_res {
+                tracing::error!(
+                    "Failed to store custodian context to private storage for request {}: {}",
+                    req_id,
+                    e
+                );
+            }
+            pub_key_store_res.is_ok() && custodian_context_store_res.is_ok()
         };
         let pub_storage_future = async {
             let recovery_store_result = store_versioned_at_request_id(
@@ -345,54 +423,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             }
             recovery_store_result.is_ok() && commit_store_result.is_ok()
         };
-        // let backup_storage_recovery_future = async {
-        //     // Store in backup vault
-        //     match &self.inner.backup_vault {
-        //         // TODO the vault is actually private so not really needed here
-        //         Some(vault) => {
-        //             let mut backup_vault_guard = vault.lock().await;
-        //             match store_versioned_at_request_id(
-        //                 &mut (*backup_vault_guard),
-        //                 req_id,
-        //                 &recovery_request,
-        //                 &PubDataType::RecoveryRequest.to_string(),
-        //             )
-        //             .await
-        //             {
-        //                 Ok(_) => None,
-        //                 Err(e) => Some(format!(
-        //                     "Failed to store recovery request in backup vault for request {req_id}: {e}",
-        //                 )),
-        //             }
-        //         }
-        //         // If there's no backup vault, we don't store anything
-        //         None => None,
-        //     }
-        // };
-        // let backup_storage_commitment_future = async {
-        //     // Store in backup vault
-        //     match &self.inner.backup_vault {
-        //         Some(vault) => {
-        //             let mut backup_vault_guard = vault.lock().await;
-        //             // Write to the other part
-        //             match store_versioned_at_request_id(
-        //                 &mut (*backup_vault_guard),
-        //                 req_id,
-        //                 &commitments,
-        //                 &PubDataType::Commitments.to_string(),
-        //             )
-        //             .await
-        //             {
-        //                 Ok(_) => None,
-        //                 Err(e) => Some(format!(
-        //                     "Failed to store commitments in backup vault for request {req_id}: {e}",
-        //                 )),
-        //             }
-        //         }
-        //         // If there's no backup vault, we don't store anything
-        //         None => None,
-        //     }
-        // };
         let (priv_res, pub_res) = tokio::join!(priv_storage_future, pub_storage_future);
         {
             // Update meta store
@@ -421,6 +451,26 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     priv_res,
                     pub_res,
                 );
+            }
+        }
+        // Finally update the current backup key in the storage
+        {
+            match self.inner.backup_vault {
+                Some(ref vault) => {
+                    let mut guarded_backup_vault = vault.lock().await;
+                    match &mut guarded_backup_vault.keychain {
+                        Some(keychain) => {
+                            if let KeychainProxy::SecretSharing(sharing_chain) = keychain {
+                                // Store the public key in the secret sharing keychain
+                                sharing_chain.set_backup_enc_key(pub_key);
+                            }
+                        },
+                        None => todo!(),
+                    }
+                },
+                None => tracing::warn!(
+                    "No backup vault configured, skipping setting backup encryption key for request {req_id}"
+                ),
             }
         }
     }

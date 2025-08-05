@@ -45,7 +45,18 @@ impl Default for RequestId {
         Self([0u8; ID_LENGTH])
     }
 }
+// todo add test or change to give context for backup explicitle
+impl PartialOrd for RequestId {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
+impl Ord for RequestId {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
 impl Versionize for RequestId {
     type Versioned<'vers> = &'vers RequestId;
 

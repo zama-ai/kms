@@ -519,7 +519,7 @@ impl_endpoint! {
 
         /// WARNING: This method is not implemented yet and will always return an error.
         ///
-        /// Contructs a new custodian context. That is, updates the internal state of custodians used for backup.
+        /// Constructs a new custodian context. That is, updates the internal state of custodians used for backup.
         ///
         /// Currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
         ///
@@ -538,7 +538,7 @@ impl_endpoint! {
 
         /// WARNING: This method is not implemented yet and will always return an error.
         ///
-        /// Destroyes a custodian context. That is, updates the internal state and configuration files to start used a new custodian context and removes the old one.
+        /// Destroys a custodian context. That is, updates the internal state and configuration files to start used a new custodian context and removes the old one.
         ///
         /// Currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
         ///

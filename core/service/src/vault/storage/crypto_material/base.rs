@@ -52,6 +52,9 @@ pub struct CryptoMaterialStorage<
 
     /// Cache for already generated public keys
     pub(crate) pk_cache: Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>,
+    // Cache for current backup key (if it is set)
+    // Observe that the `Option` is inside the lock since it may be added during runtime through a new custodian context.
+    // pub(crate) current_backup_key: Arc<RwLock<Option<BackupPublicKey>>>,
 }
 
 impl<PubS, PrivS> CryptoMaterialStorage<PubS, PrivS>
@@ -71,12 +74,14 @@ where
         private_storage: Arc<Mutex<PrivS>>,
         backup_vault: Option<Arc<Mutex<Vault>>>,
         pk_cache: Option<Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>>,
+        // current_backup_key: Arc<RwLock<Option<BackupPublicKey>>>,
     ) -> Self {
         Self {
             public_storage,
             private_storage,
             backup_vault,
             pk_cache: pk_cache.unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new()))),
+            // current_backup_key,
         }
     }
 
@@ -86,12 +91,14 @@ where
         private_storage: PrivS,
         backup_vault: Option<Vault>,
         pk_cache: Option<Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>>,
+        // current_backup_key: Arc<RwLock<Option<BackupPublicKey>>>,
     ) -> Self {
         Self::new(
             Arc::new(Mutex::new(public_storage)),
             Arc::new(Mutex::new(private_storage)),
             backup_vault.map(|s| Arc::new(Mutex::new(s))),
             pk_cache,
+            // current_backup_key,
         )
     }
 
@@ -283,6 +290,7 @@ where
     // Convenience Storage Methods
     // =========================
 
+    // TODO it seems these methods are never used!
     /// Store CRS (public parameters + private info)
     pub async fn store_crs(
         &self,
