@@ -333,16 +333,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     })
                 })
                 .as_ref()
-                .map(|k| {
-                    make_keychain(
-                        k,
-                        awskms_client.clone(),
-                        security_module.clone(),
-                        None,
-                        party_role,
-                        None,
-                    )
-                }),
+                .map(|k| make_keychain(k, awskms_client.clone(), security_module.clone(), None)),
         )
         .await
         .transpose()?;

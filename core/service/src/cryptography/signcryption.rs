@@ -1,4 +1,4 @@
- //! Necessary methods for secure client communication in relation to user decryption requests.
+//! Necessary methods for secure client communication in relation to user decryption requests.
 //!
 //! Client requests to the server should be validated against the client's wallet address,
 //! which is derived from a ECDSA secp256k1 key.

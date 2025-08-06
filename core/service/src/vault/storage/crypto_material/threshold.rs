@@ -240,7 +240,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 }
                 None => {
                     tracing::error!("No backup vault configured despite a current backup key being set! This should never happen! Skipping backup key material storage for request {key_id}");
-                    return false;
+                    false
                 }
             }
         };

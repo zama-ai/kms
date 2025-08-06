@@ -197,16 +197,7 @@ async fn main() -> anyhow::Result<()> {
             .private_vault
             .as_ref()
             .and_then(|v| v.keychain.as_ref())
-            .map(|k| {
-                make_keychain(
-                    k,
-                    awskms_client.clone(),
-                    security_module.clone(),
-                    None,
-                    None,
-                    None,
-                )
-            }),
+            .map(|k| make_keychain(k, awskms_client.clone(), security_module.clone(), None)),
     )
     .await
     .transpose()
@@ -254,8 +245,6 @@ async fn main() -> anyhow::Result<()> {
                     awskms_client.clone(),
                     security_module.clone(),
                     Some(&private_vault),
-                    party_role,
-                    Some(sk.clone()),
                 )
             }),
     )
