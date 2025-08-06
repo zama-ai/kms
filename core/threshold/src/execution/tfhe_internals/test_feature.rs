@@ -33,9 +33,6 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        endpoints::keygen::{
-            CompressionPrivateKeySharesEnum, FhePubKeySet, GlweSecretKeyShareEnum, PrivateKeySet,
-        },
         runtime::{party::Role, session::BaseSessionHandles},
         sharing::{
             input::robust_input,
@@ -53,7 +50,11 @@ use crate::{
     networking::value::NetworkValue,
 };
 
-use super::parameters::{DKGParams, DKGParamsBasics};
+use super::{
+    parameters::{DKGParams, DKGParamsBasics},
+    private_keysets::{CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet},
+    public_keysets::FhePubKeySet,
+};
 
 /// the party ID of the party doing the reconstruction
 pub const INPUT_PARTY_ID: usize = 1;

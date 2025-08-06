@@ -16,13 +16,14 @@ use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
     execution::{
-        endpoints::keygen::{FhePubKeySet, PrivateKeySet, SecureOnlineDistributedKeyGen128},
+        endpoints::keygen::SecureOnlineDistributedKeyGen128,
         online::preprocessing::{
             create_memory_factory, create_redis_factory,
             orchestration::producer_traits::SecureSmallProducerFactory, DKGPreprocessing,
         },
         runtime::party::{Role, RoleAssignment},
         small_execution::prss::RobustSecurePrssInit,
+        tfhe_internals::{private_keysets::PrivateKeySet, public_keysets::FhePubKeySet},
         zk::ceremony::SecureCeremony,
     },
     networking::{

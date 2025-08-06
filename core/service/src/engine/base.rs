@@ -45,8 +45,8 @@ use threshold_fhe::execution::endpoints::decryption::RadixOrBoolCiphertext;
 use threshold_fhe::execution::endpoints::decryption::{
     LowLevelCiphertext, SnsRadixOrBoolCiphertext,
 };
-use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use threshold_fhe::hashing::hash_element;
 use threshold_fhe::hashing::serialize_hash_element;
 use threshold_fhe::hashing::DomainSep;

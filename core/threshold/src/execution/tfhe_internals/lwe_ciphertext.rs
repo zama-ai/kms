@@ -8,7 +8,7 @@ use tfhe::{
         },
         prelude::{
             CiphertextModulus, ContiguousEntityContainerMut, LweCiphertextList,
-            LweCiphertextListOwned,
+            LweCiphertextListOwned, SeededLweCiphertextList,
         },
     },
 };
@@ -36,6 +36,30 @@ use super::{
 pub struct LweCiphertextShare<Z: BaseRing, const EXTENSION_DEGREE: usize> {
     pub mask: Vec<Z>,
     pub body: ResiduePoly<Z, EXTENSION_DEGREE>,
+}
+
+pub(crate) fn opened_lwe_bodies_to_seeded_tfhers_u64<Z: BaseRing>(
+    bodies: Vec<Z>,
+    output_container: &mut SeededLweCiphertextList<&mut [u64]>,
+) -> anyhow::Result<()> {
+    for (idx, body) in output_container.iter_mut().enumerate() {
+        let body_data = {
+            let tmp = bodies
+                .get(idx)
+                .ok_or_else(|| {
+                    anyhow_error_and_log(format!(
+                        "Body of incorrect size, failed trying to access idx {idx}"
+                    ))
+                })?
+                .to_byte_vec();
+            tmp.iter().rev().fold(0_u64, |acc, byte| {
+                acc.wrapping_shl(8).wrapping_add(*byte as u64)
+            })
+        };
+        *body.data = body_data;
+    }
+
+    Ok(())
 }
 
 pub(crate) fn opened_lwe_masks_bodies_to_tfhers_u64<Z: BaseRing>(
