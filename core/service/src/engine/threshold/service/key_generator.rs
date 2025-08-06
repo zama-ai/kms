@@ -1334,6 +1334,8 @@ mod tests {
 
     struct DroppingOnlineDistributedKeyGen128;
 
+    struct FailingOnlineDistributedKeyGen128;
+
     #[tonic::async_trait]
     impl OnlineDistributedKeyGen128 for DroppingOnlineDistributedKeyGen128 {
         async fn keygen<
@@ -1360,24 +1362,45 @@ mod tests {
         }
     }
 
-    impl RealKeyGenerator<ram::RamStorage, ram::RamStorage, DroppingOnlineDistributedKeyGen128> {
-        pub async fn init_test_dropping_keygen(session_preparer: SessionPreparer) -> Self {
+    #[tonic::async_trait]
+    impl OnlineDistributedKeyGen128 for FailingOnlineDistributedKeyGen128 {
+        async fn keygen<
+            S: BaseSessionHandles,
+            P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+            const EXTENSION_DEGREE: usize,
+        >(
+            _base_session: &mut S,
+            _preprocessing: &mut P,
+            _params: DKGParams,
+        ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+        where
+            ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+            ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+        {
+            Err(anyhow::anyhow!(
+                "This keygen implementation is supposed to fail"
+            ))
+        }
+    }
+
+    impl<KG: OnlineDistributedKeyGen128 + 'static>
+        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>
+    {
+        pub async fn init_ram_keygen(session_preparer: SessionPreparer) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
             Self::init_test(pub_storage, priv_storage, session_preparer).await
         }
     }
 
-    async fn setup_key_generator() -> (
+    async fn setup_key_generator<KG: OnlineDistributedKeyGen128 + 'static>() -> (
         RequestId,
-        RealKeyGenerator<ram::RamStorage, ram::RamStorage, DroppingOnlineDistributedKeyGen128>,
+        RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
         let session_preparer = SessionPreparer::new_test_session(false);
-        let kg = RealKeyGenerator::<
-            ram::RamStorage,
-            ram::RamStorage,
-            DroppingOnlineDistributedKeyGen128,
-        >::init_test_dropping_keygen(session_preparer.new_instance().await)
+        let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
+            session_preparer.new_instance().await,
+        )
         .await;
 
         let prep_id = RequestId::new_random(&mut OsRng);
@@ -1402,15 +1425,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_invalid_argument() {
+    async fn invalid_argument() {
         //`InvalidArgument` - If the request ID is not valid or does not match the expected format.
-        let (prep_id, kg) = setup_key_generator().await;
+        let (prep_id, kg) = setup_key_generator::<DroppingOnlineDistributedKeyGen128>().await;
         let bad_key_id = kms_grpc::kms::v1::RequestId {
             request_id: "badformat".to_string(),
         };
 
         let request = tonic::Request::new(KeyGenRequest {
-            request_id: Some(bad_key_id),
+            request_id: Some(bad_key_id.clone()),
             params: FheParameter::Test as i32,
             preproc_id: Some(prep_id.into()),
             domain: None,
@@ -1422,12 +1445,19 @@ mod tests {
             kg.key_gen(request).await.unwrap_err().code(),
             tonic::Code::InvalidArgument
         );
+        assert_eq!(
+            kg.get_result(tonic::Request::new(bad_key_id))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
+        );
     }
 
     #[tokio::test]
-    async fn test_resource_exhausted() {
+    async fn resource_exhausted() {
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        let (prep_id, mut kg) = setup_key_generator().await;
+        let (prep_id, mut kg) = setup_key_generator::<DroppingOnlineDistributedKeyGen128>().await;
         let key_id = RequestId::new_random(&mut OsRng);
 
         // Set bucket size to zero, so no operations are allowed
@@ -1449,8 +1479,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn not_found() {
+        let (_prep_id, kg) = setup_key_generator::<DroppingOnlineDistributedKeyGen128>().await;
+        let key_id = RequestId::new_random(&mut OsRng);
+
+        // no need to wait because [get_result] is semi-blocking
+        assert_eq!(
+            kg.get_result(tonic::Request::new(key_id.into()))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::NotFound
+        );
+    }
+
+    #[tokio::test]
+    async fn internal() {
+        let (prep_id, kg) = setup_key_generator::<FailingOnlineDistributedKeyGen128>().await;
+        let key_id = RequestId::new_random(&mut OsRng);
+
+        let request = tonic::Request::new(KeyGenRequest {
+            request_id: Some(key_id.into()),
+            params: FheParameter::Test as i32,
+            preproc_id: Some(prep_id.into()),
+            domain: None,
+            keyset_config: None,
+            keyset_added_info: None,
+        });
+
+        // keygen should pass because the failure occurs in background process
+        kg.key_gen(request).await.unwrap();
+
+        // no need to wait because [get_result] is semi-blocking
+        assert_eq!(
+            kg.get_result(tonic::Request::new(key_id.into()))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Internal
+        );
+    }
+
+    #[tokio::test]
     async fn sunshine() {
-        let (prep_id, kg) = setup_key_generator().await;
+        let (prep_id, kg) = setup_key_generator::<DroppingOnlineDistributedKeyGen128>().await;
         let key_id = RequestId::new_random(&mut OsRng);
 
         let request = tonic::Request::new(KeyGenRequest {

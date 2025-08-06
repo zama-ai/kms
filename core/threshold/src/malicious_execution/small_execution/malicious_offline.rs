@@ -1,7 +1,7 @@
 use tonic::async_trait;
 
 use crate::{
-    algebra::structure_traits::ErrorCorrect,
+    algebra::structure_traits::{ErrorCorrect, Ring},
     execution::{
         communication::broadcast::Broadcast,
         config::BatchParams,
@@ -88,5 +88,34 @@ impl<Z: ErrorCorrect, Bcast: Broadcast, Ses: SmallSessionHandles<Z>> Preprocessi
         RealSmallPreprocessing::<Bcast>::new(self.broadcast.clone())
             .execute(session, malicious_batch_sizes)
             .await
+    }
+}
+
+pub struct FailingPreprocessing<Z>(std::marker::PhantomData<Z>);
+
+impl<Z> Default for FailingPreprocessing<Z> {
+    fn default() -> Self {
+        Self(std::marker::PhantomData)
+    }
+}
+
+impl<Z> ProtocolDescription for FailingPreprocessing<Z> {
+    fn protocol_desc(depth: usize) -> String {
+        format!("FailingPreprocessing<Z> with depth {depth}")
+    }
+}
+
+#[async_trait]
+impl<Z, S> Preprocessing<Z, S> for FailingPreprocessing<Z>
+where
+    Z: Ring,
+    S: BaseSessionHandles + 'static,
+{
+    async fn execute(
+        &mut self,
+        _session: &mut S,
+        _batch_sizes: BatchParams,
+    ) -> anyhow::Result<InMemoryBasePreprocessing<Z>> {
+        Err(anyhow::anyhow!("This is a failing preprocessing"))
     }
 }

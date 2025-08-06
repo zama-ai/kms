@@ -300,9 +300,15 @@ mod tests {
     use threshold_fhe::{
         execution::online::preprocessing::create_memory_factory,
         malicious_execution::online::preprocessing::orchestration::producer::{
-            malicious_bit_producer::DummySmallSessionBitProducer,
-            malicious_random_producer::DummySmallSessionRandomProducer,
-            malicious_triple_producer::DummySmallSessionTripleProducer,
+            malicious_bit_producer::{
+                DummySmallSessionBitProducer, FailingSmallSessionBitProducer,
+            },
+            malicious_random_producer::{
+                DummySmallSessionRandomProducer, FailingSmallSessionRandomProducer,
+            },
+            malicious_triple_producer::{
+                DummySmallSessionTripleProducer, FailingSmallSessionTripleProducer,
+            },
         },
     };
 
@@ -310,13 +316,23 @@ mod tests {
 
     struct DummyProducerFactory;
 
+    struct FailingProducerFactory;
+
     impl ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> for DummyProducerFactory {
         type TripleProducer = DummySmallSessionTripleProducer<ResiduePolyF4Z128>;
         type RandomProducer = DummySmallSessionRandomProducer<ResiduePolyF4Z128>;
         type BitProducer = DummySmallSessionBitProducer<ResiduePolyF4Z128>;
     }
 
-    impl RealPreprocessor<DummyProducerFactory> {
+    impl ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>
+        for FailingProducerFactory
+    {
+        type TripleProducer = FailingSmallSessionTripleProducer<ResiduePolyF4Z128>;
+        type RandomProducer = FailingSmallSessionRandomProducer<ResiduePolyF4Z128>;
+        type BitProducer = FailingSmallSessionBitProducer<ResiduePolyF4Z128>;
+    }
+
+    impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
         fn init_test(session_preparer: SessionPreparer) -> Self {
             let tracker = Arc::new(TaskTracker::new());
             let rate_limiter = RateLimiter::default();
@@ -364,6 +380,15 @@ mod tests {
                 .code(),
             tonic::Code::InvalidArgument
         );
+        assert_eq!(
+            prep.get_result(tonic::Request::new(kms_grpc::kms::v1::RequestId {
+                request_id: "invalid_id".to_string(),
+            }))
+            .await
+            .unwrap_err()
+            .code(),
+            tonic::Code::InvalidArgument
+        );
     }
 
     #[tokio::test]
@@ -390,22 +415,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn internal() {
+        let session_preparer = SessionPreparer::new_test_session(true);
+        let prep = RealPreprocessor::<FailingProducerFactory>::init_test(session_preparer);
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+        };
+
+        // even though we use a failing preprocessor, the request should be ok
+        prep.key_gen_preproc(tonic::Request::new(request))
+            .await
+            .unwrap();
+
+        // but the response should come back to be an error
+        assert_eq!(
+            prep.get_result(tonic::Request::new(req_id.into()))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Internal
+        );
+    }
+
+    #[tokio::test]
     async fn aborted() {
         // `Aborted` - If the request ID is not given, the values in the request are not valid, or an internal problem occured.
         let session_preparer = SessionPreparer::new_test_session(true);
         let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
 
-        let request = KeyGenPreprocRequest {
-            request_id: None, // Aborted because request_id is None
-            params: FheParameter::Test as i32,
-            keyset_config: None,
-        };
+        {
+            // Aborted because request_id is None
+            let request = KeyGenPreprocRequest {
+                request_id: None,
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::Aborted
+            );
+        }
+        {
+            // Aborted because params is invalid
+            let mut rng = AesRng::seed_from_u64(22);
+            let req_id = RequestId::new_random(&mut rng);
+            let request = KeyGenPreprocRequest {
+                request_id: Some(req_id.into()),
+                params: 10,
+                keyset_config: None,
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::Aborted
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn not_found() {
+        // `NotFound` - If the preprocessing does not exist for `request`.
+        let session_preparer = SessionPreparer::new_test_session(true);
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let req_id = RequestId::new_random(&mut rng);
+
+        // no need to wait because [get_result] is semi-blocking
         assert_eq!(
-            prep.key_gen_preproc(tonic::Request::new(request))
+            prep.get_result(tonic::Request::new(req_id.into()))
                 .await
                 .unwrap_err()
                 .code(),
-            tonic::Code::Aborted
+            tonic::Code::NotFound
         );
     }
 

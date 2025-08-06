@@ -990,17 +990,6 @@ impl OnlineDistributedKeyGen128 for SecureOnlineDistributedKeyGen128 {
         ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     {
         distributed_keygen_z128(session, preprocessing, params).await
-
-        // let (pub_key_set, priv_key_set) =
-        //     SecureOnlineDistributedKeyGen::keygen(session, preprocessing, params).await?;
-        // Ok((
-        //     pub_key_set.to_pubkeyset(params),
-        //     priv_key_set.finalize_keyset(
-        //         params
-        //             .get_params_basics_handle()
-        //             .to_classic_pbs_parameters(),
-        //     ),
-        // ))
     }
 }
 
