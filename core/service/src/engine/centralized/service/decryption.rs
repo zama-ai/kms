@@ -434,11 +434,7 @@ pub async fn get_public_decryption_result_impl<
     let kms_sig_payload = PublicDecryptionResponsePayload {
         plaintexts,
         verification_key: server_verf_key,
-        #[allow(deprecated)] // we have to allow to fill the struct
-        digest: vec![],
-        external_signature: Some(external_signature),
         request_id: Some(retrieved_req_id.into()),
-        extra_data,
     };
 
     let kms_sig_payload_vec = tonic_handle_potential_err(
@@ -454,5 +450,7 @@ pub async fn get_public_decryption_result_impl<
     Ok(Response::new(PublicDecryptionResponse {
         signature: sig.sig.to_vec(),
         payload: Some(kms_sig_payload),
+        external_signature: Some(external_signature),
+        extra_data,
     }))
 }

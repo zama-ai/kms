@@ -943,7 +943,7 @@ fn check_external_decryption_signature(
     for response in responses {
         let payload = response.payload.as_ref().unwrap();
         check_ext_pt_signature(
-            payload.external_signature(),
+            response.external_signature(),
             &payload.plaintexts,
             external_handles.to_owned(),
             domain.clone(),

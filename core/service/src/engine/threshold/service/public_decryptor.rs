@@ -651,11 +651,7 @@ impl<
         let sig_payload = PublicDecryptionResponsePayload {
             plaintexts,
             verification_key: server_verf_key,
-            #[allow(deprecated)] // we have to allow to fill the struct
-            digest: vec![],
-            external_signature: Some(external_signature),
             request_id: Some(retrieved_req_id.into()),
-            extra_data,
         };
 
         let sig_payload_vec = tonic_handle_potential_err(
@@ -671,6 +667,8 @@ impl<
         Ok(Response::new(PublicDecryptionResponse {
             signature: sig.sig.to_vec(),
             payload: Some(sig_payload),
+            external_signature: Some(external_signature),
+            extra_data,
         }))
     }
 }

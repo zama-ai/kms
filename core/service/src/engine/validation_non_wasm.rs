@@ -838,16 +838,12 @@ mod tests {
                 .into(),
         );
         let pivot = PublicDecryptionResponsePayload {
-            #[allow(deprecated)] // we have to allow to fill the struct
-            digest: vec![],
             verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
             plaintexts: vec![TypedPlaintext {
                 bytes: vec![1],
                 fhe_type: 1,
             }],
-            external_signature: None,
             request_id: request_id.clone(),
-                extra_data: vec![],
         };
 
         let pivot_buf = bc2wrap::serialize(&pivot).unwrap();
@@ -892,15 +888,11 @@ mod tests {
             );
             let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: None,
                 request_id: bad_request_id,
-                extra_data: vec![],
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
@@ -927,15 +919,11 @@ mod tests {
             );
             let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: None,
                 request_id: bad_request_id,
-                extra_data: vec![],
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
@@ -958,15 +946,11 @@ mod tests {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
             let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&vk).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: None,
                 request_id: request_id.clone(),
-                extra_data: vec![],
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
@@ -989,15 +973,11 @@ mod tests {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
             let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&vk).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![0], // normally this is vec![1]
                     fhe_type: 1,
                 }],
-                external_signature: None,
                 request_id,
-                extra_data: vec![],
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
 
@@ -1053,15 +1033,11 @@ mod tests {
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: Some(vec![]),
                 request_id: request_id.clone(),
-                extra_data: vec![],
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
@@ -1075,20 +1051,18 @@ mod tests {
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
+                external_signature: Some(vec![]),
+                extra_data: vec![],
             }
         };
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: Some(vec![]),
                 request_id: request_id.clone(),
-                extra_data: vec![],
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
@@ -1102,6 +1076,8 @@ mod tests {
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
+                external_signature: Some(vec![]),
+                extra_data: vec![],
             }
         };
 
@@ -1149,8 +1125,6 @@ mod tests {
             let bad_resp = {
                 let payload = PublicDecryptionResponsePayload {
                     verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                    #[allow(deprecated)] // we have to allow to fill the struct
-                    digest: vec![],
                     plaintexts: vec![
                         TypedPlaintext {
                             bytes: vec![1],
@@ -1161,9 +1135,7 @@ mod tests {
                             fhe_type: 1,
                         },
                     ],
-                    external_signature: Some(vec![]),
                     request_id,
-                extra_data: vec![],
                 };
                 let payload_buf = bc2wrap::serialize(&payload).unwrap();
                 let signature = &crate::cryptography::signcryption::internal_sign(
@@ -1177,6 +1149,8 @@ mod tests {
                 PublicDecryptionResponse {
                     signature: signature_buf,
                     payload: Some(payload),
+                    external_signature: Some(vec![]),
+                    extra_data: vec![],
                 }
             };
             let agg_resp = vec![resp0.clone(), bad_resp];
@@ -1237,15 +1211,11 @@ mod tests {
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: Some(vec![]),
                 request_id: request_id.clone(),
-                extra_data: vec![],
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
@@ -1259,20 +1229,18 @@ mod tests {
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
+                external_signature: Some(vec![]),
+                extra_data: vec![],
             }
         };
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: Some(vec![]),
                 request_id: request_id.clone(),
-                extra_data: vec![],
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
             let signature = &crate::cryptography::signcryption::internal_sign(
@@ -1286,6 +1254,8 @@ mod tests {
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
+                external_signature: Some(vec![]),
+                extra_data: vec![],
             }
         };
 
@@ -1454,16 +1424,14 @@ mod tests {
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: vec![],
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: plaintexts.clone(),
-                external_signature: Some(vec![]),
                 request_id: request_id.clone(),
-                extra_data: vec![],
             };
             PublicDecryptionResponse {
                 signature: vec![],
                 payload: Some(payload),
+                external_signature: Some(vec![]),
+                extra_data: vec![],
             }
         };
 
@@ -1513,16 +1481,14 @@ mod tests {
             );
             let payload = PublicDecryptionResponsePayload {
                 verification_key: vec![],
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: plaintexts.clone(),
-                external_signature: Some(vec![]),
                 request_id: bad_request_id,
-                extra_data: vec![],
             };
             PublicDecryptionResponse {
                 signature: vec![],
                 payload: Some(payload),
+                external_signature: Some(vec![]),
+                extra_data: vec![],
             }
         };
 
