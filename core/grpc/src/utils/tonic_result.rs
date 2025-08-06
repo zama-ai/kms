@@ -7,9 +7,9 @@
 mod non_wasm {
     use tracing;
 
-    /// Truncates a string to a maximum of 128 chars to limit error message size.
-    pub(crate) fn top_n_chars(mut s: String) -> String {
-        s.truncate(128);
+    /// Truncates a string to a maximum of 1024 chars to limit error message size.
+    pub(crate) fn top_1k_chars(mut s: String) -> String {
+        s.truncate(1024);
         s
     }
 
@@ -58,7 +58,10 @@ mod non_wasm {
     pub fn tonic_some_or_err<T>(input: Option<T>, error: String) -> TonicResult<T> {
         input.ok_or_else(|| {
             tracing::warn!(error);
-            BoxedStatus::from(tonic::Status::new(tonic::Code::Aborted, top_n_chars(error)))
+            BoxedStatus::from(tonic::Status::new(
+                tonic::Code::Aborted,
+                top_1k_chars(error),
+            ))
         })
     }
 
@@ -66,7 +69,10 @@ mod non_wasm {
     pub fn tonic_some_or_err_ref<T>(input: &Option<T>, error: String) -> TonicResult<&T> {
         input.as_ref().ok_or_else(|| {
             tracing::warn!(error);
-            BoxedStatus::from(tonic::Status::new(tonic::Code::Aborted, top_n_chars(error)))
+            BoxedStatus::from(tonic::Status::new(
+                tonic::Code::Aborted,
+                top_1k_chars(error),
+            ))
         })
     }
 
@@ -74,7 +80,10 @@ mod non_wasm {
     pub fn tonic_some_ref_or_err<T>(input: Option<&T>, error: String) -> TonicResult<&T> {
         input.ok_or_else(|| {
             tracing::warn!(error);
-            BoxedStatus::from(tonic::Status::new(tonic::Code::Aborted, top_n_chars(error)))
+            BoxedStatus::from(tonic::Status::new(
+                tonic::Code::Aborted,
+                top_1k_chars(error),
+            ))
         })
     }
 
@@ -88,7 +97,7 @@ mod non_wasm {
         resp.map_err(|e| {
             let msg = format!("{}: {}", error, e.to_string());
             tracing::warn!(msg);
-            BoxedStatus::from(tonic::Status::new(tonic::Code::Aborted, top_n_chars(msg)))
+            BoxedStatus::from(tonic::Status::new(tonic::Code::Aborted, top_1k_chars(msg)))
         })
     }
 }

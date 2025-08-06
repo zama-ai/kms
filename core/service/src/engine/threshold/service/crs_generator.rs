@@ -56,7 +56,7 @@ cfg_if::cfg_if! {
 cfg_if::cfg_if! {
     if #[cfg(test)] {
         use crate::vault::storage::ram;
-        use threshold_fhe::execution::zk::ceremony::InsecureCeremony;
+        use threshold_fhe::malicious_execution::zk::ceremony::InsecureCeremony;
     }
 }
 

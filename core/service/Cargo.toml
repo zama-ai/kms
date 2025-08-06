@@ -131,7 +131,7 @@ tracing-test = "=0.2.5"
 rstest = "=0.25.0"
 # The testing feature is only required for tests
 threshold-fhe = { workspace = true, default-features = false, features = [
-    "testing",
+    "testing", "malicious_strategies",
 ] }
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
 proptest = "=1.6.0"
@@ -145,8 +145,7 @@ default = ["non-wasm"]
 testing = []
 non-wasm = [
     "threshold-fhe/non-wasm",
-    # TODO we need a way to move "threshold-fhe/testing" to dev-dependencies
-    "threshold-fhe/testing",
+    "threshold-fhe/testing", # this is needed to build CLI for generating testing keys
     "kms-grpc/non-wasm",
     "dep:aws-config",
     "dep:aws-nitro-enclaves-nsm-api",
