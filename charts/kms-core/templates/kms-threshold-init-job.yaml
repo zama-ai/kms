@@ -11,7 +11,6 @@ metadata:
   annotations:
     "helm.sh/hook-weight": "0"
     "helm.sh/hook": post-install,post-upgrade
-    "helm.sh/hook-weight": "0"
   name: {{ $kmsInitName }}
 spec:
   template:
@@ -83,9 +82,10 @@ spec:
           command: [ "/bin/sh", "-c" ]
           args:
             - |
-              kmsInitCount="$(cat /mnt/kms-init-count)"
-              echo "${kmsInitCount} peers to initialize"
-              timeout 10 bin/kms-init --addresses
+              KMS_INIT_COUNT="$(cat /mnt/kms-init-count)"
+              KMS_INIT_TIMEOUT_SECONDS={{ .Values.kmsInit.timeoutSeconds}}
+              echo "${KMS_INIT_COUNT} peers to initialize"
+              timeout ${KMS_INIT_TIMEOUT_SECONDS} bin/kms-init --addresses
               {{- if .Values.kmsCore.thresholdMode.peersList -}}
               {{ range $peer := .Values.kmsCore.thresholdMode.peersList }} {{ printf "http://%s:%d" $peer.host (int $.Values.kmsCore.ports.client) }}{{ end }}
               {{- else -}}
