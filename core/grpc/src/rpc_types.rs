@@ -291,8 +291,7 @@ pub enum PrivDataType {
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
-    CustodianInfo,         // Custodian information for the custodian context
-    CustodianSetupMessage, // Backup custodian public keys (self-signed) TODO should be in private
+    CustodianInfo, // Custodian information for the custodian context
     // PrivDecKeyShare,       // Decryption key share for a public key system used for operator backup
     ContextInfo,
 }
@@ -306,7 +305,6 @@ impl fmt::Display for PrivDataType {
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
             PrivDataType::CustodianInfo => write!(f, "CustodianInfo"),
-            PrivDataType::CustodianSetupMessage => write!(f, "CustodianSetupMessage"),
             PrivDataType::ContextInfo => write!(f, "Context"),
             // PrivDataType::PrivDecKeyShare => write!(f, "PrivDecKeyShare"),
         }
@@ -325,6 +323,7 @@ impl Default for PrivDataType {
 pub enum BackupDataType {
     PrivDecKey(RequestId), // Backed up ciphertext, encrypted with the public key for the custodians
     PrivData(PrivDataType), // Backup of a piece of private data
+                           // todo should also be used for awskms case
 }
 impl fmt::Display for BackupDataType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

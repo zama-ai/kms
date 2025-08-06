@@ -329,7 +329,6 @@ async fn write_threshold_keys_meta_update() {
         let guard = meta_store.read().await;
         assert!(guard.exists(&req_id));
     }
-
     // writing the same thing should fail because the
     // meta store disallow updating a cell that is set
     crypto_storage

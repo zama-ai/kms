@@ -134,9 +134,9 @@ pub async fn make_keychain(
             let latest_context_id = match all_custodian_ids.iter().sorted().last() {
                 Some(latest_context_id) => latest_context_id,
                 None => {
-                    return Err(anyhow_error_and_log(format!(
+                    return Err(anyhow_error_and_log(
                         "No custodian setup available in the vault",
-                    )))
+                    ))
                 }
             };
             let custodian_context: InternalCustodianContext = read_versioned_at_request_id(

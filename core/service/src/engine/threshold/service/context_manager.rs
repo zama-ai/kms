@@ -183,16 +183,6 @@ where
             for cur_type in PrivDataType::iter() {
                 // We need to match on each type to manually specify the data type and to ensure that we do not forget anything in case the enum is extended
                 match cur_type {
-                    PrivDataType::CustodianSetupMessage => {
-                        backup_priv_data!(
-                            &mut rng,
-                            guarded_priv_storage,
-                            guarded_backup_vault,
-                            cur_type,
-                            InternalCustodianSetupMessage, // todo right type?
-                            backup_enc_key
-                        );
-                    }
                     PrivDataType::SigningKey => {
                         backup_priv_data!(
                             &mut rng,

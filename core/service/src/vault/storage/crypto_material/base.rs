@@ -10,16 +10,16 @@ use crate::{
     util::meta_store::MetaStore,
     vault::{
         storage::{
-            delete_at_request_id, delete_pk_at_request_id, read_all_data_versioned,
-            store_context_at_request_id, store_pk_at_request_id, store_versioned_at_request_id,
-            Storage,
+            delete_all_at_request_id, delete_at_request_id, delete_pk_at_request_id,
+            read_all_data_versioned, store_context_at_request_id, store_pk_at_request_id,
+            store_versioned_at_request_id, Storage,
         },
         Vault,
     },
 };
 use kms_grpc::{
     rpc_types::{
-        PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
+        BackupDataType, PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
         WrappedPublicKeyOwned,
     },
     RequestId,
@@ -82,6 +82,7 @@ where
             backup_vault,
             pk_cache: pk_cache.unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new()))),
             // current_backup_key,
+            // todo add atomic token to take care of locks
         }
     }
 
@@ -442,6 +443,8 @@ where
     // Ensure_xxx_existence Methods
     // =========================
 
+    // TODO these methods should either be in threshold.rs or the similar methods there should be moved here
+
     /// Tries to delete all the types of key material related to a specific [RequestId].
     pub async fn purge_key_material(
         &self,
@@ -453,52 +456,50 @@ where
     ) {
         let f1 = async {
             let mut pub_storage = self.public_storage.lock().await;
-            let result = delete_pk_at_request_id(&mut (*pub_storage), req_id).await;
-            if let Err(e) = &result {
+            let pk_result = delete_pk_at_request_id(&mut (*pub_storage), req_id).await;
+            if let Err(e) = &pk_result {
                 tracing::warn!("Failed to delete public key for request {}: {}", req_id, e);
             }
-            result.is_err()
-        };
-        let f2 = async {
-            let mut pub_storage = self.public_storage.lock().await;
-            let result = delete_at_request_id(
+            let server_key_result = delete_at_request_id(
                 &mut (*pub_storage),
                 req_id,
                 &PubDataType::ServerKey.to_string(),
             )
             .await;
-            if let Err(e) = &result {
+            if let Err(e) = &server_key_result {
                 tracing::warn!("Failed to delete server key for request {}: {}", req_id, e);
             }
-            result.is_err()
+            pk_result.is_err() || server_key_result.is_err()
         };
-        let f3 = async {
+        let f2 = async {
             let mut priv_storage = self.private_storage.lock().await;
-            // can't map() because async closures aren't stable in Rust
-            let back_vault = match self.backup_vault {
-                Some(ref x) => Some(x.lock().await),
-                None => None,
-            };
-            let del_result_1 = delete_at_request_id(
+            let result = delete_at_request_id(
                 &mut (*priv_storage),
                 req_id,
-                &PrivDataType::FheKeyInfo.to_string(),
+                &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
             )
             .await;
-            if let Err(e) = &del_result_1 {
+            if let Err(e) = &result {
                 tracing::warn!(
                     "Failed to delete FHE key info from private storage for request {}: {}",
                     req_id,
                     e
                 );
             }
-            let del_err_1 = del_result_1.is_err();
-            let del_err_2 = match back_vault {
+            result.is_err()
+        };
+        let f3 = async {
+            let back_vault = match self.backup_vault {
+                Some(ref x) => Some(x.lock().await),
+                None => None,
+            };
+            // TODO should backups also be purged here?
+            match back_vault {
                 Some(mut x) => {
                     let result = delete_at_request_id(
                         &mut (*x),
                         req_id,
-                        &PrivDataType::FheKeyInfo.to_string(),
+                        &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
                     )
                     .await;
                     if let Err(e) = &result {
@@ -511,8 +512,7 @@ where
                     result.is_err()
                 }
                 None => false,
-            };
-            del_err_1 || del_err_2
+            }
         };
         let (r1, r2, r3) = tokio::join!(f1, f2, f3);
         if r1 || r2 || r3 {
@@ -554,11 +554,6 @@ where
 
         let f1 = async {
             let mut priv_storage = self.private_storage.lock().await;
-            let back_vault = match self.backup_vault {
-                Some(ref vault) => Some(vault.lock().await),
-                None => None,
-            };
-
             let result = store_versioned_at_request_id(
                 &mut (*priv_storage),
                 req_id,
@@ -573,30 +568,7 @@ where
                     e
                 );
             }
-            let priv_storage_ok = result.is_ok();
-
-            let backup_is_ok = match back_vault {
-                Some(mut vault) => {
-                    let backup_result = store_versioned_at_request_id(
-                        &mut (*vault),
-                        req_id,
-                        &crs_info,
-                        &PrivDataType::CrsInfo.to_string(),
-                    )
-                    .await;
-
-                    if let Err(e) = &backup_result {
-                        tracing::error!(
-                        "Failed to store threshold CRS info to backup storage for request {}: {}",
-                        req_id,
-                        e
-                    );
-                    }
-                    backup_result.is_ok()
-                }
-                None => true,
-            };
-            priv_storage_ok && backup_is_ok
+            result.is_ok()
         };
         let f2 = async {
             let mut pub_storage = self.public_storage.lock().await;
@@ -616,11 +588,34 @@ where
             }
             result.is_ok()
         };
+        let f3 = async {
+            match self.backup_vault {
+                Some(ref back_vault) => {
+                    let mut guarded_backup_vault = back_vault.lock().await;
+                    let backup_result = store_versioned_at_request_id(
+                        &mut (*guarded_backup_vault),
+                        req_id,
+                        &crs_info,
+                        &BackupDataType::PrivData(PrivDataType::CrsInfo).to_string(),
+                    )
+                    .await;
 
-        let (r1, r2) = tokio::join!(f1, f2);
+                    if let Err(e) = &backup_result {
+                        tracing::error!("Failed to store encrypted crs info to backup storage for request {req_id}: {e}");
+                    }
+                    backup_result.is_ok()
+                }
+                None => {
+                    tracing::warn!("No backup vault configured. Skipping backup of CRS material for request {req_id}");
+                    true
+                }
+            }
+        };
+        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
 
         if r1
             && r2
+            && r3
             && guarded_meta_store
                 .update(req_id, Ok(crs_info))
                 .inspect_err(|e| {
@@ -659,11 +654,6 @@ where
         };
         let f2 = async {
             let mut priv_storage = self.private_storage.lock().await;
-            let back_vault = match self.backup_vault {
-                Some(ref vault) => Some(vault.lock().await),
-                None => None,
-            };
-
             let priv_result = delete_at_request_id(
                 &mut (*priv_storage),
                 req_id,
@@ -677,12 +667,21 @@ where
                     e
                 );
             }
-            let vault_result_is_err = match back_vault {
+
+            priv_result.is_err()
+        };
+        let f3 = async {
+            let back_vault = match self.backup_vault {
+                Some(ref vault) => Some(vault.lock().await),
+                None => None,
+            };
+            // TODO should we indeed delete backup material here?
+            match back_vault {
                 Some(mut back_vault) => {
                     let vault_result = delete_at_request_id(
                         &mut (*back_vault),
                         req_id,
-                        &PrivDataType::CrsInfo.to_string(),
+                        &BackupDataType::PrivData(PrivDataType::CrsInfo).to_string(),
                     )
                     .await;
                     if let Err(e) = &vault_result {
@@ -695,11 +694,10 @@ where
                     vault_result.is_err()
                 }
                 None => false, // No backup vault, so no error
-            };
-            priv_result.is_err() || vault_result_is_err
+            }
         };
-        let (r1, r2) = tokio::join!(f1, f2);
-        if r1 || r2 {
+        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
+        if r1 || r2 || r3 {
             tracing::error!("Failed to delete crs material for request {}", req_id);
         } else {
             tracing::info!("Deleted all crs material for request {}", req_id);
@@ -752,42 +750,21 @@ where
         };
         let pub_purge = async {
             let mut pub_storage = self.public_storage.lock().await;
-            let result = delete_at_request_id(
+            let request_res = delete_at_request_id(
                 &mut (*pub_storage),
                 req_id,
                 &PubDataType::RecoveryRequest.to_string(),
             )
             .await;
-            if let Err(e) = &result {
+            if let Err(e) = &request_res {
                 tracing::warn!(
                     "Failed to delete public backup key material for request {}: {}",
                     req_id,
                     e
                 );
             }
-            result.is_err()
-        };
-        // TODO should delete commitments in pub and ciphertexts in vault
-        let vault_purge = async {
-            let mut vault_storage = match &self.backup_vault {
-                Some(vault_storage) => vault_storage.lock().await,
-                None => return false, // No backup vault to purge, so no problem
-            };
-            let recovery_res = delete_at_request_id(
-                &mut (*vault_storage),
-                req_id,
-                &PubDataType::RecoveryRequest.to_string(),
-            )
-            .await;
-            if let Err(e) = &recovery_res {
-                tracing::warn!(
-                    "Failed to delete recovery request material for request {}: {}",
-                    req_id,
-                    e
-                );
-            }
             let commit_res = delete_at_request_id(
-                &mut (*vault_storage),
+                &mut (*pub_storage),
                 req_id,
                 &PubDataType::Commitments.to_string(),
             )
@@ -799,7 +776,15 @@ where
                     e
                 );
             }
-            recovery_res.is_err() || commit_res.is_err()
+            request_res.is_err() && commit_res.is_err()
+        };
+        let vault_purge = async {
+            let mut vault_storage = match &self.backup_vault {
+                Some(vault_storage) => vault_storage.lock().await,
+                None => return false, // No backup vault to purge, so no problem
+            };
+            delete_all_at_request_id(&mut (*vault_storage), req_id).await;
+            true
         };
         let (priv_purge_res, pub_purge_res, vault_purge_res) =
             tokio::join!(priv_purge, pub_purge, vault_purge);
