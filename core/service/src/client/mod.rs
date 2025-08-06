@@ -7149,8 +7149,8 @@ pub(crate) mod tests {
         Option<NoiseSquashingCompressionPrivateKey>,
     ) {
         use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
-        use threshold_fhe::execution::{
-            endpoints::keygen::GlweSecretKeyShareEnum, tfhe_internals::utils::reconstruct_bit_vec,
+        use threshold_fhe::execution::tfhe_internals::{
+            private_keysets::GlweSecretKeyShareEnum, utils::reconstruct_bit_vec,
         };
 
         let param_handle = param.get_params_basics_handle();

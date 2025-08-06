@@ -27,14 +27,18 @@ use threshold_fhe::{
         endpoints::keygen::{
             distributed_decompression_keygen_z128,
             distributed_keygen_from_optional_compression_sk_z128, distributed_keygen_z128,
-            distributed_sns_compression_keygen_z128, CompressionPrivateKeySharesEnum, FhePubKeySet,
-            GlweSecretKeyShareEnum, PrivateKeySet,
+            distributed_sns_compression_keygen_z128,
         },
         keyset_config as ddec_keyset_config,
         online::preprocessing::DKGPreprocessing,
         runtime::session::BaseSession,
         tfhe_internals::{
-            compression_decompression_key::SnsCompressionPrivateKeyShares, parameters::DKGParams,
+            compression_decompression_key::SnsCompressionPrivateKeyShares,
+            parameters::DKGParams,
+            private_keysets::{
+                CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet,
+            },
+            public_keysets::FhePubKeySet,
         },
     },
     networking::NetworkMode,

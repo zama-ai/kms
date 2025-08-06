@@ -16,9 +16,9 @@ use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
     execution::{
-        endpoints::keygen::{FhePubKeySet, PrivateKeySet},
         online::preprocessing::{create_memory_factory, create_redis_factory, DKGPreprocessing},
         runtime::party::{Role, RoleAssignment},
+        tfhe_internals::{private_keysets::PrivateKeySet, public_keysets::FhePubKeySet},
         zk::ceremony::SecureCeremony,
     },
     networking::{

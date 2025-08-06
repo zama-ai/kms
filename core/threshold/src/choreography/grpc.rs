@@ -36,10 +36,7 @@ use crate::execution::endpoints::decryption::{
 use crate::execution::endpoints::decryption::{
     LargeOfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
 };
-use crate::execution::endpoints::keygen::FhePubKeySet;
-use crate::execution::endpoints::keygen::{
-    distributed_keygen_z128, distributed_keygen_z64, PrivateKeySet,
-};
+use crate::execution::endpoints::keygen::{distributed_keygen_z128, distributed_keygen_z64};
 use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::large_execution::offline::SecureLargePreprocessing;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
@@ -62,6 +59,8 @@ use crate::execution::small_execution::offline::{Preprocessing, SecureSmallPrepr
 use crate::execution::small_execution::prf::PRSSConversions;
 use crate::execution::small_execution::prss::{DerivePRSSState, PRSSPrimitives};
 use crate::execution::tfhe_internals::parameters::{AugmentedCiphertextParameters, DKGParams};
+use crate::execution::tfhe_internals::private_keysets::PrivateKeySet;
+use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::execution::zk::ceremony::{Ceremony, InternalPublicParameter, SecureCeremony};
 use crate::malicious_execution::runtime::malicious_session::GenericSmallSessionStruct;
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
