@@ -5,16 +5,17 @@ use crate::{
         operator::BackupCommitments,
     },
     conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain as KeychainConf, SecretSharingKeychain},
-    cryptography::{
-        attestation::SecurityModuleProxy,
-        backup_pke::{BackupCiphertext, BackupPublicKey},
+    cryptography::{attestation::SecurityModuleProxy, backup_pke::BackupCiphertext},
+    vault::{
+        storage::{read_versioned_at_request_id, StorageReader},
+        Vault,
     },
-    vault::{storage::read_versioned_at_request_id, Vault},
 };
 use aes_gcm_siv::{AeadInPlace, Aes256GcmSiv, KeyInit, Nonce};
 use aes_prng::AesRng;
 use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
+use itertools::Itertools;
 use kms_grpc::{rpc_types::PrivDataType, RequestId};
 use rand::SeedableRng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -96,7 +97,7 @@ pub async fn make_keychain(
     security_module: Option<SecurityModuleProxy>,
     private_storage: Option<&Vault>,
 ) -> anyhow::Result<KeychainProxy> {
-    let rng = AesRng::from_entropy(); // todo parameterize
+    let rng = AesRng::from_entropy();
     let keychain = match keychain_conf {
         KeychainConf::AwsKms(AwsKmsKeychain {
             root_key_id,
@@ -119,38 +120,34 @@ pub async fn make_keychain(
                 )?),
             }
         }
-        KeychainConf::SecretSharing(SecretSharingKeychain { context_id }) => {
+        // Note that it is only possible to use the secret share keychain if there is already a context present.
+        // This presents a bootstrapping issue hence the system needs to initially NOT use the secret share keychain but once a custodian context is set up,
+        // it can switch to it by changing the configuration file and rebooting.
+        KeychainConf::SecretSharing(SecretSharingKeychain {}) => {
             // If secret share backup is used with the centralized KMS, assume);
             let private_vault = private_storage
                 .expect("Public vault must be provided to load custodian setup messages");
-            // let all_custodian_ids = private_vault
-            //     .all_data_ids(&PrivDataType::CustodianInfo.to_string())
-            //     .await?;
+            let all_custodian_ids = private_vault
+                .all_data_ids(&PrivDataType::CustodianInfo.to_string())
+                .await?;
             // Get the latest context ID which should be the most recent one
-            // TODO we probably dont want to do that
-            // let latest_context_id = match all_custodian_ids.iter().sorted().last() {
-            //     Some(latest_context_id) => latest_context_id,
-            //     None => {
-            //         return Err(anyhow_error_and_log(format!(
-            //             "No custodian setup available in the vault for role {my_role:?}",
-            //         )))
-            //     }
-            // };
+            let latest_context_id = match all_custodian_ids.iter().sorted().last() {
+                Some(latest_context_id) => latest_context_id,
+                None => {
+                    return Err(anyhow_error_and_log(format!(
+                        "No custodian setup available in the vault",
+                    )))
+                }
+            };
             let custodian_context: InternalCustodianContext = read_versioned_at_request_id(
                 private_vault,
-                context_id,
+                latest_context_id,
                 &PrivDataType::CustodianInfo.to_string(),
-            )
-            .await?;
-            let backup_enc_key: BackupPublicKey = read_versioned_at_request_id(
-                private_vault,
-                context_id,
-                &PrivDataType::PubBackupKey.to_string(),
             )
             .await?;
             KeychainProxy::from(secretsharing::SecretShareKeychain::new(
                 rng,
-                backup_enc_key,
+                custodian_context.backup_enc_key.clone(),
                 custodian_context.custodian_nodes.len(),
             ))
         }

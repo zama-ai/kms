@@ -126,6 +126,7 @@ pub struct InternalCustodianContext {
     pub context_id: RequestId,
     pub previous_context_id: Option<RequestId>,
     pub custodian_nodes: HashMap<Role, InternalCustodianSetupMessage>,
+    pub backup_enc_key: BackupPublicKey,
 }
 
 impl Named for InternalCustodianContext {

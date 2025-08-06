@@ -728,7 +728,6 @@ where
         }
     }
 
-    //todo is this still needed?
     pub async fn purge_backup_material(
         &self,
         req_id: &RequestId,
@@ -739,12 +738,12 @@ where
             let result = delete_at_request_id(
                 &mut (*priv_storage),
                 req_id,
-                &PrivDataType::PubBackupKey.to_string(),
+                &PrivDataType::CustodianInfo.to_string(),
             )
             .await;
             if let Err(e) = &result {
                 tracing::warn!(
-                    "Failed to delete private backup key material for request {}: {}",
+                    "Failed to delete custodian info for request {}: {}",
                     req_id,
                     e
                 );

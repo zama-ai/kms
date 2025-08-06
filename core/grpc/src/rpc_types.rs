@@ -294,7 +294,6 @@ pub enum PrivDataType {
     CustodianInfo,         // Custodian information for the custodian context
     CustodianSetupMessage, // Backup custodian public keys (self-signed) TODO should be in private
     // PrivDecKeyShare,       // Decryption key share for a public key system used for operator backup
-    PubBackupKey, // Public key for encrypting backup data, does not need to be private, but must be authentic
     ContextInfo,
 }
 
@@ -310,7 +309,6 @@ impl fmt::Display for PrivDataType {
             PrivDataType::CustodianSetupMessage => write!(f, "CustodianSetupMessage"),
             PrivDataType::ContextInfo => write!(f, "Context"),
             // PrivDataType::PrivDecKeyShare => write!(f, "PrivDecKeyShare"),
-            PrivDataType::PubBackupKey => write!(f, "PubBackupKey"),
         }
     }
 }

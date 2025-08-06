@@ -362,20 +362,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         let mut public_storage_guard = self.inner.public_storage.lock().await;
 
         let priv_storage_future = async {
-            let pub_key_store_res = store_versioned_at_request_id(
-                &mut (*private_storage_guard),
-                req_id,
-                &pub_key,
-                &PrivDataType::PubBackupKey.to_string(),
-            )
-            .await;
-            if let Err(e) = &pub_key_store_res {
-                tracing::error!(
-                    "Failed to store public backup encryption key to private storage for request {}: {}",
-                    req_id,
-                    e
-                );
-            }
             let custodian_context_store_res = store_versioned_at_request_id(
                 &mut (*private_storage_guard),
                 req_id,
@@ -390,7 +376,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     e
                 );
             }
-            pub_key_store_res.is_ok() && custodian_context_store_res.is_ok()
+            custodian_context_store_res.is_ok()
         };
         let pub_storage_future = async {
             let recovery_store_result = store_versioned_at_request_id(

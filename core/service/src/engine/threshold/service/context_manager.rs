@@ -1,7 +1,7 @@
 use crate::backup::custodian::{InternalCustodianContext, InternalCustodianSetupMessage};
 use crate::backup::operator::{BackupCommitments, Operator, RecoveryRequest};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::backup_pke::{self, BackupCiphertext, BackupPublicKey};
+use crate::cryptography::backup_pke::{self, BackupCiphertext};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::{
@@ -152,23 +152,24 @@ where
                 internal_msg,
             );
         }
+        let mut rng = &mut self.base_kms.new_rng().await;
+        // Generate asymmetric keys for the operator to use to encrypt the backup
+        let (backup_enc_key, backup_priv_key) = backup_pke::keygen(&mut rng)?;
         let custodian_context = InternalCustodianContext {
             context_id,
             threshold: context.threshold,
             previous_context_id: context.previous_context_id.map(Into::into),
             custodian_nodes: node_map,
+            backup_enc_key: backup_enc_key.clone(),
         };
-        let mut rng = &mut self.base_kms.new_rng().await;
-        // Generate asymmetric keys for the operator to use to encrypt the backup
-        let (pub_enc_key, priv_key) = backup_pke::keygen(&mut rng)?;
         let (recovery_request, commitments) = self
-            .gen_backup_keys(
+            .gen_recovery_request(
                 rng,
                 &custodian_context,
                 self.my_role,
                 context_id,
-                pub_enc_key.clone(),
-                priv_key,
+                backup_enc_key.clone(),
+                backup_priv_key,
             )
             .await?;
 
@@ -189,7 +190,7 @@ where
                             guarded_backup_vault,
                             cur_type,
                             InternalCustodianSetupMessage, // todo right type?
-                            pub_enc_key
+                            backup_enc_key
                         );
                     }
                     PrivDataType::SigningKey => {
@@ -199,7 +200,7 @@ where
                             guarded_backup_vault,
                             cur_type,
                             PrivateSigKey,
-                            pub_enc_key
+                            backup_enc_key
                         );
                     }
                     PrivDataType::FheKeyInfo => {
@@ -209,7 +210,7 @@ where
                             guarded_backup_vault,
                             cur_type,
                             ThresholdFheKeys,
-                            pub_enc_key
+                            backup_enc_key
                         );
                     }
                     PrivDataType::CrsInfo => {
@@ -219,7 +220,7 @@ where
                             guarded_backup_vault,
                             cur_type,
                             SignedPubDataHandleInternal,
-                            pub_enc_key
+                            backup_enc_key
                         );
                     }
                     PrivDataType::FhePrivateKey => {
@@ -229,7 +230,7 @@ where
                             guarded_backup_vault,
                             cur_type,
                             ClientKey,
-                            pub_enc_key
+                            backup_enc_key
                         );
                     }
                     PrivDataType::PrssSetup => {
@@ -242,16 +243,6 @@ where
                             "CustodianInfo type is not backed up, please implement it if needed"
                         );
                         continue;
-                    }
-                    PrivDataType::PubBackupKey => {
-                        backup_priv_data!(
-                            &mut rng,
-                            guarded_priv_storage,
-                            guarded_backup_vault,
-                            cur_type,
-                            BackupPublicKey,
-                            pub_enc_key
-                        );
                     }
                     PrivDataType::ContextInfo => {
                         tracing::warn!("Types for context are not finalized yet, skipping backup");
@@ -273,7 +264,7 @@ where
         self.crypto_storage
             .write_backup_keys_with_meta_store(
                 &context_id,
-                pub_enc_key,
+                backup_enc_key,
                 recovery_request,
                 custodian_context,
                 commitments,
@@ -290,7 +281,7 @@ where
     }
 
     /// Generate a recovery request to the backup vault.
-    async fn gen_backup_keys(
+    async fn gen_recovery_request(
         &self,
         rng: &mut AesRng,
         custodian_context: &InternalCustodianContext,
