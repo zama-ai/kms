@@ -26,15 +26,13 @@ use threshold_fhe::{
         structure_traits::{ErrorCorrect, Invert, Ring, Solve},
     },
     execution::{
-        endpoints::{
-            decryption::{
-                decrypt_using_noiseflooding, secure_decrypt_using_bitdec, DecryptionMode,
-                LowLevelCiphertext, OfflineNoiseFloodSession, SecureOnlineNoiseFloodDecryption,
-                SmallOfflineNoiseFloodSession,
-            },
-            keygen::PrivateKeySet,
+        endpoints::decryption::{
+            decrypt_using_noiseflooding, secure_decrypt_using_bitdec, DecryptionMode,
+            LowLevelCiphertext, OfflineNoiseFloodSession, SecureOnlineNoiseFloodDecryption,
+            SmallOfflineNoiseFloodSession,
         },
         runtime::session::SmallSession,
+        tfhe_internals::private_keysets::PrivateKeySet,
     },
     session_id::SessionId,
 };

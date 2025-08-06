@@ -28,15 +28,13 @@ use threshold_fhe::{
         structure_traits::{ErrorCorrect, Invert, Ring, Solve},
     },
     execution::{
-        endpoints::{
-            decryption::{
-                partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec,
-                DecryptionMode, LowLevelCiphertext, OfflineNoiseFloodSession,
-                SmallOfflineNoiseFloodSession,
-            },
-            keygen::PrivateKeySet,
+        endpoints::decryption::{
+            partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec,
+            DecryptionMode, LowLevelCiphertext, OfflineNoiseFloodSession,
+            SmallOfflineNoiseFloodSession,
         },
         runtime::session::SmallSession,
+        tfhe_internals::private_keysets::PrivateKeySet,
     },
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};

@@ -2,17 +2,23 @@ use std::slice::IterMut;
 
 use itertools::Itertools;
 use tfhe::{
-    core_crypto::{commons::parameters::LweSize, entities::LweKeyswitchKeyOwned},
+    core_crypto::{
+        commons::{math::random::CompressionSeed, parameters::LweSize},
+        entities::LweKeyswitchKeyOwned,
+        prelude::SeededLweKeyswitchKeyOwned,
+    },
     shortint::{
         parameters::{DecompositionBaseLog, DecompositionLevelCount, LweDimension},
         CiphertextModulus,
     },
+    Seed,
 };
 
 use crate::{
     algebra::structure_traits::{BaseRing, ErrorCorrect},
     execution::{
         online::triple::open_list, runtime::session::BaseSessionHandles, sharing::share::Share,
+        tfhe_internals::lwe_ciphertext::opened_lwe_bodies_to_seeded_tfhers_u64,
     },
 };
 
@@ -67,6 +73,39 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweKeySwitchKeyShare<Z, EXTENSI
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
+    pub async fn open_to_tfhers_seeded_type<S: BaseSessionHandles>(
+        self,
+        session: &S,
+    ) -> anyhow::Result<SeededLweKeyswitchKeyOwned<u64>> {
+        let my_role = session.my_role();
+        let input_key_lwe_dimension = LweDimension(self.data.len());
+
+        let shared_bodies: Vec<_> = self
+            .data
+            .iter()
+            .flat_map(|v1| v1.iter().map(|v2| Share::new(my_role, v2.body)))
+            .collect();
+        let bodies: Vec<Z> = open_list(&shared_bodies, session)
+            .await?
+            .iter()
+            .map(|v| v.to_scalar())
+            .try_collect()?;
+
+        let mut ksk = SeededLweKeyswitchKeyOwned::new(
+            0_u64,
+            self.decomp_base_log,
+            self.decomp_level_count,
+            input_key_lwe_dimension,
+            self.output_lwe_size.to_lwe_dimension(),
+            CompressionSeed::from(Seed(0)), // NOTE: This is a dummy seed, because XOF compressed keys use a global seed and not a per-key seed
+            CiphertextModulus::new_native(),
+        );
+
+        let mut lwe_ciphertext_list = ksk.as_mut_seeded_lwe_ciphertext_list();
+        opened_lwe_bodies_to_seeded_tfhers_u64(bodies, &mut lwe_ciphertext_list)?;
+        Ok(ksk)
+    }
+
     pub async fn open_to_tfhers_type<S: BaseSessionHandles>(
         self,
         session: &S,

@@ -6,11 +6,15 @@ use tfhe::{
     boolean::prelude::{
         DecompositionBaseLog, DecompositionLevelCount, GlweDimension, LweDimension, PolynomialSize,
     },
-    core_crypto::prelude::{
-        CiphertextModulus, ContiguousEntityContainerMut, GlweSize, LwePackingKeyswitchKeyOwned,
-        UnsignedInteger,
+    core_crypto::{
+        commons::math::random::CompressionSeed,
+        prelude::{
+            CiphertextModulus, ContiguousEntityContainerMut, GlweSize, LwePackingKeyswitchKeyOwned,
+            SeededLwePackingKeyswitchKeyOwned, UnsignedInteger,
+        },
     },
     prelude::CastFrom,
+    Seed,
 };
 
 use crate::{
@@ -88,6 +92,71 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LwePackingKeyswitchKeyShares<Z,
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
+    pub async fn open_to_tfhers_seeded_type<
+        Scalar: Zero + UnsignedInteger + CastFrom<u8>,
+        S: BaseSessionHandles,
+    >(
+        self,
+        session: &S,
+    ) -> anyhow::Result<SeededLwePackingKeyswitchKeyOwned<Scalar>> {
+        let my_role = session.my_role();
+        let input_key_lwe_dimension = LweDimension(self.data.len());
+        let output_key_glwe_dimension = self.output_glwe_size.to_glwe_dimension();
+        let output_key_polynomial_size = self.output_polynomial_size();
+
+        let shared_bodies: Vec<_> = self
+            .data
+            .iter()
+            .flat_map(|v1| {
+                v1.iter()
+                    .flat_map(|v2| v2.body.iter().map(|value| Share::new(my_role, *value)))
+            })
+            .collect();
+
+        let bodies: Vec<Z> = open_list(&shared_bodies, session)
+            .await?
+            .iter()
+            .map(|v| v.to_scalar())
+            .try_collect()?;
+
+        let mut ksk = SeededLwePackingKeyswitchKeyOwned::new(
+            Scalar::zero(),
+            self.decomp_base_log,
+            self.decomp_level_count,
+            input_key_lwe_dimension,
+            output_key_glwe_dimension,
+            output_key_polynomial_size,
+            CompressionSeed::from(Seed(0)), // NOTE: This is a dummy seed, because XOF compressed keys use a global seed and not a per-key seed
+            CiphertextModulus::new_native(),
+        );
+
+        let mut glwe_ciphertext_list = ksk.as_mut_seeded_lwe_ciphertext_list();
+        let mut bodies_iterator = bodies.into_iter();
+
+        for mut glwe_ciphertext in glwe_ciphertext_list.iter_mut() {
+            let mut body = glwe_ciphertext.get_mut_body();
+
+            let underlying_container = body.as_mut();
+            for c_b in underlying_container.iter_mut() {
+                let body_data = {
+                    let tmp = if let Some(body) = bodies_iterator.next() {
+                        body.to_byte_vec()
+                    } else {
+                        return Err(anyhow_error_and_log(
+                            "Not enough bodies to cast the compression key to tfhe-rs type",
+                        ));
+                    };
+                    tmp.iter().rev().fold(Scalar::zero(), |acc, byte| {
+                        acc.wrapping_shl(8).wrapping_add(Scalar::cast_from(*byte))
+                    })
+                };
+                *(c_b) = body_data;
+            }
+        }
+
+        Ok(ksk)
+    }
+
     pub async fn open_to_tfhers_type<
         Scalar: Zero + UnsignedInteger + CastFrom<u8>,
         S: BaseSessionHandles,

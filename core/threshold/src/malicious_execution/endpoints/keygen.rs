@@ -4,10 +4,13 @@ use rand::SeedableRng;
 use crate::{
     algebra::{base_ring::Z128, galois_rings::common::ResiduePoly, structure_traits::ErrorCorrect},
     execution::{
-        endpoints::keygen::{FhePubKeySet, OnlineDistributedKeyGen, PrivateKeySet},
+        endpoints::keygen::OnlineDistributedKeyGen,
         online::preprocessing::DKGPreprocessing,
         runtime::session::BaseSessionHandles,
-        tfhe_internals::{parameters::DKGParams, test_feature::gen_key_set},
+        tfhe_internals::{
+            parameters::DKGParams, private_keysets::PrivateKeySet, public_keysets::FhePubKeySet,
+            test_feature::gen_key_set,
+        },
     },
 };
 

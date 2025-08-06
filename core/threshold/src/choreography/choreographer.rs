@@ -8,9 +8,9 @@ use crate::choreography::grpc::gen::{
 use crate::choreography::requests::CrsGenParams;
 use crate::conf::choreo::ChoreoConf;
 use crate::execution::endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext};
-use crate::execution::endpoints::keygen::FhePubKeySet;
 use crate::execution::runtime::party::RoleAssignment;
 use crate::execution::tfhe_internals::parameters::DkgParamsAvailable;
+use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::execution::zk::ceremony::compute_witness_dim;
 use crate::{
     algebra::base_ring::Z64,
