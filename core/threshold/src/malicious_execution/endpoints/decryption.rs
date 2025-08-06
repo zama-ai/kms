@@ -5,14 +5,12 @@ use crate::{
         structure_traits::{ErrorCorrect, Invert, Solve},
     },
     execution::{
-        endpoints::{
-            decryption::{
-                OnlineNoiseFloodDecryption, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
-            },
-            keygen::PrivateKeySet,
+        endpoints::decryption::{
+            OnlineNoiseFloodDecryption, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
         },
         online::preprocessing::NoiseFloodPreprocessing,
         runtime::session::BaseSessionHandles,
+        tfhe_internals::private_keysets::PrivateKeySet,
     },
 };
 

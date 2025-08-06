@@ -54,12 +54,12 @@ use tfhe::{
 };
 use tfhe::{FheTypes, ServerKey};
 #[cfg(feature = "non-wasm")]
-use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
-#[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::keyset_config::KeySetCompressionConfig;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+#[cfg(feature = "non-wasm")]
+use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
 use threshold_fhe::hashing::DomainSep;
@@ -1101,7 +1101,10 @@ pub(crate) mod tests {
     }
 
     pub(crate) async fn new_pub_ram_storage_from_existing_keys(
-        keys: &HashMap<RequestId, threshold_fhe::execution::endpoints::keygen::FhePubKeySet>,
+        keys: &HashMap<
+            RequestId,
+            threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet,
+        >,
     ) -> anyhow::Result<RamStorage> {
         let mut ram_storage = RamStorage::new();
         for (cur_req_id, cur_keys) in keys {
