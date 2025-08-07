@@ -22,6 +22,21 @@ struct InnerBackupPrivateKey {
     decapsulation_key: <ml_kem::kem::Kem<MlKemParams> as ml_kem::KemCore>::DecapsulationKey,
 }
 
+impl Drop for InnerBackupPrivateKey {
+    fn drop(&mut self) {
+        // Directly zeroize the underlying key bytes without creating copies
+        // This is more secure as it avoids temporary allocations of sensitive data
+        let key_bytes_ptr = self.decapsulation_key.as_bytes().as_ptr() as *mut u8;
+        let key_len = self.decapsulation_key.as_bytes().len();
+
+        // SAFETY: We're zeroizing the memory that belongs to this struct
+        // The pointer is valid and the length is correct from as_bytes()
+        unsafe {
+            std::ptr::write_bytes(key_bytes_ptr, 0, key_len);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum BackupPrivateKeyVersioned {
     V0(BackupPrivateKey),
