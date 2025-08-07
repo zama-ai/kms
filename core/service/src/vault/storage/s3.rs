@@ -71,16 +71,46 @@ impl S3Storage {
         if let Some(cache) = &self.cache {
             let cache = Arc::clone(cache);
             let mut guarded_cache = cache.lock().await;
-            guarded_cache.insert(&self.bucket, key, data);
+            match guarded_cache.insert(&self.bucket, key, data) {
+                Some(old_data) => {
+                    let size_changed = old_data.len() != data.len();
+                    let data_changed = old_data != data;
+                    tracing::debug!("Updated cache entry for bucket={}, key={}, size_changed={}, data_changed={}, size={}", 
+                        &self.bucket, key, size_changed, data_changed, data.len());
+                }
+                None => {
+                    tracing::debug!(
+                        "Added new cache entry for bucket={}, key={}, size={}",
+                        &self.bucket,
+                        key,
+                        data.len()
+                    );
+                }
+            }
         }
     }
 
-    /// Helper to invalidate cache entry (remove from cache)
-    async fn invalidate_cache(&self, key: &str) {
+    /// Helper to delete cache entry (remove from cache)
+    async fn delete_cache(&self, key: &str) {
         if let Some(cache) = &self.cache {
             let cache = Arc::clone(cache);
             let mut guarded_cache = cache.lock().await;
-            guarded_cache.remove(&self.bucket, key);
+            match guarded_cache.remove(&self.bucket, key) {
+                Some(_) => {
+                    tracing::debug!(
+                        "Removed cache entry for bucket={}, key={}",
+                        &self.bucket,
+                        key
+                    );
+                }
+                None => {
+                    tracing::warn!(
+                        "Attempted to remove non-existent cache entry for bucket={}, key={}",
+                        &self.bucket,
+                        key
+                    );
+                }
+            }
         }
     }
 
@@ -222,7 +252,7 @@ impl Storage for S3Storage {
         );
 
         // Remove from cache BEFORE deleting from S3 to prevent stale cache reads
-        self.invalidate_cache(key).await;
+        self.delete_cache(key).await;
 
         // Attempt S3 deletion but don't fail on errors
         if let Err(e) = self
