@@ -97,6 +97,7 @@ where
         S: BaseSessionHandles,
     >(
         self,
+        seed: u128,
         session: &S,
     ) -> anyhow::Result<SeededLwePackingKeyswitchKeyOwned<Scalar>> {
         let my_role = session.my_role();
@@ -126,7 +127,7 @@ where
             input_key_lwe_dimension,
             output_key_glwe_dimension,
             output_key_polynomial_size,
-            CompressionSeed::from(Seed(0)), // NOTE: This is a dummy seed, because XOF compressed keys use a global seed and not a per-key seed
+            CompressionSeed::from(Seed(seed)), // NOTE: if the key was generated using XOF we need to use a custom decompression function
             CiphertextModulus::new_native(),
         );
 
