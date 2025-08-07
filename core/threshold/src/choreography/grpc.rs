@@ -17,7 +17,9 @@ use self::gen::{
 
 use crate::algebra::base_ring::{Z128, Z64};
 use crate::algebra::galois_rings::common::ResiduePoly;
-use crate::algebra::structure_traits::{Derive, ErrorCorrect, FromU128, Invert, Solve, Syndrome};
+use crate::algebra::structure_traits::{
+    Derive, ErrorCorrect, FromU128, Invert, Ring, Solve, Syndrome,
+};
 #[cfg(feature = "measure_memory")]
 use crate::allocator::MEM_ALLOCATOR;
 use crate::choreography::requests::{
@@ -36,15 +38,16 @@ use crate::execution::endpoints::decryption::{
 use crate::execution::endpoints::decryption::{
     LargeOfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
 };
-use crate::execution::endpoints::keygen::FhePubKeySet;
 use crate::execution::endpoints::keygen::{
-    distributed_keygen_z128, distributed_keygen_z64, PrivateKeySet,
+    FhePubKeySet, OnlineDistributedKeyGen, PrivateKeySet, SecureOnlineDistributedKeyGen,
 };
 use crate::execution::keyset_config::KeySetConfig;
 use crate::execution::large_execution::offline::SecureLargePreprocessing;
+use crate::execution::online::gen_bits::SecureBitGenEven;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::memory::noiseflood::InMemoryNoiseFloodPreprocessing;
 use crate::execution::online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator;
+use crate::execution::online::preprocessing::orchestration::producer_traits::ProducerFactory;
 use crate::execution::online::preprocessing::orchestration::producers::bits_producer::GenericBitProducer;
 use crate::execution::online::preprocessing::orchestration::producers::randoms_producer::GenericRandomProducer;
 use crate::execution::online::preprocessing::orchestration::producers::triples_producer::GenericTripleProducer;
@@ -243,6 +246,25 @@ pub struct GrpcChoreography<
     _marker_small_offline_strat: std::marker::PhantomData<SmallOfflineStrategy>,
     _marker_large_offline_z64_strat: std::marker::PhantomData<LargeOfflineStrategyZ64>,
     _marker_large_offline_z128_strat: std::marker::PhantomData<LargeOfflineStrategyZ128>,
+}
+
+struct SecureBitGenEvenProducerFactory<Z, S, P>
+where
+    Z: Ring,
+    S: BaseSessionHandles + 'static,
+{
+    _phantom: std::marker::PhantomData<(Z, S, P)>,
+}
+
+impl<Z, S, P> ProducerFactory<Z, S> for SecureBitGenEvenProducerFactory<Z, S, P>
+where
+    Z: Ring + ErrorCorrect + Invert,
+    S: BaseSessionHandles + 'static,
+    P: Preprocessing<Z, S> + Default,
+{
+    type TripleProducer = GenericTripleProducer<Z, S, P>;
+    type RandomProducer = GenericRandomProducer<Z, S, P>;
+    type BitProducer = GenericBitProducer<Z, S, P, SecureBitGenEven>;
 }
 
 impl<
@@ -713,19 +735,7 @@ where
                     };
                     let (sessions, preproc) = {
                         orchestrator
-                            .orchestrate_dkg_processing::<_, GenericTripleProducer<
-                                _,
-                                _,
-                                SmallOfflineStrategy,
-                            >, GenericRandomProducer<
-                                _,
-                                _,
-                                SmallOfflineStrategy,
-                            >, GenericBitProducer<
-                                _,
-                                _,
-                                SmallOfflineStrategy,
-                            >>(sessions)
+                            .orchestrate_dkg_processing::<_, SecureBitGenEvenProducerFactory<_, _, SmallOfflineStrategy>>(sessions)
                             .instrument(tracing::info_span!("orchestrate"))
                             .await
                             .unwrap()
@@ -756,19 +766,7 @@ where
                     };
                     let (sessions, preproc) = {
                         orchestrator
-                            .orchestrate_dkg_processing::<_, GenericTripleProducer<
-                                _,
-                                _,
-                                LargeOfflineStrategyZ64,
-                            >, GenericRandomProducer<
-                                _,
-                                _,
-                                LargeOfflineStrategyZ64,
-                            >, GenericBitProducer<
-                                _,
-                                _,
-                                LargeOfflineStrategyZ64,
-                            >>(sessions)
+                            .orchestrate_dkg_processing::<_, SecureBitGenEvenProducerFactory<_, _, LargeOfflineStrategyZ64>>(sessions)
                             .instrument(tracing::info_span!("orchestrate"))
                             .await
                             .unwrap()
@@ -809,19 +807,7 @@ where
                     };
                     let (sessions, preproc) = {
                         orchestrator
-                            .orchestrate_dkg_processing::<_, GenericTripleProducer<
-                                _,
-                                _,
-                                SmallOfflineStrategy,
-                            >, GenericRandomProducer<
-                                _,
-                                _,
-                                SmallOfflineStrategy,
-                            >, GenericBitProducer<
-                                _,
-                                _,
-                                SmallOfflineStrategy,
-                            >>(sessions)
+                            .orchestrate_dkg_processing::<_, SecureBitGenEvenProducerFactory<_, _, SmallOfflineStrategy>>(sessions)
                             .await
                             .unwrap()
                     };
@@ -850,19 +836,7 @@ where
                     };
                     let (sessions, preproc) = {
                         orchestrator
-                            .orchestrate_dkg_processing::<_, GenericTripleProducer<
-                                _,
-                                _,
-                                LargeOfflineStrategyZ128,
-                            >, GenericRandomProducer<
-                                _,
-                                _,
-                                LargeOfflineStrategyZ128,
-                            >, GenericBitProducer<
-                                _,
-                                _,
-                                LargeOfflineStrategyZ128,
-                            >>(sessions)
+                            .orchestrate_dkg_processing::<_, SecureBitGenEvenProducerFactory<_, _, LargeOfflineStrategyZ128>>(sessions)
                             .await
                             .unwrap()
                     };
@@ -961,10 +935,13 @@ where
                 }
 
                 let my_future = || async move {
-                    let keys =
-                        distributed_keygen_z64(&mut base_session, preproc.as_mut(), dkg_params)
-                            .await
-                            .unwrap();
+                    let keys = SecureOnlineDistributedKeyGen::keygen::<_, _, EXTENSION_DEGREE>(
+                        &mut base_session,
+                        preproc.as_mut(),
+                        dkg_params,
+                    )
+                    .await
+                    .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
                     fill_network_memory_info_single_session(base_session);
                 };
@@ -977,7 +954,12 @@ where
                 let sid_u128: u128 = session_id.into();
                 let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
-                    let keys = distributed_keygen_z64(&mut base_session, &mut preproc, dkg_params)
+                    let keys =
+                        SecureOnlineDistributedKeyGen::<Z64>::keygen::<_, _, EXTENSION_DEGREE>(
+                            &mut base_session,
+                            &mut preproc,
+                            dkg_params,
+                        )
                         .await
                         .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
@@ -1005,9 +987,13 @@ where
 
                 let my_future = || async move {
                     let keys =
-                        distributed_keygen_z128(&mut base_session, preproc.as_mut(), dkg_params)
-                            .await
-                            .unwrap();
+                        SecureOnlineDistributedKeyGen::<Z128>::keygen::<_, _, EXTENSION_DEGREE>(
+                            &mut base_session,
+                            preproc.as_mut(),
+                            dkg_params,
+                        )
+                        .await
+                        .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
                     fill_network_memory_info_single_session(base_session);
                 };
@@ -1020,9 +1006,13 @@ where
                 let sid_u128: u128 = session_id.into();
                 let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
                 let my_future = || async move {
-                    let keys = distributed_keygen_z128(&mut base_session, &mut preproc, dkg_params)
-                        .await
-                        .unwrap();
+                    let keys = SecureOnlineDistributedKeyGen::<Z128>::keygen::<
+                        _,
+                        _,
+                        EXTENSION_DEGREE,
+                    >(&mut base_session, &mut preproc, dkg_params)
+                    .await
+                    .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
                     fill_network_memory_info_single_session(base_session);
                 };
