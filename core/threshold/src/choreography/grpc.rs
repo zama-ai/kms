@@ -29,10 +29,13 @@ use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
 use crate::execution::endpoints::decryption::{
     combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
-    task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, NoiseFloodPreparation,
-    RadixOrBoolCiphertext, SnsDecryptionKeyType, SnsRadixOrBoolCiphertext,
+    task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, OfflineNoiseFloodSession,
+    RadixOrBoolCiphertext, SecureOnlineNoiseFloodDecryption, SnsDecryptionKeyType,
+    SnsRadixOrBoolCiphertext,
 };
-use crate::execution::endpoints::decryption::{NoiseFloodLargeSession, NoiseFloodSmallSession};
+use crate::execution::endpoints::decryption::{
+    LargeOfflineNoiseFloodSession, SmallOfflineNoiseFloodSession,
+};
 use crate::execution::endpoints::keygen::FhePubKeySet;
 use crate::execution::endpoints::keygen::{
     distributed_keygen_z128, distributed_keygen_z64, PrivateKeySet,
@@ -1361,8 +1364,10 @@ where
                             format!("Failed to create Base Session: {e:?}"),
                         )
                     })?;
-                let mut small_session =
-                    NoiseFloodSmallSession::new(create_small_session(base_session, &prss_setup));
+                let mut small_session = SmallOfflineNoiseFloodSession::new(create_small_session(
+                    base_session,
+                    &prss_setup,
+                ));
                 let store = self.data.ddec_preproc_store_nf.clone();
                 let my_future = || async move {
                     for _ in 0..num_ctxt {
@@ -1408,9 +1413,10 @@ where
                             format!("Failed to create Base Session: {e:?}"),
                         )
                     })?;
-                let mut large_session = NoiseFloodLargeSession::<LargeOfflineStrategyZ128>::new(
-                    create_large_session(base_session),
-                );
+                let mut large_session =
+                    LargeOfflineNoiseFloodSession::<LargeOfflineStrategyZ128>::new(
+                        create_large_session(base_session),
+                    );
                 let store = self.data.ddec_preproc_store_nf.clone();
                 let my_future = || async move {
                     for _ in 0..num_ctxt {
@@ -1614,7 +1620,7 @@ where
                         // Instantiate required number of small sessions
                         let small_sessions = create_small_sessions(base_sessions, &prss_setup)
                             .into_iter()
-                            .map(NoiseFloodSmallSession::new)
+                            .map(SmallOfflineNoiseFloodSession::new)
                             .collect_vec();
 
                         // Spawn a tokio task for each session
@@ -1643,7 +1649,12 @@ where
                                     let mut res = Vec::new();
                                     for ctxt in ctxts.into_iter() {
                                         res.push(
-                                            run_decryption_noiseflood_64(
+                                            run_decryption_noiseflood_64::<
+                                                EXTENSION_DEGREE,
+                                                _,
+                                                _,
+                                                SecureOnlineNoiseFloodDecryption,
+                                            >(
                                                 &mut base_session,
                                                 &mut noiseflood_preprocessing,
                                                 &key_ref.1,
@@ -2114,7 +2125,12 @@ where
                                 panic!("Missing key (it was there just before)")
                             };
                             res.push(
-                                run_decryption_noiseflood_64(
+                                run_decryption_noiseflood_64::<
+                                    EXTENSION_DEGREE,
+                                    _,
+                                    _,
+                                    SecureOnlineNoiseFloodDecryption,
+                                >(
                                     &mut base_session,
                                     &mut preprocessing,
                                     &key_ref.1,

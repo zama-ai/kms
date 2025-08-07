@@ -211,6 +211,7 @@ kmsCoreClient:
 # Threshold Init job
 kmsInit:
   enabled: false
+  timeoutSeconds: 300
   nameOverride:
   nodeSelector:
   affinity:
@@ -230,6 +231,7 @@ kmsGenKeys:
   configmap:
     name: kms-keys
     annotations:
+  resources: {}
 
 kubeUtils:
   image:
