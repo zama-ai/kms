@@ -444,7 +444,7 @@ impl Networking for NetworkSession {
 
         #[cfg(feature = "choreographer")]
         {
-            let mut sent = self.num_byte_sent.write().unwrap();
+            let mut sent = self.num_byte_sent.try_write().unwrap();
             *sent += tag.len() + value.len();
         }
         let request = SendValueRequest {
@@ -605,7 +605,7 @@ impl Networking for NetworkSession {
 
     #[cfg(feature = "choreographer")]
     fn get_num_byte_sent(&self) -> anyhow::Result<usize> {
-        if let Ok(num_byte_sent) = self.num_byte_sent.read() {
+        if let Ok(num_byte_sent) = self.num_byte_sent.try_read() {
             Ok(*num_byte_sent)
         } else {
             Err(anyhow_error_and_log("Couldn't lock num_byte_sent RwLock"))
