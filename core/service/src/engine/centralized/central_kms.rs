@@ -527,6 +527,7 @@ pub async fn async_user_decrypt<
     server_verf_key: Vec<u8>,
     domain: &alloy_sol_types::Eip712Domain,
     metric_tags: Vec<(&'static str, String)>,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>)> {
     use observability::{
         metrics,
@@ -582,8 +583,13 @@ pub async fn async_user_decrypt<
         degree: 0,   // In the centralized KMS, the degree is always 0 since result is a constant
     };
 
-    let external_signature =
-        compute_external_user_decrypt_signature(sig_key, &payload, domain, client_enc_key)?;
+    let external_signature = compute_external_user_decrypt_signature(
+        sig_key,
+        &payload,
+        domain,
+        client_enc_key,
+        extra_data,
+    )?;
 
     Ok((payload, external_signature))
 }

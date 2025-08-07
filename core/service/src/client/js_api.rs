@@ -380,6 +380,7 @@ struct UserDecryptionResponseHex {
     // NOTE: this is the external signature
     signature: String,
     payload: Option<String>,
+    extra_data: Option<String>,
 }
 
 #[cfg(feature = "wasm_tests")]
@@ -392,6 +393,7 @@ fn resp_to_js(agg_resp: Vec<UserDecryptionResponse>) -> JsValue {
                 Some(inner) => Some(hex::encode(serialize(&inner).unwrap())),
                 None => None,
             },
+            extra_data: Some(hex::encode(&resp.extra_data)),
         };
         out.push(r);
     }
@@ -420,6 +422,10 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
                     Some(deserialize(&buf)?)
                 }
                 None => None,
+            },
+            extra_data: match hex_resp.extra_data {
+                Some(inner) => hex::decode(&inner)?,
+                None => vec![],
             },
         });
     }
@@ -473,7 +479,8 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
 /// [
 ///   {
 ///     signature: '69e7e040cab157aa819015b321c012dccb1545ffefd325b359b492653f0347517e28e66c572cdc299e259024329859ff9fcb0096e1ce072af0b6e1ca1fe25ec6',
-///     payload: '0100000029...'
+///     payload: '0100000029...',
+///     extra_data: '01234...',
 ///   }
 /// ]
 /// ```
