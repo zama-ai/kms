@@ -320,7 +320,7 @@ impl SendingService for GrpcSendingService {
         Ok(Self {
             config,
             tls_certs,
-            thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
+            thread_handles: Arc::new(std::sync::RwLock::new(ThreadHandleGroup::new())),
             channel_map: DashMap::new(),
         })
     }
