@@ -85,7 +85,7 @@ pub struct GrpcSendingService {
     /// Keep in memory channels we already have available
     channel_map:
         DashMap<Identity, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>,
-    thread_handles: Arc<RwLock<ThreadHandleGroup>>,
+    thread_handles: Arc<std::sync::RwLock<ThreadHandleGroup>>,
 }
 
 impl GrpcSendingService {
@@ -287,16 +287,20 @@ impl GrpcSendingService {
     /// Shut down the sending service.
     pub fn shutdown(&mut self) {
         match Arc::get_mut(&mut self.thread_handles) {
-            Some(lock) => {
-                let lock = RwLock::get_mut(lock);
-                let handles = std::mem::take(lock);
-                match handles.join_all_blocking() {
-                    Ok(_) => tracing::info!(
-                        "Successfully cleaned up all handles in grpc sending service"
-                    ),
-                    Err(e) => tracing::error!("Error joining threads on drop: {}", e),
+            Some(lock) => match std::sync::RwLock::get_mut(lock) {
+                Ok(handles) => {
+                    let handles = std::mem::take(handles);
+                    match handles.join_all_blocking() {
+                        Ok(_) => tracing::info!(
+                            "Successfully cleaned up all handles in grpc sending service"
+                        ),
+                        Err(e) => tracing::error!("Error joining threads on drop: {}", e),
+                    }
                 }
-            }
+                Err(_) => {
+                    tracing::warn!("Could not get exclusive access to thread handles for cleanup")
+                }
+            },
             None => {
                 tracing::warn!("Thread handles are still referenced elsewhere, skipping cleanup")
             }
