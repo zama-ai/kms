@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     net::IpAddr,
     str::FromStr,
-    sync::{Arc, OnceLock, RwLock},
+    sync::{Arc, OnceLock},
 };
 
 use backoff::exponential::ExponentialBackoff;
@@ -14,7 +14,10 @@ use hyper_rustls::{FixedServerNameResolver, HttpsConnectorBuilder};
 use observability::telemetry::ContextPropagator;
 use serde::{Deserialize, Serialize};
 use tokio::{
-    sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    sync::{
+        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        RwLock,
+    },
     time::{Duration, Instant},
 };
 use tokio_rustls::rustls::{
@@ -284,20 +287,16 @@ impl GrpcSendingService {
     /// Shut down the sending service.
     pub fn shutdown(&mut self) {
         match Arc::get_mut(&mut self.thread_handles) {
-            Some(lock) => match RwLock::get_mut(lock) {
-                Ok(handles) => {
-                    let handles = std::mem::take(handles);
-                    match handles.join_all_blocking() {
-                        Ok(_) => tracing::info!(
-                            "Successfully cleaned up all handles in grpc sending service"
-                        ),
-                        Err(e) => tracing::error!("Error joining threads on drop: {}", e),
-                    }
+            Some(lock) => {
+                let lock = RwLock::get_mut(lock);
+                let handles = std::mem::take(lock);
+                match handles.join_all_blocking() {
+                    Ok(_) => tracing::info!(
+                        "Successfully cleaned up all handles in grpc sending service"
+                    ),
+                    Err(e) => tracing::error!("Error joining threads on drop: {}", e),
                 }
-                Err(_) => {
-                    tracing::warn!("Could not get exclusive access to thread handles for cleanup")
-                }
-            },
+            }
             None => {
                 tracing::warn!("Thread handles are still referenced elsewhere, skipping cleanup")
             }
@@ -347,7 +346,7 @@ impl SendingService for GrpcSendingService {
 
         // 5. Minimize lock scope - acquire write lock last and release immediately
         self.thread_handles
-            .write()
+            .try_write()
             .map_err(|e| {
                 anyhow_error_and_log(format!(
                     "Failed to acquire write lock for thread handles: {e}"
@@ -419,13 +418,21 @@ pub struct NetworkSession {
 
 #[async_trait]
 impl Networking for NetworkSession {
+    /// WARNING: [`increase_round_counter`] MUST be called right before sending.
+    /// In particular a call to [`receive`] cannot be interleaved between a counter increase and a send.
+    /// Thus sending and receiving MUST not be interleaved.
+    ///
     //Note this need not be async, so do we want to keep the trait definition async
     //if we want to add other implems which may require async ?
     async fn send(&self, value: Vec<u8>, receiver: &Identity) -> anyhow::Result<()> {
-        let round_counter = *self
+        // Lock the counter to ensure no modifications happens while sending
+        // This may cause an error if someone tries to increase the round counter at the same time
+        // however, this would imply incorrect use of the networking API and thus we want to fail fast.
+        let counter_lock = self
             .round_counter
-            .read()
+            .try_read()
             .map_err(|e| anyhow_error_and_log(format!("Locking error: {e:?}")))?;
+        let round_counter = *counter_lock;
         let tagged_value = Tag {
             sender: self.owner.clone(),
             session_id: self.session_id,
@@ -456,7 +463,17 @@ impl Networking for NetworkSession {
     }
 
     /// Receives messages from other parties, assuming the grpc server filled the [`MessageQueueStores`] correctly
+    ///
+    /// WARNING: A call to [`receive`] cannot be interleaved between a counter increase and a send.
+    /// Thus sending and receiving MUST not be interleaved.
     async fn receive(&self, sender: &Identity) -> anyhow::Result<Vec<u8>> {
+        // Lock the counter to ensure no modifications happens while receiving
+        // This may cause an error if someone tries to increase the round counter at the same time
+        // however, this would imply incorrect use of the networking API and thus we want to fail fast.
+        let counter_lock = self
+            .round_counter
+            .try_read()
+            .map_err(|e| anyhow_error_and_log(format!("Locking error: {e:?}")))?;
         let rx = self.receiving_channels.get(sender).ok_or_else(|| {
             anyhow_error_and_log(format!(
                 "couldn't retrieve receiving channel for P:{sender:?}"
@@ -470,14 +487,9 @@ impl Networking for NetworkSession {
             .recv()
             .await
             .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
-        let network_round = {
-            *self
-                .round_counter
-                .read()
-                .map_err(|e| anyhow_error_and_log(format!("Locking error: {e:?}")))?
-        };
 
         // drop old messages
+        let network_round = *counter_lock;
         while local_packet.round_counter < network_round {
             tracing::debug!(
                 "@ round {} - dropped value {:?} from round {}",
@@ -504,10 +516,10 @@ impl Networking for NetworkSession {
             Ok(next_round_timeout),
             Ok(mut net_round),
         ) = (
-            self.max_elapsed_time.write(),
-            self.current_network_timeout.write(),
-            self.next_network_timeout.read(),
-            self.round_counter.write(),
+            self.max_elapsed_time.try_write(),
+            self.current_network_timeout.try_write(),
+            self.next_network_timeout.try_read(),
+            self.round_counter.try_write(),
         ) {
             *max_elapsed_time += *current_round_timeout;
 
@@ -533,8 +545,8 @@ impl Networking for NetworkSession {
     fn get_timeout_current_round(&self) -> anyhow::Result<Instant> {
         let init_time = self.init_time.get_or_init(Instant::now);
         if let (Ok(max_elapsed_time), Ok(network_timeout)) = (
-            self.max_elapsed_time.read(),
-            self.current_network_timeout.read(),
+            self.max_elapsed_time.try_read(),
+            self.current_network_timeout.try_read(),
         ) {
             Ok(*init_time + *network_timeout + *max_elapsed_time)
         } else {
@@ -543,7 +555,7 @@ impl Networking for NetworkSession {
     }
 
     fn get_current_round(&self) -> anyhow::Result<usize> {
-        if let Ok(round_counter) = self.round_counter.read() {
+        if let Ok(round_counter) = self.round_counter.try_read() {
             Ok(*round_counter)
         } else {
             Err(anyhow_error_and_log("Couldn't lock round_counter RwLock"))
@@ -556,7 +568,7 @@ impl Networking for NetworkSession {
     fn set_timeout_for_next_round(&self, timeout: Duration) -> anyhow::Result<()> {
         match self.get_network_mode() {
             NetworkMode::Sync => {
-                if let Ok(mut next_network_timeout) = self.next_network_timeout.write() {
+                if let Ok(mut next_network_timeout) = self.next_network_timeout.try_write() {
                     *next_network_timeout = timeout;
                 } else {
                     return Err(anyhow_error_and_log("Couldn't lock mutex"));
