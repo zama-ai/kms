@@ -15,10 +15,11 @@ use observability::{
 use threshold_fhe::{
     algebra::base_ring::Z64,
     execution::{
-        runtime::session::{BaseSession, ParameterHandles, ToBaseSession},
+        runtime::session::{BaseSession, ParameterHandles},
         tfhe_internals::parameters::DKGParams,
         zk::ceremony::{compute_witness_dim, Ceremony},
     },
+    networking::NetworkMode,
 };
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -182,11 +183,11 @@ impl<
         }
 
         let session_id = req_id.derive_session_id()?;
+        // CRS ceremony requires a sync network
         let session = self
             .session_preparer
-            .prepare_ddec_data_from_sessionid_z128(session_id)
-            .await?
-            .to_base_session();
+            .make_base_session(session_id, NetworkMode::Sync)
+            .await?;
 
         let meta_store = Arc::clone(&self.crs_meta_store);
         let meta_store_cancelled = Arc::clone(&self.crs_meta_store);
@@ -664,6 +665,19 @@ mod tests {
         };
 
         let request = Request::new(req);
+        let _ = crs_gen.crs_gen(request).await.unwrap();
+
+        // Send a the request again, it should return an error
+        // because the session has already been used.
+        let req = CrsGenRequest {
+            params: 0,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: None,
+        };
+
+        let request = Request::new(req);
+
         assert_eq!(
             crs_gen.crs_gen(request).await.unwrap_err().code(),
             tonic::Code::Aborted
