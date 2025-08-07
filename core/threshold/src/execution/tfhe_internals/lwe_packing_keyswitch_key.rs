@@ -43,7 +43,9 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LwePackingKeyswitchKeyShares<Z,
         self.output_polynomial_size
     }
 
-    pub fn iter_mut_levels(&mut self) -> IterMut<Vec<GlweCiphertextShare<Z, EXTENSION_DEGREE>>> {
+    pub fn iter_mut_levels(
+        &mut self,
+    ) -> IterMut<'_, Vec<GlweCiphertextShare<Z, EXTENSION_DEGREE>>> {
         self.data.iter_mut()
     }
 
