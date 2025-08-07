@@ -645,31 +645,43 @@ mod tests {
         assert_eq!(res.unwrap_err().code(), tonic::Code::ResourceExhausted);
     }
 
-    // Note to reviewer: This test is commented out because it requires a non-existing PRSS to simulate an abort failure, but we do not require a PRSS anymore in CRS. (not sure how to simulate an abort failure otherwie)
-    //#[tokio::test]
-    //async fn aborted() {
-    //    // We use non existing PRSS to simulate an abort failure
-    //    let session_preparer = SessionPreparer::new_test_session(false);
+    #[tokio::test]
+    async fn aborted() {
+        // We use non existing PRSS to simulate an abort failure
+        let session_preparer = SessionPreparer::new_test_session(false);
 
-    //    let crs_gen =
-    //        RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
-    //            session_preparer,
-    //        )
-    //        .await;
-    //    let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
-    //    let req = CrsGenRequest {
-    //        params: 0,
-    //        max_num_bits: None,
-    //        request_id: Some(req_id.into()),
-    //        domain: None,
-    //    };
+        let crs_gen =
+            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
+                session_preparer,
+            )
+            .await;
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req = CrsGenRequest {
+            params: 0,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: None,
+        };
 
-    //    let request = Request::new(req);
-    //    assert_eq!(
-    //        crs_gen.crs_gen(request).await.unwrap_err().code(),
-    //        tonic::Code::Aborted
-    //    );
-    //}
+        let request = Request::new(req);
+        let _ = crs_gen.crs_gen(request).await.unwrap();
+
+        // Send a the request again, it should return an error
+        // because the session has already been used.
+        let req = CrsGenRequest {
+            params: 0,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: None,
+        };
+
+        let request = Request::new(req);
+
+        assert_eq!(
+            crs_gen.crs_gen(request).await.unwrap_err().code(),
+            tonic::Code::Aborted
+        );
+    }
 
     #[tokio::test]
     async fn internal_failure() {
