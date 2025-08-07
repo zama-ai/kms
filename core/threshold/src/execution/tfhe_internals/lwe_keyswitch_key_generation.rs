@@ -139,6 +139,7 @@ mod tests {
             parameters::{DecompositionBaseLog, DecompositionLevelCount, PolynomialSize},
             CiphertextModulus,
         },
+        Seed,
     };
 
     use crate::{
@@ -228,7 +229,7 @@ mod tests {
             .collect_vec();
 
             let mut mpc_encryption_rng = MPCEncryptionRandomGenerator {
-                mask: MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(seed),
+                mask: MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(Seed(seed)),
                 noise: MPCNoiseRandomGenerator {
                     vec: vec_tuniform_noise,
                 },

@@ -15,6 +15,7 @@ use crate::execution::tfhe_internals::parameters::{
 };
 use crate::execution::tfhe_internals::private_keysets::{GenericPrivateKeySet, PrivateKeySet};
 use crate::execution::tfhe_internals::public_keysets::{FhePubKeySet, RawPubKeySet};
+use crate::hashing::DomainSep;
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
@@ -49,6 +50,7 @@ use tfhe::shortint::server_key::{
 };
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe_csprng::generators::SoftwareRandomGenerator;
+use tfhe_csprng::seeders::XofSeed;
 use tracing::instrument;
 
 ///Sample the random but public seed
@@ -665,6 +667,7 @@ where
     Ok(compression_material)
 }
 
+const DSEP_KG: DomainSep = *b"TFHE_GEN";
 /// Runs the distributed key generation protocol but optionally
 /// uses an existing compression secret key.
 ///
@@ -703,7 +706,7 @@ where
         Z,
         SoftwareRandomGenerator,
         EXTENSION_DEGREE,
-    >::new_from_seed(seed);
+    >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
 
     //Generate the shared LWE hat secret key and corresponding public key
     let (lwe_hat_secret_key_share, lwe_public_key) = generate_lwe_private_public_key_pair(
@@ -999,12 +1002,16 @@ where
 {
     let params_basics_handle = params.get_params_basics_handle();
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
+    // NOTE: Do we really want to use XofSeed here ?
+    // XOF (de)compression is meant to work over a complete keyset,
+    // it hasn't been described (or implemented) to work over a single key
+    // so we might want to use a regular Seed instead for compatibility with tfhe-rs seeded struct.
     //Init the XOF with the seed computed above
     let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
         Z128,
         SoftwareRandomGenerator,
         EXTENSION_DEGREE,
-    >::new_from_seed(seed);
+    >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
 
     let params = params_basics_handle
         .get_compression_decompression_params()
@@ -1045,7 +1052,7 @@ where
         Z128,
         SoftwareRandomGenerator,
         EXTENSION_DEGREE,
-    >::new_from_seed(seed);
+    >::new_from_seed(XofSeed::new_u128(seed, DSEP_KG));
 
     let params = params_basics_handle
         .get_sns_compression_params()

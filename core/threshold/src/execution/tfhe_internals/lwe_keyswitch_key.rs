@@ -75,6 +75,7 @@ where
 {
     pub async fn open_to_tfhers_seeded_type<S: BaseSessionHandles>(
         self,
+        seed: u128,
         session: &S,
     ) -> anyhow::Result<SeededLweKeyswitchKeyOwned<u64>> {
         let my_role = session.my_role();
@@ -97,7 +98,7 @@ where
             self.decomp_level_count,
             input_key_lwe_dimension,
             self.output_lwe_size.to_lwe_dimension(),
-            CompressionSeed::from(Seed(0)), // NOTE: This is a dummy seed, because XOF compressed keys use a global seed and not a per-key seed
+            CompressionSeed::from(Seed(seed)), // NOTE: if the key was generated using XOF we need to use a custom decompression function
             CiphertextModulus::new_native(),
         );
 
