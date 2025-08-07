@@ -1,15 +1,19 @@
-use std::ops::DerefMut;
+use std::ops::{Deref, DerefMut};
 
 use itertools::{EitherOrBoth, Itertools};
 use tfhe::{
     core_crypto::{
         commons::{
+            generators::MaskRandomGenerator,
             math::random::CompressionSeed,
             parameters::GlweSize,
-            traits::{ContiguousEntityContainerMut, UnsignedInteger},
+            traits::{ByteRandomGenerator, ContiguousEntityContainerMut, UnsignedInteger},
         },
         entities::LweBootstrapKeyOwned,
-        prelude::SeededLweBootstrapKeyOwned,
+        prelude::{
+            decompress_seeded_ggsw_ciphertext_list_with_pre_seeded_generator,
+            SeededLweBootstrapKeyOwned, UnsignedTorus,
+        },
     },
     shortint::parameters::{
         CoreCiphertextModulus, DecompositionBaseLog, DecompositionLevelCount, LweDimension,
@@ -17,6 +21,7 @@ use tfhe::{
     },
     Seed,
 };
+use tfhe_csprng::seeders::XofSeed;
 
 use crate::{
     algebra::{
@@ -302,4 +307,38 @@ where
 
         Ok(bootstrap_key)
     }
+}
+
+pub fn par_decompress_into_lwe_bootstrap_key_generated_from_xof<
+    Scalar: UnsignedTorus,
+    Gen: ByteRandomGenerator,
+>(
+    seeded_key_generate_with_xof: SeededLweBootstrapKeyOwned<Scalar>,
+    xof_dsep: [u8; 8],
+) -> LweBootstrapKeyOwned<Scalar> {
+    //Init the XOF
+    let seed = seeded_key_generate_with_xof
+        .deref()
+        .compression_seed()
+        .seed
+        .0;
+    let mut rng = MaskRandomGenerator::<Gen>::new(XofSeed::new_u128(seed, xof_dsep));
+
+    let mut decompressed_bsk = LweBootstrapKeyOwned::new(
+        Scalar::ZERO,
+        seeded_key_generate_with_xof.glwe_size(),
+        seeded_key_generate_with_xof.polynomial_size(),
+        seeded_key_generate_with_xof.decomposition_base_log(),
+        seeded_key_generate_with_xof.decomposition_level_count(),
+        seeded_key_generate_with_xof.input_lwe_dimension(),
+        seeded_key_generate_with_xof.ciphertext_modulus(),
+    );
+
+    decompress_seeded_ggsw_ciphertext_list_with_pre_seeded_generator::<Scalar, _, _, Gen>(
+        &mut decompressed_bsk,
+        &seeded_key_generate_with_xof,
+        &mut rng,
+    );
+
+    decompressed_bsk
 }
