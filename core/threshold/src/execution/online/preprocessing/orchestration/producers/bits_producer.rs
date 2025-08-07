@@ -10,7 +10,7 @@ use crate::{
         config::BatchParams,
         large_execution::offline::SecureLargePreprocessing,
         online::{
-            gen_bits::{BitGenEven, RealBitGenEven},
+            gen_bits::{BitGenEven, SecureBitGenEven},
             preprocessing::orchestration::{
                 producer_traits::BitProducerTrait, progress_tracker::ProgressTracker,
             },
@@ -107,10 +107,10 @@ where
 }
 
 pub type SecureSmallSessionBitProducer<Z> =
-    GenericBitProducer<Z, SmallSession<Z>, SecureSmallPreprocessing, RealBitGenEven>;
+    GenericBitProducer<Z, SmallSession<Z>, SecureSmallPreprocessing, SecureBitGenEven>;
 
 pub type SecureLargeSessionBitProducer<Z> =
-    GenericBitProducer<Z, LargeSession, SecureLargePreprocessing<Z>, RealBitGenEven>;
+    GenericBitProducer<Z, LargeSession, SecureLargePreprocessing<Z>, SecureBitGenEven>;
 
 #[cfg(test)]
 mod tests {

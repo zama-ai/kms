@@ -101,7 +101,8 @@ impl<Z> Default for FailingPreprocessing<Z> {
 
 impl<Z> ProtocolDescription for FailingPreprocessing<Z> {
     fn protocol_desc(depth: usize) -> String {
-        format!("FailingPreprocessing<Z> with depth {depth}")
+        let indent = "   ".repeat(depth);
+        format!("{indent}-FailingPreprocessing")
     }
 }
 

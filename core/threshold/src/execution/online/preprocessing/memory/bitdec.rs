@@ -7,7 +7,7 @@ use crate::{
 
 use super::{BasePreprocessing, TriplePreprocessing};
 use crate::execution::online::gen_bits::BitGenEven;
-use crate::execution::online::gen_bits::RealBitGenEven;
+use crate::execution::online::gen_bits::SecureBitGenEven;
 use crate::execution::online::preprocessing::BitPreprocessing;
 use crate::execution::online::preprocessing::{BitDecPreprocessing, InMemoryBitDecPreprocessing};
 use crate::execution::online::triple::Triple;
@@ -89,7 +89,7 @@ where
         num_ctxts: usize,
     ) -> anyhow::Result<()> {
         //Need 64 bits per ctxt
-        let bit_vec = RealBitGenEven::gen_bits_even(
+        let bit_vec = SecureBitGenEven::gen_bits_even(
             self.num_required_bits(num_ctxts),
             preprocessing,
             session,

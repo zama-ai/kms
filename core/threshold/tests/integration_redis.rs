@@ -13,8 +13,8 @@ use threshold_fhe::execution::sharing::share::Share;
 #[cfg(feature = "testing")]
 use threshold_fhe::{
     execution::{
-        endpoints::keygen::{OnlineDistributedKeyGen64, SecureOnlineDistributedKeyGen64},
-        online::preprocessing::orchestration::dkg_orchestrator::SecureLargeProducerFactory,
+        endpoints::keygen::SecureOnlineDistributedKeyGen,
+        online::preprocessing::orchestration::producer_traits::SecureLargeProducerFactory,
         runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         tfhe_internals::parameters::DKGParams,
     },
@@ -205,7 +205,7 @@ fn test_dkg_orchestrator_large(
     use threshold_fhe::{
         algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
         execution::{
-            keyset_config::KeySetConfig,
+            endpoints::keygen::OnlineDistributedKeyGen, keyset_config::KeySetConfig,
             online::preprocessing::orchestration::dkg_orchestrator::PreprocessingOrchestrator,
             runtime::session::ParameterHandles,
         },
@@ -271,7 +271,8 @@ fn test_dkg_orchestrator_large(
             let dkg_session = sessions.get_mut(0).unwrap();
 
             let (pk, sk) = rt_handle.block_on(async {
-                SecureOnlineDistributedKeyGen64::keygen(dkg_session, preproc.as_mut(), params)
+
+                SecureOnlineDistributedKeyGen::<Z64>::keygen::<_, _,{ ResiduePolyF4Z64::EXTENSION_DEGREE}>(dkg_session, preproc.as_mut(), params)
                     .await
                     .unwrap()
             });

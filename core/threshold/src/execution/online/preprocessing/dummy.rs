@@ -98,7 +98,8 @@ where
 
 impl<Z> crate::ProtocolDescription for DummyPreprocessing<Z> {
     fn protocol_desc(depth: usize) -> String {
-        format!("DummyPreprocessing<Z> with depth {depth}")
+        let indent = "   ".repeat(depth);
+        format!("{indent}-DummyPreprocessing")
     }
 }
 
@@ -139,11 +140,7 @@ impl<
     ) -> anyhow::Result<InMemoryBasePreprocessing<Z>> {
         let mut base_preprocessing = InMemoryBasePreprocessing::<Z>::default();
 
-        while base_preprocessing.triples_len() < batch_sizes.triples {
-            base_preprocessing.append_triples(
-                self.next_triple_vec(batch_sizes.triples - base_preprocessing.triples_len())?,
-            );
-        }
+        base_preprocessing.append_triples(self.next_triple_vec(batch_sizes.triples)?);
 
         if batch_sizes.randoms > 0 {
             base_preprocessing.append_randoms(self.next_random_vec(batch_sizes.randoms)?);

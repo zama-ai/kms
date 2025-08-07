@@ -21,20 +21,7 @@ use crate::{
                     BATCH_SIZE_BITS, BATCH_SIZE_TRIPLES, CHANNEL_BUFFER_SIZE,
                     TRACKER_LOG_PERCENTAGE,
                 },
-                orchestration::{
-                    producer_traits::ProducerFactory,
-                    producers::{
-                        bits_producer::{
-                            SecureLargeSessionBitProducer, SecureSmallSessionBitProducer,
-                        },
-                        randoms_producer::{
-                            SecureLargeSessionRandomProducer, SecureSmallSessionRandomProducer,
-                        },
-                        triples_producer::{
-                            SecureLargeSessionTripleProducer, SecureSmallSessionTripleProducer,
-                        },
-                    },
-                },
+                orchestration::producer_traits::ProducerFactory,
                 DKGPreprocessing, PreprocessorFactory,
             },
             triple::Triple,
@@ -324,30 +311,6 @@ pub(crate) fn create_channels<R: Clone>(
     )
 }
 
-pub struct SecureSmallProducerFactory<Z: PRSSConversions + ErrorCorrect + Invert + Derive + Solve> {
-    _phantom: std::marker::PhantomData<Z>,
-}
-
-impl<Z: PRSSConversions + ErrorCorrect + Invert + Derive + Solve>
-    ProducerFactory<Z, SmallSession<Z>> for SecureSmallProducerFactory<Z>
-{
-    type TripleProducer = SecureSmallSessionTripleProducer<Z>;
-    type RandomProducer = SecureSmallSessionRandomProducer<Z>;
-    type BitProducer = SecureSmallSessionBitProducer<Z>;
-}
-
-pub struct SecureLargeProducerFactory<Z: PRSSConversions + ErrorCorrect + Invert + Derive + Solve> {
-    _phantom: std::marker::PhantomData<Z>,
-}
-
-impl<Z: PRSSConversions + ErrorCorrect + Invert + Derive + Solve> ProducerFactory<Z, LargeSession>
-    for SecureLargeProducerFactory<Z>
-{
-    type TripleProducer = SecureLargeSessionTripleProducer<Z>;
-    type RandomProducer = SecureLargeSessionRandomProducer<Z>;
-    type BitProducer = SecureLargeSessionBitProducer<Z>;
-}
-
 impl<Z> PreprocessingOrchestrator<Z>
 where
     Z: PRSSConversions + ErrorCorrect + Invert + Derive + Solve,
@@ -359,15 +322,13 @@ where
     ///__NOTE__ For now we dedicate 1 in 20 sessions
     /// to raw triple and randomness generation and the rest to bit generation
     #[instrument(name="Preprocessing",skip(self,sessions),fields(num_sessions=?sessions.len(), percentage_offline))]
-    pub(crate) async fn orchestrate_dkg_processing<S, TripleProducer, RandomProducer, BitProducer>(
+    pub(crate) async fn orchestrate_dkg_processing<S, P>(
         self,
         mut sessions: Vec<S>,
     ) -> anyhow::Result<(Vec<S>, Box<dyn DKGPreprocessing<Z>>)>
     where
         S: ParameterHandles + 'static,
-        TripleProducer: TripleProducerTrait<Z, S>,
-        RandomProducer: RandomProducerTrait<Z, S>,
-        BitProducer: BitProducerTrait<Z, S>,
+        P: ProducerFactory<Z, S>,
     {
         #[cfg(feature = "choreographer")]
         tracing::Span::current().record("percentage_offline", self.percentage_offline);
@@ -424,7 +385,7 @@ where
         joinset_processors.spawn(bit_processor.run().instrument(current_span.clone()));
 
         //Start the producers
-        let triple_producer = TripleProducer::new(
+        let triple_producer = P::TripleProducer::new(
             BATCH_SIZE_TRIPLES,
             num_triples,
             basic_sessions,
@@ -433,7 +394,7 @@ where
         )?;
         let mut triple_producer_handles = triple_producer.start_triple_production();
 
-        let bit_producer = BitProducer::new(
+        let bit_producer = P::BitProducer::new(
             BATCH_SIZE_BITS,
             num_bits,
             sessions,
@@ -453,7 +414,7 @@ where
         let randomness_session = res_sessions
             .pop()
             .ok_or_else(|| anyhow_error_and_log("Failed to pop a session for randomness"))?;
-        let randomness_producer = RandomProducer::new(
+        let randomness_producer = P::RandomProducer::new(
             num_randomness,
             num_randomness,
             vec![randomness_session],
@@ -484,26 +445,20 @@ where
         Ok((res_sessions, dkg_preproc_return))
     }
 
-    pub async fn orchestrate_dkg_processing_secure_session<
+    pub async fn orchestrate_dkg_processing_small_session<
         P: ProducerFactory<Z, SmallSession<Z>>,
     >(
         self,
         sessions: Vec<SmallSession<Z>>,
     ) -> anyhow::Result<(Vec<SmallSession<Z>>, Box<dyn DKGPreprocessing<Z>>)> {
-        self.orchestrate_dkg_processing::<_, P::TripleProducer, P::RandomProducer, P::BitProducer>(
-            sessions,
-        )
-        .await
+        self.orchestrate_dkg_processing::<_, P>(sessions).await
     }
 
     pub async fn orchestrate_dkg_processing_large_session<P: ProducerFactory<Z, LargeSession>>(
         self,
         sessions: Vec<LargeSession>,
     ) -> anyhow::Result<(Vec<LargeSession>, Box<dyn DKGPreprocessing<Z>>)> {
-        self.orchestrate_dkg_processing::<_, P::TripleProducer, P::RandomProducer, P::BitProducer>(
-            sessions,
-        )
-        .await
+        self.orchestrate_dkg_processing::<_, P>(sessions).await
     }
 }
 

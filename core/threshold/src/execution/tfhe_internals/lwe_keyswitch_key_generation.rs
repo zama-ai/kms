@@ -147,7 +147,7 @@ mod tests {
         },
         execution::{
             online::{
-                gen_bits::{BitGenEven, RealBitGenEven},
+                gen_bits::{BitGenEven, SecureBitGenEven},
                 preprocessing::dummy::DummyPreprocessing,
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
@@ -194,7 +194,7 @@ mod tests {
 
             //Generate the Lwe key
             let lwe_secret_key_share = LweSecretKeyShare::<Z64, 4> {
-                data: RealBitGenEven::gen_bits_even(
+                data: SecureBitGenEven::gen_bits_even(
                     num_key_bits_lwe,
                     &mut large_preproc,
                     &mut session,
@@ -205,7 +205,7 @@ mod tests {
 
             //Generate the Glwe key
             let glwe_secret_key_share = GlweSecretKeyShare::<Z64, 4> {
-                data: RealBitGenEven::gen_bits_even(
+                data: SecureBitGenEven::gen_bits_even(
                     num_key_bits_glwe,
                     &mut large_preproc,
                     &mut session,

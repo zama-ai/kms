@@ -28,7 +28,7 @@ use threshold_fhe::{
             distributed_decompression_keygen_z128,
             distributed_keygen_from_optional_compression_sk_z128,
             distributed_sns_compression_keygen_z128, CompressionPrivateKeySharesEnum, FhePubKeySet,
-            GlweSecretKeyShareEnum, OnlineDistributedKeyGen128, PrivateKeySet,
+            GlweSecretKeyShareEnum, OnlineDistributedKeyGen, PrivateKeySet,
         },
         keyset_config as ddec_keyset_config,
         online::preprocessing::DKGPreprocessing,
@@ -90,7 +90,7 @@ use threshold_fhe::execution::tfhe_internals::{
 pub struct RealKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen128 + 'static,
+    KG: OnlineDistributedKeyGen<Z128> + 'static,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -110,7 +110,7 @@ pub struct RealKeyGenerator<
 pub struct RealInsecureKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen128 + 'static,
+    KG: OnlineDistributedKeyGen<Z128> + 'static,
 > {
     pub real_key_generator: RealKeyGenerator<PubS, PrivS, KG>,
 }
@@ -119,7 +119,7 @@ pub struct RealInsecureKeyGenerator<
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen128,
+        KG: OnlineDistributedKeyGen<Z128>,
     > RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
     pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, KG>) -> Self {
@@ -144,7 +144,7 @@ impl<
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen128 + 'static,
+        KG: OnlineDistributedKeyGen<Z128> + 'static,
     > InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
     async fn insecure_key_gen(
@@ -190,7 +190,7 @@ fn convert_to_bit(input: Vec<ResiduePoly<Z128, 4>>) -> anyhow::Result<Vec<u64>> 
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen128 + 'static,
+        KG: OnlineDistributedKeyGen<Z128> + 'static,
     > RealKeyGenerator<PubS, PrivS, KG>
 {
     #[allow(clippy::too_many_arguments)]
@@ -1254,7 +1254,7 @@ impl<
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen128 + 'static,
+        KG: OnlineDistributedKeyGen<Z128> + 'static,
     > KeyGenerator for RealKeyGenerator<PubS, PrivS, KG>
 {
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
@@ -1271,16 +1271,12 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use aes_prng::AesRng;
     use kms_grpc::kms::v1::FheParameter;
-    use rand::{rngs::OsRng, SeedableRng};
+    use rand::rngs::OsRng;
     use threshold_fhe::{
-        algebra::{
-            base_ring::Z64,
-            structure_traits::{ErrorCorrect, Ring},
-        },
-        execution::{
-            online::preprocessing::dummy::DummyPreprocessing, runtime::session::BaseSessionHandles,
+        execution::online::preprocessing::dummy::DummyPreprocessing,
+        malicious_execution::endpoints::keygen::{
+            DroppingOnlineDistributedKeyGen128, FailingOnlineDistributedKeyGen128,
         },
     };
 
@@ -1291,7 +1287,7 @@ mod tests {
     impl<
             PubS: Storage + Sync + Send + 'static,
             PrivS: Storage + Sync + Send + 'static,
-            KG: OnlineDistributedKeyGen128 + 'static,
+            KG: OnlineDistributedKeyGen<Z128> + 'static,
         > RealKeyGenerator<PubS, PrivS, KG>
     {
         async fn init_test(
@@ -1332,58 +1328,7 @@ mod tests {
         }
     }
 
-    struct DroppingOnlineDistributedKeyGen128;
-
-    struct FailingOnlineDistributedKeyGen128;
-
-    #[tonic::async_trait]
-    impl OnlineDistributedKeyGen128 for DroppingOnlineDistributedKeyGen128 {
-        async fn keygen<
-            S: BaseSessionHandles,
-            P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
-            const EXTENSION_DEGREE: usize,
-        >(
-            _base_session: &mut S,
-            _preprocessing: &mut P,
-            _params: DKGParams,
-        ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
-        where
-            ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
-            ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
-        {
-            let param = crate::consts::TEST_PARAM;
-            let mut rng = AesRng::seed_from_u64(42);
-
-            // NOTE: we can't use the generated [_threshold_fhe_keys] because it is not generic over EXTENSION_DEGREE
-            let (_threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, &mut rng);
-            let private_key_set = PrivateKeySet::<EXTENSION_DEGREE>::init_dummy(param);
-
-            Ok((fhe_key_set, private_key_set))
-        }
-    }
-
-    #[tonic::async_trait]
-    impl OnlineDistributedKeyGen128 for FailingOnlineDistributedKeyGen128 {
-        async fn keygen<
-            S: BaseSessionHandles,
-            P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
-            const EXTENSION_DEGREE: usize,
-        >(
-            _base_session: &mut S,
-            _preprocessing: &mut P,
-            _params: DKGParams,
-        ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
-        where
-            ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
-            ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
-        {
-            Err(anyhow::anyhow!(
-                "This keygen implementation is supposed to fail"
-            ))
-        }
-    }
-
-    impl<KG: OnlineDistributedKeyGen128 + 'static>
+    impl<KG: OnlineDistributedKeyGen<Z128> + 'static>
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>
     {
         pub async fn init_ram_keygen(session_preparer: SessionPreparer) -> Self {
@@ -1393,7 +1338,7 @@ mod tests {
         }
     }
 
-    async fn setup_key_generator<KG: OnlineDistributedKeyGen128 + 'static>() -> (
+    async fn setup_key_generator<KG: OnlineDistributedKeyGen<Z128> + 'static>() -> (
         RequestId,
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {

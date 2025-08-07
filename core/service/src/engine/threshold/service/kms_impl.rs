@@ -19,7 +19,7 @@ use threshold_fhe::{
         endpoints::keygen::{FhePubKeySet, PrivateKeySet, SecureOnlineDistributedKeyGen128},
         online::preprocessing::{
             create_memory_factory, create_redis_factory,
-            orchestration::dkg_orchestrator::SecureSmallProducerFactory, DKGPreprocessing,
+            orchestration::producer_traits::SecureSmallProducerFactory, DKGPreprocessing,
         },
         runtime::party::{Role, RoleAssignment},
         zk::ceremony::SecureCeremony,

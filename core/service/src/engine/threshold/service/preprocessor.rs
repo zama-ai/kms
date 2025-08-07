@@ -191,7 +191,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);
                 // Execute the orchestration with the successfully created orchestrator
                 match orchestrator
-                    .orchestrate_dkg_processing_secure_session::<P>(sessions)
+                    .orchestrate_dkg_processing_small_session::<P>(sessions)
                     .await
                 {
                     Ok((_, preproc_handle)) => Ok(Arc::new(Mutex::new(preproc_handle))),
@@ -299,38 +299,12 @@ mod tests {
     use rand::SeedableRng;
     use threshold_fhe::{
         execution::online::preprocessing::create_memory_factory,
-        malicious_execution::online::preprocessing::orchestration::producer::{
-            malicious_bit_producer::{
-                DummySmallSessionBitProducer, FailingSmallSessionBitProducer,
-            },
-            malicious_random_producer::{
-                DummySmallSessionRandomProducer, FailingSmallSessionRandomProducer,
-            },
-            malicious_triple_producer::{
-                DummySmallSessionTripleProducer, FailingSmallSessionTripleProducer,
-            },
+        malicious_execution::online::preprocessing::orchestration::malicious_producer_traits::{
+            DummyProducerFactory, FailingProducerFactory,
         },
     };
 
     use super::*;
-
-    struct DummyProducerFactory;
-
-    struct FailingProducerFactory;
-
-    impl ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> for DummyProducerFactory {
-        type TripleProducer = DummySmallSessionTripleProducer<ResiduePolyF4Z128>;
-        type RandomProducer = DummySmallSessionRandomProducer<ResiduePolyF4Z128>;
-        type BitProducer = DummySmallSessionBitProducer<ResiduePolyF4Z128>;
-    }
-
-    impl ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>
-        for FailingProducerFactory
-    {
-        type TripleProducer = FailingSmallSessionTripleProducer<ResiduePolyF4Z128>;
-        type RandomProducer = FailingSmallSessionRandomProducer<ResiduePolyF4Z128>;
-        type BitProducer = FailingSmallSessionBitProducer<ResiduePolyF4Z128>;
-    }
 
     impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
         fn init_test(session_preparer: SessionPreparer) -> Self {

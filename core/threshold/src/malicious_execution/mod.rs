@@ -18,6 +18,7 @@ pub mod online {
     pub mod malicious_gen_bits;
     pub mod preprocessing {
         pub mod orchestration {
+            pub mod malicious_producer_traits;
             pub mod producer {
                 pub mod malicious_bit_producer;
                 pub mod malicious_random_producer;
@@ -34,6 +35,7 @@ pub mod runtime {
 }
 pub mod endpoints {
     pub mod decryption;
+    pub mod keygen;
 }
 pub mod zk {
     pub mod ceremony;
