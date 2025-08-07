@@ -109,6 +109,7 @@ tracing = { workspace = true, features = ["log"] }
 trait-variant.workspace = true
 url = { version = "=2.5.4", features = ["serde"] }
 validator.workspace = true
+zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }
 ordermap = "=0.5.7"
 x509-parser = { workspace = true, optional = true }
 

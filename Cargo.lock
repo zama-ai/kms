@@ -3964,6 +3964,7 @@ dependencies = [
  "validator",
  "wasm-bindgen",
  "x509-parser 0.17.0",
+ "zeroize",
 ]
 
 [[package]]
