@@ -30,7 +30,7 @@ pub struct LweKeySwitchKeyShare<Z: BaseRing, const EXTENSION_DEGREE: usize> {
 }
 
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweKeySwitchKeyShare<Z, EXTENSION_DEGREE> {
-    pub fn iter_mut_levels(&mut self) -> IterMut<Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>> {
+    pub fn iter_mut_levels(&mut self) -> IterMut<'_, Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>> {
         self.data.iter_mut()
     }
 
