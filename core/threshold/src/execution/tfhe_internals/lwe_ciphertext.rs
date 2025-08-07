@@ -253,7 +253,7 @@ mod tests {
         algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
         execution::{
             online::{
-                gen_bits::{BitGenEven, RealBitGenEven},
+                gen_bits::{BitGenEven, SecureBitGenEven},
                 preprocessing::dummy::DummyPreprocessing,
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
@@ -305,9 +305,13 @@ mod tests {
             let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             let lwe_secret_key_share = LweSecretKeyShare {
-                data: RealBitGenEven::gen_bits_even(num_key_bits, &mut large_preproc, &mut session)
-                    .await
-                    .unwrap(),
+                data: SecureBitGenEven::gen_bits_even(
+                    num_key_bits,
+                    &mut large_preproc,
+                    &mut session,
+                )
+                .await
+                .unwrap(),
             };
 
             let vec_tuniform_noise = RealSecretDistributions::t_uniform(

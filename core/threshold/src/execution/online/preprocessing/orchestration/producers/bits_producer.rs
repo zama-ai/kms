@@ -10,7 +10,7 @@ use crate::{
         config::BatchParams,
         large_execution::offline::SecureLargePreprocessing,
         online::{
-            gen_bits::{BitGenEven, RealBitGenEven},
+            gen_bits::{BitGenEven, SecureBitGenEven},
             preprocessing::orchestration::{
                 producer_traits::BitProducerTrait, progress_tracker::ProgressTracker,
             },
@@ -23,23 +23,25 @@ use crate::{
 
 use super::common::{execute_preprocessing, ProducerSession};
 
-pub struct GenericBitProducer<Z, S, PreprocStrat>
+pub struct GenericBitProducer<Z, S, PreprocStrat, G>
 where
     Z: Ring,
     S: BaseSessionHandles + 'static,
+    G: BitGenEven,
 {
     pub(crate) batch_size: usize,
     pub(crate) total_size: usize,
     pub(crate) producers: Vec<ProducerSession<S, Vec<Share<Z>>>>,
     pub(crate) progress_tracker: Option<ProgressTracker>,
-    _marker_strat: std::marker::PhantomData<PreprocStrat>,
+    _marker_strat: std::marker::PhantomData<(PreprocStrat, G)>,
 }
 
-impl<Z, S, PreprocStrat> BitProducerTrait<Z, S> for GenericBitProducer<Z, S, PreprocStrat>
+impl<Z, S, PreprocStrat, G> BitProducerTrait<Z, S> for GenericBitProducer<Z, S, PreprocStrat, G>
 where
     Z: ErrorCorrect + Invert,
     S: BaseSessionHandles + 'static,
     PreprocStrat: Preprocessing<Z, S> + Default,
+    G: BitGenEven,
 {
     fn new(
         batch_size: usize,
@@ -91,12 +93,8 @@ where
             for _ in 0..num_loops {
                 let mut correlated_randomness =
                     preprocessing.execute(&mut session, base_batch_size).await?;
-                let bits = RealBitGenEven::gen_bits_even(
-                    batch_size,
-                    &mut correlated_randomness,
-                    &mut session,
-                )
-                .await?;
+                let bits =
+                    G::gen_bits_even(batch_size, &mut correlated_randomness, &mut session).await?;
 
                 //Drop the error on purpose as the receiver end might be closed already if we produced too much
                 let _ = sender_channel.send(bits).await;
@@ -109,10 +107,10 @@ where
 }
 
 pub type SecureSmallSessionBitProducer<Z> =
-    GenericBitProducer<Z, SmallSession<Z>, SecureSmallPreprocessing>;
+    GenericBitProducer<Z, SmallSession<Z>, SecureSmallPreprocessing, SecureBitGenEven>;
 
 pub type SecureLargeSessionBitProducer<Z> =
-    GenericBitProducer<Z, LargeSession, SecureLargePreprocessing<Z>>;
+    GenericBitProducer<Z, LargeSession, SecureLargePreprocessing<Z>, SecureBitGenEven>;
 
 #[cfg(test)]
 mod tests {

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::BitDecPreprocessing;
 use super::BitPreprocessing;
 use super::DKGPreprocessing;
@@ -14,17 +16,20 @@ use crate::algebra::structure_traits::Solve;
 use crate::execution::constants::LOG_B_SWITCH_SQUASH;
 use crate::execution::constants::STATSEC;
 use crate::execution::keyset_config::KeySetConfig;
+use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::BasePreprocessing;
 use crate::execution::online::preprocessing::RandomPreprocessing;
 use crate::execution::online::preprocessing::TriplePreprocessing;
 use crate::execution::online::secret_distributions::RealSecretDistributions;
 use crate::execution::online::secret_distributions::SecretDistributions;
 use crate::execution::online::triple::Triple;
+use crate::execution::runtime::party::Identity;
 use crate::execution::runtime::session::BaseSession;
 use crate::execution::runtime::session::SessionParameters;
 use crate::execution::runtime::session::SmallSession;
 use crate::execution::sharing::shamir::RevealOp;
 use crate::execution::sharing::shamir::ShamirSharings;
+use crate::execution::small_execution::offline::Preprocessing;
 use crate::execution::tfhe_internals::parameters::DKGParams;
 use crate::execution::tfhe_internals::parameters::TUniformBound;
 use crate::{
@@ -88,6 +93,59 @@ where
             .into_iter()
             .map(|(role, embedded_role)| Share::new(role, poly.eval(&embedded_role)))
             .collect())
+    }
+}
+
+impl<Z> crate::ProtocolDescription for DummyPreprocessing<Z> {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{indent}-DummyPreprocessing")
+    }
+}
+
+impl<Z> Default for DummyPreprocessing<Z> {
+    fn default() -> Self {
+        let role_assignments =
+            HashMap::from_iter([(Role::indexed_from_one(1), Identity::default())]);
+        let own_identity = role_assignments
+            .get(&Role::indexed_from_one(1))
+            .cloned()
+            .unwrap();
+        DummyPreprocessing {
+            seed: 0,
+            parameters: SessionParameters::new(
+                0,
+                crate::session_id::SessionId::from(0u128),
+                own_identity,
+                role_assignments,
+            )
+            .unwrap(),
+            rnd_ctr: 0,
+            trip_ctr: 0,
+            _phantom: Default::default(),
+        }
+    }
+}
+
+#[async_trait]
+impl<
+        Z: ErrorCorrect + RingWithExceptionalSequence,
+        S: crate::execution::runtime::session::BaseSessionHandles,
+    > Preprocessing<Z, S> for DummyPreprocessing<Z>
+{
+    async fn execute(
+        &mut self,
+        _session: &mut S,
+        batch_sizes: crate::execution::config::BatchParams,
+    ) -> anyhow::Result<InMemoryBasePreprocessing<Z>> {
+        let mut base_preprocessing = InMemoryBasePreprocessing::<Z>::default();
+
+        base_preprocessing.append_triples(self.next_triple_vec(batch_sizes.triples)?);
+
+        if batch_sizes.randoms > 0 {
+            base_preprocessing.append_randoms(self.next_random_vec(batch_sizes.randoms)?);
+        }
+        Ok(base_preprocessing)
     }
 }
 
