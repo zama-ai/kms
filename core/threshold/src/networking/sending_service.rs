@@ -350,7 +350,7 @@ impl SendingService for GrpcSendingService {
 
         // 5. Minimize lock scope - acquire write lock last and release immediately
         self.thread_handles
-            .try_write()
+            .write()
             .map_err(|e| {
                 anyhow_error_and_log(format!(
                     "Failed to acquire write lock for thread handles: {e}"
