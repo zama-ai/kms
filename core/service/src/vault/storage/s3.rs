@@ -75,12 +75,12 @@ impl S3Storage {
         }
     }
 
-    /// Helper to invalidate cache entry (using poison approach)
+    /// Helper to invalidate cache entry (remove from cache)
     async fn invalidate_cache(&self, key: &str) {
         if let Some(cache) = &self.cache {
             let cache = Arc::clone(cache);
             let mut guarded_cache = cache.lock().await;
-            guarded_cache.insert(&self.bucket, key, &[]); // Poison with empty data
+            guarded_cache.remove(&self.bucket, key);
         }
     }
 
