@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use tfhe::named::Named;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
+use zeroize::Zeroize;
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::hybrid_ml_kem::{self};
@@ -26,7 +27,7 @@ pub enum BackupPrivateKeyVersioned {
     V0(BackupPrivateKey),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize, Zeroize)]
 #[versionize(BackupPrivateKeyVersioned)]
 pub struct BackupPrivateKey {
     decapsulation_key: Vec<u8>,
@@ -59,6 +60,10 @@ impl TryFrom<&BackupPrivateKey> for InnerBackupPrivateKey {
 
         let decapsulation_key =
             <MlKemType as ml_kem::KemCore>::DecapsulationKey::from_bytes(&decaps_key_buf);
+
+        // Zeroize the key buffer to prevent memory disclosure attacks
+        decaps_key_buf.zeroize();
+
         Ok(Self { decapsulation_key })
     }
 }
