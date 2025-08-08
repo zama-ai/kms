@@ -25,9 +25,8 @@ use threshold_fhe::{
     },
     execution::{
         endpoints::keygen::{
-            distributed_decompression_keygen_z128,
-            distributed_keygen_from_optional_compression_sk_z128,
-            distributed_sns_compression_keygen_z128, OnlineDistributedKeyGen,
+            distributed_decompression_keygen_z128, distributed_sns_compression_keygen_z128,
+            OnlineDistributedKeyGen,
         },
         keyset_config as ddec_keyset_config,
         online::preprocessing::DKGPreprocessing,
@@ -1101,7 +1100,7 @@ impl<
                 CompressionPrivateKeySharesEnum::Z128(share) => share,
             }
         };
-        distributed_keygen_from_optional_compression_sk_z128(
+        KG::keygen(
             base_session,
             preprocessing,
             params,
@@ -1170,7 +1169,7 @@ impl<
                         ddec_keyset_config::KeySetCompressionConfig::Generate,
                         ddec_keyset_config::ComputeKeyType::Cpu,
                     ) => {
-                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params).await
+                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params,None).await
                     }
                     (
                         ddec_keyset_config::KeySetCompressionConfig::UseExisting,

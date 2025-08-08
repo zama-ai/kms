@@ -2,16 +2,16 @@ use itertools::{EitherOrBoth, Itertools};
 use serde::{Deserialize, Serialize};
 use tfhe::{
     core_crypto::{
-        commons::traits::ByteRandomGenerator,
+        commons::{math::random::CompressionSeed, traits::ByteRandomGenerator},
         entities::{LweCompactPublicKey, LweCompactPublicKeyOwned},
-        prelude::SeededLweCompactPublicKey,
+        prelude::{SeededLweCompactPublicKey, SeededLweCompactPublicKeyOwned},
     },
     shortint::{
         self,
         parameters::{CompactPublicKeyEncryptionParameters, LweDimension, PolynomialSize},
         CiphertextModulus,
     },
-    Versionize,
+    Seed, Versionize,
 };
 use tfhe_versionable::VersionsDispatch;
 
@@ -110,6 +110,51 @@ where
                 return Err(anyhow_error_and_log("zip error"));
             }
         }
+
+        let underlying_container = pk_body.as_mut();
+        for c_m in underlying_container.iter_mut().zip_longest(body) {
+            if let EitherOrBoth::Both(c, m) = c_m {
+                let m_byte_vec = m.to_byte_vec();
+                let m = m_byte_vec.iter().rev().fold(0_u64, |acc, byte| {
+                    acc.wrapping_shl(8).wrapping_add(*byte as u64)
+                });
+                *c = m;
+            } else {
+                return Err(anyhow_error_and_log("zip error"));
+            }
+        }
+
+        Ok(pk)
+    }
+
+    pub async fn open_to_tfhers_seeded_type<S: BaseSessionHandles>(
+        self,
+        seed: u128,
+        session: &S,
+    ) -> anyhow::Result<SeededLweCompactPublicKeyOwned<u64>> {
+        let lwe_dimension = LweDimension(self.glwe_ciphertext_share.polynomial_size.0);
+        let my_role = session.my_role();
+
+        let shared_body = self
+            .glwe_ciphertext_share
+            .body
+            .into_iter()
+            .map(|value| Share::new(my_role, value))
+            .collect_vec();
+        let body: Vec<Z> = open_list(&shared_body, session)
+            .await?
+            .iter()
+            .map(|value| value.to_scalar())
+            .try_collect()?;
+
+        let mut pk = SeededLweCompactPublicKeyOwned::new(
+            0_u64,
+            lwe_dimension,
+            CompressionSeed::from(Seed(seed)), // NOTE: key was generated using XOF so we need to use a custom decompression function
+            CiphertextModulus::new_native(),
+        );
+
+        let mut pk_body = pk.get_mut_body();
 
         let underlying_container = pk_body.as_mut();
         for c_m in underlying_container.iter_mut().zip_longest(body) {
