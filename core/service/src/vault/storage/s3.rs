@@ -65,6 +65,80 @@ impl S3Storage {
     fn item_key(&self, data_id: &RequestId, data_type: &str) -> String {
         format!("{}/{}/{}", self.prefix, data_type, data_id)
     }
+
+    /// Helper to update cache after successful S3 operation
+    async fn update_cache(&self, key: &str, data: &[u8]) {
+        if let Some(cache) = &self.cache {
+            let cache = Arc::clone(cache);
+            let mut guarded_cache = cache.lock().await;
+            match guarded_cache.insert(&self.bucket, key, data) {
+                Some(old_data) => {
+                    let size_changed = old_data.len() != data.len();
+                    let data_changed = old_data != data;
+                    tracing::debug!("Updated cache entry for bucket={}, key={}, size_changed={}, data_changed={}, size={}", 
+                        &self.bucket, key, size_changed, data_changed, data.len());
+                }
+                None => {
+                    tracing::debug!(
+                        "Added new cache entry for bucket={}, key={}, size={}",
+                        &self.bucket,
+                        key,
+                        data.len()
+                    );
+                }
+            }
+        }
+    }
+
+    /// Helper to delete cache entry (remove from cache)
+    async fn delete_cache(&self, key: &str) {
+        if let Some(cache) = &self.cache {
+            let cache = Arc::clone(cache);
+            let mut guarded_cache = cache.lock().await;
+            match guarded_cache.remove(&self.bucket, key) {
+                Some(_) => {
+                    tracing::debug!(
+                        "Removed cache entry for bucket={}, key={}",
+                        &self.bucket,
+                        key
+                    );
+                }
+                None => {
+                    tracing::warn!(
+                        "Attempted to remove non-existent cache entry for bucket={}, key={}",
+                        &self.bucket,
+                        key
+                    );
+                }
+            }
+        }
+    }
+
+    /// Helper to get data from cache or S3 with cache population
+    async fn get_with_cache(&self, key: &str) -> anyhow::Result<Vec<u8>> {
+        match &self.cache {
+            Some(cache) => {
+                let cache = Arc::clone(cache);
+                let mut guarded_cache = cache.lock().await;
+                match guarded_cache.get(&self.bucket, key) {
+                    Some(buf) => {
+                        tracing::info!(
+                            "found bucket={}, path={} in storage cache",
+                            &self.bucket,
+                            key
+                        );
+                        Ok(buf.clone())
+                    }
+                    None => {
+                        let data = s3_get_blob(&self.s3_client, &self.bucket, key).await?;
+                        guarded_cache.insert(&self.bucket, key, &data);
+                        Ok(data)
+                    }
+                }
+            }
+            None => s3_get_blob(&self.s3_client, &self.bucket, key).await,
+        }
+    }
 }
 
 impl StorageReader for S3Storage {
@@ -106,28 +180,7 @@ impl StorageReader for S3Storage {
             key
         );
 
-        let buf = match &self.cache {
-            Some(cache) => {
-                let cache = Arc::clone(cache);
-                let mut guarded_cache = cache.lock().await;
-                match guarded_cache.get(&self.bucket, key) {
-                    Some(buf) => {
-                        tracing::info!(
-                            "found bucket={}, path={} in storage cache",
-                            &self.bucket,
-                            key
-                        );
-                        buf.clone()
-                    }
-                    None => {
-                        let data = s3_get_blob(&self.s3_client, &self.bucket, key).await?;
-                        guarded_cache.insert(&self.bucket, key, &data);
-                        data
-                    }
-                }
-            }
-            None => s3_get_blob(&self.s3_client, &self.bucket, key).await?,
-        };
+        let buf = self.get_with_cache(key).await?;
         safe_deserialize(&mut std::io::Cursor::new(buf), SAFE_SER_SIZE_LIMIT)
             .map_err(|e| anyhow::anyhow!(e))
     }
@@ -179,13 +232,14 @@ impl Storage for S3Storage {
         );
         let mut buf = Vec::new();
         safe_serialize(data, &mut buf, SAFE_SER_SIZE_LIMIT)?;
-        self.cache.as_ref().map(|cache| async {
-            Arc::clone(cache)
-                .lock()
-                .await
-                .insert(&self.bucket, key, &buf);
-        });
-        s3_put_blob(&self.s3_client, &self.bucket, key, buf).await
+
+        // Store in S3 FIRST - only update cache if S3 operation succeeds
+        s3_put_blob(&self.s3_client, &self.bucket, key, buf.clone()).await?;
+
+        // Update cache ONLY after successful S3 storage
+        self.update_cache(key, &buf).await;
+
+        Ok(())
     }
 
     async fn delete_data(&mut self, data_id: &RequestId, data_type: &str) -> anyhow::Result<()> {
@@ -197,13 +251,21 @@ impl Storage for S3Storage {
             key
         );
 
-        let _ = self
+        // Remove from cache BEFORE deleting from S3 to prevent stale cache reads
+        self.delete_cache(key).await;
+
+        // Attempt S3 deletion but don't fail on errors
+        if let Err(e) = self
             .s3_client
             .delete_object()
             .bucket(&self.bucket)
             .key(key)
             .send()
-            .await;
+            .await
+        {
+            tracing::error!("S3 delete failed: {:?}", e);
+        }
+
         Ok(())
     }
 }
@@ -219,7 +281,13 @@ impl StorageForBytes for S3Storage {
 
         tracing::info!("Storing text in bucket {} under key {}", &self.bucket, key);
 
-        s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await
+        // Store in S3 FIRST - only update cache if S3 operation succeeds
+        s3_put_blob(&self.s3_client, &self.bucket, key, bytes.to_vec()).await?;
+
+        // Update cache ONLY after successful S3 storage
+        self.update_cache(key, bytes).await;
+
+        Ok(())
     }
 
     async fn load_bytes(&self, data_id: &RequestId, data_type: &str) -> anyhow::Result<Vec<u8>> {
@@ -231,7 +299,8 @@ impl StorageForBytes for S3Storage {
             key
         );
 
-        s3_get_blob(&self.s3_client, &self.bucket, key).await
+        // Check cache first, then S3 if not found
+        self.get_with_cache(key).await
     }
 }
 

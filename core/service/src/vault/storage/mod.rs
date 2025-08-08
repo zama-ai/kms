@@ -419,6 +419,10 @@ impl StorageCache {
         // do we have to use to_string()?
         self.cache.get(&(key.to_string(), subkey.to_string()))
     }
+
+    pub(crate) fn remove(&mut self, key: &str, subkey: &str) -> Option<Vec<u8>> {
+        self.cache.remove(&(key.to_string(), subkey.to_string()))
+    }
 }
 
 #[cfg(test)]

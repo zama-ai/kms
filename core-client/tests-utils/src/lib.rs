@@ -32,7 +32,7 @@ impl fmt::Display for OutputWrapper<'_> {
 }
 
 // Helper function to create the wrapper
-pub fn format_output(output: &'_ Output) -> OutputWrapper<'_> {
+pub fn format_output(output: &Output) -> OutputWrapper<'_> {
     OutputWrapper(output)
 }
 
