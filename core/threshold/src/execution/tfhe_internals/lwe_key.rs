@@ -4,6 +4,7 @@ use tfhe::{
     core_crypto::{
         commons::traits::ByteRandomGenerator,
         entities::{LweCompactPublicKey, LweCompactPublicKeyOwned},
+        prelude::SeededLweCompactPublicKey,
     },
     shortint::{
         self,
@@ -134,6 +135,15 @@ pub(crate) fn to_tfhe_hl_api_compact_public_key(
     let ipk = shortint::CompactPublicKey::from_raw_parts(compact_lwe_pk, params);
     let cpk = tfhe::integer::public_key::CompactPublicKey::from_raw_parts(ipk);
     tfhe::CompactPublicKey::from_raw_parts(cpk, tfhe::Tag::default())
+}
+
+pub(crate) fn to_tfhe_hl_api_compressed_compact_public_key(
+    seeded_compact_lwe_pk: SeededLweCompactPublicKey<Vec<u64>>,
+    params: CompactPublicKeyEncryptionParameters,
+) -> tfhe::CompressedCompactPublicKey {
+    let ipk = shortint::CompressedCompactPublicKey::from_raw_parts(seeded_compact_lwe_pk, params);
+    let cpk = tfhe::integer::public_key::CompressedCompactPublicKey::from_raw_parts(ipk);
+    tfhe::CompressedCompactPublicKey::from_raw_parts(cpk, tfhe::Tag::default())
 }
 
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweSecretKeyShare<Z, EXTENSION_DEGREE>
