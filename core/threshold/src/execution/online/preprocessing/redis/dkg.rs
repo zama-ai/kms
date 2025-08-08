@@ -6,7 +6,7 @@ use crate::{
     execution::{
         keyset_config::KeySetConfig,
         online::{
-            gen_bits::{BitGenEven, RealBitGenEven},
+            gen_bits::{BitGenEven, SecureBitGenEven},
             preprocessing::{BasePreprocessing, BitPreprocessing, DKGPreprocessing, NoiseBounds},
         },
         runtime::session::BaseSession,
@@ -63,7 +63,7 @@ where
             .total_bits_required(keyset_config);
 
         self.append_bits(
-            RealBitGenEven::gen_bits_even(num_bits_required, preprocessing, session).await?,
+            SecureBitGenEven::gen_bits_even(num_bits_required, preprocessing, session).await?,
         );
 
         let mut bit_preproc = self.clone();

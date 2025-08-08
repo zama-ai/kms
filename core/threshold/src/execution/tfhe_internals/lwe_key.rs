@@ -236,7 +236,7 @@ mod tests {
         },
         execution::{
             online::{
-                gen_bits::{BitGenEven, RealBitGenEven},
+                gen_bits::{BitGenEven, SecureBitGenEven},
                 preprocessing::dummy::DummyPreprocessing,
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
@@ -272,7 +272,7 @@ mod tests {
             let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             let vec_shared_bits =
-                RealBitGenEven::gen_bits_even(num_key_bits, &mut large_preproc, &mut session)
+                SecureBitGenEven::gen_bits_even(num_key_bits, &mut large_preproc, &mut session)
                     .await
                     .unwrap();
 
