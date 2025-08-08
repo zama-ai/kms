@@ -98,7 +98,7 @@ where
             self.decomp_level_count,
             input_key_lwe_dimension,
             self.output_lwe_size.to_lwe_dimension(),
-            CompressionSeed::from(Seed(seed)), // NOTE: if the key was generated using XOF we need to use a custom decompression function
+            CompressionSeed::from(Seed(seed)), // NOTE: key was generated using XOF so we need to use a custom decompression function
             CiphertextModulus::new_native(),
         );
 
