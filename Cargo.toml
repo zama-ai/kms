@@ -99,6 +99,7 @@ tracing-opentelemetry = "=0.30.0"
 tracing-subscriber = { version = "=0.3.19", features = ["fmt", "std"] }
 trait-variant = "0.1.2"
 validator = { version = "=0.20.0", features = ["derive"] }
+zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }
 x509-parser = { version = "=0.17.0", features = ["verify"] }
 
 alloy-dyn-abi = "=1.1.2"
