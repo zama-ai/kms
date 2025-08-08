@@ -2124,7 +2124,7 @@ pub mod test_tools {
                     service_listener,
                     cur_arc_server,
                     Arc::new(crate::grpc::MetaStoreStatusServiceImpl::new(
-                        None, None, None, None, None,
+                        None, None, None, None, None, None,
                     )),
                     cur_health_service,
                     server_shutdown_rx.map(drop),
@@ -2369,7 +2369,7 @@ pub mod test_tools {
                 listener,
                 arc_kms,
                 Arc::new(crate::grpc::MetaStoreStatusServiceImpl::new(
-                    None, None, None, None, None,
+                    None, None, None, None, None, None,
                 )),
                 health_service,
                 rx.map(drop),

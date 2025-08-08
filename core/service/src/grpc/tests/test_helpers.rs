@@ -17,6 +17,7 @@ pub fn create_test_service() -> MetaStoreStatusServiceImpl {
         user_dec_store: Some(Arc::new(RwLock::new(MetaStore::new(100, 50)))),
         crs_store: Some(Arc::new(RwLock::new(MetaStore::new(100, 50)))),
         preproc_store: Some(Arc::new(RwLock::new(MetaStore::new(100, 50)))),
+        custodian_context_store: Some(Arc::new(RwLock::new(MetaStore::new(100, 50)))),
     }
 }
 
@@ -28,6 +29,7 @@ pub fn create_unavailable_service() -> MetaStoreStatusServiceImpl {
         user_dec_store: None,
         crs_store: None,
         preproc_store: None,
+        custodian_context_store: None,
     }
 }
 
@@ -39,6 +41,7 @@ pub fn create_mixed_availability_service() -> MetaStoreStatusServiceImpl {
         user_dec_store: Some(Arc::new(RwLock::new(MetaStore::new(200, 100)))),
         crs_store: None, // Not available
         preproc_store: Some(Arc::new(RwLock::new(MetaStore::new(300, 150)))),
+        custodian_context_store: Some(Arc::new(RwLock::new(MetaStore::new(100, 50)))),
     }
 }
 
