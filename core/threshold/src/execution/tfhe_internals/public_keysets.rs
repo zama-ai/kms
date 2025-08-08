@@ -280,7 +280,7 @@ impl RawCompressedPubKeySet {
     }
 
     pub fn compute_tfhe_hl_api_compressed_server_key(
-        self,
+        &self,
         params: DKGParams,
     ) -> tfhe::CompressedServerKey {
         let shortint_key = self.compute_tfhe_shortint_compressed_server_key(params);
@@ -298,27 +298,33 @@ impl RawCompressedPubKeySet {
         //    )
         //});
 
-        let (compression_key, decompression_key) = self.compression_keys.unzip();
+        let (compression_key, decompression_key) = match self.compression_keys.as_ref() {
+            Some((compression_key, decompression_key)) => (
+                Some(compression_key.clone()),
+                Some(decompression_key.clone()),
+            ),
+            None => (None, None),
+        };
 
         let (noise_squashing_key, noise_squashing_compression_key) = match (
-            self.bk_sns,
-            self.msnrk_sns,
+            self.bk_sns.as_ref(),
+            self.msnrk_sns.as_ref(),
             params,
         ) {
             (Some(bk_sns), Some(msnrk_sns), DKGParams::WithSnS(params_with_sns)) => {
                 let noise_squashing_key = Some(
                     tfhe::integer::noise_squashing::CompressedNoiseSquashingKey::from_raw_parts( tfhe::shortint::noise_squashing::CompressedNoiseSquashingKey::from_raw_parts(
                         bk_sns.clone(),
-                        msnrk_sns,
+                        msnrk_sns.clone(),
                         params_with_sns.sns_params.message_modulus,
                         params_with_sns.sns_params.carry_modulus,
                         params_with_sns.sns_params.ciphertext_modulus,
                     )));
-                match self.sns_compression_key {
+                match self.sns_compression_key.as_ref() {
                         Some(sns_compression_key) => (
                             noise_squashing_key,
                             Some(tfhe::integer::ciphertext::CompressedNoiseSquashingCompressionKey::from_raw_parts(
-                                sns_compression_key,
+                                sns_compression_key.clone(),
                             )),
                         ),
                         None => (noise_squashing_key, None),
@@ -347,7 +353,7 @@ impl RawCompressedPubKeySet {
         todo!()
     }
 
-    pub fn to_compressed_pubkeyset(self, params: DKGParams) -> CompressedFhePubKeySet {
+    pub fn to_compressed_pubkeyset(&self, params: DKGParams) -> CompressedFhePubKeySet {
         let seed = self.seed;
         let public_key = self.compute_tfhe_hl_api_compressed_compact_public_key(params);
         let server_key = self.compute_tfhe_hl_api_compressed_server_key(params);
