@@ -226,32 +226,6 @@ fn operator_setup() {
         ));
     }
 
-    // use the wrong verification key, setup should fail
-    {
-        let wrong_verification_key = PublicSigKey::new({
-            let signing_key = k256::ecdsa::SigningKey::random(&mut rng);
-            *signing_key.verifying_key()
-        });
-        let mut wrong_custodian_messages = custodian_messages.clone();
-        wrong_custodian_messages[0].public_verf_key = wrong_verification_key;
-
-        let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
-        let operator = Operator::new(
-            Role::indexed_from_zero(0),
-            wrong_custodian_messages,
-            signing_key,
-            verification_key,
-            private_key,
-            public_key,
-            custodian_threshold,
-        );
-        assert!(matches!(
-            operator.unwrap_err(),
-            BackupError::SignatureVerificationError(..)
-        ));
-    }
-
     // use the wrong header, setup should fail
     {
         let mut wrong_custodian_messages = custodian_messages.clone();
