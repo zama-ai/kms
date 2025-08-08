@@ -31,6 +31,7 @@ use crate::{
             lwe_bootstrap_key_generation::allocate_and_generate_lwe_bootstrap_key,
             lwe_key::{allocate_and_generate_new_lwe_compact_public_key, LweSecretKeyShare},
             lwe_keyswitch_key_generation::allocate_and_generate_new_lwe_keyswitch_key,
+            lwe_packing_keyswitch_key::LwePackingKeyswitchKeyShares,
             randomness::MPCEncryptionRandomGenerator,
         },
     },
@@ -38,13 +39,14 @@ use crate::{
 use itertools::Itertools;
 use num_integer::div_ceil;
 use tfhe::core_crypto::commons::traits::UnsignedInteger;
-use tfhe::core_crypto::prelude::SeededLweKeyswitchKey;
+use tfhe::core_crypto::prelude::{SeededLweBootstrapKey, SeededLweKeyswitchKey};
 use tfhe::core_crypto::{
     algorithms::par_convert_standard_lwe_bootstrap_key_to_fourier,
     entities::{FourierLweBootstrapKey, LweBootstrapKey, LweCompactPublicKey, LweKeyswitchKey},
     prelude::ByteRandomGenerator,
 };
 use tfhe::shortint::list_compression::{
+    CompressedCompressionKey, CompressedDecompressionKey, CompressedNoiseSquashingCompressionKey,
     CompressionKey, DecompressionKey, NoiseSquashingCompressionKey,
 };
 use tfhe::shortint::server_key::{
@@ -55,6 +57,8 @@ use tfhe::shortint::ClassicPBSParameters;
 use tfhe_csprng::generators::SoftwareRandomGenerator;
 use tfhe_csprng::seeders::XofSeed;
 use tracing::instrument;
+
+pub(crate) const DSEP_KG: DomainSep = *b"TFHE_GEN";
 
 ///Sample the random but public seed
 async fn sample_seed<
@@ -335,7 +339,7 @@ where
 
 ///Generate the Key Switch Key from a Glwe key given in Lwe format,
 ///and an actual Lwe key
-#[instrument(name="Gen compressed KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen compressed KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_compressed_key_switch_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -367,24 +371,23 @@ where
     ksk_share.open_to_tfhers_seeded_type(seed, session).await
 }
 
-///Generates a Bootstrapping Key given a Glwe key in Glwe format
-///, a Lwe key and the params for the BK generation
-#[instrument(name="Gen BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
-async fn generate_bootstrap_key<
+///Helper function to generate bootstrap key share
+async fn generate_bootstrap_key_share<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
     Gen: ByteRandomGenerator,
-    Scalar: UnsignedInteger,
     const EXTENSION_DEGREE: usize,
 >(
     glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
     lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    params: BKParams,
+    params: &BKParams,
     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
-) -> anyhow::Result<LweBootstrapKey<Vec<Scalar>>>
+) -> anyhow::Result<
+    crate::execution::tfhe_internals::lwe_bootstrap_key::LweBootstrapKeyShare<Z, EXTENSION_DEGREE>,
+>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
@@ -413,9 +416,86 @@ where
     .await?;
 
     tracing::info!("(Party {my_role}) Generating BK {:?} ...Done", params);
+    Ok(bk_share)
+}
+
+///Generates a Bootstrapping Key given a Glwe key in Glwe format
+///, a Lwe key and the params for the BK generation
+#[instrument(name="Gen BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+async fn generate_bootstrap_key<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ByteRandomGenerator,
+    Scalar: UnsignedInteger,
+    const EXTENSION_DEGREE: usize,
+>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: BKParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+) -> anyhow::Result<LweBootstrapKey<Vec<Scalar>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let my_role = session.my_role();
+    let bk_share = generate_bootstrap_key_share(
+        glwe_secret_key_share,
+        lwe_secret_key_share,
+        &params,
+        mpc_encryption_rng,
+        session,
+        preprocessing,
+    )
+    .await?;
+
     tracing::info!("(Party {my_role}) Opening BK {:?} ...Start", params);
     //Open the bk and cast it to TFHE-rs type
     let bk = bk_share.open_to_tfhers_type::<Scalar, _>(session).await?;
+    tracing::info!("(Party {my_role}) Opening BK {:?} ...Done", params);
+    Ok(bk)
+}
+
+///Generates a Bootstrapping Key given a Glwe key in Glwe format
+///, a Lwe key and the params for the BK generation
+#[instrument(name="Gen compressed BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+async fn generate_compressed_bootstrap_key<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ByteRandomGenerator,
+    Scalar: UnsignedInteger,
+    const EXTENSION_DEGREE: usize,
+>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: BKParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+    seed: u128,
+) -> anyhow::Result<SeededLweBootstrapKey<Vec<Scalar>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let my_role = session.my_role();
+    let bk_share = generate_bootstrap_key_share(
+        glwe_secret_key_share,
+        lwe_secret_key_share,
+        &params,
+        mpc_encryption_rng,
+        session,
+        preprocessing,
+    )
+    .await?;
+
+    tracing::info!("(Party {my_role}) Opening BK {:?} ...Start", params);
+    //Open the bk and cast it to TFHE-rs type
+    let bk = bk_share
+        .open_to_tfhers_seeded_type::<Scalar, _>(seed, session)
+        .await?;
     tracing::info!("(Party {my_role}) Opening BK {:?} ...Done", params);
     Ok(bk)
 }
@@ -467,28 +547,61 @@ where
         modulus_switch_noise_reduction_key: ModulusSwitchConfiguration::Standard,
     };
 
-    let decompression_key = DecompressionKey {
+    Ok(DecompressionKey {
         blind_rotate_key,
         lwe_per_glwe: params.raw_compression_parameters.lwe_per_glwe,
-    };
-    Ok(decompression_key)
+    })
 }
 
-async fn generate_sns_compression_keys<
+#[instrument(name="Gen compressed Decompression Key", skip(private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+async fn generate_compressed_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
     Gen: ByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
-    glwe_secret_key_share_sns_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
-    params: DistributedSnsCompressionParameters,
+    private_glwe_compute_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    private_compression_key: &CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>,
+    params: DistributedCompressionParameters,
     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     session: &mut S,
     preprocessing: &mut P,
+    seed: u128,
+) -> anyhow::Result<CompressedDecompressionKey>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let blind_rotate_key: SeededLweBootstrapKey<Vec<u64>> = generate_compressed_bootstrap_key(
+        private_glwe_compute_key,
+        &private_compression_key.clone().into_lwe_secret_key(),
+        params.bk_params,
+        mpc_encryption_rng,
+        session,
+        preprocessing,
+        seed,
+    )
+    .await?;
+
+    Ok(CompressedDecompressionKey {
+        blind_rotate_key,
+        lwe_per_glwe: params.raw_compression_parameters.lwe_per_glwe,
+    })
+}
+
+fn generate_sns_compression_key_shares<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    glwe_secret_key_share_sns_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: &DistributedSnsCompressionParameters,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    preprocessing: &mut P,
 ) -> anyhow::Result<(
     SnsCompressionPrivateKeyShares<Z, EXTENSION_DEGREE>,
-    NoiseSquashingCompressionKey,
+    LwePackingKeyswitchKeyShares<Z, EXTENSION_DEGREE>,
 )>
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
@@ -522,6 +635,39 @@ where
         mpc_encryption_rng,
     );
 
+    Ok((
+        private_sns_compression_key_shares,
+        packing_key_switching_key_shares,
+    ))
+}
+
+async fn generate_sns_compression_keys<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    glwe_secret_key_share_sns_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: DistributedSnsCompressionParameters,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+) -> anyhow::Result<(
+    SnsCompressionPrivateKeyShares<Z, EXTENSION_DEGREE>,
+    NoiseSquashingCompressionKey,
+)>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let (private_sns_compression_key_shares, packing_key_switching_key_shares) =
+        generate_sns_compression_key_shares(
+            glwe_secret_key_share_sns_as_lwe,
+            &params,
+            mpc_encryption_rng,
+            preprocessing,
+        )?;
+
     let packing_key_switching_key = packing_key_switching_key_shares
         .open_to_tfhers_type::<u128, _>(session)
         .await
@@ -532,6 +678,82 @@ where
         params.raw_compression_parameters.lwe_per_glwe,
     );
     Ok((private_sns_compression_key_shares, compression_key))
+}
+
+async fn generate_compressed_sns_compression_keys<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    glwe_secret_key_share_sns_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: DistributedSnsCompressionParameters,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+    seed: u128,
+) -> anyhow::Result<(
+    SnsCompressionPrivateKeyShares<Z, EXTENSION_DEGREE>,
+    CompressedNoiseSquashingCompressionKey,
+)>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let (private_sns_compression_key_shares, packing_key_switching_key_shares) =
+        generate_sns_compression_key_shares(
+            glwe_secret_key_share_sns_as_lwe,
+            &params,
+            mpc_encryption_rng,
+            preprocessing,
+        )?;
+
+    let packing_key_switching_key = packing_key_switching_key_shares
+        .open_to_tfhers_seeded_type::<u128, _>(seed, session)
+        .await
+        .inspect_err(|e| tracing::error!("failed to open tfhers type u128: {e}"))?;
+
+    let compression_key = CompressedNoiseSquashingCompressionKey::from_raw_parts(
+        packing_key_switching_key,
+        params.raw_compression_parameters.lwe_per_glwe,
+    );
+
+    Ok((private_sns_compression_key_shares, compression_key))
+}
+
+/// Helper function to generate packing key switching key shares
+/// for use in Compression key.
+fn generate_packing_key_switching_key_shares<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    private_glwe_compute_key_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    private_compression_key: &CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>,
+    params: &DistributedCompressionParameters,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    preprocessing: &mut P,
+) -> anyhow::Result<LwePackingKeyswitchKeyShares<Z, EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let noise_vec = preprocessing
+        .next_noise_vec(params.ksk_num_noise, params.ksk_noisebound)?
+        .iter()
+        .map(|share| share.value())
+        .collect_vec();
+
+    mpc_encryption_rng.fill_noise(noise_vec);
+
+    Ok(allocate_and_generate_lwe_packing_keyswitch_key(
+        private_glwe_compute_key_as_lwe,
+        &private_compression_key.post_packing_ks_key,
+        params.raw_compression_parameters.packing_ks_base_log,
+        params.raw_compression_parameters.packing_ks_level,
+        EncryptionType::Bits64,
+        mpc_encryption_rng,
+    ))
 }
 
 #[instrument(name="Gen Compression and Decompression Key", skip(private_glwe_compute_key_as_lwe, private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
@@ -553,22 +775,13 @@ async fn generate_compression_decompression_keys<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let noise_vec = preprocessing
-        .next_noise_vec(params.ksk_num_noise, params.ksk_noisebound)?
-        .iter()
-        .map(|share| share.value())
-        .collect_vec();
-
-    mpc_encryption_rng.fill_noise(noise_vec);
-
-    let packing_key_switching_key_shares = allocate_and_generate_lwe_packing_keyswitch_key(
+    let packing_key_switching_key_shares = generate_packing_key_switching_key_shares(
         private_glwe_compute_key_as_lwe,
-        &private_compression_key.post_packing_ks_key,
-        params.raw_compression_parameters.packing_ks_base_log,
-        params.raw_compression_parameters.packing_ks_level,
-        EncryptionType::Bits64,
+        private_compression_key,
+        &params,
         mpc_encryption_rng,
-    );
+        preprocessing,
+    )?;
 
     let packing_key_switching_key = packing_key_switching_key_shares
         .open_to_tfhers_type::<u64, _>(session)
@@ -587,6 +800,59 @@ where
         mpc_encryption_rng,
         session,
         preprocessing,
+    )
+    .await?;
+
+    Ok((compression_key, decompression_key))
+}
+
+#[allow(clippy::too_many_arguments)]
+#[instrument(name="Gen compressed Compression and Decompression Key", skip(private_glwe_compute_key_as_lwe, private_glwe_compute_key, private_compression_key, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+async fn generate_compressed_compression_decompression_keys<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    private_glwe_compute_key_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    private_glwe_compute_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    private_compression_key: &CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>,
+    params: DistributedCompressionParameters,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+    seed: u128,
+) -> anyhow::Result<(CompressedCompressionKey, CompressedDecompressionKey)>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let packing_key_switching_key_shares = generate_packing_key_switching_key_shares(
+        private_glwe_compute_key_as_lwe,
+        private_compression_key,
+        &params,
+        mpc_encryption_rng,
+        preprocessing,
+    )?;
+
+    let packing_key_switching_key = packing_key_switching_key_shares
+        .open_to_tfhers_seeded_type::<u64, _>(seed, session)
+        .await?;
+
+    let compression_key = CompressedCompressionKey {
+        packing_key_switching_key,
+        lwe_per_glwe: params.raw_compression_parameters.lwe_per_glwe,
+        storage_log_modulus: params.raw_compression_parameters.storage_log_modulus,
+    };
+
+    let decompression_key = generate_compressed_decompression_keys(
+        private_glwe_compute_key,
+        private_compression_key,
+        params,
+        mpc_encryption_rng,
+        session,
+        preprocessing,
+        seed,
     )
     .await?;
 
@@ -795,7 +1061,6 @@ where
     Ok(compression_material)
 }
 
-const DSEP_KG: DomainSep = *b"TFHE_GEN";
 /// Runs the distributed key generation protocol but optionally
 /// uses an existing compression secret key.
 ///
