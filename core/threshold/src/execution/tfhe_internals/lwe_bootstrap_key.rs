@@ -147,7 +147,7 @@ where
             decomp_base_log,
             decomp_level_count,
             input_lwe_dimension,
-            CompressionSeed::from(Seed(seed)), // NOTE: if the key was generated using XOF we need to use a custom decompression function
+            CompressionSeed::from(Seed(seed)), // NOTE: key was generated using XOF so we need to use a custom decompression function
             CoreCiphertextModulus::new_native(),
         );
 

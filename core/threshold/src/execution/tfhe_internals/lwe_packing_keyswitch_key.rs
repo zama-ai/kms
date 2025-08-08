@@ -127,7 +127,7 @@ where
             input_key_lwe_dimension,
             output_key_glwe_dimension,
             output_key_polynomial_size,
-            CompressionSeed::from(Seed(seed)), // NOTE: if the key was generated using XOF we need to use a custom decompression function
+            CompressionSeed::from(Seed(seed)), // NOTE: the key was generated using XOF so we need to use a custom decompression function
             CiphertextModulus::new_native(),
         );
 

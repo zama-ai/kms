@@ -9,7 +9,7 @@ use tfhe::{
     },
     shortint::parameters::{DecompositionLevelCount, GlweDimension, LweDimension, PolynomialSize},
 };
-use tfhe_csprng::{generators::ForkError, seeders::SeedKind};
+use tfhe_csprng::{generators::ForkError, seeders::XofSeed};
 
 use super::parameters::EncryptionType;
 
@@ -105,7 +105,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
 }
 
 impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
-    pub fn new_from_seed(seed: impl Into<SeedKind>) -> Self {
+    pub fn new_from_seed(seed: XofSeed) -> Self {
         Self {
             gen: RandomGenerator::<Gen>::new(seed),
         }
@@ -186,7 +186,7 @@ impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
 impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
     MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>
 {
-    pub(crate) fn new_from_seed(seed: impl Into<SeedKind>) -> Self {
+    pub(crate) fn new_from_seed(seed: XofSeed) -> Self {
         Self {
             mask: MPCMaskRandomGenerator::<Gen>::new_from_seed(seed),
             noise: Default::default(),
