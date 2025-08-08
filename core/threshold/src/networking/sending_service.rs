@@ -402,7 +402,8 @@ pub struct NetworkSession {
     /// owned by the session and thus automatically cleaned up on drop
     pub receiving_channels: MessageQueueStore,
     // Round counter for the current session, behind a lock to be able to update it without a mut ref to self
-    pub round_counter: RwLock<usize>,
+    // Observe tokio lock is needed since it must be held across an await point
+    pub round_counter: tokio::sync::RwLock<usize>,
     // Measure the number of bytes sent by this session
     #[cfg(feature = "choreographer")]
     pub num_byte_sent: RwLock<usize>,
@@ -419,13 +420,21 @@ pub struct NetworkSession {
 
 #[async_trait]
 impl Networking for NetworkSession {
+    /// WARNING: [`increase_round_counter`] MUST be called right before sending.
+    /// In particular a call to [`receive`] cannot be interleaved between a counter increase and a send.
+    /// Thus sending and receiving MUST not be interleaved.
+    ///
     //Note this need not be async, so do we want to keep the trait definition async
     //if we want to add other implems which may require async ?
     async fn send(&self, value: Vec<u8>, receiver: &Identity) -> anyhow::Result<()> {
-        let round_counter = *self
+        // Lock the counter to ensure no modifications happens while sending
+        // This may cause an error if someone tries to increase the round counter at the same time
+        // however, this would imply incorrect use of the networking API and thus we want to fail fast.
+        let counter_lock = self
             .round_counter
-            .read()
+            .try_read()
             .map_err(|e| anyhow_error_and_log(format!("Locking error: {e:?}")))?;
+        let round_counter = *counter_lock;
         let tagged_value = Tag {
             sender: self.owner.clone(),
             session_id: self.session_id,
@@ -437,7 +446,7 @@ impl Networking for NetworkSession {
 
         #[cfg(feature = "choreographer")]
         {
-            let mut sent = self.num_byte_sent.write().unwrap();
+            let mut sent = self.num_byte_sent.try_write().unwrap();
             *sent += tag.len() + value.len();
         }
         let request = SendValueRequest {
@@ -456,12 +465,17 @@ impl Networking for NetworkSession {
     }
 
     /// Receives messages from other parties, assuming the grpc server filled the [`MessageQueueStores`] correctly
+    ///
+    /// WARNING: A call to [`receive`] cannot be interleaved between a counter increase and a send.
+    /// Thus sending and receiving MUST not be interleaved.
     async fn receive(&self, sender: &Identity) -> anyhow::Result<Vec<u8>> {
-        let network_round = *self
+        // Lock the counter to ensure no modifications happens while receiving
+        // This may cause an error if someone tries to increase the round counter at the same time
+        // however, this would imply incorrect use of the networking API and thus we want to fail fast.
+        let counter_lock = self
             .round_counter
-            .read()
+            .try_read()
             .map_err(|e| anyhow_error_and_log(format!("Locking error: {e:?}")))?;
-
         let rx = self.receiving_channels.get(sender).ok_or_else(|| {
             anyhow_error_and_log(format!(
                 "couldn't retrieve receiving channel for P:{sender:?}"
@@ -477,6 +491,7 @@ impl Networking for NetworkSession {
             .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
 
         // drop old messages
+        let network_round = *counter_lock;
         while local_packet.round_counter < network_round {
             tracing::debug!(
                 "@ round {} - dropped value {:?} from round {}",
@@ -503,10 +518,10 @@ impl Networking for NetworkSession {
             Ok(next_round_timeout),
             Ok(mut net_round),
         ) = (
-            self.max_elapsed_time.write(),
-            self.current_network_timeout.write(),
-            self.next_network_timeout.read(),
-            self.round_counter.write(),
+            self.max_elapsed_time.try_write(),
+            self.current_network_timeout.try_write(),
+            self.next_network_timeout.try_read(),
+            self.round_counter.try_write(),
         ) {
             *max_elapsed_time += *current_round_timeout;
 
@@ -532,8 +547,8 @@ impl Networking for NetworkSession {
     fn get_timeout_current_round(&self) -> anyhow::Result<Instant> {
         let init_time = self.init_time.get_or_init(Instant::now);
         if let (Ok(max_elapsed_time), Ok(network_timeout)) = (
-            self.max_elapsed_time.read(),
-            self.current_network_timeout.read(),
+            self.max_elapsed_time.try_read(),
+            self.current_network_timeout.try_read(),
         ) {
             Ok(*init_time + *network_timeout + *max_elapsed_time)
         } else {
@@ -542,7 +557,7 @@ impl Networking for NetworkSession {
     }
 
     fn get_current_round(&self) -> anyhow::Result<usize> {
-        if let Ok(round_counter) = self.round_counter.read() {
+        if let Ok(round_counter) = self.round_counter.try_read() {
             Ok(*round_counter)
         } else {
             Err(anyhow_error_and_log("Couldn't lock round_counter RwLock"))
@@ -555,7 +570,7 @@ impl Networking for NetworkSession {
     fn set_timeout_for_next_round(&self, timeout: Duration) -> anyhow::Result<()> {
         match self.get_network_mode() {
             NetworkMode::Sync => {
-                if let Ok(mut next_network_timeout) = self.next_network_timeout.write() {
+                if let Ok(mut next_network_timeout) = self.next_network_timeout.try_write() {
                     *next_network_timeout = timeout;
                 } else {
                     return Err(anyhow_error_and_log("Couldn't lock mutex"));
@@ -592,7 +607,7 @@ impl Networking for NetworkSession {
 
     #[cfg(feature = "choreographer")]
     fn get_num_byte_sent(&self) -> anyhow::Result<usize> {
-        if let Ok(num_byte_sent) = self.num_byte_sent.read() {
+        if let Ok(num_byte_sent) = self.num_byte_sent.try_read() {
             Ok(*num_byte_sent)
         } else {
             Err(anyhow_error_and_log("Couldn't lock num_byte_sent RwLock"))
