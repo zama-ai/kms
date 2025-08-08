@@ -68,6 +68,7 @@ use threshold_fhe::session_id::SessionId;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::thread_handles::ThreadHandleGroup;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 #[cfg(feature = "non-wasm")]
 use tokio_util::task::TaskTracker;
 use tonic_health::pb::health_server::{Health, HealthServer};
@@ -987,16 +988,19 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Shutdown
     for RealCentralizedKms<PubS, PrivS>
 {
-    async fn shutdown(&self) -> anyhow::Result<()> {
-        self.health_reporter
-            .write()
-            .await
-            .set_not_serving::<CoreServiceEndpointServer<Self>>()
-            .await;
-        self.tracker.close();
-        self.tracker.wait().await;
-        tracing::info!("Central core service endpoint server shutdown complete.");
-        Ok(())
+    fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
+        let h_repoter = self.health_reporter.clone();
+        let tracker = self.tracker.clone();
+        let handle = tokio::task::spawn(async move {
+            h_repoter
+                .write()
+                .await
+                .set_not_serving::<CoreServiceEndpointServer<Self>>()
+                .await;
+            tracker.close();
+            tracker.wait().await;
+        });
+        Ok(handle)
     }
 }
 

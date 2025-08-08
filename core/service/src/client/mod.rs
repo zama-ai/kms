@@ -2260,10 +2260,13 @@ pub mod test_tools {
 
         pub async fn assert_shutdown(self) {
             // Call shutdown so we can await the server to shut down even though sending the shutdown signal already calls this
-            self.server
+            let shutdown_handle = self
+                .server
                 .shutdown()
+                .expect("Failed to execute core service server shutdown");
+            shutdown_handle
                 .await
-                .expect("Failed to await core service server shutdown");
+                .expect("Failed to await core service server shutdown completion");
             // Shut down the core server
             // The receiver should not be closed, that's why we unwrap
             self.service_shutdown_tx
@@ -2926,7 +2929,8 @@ pub(crate) mod tests {
             ServingStatus::NotServing as i32,
             "Service is not in NOT SERVING status. Got status: {status}"
         );
-        let _ = server_handle.server.shutdown().await;
+        let shutdown_handle = server_handle.server.shutdown().unwrap();
+        shutdown_handle.await.unwrap();
         check_port_is_closed(mpc_port).await;
         check_port_is_closed(service_port).await;
     }
