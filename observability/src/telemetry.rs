@@ -148,9 +148,7 @@ pub fn init_metrics(settings: &TelemetryConfig) -> Result<SdkMeterProvider, anyh
     let state = MetricsState::new(registry);
 
     // Use the global METRICS instance also as a sanity check that metrics are working
-    METRICS
-        .increment_request_counter("system_startup")
-        .context("Failed to increment system startup counter")?;
+    METRICS.increment_request_counter("system_startup");
 
     // Get the current runtime handle
     let rt = tokio::runtime::Handle::current();

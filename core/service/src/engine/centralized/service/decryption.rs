@@ -37,30 +37,18 @@ pub async fn user_decrypt_impl<
     // Start timing and counting before any operations
     let mut timer = METRICS
         .time_operation(OP_USER_DECRYPT_REQUEST)
-        .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-        .and_then(|b| {
-            // Use a constant party ID since this is the central KMS
-            b.tag(TAG_PARTY_ID, "central")
-                .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-        })
-        .map(|b| b.start())
-        .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-        .ok();
+        // Use a constant party ID since this is the central KMS
+        .tag(TAG_PARTY_ID, "central")
+        .start();
 
-    let _request_counter = METRICS
-        .increment_request_counter(OP_USER_DECRYPT_REQUEST)
-        .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
+    METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
 
     let permit = service
         .rate_limiter
         .start_user_decrypt()
         .await
         .map_err(|e| {
-            if let Err(e) =
-                METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
-            {
-                tracing::warn!("Failed to increment error counter: {:?}", e);
-            }
+            METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED);
             Status::resource_exhausted(e.to_string())
         })?;
 
@@ -72,12 +60,7 @@ pub async fn user_decrypt_impl<
             format!("Failed to validate user decryption request: {inner:?}"),
         )?;
 
-    if let Some(b) = timer.as_mut() {
-        //We log but we don't want to return early because timer failed
-        let _ = b
-            .tags([(TAG_KEY_ID, key_id.as_str())])
-            .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
-    }
+    timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
     {
         let mut guarded_meta_store = service.user_decrypt_meta_map.write().await;
@@ -117,11 +100,7 @@ pub async fn user_decrypt_impl<
                 Ok(k) => k,
                 Err(e) => {
                     let mut guarded_meta_store = meta_store.write().await;
-                    if let Err(e) =
-                        METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND)
-                    {
-                        tracing::warn!("Failed to increment error counter: {:?}", e);
-                    }
+                    METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
                     let _ = guarded_meta_store.update(
                         &request_id,
                         Err(format!("Failed to get key ID {key_id} with error {e:?}")),
@@ -158,12 +137,10 @@ pub async fn user_decrypt_impl<
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store
                         .update(&request_id, Err(format!("Failed user decryption: {e}")));
-                    METRICS
-                        .increment_error_counter(
-                            OP_USER_DECRYPT_REQUEST,
-                            ERR_USER_DECRYPTION_FAILED,
-                        )
-                        .ok();
+                    METRICS.increment_error_counter(
+                        OP_USER_DECRYPT_REQUEST,
+                        ERR_USER_DECRYPTION_FAILED,
+                    );
                 }
             }
         }
@@ -222,30 +199,18 @@ pub async fn public_decrypt_impl<
     // Start timing and counting before any operations
     let mut timer = METRICS
         .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
-        .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-        .and_then(|b| {
-            // Use a constant party ID since this is the central KMS
-            b.tag(TAG_PARTY_ID, "central")
-                .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-        })
-        .map(|b| b.start())
-        .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-        .ok();
+        // Use a constant party ID since this is the central KMS
+        .tag(TAG_PARTY_ID, "central")
+        .start();
 
-    METRICS
-        .increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST)
-        .map_err(|e| Status::internal(e.to_string()))?;
+    METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
 
     let permit = service
         .rate_limiter
         .start_pub_decrypt()
         .await
         .map_err(|e| {
-            if let Err(e) =
-                METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
-            {
-                tracing::warn!("Failed to increment error counter: {:?}", e);
-            }
+            METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED);
             tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string())
         })?;
 
@@ -257,12 +222,7 @@ pub async fn public_decrypt_impl<
         format!("Failed to validate decrypt request {inner:?}"),
     )?;
 
-    if let Some(b) = timer.as_mut() {
-        //We log but we don't want to return early because timer failed
-        let _ = b
-            .tags([(TAG_KEY_ID, key_id.as_str())])
-            .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
-    }
+    timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
     tracing::info!(
         "Decrypting {} ciphertexts using key {} with request id {}",
@@ -305,11 +265,7 @@ pub async fn public_decrypt_impl<
                 Ok(k) => k,
                 Err(e) => {
                     let mut guarded_meta_store = meta_store.write().await;
-                    if let Err(e) = METRICS
-                        .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND)
-                    {
-                        tracing::warn!("Failed to increment error counter: {:?}", e);
-                    }
+                    METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
                     let _ = guarded_meta_store.update(
                         &request_id,
                         Err(format!("Failed to get key ID {key_id} with error {e:?}")),
@@ -366,12 +322,10 @@ pub async fn public_decrypt_impl<
                 }
                 Ok(Err(e)) => {
                     let mut guarded_meta_store = meta_store.write().await;
-                    if let Err(e) = METRICS.increment_error_counter(
+                    METRICS.increment_error_counter(
                         OP_PUBLIC_DECRYPT_REQUEST,
                         ERR_PUBLIC_DECRYPTION_FAILED,
-                    ) {
-                        tracing::warn!("Failed to increment error counter: {:?}", e);
-                    }
+                    );
                     let _ = guarded_meta_store.update(
                         &request_id,
                         Err(format!("Error during decryption computation: {e}")),
