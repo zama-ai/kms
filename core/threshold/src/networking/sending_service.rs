@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     net::IpAddr,
     str::FromStr,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, RwLock},
 };
 
 use backoff::exponential::ExponentialBackoff;
@@ -14,10 +14,7 @@ use hyper_rustls::{FixedServerNameResolver, HttpsConnectorBuilder};
 use observability::telemetry::ContextPropagator;
 use serde::{Deserialize, Serialize};
 use tokio::{
-    sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        RwLock,
-    },
+    sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     time::{Duration, Instant},
 };
 use tokio_rustls::rustls::{
@@ -85,7 +82,7 @@ pub struct GrpcSendingService {
     /// Keep in memory channels we already have available
     channel_map:
         DashMap<Identity, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>,
-    thread_handles: Arc<std::sync::RwLock<ThreadHandleGroup>>,
+    thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
 
 impl GrpcSendingService {
@@ -287,7 +284,7 @@ impl GrpcSendingService {
     /// Shut down the sending service.
     pub fn shutdown(&mut self) {
         match Arc::get_mut(&mut self.thread_handles) {
-            Some(lock) => match std::sync::RwLock::get_mut(lock) {
+            Some(lock) => match RwLock::get_mut(lock) {
                 Ok(handles) => {
                     let handles = std::mem::take(handles);
                     match handles.join_all_blocking() {
@@ -320,7 +317,7 @@ impl SendingService for GrpcSendingService {
         Ok(Self {
             config,
             tls_certs,
-            thread_handles: Arc::new(std::sync::RwLock::new(ThreadHandleGroup::new())),
+            thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
             channel_map: DashMap::new(),
         })
     }
@@ -405,7 +402,8 @@ pub struct NetworkSession {
     /// owned by the session and thus automatically cleaned up on drop
     pub receiving_channels: MessageQueueStore,
     // Round counter for the current session, behind a lock to be able to update it without a mut ref to self
-    pub round_counter: RwLock<usize>,
+    // Observe tokio lock is needed since it must be held across an await point
+    pub round_counter: tokio::sync::RwLock<usize>,
     // Measure the number of bytes sent by this session
     #[cfg(feature = "choreographer")]
     pub num_byte_sent: RwLock<usize>,
