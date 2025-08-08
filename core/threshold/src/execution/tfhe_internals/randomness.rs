@@ -1,7 +1,4 @@
-use crate::{
-    algebra::{galois_rings::common::ResiduePoly, structure_traits::BaseRing},
-    hashing::DomainSep,
-};
+use crate::algebra::{galois_rings::common::ResiduePoly, structure_traits::BaseRing};
 
 use itertools::Itertools;
 use tfhe::{
@@ -15,8 +12,6 @@ use tfhe::{
 use tfhe_csprng::{generators::ForkError, seeders::XofSeed};
 
 use super::parameters::EncryptionType;
-
-const KG_DSEP: DomainSep = *b"TFHE_GEN";
 
 //Question:
 //For now there's a single noise vector which should be filled with the values we want
@@ -110,9 +105,9 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
 }
 
 impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
-    pub fn new_from_seed(seed: u128) -> Self {
+    pub fn new_from_seed(seed: XofSeed) -> Self {
         Self {
-            gen: RandomGenerator::<Gen>::new(XofSeed::new_u128(seed, KG_DSEP)),
+            gen: RandomGenerator::<Gen>::new(seed),
         }
     }
     pub fn fill_slice_with_random_mask_custom_mod<Z: BaseRing>(
@@ -191,7 +186,7 @@ impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
 impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
     MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>
 {
-    pub(crate) fn new_from_seed(seed: u128) -> Self {
+    pub(crate) fn new_from_seed(seed: XofSeed) -> Self {
         Self {
             mask: MPCMaskRandomGenerator::<Gen>::new_from_seed(seed),
             noise: Default::default(),

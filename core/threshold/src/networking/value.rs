@@ -1,12 +1,12 @@
 use crate::algebra::structure_traits::{Ring, Zero};
 use crate::error::error_handler::anyhow_error_and_log;
-#[cfg(any(test, feature = "testing"))]
-use crate::execution::endpoints::keygen::FhePubKeySet;
 use crate::execution::large_execution::local_double_share::MapsDoubleSharesChallenges;
 use crate::execution::large_execution::local_single_share::MapsSharesChallenges;
 use crate::execution::large_execution::vss::{
     ExchangedDataRound1, ValueOrPoly, VerificationValues,
 };
+#[cfg(any(test, feature = "testing"))]
+use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::execution::zk::ceremony;
 use crate::execution::{runtime::party::Role, small_execution::prss::PartySet};
 #[cfg(feature = "experimental")]

@@ -26,7 +26,7 @@ use kms_grpc::{
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
-use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
+use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 use super::{check_data_exists, log_storage_success, CryptoMaterialReader};
@@ -99,7 +99,7 @@ where
         Arc::clone(&self.public_storage)
     }
 
-    /// Getter for private_storage  
+    /// Getter for private_storage
     pub fn get_private_storage(&self) -> Arc<Mutex<PrivS>> {
         Arc::clone(&self.private_storage)
     }
