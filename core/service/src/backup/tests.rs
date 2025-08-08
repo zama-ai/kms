@@ -12,10 +12,7 @@ use crate::{
         operator::BackupCommitments,
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
-    cryptography::{
-        backup_pke,
-        internal_crypto_types::{gen_sig_keys, PublicSigKey},
-    },
+    cryptography::{backup_pke, internal_crypto_types::gen_sig_keys},
 };
 
 use super::{custodian, error::BackupError, operator::Operator};
