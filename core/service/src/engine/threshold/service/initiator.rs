@@ -1,5 +1,5 @@
 // === Standard Library ===
-use std::sync::Arc;
+use std::{marker::PhantomData, sync::Arc};
 
 // === External Crates ===
 use kms_grpc::{
@@ -12,7 +12,7 @@ use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
         runtime::session::ParameterHandles,
-        small_execution::prss::{PRSSInit, PRSSSetup, RobustSecurePrssInit},
+        small_execution::prss::{PRSSInit, PRSSSetup},
     },
     networking::NetworkMode,
 };
@@ -33,16 +33,26 @@ use crate::{
 // === Current Module Imports ===
 use super::{session::SessionPreparer, RealThresholdKms};
 
-pub struct RealInitiator<PrivS: Storage + Send + Sync + 'static> {
+pub struct RealInitiator<
+    PrivS: Storage + Send + Sync + 'static,
+    Init: PRSSInit<ResiduePolyF4Z64> + PRSSInit<ResiduePolyF4Z128>,
+> {
     // TODO eventually add mode to allow for nlarge as well.
     pub prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
     pub prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
     pub private_storage: Arc<Mutex<PrivS>>,
     pub session_preparer: SessionPreparer,
-    pub health_reporter: Arc<RwLock<HealthReporter>>,
+    pub health_reporter: HealthReporter,
+    pub(crate) _init: PhantomData<Init>,
 }
 
-impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
+impl<
+        PrivS: Storage + Send + Sync + 'static,
+        Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
+            + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
+            + Default,
+    > RealInitiator<PrivS, Init>
+{
     pub async fn init_prss_from_disk(&self, req_id: &RequestId) -> anyhow::Result<()> {
         let prss_setup_z128_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
@@ -109,8 +119,6 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         {
             // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
             self.health_reporter
-                .write()
-                .await
                 .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS>>>()
                 .await;
         }
@@ -141,13 +149,15 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
             "Role assignments: {:?}",
             base_session.parameters.role_assignments()
         );
-        let prss_setup_obj_z128: PRSSSetup<ResiduePolyF4Z128> = RobustSecurePrssInit::default()
-            .init(&mut base_session)
-            .await?;
 
-        let prss_setup_obj_z64: PRSSSetup<ResiduePolyF4Z64> = RobustSecurePrssInit::default()
-            .init(&mut base_session)
-            .await?;
+        // It seems we cannot do something like
+        // `Init::default().init(&mut base_session).await?;`
+        // as the type inference gets confused even when using the correct return type.
+        let prss_setup_obj_z128: PRSSSetup<ResiduePolyF4Z128> =
+            <Init as PRSSInit<ResiduePolyF4Z128>>::init(&Init::default(), &mut base_session)
+                .await?;
+        let prss_setup_obj_z64: PRSSSetup<ResiduePolyF4Z64> =
+            <Init as PRSSInit<ResiduePolyF4Z64>>::init(&Init::default(), &mut base_session).await?;
 
         let mut guarded_prss_setup = self.prss_setup_z128.write().await;
         *guarded_prss_setup = Some(prss_setup_obj_z128.clone());
@@ -186,8 +196,6 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         {
             // Notice that this is a hack to get the health reporter to report serving. The type `PrivS` has no influence on the service name.
             self.health_reporter
-                .write()
-                .await
                 .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PrivS, PrivS>>>()
                 .await;
         }
@@ -197,7 +205,13 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 }
 
 #[tonic::async_trait]
-impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> {
+impl<
+        PrivS: Storage + Send + Sync + 'static,
+        Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
+            + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>
+            + Default,
+    > Initiator for RealInitiator<PrivS, Init>
+{
     async fn init(&self, request: Request<v1::InitRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(
@@ -219,14 +233,40 @@ impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> 
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use crate::{
         client::test_tools::{self},
         consts::PRSS_INIT_REQ_ID,
-        engine::base::derive_request_id,
         util::key_setup::test_tools::purge,
-        vault::storage::{file::FileStorage, StorageType},
+        vault::storage::{file::FileStorage, ram, StorageType},
     };
-    use threshold_fhe::execution::runtime::party::Role;
+    use aes_prng::AesRng;
+    use kms_grpc::kms::v1::InitRequest;
+    use rand::SeedableRng;
+    use threshold_fhe::{
+        execution::runtime::party::Role,
+        malicious_execution::small_execution::malicious_prss::{
+            FailingPrss, MaliciousPrssDropPRSSSetup,
+        },
+    };
+
+    impl<
+            Init: PRSSInit<ResiduePolyF4Z64, OutputType = PRSSSetup<ResiduePolyF4Z64>>
+                + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>,
+        > RealInitiator<ram::RamStorage, Init>
+    {
+        fn init_test(session_preparer: SessionPreparer) -> Self {
+            Self {
+                prss_setup_z128: Arc::new(RwLock::new(None)),
+                prss_setup_z64: Arc::new(RwLock::new(None)),
+                private_storage: Arc::new(Mutex::new(ram::RamStorage::new())),
+                session_preparer,
+                health_reporter: HealthReporter::new(),
+                _init: PhantomData,
+            }
+        }
+    }
 
     #[tokio::test]
     #[serial_test::serial]
@@ -315,5 +355,82 @@ mod tests {
         assert!(logs_contain(
             "Initializing threshold KMS server with PRSS Setup Z64 from disk"
         ));
+    }
+
+    #[tokio::test]
+    async fn sunshine() {
+        let session_preparer = SessionPreparer::new_test_session(false);
+        let initiator = RealInitiator::<ram::RamStorage, MaliciousPrssDropPRSSSetup>::init_test(
+            session_preparer,
+        );
+
+        let mut rng = AesRng::seed_from_u64(42);
+        let req_id = RequestId::new_random(&mut rng);
+        initiator
+            .init(tonic::Request::new(InitRequest {
+                request_id: Some(req_id.into()),
+            }))
+            .await
+            .unwrap();
+    }
+    #[tokio::test]
+    async fn invalid_argument() {
+        let session_preparer = SessionPreparer::new_test_session(false);
+        let initiator = RealInitiator::<ram::RamStorage, MaliciousPrssDropPRSSSetup>::init_test(
+            session_preparer,
+        );
+
+        let bad_req_id = kms_grpc::kms::v1::RequestId {
+            request_id: "bad req id".to_string(),
+        };
+        assert_eq!(
+            initiator
+                .init(tonic::Request::new(InitRequest {
+                    request_id: Some(bad_req_id)
+                }))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::InvalidArgument
+        );
+    }
+
+    #[tokio::test]
+    async fn aborted() {
+        let session_preparer = SessionPreparer::new_test_session(false);
+        let initiator = RealInitiator::<ram::RamStorage, MaliciousPrssDropPRSSSetup>::init_test(
+            session_preparer,
+        );
+
+        assert_eq!(
+            initiator
+                .init(tonic::Request::new(InitRequest {
+                    // this is set to none
+                    request_id: None
+                }))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Aborted
+        );
+    }
+
+    #[tokio::test]
+    async fn internal() {
+        let session_preparer = SessionPreparer::new_test_session(false);
+        let initiator = RealInitiator::<ram::RamStorage, FailingPrss>::init_test(session_preparer);
+
+        let mut rng = AesRng::seed_from_u64(42);
+        let req_id = RequestId::new_random(&mut rng);
+        assert_eq!(
+            initiator
+                .init(tonic::Request::new(InitRequest {
+                    request_id: Some(req_id.into())
+                }))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Internal
+        );
     }
 }
