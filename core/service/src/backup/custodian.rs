@@ -21,7 +21,7 @@ use crate::{
 
 use super::{
     error::BackupError,
-    operator::{BackupMaterial, OperatorBackupOutput, DSEP_BACKUP_OPERATOR},
+    operator::{BackupMaterial, OperatorBackupOutput, DSEP_BACKUP_CIPHER},
     traits::{BackupDecryptor, BackupSigner},
 };
 
@@ -197,7 +197,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
             sig: k256::ecdsa::Signature::from_slice(&backup.signature)?,
         };
         internal_verify_sig(
-            &DSEP_BACKUP_OPERATOR,
+            &DSEP_BACKUP_CIPHER,
             &backup.ciphertext,
             &signature,
             operator_verification_key,

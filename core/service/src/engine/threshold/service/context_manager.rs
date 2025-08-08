@@ -310,7 +310,7 @@ where
         }
         let recovery_request = RecoveryRequest::new(
             operator.public_key().to_owned(),
-            operator.verification_key().to_owned(),
+            &self.base_kms.sig_key,
             ciphertexts,
             backup_id,
             my_role,

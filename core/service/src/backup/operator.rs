@@ -11,12 +11,13 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         backup_pke::BackupPublicKey,
-        internal_crypto_types::{PublicSigKey, Signature},
+        internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature},
         signcryption::internal_verify_sig,
     },
     engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY},
 };
 use itertools::Itertools;
+use k256::ecdsa::SigningKey;
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -37,7 +38,8 @@ use threshold_fhe::{
 };
 
 pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
-pub(crate) const DSEP_BACKUP_OPERATOR: DomainSep = *b"BKUPOPER";
+pub(crate) const DSEP_BACKUP_CIPHER: DomainSep = *b"BKUPCIPH";
+pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRREQ";
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum RecoveryRequestVersioned {
@@ -52,10 +54,22 @@ impl Named for RecoveryRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(RecoveryRequestVersioned)]
 pub struct RecoveryRequest {
+    payload: InnerRecoveryRequest,
+    signature: Vec<u8>,
+}
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+enum InnerRecoveryRequestVersioned {
+    V0(InnerRecoveryRequest),
+}
+
+/// The data sent to the custodians by the operator during the recovery procedure.
+#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[versionize(InnerRecoveryRequestVersioned)]
+struct InnerRecoveryRequest {
     /// The ephemeral key used to signcrypt the recovered data during transit to the operator.
     enc_key: BackupPublicKey,
     /// The public key of the operator that was originally used to sign the backup.
-    verification_key: PublicSigKey, // todo should be a signature  st request can be validated according to blockchain. and each operator output then don't need to be signed but instead the whole payload is
     /// The ciphertexts that are the backup. Indexed by the custodian role.
     /// NOTE: since BTreeMap does not implement Versionize, we use a Vec here.
     cts: Vec<(Role, OperatorBackupOutput)>,
@@ -68,61 +82,86 @@ pub struct RecoveryRequest {
 impl RecoveryRequest {
     pub fn new(
         enc_key: BackupPublicKey,
-        verification_key: PublicSigKey,
+        sig_key: &PrivateSigKey,
         cts: BTreeMap<Role, OperatorBackupOutput>,
         backup_id: RequestId,
         operator_role: Role,
     ) -> anyhow::Result<Self> {
         // Observe that we use a Vec here instead of a BTreeMap since it does not support Versionize.
         let inner_cts = cts.into_iter().collect::<Vec<_>>();
-        let res = Self {
+        let inner_req = InnerRecoveryRequest {
             enc_key,
-            verification_key,
             cts: inner_cts,
             backup_id,
             operator_role,
         };
-
-        if !res.is_valid() {
+        let serialized_inner_req = bc2wrap::serialize(&inner_req).map_err(|e| {
+            anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
+        })?;
+        let signature = &crate::cryptography::signcryption::internal_sign(
+            &DSEP_BACKUP_RECOVERY,
+            &serialized_inner_req,
+            &sig_key,
+        )?;
+        let signature_buf = signature.sig.to_vec();
+        let res = Self {
+            payload: inner_req,
+            signature: signature_buf,
+        };
+        let verf_key = PublicSigKey::new(*SigningKey::verifying_key(sig_key.sk()));
+        if !res.is_valid(&verf_key)? {
             return Err(anyhow_error_and_log("Invalid RecoveryRequest data"));
         }
         Ok(res)
     }
 
     /// Validate that the data in the request is sensible.
-    /// Note: this should not be taken as a cryptographic validation, but just as a fail-fast sanity check.
-    /// Furthermore, the typoe constraints will always ensure that a [`RecoveryRequest`] is valid,
-    /// hence a failure can only be expected as a result of manipulation of a serialized requst.
-    pub fn is_valid(&self) -> bool {
-        if !self.backup_id.is_valid() {
-            tracing::error!("RecoveryRequest has an invalid backup ID");
-            return false;
+    pub fn is_valid(&self, verf_key: &PublicSigKey) -> anyhow::Result<bool> {
+        if !self.payload.backup_id.is_valid() {
+            tracing::warn!("RecoveryRequest has an invalid backup ID");
+            return Ok(false);
         }
-        if self.operator_role.one_based() == 0 {
-            tracing::error!("RecoveryRequest has an invalid operator role");
-            return false;
+        if self.payload.operator_role.one_based() == 0 {
+            tracing::warn!("RecoveryRequest has an invalid operator role");
+            return Ok(false);
         }
-        true
+        let serialized_inner_req = bc2wrap::serialize(&self.payload).map_err(|e| {
+            anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
+        })?;
+        if internal_verify_sig(
+            &DSEP_BACKUP_RECOVERY,
+            &serialized_inner_req,
+            &Signature {
+                sig: k256::ecdsa::Signature::from_slice(&self.signature)?,
+            },
+            &verf_key,
+        )
+        .is_err()
+        {
+            tracing::warn!("RecoveryRequest signature verification failed");
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     pub fn encryption_key(&self) -> &BackupPublicKey {
-        &self.enc_key
-    }
-
-    pub fn verification_key(&self) -> &PublicSigKey {
-        &self.verification_key
+        &self.payload.enc_key
     }
 
     pub fn ciphertexts(&self) -> HashMap<Role, &OperatorBackupOutput> {
-        self.cts.iter().map(|(role, ct)| (*role, ct)).collect()
+        self.payload
+            .cts
+            .iter()
+            .map(|(role, ct)| (*role, ct))
+            .collect()
     }
 
     pub fn backup_id(&self) -> RequestId {
-        self.backup_id
+        self.payload.backup_id
     }
 
     pub fn operator_role(&self) -> Role {
-        self.operator_role
+        self.payload.operator_role
     }
 }
 
@@ -130,12 +169,12 @@ impl Display for RecoveryRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "RecoveryRequest with:\n backup id: {}\n operator role: {}\n verification key address: {}\n ciphertext digest: {}\n encryption key digest: {}",
-            self.backup_id,
-            self.operator_role,
-            alloy_primitives::Address::from_public_key(self.verification_key.pk()),
-            hex::encode(hash_element(&DSEP_PUBDATA_KEY, &bc2wrap::serialize(&self.cts).unwrap())),
-            hex::encode(hash_element(&DSEP_PUBDATA_KEY,  &bc2wrap::serialize(&self.enc_key).unwrap()))
+            "RecoveryRequest with:\n backup id: {}\n operator role: {}\n signature: {}\n ciphertext digest: {}\n encryption key digest: {}",
+            self.payload.backup_id,
+            self.payload.operator_role,
+            hex::encode(&self.signature),
+            hex::encode(hash_element(&DSEP_PUBDATA_KEY, &bc2wrap::serialize(&self.payload.cts).unwrap())),
+            hex::encode(hash_element(&DSEP_PUBDATA_KEY,  &bc2wrap::serialize(&self.payload.enc_key).unwrap()))
         )
     }
 }
@@ -515,7 +554,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
             safe_serialize(&backup_material, &mut msg, SAFE_SER_SIZE_LIMIT)
                 .map_err(|e| BackupError::BincodeError(e.to_string()))?;
             let ciphertext = enc_pk.encrypt(rng, &msg)?;
-            let signature = self.signer.sign(&DSEP_BACKUP_OPERATOR, &ciphertext)?;
+            let signature = self.signer.sign(&DSEP_BACKUP_CIPHER, &ciphertext)?;
 
             // we simply use the digest as the commitment
             // since the share should have enough entropy
