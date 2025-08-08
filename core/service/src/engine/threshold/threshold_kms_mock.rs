@@ -23,7 +23,6 @@ use kms_grpc::rpc_types::PubDataType;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tfhe::FheTypes;
-use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::server::NamedService;
 use tonic::{transport, transport::server::TcpIncoming, Request, Response, Status};
@@ -110,7 +109,7 @@ async fn new_dummy_threshold_kms() -> (DummyThresholdKms, HealthServer<impl Heal
             DummyContextManager {},
             DummyBackupOperator {},
             Arc::new(TaskTracker::new()),
-            Arc::new(RwLock::new(threshold_health_reporter)),
+            threshold_health_reporter,
             handle,
         ),
         threshold_health_service,

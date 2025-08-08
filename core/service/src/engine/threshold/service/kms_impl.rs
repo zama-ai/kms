@@ -22,6 +22,7 @@ use threshold_fhe::{
             orchestration::producer_traits::SecureSmallProducerFactory, DKGPreprocessing,
         },
         runtime::party::{Role, RoleAssignment},
+        small_execution::prss::RobustSecurePrssInit,
         zk::ceremony::SecureCeremony,
     },
     networking::{
@@ -165,7 +166,7 @@ pub fn compute_all_info(
 
 #[cfg(not(feature = "insecure"))]
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealInitiator<PrivS>,
+    RealInitiator<PrivS, RobustSecurePrssInit>,
     RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<PubS, PrivS, SecureOnlineDistributedKeyGen128>,
@@ -177,7 +178,7 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
 
 #[cfg(feature = "insecure")]
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
-    RealInitiator<PrivS>,
+    RealInitiator<PrivS, RobustSecurePrssInit>,
     RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
     RealKeyGenerator<PubS, PrivS, SecureOnlineDistributedKeyGen128>,
@@ -437,12 +438,10 @@ where
 
     let (core_service_health_reporter, core_service_health_service) =
         tonic_health::server::health_reporter();
-    let thread_core_health_reporter = Arc::new(RwLock::new(core_service_health_reporter));
+    let thread_core_health_reporter = core_service_health_reporter.clone();
     {
         // We are only serving after initialization
         thread_core_health_reporter
-            .write()
-            .await
             .set_not_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
             .await;
     }
@@ -452,6 +451,7 @@ where
         private_storage: crypto_storage.get_private_storage(),
         session_preparer: session_preparer.new_instance().await,
         health_reporter: thread_core_health_reporter.clone(),
+        _init: PhantomData,
     };
     let req_id_prss = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?; // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
     if run_prss {
@@ -571,7 +571,7 @@ where
         context_manager,
         backup_operator,
         Arc::clone(&tracker),
-        Arc::clone(&thread_core_health_reporter),
+        thread_core_health_reporter,
         abort_handle,
     );
 

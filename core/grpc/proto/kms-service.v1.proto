@@ -6,6 +6,7 @@ import "kms.v1.proto";
 service CoreServiceEndpoint {
   // Perform the threshold KMS initialization.
   // This call returns an error on the centralized KMS.
+  // This is a synchronous call and an successful response suggests the initialization completed.
   rpc Init(kms.v1.InitRequest) returns (kms.v1.Empty);
 
   // Start generating preprocessing materials for key generation asynchronously.
