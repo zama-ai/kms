@@ -101,7 +101,7 @@ impl RecoveryRequest {
         let signature = &crate::cryptography::signcryption::internal_sign(
             &DSEP_BACKUP_RECOVERY,
             &serialized_inner_req,
-            &sig_key,
+            sig_key,
         )?;
         let signature_buf = signature.sig.to_vec();
         let res = Self {
@@ -134,7 +134,7 @@ impl RecoveryRequest {
             &Signature {
                 sig: k256::ecdsa::Signature::from_slice(&self.signature)?,
             },
-            &verf_key,
+            verf_key,
         )
         .is_err()
         {
