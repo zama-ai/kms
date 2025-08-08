@@ -3,6 +3,7 @@ use tfhe::{
     boolean::prelude::LweDimension,
     core_crypto::{
         commons::{
+            math::random::CompressionSeed,
             parameters::{LweCiphertextCount, LweSize},
             traits::ByteRandomGenerator,
         },
@@ -11,6 +12,7 @@ use tfhe::{
             LweCiphertextListOwned, SeededLweCiphertextList,
         },
     },
+    Seed,
 };
 
 use crate::{
@@ -148,6 +150,47 @@ where
     Ok(output)
 }
 
+pub(crate) async fn open_to_tfhers_seeded_type<
+    Z: BaseRing,
+    const EXTENSION_DEGREE: usize,
+    S: BaseSessionHandles,
+>(
+    ciphertext_share_list: Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>,
+    seed: u128,
+    session: &S,
+) -> anyhow::Result<SeededLweCiphertextList<Vec<u64>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let lwe_dim = LweDimension(ciphertext_share_list[0].mask.len());
+    let my_role = session.my_role();
+    // Split the body from the mask, so that we can open the body which are initially secret shared
+    let shared_bodies: Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>> = ciphertext_share_list
+        .into_iter()
+        .map(|x| Share::new(my_role, x.body))
+        .collect();
+
+    let ciphertext_count = shared_bodies.len();
+
+    // Open the body
+    let opened_bodies: Vec<Z> = open_list(&shared_bodies, session)
+        .await?
+        .into_iter()
+        .map(|x| x.to_scalar())
+        .try_collect()?;
+
+    let container = vec![0u64; ciphertext_count];
+    let mut output = SeededLweCiphertextList::from_container(
+        container,
+        lwe_dim.to_lwe_size(),
+        CompressionSeed::from(Seed(seed)), // NOTE: key was generated using XOF so we need to use a custom decompression function
+        CiphertextModulus::new_native(),
+    );
+    opened_lwe_bodies_to_seeded_tfhers_u64(opened_bodies, &mut output.as_mut_view())?;
+
+    Ok(output)
+}
+
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweCiphertextShare<Z, EXTENSION_DEGREE> {
     pub fn new(lwe_size: LweSize) -> Self {
         Self {
@@ -270,9 +313,8 @@ mod tests {
             parameters::{DecompositionBaseLog, DecompositionLevelCount, LweDimension},
             CiphertextModulus,
         },
-        Seed,
     };
-    use tfhe_csprng::generators::SoftwareRandomGenerator;
+    use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 
     use crate::{
         algebra::{galois_rings::degree_4::ResiduePolyF4Z64, structure_traits::Ring},
@@ -316,6 +358,7 @@ mod tests {
         let num_key_bits = lwe_dimension;
 
         let mut task = |mut session: LargeSession| async move {
+            let xof_seed = XofSeed::new_u128(seed, *b"TEST_GEN");
             let my_role = session.my_role();
             let encoded_message = ShamirSharings::share(
                 &mut AesRng::seed_from_u64(0),
@@ -350,7 +393,7 @@ mod tests {
             .collect_vec();
 
             let mut mpc_encryption_rng = MPCEncryptionRandomGenerator {
-                mask: MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(Seed(seed)),
+                mask: MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(xof_seed),
                 noise: MPCNoiseRandomGenerator {
                     vec: vec_tuniform_noise,
                 },

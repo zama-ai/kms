@@ -5,9 +5,10 @@ use crate::execution::tfhe_internals::compression_decompression_key::{
     CompressionPrivateKeyShares, SnsCompressionPrivateKeyShares,
 };
 use crate::execution::tfhe_internals::lwe_ciphertext::{
-    encrypt_lwe_ciphertext_list, LweCiphertextShare,
+    self, encrypt_lwe_ciphertext_list, LweCiphertextShare,
 };
 use crate::execution::tfhe_internals::lwe_key::LweCompactPublicKeyShare;
+use crate::execution::tfhe_internals::lwe_keyswitch_key::LweKeySwitchKeyShare;
 use crate::execution::tfhe_internals::lwe_packing_keyswitch_key_generation::allocate_and_generate_lwe_packing_keyswitch_key;
 use crate::execution::tfhe_internals::parameters::{
     BKParams, DKGParams, DistributedCompressionParameters, DistributedSnsCompressionParameters,
@@ -37,6 +38,7 @@ use crate::{
 use itertools::Itertools;
 use num_integer::div_ceil;
 use tfhe::core_crypto::commons::traits::UnsignedInteger;
+use tfhe::core_crypto::prelude::SeededLweKeyswitchKey;
 use tfhe::core_crypto::{
     algorithms::par_convert_standard_lwe_bootstrap_key_to_fourier,
     entities::{FourierLweBootstrapKey, LweBootstrapKey, LweCompactPublicKey, LweKeyswitchKey},
@@ -46,7 +48,8 @@ use tfhe::shortint::list_compression::{
     CompressionKey, DecompressionKey, NoiseSquashingCompressionKey,
 };
 use tfhe::shortint::server_key::{
-    ModulusSwitchConfiguration, ModulusSwitchNoiseReductionKey, ShortintBootstrappingKey,
+    CompressedModulusSwitchNoiseReductionKey, ModulusSwitchConfiguration,
+    ModulusSwitchNoiseReductionKey, ShortintBootstrappingKey,
 };
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe_csprng::generators::SoftwareRandomGenerator;
@@ -169,6 +172,77 @@ async fn generate_mod_switch_noise_reduction_key<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
+    let output = generate_encrypted_zeros(
+        input_lwe_sk,
+        params,
+        mpc_encryption_rng,
+        session,
+        preprocessing,
+    )?;
+
+    let opened_ciphertext_list = lwe_ciphertext::open_to_tfhers_type(output, session).await?;
+
+    Ok(ModulusSwitchNoiseReductionKey {
+        modulus_switch_zeros: opened_ciphertext_list,
+        ms_bound: params.params.ms_bound,
+        ms_r_sigma_factor: params.params.ms_r_sigma_factor,
+        ms_input_variance: params.params.ms_input_variance,
+    })
+}
+
+#[instrument(name="Gen Compressed MSNRK",skip(input_lwe_sk, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+async fn generate_compressed_mod_swich_noise_reduction_key<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: &MSNRKParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+    seed: u128,
+) -> anyhow::Result<CompressedModulusSwitchNoiseReductionKey<u64>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let output = generate_encrypted_zeros(
+        input_lwe_sk,
+        params,
+        mpc_encryption_rng,
+        session,
+        preprocessing,
+    )?;
+
+    let opened_ciphertext_list =
+        lwe_ciphertext::open_to_tfhers_seeded_type(output, seed, session).await?;
+
+    Ok(CompressedModulusSwitchNoiseReductionKey {
+        modulus_switch_zeros: opened_ciphertext_list,
+        ms_bound: params.params.ms_bound,
+        ms_r_sigma_factor: params.params.ms_r_sigma_factor,
+        ms_input_variance: params.params.ms_input_variance,
+    })
+}
+
+fn generate_encrypted_zeros<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: &MSNRKParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+) -> anyhow::Result<Vec<LweCiphertextShare<Z, EXTENSION_DEGREE>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
     let my_role = session.my_role();
     tracing::info!("(Party {my_role}) Generating MSNRK...Start");
     let vec_tuniform_noise = preprocessing
@@ -185,15 +259,45 @@ where
     let encoded = vec![ResiduePoly::<Z, EXTENSION_DEGREE>::ZERO; zeros_count];
     encrypt_lwe_ciphertext_list(input_lwe_sk, &mut output, &encoded, mpc_encryption_rng)?;
 
-    use crate::execution::tfhe_internals::lwe_ciphertext;
-    let opened_ciphertext_list = lwe_ciphertext::open_to_tfhers_type(output, session).await?;
+    Ok(output)
+}
 
-    Ok(ModulusSwitchNoiseReductionKey {
-        modulus_switch_zeros: opened_ciphertext_list,
-        ms_bound: params.params.ms_bound,
-        ms_r_sigma_factor: params.params.ms_r_sigma_factor,
-        ms_input_variance: params.params.ms_input_variance,
-    })
+/// Generate KSK shares using MPC encryption
+fn generate_ksk_share<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: &KSKParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+) -> anyhow::Result<LweKeySwitchKeyShare<Z, EXTENSION_DEGREE>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let my_role = session.my_role();
+    tracing::info!("(Party {my_role}) Generating KSK...Start");
+    let vec_tuniform_noise = preprocessing
+        .next_noise_vec(params.num_needed_noise, params.noise_bound)?
+        .iter()
+        .map(|share| share.value())
+        .collect_vec();
+
+    mpc_encryption_rng.fill_noise(vec_tuniform_noise);
+
+    //Then compute the KSK
+    allocate_and_generate_new_lwe_keyswitch_key(
+        input_lwe_sk,
+        output_lwe_sk,
+        params.decomposition_base_log,
+        params.decomposition_level_count,
+        mpc_encryption_rng,
+    )
 }
 
 ///Generate the Key Switch Key from a Glwe key given in Lwe format,
@@ -216,27 +320,51 @@ async fn generate_key_switch_key<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    let my_role = session.my_role();
-    tracing::info!("(Party {my_role}) Generating KSK...Start");
-    let vec_tuniform_noise = preprocessing
-        .next_noise_vec(params.num_needed_noise, params.noise_bound)?
-        .iter()
-        .map(|share| share.value())
-        .collect_vec();
-
-    mpc_encryption_rng.fill_noise(vec_tuniform_noise);
-
-    //Then compute the KSK
-    let ksk_share = allocate_and_generate_new_lwe_keyswitch_key(
+    let ksk_share = generate_ksk_share(
         input_lwe_sk,
         output_lwe_sk,
-        params.decomposition_base_log,
-        params.decomposition_level_count,
+        params,
         mpc_encryption_rng,
+        session,
+        preprocessing,
     )?;
 
     //Open the KSK and cast it to TFHE-RS type
     ksk_share.open_to_tfhers_type(session).await
+}
+
+///Generate the Key Switch Key from a Glwe key given in Lwe format,
+///and an actual Lwe key
+#[instrument(name="Gen compressed KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+async fn generate_compressed_key_switch_key<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    output_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: &KSKParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+    seed: u128,
+) -> anyhow::Result<SeededLweKeyswitchKey<Vec<u64>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let ksk_share = generate_ksk_share(
+        input_lwe_sk,
+        output_lwe_sk,
+        params,
+        mpc_encryption_rng,
+        session,
+        preprocessing,
+    )?;
+
+    //Open the KSK and cast it to TFHE-RS seeded type
+    ksk_share.open_to_tfhers_seeded_type(seed, session).await
 }
 
 ///Generates a Bootstrapping Key given a Glwe key in Glwe format
@@ -984,6 +1112,8 @@ where
     ))
 }
 
+//NOTE: When we generate a standalone CompressedDecompressionKey via this fn, it needs to be decompressed
+//using the decompression function WE provide, not the one from the TFHE-rs library.
 #[instrument(name="Gen Decompression Key Z128", skip(private_glwe_compute_key, private_compression_key, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub async fn distributed_decompression_keygen_z128<
     S: BaseSessionHandles,
@@ -1002,11 +1132,8 @@ where
 {
     let params_basics_handle = params.get_params_basics_handle();
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
-    // NOTE: Do we really want to use XofSeed here ?
-    // XOF (de)compression is meant to work over a complete keyset,
-    // it hasn't been described (or implemented) to work over a single key
-    // so we might want to use a regular Seed instead for compatibility with tfhe-rs seeded struct.
     //Init the XOF with the seed computed above
+    // QU: Do we want to use the same DSEP as in the regualr KG?
     let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
         Z128,
         SoftwareRandomGenerator,
@@ -1048,6 +1175,7 @@ where
     let params_basics_handle = params.get_params_basics_handle();
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
     //Init the XOF with the seed computed above
+    // QU: Do we want to use the same DSEP as in the regualr KG?
     let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
         Z128,
         SoftwareRandomGenerator,
