@@ -330,6 +330,7 @@ pub trait DKGParamsBasics: Sync {
     fn all_lwe_hat_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
     fn all_glwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
     fn all_compression_ksk_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
+    fn pksk_rshift(&self) -> i8;
 }
 
 fn combine_noise_info(target_bound: NoiseBounds, list: &[NoiseInfo]) -> NoiseInfo {
@@ -955,6 +956,17 @@ impl DKGParamsBasics for DKGParamsRegular {
     )> {
         self.dedicated_compact_public_key_parameters
     }
+
+    fn pksk_rshift(&self) -> i8 {
+        let nb_bits_input = self
+            .dedicated_compact_public_key_parameters
+            .map(|(pk_params, _)| (pk_params.carry_modulus.0 * pk_params.carry_modulus.0).ilog2());
+        let nb_bits_output = (self.get_carry_modulus().0 * self.get_carry_modulus().0).ilog2();
+
+        nb_bits_input
+            .map(|nb_bits_input| (nb_bits_output - nb_bits_input) as i8)
+            .unwrap_or(0)
+    }
 }
 
 impl DKGParamsBasics for DKGParamsSnS {
@@ -1257,6 +1269,10 @@ impl DKGParamsBasics for DKGParamsSnS {
         ShortintKeySwitchingParameters,
     )> {
         self.regular_params.get_dedicated_pk_params()
+    }
+
+    fn pksk_rshift(&self) -> i8 {
+        self.regular_params.pksk_rshift()
     }
 }
 
