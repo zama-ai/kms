@@ -904,6 +904,108 @@ where
     Ok((compression_key, decompression_key))
 }
 
+trait Finalizable<const EXTENSION_DEGREE: usize> {
+    /// Finalizes the keyset by converting it to a `PrivateKeySet`.
+    ///
+    /// This method is used to convert the generic private key set into a concrete
+    /// `PrivateKeySet` with the given parameters.
+    ///
+    /// Inputs:
+    /// - `self`: The generic private key set to finalize.
+    /// - `parameters`: The parameters for the classic PBS.
+    ///
+    /// Outputs:
+    /// - A finalized `PrivateKeySet`.
+    fn finalize_keyset(self, parameters: ClassicPBSParameters) -> PrivateKeySet<EXTENSION_DEGREE>;
+}
+
+impl<const EXTENSION_DEGREE: usize> Finalizable<EXTENSION_DEGREE>
+    for GenericPrivateKeySet<Z128, EXTENSION_DEGREE>
+where
+    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+{
+    fn finalize_keyset(self, parameters: ClassicPBSParameters) -> PrivateKeySet<EXTENSION_DEGREE> {
+        self.finalize_keyset(parameters)
+    }
+}
+
+impl<const EXTENSION_DEGREE: usize> Finalizable<EXTENSION_DEGREE>
+    for GenericPrivateKeySet<Z64, EXTENSION_DEGREE>
+where
+    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+{
+    fn finalize_keyset(self, parameters: ClassicPBSParameters) -> PrivateKeySet<EXTENSION_DEGREE> {
+        self.finalize_keyset(parameters)
+    }
+}
+
+/// Trait for generic online distributed key generation.
+/// It is used for testing since the return types are generic private types.
+/// For public use, the [OnlineDistributedKeyGen128] trait should be used instead.
+#[tonic::async_trait]
+pub trait OnlineDistributedKeyGen<Z>: Send + Sync {
+    /// Runs the distributed key generation protocol.
+    ///
+    /// We have a private trait bound here to ensure that the
+    /// an internal type implements a private trait Finalizable.
+    #[allow(private_bounds)]
+    async fn keygen<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+        const EXTENSION_DEGREE: usize,
+    >(
+        session: &mut S,
+        preprocessing: &mut P,
+        params: DKGParams,
+    ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+    where
+        Z: BaseRing,
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>;
+}
+
+pub type SecureOnlineDistributedKeyGen128 = SecureOnlineDistributedKeyGen<Z128>;
+
+pub struct SecureOnlineDistributedKeyGen<Z: BaseRing>(std::marker::PhantomData<Z>);
+
+#[tonic::async_trait]
+impl<Z: BaseRing> OnlineDistributedKeyGen<Z> for SecureOnlineDistributedKeyGen<Z> {
+    #[allow(private_bounds)]
+    async fn keygen<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
+        const EXTENSION_DEGREE: usize,
+    >(
+        session: &mut S,
+        preprocessing: &mut P,
+        params: DKGParams,
+    ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+    where
+        ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+        GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
+    {
+        if Z::BIT_LENGTH == 64 {
+            if let DKGParams::WithSnS(_) = params {
+                return Err(anyhow_error_and_log(
+                    "Can not generate Switch and Squash key with ResiduePolyF8Z64".to_string(),
+                ));
+            }
+        }
+
+        let (pub_key_set, priv_key_set) =
+            distributed_keygen(session, preprocessing, params).await?;
+        Ok((
+            pub_key_set.to_pubkeyset(params),
+            priv_key_set.finalize_keyset(
+                params
+                    .get_params_basics_handle()
+                    .to_classic_pbs_parameters(),
+            ),
+        ))
+    }
+}
+
 /// Runs the distributed key generation protocol.
 ///
 /// Inputs:
@@ -1286,58 +1388,6 @@ where
     };
 
     Ok((pub_key_set, priv_key_set))
-}
-
-pub async fn distributed_keygen_z64<
-    S: BaseSessionHandles,
-    P: DKGPreprocessing<ResiduePoly<Z64, EXTENSION_DEGREE>> + Send + ?Sized,
-    const EXTENSION_DEGREE: usize,
->(
-    session: &mut S,
-    preprocessing: &mut P,
-    params: DKGParams,
-) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
-where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
-{
-    if let DKGParams::WithSnS(_) = params {
-        return Err(anyhow_error_and_log(
-            "Can not generate Switch and Squash key with ResiduePolyF8Z64".to_string(),
-        ));
-    }
-    let (pub_key_set, priv_key_set) = distributed_keygen(session, preprocessing, params).await?;
-    Ok((
-        pub_key_set.to_pubkeyset(params),
-        priv_key_set.finalize_keyset(
-            params
-                .get_params_basics_handle()
-                .to_classic_pbs_parameters(),
-        ),
-    ))
-}
-
-pub async fn distributed_keygen_z128<
-    S: BaseSessionHandles,
-    P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
-    const EXTENSION_DEGREE: usize,
->(
-    session: &mut S,
-    preprocessing: &mut P,
-    params: DKGParams,
-) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
-where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
-{
-    let (pub_key_set, priv_key_set) = distributed_keygen(session, preprocessing, params).await?;
-    Ok((
-        pub_key_set.to_pubkeyset(params),
-        priv_key_set.finalize_keyset(
-            params
-                .get_params_basics_handle()
-                .to_classic_pbs_parameters(),
-        ),
-    ))
 }
 
 #[instrument(name="DKG with optional compression SK Z128", skip(existing_compression_sk, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
