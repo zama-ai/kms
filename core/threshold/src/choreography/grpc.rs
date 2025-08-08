@@ -939,6 +939,7 @@ where
                         &mut base_session,
                         preproc.as_mut(),
                         dkg_params,
+                        None,
                     )
                     .await
                     .unwrap();
@@ -959,6 +960,7 @@ where
                             &mut base_session,
                             &mut preproc,
                             dkg_params,
+                            None,
                         )
                         .await
                         .unwrap();
@@ -986,14 +988,15 @@ where
                 }
 
                 let my_future = || async move {
-                    let keys =
-                        SecureOnlineDistributedKeyGen::<Z128>::keygen::<_, _, EXTENSION_DEGREE>(
-                            &mut base_session,
-                            preproc.as_mut(),
-                            dkg_params,
-                        )
-                        .await
-                        .unwrap();
+                    let keys = SecureOnlineDistributedKeyGen::<Z128>::keygen::<
+                        _,
+                        _,
+                        EXTENSION_DEGREE,
+                    >(
+                        &mut base_session, preproc.as_mut(), dkg_params, None
+                    )
+                    .await
+                    .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
                     fill_network_memory_info_single_session(base_session);
                 };
@@ -1010,7 +1013,9 @@ where
                         _,
                         _,
                         EXTENSION_DEGREE,
-                    >(&mut base_session, &mut preproc, dkg_params)
+                    >(
+                        &mut base_session, &mut preproc, dkg_params, None
+                    )
                     .await
                     .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
