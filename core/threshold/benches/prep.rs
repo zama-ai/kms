@@ -9,7 +9,7 @@ use threshold_fhe::execution::large_execution::double_sharing::{
     DoubleSharing, SecureDoubleSharing,
 };
 use threshold_fhe::execution::large_execution::offline::SecureLargePreprocessing;
-use threshold_fhe::execution::online::gen_bits::{BitGenEven, RealBitGenEven};
+use threshold_fhe::execution::online::gen_bits::{BitGenEven, SecureBitGenEven};
 use threshold_fhe::execution::runtime::session::{LargeSession, SmallSession128};
 use threshold_fhe::execution::sharing::shamir::{InputOp, RevealOp};
 use threshold_fhe::execution::small_execution::offline::{Preprocessing, SecureSmallPreprocessing};
@@ -363,7 +363,7 @@ fn bitgen_nlarge(c: &mut Criterion) {
                                 )
                                 .await
                                 .unwrap();
-                        let _ = RealBitGenEven::gen_bits_even(
+                        let _ = SecureBitGenEven::gen_bits_even(
                             config.batch_size,
                             &mut large_preprocessing,
                             &mut session,

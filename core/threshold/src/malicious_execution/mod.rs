@@ -14,6 +14,19 @@ pub mod large_execution {
     pub mod malicious_share_dispute;
     pub mod malicious_vss;
 }
+pub mod online {
+    pub mod malicious_gen_bits;
+    pub mod preprocessing {
+        pub mod orchestration {
+            pub mod malicious_producer_traits;
+            pub mod producer {
+                pub mod malicious_bit_producer;
+                pub mod malicious_random_producer;
+                pub mod malicious_triple_producer;
+            }
+        }
+    }
+}
 pub mod open {
     pub mod malicious_open;
 }
@@ -22,6 +35,7 @@ pub mod runtime {
 }
 pub mod endpoints {
     pub mod decryption;
+    pub mod keygen;
 }
 pub mod zk {
     pub mod ceremony;
