@@ -10,7 +10,7 @@ use kms_grpc::{
 };
 use observability::{
     metrics,
-    metrics_names::{OP_CRS_GEN, OP_INSECURE_CRS_GEN, TAG_PARTY_ID},
+    metrics_names::{ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN, OP_INSECURE_CRS_GEN, TAG_PARTY_ID},
 };
 use threshold_fhe::{
     algebra::base_ring::Z64,
@@ -34,7 +34,6 @@ use crate::{
         threshold::traits::CrsGenerator,
         validation::validate_request_id,
     },
-    tonic_handle_potential_err,
     util::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
@@ -88,11 +87,13 @@ impl<
         request: Request<CrsGenRequest>,
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self
-            .rate_limiter
-            .start_crsgen()
-            .await
-            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+        let permit = self.rate_limiter.start_crsgen().await.inspect_err(|_e| {
+            if let Err(e) =
+                metrics::METRICS.increment_error_counter(OP_CRS_GEN, ERR_RATE_LIMIT_EXCEEDED)
+            {
+                tracing::warn!("Failed to increment error counter: {:?}", e);
+            }
+        })?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -100,19 +101,18 @@ impl<
             inner.request_id
         );
 
-        let dkg_params = retrieve_parameters(inner.params).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::NotFound,
-                format!("Can not retrieve fhe parameters with error {e}"),
-            )
-        })?;
+        let dkg_params = retrieve_parameters(inner.params)?;
         let crs_params = dkg_params
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
-        let witness_dim = tonic_handle_potential_err(
-            compute_witness_dim(&crs_params, inner.max_num_bits.map(|x| x as usize)),
-            "witness dimension computation failed".to_string(),
-        )?;
+
+        let witness_dim = compute_witness_dim(&crs_params, inner.max_num_bits.map(|x| x as usize))
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!("witness dimension computation failed: {e}"),
+                )
+            })?;
 
         let req_id = inner
             .request_id
@@ -127,6 +127,7 @@ impl<
 
         let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
 
+        // NOTE: everything inside this function will cause an Aborted error code
         self.inner_crs_gen(
             req_id,
             witness_dim,
@@ -340,44 +341,6 @@ impl<
             (elapsed_time).as_millis()
         );
     }
-
-    #[cfg(test)]
-    async fn init_test(
-        pub_storage: PubS,
-        priv_storage: PrivS,
-        session_preparer: SessionPreparer,
-    ) -> Self {
-        let crypto_storage = ThresholdCryptoMaterialStorage::new(
-            pub_storage,
-            priv_storage,
-            None,
-            HashMap::new(),
-            HashMap::new(),
-        );
-
-        let tracker = Arc::new(TaskTracker::new());
-        let ongoing = Arc::new(Mutex::new(HashMap::new()));
-        let rate_limiter = RateLimiter::default();
-        Self {
-            base_kms: session_preparer.base_kms.new_instance().await,
-            crypto_storage,
-            crs_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-            session_preparer,
-            tracker,
-            ongoing,
-            rate_limiter,
-            _ceremony: PhantomData,
-        }
-    }
-
-    #[cfg(test)]
-    fn set_bucket_size(&mut self, bucket_size: usize) {
-        let config = crate::util::rate_limiter::RateLimiterConfig {
-            bucket_size,
-            ..Default::default()
-        };
-        self.rate_limiter = RateLimiter::new(config);
-    }
 }
 
 #[tonic::async_trait]
@@ -472,6 +435,49 @@ mod tests {
     use crate::consts::DURATION_WAITING_ON_RESULT_SECONDS;
 
     use super::*;
+
+    impl<
+            PubS: Storage + Send + Sync + 'static,
+            PrivS: Storage + Send + Sync + 'static,
+            C: Ceremony + Send + Sync + 'static,
+        > RealCrsGenerator<PubS, PrivS, C>
+    {
+        async fn init_test(
+            pub_storage: PubS,
+            priv_storage: PrivS,
+            session_preparer: SessionPreparer,
+        ) -> Self {
+            let crypto_storage = ThresholdCryptoMaterialStorage::new(
+                pub_storage,
+                priv_storage,
+                None,
+                HashMap::new(),
+                HashMap::new(),
+            );
+
+            let tracker = Arc::new(TaskTracker::new());
+            let ongoing = Arc::new(Mutex::new(HashMap::new()));
+            let rate_limiter = RateLimiter::default();
+            Self {
+                base_kms: session_preparer.base_kms.new_instance().await,
+                crypto_storage,
+                crs_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+                session_preparer,
+                tracker,
+                ongoing,
+                rate_limiter,
+                _ceremony: PhantomData,
+            }
+        }
+
+        fn set_bucket_size(&mut self, bucket_size: usize) {
+            let config = crate::util::rate_limiter::RateLimiterConfig {
+                bucket_size,
+                ..Default::default()
+            };
+            self.rate_limiter = RateLimiter::new(config);
+        }
+    }
 
     #[derive(Clone, Default)]
     pub struct BrokenCeremony {}

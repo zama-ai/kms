@@ -75,20 +75,24 @@ macro_rules! impl_rate_limiter_for {
         /// If the result is an error, then it means there are no more
         /// resource to support the $token_name request.
         /// The resource is returned when the permit is dropped.
-        pub async fn $fn_name(&self) -> anyhow::Result<OwnedSemaphorePermit> {
+        /// 
+        /// If there's an error, we return `ResourceExhausted`.
+        pub async fn $fn_name(
+            &self,
+        ) -> Result<OwnedSemaphorePermit, kms_grpc::utils::tonic_result::BoxedStatus> {
             let num_tokens = self.config.$token_name;
             let cloned_bucket = Arc::clone(&self.bucket);
 
             let permit = cloned_bucket
                 .try_acquire_many_owned(num_tokens)
                 .map_err(|e| {
-                    anyhow::anyhow!(
+                    tonic::Status::resource_exhausted(format!(
                         "not enough tokens in bucket for {}, need {} from {}: {}",
                         $token_str,
                         num_tokens,
                         self.bucket.available_permits(),
                         e
-                    )
+                    ))
                 })?;
             Ok(permit)
         }

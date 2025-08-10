@@ -7,7 +7,7 @@ use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
-use observability::metrics_names::{ERR_CRS_GEN_FAILED, OP_CRS_GEN};
+use observability::metrics_names::{ERR_CRS_GEN_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::session_id::SessionId;
 use tokio::sync::{OwnedSemaphorePermit, RwLock};
@@ -45,7 +45,11 @@ pub async fn crs_gen_impl<
         .rate_limiter
         .start_crsgen()
         .await
-        .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+        .inspect_err(|_e| {
+            if let Err(e) = METRICS.increment_error_counter(OP_CRS_GEN, ERR_RATE_LIMIT_EXCEEDED) {
+                tracing::warn!("Failed to increment error counter: {:?}", e);
+            }
+        })?;
 
     let inner = request.into_inner();
     let req_id = tonic_some_or_err(
@@ -54,10 +58,8 @@ pub async fn crs_gen_impl<
     )?
     .into();
     validate_request_id(&req_id)?;
-    let params = tonic_handle_potential_err(
-        retrieve_parameters(inner.params),
-        "Parameter choice is not recognized".to_string(),
-    )?;
+    let params = retrieve_parameters(inner.params)?;
+
     {
         let mut guarded_meta_store = service.crs_meta_map.write().await;
         tonic_handle_potential_err(

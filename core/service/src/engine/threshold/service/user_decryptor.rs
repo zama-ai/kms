@@ -436,11 +436,17 @@ impl<
             .increment_request_counter(OP_USER_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
-        let permit = self.rate_limiter.start_user_decrypt().await.map_err(|e| {
-            let _ = metrics::METRICS
-                .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED);
-            Status::resource_exhausted(e.to_string())
-        })?;
+        let permit = self
+            .rate_limiter
+            .start_user_decrypt()
+            .await
+            .inspect_err(|_e| {
+                if let Err(e) = metrics::METRICS
+                    .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
+                {
+                    tracing::warn!("Failed to increment error counter: {:?}", e);
+                }
+            })?;
 
         let inner = request.into_inner();
         tracing::info!(

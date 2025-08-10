@@ -45,12 +45,15 @@ pub async fn key_gen_impl<
         .increment_request_counter(OP_KEYGEN)
         .map_err(|e| Status::internal(format!("Failed to increment counter: {e}")))?;
 
-    let permit = service.rate_limiter.start_keygen().await.map_err(|e| {
-        if let Err(e) = METRICS.increment_error_counter(OP_KEYGEN, ERR_RATE_LIMIT_EXCEEDED) {
-            tracing::warn!("Failed to increment error counter: {:?}", e);
-        }
-        Status::resource_exhausted(e.to_string())
-    })?;
+    let permit = service
+        .rate_limiter
+        .start_keygen()
+        .await
+        .inspect_err(|_e| {
+            if let Err(e) = METRICS.increment_error_counter(OP_KEYGEN, ERR_RATE_LIMIT_EXCEEDED) {
+                tracing::warn!("Failed to increment error counter: {:?}", e);
+            }
+        })?;
     let inner = request.into_inner();
     tracing::info!(
         "centralized key-gen with request id: {:?}",
@@ -62,10 +65,7 @@ pub async fn key_gen_impl<
     )?
     .into();
     validate_request_id(&req_id)?;
-    let params = tonic_handle_potential_err(
-        retrieve_parameters(inner.params),
-        "Parameter choice is not recognized".to_string(),
-    )?;
+    let params = retrieve_parameters(inner.params)?;
     let internal_keyset_config = tonic_handle_potential_err(
         InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info),
         "Invalid keyset config".to_string(),

@@ -14,8 +14,9 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_PUBLIC_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
-        TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+        ERR_PUBLIC_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_PUBLIC_DECRYPT_INNER,
+        OP_PUBLIC_DECRYPT_REQUEST, TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
+        TAG_TFHE_TYPE,
     },
 };
 use tfhe::FheTypes;
@@ -279,7 +280,13 @@ impl<
             .rate_limiter
             .start_pub_decrypt()
             .await
-            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+            .inspect_err(|_e| {
+                if let Err(e) = metrics::METRICS
+                    .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
+                {
+                    tracing::warn!("Failed to increment error counter: {:?}", e);
+                }
+            })?;
 
         let inner = request.into_inner();
         tracing::info!(

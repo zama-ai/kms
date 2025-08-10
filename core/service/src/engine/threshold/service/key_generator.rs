@@ -10,8 +10,9 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN,
-        OP_INSECURE_SNS_COMPRESSION_KEYGEN, OP_KEYGEN, OP_SNS_COMPRESSION_KEYGEN, TAG_PARTY_ID,
+        ERR_RATE_LIMIT_EXCEEDED, OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN,
+        OP_INSECURE_KEYGEN, OP_INSECURE_SNS_COMPRESSION_KEYGEN, OP_KEYGEN,
+        OP_SNS_COMPRESSION_KEYGEN, TAG_PARTY_ID,
     },
 };
 use tfhe::{
@@ -354,11 +355,13 @@ impl<
         request: Request<KeyGenRequest>,
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self
-            .rate_limiter
-            .start_keygen()
-            .await
-            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+        let permit = self.rate_limiter.start_keygen().await.inspect_err(|_e| {
+            if let Err(e) =
+                metrics::METRICS.increment_error_counter(OP_KEYGEN, ERR_RATE_LIMIT_EXCEEDED)
+            {
+                tracing::warn!("Failed to increment error counter: {:?}", e);
+            }
+        })?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -376,10 +379,7 @@ impl<
         validate_request_id(&request_id)?;
 
         // Retrieve kg params and preproc_id
-        let dkg_params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params),
-            "Parameter choice is not recognized".to_string(),
-        )?;
+        let dkg_params = retrieve_parameters(inner.params)?;
 
         let preproc_handle = if insecure {
             PreprocHandleWithMode::Insecure

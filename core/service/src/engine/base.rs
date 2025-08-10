@@ -24,6 +24,7 @@ use kms_grpc::rpc_types::{
     FhePubKey, FheServerKey, PubDataType, PublicDecryptVerification, SignedPubDataHandleInternal,
     CRS,
 };
+use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -737,9 +738,16 @@ pub fn compute_pt_message_hash(
     message_hash
 }
 
-pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> anyhow::Result<DKGParams> {
+/// Attempt to find the concrete parameters from an enum variant defined by
+/// [kms_grpc::kms::v1::FheParameter].
+///
+/// Since this function is normally used by the grpc service, we return the error code
+/// NotFound if the concrete parameter cannot be found.
+pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> Result<DKGParams, BoxedStatus> {
     let fhe_parameter: crate::cryptography::internal_crypto_types::WrappedDKGParams =
-        FheParameter::try_from(fhe_parameter)?.into();
+        FheParameter::try_from(fhe_parameter)
+            .map_err(|e| tonic::Status::not_found(format!("DKG parameter not found: {e}")))?
+            .into();
     Ok(*fhe_parameter)
 }
 
