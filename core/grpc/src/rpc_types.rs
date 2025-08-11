@@ -246,8 +246,8 @@ pub enum PubDataType {
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO I think this should be in private since we don't trust the public to never be modified
-    RecoveryRequest, // Recovery request for backup vault // TODO shoulde these be in the backup vault?
-    Commitments,     // Commitments for the backup vault
+    RecoveryRequest, // Recovery request for backup vault
+    Commitments, // Commitments for the backup vault
 }
 
 impl fmt::Display for PubDataType {

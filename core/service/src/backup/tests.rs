@@ -1,21 +1,15 @@
-use std::collections::BTreeMap;
-
+use super::{custodian, error::BackupError, operator::Operator};
+use crate::{
+    backup::seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
+    cryptography::{backup_pke, internal_crypto_types::gen_sig_keys},
+};
 use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::RequestId;
 use proptest::prelude::*;
 use rand::{rngs::OsRng, SeedableRng};
+use std::collections::BTreeMap;
 use threshold_fhe::execution::runtime::party::Role;
-
-use crate::{
-    backup::{
-        operator::BackupCommitments,
-        seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
-    },
-    cryptography::{backup_pke, internal_crypto_types::gen_sig_keys},
-};
-
-use super::{custodian, error::BackupError, operator::Operator};
 
 enum DropShares {
     NoDrop,
@@ -103,7 +97,7 @@ fn full_flow() {
         let reencrypted_cts = operators
             .iter()
             .zip_eq(&cts)
-            .map(|(operator, ct)| {
+            .map(|(operator, (ct, com))| {
                 // reencrypted ciphertexts ciphertexts for one operator
                 (
                     custodians
@@ -131,9 +125,7 @@ fn full_flow() {
                             )
                         })
                         .collect::<BTreeMap<_, _>>(),
-                    ct.iter()
-                        .map(|(k, v)| (*k, v.commitment.clone()))
-                        .collect::<BTreeMap<_, _>>(),
+                    com,
                 )
             })
             .collect::<Vec<_>>();
@@ -157,11 +149,7 @@ fn full_flow() {
                     }
                 }
                 operator
-                    .verify_and_recover(
-                        &reencrypted_ct,
-                        &BackupCommitments::from_btree(commitments),
-                        backup_id,
-                    )
+                    .verify_and_recover(&reencrypted_ct, commitments, backup_id)
                     .unwrap()
             })
             .collect();
@@ -362,14 +350,14 @@ fn custodian_reencrypt() {
     {
         let operator_role = Role::indexed_from_zero(0);
         let mut bad_cts = cts.clone();
-        if let Some(z) = bad_cts[0].get_mut(&operator_role) {
+        if let Some(z) = bad_cts[0].0.get_mut(&operator_role) {
             z.ciphertext[0] ^= 1;
         }
 
         let err = custodians[0]
             .verify_reencrypt(
                 &mut rng,
-                bad_cts[0].get(&operator_role).unwrap(),
+                bad_cts[0].0.get(&operator_role).unwrap(),
                 verification_key,
                 operator_pk,
                 backup_id,
@@ -383,14 +371,14 @@ fn custodian_reencrypt() {
     {
         let operator_role = Role::indexed_from_zero(0);
         let mut bad_cts = cts.clone();
-        if let Some(z) = bad_cts[0].get_mut(&operator_role) {
+        if let Some(z) = bad_cts[0].0.get_mut(&operator_role) {
             z.signature[0] ^= 1;
         }
 
         let err = custodians[0]
             .verify_reencrypt(
                 &mut rng,
-                bad_cts[0].get(&operator_role).unwrap(),
+                bad_cts[0].0.get(&operator_role).unwrap(),
                 verification_key,
                 operator_pk,
                 backup_id,
@@ -407,7 +395,7 @@ fn custodian_reencrypt() {
         let err = custodians[0]
             .verify_reencrypt(
                 &mut rng,
-                cts[0].get(&operator_role).unwrap(),
+                cts[0].0.get(&operator_role).unwrap(),
                 verification_key,
                 operator_pk,
                 bad_backup_id,
@@ -424,7 +412,7 @@ fn custodian_reencrypt() {
         let err = custodians[0]
             .verify_reencrypt(
                 &mut rng,
-                cts[0].get(&operator_role).unwrap(),
+                cts[0].0.get(&operator_role).unwrap(),
                 verification_key,
                 operator_pk,
                 backup_id,
@@ -440,7 +428,7 @@ fn custodian_reencrypt() {
         let _ = custodians[0]
             .verify_reencrypt(
                 &mut rng,
-                cts[0].get(&operator_role).unwrap(),
+                cts[0].0.get(&operator_role).unwrap(),
                 verification_key,
                 operator_pk,
                 backup_id,

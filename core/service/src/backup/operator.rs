@@ -180,10 +180,10 @@ impl Display for RecoveryRequest {
 }
 
 #[derive(Clone)]
-pub struct Operator<S: BackupSigner, D: BackupDecryptor> {
+pub struct Operator<D: BackupDecryptor> {
     my_role: Role,
     custodian_keys: Vec<(BackupPublicKey, PublicSigKey)>,
-    signer: S,
+    signer: PrivateSigKey,
     // the public component of [signer] above
     verification_key: PublicSigKey,
     decryptor: D,
@@ -191,7 +191,7 @@ pub struct Operator<S: BackupSigner, D: BackupDecryptor> {
     threshold: usize,
 }
 
-impl<S: BackupSigner, D: BackupDecryptor> std::fmt::Debug for Operator<S, D> {
+impl<D: BackupDecryptor> std::fmt::Debug for Operator<D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Operator")
             .field("my_id", &self.my_role)
@@ -226,7 +226,7 @@ pub struct OperatorBackupOutput {
     /// because the operator cannot keep the opening and it cannot make it public.
     /// As such, we need to ensure the material that is being committed
     /// has enough entropy.
-    pub commitment: Vec<u8>,
+    pub commitment: Vec<u8>, // todo is this still needed here?
 }
 
 impl Named for OperatorBackupOutput {
@@ -258,7 +258,8 @@ pub enum BackupCommitmentsVersioned {
 pub struct BackupCommitments {
     // Note that ideally we want to use a BTreeMap here,
     // but it does not implement Versionize yet.
-    pub(crate) commitments: Vec<Vec<u8>>,
+    commitments: Vec<Vec<u8>>,
+    signature: Vec<u8>, // TODO should be made to signature type
 }
 
 impl Named for BackupCommitments {
@@ -266,18 +267,43 @@ impl Named for BackupCommitments {
 }
 
 impl BackupCommitments {
-    pub fn new(commitments: Vec<Vec<u8>>) -> Self {
-        Self { commitments }
+    pub fn new(commitments: Vec<Vec<u8>>, sk: &PrivateSigKey) -> anyhow::Result<Self> {
+        let serialized_coms = bc2wrap::serialize(&commitments).map_err(|e| {
+            anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
+        })?;
+        let signature = &crate::cryptography::signcryption::internal_sign(
+            &DSEP_BACKUP_RECOVERY,
+            &serialized_coms,
+            sk,
+        )?;
+        let signature_buf = signature.sig.to_vec();
+        Ok(Self {
+            commitments,
+            signature: signature_buf,
+        })
     }
 
-    pub fn from_btree(commitments: BTreeMap<Role, Vec<u8>>) -> Self {
+    pub fn from_btree(
+        commitments: BTreeMap<Role, Vec<u8>>,
+        sk: &PrivateSigKey,
+    ) -> anyhow::Result<Self> {
         let mut commitments_vec = Vec::new();
         for i in 1..=commitments.len() {
             commitments_vec.push(commitments[&Role::indexed_from_one(i)].to_owned());
         }
-        Self {
+        let serialized_coms = bc2wrap::serialize(&commitments).map_err(|e| {
+            anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
+        })?;
+        let signature = &crate::cryptography::signcryption::internal_sign(
+            &DSEP_BACKUP_RECOVERY,
+            &serialized_coms,
+            sk,
+        )?;
+        let signature_buf = signature.sig.to_vec();
+        Ok(Self {
             commitments: commitments_vec,
-        }
+            signature: signature_buf,
+        })
     }
 
     pub fn get(&self, role: &Role) -> anyhow::Result<&[u8]> {
@@ -399,11 +425,11 @@ impl Named for BackupMaterial {
     const NAME: &'static str = "backup::BackupShares";
 }
 
-impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
+impl<D: BackupDecryptor> Operator<D> {
     pub fn new(
         my_role: Role,
         custodian_messages: Vec<InternalCustodianSetupMessage>,
-        signer: S,
+        signer: PrivateSigKey,
         operator_verf_key: PublicSigKey,
         decryptor: D,
         operator_enc_key: BackupPublicKey,
@@ -486,7 +512,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
         rng: &mut R,
         secret: &[u8],
         backup_id: RequestId,
-    ) -> Result<BTreeMap<Role, OperatorBackupOutput>, BackupError> {
+    ) -> Result<(BTreeMap<Role, OperatorBackupOutput>, BackupCommitments), BackupError> {
         let n = self.custodian_keys.len();
         let t = self.threshold;
 
@@ -574,7 +600,14 @@ impl<S: BackupSigner, D: BackupDecryptor> Operator<S, D> {
         }
 
         // 5. The ciphertext is stored by `Pij`, or stored on a non-malleable storage, e.g. a blockchain or a secure bank vault.
-        Ok(ct_shares)
+        // 6. The commitments are stored by `P_i` and can be used to verify the shares later.
+        let com_map = ct_shares
+            .iter()
+            .map(|(role, com)| (*role, com.commitment.clone()))
+            .collect::<BTreeMap<Role, Vec<u8>>>();
+        let commitments = BackupCommitments::from_btree(com_map, &self.signer)
+            .map_err(|e| BackupError::OperatorError(format!("Could not sign commitments: {e}")))?;
+        Ok((ct_shares, commitments))
     }
 
     /// Operators that does the recovery collects all the materials

@@ -235,7 +235,7 @@ mod tests {
         },
         cryptography::{
             backup_pke::{self, BackupPrivateKey},
-            internal_crypto_types::{gen_sig_keys, PrivateSigKey},
+            internal_crypto_types::gen_sig_keys,
         },
         engine::base::derive_request_id,
         util::file_handling::{safe_read_element_versioned, safe_write_element_versioned},
@@ -429,7 +429,7 @@ mod tests {
         setup_msgs: Vec<InternalCustodianSetupMessage>,
         backup_id: RequestId,
         msg: &[u8],
-    ) -> (BackupCommitments, Operator<PrivateSigKey, BackupPrivateKey>) {
+    ) -> (BackupCommitments, Operator<BackupPrivateKey>) {
         let request_path = root_path.join(format!(
             "operator-{operator_role}{MAIN_SEPARATOR}{backup_id}-request.bin"
         ));
@@ -451,15 +451,13 @@ mod tests {
             threshold,
         )
         .unwrap();
-        let ct_map = operator
+        let (ct_map, commitments) = operator
             .secret_share_and_encrypt(&mut rng, msg, backup_id)
             .unwrap();
-        let mut commitments = BTreeMap::new();
         let mut ciphertexts = BTreeMap::new();
         for custodian_index in 1..=amount_custodians {
             let custodian_role = Role::indexed_from_one(custodian_index);
             let ct = ct_map.get(&custodian_role).unwrap();
-            commitments.insert(custodian_role, ct.commitment.clone());
             ciphertexts.insert(custodian_role, ct.to_owned());
         }
         let recovery_request = RecoveryRequest::new(
@@ -476,13 +474,13 @@ mod tests {
         safe_write_element_versioned(&Path::new(&request_path), &recovery_request)
             .await
             .unwrap();
-        (BackupCommitments::from_btree(commitments), operator)
+        (commitments, operator)
     }
 
     async fn decrypt_recovery(
         root_path: &Path,
         amount_custodians: usize,
-        operator: &Operator<PrivateSigKey, BackupPrivateKey>,
+        operator: &Operator<BackupPrivateKey>,
         commitment: &BackupCommitments,
         backup_id: RequestId,
     ) -> Vec<u8> {

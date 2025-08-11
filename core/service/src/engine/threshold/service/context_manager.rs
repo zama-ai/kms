@@ -288,7 +288,7 @@ where
                 .values()
                 .cloned()
                 .collect_vec(),
-            Arc::clone(&self.base_kms.sig_key),
+            (*self.base_kms.sig_key).clone(),
             verification_key,
             priv_key.clone(),
             pub_enc_key,
@@ -297,15 +297,13 @@ where
         // TODO should commitments be moved into secret_share_and_encrypt? Since this should basically just be used to share the private key
         let mut serialized_priv_key = Vec::new();
         safe_serialize(&priv_key, &mut serialized_priv_key, SAFE_SER_SIZE_LIMIT)?;
-        let ct_map = operator
+        let (ct_map, commitments) = operator
             .secret_share_and_encrypt(rng, &serialized_priv_key, backup_id)
             .unwrap();
-        let mut commitments = Vec::new();
         let mut ciphertexts = BTreeMap::new();
         for custodian_index in 1..=custodian_context.custodian_nodes.keys().len() {
             let custodian_role = Role::indexed_from_one(custodian_index);
             let ct = ct_map.get(&custodian_role).unwrap();
-            commitments.push(ct.commitment.clone());
             ciphertexts.insert(custodian_role, ct.to_owned());
         }
         let recovery_request = RecoveryRequest::new(
@@ -320,6 +318,6 @@ where
             "Generated recovery request for backup_id/context_id={}",
             backup_id
         );
-        Ok((recovery_request, BackupCommitments { commitments }))
+        Ok((recovery_request, commitments))
     }
 }

@@ -323,13 +323,14 @@ fn test_operator_backup_output(
         .unwrap()
     };
 
-    let new_operator_backup_output = &operator
+    let (cts, _commitments) = &operator
         .secret_share_and_encrypt(
             &mut rng,
             &test.plaintext,
             RequestId::from_bytes(test.backup_id),
         )
-        .unwrap()[&operator.role()];
+        .unwrap();
+    let new_operator_backup_output = &cts[&operator.role()];
     if original_operator_backup_output != *new_operator_backup_output {
         Err(test.failure(
             format!(
