@@ -271,7 +271,7 @@ impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Symm> {
             &mut envelope
                 .clone()
                 .try_as_app_key_blob()
-                .ok_or(anyhow_error_and_log("Expected single share encrypted data"))?,
+                .ok_or(anyhow::anyhow!("Expected single share encrypted data"))?,
         )
         .await
     }
@@ -320,9 +320,7 @@ impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Asymm> {
             &mut envelope
                 .clone()
                 .try_as_app_key_blob()
-                .ok_or(anyhow_error_and_log(
-                    "Expected single share encrypted value",
-                ))?,
+                .ok_or(anyhow::anyhow!("Expected single share encrypted value",))?,
         )
         .await
     }
