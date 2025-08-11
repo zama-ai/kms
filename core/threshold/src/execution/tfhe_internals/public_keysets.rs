@@ -351,8 +351,7 @@ impl RawCompressedPubKeySet {
             noise_squashing_key,
             noise_squashing_compression_key,
             tfhe::Tag::default(),
-        );
-        todo!()
+        )
     }
 
     pub fn to_compressed_pubkeyset(&self, params: DKGParams) -> CompressedFhePubKeySet {
