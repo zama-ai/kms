@@ -33,6 +33,9 @@ kmsCore:
         publicVaultStorageBucket: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
         privateVaultKeychainAWSKMSRootKeySpec: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
         privateVaultKeychainAWSKMSRootKeyID: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
+        backupVaultStorageBucket: KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET
+        backupVaultKeychainAWSKMSRootKeySpec: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
+        backupVaultKeychainAWSKMSRootKeyID: KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
 
   rateLimiter:
     bucketSize: 50000
@@ -145,6 +148,15 @@ kmsCore:
       enabled: false
       bucket: kms-private
       path: kms
+    awskms:
+      enabled: false
+      rootKeyId: 00000000-0000-0000-0000-000000000000
+      rootKeySpec: symm
+  backupVault:
+    s3:
+      enabled: false
+      bucket: kms-private
+      path: ""
     awskms:
       enabled: false
       rootKeyId: 00000000-0000-0000-0000-000000000000
