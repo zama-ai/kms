@@ -1103,6 +1103,10 @@ pub trait OnlineDistributedKeyGen<Z>: Send + Sync {
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>;
 
+    // NOTE: This can not be used or tested yet as we are waiting for tfhe-rs
+    // next release to be able to decompress the keys generated here.
+    // see https://github.com/zama-ai/kms/pull/40
+
     /// Runs the distributed key generation protocol.
     ///
     /// We have a private trait bound here to ensure that the
