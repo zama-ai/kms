@@ -45,7 +45,8 @@ impl Default for RequestId {
         Self([0u8; ID_LENGTH])
     }
 }
-// todo add test or change to give context for backup explicitle
+
+/// Compared the request ID as if it is an integer
 impl PartialOrd for RequestId {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
@@ -674,5 +675,28 @@ mod tests {
 
         // Verify the conversion resulted in an invalid ID
         assert!(!id.is_valid());
+    }
+
+    #[test]
+    fn request_id_ordering() {
+        let base = v1::RequestId {
+            request_id: "0102030405060708091011121314151617181920".to_string(),
+        };
+        let base_larger_1 = v1::RequestId {
+            request_id: "0102030405060708091011121314151617181921".to_string(),
+        };
+        let base_larger_2 = v1::RequestId {
+            request_id: "1102030405060708091011121314151617181920".to_string(),
+        };
+        let base_smaller_1 = v1::RequestId {
+            request_id: "0002030405060708091011121314151617181920".to_string(),
+        };
+        let base_smaller_2 = v1::RequestId {
+            request_id: "0102030405060708091011121314151617181919".to_string(),
+        };
+        assert!(base < base_larger_1);
+        assert!(base < base_larger_2);
+        assert!(base > base_smaller_1);
+        assert!(base > base_smaller_2);
     }
 }
