@@ -120,6 +120,7 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+            {{- if .Values.kmsCore.privateVault.awskms.enabled }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
               valueFrom:
                 configMapKeyRef:
@@ -130,6 +131,7 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
+            {{- end }}
           {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:
@@ -345,6 +347,7 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+            {{- if .Values.kmsCore.privateVault.awskms.enabled }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
               valueFrom:
                 configMapKeyRef:
@@ -355,6 +358,7 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
+            {{- end }}
           {{- end }}
           {{- if not .Values.kmsCore.privateVault.s3.enabled }}
           volumeMounts:
@@ -443,6 +447,7 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+            {{- if .Values.kmsCore.privateVault.awskms.enabled }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
               valueFrom:
                 configMapKeyRef:
@@ -453,6 +458,7 @@ spec:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
+            {{- end }}
           {{- end }}
           workingDir: {{ .Values.kmsCore.workdir }}
           volumeMounts:

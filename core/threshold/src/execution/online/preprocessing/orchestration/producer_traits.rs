@@ -1,10 +1,26 @@
 use tokio::task::JoinSet;
 
 use crate::{
-    algebra::structure_traits::Solve,
+    algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve},
     execution::{
-        online::{preprocessing::orchestration::progress_tracker::ProgressTracker, triple::Triple},
+        online::{
+            preprocessing::orchestration::{
+                producers::{
+                    bits_producer::{SecureLargeSessionBitProducer, SecureSmallSessionBitProducer},
+                    randoms_producer::{
+                        SecureLargeSessionRandomProducer, SecureSmallSessionRandomProducer,
+                    },
+                    triples_producer::{
+                        SecureLargeSessionTripleProducer, SecureSmallSessionTripleProducer,
+                    },
+                },
+                progress_tracker::ProgressTracker,
+            },
+            triple::Triple,
+        },
+        runtime::session::{LargeSession, SmallSession},
         sharing::share::Share,
+        small_execution::prf::PRSSConversions,
     },
 };
 
@@ -61,31 +77,28 @@ pub trait ProducerFactory<Z: Clone, S> {
     type TripleProducer: TripleProducerTrait<Z, S>;
     type RandomProducer: RandomProducerTrait<Z, S>;
     type BitProducer: BitProducerTrait<Z, S>;
+}
 
-    fn create_triple_producer(
-        &self,
-        batch_size: usize,
-        total_size: usize,
-        sessions: Vec<S>,
-        channels: Vec<tokio::sync::mpsc::Sender<Vec<Triple<Z>>>>,
-        progress_tracker: Option<ProgressTracker>,
-    ) -> anyhow::Result<Self::TripleProducer>;
+pub struct SecureSmallProducerFactory<Z: PRSSConversions + ErrorCorrect + Invert + Derive + Solve> {
+    _phantom: std::marker::PhantomData<Z>,
+}
 
-    fn create_random_producer(
-        &self,
-        batch_size: usize,
-        total_size: usize,
-        sessions: Vec<S>,
-        channels: Vec<tokio::sync::mpsc::Sender<Vec<Share<Z>>>>,
-        progress_tracker: Option<ProgressTracker>,
-    ) -> anyhow::Result<Self::RandomProducer>;
+impl<Z: PRSSConversions + ErrorCorrect + Invert + Derive + Solve>
+    ProducerFactory<Z, SmallSession<Z>> for SecureSmallProducerFactory<Z>
+{
+    type TripleProducer = SecureSmallSessionTripleProducer<Z>;
+    type RandomProducer = SecureSmallSessionRandomProducer<Z>;
+    type BitProducer = SecureSmallSessionBitProducer<Z>;
+}
 
-    fn create_bit_producer(
-        &self,
-        batch_size: usize,
-        total_size: usize,
-        sessions: Vec<S>,
-        channels: Vec<tokio::sync::mpsc::Sender<Vec<Share<Z>>>>,
-        progress_tracker: Option<ProgressTracker>,
-    ) -> anyhow::Result<Self::BitProducer>;
+pub struct SecureLargeProducerFactory<Z: PRSSConversions + ErrorCorrect + Invert + Derive + Solve> {
+    _phantom: std::marker::PhantomData<Z>,
+}
+
+impl<Z: PRSSConversions + ErrorCorrect + Invert + Derive + Solve> ProducerFactory<Z, LargeSession>
+    for SecureLargeProducerFactory<Z>
+{
+    type TripleProducer = SecureLargeSessionTripleProducer<Z>;
+    type RandomProducer = SecureLargeSessionRandomProducer<Z>;
+    type BitProducer = SecureLargeSessionBitProducer<Z>;
 }

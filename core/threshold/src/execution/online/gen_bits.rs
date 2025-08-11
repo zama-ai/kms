@@ -23,7 +23,7 @@ pub trait BitGenEven {
     ) -> anyhow::Result<Vec<Share<Z>>>;
 }
 
-pub struct RealBitGenEven {}
+pub struct SecureBitGenEven {}
 
 //NOTE: We could also do like we do with triples, i.e. have a generation function which is async and stores
 //the resulting bits, and then a next function that just pops them.
@@ -31,7 +31,7 @@ pub struct RealBitGenEven {}
 
 /// BitGen for even modulus
 #[async_trait]
-impl BitGenEven for RealBitGenEven {
+impl BitGenEven for SecureBitGenEven {
     /// Generates a vector of secret shared random bits using a preprocessing functionality and a session.
     /// The code only works when the modulo of the ring used is even.
     #[instrument(name="MPC.GenBits", skip(amount, preproc, session), fields(sid = ?session.session_id(), own_identity = ?session.own_identity(),batch_size=?amount))]
@@ -82,7 +82,7 @@ mod tests {
     use crate::algebra::galois_rings::degree_8::{ResiduePolyF8Z128, ResiduePolyF8Z64};
     use crate::algebra::structure_traits::Ring;
     use crate::execution::online::gen_bits::BitGenEven;
-    use crate::execution::online::gen_bits::RealBitGenEven;
+    use crate::execution::online::gen_bits::SecureBitGenEven;
     use crate::{
         algebra::structure_traits::{One, Sample, ZConsts, Zero},
         execution::{
@@ -116,7 +116,7 @@ mod tests {
                     const AMOUNT: usize = 10;
                     async fn task(mut session: SmallSession<$z>, _bot: Option<String>) -> Vec<$z> {
                         let mut preprocessing = DummyPreprocessing::<$z>::new(42, &session);
-                        let bits = RealBitGenEven::gen_bits_even(AMOUNT, &mut preprocessing, &mut session)
+                        let bits = SecureBitGenEven::gen_bits_even(AMOUNT, &mut preprocessing, &mut session)
                             .await
                             .unwrap();
                         open_list(&bits, &session).await.unwrap()
@@ -156,11 +156,11 @@ mod tests {
                                 });
                             mock.expect_next_triple_vec()
                                 .returning(move |amount| preprocessing.next_triple_vec(amount));
-                            RealBitGenEven::gen_bits_even(AMOUNT, &mut mock, &mut session)
+                            SecureBitGenEven::gen_bits_even(AMOUNT, &mut mock, &mut session)
                                 .await
                                 .unwrap()
                         } else {
-                            RealBitGenEven::gen_bits_even(AMOUNT, &mut preprocessing, &mut session)
+                            SecureBitGenEven::gen_bits_even(AMOUNT, &mut preprocessing, &mut session)
                                 .await
                                 .unwrap()
                         };

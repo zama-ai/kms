@@ -4,8 +4,8 @@ image_id = "ami-0a56cf46caf2fd41c"
 instance_type = "m6i.4xlarge"
 
 [backend.aws.big-instance-service]
-region = "eu-west-3"
-image_id = "ami-0a56cf46caf2fd41c"
+region = "eu-west-1"
+image_id = "ami-04f62ae93462b459a"
 instance_type = "c7i.8xlarge"
 
 [backend.aws.docker-big-instance]

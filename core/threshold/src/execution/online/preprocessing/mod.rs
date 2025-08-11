@@ -6,7 +6,7 @@ use crate::algebra::galois_rings::common::ResiduePoly;
 use crate::algebra::structure_traits::{ErrorCorrect, Invert, Solve};
 use crate::execution::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC};
 use crate::execution::keyset_config::KeySetConfig;
-use crate::execution::online::gen_bits::{BitGenEven, RealBitGenEven};
+use crate::execution::online::gen_bits::{BitGenEven, SecureBitGenEven};
 use crate::execution::online::preprocessing::memory::{memory_factory, InMemoryBitPreprocessing};
 use crate::execution::runtime::session::{BaseSession, ParameterHandles, SmallSession};
 use crate::execution::small_execution::prss::PRSSPrimitives;
@@ -184,7 +184,7 @@ where
         let bound_d = (STATSEC + LOG_B_SWITCH_SQUASH) as usize;
         let num_bits = 2 * num_ctxts * (bound_d + 2);
         let available_bits =
-            RealBitGenEven::gen_bits_even(num_bits, preprocessing, session).await?;
+            SecureBitGenEven::gen_bits_even(num_bits, preprocessing, session).await?;
         let mut bit_preproc = InMemoryBitPreprocessing { available_bits };
 
         self.fill_from_bits_preproc(&mut bit_preproc, num_ctxts)
