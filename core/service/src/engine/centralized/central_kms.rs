@@ -81,7 +81,7 @@ pub(crate) async fn async_generate_fhe_keys<PubS, PrivS>(
     keyset_config: StandardKeySetConfig,
     compression_key_id: Option<RequestId>,
     seed: Option<Seed>,
-    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    eip712_domain: alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
 where
     PubS: Storage + Sync + Send + 'static,
@@ -89,7 +89,6 @@ where
 {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
-    let eip712_domain_copy = eip712_domain.cloned();
 
     let existing_key_handle = match compression_key_id {
         Some(compression_key_id_inner) => {
@@ -111,7 +110,7 @@ where
             keyset_config,
             existing_key_handle,
             seed,
-            eip712_domain_copy.as_ref(),
+            &eip712_domain,
         );
         let _ = send.send(out);
     });
@@ -165,7 +164,7 @@ pub(crate) async fn async_generate_sns_compression_keys<PubS, PrivS>(
     storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     params: DKGParams,
     exsiting_keyset_id: &RequestId,
-    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    eip712_domain: alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
 where
     PubS: Storage + Sync + Send + 'static,
@@ -259,7 +258,7 @@ where
         server_key: new_server_key,
     };
     let handles =
-        KmsFheKeyHandles::new(sk, new_client_key, &pks, decompression_key, eip712_domain)?;
+        KmsFheKeyHandles::new(sk, new_client_key, &pks, decompression_key, &eip712_domain)?;
     Ok((pks, handles))
 }
 
@@ -268,23 +267,15 @@ pub(crate) async fn async_generate_crs(
     sk: &PrivateSigKey,
     params: DKGParams,
     max_num_bits: Option<u32>,
-    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    eip712_domain: alloy_sol_types::Eip712Domain,
     sid: SessionId,
     rng: AesRng,
 ) -> anyhow::Result<(CompactPkeCrs, SignedPubDataHandleInternal)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
-    let eip712_domain_copy = eip712_domain.cloned();
 
     rayon::spawn_fifo(move || {
-        let out = gen_centralized_crs(
-            &sk_copy,
-            &params,
-            max_num_bits,
-            eip712_domain_copy.as_ref(),
-            sid,
-            rng,
-        );
+        let out = gen_centralized_crs(&sk_copy, &params, max_num_bits, &eip712_domain, sid, rng);
         let _ = send.send(out);
     });
     recv.await?
@@ -297,7 +288,7 @@ pub fn generate_fhe_keys(
     keyset_config: StandardKeySetConfig,
     existing_key_handle: Option<KmsFheKeyHandles>,
     seed: Option<Seed>,
-    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    eip712_domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
         let client_key = match keyset_config.compression_config {
@@ -393,7 +384,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
     params: &DKGParams,
     max_num_bits: Option<u32>,
-    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    eip712_domain: &alloy_sol_types::Eip712Domain,
     sid: SessionId,
     mut rng: R,
 ) -> anyhow::Result<(CompactPkeCrs, SignedPubDataHandleInternal)> {
@@ -1034,6 +1025,7 @@ pub(crate) mod tests {
     use crate::cryptography::signcryption::{
         decrypt_signcryption_with_link, ephemeral_signcryption_key_generation,
     };
+    use crate::dummy_domain;
     use crate::engine::base::{compute_handle, compute_info, derive_request_id};
     use crate::engine::traits::Kms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
@@ -1154,13 +1146,14 @@ pub(crate) mod tests {
         let mut rng = AesRng::seed_from_u64(100);
         let seed = Some(Seed(42));
         let (sig_pk, sig_sk) = gen_sig_keys(&mut rng);
+        let domain = dummy_domain();
         let (pub_fhe_keys, key_info) = generate_fhe_keys(
             &sig_sk,
             dkg_params,
             StandardKeySetConfig::default(),
             None,
             seed,
-            None,
+            &domain,
         )
         .unwrap();
         assert!(pub_fhe_keys.server_key.noise_squashing_key().is_some());
@@ -1173,7 +1166,7 @@ pub(crate) mod tests {
             StandardKeySetConfig::default(),
             None,
             seed,
-            None,
+            &domain,
         )
         .unwrap();
         assert!(other_pub_fhe_keys
@@ -1214,6 +1207,7 @@ pub(crate) mod tests {
     #[serial(default_keys)]
     async fn test_gen_keys() {
         let mut rng = AesRng::seed_from_u64(100);
+        let domain = dummy_domain();
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         assert!(generate_fhe_keys(
             &sig_sk,
@@ -1221,7 +1215,7 @@ pub(crate) mod tests {
             StandardKeySetConfig::default(),
             None,
             None,
-            None
+            &domain,
         )
         .is_ok());
     }
@@ -1605,9 +1599,10 @@ pub(crate) mod tests {
             .unwrap()
         };
 
+        let domain = dummy_domain();
         let value = TestType { i: 32 };
-        let expected = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, None).unwrap();
-        let actual = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, None).unwrap();
+        let expected = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
+        let actual = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
         assert_eq!(expected, actual);
     }
 
@@ -1631,13 +1626,33 @@ pub(crate) mod tests {
         };
 
         let value = TestType { i: 32 };
-        let base = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, None).unwrap();
+        let domain = dummy_domain();
+        let base = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
+
         // Observe one char off in dsep
-        let wrong_dsep = compute_info(&kms.base_kms.sig_key, b"TESTTESU", &value, None).unwrap();
-        assert_ne!(base, wrong_dsep);
-        let new_val = TestType { i: 33 };
-        let wrong_val = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &new_val, None).unwrap();
-        assert_ne!(base, wrong_val);
+        {
+            let info = compute_info(&kms.base_kms.sig_key, b"TESTTESU", &value, &domain).unwrap();
+            assert_ne!(base, info);
+        }
+
+        // observe there's a different value
+        {
+            let new_val = TestType { i: 33 };
+            let info = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &new_val, &domain).unwrap();
+            assert_ne!(base, info);
+        }
+
+        // observe the domain is different
+        {
+            let domain = alloy_sol_types::eip712_domain!(
+                name: "Authorization token",
+                version: "2", // different from dummy_domain
+                chain_id: 8006,
+                verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+            );
+            let info = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
+            assert_ne!(base, info);
+        }
     }
 
     #[test]

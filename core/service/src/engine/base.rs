@@ -112,7 +112,7 @@ impl KmsFheKeyHandles {
         client_key: FhePrivateKey,
         public_keys: &FhePubKeySet,
         decompression_key: Option<DecompressionKey>,
-        eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+        eip712_domain: &alloy_sol_types::Eip712Domain,
     ) -> anyhow::Result<Self> {
         let mut public_key_info = HashMap::new();
         public_key_info.insert(
@@ -180,19 +180,13 @@ pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
     sk: &PrivateSigKey,
     dsep: &DomainSep,
     element: &S,
-    domain: Option<&alloy_sol_types::Eip712Domain>,
+    domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<SignedPubDataHandleInternal> {
     let handle = compute_handle(element)?;
     let signature = crate::cryptography::signcryption::internal_sign(dsep, &handle, sk)?;
 
     // if we get an EIP-712 domain, compute the external signature
-    let external_signature = match domain {
-        Some(domain) => compute_external_pubdata_signature(sk, element, domain)?,
-        None => {
-            tracing::warn!("Skipping external signature computation due to missing domain");
-            vec![]
-        }
-    };
+    let external_signature = compute_external_pubdata_signature(sk, element, domain)?;
 
     Ok(SignedPubDataHandleInternal {
         key_handle: handle,
@@ -787,6 +781,7 @@ pub(crate) mod tests {
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::internal_crypto_types::gen_sig_keys,
+        dummy_domain,
         engine::centralized::central_kms::generate_fhe_keys,
     };
     use aes_prng::AesRng;
@@ -970,7 +965,7 @@ pub(crate) mod tests {
             StandardKeySetConfig::default(),
             None,
             None,
-            None,
+            &dummy_domain(),
         )
         .unwrap();
 
@@ -1011,7 +1006,7 @@ pub(crate) mod tests {
             StandardKeySetConfig::default(),
             None,
             None,
-            None,
+            &dummy_domain(),
         )
         .unwrap();
 
@@ -1079,7 +1074,7 @@ pub(crate) mod tests {
             StandardKeySetConfig::default(),
             None,
             None,
-            None,
+            &dummy_domain(),
         )
         .unwrap();
 

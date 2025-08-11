@@ -597,12 +597,8 @@ impl<
                 .collect();
 
             // Compute expensive signature OUTSIDE the lock
-            let external_sig = if let Some(domain) = eip712_domain {
-                compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, domain)
-            } else {
-                tracing::warn!("Skipping external signature computation due to missing domain");
-                vec![]
-            };
+            let external_sig =
+                compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, eip712_domain);
 
             // Single success update with minimal lock hold time
             let success_result = Ok((req_id, pts.clone(), external_sig));
@@ -682,6 +678,7 @@ mod tests {
             decompression::test_tools::safe_serialize_versioned,
             internal_crypto_types::gen_sig_keys,
         },
+        dummy_domain,
         engine::threshold::service::compute_all_info,
         vault::storage::ram,
     };
@@ -794,7 +791,7 @@ mod tests {
             .build();
         let ct_buf = safe_serialize_versioned(&ct);
 
-        let info = compute_all_info(&sk, &fhe_key_set, None).unwrap();
+        let info = compute_all_info(&sk, &fhe_key_set, &dummy_domain()).unwrap();
 
         let dummy_meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
         {

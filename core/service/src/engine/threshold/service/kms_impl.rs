@@ -142,7 +142,7 @@ pub type BucketMetaStore = Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>
 pub fn compute_all_info(
     sig_key: &PrivateSigKey,
     fhe_key_set: &FhePubKeySet,
-    domain: Option<&alloy_sol_types::Eip712Domain>,
+    domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<KeyGenCallValues> {
     //Compute all the info required for storing
     let pub_key_info = compute_info(sig_key, &DSEP_PUBDATA_KEY, &fhe_key_set.public_key, domain);

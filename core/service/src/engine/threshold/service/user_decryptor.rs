@@ -602,6 +602,7 @@ mod tests {
             decompression::test_tools::safe_serialize_versioned,
             internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
         },
+        dummy_domain,
         engine::threshold::service::compute_all_info,
         vault::storage::ram,
     };
@@ -675,7 +676,8 @@ mod tests {
             .build();
         let ct_buf = safe_serialize_versioned(&ct);
 
-        let info = compute_all_info(&sk, &fhe_key_set, None).unwrap();
+        let domain = dummy_domain();
+        let info = compute_all_info(&sk, &fhe_key_set, &domain).unwrap();
 
         let dummy_meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
         {

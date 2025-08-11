@@ -3,6 +3,7 @@ pub mod test_tools;
 
 use crate::client::ClientDataType;
 use crate::cryptography::internal_crypto_types::gen_sig_keys;
+use crate::dummy_domain;
 use crate::engine::base::{compute_handle, compute_info, DSEP_PUBDATA_CRS};
 use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
 use crate::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
@@ -315,8 +316,9 @@ where
 
     // Use proper error handling instead of unwrap
     let sid = SessionId::from(0); // we're in the centralized case, so no need sid
+    let domain = dummy_domain();
     let (pp, crs_info) =
-        match gen_centralized_crs(&sk, &dkg_params, max_num_bits_u32, None, sid, &mut rng) {
+        match gen_centralized_crs(&sk, &dkg_params, max_num_bits_u32, &domain, sid, &mut rng) {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Failed to generate centralized CRS: {}", e);
@@ -422,13 +424,14 @@ where
     };
 
     // Generate two sets of FHE keys with proper error handling
+    let domain = dummy_domain();
     let (fhe_pub_keys_1, key_info_1) = match generate_fhe_keys(
         &sk,
         dkg_params,
         StandardKeySetConfig::default(),
         None,
         seed,
-        None,
+        &domain,
     ) {
         Ok(result) => result,
         Err(e) => {
@@ -443,7 +446,7 @@ where
         StandardKeySetConfig::default(),
         None,
         seed,
-        None,
+        &domain,
     ) {
         Ok(result) => result,
         Err(e) => {
@@ -884,11 +887,12 @@ where
         keyset.public_keys.server_key.clone().into_raw_parts();
 
     // Store keys for each party
+    let domain = dummy_domain();
     for i in 1..=amount_parties {
         // Get signing key for this party
         let sk = &signing_keys[i - 1];
         // Compute info with proper error handling
-        let info = match compute_all_info(sk, &keyset.public_keys, None) {
+        let info = match compute_all_info(sk, &keyset.public_keys, &domain) {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Failed to compute key info for party {}: {}", i, e);
@@ -1081,13 +1085,14 @@ where
 
     // Store the CRS for each party
     // PANICS: if the private and public storage and signing keys are not of equal length
+    let domain = dummy_domain();
     for (cur_pub, (cur_priv, cur_sk)) in pub_storages
         .iter_mut()
         .zip_eq(priv_storages.iter_mut().zip_eq(signing_keys.iter()))
     {
         // Compute signed metadata for CRS verification
         // PANICS: If signature generation fails - would compromise security model
-        let crs_info = compute_info(cur_sk, &DSEP_PUBDATA_CRS, &pp, None).unwrap_or_else(|e| {
+        let crs_info = compute_info(cur_sk, &DSEP_PUBDATA_CRS, &pp, &domain).unwrap_or_else(|e| {
             panic!("Failed to compute CRS info for party: {e}");
         });
 

@@ -2,6 +2,7 @@ use crate::kms::v1::{
     Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
 use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
+use crate::utils::tonic_result::BoxedStatus;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
@@ -87,22 +88,14 @@ alloy_sol_types::sol! {
 
 pub fn protobuf_to_alloy_domain_option(
     domain_ref: Option<&Eip712DomainMsg>,
-) -> Option<Eip712Domain> {
-    if let Some(domain) = domain_ref {
-        match protobuf_to_alloy_domain(domain) {
-            Ok(domain) => Some(domain),
-            Err(e) => {
-                tracing::warn!(
-                    "Could not turn domain to alloy: {:?}. Error: {:?}. Returning None.",
-                    domain,
-                    e
-                );
-                None
-            }
-        }
-    } else {
-        None
-    }
+) -> Result<Eip712Domain, BoxedStatus> {
+    let inner = domain_ref.ok_or(tonic::Status::invalid_argument("missing domain"))?;
+    let out = protobuf_to_alloy_domain(inner).map_err(|e| {
+        tonic::Status::invalid_argument(format!(
+            "failed to convert protobuf domain to alloy domain: {e}"
+        ))
+    })?;
+    Ok(out)
 }
 
 pub fn protobuf_to_alloy_domain(pb_domain: &Eip712DomainMsg) -> anyhow::Result<Eip712Domain> {

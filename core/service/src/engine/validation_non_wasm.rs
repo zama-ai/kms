@@ -180,12 +180,7 @@ pub fn validate_user_decrypt_req(
 #[allow(clippy::type_complexity)]
 pub fn validate_public_decrypt_req(
     req: &PublicDecryptionRequest,
-) -> anyhow::Result<(
-    Vec<TypedCiphertext>,
-    RequestId,
-    RequestId,
-    Option<Eip712Domain>,
-)> {
+) -> anyhow::Result<(Vec<TypedCiphertext>, RequestId, RequestId, Eip712Domain)> {
     let key_id: RequestId = tonic_some_or_err(
         req.key_id.clone(),
         format!("{ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID} (Request ID: {req:?})"),
@@ -214,7 +209,7 @@ pub fn validate_public_decrypt_req(
         )));
     }
 
-    let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref());
+    let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref())?;
 
     Ok((req.ciphertexts.clone(), key_id, request_id, eip712_domain))
 }
@@ -569,8 +564,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
             };
-            let (_, _, _, domain) = validate_public_decrypt_req(&req).unwrap();
-            assert!(domain.is_some());
+            let (_, _, _, _domain) = validate_public_decrypt_req(&req).unwrap();
         }
     }
 

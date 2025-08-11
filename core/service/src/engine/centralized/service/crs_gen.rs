@@ -73,7 +73,7 @@ pub async fn crs_gen_impl<
     let sk = Arc::clone(&service.base_kms.sig_key);
     let rng = service.base_kms.new_rng().await;
 
-    let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
+    let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref())?;
     let handle = service.tracker.spawn(
         async move {
             let _timer = _timer;
@@ -140,7 +140,7 @@ pub(crate) async fn crs_gen_background<
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     sk: Arc<PrivateSigKey>,
     params: DKGParams,
-    eip712_domain: Option<Eip712Domain>,
+    eip712_domain: Eip712Domain,
     max_number_bits: Option<u32>,
     permit: OwnedSemaphorePermit,
 ) -> Result<(), anyhow::Error> {
@@ -148,32 +148,24 @@ pub(crate) async fn crs_gen_background<
     let start = tokio::time::Instant::now();
 
     let sid = SessionId::from(0);
-    let (pp, crs_info) = match async_generate_crs(
-        &sk,
-        params,
-        max_number_bits,
-        eip712_domain.as_ref(),
-        sid,
-        rng,
-    )
-    .await
-    {
-        Ok((pp, crs_info)) => (pp, crs_info),
-        Err(e) => {
-            tracing::error!("Error in inner CRS generation: {}", e);
-            let mut guarded_meta_store = meta_store.write().await;
-            let _ = guarded_meta_store.update(
-                req_id,
-                Err(format!(
-                    "Failed CRS generation for CRS with ID {req_id}: {e}"
-                )),
-            );
-            METRICS
-                .increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED)
-                .ok();
-            return Err(anyhow::anyhow!("Failed CRS generation: {}", e));
-        }
-    };
+    let (pp, crs_info) =
+        match async_generate_crs(&sk, params, max_number_bits, eip712_domain, sid, rng).await {
+            Ok((pp, crs_info)) => (pp, crs_info),
+            Err(e) => {
+                tracing::error!("Error in inner CRS generation: {}", e);
+                let mut guarded_meta_store = meta_store.write().await;
+                let _ = guarded_meta_store.update(
+                    req_id,
+                    Err(format!(
+                        "Failed CRS generation for CRS with ID {req_id}: {e}"
+                    )),
+                );
+                METRICS
+                    .increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED)
+                    .ok();
+                return Err(anyhow::anyhow!("Failed CRS generation: {}", e));
+            }
+        };
 
     crypto_storage
         .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)

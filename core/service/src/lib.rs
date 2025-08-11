@@ -10,15 +10,7 @@ pub mod client;
 pub mod consts;
 
 #[cfg(feature = "non-wasm")]
-pub mod util {
-    pub mod file_handling;
-    pub mod key_setup;
-    pub mod meta_store;
-    #[cfg(any(test, feature = "testing", feature = "insecure"))]
-    pub mod random_free_port;
-    pub mod rate_limiter;
-    pub mod retry;
-}
+pub mod util;
 pub mod cryptography {
     #[cfg(feature = "non-wasm")]
     pub mod attestation;
@@ -113,6 +105,16 @@ pub fn compute_user_decrypt_message_hash(
         message_hash
     );
     Ok(message_hash)
+}
+
+/// Create a dummy domain for testing
+pub(crate) fn dummy_domain() -> alloy_sol_types::Eip712Domain {
+    alloy_sol_types::eip712_domain!(
+        name: "Authorization token",
+        version: "1",
+        chain_id: 8006,
+        verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+    )
 }
 
 // re-export DecryptionMode

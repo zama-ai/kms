@@ -155,7 +155,7 @@ fn test_kms_fhe_key_handles(
         client_key,
         &fhe_pub_key_set,
         decompression_key,
-        Some(&dummy_domain()),
+        &dummy_domain(),
     )
     .unwrap();
 

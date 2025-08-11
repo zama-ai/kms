@@ -2451,6 +2451,7 @@ pub(crate) mod tests {
     use crate::cryptography::internal_crypto_types::{
         UnifiedPrivateEncKey, UnifiedPublicEncKey, WrappedDKGParams,
     };
+    use crate::dummy_domain;
     use crate::engine::base::{compute_handle, derive_request_id, BaseKmsStruct, DSEP_PUBDATA_CRS};
     #[cfg(feature = "slow_tests")]
     use crate::engine::centralized::central_kms::tests::get_default_keys;
@@ -2521,15 +2522,6 @@ pub(crate) mod tests {
 
     // Time to sleep to ensure that previous servers and tests have shut down properly.
     const TIME_TO_SLEEP_MS: u64 = 500;
-
-    fn dummy_domain() -> alloy_sol_types::Eip712Domain {
-        alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        )
-    }
 
     /// Reads the testing keys for the threshold servers and starts them up, and returns a hash map
     /// of the servers, based on their ID, which starts from 1. A similar map is also returned

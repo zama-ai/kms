@@ -125,7 +125,7 @@ impl<
             .into();
         validate_request_id(&req_id)?;
 
-        let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
+        let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref())?;
 
         // NOTE: everything inside this function will cause an Aborted error code
         self.inner_crs_gen(
@@ -133,7 +133,7 @@ impl<
             witness_dim,
             inner.max_num_bits,
             dkg_params,
-            eip712_domain.as_ref(),
+            &eip712_domain,
             permit,
             insecure,
         )
@@ -149,7 +149,7 @@ impl<
         witness_dim: usize,
         max_num_bits: Option<u32>,
         dkg_params: DKGParams,
-        eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+        eip712_domain: &alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
         insecure: bool,
     ) -> anyhow::Result<()> {
@@ -193,7 +193,7 @@ impl<
         let meta_store_cancelled = Arc::clone(&self.crs_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let crypto_storage_cancelled = self.crypto_storage.clone();
-        let eip712_domain_copy = eip712_domain.cloned();
+        let eip712_domain_copy = eip712_domain.clone();
 
         // we need to clone the signature key because it needs to be given
         // the thread that spawns the CRS ceremony
@@ -258,7 +258,7 @@ impl<
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
-        eip712_domain: Option<alloy_sol_types::Eip712Domain>,
+        eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
         insecure: bool,
     ) {
@@ -282,12 +282,13 @@ impl<
                 let my_role = base_session.my_role();
                 // We let the first party sample the seed (we are using 1-based party IDs)
                 let input_party_id = 1;
+                let domain = eip712_domain.clone();
                 if my_role.one_based() == input_party_id {
                     let crs_res = async_generate_crs(
                         &sk,
                         params,
                         max_num_bits,
-                        eip712_domain.as_ref(),
+                        domain,
                         base_session.session_id(),
                         rng,
                     )
@@ -316,7 +317,7 @@ impl<
             })
         };
         let res_info_pp = pp.and_then(|pp| {
-            compute_info(&sk, &DSEP_PUBDATA_CRS, &pp, eip712_domain.as_ref()).map(|info| (pp, info))
+            compute_info(&sk, &DSEP_PUBDATA_CRS, &pp, &eip712_domain).map(|info| (pp, info))
         });
 
         let (pp_id, meta_data) = match res_info_pp {

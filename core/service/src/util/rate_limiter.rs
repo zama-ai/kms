@@ -75,7 +75,7 @@ macro_rules! impl_rate_limiter_for {
         /// If the result is an error, then it means there are no more
         /// resource to support the $token_name request.
         /// The resource is returned when the permit is dropped.
-        /// 
+        ///
         /// If there's an error, we return `ResourceExhausted`.
         pub async fn $fn_name(
             &self,

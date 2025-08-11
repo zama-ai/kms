@@ -201,7 +201,7 @@ impl<
         internal_keyset_config: InternalKeySetConfig,
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
-        eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+        eip712_domain: &alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
         //Retrieve the right metric tag
@@ -266,7 +266,7 @@ impl<
         let sk = Arc::clone(&self.base_kms.sig_key);
         let crypto_storage = self.crypto_storage.clone();
         let crypto_storage_cancelled = self.crypto_storage.clone();
-        let eip712_domain_copy = eip712_domain.cloned();
+        let eip712_domain_copy = eip712_domain.clone();
 
         let token = CancellationToken::new();
         {
@@ -398,7 +398,7 @@ impl<
             )
         };
 
-        let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
+        let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref())?;
 
         let internal_keyset_config = tonic_handle_potential_err(
             InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info),
@@ -411,7 +411,7 @@ impl<
                 internal_keyset_config,
                 preproc_handle,
                 request_id,
-                eip712_domain.as_ref(),
+                &eip712_domain,
                 permit,
             )
             .await,
@@ -794,7 +794,7 @@ impl<
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
         keyset_added_info: KeySetAddedInfo,
-        eip712_domain: Option<alloy_sol_types::Eip712Domain>,
+        eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
     ) {
         let _permit = permit;
@@ -853,12 +853,7 @@ impl<
         };
 
         // Compute all the info required for storing
-        let info = match compute_info(
-            &sk,
-            &DSEP_PUBDATA_KEY,
-            &decompression_key,
-            eip712_domain.as_ref(),
-        ) {
+        let info = match compute_info(&sk, &DSEP_PUBDATA_KEY, &decompression_key, &eip712_domain) {
             Ok(info) => HashMap::from_iter(vec![(PubDataType::DecompressionKey, info)]),
             Err(_) => {
                 let mut guarded_meta_storage = meta_store.write().await;
@@ -889,7 +884,7 @@ impl<
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
         keyset_added_info: KeySetAddedInfo,
-        eip712_domain: Option<alloy_sol_types::Eip712Domain>,
+        eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
     ) {
         let _permit = permit;
@@ -985,7 +980,7 @@ impl<
         };
 
         // Compute all the info required for storing
-        let info = match compute_all_info(&sk, &fhe_pub_key_set, eip712_domain.as_ref()) {
+        let info = match compute_all_info(&sk, &fhe_pub_key_set, &eip712_domain) {
             Ok(info) => info,
             Err(_) => {
                 let mut guarded_meta_storage = meta_store.write().await;
@@ -1117,7 +1112,7 @@ impl<
         params: DKGParams,
         keyset_config: ddec_keyset_config::StandardKeySetConfig,
         compression_key_id: Option<RequestId>,
-        eip712_domain: Option<alloy_sol_types::Eip712Domain>,
+        eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
     ) {
         let _permit = permit;
@@ -1198,7 +1193,7 @@ impl<
         };
 
         //Compute all the info required for storing
-        let info = match compute_all_info(&sk, &pub_key_set, eip712_domain.as_ref()) {
+        let info = match compute_all_info(&sk, &pub_key_set, &eip712_domain) {
             Ok(info) => info,
             Err(_) => {
                 let mut guarded_meta_storage = meta_store.write().await;
