@@ -228,11 +228,14 @@ where
                         continue;
                     }
                     PrivDataType::CustodianInfo => {
-                        // TODO Types for custodians are not finalized yet
-                        tracing::warn!(
-                            "CustodianInfo type is not backed up, please implement it if needed"
+                        backup_priv_data!(
+                            &mut rng,
+                            guarded_priv_storage,
+                            guarded_backup_vault,
+                            cur_type,
+                            InternalCustodianContext,
+                            backup_enc_key
                         );
-                        continue;
                     }
                     PrivDataType::ContextInfo => {
                         tracing::warn!("Types for context are not finalized yet, skipping backup");

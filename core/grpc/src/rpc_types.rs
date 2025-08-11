@@ -318,17 +318,13 @@ impl Default for PrivDataType {
     }
 }
 
-// TODO is this needed or should we just use privdatatype instead for encrypted private data?
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
 pub enum BackupDataType {
-    PrivDecKey(RequestId), // Backed up ciphertext, encrypted with the public key for the custodians
     PrivData(PrivDataType), // Backup of a piece of private data
-                           // todo should also be used for awskms case
 }
 impl fmt::Display for BackupDataType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            BackupDataType::PrivDecKey(id) => write!(f, "PrivDataKey({id})"),
             BackupDataType::PrivData(data_type) => write!(f, "PrivData({data_type})"),
         }
     }

@@ -167,7 +167,7 @@ where
                     priv_storage,
                     backup_vault,
                     PrivDataType::CustodianInfo,
-                    SignedPubDataHandleInternal
+                    InternalCustodianContext
                 );
             }
             PrivDataType::ContextInfo => {
