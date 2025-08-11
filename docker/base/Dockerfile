@@ -1,4 +1,4 @@
-FROM cgr.dev/chainguard/glibc-dynamic:latest-dev AS prod
+FROM cgr.dev/chainguard/glibc-dynamic:latest AS prod
 
 ARG RUST_IMAGE_VERSION=stable
 # Install essential tools and dependencies
