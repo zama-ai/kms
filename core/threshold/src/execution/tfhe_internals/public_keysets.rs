@@ -213,6 +213,8 @@ impl RawPubKeySet {
     }
 }
 
+// NOTE: This is meant to be replaced by XofKeySet once introduced in TFHE-RS
+// https://github.com/zama-ai/tfhe-rs/pull/2409
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CompressedFhePubKeySet {
     pub public_key: tfhe::CompressedCompactPublicKey,
