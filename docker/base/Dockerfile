@@ -4,7 +4,9 @@ ARG RUST_IMAGE_VERSION=stable
 # Install essential tools and dependencies
 USER root
 
-RUN apk update && apk add \
+RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
+    --mount=type=cache,target=/var/lib/apk,sharing=locked \
+    apk add --no-cache \
     curl \
     wget \
     bash \
