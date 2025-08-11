@@ -154,10 +154,9 @@ impl<
         // `Init::default().init(&mut base_session).await?;`
         // as the type inference gets confused even when using the correct return type.
         let prss_setup_obj_z128: PRSSSetup<ResiduePolyF4Z128> =
-            <Init as PRSSInit<ResiduePolyF4Z128>>::init(&Init::default(), &mut base_session)
-                .await?;
+            PRSSInit::<ResiduePolyF4Z128>::init(&Init::default(), &mut base_session).await?;
         let prss_setup_obj_z64: PRSSSetup<ResiduePolyF4Z64> =
-            <Init as PRSSInit<ResiduePolyF4Z64>>::init(&Init::default(), &mut base_session).await?;
+            PRSSInit::<ResiduePolyF4Z64>::init(&Init::default(), &mut base_session).await?;
 
         let mut guarded_prss_setup = self.prss_setup_z128.write().await;
         *guarded_prss_setup = Some(prss_setup_obj_z128.clone());
@@ -246,9 +245,7 @@ mod tests {
     use rand::SeedableRng;
     use threshold_fhe::{
         execution::runtime::party::Role,
-        malicious_execution::small_execution::malicious_prss::{
-            FailingPrss, MaliciousPrssDropPRSSSetup,
-        },
+        malicious_execution::small_execution::malicious_prss::{EmptyPrss, FailingPrss},
     };
 
     impl<
@@ -360,9 +357,7 @@ mod tests {
     #[tokio::test]
     async fn sunshine() {
         let session_preparer = SessionPreparer::new_test_session(false);
-        let initiator = RealInitiator::<ram::RamStorage, MaliciousPrssDropPRSSSetup>::init_test(
-            session_preparer,
-        );
+        let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(session_preparer);
 
         let mut rng = AesRng::seed_from_u64(42);
         let req_id = RequestId::new_random(&mut rng);
@@ -376,9 +371,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         let session_preparer = SessionPreparer::new_test_session(false);
-        let initiator = RealInitiator::<ram::RamStorage, MaliciousPrssDropPRSSSetup>::init_test(
-            session_preparer,
-        );
+        let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(session_preparer);
 
         let bad_req_id = kms_grpc::kms::v1::RequestId {
             request_id: "bad req id".to_string(),
@@ -398,9 +391,7 @@ mod tests {
     #[tokio::test]
     async fn aborted() {
         let session_preparer = SessionPreparer::new_test_session(false);
-        let initiator = RealInitiator::<ram::RamStorage, MaliciousPrssDropPRSSSetup>::init_test(
-            session_preparer,
-        );
+        let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(session_preparer);
 
         assert_eq!(
             initiator

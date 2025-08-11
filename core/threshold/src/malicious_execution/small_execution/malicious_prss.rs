@@ -373,21 +373,20 @@ impl<
     }
 }
 
-// Like [MaliciousPrssDrop], but output a PRSSSetup.
+/// Malicious implementation of [`PrssInit`] that does not do anything
+/// and returns an empty [`PRSSSetup`]
 #[derive(Clone, Default)]
-pub struct MaliciousPrssDropPRSSSetup {}
+pub struct EmptyPrss {}
 
-impl ProtocolDescription for MaliciousPrssDropPRSSSetup {
+impl ProtocolDescription for EmptyPrss {
     fn protocol_desc(depth: usize) -> String {
         let indent = "   ".repeat(depth);
-        format!("{indent}-MaliciousPrssDropPRSSState")
+        format!("{indent}-EmptyPrss")
     }
 }
 
 #[async_trait]
-impl<Z: Zero + RingWithExceptionalSequence + Invert + PRSSConversions> PRSSInit<Z>
-    for MaliciousPrssDropPRSSSetup
-{
+impl<Z: Zero + RingWithExceptionalSequence + Invert + PRSSConversions> PRSSInit<Z> for EmptyPrss {
     type OutputType = PRSSSetup<Z>;
     async fn init<S: BaseSessionHandles>(
         &self,
