@@ -42,6 +42,19 @@ pub enum BackupPrivateKeyVersioned {
     V0(BackupPrivateKey),
 }
 
+// NOTE:
+// The `Versionize` derive macro cannot be combined with a custom `Drop` implementation
+// or `ZeroizeOnDrop` derivation without conflicts.
+//
+// Security-wise, the current design is solid:
+// - Actual cryptographic key material resides in `InnerBackupPrivateKey`, not in the
+//   serialized `Vec<u8>` representation.
+// - Most `BackupPrivateKey` instances are short-lived and immediately used for decryption;
+//   `decrypt()` converts them into `InnerBackupPrivateKey`.
+// - `InnerBackupPrivateKey` implements a custom `Drop` with explicit memory zeroization.
+// - `BackupPrivateKey` implements `Zeroize` for manual wiping if needed.
+// - `try_from()` ensures that the intermediate `decaps_key_buf` (which *does* contain
+//   sensitive data) is securely zeroized after use.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize, Zeroize)]
 #[versionize(BackupPrivateKeyVersioned)]
 pub struct BackupPrivateKey {
