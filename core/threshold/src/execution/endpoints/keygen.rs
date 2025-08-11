@@ -2093,7 +2093,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false);
 
         run_switch_and_squash(
             temp_dir.path(),
@@ -2149,7 +2149,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false);
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             temp_dir.path(),
@@ -2198,7 +2198,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false);
 
         //This parameter set isnt big enough to run the fheuint tests
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
@@ -2241,7 +2241,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false);
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             temp_dir.path(),
@@ -2290,7 +2290,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false);
 
         //This parameter set isnt big enough to run the fheuint tests
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
@@ -2332,7 +2332,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false);
 
         run_switch_and_squash(
             temp_dir.path(),
@@ -2399,6 +2399,7 @@ pub mod tests {
             threshold,
             temp_dir.path(),
             keyset_config,
+            false,
         );
 
         run_switch_and_squash(
@@ -2455,7 +2456,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false);
 
         run_switch_and_squash(
             temp_dir.path(),
@@ -2511,7 +2512,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false);
 
         run_switch_and_squash(
             temp_dir.path(),
@@ -2561,7 +2562,7 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path());
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false);
 
         run_tfhe_computation_shortint::<EXTENSION_DEGREE, DKGParamsRegular>(
             temp_dir.path(),
@@ -3032,6 +3033,7 @@ pub mod tests {
         threshold: usize,
         prefix_path: &Path,
         keyset_config: KeySetConfig,
+        run_compressed: bool,
     ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
@@ -3098,14 +3100,27 @@ pub mod tests {
             assert_ne!(0, dkg_preproc.randoms_len());
 
             let my_role = session.my_role();
-            let (pk, sk) = distributed_keygen_from_optional_compression_sk(
-                &mut session,
-                dkg_preproc.as_mut(),
-                params,
-                compression_sk_skares.as_ref(),
-            )
+            let (pk, sk) = if run_compressed {
+                let (compressed_pk, sk) =
+                    super::distributed_keygen_compressed_from_optional_compression_sk::<
+                        Z64,
+                        _,
+                        _,
+                        EXTENSION_DEGREE,
+                    >(&mut session, &mut large_preproc, params, None)
+                    .await
+                    .unwrap();
+                (compressed_pk.decompress(), sk)
+            } else {
+                super::distributed_keygen_from_optional_compression_sk::<
+                Z128,
+                _,
+                _,
+                EXTENSION_DEGREE,
+            >(&mut session, &mut large_preproc, params, None)
             .await
-            .unwrap();
+            .unwrap()
+            };
 
             // make sure we used up all the preprocessing materials
             assert_eq!(0, dkg_preproc.bits_len());
@@ -3161,6 +3176,7 @@ pub mod tests {
         num_parties: usize,
         threshold: usize,
         prefix_path: &Path,
+        run_compressed: bool,
     ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
         ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
@@ -3169,14 +3185,27 @@ pub mod tests {
             let my_role = session.my_role();
             let mut large_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
 
-            let (pk, sk) = super::distributed_keygen_from_optional_compression_sk::<
+            let (pk, sk) = if run_compressed {
+                let (compressed_pk, sk) =
+                    super::distributed_keygen_compressed_from_optional_compression_sk::<
+                        Z64,
+                        _,
+                        _,
+                        EXTENSION_DEGREE,
+                    >(&mut session, &mut large_preproc, params, None)
+                    .await
+                    .unwrap();
+                (compressed_pk.decompress(), sk)
+            } else {
+                super::distributed_keygen_from_optional_compression_sk::<
                 Z128,
                 _,
                 _,
                 EXTENSION_DEGREE,
             >(&mut session, &mut large_preproc, params, None)
             .await
-            .unwrap();
+            .unwrap()
+            };
 
             (
                 my_role,

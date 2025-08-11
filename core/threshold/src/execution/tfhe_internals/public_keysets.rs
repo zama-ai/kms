@@ -287,18 +287,16 @@ impl RawCompressedPubKeySet {
     ) -> tfhe::CompressedServerKey {
         let shortint_key = self.compute_tfhe_shortint_compressed_server_key(params);
 
-        //MISSING FROM_RAW_PARTS
-        let cpk_key_switching_key_material = None;
-        //let cpk_key_switching_key_material = self.pksk.as_ref().map(|pksk| {
-        //    tfhe::shortint::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
-        //        pksk.clone(),
-        //        0,
-        //        params
-        //            .get_params_basics_handle()
-        //            .get_pksk_destination()
-        //            .unwrap(),
-        //    )
-        //});
+        let cpk_key_switching_key_material = self.pksk.as_ref().map(|pksk| {
+            tfhe::shortint::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
+                pksk.clone(),
+                params.get_params_basics_handle().pksk_rshift(),
+                params
+                    .get_params_basics_handle()
+                    .get_pksk_destination()
+                    .unwrap(),
+            )
+        });
 
         let (compression_key, decompression_key) = match self.compression_keys.as_ref() {
             Some((compression_key, decompression_key)) => (
@@ -364,5 +362,11 @@ impl RawCompressedPubKeySet {
             server_key,
             seed,
         }
+    }
+
+    // NOTE: This is meant to be replaced by CompressedXofKeySet::decompress once introduced in TFHE-RS
+    // https://github.com/zama-ai/tfhe-rs/pull/2409
+    pub fn decompress(self) -> RawPubKeySet {
+        todo!()
     }
 }
