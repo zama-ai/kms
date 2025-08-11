@@ -264,12 +264,12 @@ where
                 Arc::clone(&self.custodian_meta_store),
             )
             .await;
-
-        // TODO I am unsure what should be stored in the backup vault and what should be in the public storage.
-        // Basically everything can be released publicly and have build in ways of protecting against tampering.
-        // Hence for now I store everything in the public storage since the backup vault is now used for export
-        // Log after lock is released
-
+        tracing::info!(
+            "New custodian context created with context_id={}, threshold={} from {} custodians",
+            context_id,
+            context.threshold,
+            context.custodian_nodes.len()
+        );
         Ok(())
     }
 
@@ -295,18 +295,18 @@ where
             verification_key,
             priv_key.clone(),
             pub_enc_key,
-            custodian_context.threshold.try_into().unwrap(),
+            custodian_context.threshold as usize,
         )?;
-        // TODO should commitments be moved into secret_share_and_encrypt? Since this should basically just be used to share the private key
         let mut serialized_priv_key = Vec::new();
         safe_serialize(&priv_key, &mut serialized_priv_key, SAFE_SER_SIZE_LIMIT)?;
-        let (ct_map, commitments) = operator
-            .secret_share_and_encrypt(rng, &serialized_priv_key, backup_id)
-            .unwrap();
+        let (ct_map, commitments) =
+            operator.secret_share_and_encrypt(rng, &serialized_priv_key, backup_id)?;
         let mut ciphertexts = BTreeMap::new();
         for custodian_index in 1..=custodian_context.custodian_nodes.keys().len() {
             let custodian_role = Role::indexed_from_one(custodian_index);
-            let ct = ct_map.get(&custodian_role).unwrap();
+            let ct = ct_map.get(&custodian_role).expect(&format!(
+                "Missing operator backup output for role {custodian_role}"
+            ));
             ciphertexts.insert(custodian_role, ct.to_owned());
         }
         let recovery_request = RecoveryRequest::new(
