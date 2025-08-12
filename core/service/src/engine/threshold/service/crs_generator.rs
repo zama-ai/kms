@@ -425,7 +425,7 @@ impl<
 mod tests {
     use std::time::Duration;
 
-    use kms_grpc::kms::v1::FheParameter;
+    use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};
     use threshold_fhe::{
         algebra::structure_traits::Ring,
         execution::{
@@ -433,7 +433,7 @@ mod tests {
         },
     };
 
-    use crate::consts::DURATION_WAITING_ON_RESULT_SECONDS;
+    use crate::{consts::DURATION_WAITING_ON_RESULT_SECONDS, dummy_domain};
 
     use super::*;
 
@@ -566,11 +566,12 @@ mod tests {
             .await;
 
         // `InvalidArgument` - If the request ID is not present, valid or does not match the expected format.
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: None,
-            domain: None,
+            domain: Some(domain),
         };
 
         let request = Request::new(req);
@@ -603,11 +604,12 @@ mod tests {
 
         // `NotFound` - If the parameters in the request are not valid.
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: 2,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: None,
+            domain: Some(domain),
         };
 
         let request = Request::new(req);
@@ -639,11 +641,12 @@ mod tests {
         crs_gen.set_bucket_size(1);
 
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: None,
+            domain: Some(domain),
         };
 
         let request = Request::new(req);
@@ -663,11 +666,12 @@ mod tests {
             )
             .await;
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: None,
+            domain: Some(domain),
         };
 
         let request = Request::new(req);
@@ -690,11 +694,12 @@ mod tests {
                 .await;
 
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: None,
+            domain: Some(domain),
         };
 
         // we expect the CRS generation call to pass, but only get an error when we try to retrieve the result
@@ -723,11 +728,12 @@ mod tests {
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
 
         // start the ceremony but immediately fetch the result, it should be not found too
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: None,
+            domain: Some(domain),
         };
 
         let request = Request::new(req);
@@ -754,11 +760,12 @@ mod tests {
 
         // Test that we can successfully generate a CRS
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: None,
+            domain: Some(domain),
         };
 
         let request = Request::new(req);

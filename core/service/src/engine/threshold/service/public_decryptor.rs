@@ -670,7 +670,7 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use kms_grpc::kms::v1::TypedCiphertext;
+    use kms_grpc::{kms::v1::TypedCiphertext, rpc_types::alloy_to_protobuf_domain};
 
     use crate::{
         consts::TEST_PARAM,
@@ -831,6 +831,7 @@ mod tests {
 
         let (key_id, ct_buf, public_decryptor) = setup_public_decryptor().await;
 
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
         let bad_key_id = RequestId::new_random(&mut rand::rngs::OsRng);
         let request = Request::new(PublicDecryptionRequest {
@@ -842,7 +843,7 @@ mod tests {
                 ciphertext_format: CiphertextFormat::SmallCompressed as i32,
             }],
             key_id: Some(bad_key_id.into()),
-            domain: None,
+            domain: Some(domain),
         });
         // NOTE: should probably be NotFound
         assert_eq!(
@@ -884,6 +885,7 @@ mod tests {
         // Set bucket size to zero, so no operations are allowed
         public_decryptor.set_bucket_size(0);
 
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
         let request = Request::new(PublicDecryptionRequest {
             request_id: Some(req_id.into()),
@@ -894,7 +896,7 @@ mod tests {
                 ciphertext_format: CiphertextFormat::SmallCompressed as i32,
             }],
             key_id: Some(key_id.into()),
-            domain: None,
+            domain: Some(domain),
         });
         assert_eq!(
             public_decryptor
@@ -913,6 +915,7 @@ mod tests {
     async fn sunshine() {
         let (key_id, ct_buf, public_decryptor) = setup_public_decryptor().await;
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = Request::new(PublicDecryptionRequest {
             request_id: Some(req_id.into()),
             ciphertexts: vec![TypedCiphertext {
@@ -922,7 +925,7 @@ mod tests {
                 ciphertext_format: CiphertextFormat::SmallCompressed as i32,
             }],
             key_id: Some(key_id.into()),
-            domain: None,
+            domain: Some(domain),
         });
         public_decryptor.public_decrypt(request).await.unwrap();
     }

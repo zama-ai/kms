@@ -339,29 +339,48 @@ mod tests {
         let session_preparer = SessionPreparer::new_test_session(true);
         let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
 
-        let request = KeyGenPreprocRequest {
-            request_id: Some(kms_grpc::kms::v1::RequestId {
-                request_id: "invalid_id".to_string(),
-            }),
-            params: FheParameter::Test as i32,
-            keyset_config: None,
-        };
-        assert_eq!(
-            prep.key_gen_preproc(tonic::Request::new(request))
+        {
+            let request = KeyGenPreprocRequest {
+                request_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "invalid_id".to_string(),
+                }),
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+            assert_eq!(
+                prep.get_result(tonic::Request::new(kms_grpc::kms::v1::RequestId {
+                    request_id: "invalid_id".to_string(),
+                }))
                 .await
                 .unwrap_err()
                 .code(),
-            tonic::Code::InvalidArgument
-        );
-        assert_eq!(
-            prep.get_result(tonic::Request::new(kms_grpc::kms::v1::RequestId {
-                request_id: "invalid_id".to_string(),
-            }))
-            .await
-            .unwrap_err()
-            .code(),
-            tonic::Code::InvalidArgument
-        );
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // Invalid argument because params is invalid
+            let mut rng = AesRng::seed_from_u64(22);
+            let req_id = RequestId::new_random(&mut rng);
+            let request = KeyGenPreprocRequest {
+                request_id: Some(req_id.into()),
+                params: 10,
+                keyset_config: None,
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::Aborted
+            );
+        }
     }
 
     #[tokio::test]
@@ -421,38 +440,19 @@ mod tests {
         let session_preparer = SessionPreparer::new_test_session(true);
         let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
 
-        {
-            // Aborted because request_id is None
-            let request = KeyGenPreprocRequest {
-                request_id: None,
-                params: FheParameter::Test as i32,
-                keyset_config: None,
-            };
-            assert_eq!(
-                prep.key_gen_preproc(tonic::Request::new(request))
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::Aborted
-            );
-        }
-        {
-            // Aborted because params is invalid
-            let mut rng = AesRng::seed_from_u64(22);
-            let req_id = RequestId::new_random(&mut rng);
-            let request = KeyGenPreprocRequest {
-                request_id: Some(req_id.into()),
-                params: 10,
-                keyset_config: None,
-            };
-            assert_eq!(
-                prep.key_gen_preproc(tonic::Request::new(request))
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::Aborted
-            );
-        }
+        // Aborted because request_id is None
+        let request = KeyGenPreprocRequest {
+            request_id: None,
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+        };
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Aborted
+        );
     }
 
     #[tokio::test]

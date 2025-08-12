@@ -1027,6 +1027,7 @@ pub(crate) mod tests {
     };
     use crate::dummy_domain;
     use crate::engine::base::{compute_handle, compute_info, derive_request_id};
+    use crate::engine::centralized::central_kms::async_generate_crs;
     use crate::engine::traits::Kms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
     use crate::util::file_handling::{read_element, write_element};
@@ -1037,18 +1038,15 @@ pub(crate) mod tests {
     use kms_grpc::rpc_types::{PrivDataType, WrappedPublicKey};
     use kms_grpc::RequestId;
     use rand::{RngCore, SeedableRng};
-    use serde::{Deserialize, Serialize};
     use serial_test::serial;
     use std::collections::HashMap;
     use std::str::FromStr;
     use std::{path::Path, sync::Arc};
-    use tfhe::named::Named;
-    use tfhe::Versionize;
     use tfhe::{set_server_key, FheTypes};
     use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
-    use tfhe_versionable::VersionsDispatch;
     use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+    use threshold_fhe::session_id::SessionId;
     use tokio::sync::OnceCell;
 
     static ONCE_TEST_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();
@@ -1562,21 +1560,6 @@ pub(crate) mod tests {
         assert_eq!(plaintext.fhe_type().unwrap(), FheTypes::Uint64);
     }
 
-    #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, VersionsDispatch)]
-    enum TestTypeVersioned {
-        V0(TestType),
-    }
-
-    impl Named for TestType {
-        const NAME: &'static str = "TestType";
-    }
-
-    #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, Versionize)]
-    #[versionize(TestTypeVersioned)]
-    struct TestType {
-        i: u32,
-    }
-
     #[tokio::test]
     async fn ensure_compute_info_consistency() {
         // we need compute info to work without calling the sign function from KMS,
@@ -1600,7 +1583,18 @@ pub(crate) mod tests {
         };
 
         let domain = dummy_domain();
-        let value = TestType { i: 32 };
+        let sk = &keys.centralized_kms_keys.sig_sk;
+        let (value, _) = async_generate_crs(
+            sk,
+            TEST_PARAM,
+            Some(1),
+            domain.clone(),
+            SessionId::from(11u128),
+            AesRng::seed_from_u64(100),
+        )
+        .await
+        .unwrap();
+
         let expected = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
         let actual = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
         assert_eq!(expected, actual);
@@ -1625,8 +1619,19 @@ pub(crate) mod tests {
             .unwrap()
         };
 
-        let value = TestType { i: 32 };
         let domain = dummy_domain();
+        let sk = &keys.centralized_kms_keys.sig_sk;
+        let (value, _) = async_generate_crs(
+            sk,
+            TEST_PARAM,
+            Some(1),
+            domain.clone(),
+            SessionId::from(11u128),
+            AesRng::seed_from_u64(100),
+        )
+        .await
+        .unwrap();
+
         let base = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
 
         // Observe one char off in dsep
@@ -1637,7 +1642,16 @@ pub(crate) mod tests {
 
         // observe there's a different value
         {
-            let new_val = TestType { i: 33 };
+            let (new_val, _) = async_generate_crs(
+                sk,
+                TEST_PARAM,
+                Some(1),
+                domain.clone(),
+                SessionId::from(11u128),
+                AesRng::seed_from_u64(101),
+            )
+            .await
+            .unwrap();
             let info = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &new_val, &domain).unwrap();
             assert_ne!(base, info);
         }

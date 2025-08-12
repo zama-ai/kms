@@ -736,11 +736,11 @@ pub fn compute_pt_message_hash(
 /// [kms_grpc::kms::v1::FheParameter].
 ///
 /// Since this function is normally used by the grpc service, we return the error code
-/// NotFound if the concrete parameter cannot be found.
+/// InvalidArgument if the concrete parameter does not exist.
 pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> Result<DKGParams, BoxedStatus> {
     let fhe_parameter: crate::cryptography::internal_crypto_types::WrappedDKGParams =
         FheParameter::try_from(fhe_parameter)
-            .map_err(|e| tonic::Status::not_found(format!("DKG parameter not found: {e}")))?
+            .map_err(|e| tonic::Status::invalid_argument(format!("DKG parameter not found: {e}")))?
             .into();
     Ok(*fhe_parameter)
 }
