@@ -223,6 +223,9 @@ message PublicDecryptionRequest {
 
   // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
+
+  // Extra data from the gateway.
+  bytes extra_data = 5;
 }
 
 // KMS-internal Public Decryption Response Payload, containing meta data, plaintexts
@@ -234,27 +237,29 @@ message PublicDecryptionResponsePayload {
   // trusted keys.
   // TODO should be renamed to make it clear it is the server's key
   bytes verification_key = 1;
-  // Digest of the request validated.
-  // Needed to ensure that the response is for the expected request.
-  // THIS IS DEPRECATED AND KMS WILL LEAVE THIS FIELD EMPTY,
-  // instead, we will use request_id to specify the link.
-  bytes digest = 2 [deprecated=true];
+
   // A list of plaintexts, as little endian byte arrays. One for each
   // ciphertext.
-  repeated TypedPlaintext plaintexts = 3;
-  // the signature on external_decryption_result for the external recipient
-  // (e.g. using EIP712 for fhevm)
-  optional bytes external_signature = 4;
+  repeated TypedPlaintext plaintexts = 2;
+
   // Request ID of the request that this response corresponds to.
-  RequestId request_id = 5;
+  RequestId request_id = 3;
 }
 
 // KMS-internal Public Decryption Response
 message PublicDecryptionResponse {
   // Signature of the serialization of [PublicDecryptionResponsePayload].
   bytes signature = 1;
+
+  // the signature on external_decryption_result for the external recipient
+  // (e.g. using EIP712 for fhevm)
+  optional bytes external_signature = 2;
+
   // The payload that is signed
-  PublicDecryptionResponsePayload payload = 2;
+  PublicDecryptionResponsePayload payload = 3;
+
+  // Extra data used in the EIP712 signature - external_signature.
+  bytes extra_data = 4;
 }
 
 // Eip712 domain information. 
@@ -289,20 +294,29 @@ message UserDecryptionRequest {
 
   // The user's EIP712 domain. This MUST be present. Furthermore, the `verifying_contract` MUST be set and be distinct from `client_address`.
   Eip712DomainMsg domain = 6;
+
+  // Extra data from the gateway.
+  bytes extra_data = 7;
 }
 
 message UserDecryptionResponse {
   bytes signature = 1;
+
   // This is the external signature created from the Eip712 domain
   // on the structure, where userDecryptedShare is bc2wrap::serialize(&payload)
   // struct UserDecryptResponseVerification {
   //     bytes publicKey;
   //     uint256[] ctHandles;
-  //     bytes userDecryptedShare;
+  //     bytes userDecryptedShare; // serialization of payload
+  //     bytes extraData;
   // }
   bytes external_signature = 2;
+
   // The actual [UserDecryptionResponsePayload].
   UserDecryptionResponsePayload payload = 3;
+
+  // Extra data used in the EIP712 signature - external_signature.
+  bytes extra_data = 4;
 }
 
 message UserDecryptionResponsePayload {
@@ -310,17 +324,21 @@ message UserDecryptionResponsePayload {
   // Needed to validate the response, but MUST also be linked to a list of
   // trusted keys.
   bytes verification_key = 1;
+
   // This is needed to ensure the response corresponds to the request.
   // It is the digest of UserDecryptionLinker hashed using EIP712
   // under the given domain in the request.
   bytes digest = 2;
+
   // The resulting signcrypted ciphertexts, each ciphertext
   // must be decrypted and then reconstructed with the other shares
   // to produce the final plaintext.
   repeated TypedSigncryptedCiphertext signcrypted_ciphertexts = 3;
+
   // The ID of the MPC party doing the user decryption. Used for polynomial
   // reconstruction.
   uint32 party_id = 4;
+
   // The degree of the sharing scheme used.
   uint32 degree = 5;
 }
