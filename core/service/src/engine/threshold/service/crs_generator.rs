@@ -608,7 +608,7 @@ mod tests {
             let request = Request::new(req);
             let res = crs_gen.crs_gen(request).await;
 
-            assert_eq!(res.unwrap_err().code(), tonic::Code::NotFound);
+            assert_eq!(res.unwrap_err().code(), tonic::Code::InvalidArgument);
         }
     }
 
