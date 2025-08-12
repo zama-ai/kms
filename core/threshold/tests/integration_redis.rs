@@ -4,8 +4,8 @@ use redis::{Cmd, ConnectionLike};
 use std::num::Wrapping;
 use threshold_fhe::algebra::base_ring::{Z128, Z64};
 use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4;
-use threshold_fhe::execution::online::preprocessing::create_redis_factory;
 use threshold_fhe::execution::online::preprocessing::redis::RedisConf;
+use threshold_fhe::execution::online::preprocessing::{create_redis_factory, PreprocessorFactory};
 use threshold_fhe::execution::online::triple::Triple;
 use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::sharing::share::Share;
@@ -189,6 +189,34 @@ fn test_fetch_more_than_stored() {
         .unwrap_err()
         .to_string()
         .contains("Pop length error."));
+}
+
+#[test]
+fn test_cleanup_on_drop() {
+    let test_key_prefix = "test_cleanup_on_drop".to_string();
+    let redis_conf = RedisConf::default();
+    let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
+    let mut bit_redis_preprocessing = redis_factory.create_bit_preprocessing_residue_64();
+
+    // Create a new factory because we want to have the exact same key prefix (i.e. no counter increase)
+    let mut redis_factory_bis: Box<dyn PreprocessorFactory<4>> =
+        create_redis_factory(test_key_prefix.clone(), &redis_conf);
+    let bit_redis_preprocessing_bis = redis_factory_bis.create_bit_preprocessing_residue_64();
+
+    let share = Share::new(
+        Role::indexed_from_one(1),
+        ResiduePolyF4::<Z64>::from_scalar(Wrapping(1)),
+    );
+
+    bit_redis_preprocessing.append_bits(vec![share]);
+
+    // Make sure we can actually see the "bit" from the other preprocessing
+    assert_eq!(bit_redis_preprocessing_bis.bits_len(), 1);
+    // Drop the preprocessing instance
+    drop(bit_redis_preprocessing);
+
+    // Check that the shares have been cleaned up
+    assert_eq!(bit_redis_preprocessing_bis.bits_len(), 0);
 }
 
 test_triples![create_base_preprocessing_residue_64 Z64];

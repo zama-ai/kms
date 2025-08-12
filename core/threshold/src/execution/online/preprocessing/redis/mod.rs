@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use strum::IntoEnumIterator;
 
 use super::RandomPreprocessing;
 use crate::execution::online::preprocessing::BitDecPreprocessing;
@@ -77,7 +78,7 @@ impl<const EXTENSION_DEGREE: usize> RedisPreprocessorFactory<EXTENSION_DEGREE> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, strum_macros::EnumIter)]
 pub enum CorrelatedRandomnessType {
     Triple,
     Randomness,
@@ -348,6 +349,35 @@ pub struct RedisPreprocessing<R: Ring> {
     client: Arc<Client>,
     key_prefix: String,
     _phantom: PhantomData<R>,
+}
+
+impl<R: Ring> Drop for RedisPreprocessing<R> {
+    // Custom drop implementation to make sure there's no dangling
+    // correlated randomness stored in Redis if there are no more references
+    // to it in rust.
+    // NOTE: Ideally we'd Zeroize it but afaict Redis doesn't propose such functionality
+    fn drop(&mut self) {
+        // Cleanup logic here
+        let mut con = match self.client.get_connection() {
+            Ok(con) => {
+                tracing::info!("Connection to redis for cleanup");
+                con
+            }
+            Err(_) => {
+                tracing::warn!("Failed to connect to redis to cleanup");
+                return;
+            }
+        };
+
+        for randomness_type in CorrelatedRandomnessType::iter() {
+            let key = compute_key(self.key_prefix.clone(), randomness_type);
+
+            // Remove the key from Redis
+            let _: RedisResult<()> = con.del(key).inspect_err(|e| {
+                tracing::warn!("Failed to delete key from Redis: {}", e);
+            });
+        }
+    }
 }
 
 impl<R: Ring> RedisPreprocessing<R> {
