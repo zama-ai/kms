@@ -75,7 +75,7 @@ tfhe = { workspace = true, features = [
 tfhe-csprng.workspace = true
 tracing = { workspace = true, features = ["log"] }
 x509-parser = { workspace = true, optional = true }
-zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }
+zeroize.workspace = true
 tfhe-zk-pok = { workspace = true, optional = true }
 tfhe-versionable.workspace = true
 
