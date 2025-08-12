@@ -43,16 +43,16 @@ macro_rules! impl_endpoint {
 
 impl_endpoint! {
     impl CoreServiceEndpoint {
-        /// Initializes the centralized KMS service.
+        /// Initializes the threshold KMS service.
         /// This involves executing the PRSS protocol to generate secret shared correlated randomness.
         ///
-        /// * `_request` - Struct containing all the data of the request.
+        /// * `request` - Struct containing the request ID, which must be 32 bytes lower-case hex encoding without `0x` prefix.
         ///
         /// # Returns
         /// * Errors:
-        ///    - `InvalidArgument` - If the request ID is not valid or does not match the expected format.
+        ///    - `InvalidArgument` - If the request ID does not match the expected format or missing.
         ///    - `Internal` - An error occured during PRSS generation.
-        ///    - `Aborted` - If the request ID is not given.
+        ///    - `AlreadyExists` - If request ID has already been used.
         ///
         /// # Conditions
         /// * Pre-condition:

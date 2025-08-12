@@ -373,36 +373,59 @@ mod tests {
         let session_preparer = SessionPreparer::new_test_session(false);
         let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(session_preparer);
 
-        let bad_req_id = kms_grpc::kms::v1::RequestId {
-            request_id: "bad req id".to_string(),
-        };
-        assert_eq!(
-            initiator
-                .init(tonic::Request::new(InitRequest {
-                    request_id: Some(bad_req_id)
-                }))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::InvalidArgument
-        );
+        {
+            // bad request ID
+            let bad_req_id = kms_grpc::kms::v1::RequestId {
+                request_id: "bad req id".to_string(),
+            };
+            assert_eq!(
+                initiator
+                    .init(tonic::Request::new(InitRequest {
+                        request_id: Some(bad_req_id)
+                    }))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // missing request ID
+            assert_eq!(
+                initiator
+                    .init(tonic::Request::new(InitRequest { request_id: None }))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
     }
 
     #[tokio::test]
-    async fn aborted() {
+    async fn already_exists() {
         let session_preparer = SessionPreparer::new_test_session(false);
         let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(session_preparer);
 
+        let mut rng = AesRng::seed_from_u64(42);
+        let req_id = RequestId::new_random(&mut rng);
+        initiator
+            .init(tonic::Request::new(InitRequest {
+                request_id: Some(req_id.into()),
+            }))
+            .await
+            .unwrap();
+
+        // try the same again and we should see an AlreadyExists error
         assert_eq!(
             initiator
                 .init(tonic::Request::new(InitRequest {
-                    // this is set to none
-                    request_id: None
+                    request_id: Some(req_id.into()),
                 }))
                 .await
                 .unwrap_err()
                 .code(),
-            tonic::Code::Aborted
+            tonic::Code::AlreadyExists
         );
     }
 
