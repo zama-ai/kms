@@ -39,10 +39,8 @@ use rsa::{
     Oaep, RsaPrivateKey, RsaPublicKey,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::BTreeSet;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{named::Named, Unversionize, Versionize};
-use threshold_fhe::execution::runtime::party::Role;
 use url::Url;
 
 // recipient enclave RSA keypair size
@@ -197,12 +195,7 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
     }
 }
 
-//#[tonic::async_trait]
 impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKeychain<S, Symm, R> {
-    fn envelope_share_ids(&self) -> Option<BTreeSet<Role>> {
-        None::<BTreeSet<Role>>
-    }
-
     /// Request a data key from AWS KMS and encrypt an application key (such as the FHE private key) on
     /// it. Stores a copy of the data key encrypted on the root key (stored in AWS KMS) together with
     /// the encrypted application key.
@@ -279,12 +272,7 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
     }
 }
 
-//#[tonic::async_trait]
 impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKeychain<S, Asymm, R> {
-    fn envelope_share_ids(&self) -> Option<BTreeSet<Role>> {
-        None::<BTreeSet<Role>>
-    }
-
     async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         _payload_id: &RequestId,

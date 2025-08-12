@@ -19,10 +19,7 @@ use itertools::Itertools;
 use kms_grpc::{rpc_types::PrivDataType, RequestId};
 use rand::SeedableRng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    convert::Into,
-};
+use std::{collections::BTreeMap, convert::Into};
 use strum_macros::EnumTryAs;
 use tfhe::{named::Named, Unversionize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
@@ -54,9 +51,6 @@ impl Named for AppKeyBlob {
 #[allow(async_fn_in_trait)]
 #[enum_dispatch]
 pub trait Keychain {
-    // todo scan be removed and since we can get the same by cehcking. SecretSharing or AwsKMSSymm AWSKMSAssymm
-    fn envelope_share_ids(&self) -> Option<BTreeSet<Role>>;
-
     async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         payload_id: &RequestId,
@@ -148,7 +142,6 @@ pub async fn make_keychain(
             KeychainProxy::from(secretsharing::SecretShareKeychain::new(
                 rng,
                 custodian_context.backup_enc_key.clone(),
-                custodian_context.custodian_nodes.len(),
             ))
         }
     };

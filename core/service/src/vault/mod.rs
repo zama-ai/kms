@@ -26,32 +26,8 @@ impl StorageReader for Vault {
     ) -> anyhow::Result<T> {
         match self.keychain.as_ref() {
             Some(k) => {
-                let mut envelope = match k.envelope_share_ids() {
-                    Some(_ids) => {
-                        // let mut rs = BTreeMap::new();
-                        // let mut cs = BTreeMap::new();
-                        // for id in &ids {
-                        //     let (recovery, commitment) = try_join(
-                        //         self.storage.read_data(
-                        //             data_id,
-                        //             format!("{data_type}-recovery-{id}").as_str(),
-                        //         ),
-                        //         self.storage.load_bytes(
-                        //             data_id,
-                        //             format!("{data_type}-commitment-{id}").as_str(),
-                        //         ),
-                        //     )
-                        //     .await?;
-                        //     rs.insert(*id, recovery);
-                        //     cs.insert(*id, commitment);
-                        // }
-                        // EnvelopeLoad::OperatorRecoveryInput(rs, BackupCommitments::from_btree(cs))
-                        todo!("Implement recovery input loading")
-                    }
-                    None => {
-                        EnvelopeLoad::AppKeyBlob(self.storage.read_data(data_id, data_type).await?)
-                    }
-                };
+                let mut envelope =
+                    EnvelopeLoad::AppKeyBlob(self.storage.read_data(data_id, data_type).await?);
                 k.decrypt(data_id, &mut envelope).await
             }
             None => self.storage.read_data(data_id, data_type).await,
