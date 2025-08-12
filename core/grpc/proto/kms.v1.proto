@@ -225,7 +225,7 @@ message PublicDecryptionRequest {
   Eip712DomainMsg domain = 4;
 
   // Extra data from the gateway.
-  bytes extra_data = 7;
+  bytes extra_data = 5;
 }
 
 // KMS-internal Public Decryption Response Payload, containing meta data, plaintexts
