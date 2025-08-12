@@ -42,15 +42,19 @@ pub struct CryptoMaterialStorage<
     PrivS: Storage + Send + Sync + 'static,
 > {
     /// Storage for publicly readable data (may be susceptible to malicious modifications)
+    /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
     pub(crate) public_storage: Arc<Mutex<PubS>>,
 
     /// Storage for private data (only accessible by owner, modifications are detectable)
+    /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
     pub(crate) private_storage: Arc<Mutex<PrivS>>,
 
     /// Optional backup vault for recovery purposes
+    /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
     pub(crate) backup_vault: Option<Arc<Mutex<Vault>>>,
 
     /// Cache for already generated public keys
+    /// Warning: In relation to concurrency where multiple locks are needed always lock public_storage first, then private_storage second, backup_vault third and finally pk_cache last.
     pub(crate) pk_cache: Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>,
     // Cache for current backup key (if it is set)
     // Observe that the `Option` is inside the lock since it may be added during runtime through a new custodian context.
@@ -74,15 +78,12 @@ where
         private_storage: Arc<Mutex<PrivS>>,
         backup_vault: Option<Arc<Mutex<Vault>>>,
         pk_cache: Option<Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>>,
-        // current_backup_key: Arc<RwLock<Option<BackupPublicKey>>>,
     ) -> Self {
         Self {
             public_storage,
             private_storage,
             backup_vault,
             pk_cache: pk_cache.unwrap_or_else(|| Arc::new(RwLock::new(HashMap::new()))),
-            // current_backup_key,
-            // todo add atomic token to take care of locks
         }
     }
 
@@ -92,14 +93,12 @@ where
         private_storage: PrivS,
         backup_vault: Option<Vault>,
         pk_cache: Option<Arc<RwLock<HashMap<RequestId, WrappedPublicKeyOwned>>>>,
-        // current_backup_key: Arc<RwLock<Option<BackupPublicKey>>>,
     ) -> Self {
         Self::new(
             Arc::new(Mutex::new(public_storage)),
             Arc::new(Mutex::new(private_storage)),
             backup_vault.map(|s| Arc::new(Mutex::new(s))),
             pk_cache,
-            // current_backup_key,
         )
     }
 
@@ -129,6 +128,7 @@ where
         pub_data_type: &str,
         priv_data_type: &str,
     ) -> anyhow::Result<bool> {
+        // First locking public storage, then private storage as per concurrency rules
         let pub_storage = self.public_storage.lock().await;
         let priv_storage = self.private_storage.lock().await;
 
@@ -300,17 +300,6 @@ where
         crs_info: &SignedPubDataHandleInternal,
         is_threshold: bool,
     ) -> anyhow::Result<()> {
-        // Store private CRS info
-        self.store_private_serializable_data(crs_handle, crs_info, PrivDataType::CrsInfo)
-            .await?;
-        log_storage_success(
-            crs_handle,
-            self.private_storage.lock().await.info(),
-            "CRS data",
-            false,
-            is_threshold,
-        );
-
         // Store public CRS
         self.store_public_serializable_data(crs_handle, public_params, PubDataType::CRS)
             .await?;
@@ -321,7 +310,16 @@ where
             true,
             is_threshold,
         );
-
+        // Store private CRS info
+        self.store_private_serializable_data(crs_handle, crs_info, PrivDataType::CrsInfo)
+            .await?;
+        log_storage_success(
+            crs_handle,
+            self.private_storage.lock().await.info(),
+            "CRS data",
+            false,
+            is_threshold,
+        );
         Ok(())
     }
 
@@ -334,34 +332,6 @@ where
         is_threshold: bool,
         write_privkey: bool,
     ) -> anyhow::Result<()> {
-        // Store key info
-        self.store_private_serializable_data(req_id, key_info, PrivDataType::FheKeyInfo)
-            .await?;
-        log_storage_success(
-            req_id,
-            self.private_storage.lock().await.info(),
-            "key data",
-            false,
-            is_threshold,
-        );
-
-        // Optionally store private key
-        if write_privkey {
-            self.store_private_serializable_data(
-                req_id,
-                &key_info.client_key,
-                PrivDataType::FhePrivateKey,
-            )
-            .await?;
-            log_storage_success(
-                req_id,
-                self.private_storage.lock().await.info(),
-                "individual private key",
-                false,
-                is_threshold,
-            );
-        }
-
         // Store public key
         self.store_threshold_public_key(req_id, WrappedPublicKey::Compact(&public_keys.public_key))
             .await?;
@@ -392,6 +362,33 @@ where
             is_threshold,
         );
 
+        // Store key info
+        self.store_private_serializable_data(req_id, key_info, PrivDataType::FheKeyInfo)
+            .await?;
+        log_storage_success(
+            req_id,
+            self.private_storage.lock().await.info(),
+            "key data",
+            false,
+            is_threshold,
+        );
+
+        // Optionally store private key
+        if write_privkey {
+            self.store_private_serializable_data(
+                req_id,
+                &key_info.client_key,
+                PrivDataType::FhePrivateKey,
+            )
+            .await?;
+            log_storage_success(
+                req_id,
+                self.private_storage.lock().await.info(),
+                "individual private key",
+                false,
+                is_threshold,
+            );
+        }
         Ok(())
     }
 
@@ -454,8 +451,15 @@ where
             MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>,
         >,
     ) {
+        // Lock all stores here as storing will be executed concurrently and hence we can otherwise not enforce the locking order
+        let mut pub_storage = self.public_storage.lock().await;
+        let mut priv_storage = self.private_storage.lock().await;
+        let back_vault = match self.backup_vault {
+            Some(ref x) => Some(x.lock().await),
+            None => None,
+        };
+
         let f1 = async {
-            let mut pub_storage = self.public_storage.lock().await;
             let pk_result = delete_pk_at_request_id(&mut (*pub_storage), req_id).await;
             if let Err(e) = &pk_result {
                 tracing::warn!("Failed to delete public key for request {}: {}", req_id, e);
@@ -472,7 +476,6 @@ where
             pk_result.is_err() || server_key_result.is_err()
         };
         let f2 = async {
-            let mut priv_storage = self.private_storage.lock().await;
             let result = delete_at_request_id(
                 &mut (*priv_storage),
                 req_id,
@@ -489,10 +492,6 @@ where
             result.is_err()
         };
         let f3 = async {
-            let back_vault = match self.backup_vault {
-                Some(ref x) => Some(x.lock().await),
-                None => None,
-            };
             // TODO should backups also be purged here?
             match back_vault {
                 Some(mut x) => {
@@ -551,9 +550,15 @@ where
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
         let mut guarded_meta_store = meta_store.write().await;
+        // Enforce locking order for internal types
+        let mut pub_storage = self.public_storage.lock().await;
+        let mut priv_storage = self.private_storage.lock().await;
+        let back_vault = match self.backup_vault {
+            Some(ref x) => Some(x.lock().await),
+            None => None,
+        };
 
         let f1 = async {
-            let mut priv_storage = self.private_storage.lock().await;
             let result = store_versioned_at_request_id(
                 &mut (*priv_storage),
                 req_id,
@@ -571,7 +576,6 @@ where
             result.is_ok()
         };
         let f2 = async {
-            let mut pub_storage = self.public_storage.lock().await;
             let result = store_versioned_at_request_id(
                 &mut (*pub_storage),
                 req_id,
@@ -589,9 +593,8 @@ where
             result.is_ok()
         };
         let f3 = async {
-            match self.backup_vault {
-                Some(ref back_vault) => {
-                    let mut guarded_backup_vault = back_vault.lock().await;
+            match back_vault {
+                Some(mut guarded_backup_vault) => {
                     let backup_result = store_versioned_at_request_id(
                         &mut (*guarded_backup_vault),
                         req_id,
@@ -638,8 +641,15 @@ where
         req_id: &RequestId,
         mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<SignedPubDataHandleInternal>>,
     ) {
+        // Enforce locking order for internal types
+        let mut pub_storage = self.public_storage.lock().await;
+        let mut priv_storage = self.private_storage.lock().await;
+        let back_vault = match self.backup_vault {
+            Some(ref x) => Some(x.lock().await),
+            None => None,
+        };
+
         let f1 = async {
-            let mut pub_storage = self.public_storage.lock().await;
             let result =
                 delete_at_request_id(&mut (*pub_storage), req_id, &PubDataType::CRS.to_string())
                     .await;
@@ -653,7 +663,6 @@ where
             result.is_err()
         };
         let f2 = async {
-            let mut priv_storage = self.private_storage.lock().await;
             let priv_result = delete_at_request_id(
                 &mut (*priv_storage),
                 req_id,
@@ -671,10 +680,6 @@ where
             priv_result.is_err()
         };
         let f3 = async {
-            let back_vault = match self.backup_vault {
-                Some(ref vault) => Some(vault.lock().await),
-                None => None,
-            };
             // TODO should we indeed delete backup material here?
             match back_vault {
                 Some(mut back_vault) => {
@@ -731,8 +736,15 @@ where
         req_id: &RequestId,
         mut guarded_meta_store: RwLockWriteGuard<'_, CustodianMetaStore>,
     ) {
+        // Enforce locking order for internal types
+        let mut pub_storage = self.public_storage.lock().await;
+        let mut priv_storage = self.private_storage.lock().await;
+        let back_vault = match self.backup_vault {
+            Some(ref x) => Some(x.lock().await),
+            None => None,
+        };
+
         let priv_purge = async {
-            let mut priv_storage = self.private_storage.lock().await;
             let result = delete_at_request_id(
                 &mut (*priv_storage),
                 req_id,
@@ -749,7 +761,6 @@ where
             result.is_err()
         };
         let pub_purge = async {
-            let mut pub_storage = self.public_storage.lock().await;
             let request_res = delete_at_request_id(
                 &mut (*pub_storage),
                 req_id,
@@ -779,12 +790,13 @@ where
             request_res.is_err() && commit_res.is_err()
         };
         let vault_purge = async {
-            let mut vault_storage = match &self.backup_vault {
-                Some(vault_storage) => vault_storage.lock().await,
-                None => return false, // No backup vault to purge, so no problem
-            };
-            delete_all_at_request_id(&mut (*vault_storage), req_id).await;
-            true
+            match back_vault {
+                Some(mut back_vault) => {
+                    delete_all_at_request_id(&mut (*back_vault), req_id).await;
+                    true
+                }
+                None => false, // No backup vault, so no error
+            }
         };
         let (priv_purge_res, pub_purge_res, vault_purge_res) =
             tokio::join!(priv_purge, pub_purge, vault_purge);
@@ -904,6 +916,7 @@ where
         T: CryptoMaterialReader + Clone,
         S: Storage + Send + Sync + 'static,
     {
+        let pub_storage = storage.lock().await;
         let out = {
             let cache_guard = cache.read().await;
             cache_guard.get(req_id).cloned()
@@ -912,7 +925,6 @@ where
         match out {
             Some(pk) => Ok(pk),
             None => {
-                let pub_storage = storage.lock().await;
                 let pk = T::read_from_storage(&(*pub_storage), req_id)
                     .await
                     .inspect_err(|e| {

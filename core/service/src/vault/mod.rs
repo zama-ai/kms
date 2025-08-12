@@ -9,8 +9,6 @@ pub mod aws;
 pub mod keychain;
 pub mod storage;
 
-// todo we may add handles to embed the encryption key and then add a method to do reencrypt
-
 #[derive(Clone)]
 pub struct Vault {
     pub storage: StorageProxy,
