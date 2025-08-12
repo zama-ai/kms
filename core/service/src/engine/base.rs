@@ -20,6 +20,7 @@ use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, SignedPubDataHandle, TypedPlaintext,
     UserDecryptionResponsePayload,
 };
+use kms_grpc::rpc_types::FheDecompressionUpgradeKey;
 use kms_grpc::rpc_types::{
     FhePubKey, FheServerKey, PubDataType, PublicDecryptVerification, SignedPubDataHandleInternal,
     CRS,
@@ -502,9 +503,17 @@ pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
             };
             message.eip712_signing_hash(eip712_domain)
         }
+        // TODO: at the moment we only support  integer:::DecompressionKey
+        // but this support will be dropped in favor for DecompressionUpgradeKey
+        "integer::DecompressionKey" => {
+            let message = FheDecompressionUpgradeKey {
+                decompression_upgrade_key: bytes.into(),
+            };
+            message.eip712_signing_hash(eip712_domain)
+        }
         e => {
             return Err(anyhow_error_and_log(format!(
-                "Cannot compute EIP-712 signature on type {e}. Expected one of: zk::CompactPkeCrs, high_level_api::CompactPublicKey, high_level_api::ServerKey."
+                "Cannot compute EIP-712 signature on type {e}. Expected one of: zk::CompactPkeCrs, high_level_api::CompactPublicKey, high_level_api::ServerKey, integer::DecompressionKey."
             )))
         }
     };

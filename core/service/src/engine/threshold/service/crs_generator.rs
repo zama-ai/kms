@@ -568,29 +568,48 @@ mod tests {
 
         // `InvalidArgument` - If the request ID is not present, valid or does not match the expected format.
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let req = CrsGenRequest {
-            params: FheParameter::Default as i32,
-            max_num_bits: None,
-            request_id: None,
-            domain: Some(domain),
-        };
+        {
+            let req = CrsGenRequest {
+                params: FheParameter::Default as i32,
+                max_num_bits: None,
+                request_id: None,
+                domain: Some(domain),
+            };
 
-        let request = Request::new(req);
-        let res = crs_gen.crs_gen(request).await;
+            let request = Request::new(req);
+            let res = crs_gen.crs_gen(request).await;
 
-        assert_eq!(res.unwrap_err().code(), tonic::Code::InvalidArgument);
+            assert_eq!(res.unwrap_err().code(), tonic::Code::InvalidArgument);
 
-        // same for the result, should give us an error with a bad request ID
-        assert_eq!(
-            crs_gen
-                .get_result(Request::new(kms_grpc::kms::v1::RequestId {
-                    request_id: "xyz".to_string(),
-                }))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::InvalidArgument
-        );
+            // same for the result, should give us an error with a bad request ID
+            assert_eq!(
+                crs_gen
+                    .get_result(Request::new(kms_grpc::kms::v1::RequestId {
+                        request_id: "xyz".to_string(),
+                    }))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+
+        {
+            // `InvalidArgument` - If the parameters in the request are not valid.
+            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let req = CrsGenRequest {
+                params: 2,
+                max_num_bits: None,
+                request_id: Some(req_id.into()),
+                domain: Some(domain),
+            };
+
+            let request = Request::new(req);
+            let res = crs_gen.crs_gen(request).await;
+
+            assert_eq!(res.unwrap_err().code(), tonic::Code::NotFound);
+        }
     }
 
     #[tokio::test]
@@ -603,22 +622,8 @@ mod tests {
             )
             .await;
 
-        // `NotFound` - If the parameters in the request are not valid.
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let req = CrsGenRequest {
-            params: 2,
-            max_num_bits: None,
-            request_id: Some(req_id.into()),
-            domain: Some(domain),
-        };
-
-        let request = Request::new(req);
-        let res = crs_gen.crs_gen(request).await;
-
-        assert_eq!(res.unwrap_err().code(), tonic::Code::NotFound);
-
         // `NotFound` - If the CRS generation does not exist for `request`.
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
         assert_eq!(
             crs_gen
                 .get_result(Request::new(req_id.into()))
@@ -672,7 +677,7 @@ mod tests {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: Some(domain),
+            domain: Some(domain.clone()),
         };
 
         let request = Request::new(req);
@@ -684,7 +689,7 @@ mod tests {
             params: 0,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: None,
+            domain: Some(domain),
         };
 
         let request = Request::new(req);

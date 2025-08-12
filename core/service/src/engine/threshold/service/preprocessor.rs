@@ -378,7 +378,7 @@ mod tests {
                     .await
                     .unwrap_err()
                     .code(),
-                tonic::Code::Aborted
+                tonic::Code::InvalidArgument
             );
         }
     }

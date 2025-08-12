@@ -86,6 +86,13 @@ alloy_sol_types::sol! {
     }
 }
 
+// Solidity struct for DecompressionUpgradeKey
+alloy_sol_types::sol! {
+    struct FheDecompressionUpgradeKey {
+        bytes decompression_upgrade_key;
+    }
+}
+
 pub fn protobuf_to_alloy_domain_option(
     domain_ref: Option<&Eip712DomainMsg>,
 ) -> Result<Eip712Domain, BoxedStatus> {

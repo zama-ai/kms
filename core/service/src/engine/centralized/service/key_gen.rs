@@ -219,14 +219,12 @@ pub(crate) async fn key_gen_background<
             let info =
                 match compute_info(&sk, &DSEP_PUBDATA_KEY, &decompression_key, &eip712_domain) {
                     Ok(info) => HashMap::from_iter(vec![(PubDataType::DecompressionKey, info)]),
-                    Err(_) => {
+                    Err(e) => {
                         let mut guarded_meta_storage = meta_store.write().await;
                         // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_storage.update(
-                            req_id,
-                            Err("Failed to compute decompression key info".to_string()),
-                        );
-                        anyhow::bail!("Failed to compute decompression key info");
+                        let err_msg = format!("Failed to compute decompression key info: {e}");
+                        let _ = guarded_meta_storage.update(req_id, Err(err_msg.clone()));
+                        anyhow::bail!(err_msg);
                     }
                 };
             crypto_storage

@@ -1266,7 +1266,7 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use kms_grpc::kms::v1::FheParameter;
+    use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};
     use rand::rngs::OsRng;
     use threshold_fhe::{
         execution::online::preprocessing::dummy::DummyPreprocessing,
@@ -1275,7 +1275,7 @@ mod tests {
         },
     };
 
-    use crate::vault::storage::ram;
+    use crate::{dummy_domain, vault::storage::ram};
 
     use super::*;
 
@@ -1372,11 +1372,12 @@ mod tests {
             request_id: "badformat".to_string(),
         };
 
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(bad_key_id.clone()),
             params: FheParameter::Test as i32,
             preproc_id: Some(prep_id.into()),
-            domain: None,
+            domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
         });
@@ -1403,11 +1404,12 @@ mod tests {
         // Set bucket size to zero, so no operations are allowed
         kg.set_bucket_size(0);
 
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
             params: FheParameter::Test as i32,
             preproc_id: Some(prep_id.into()),
-            domain: None,
+            domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
         });
@@ -1438,11 +1440,12 @@ mod tests {
         let (prep_id, kg) = setup_key_generator::<FailingOnlineDistributedKeyGen128>().await;
         let key_id = RequestId::new_random(&mut OsRng);
 
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
             params: FheParameter::Test as i32,
             preproc_id: Some(prep_id.into()),
-            domain: None,
+            domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
         });
@@ -1465,11 +1468,12 @@ mod tests {
         let (prep_id, kg) = setup_key_generator::<DroppingOnlineDistributedKeyGen128>().await;
         let key_id = RequestId::new_random(&mut OsRng);
 
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
             params: FheParameter::Test as i32,
             preproc_id: Some(prep_id.into()),
-            domain: None,
+            domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
         });
