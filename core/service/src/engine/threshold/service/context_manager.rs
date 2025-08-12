@@ -304,9 +304,9 @@ where
         let mut ciphertexts = BTreeMap::new();
         for custodian_index in 1..=custodian_context.custodian_nodes.keys().len() {
             let custodian_role = Role::indexed_from_one(custodian_index);
-            let ct = ct_map.get(&custodian_role).expect(&format!(
-                "Missing operator backup output for role {custodian_role}"
-            ));
+            let ct = ct_map.get(&custodian_role).unwrap_or_else(|| {
+                panic!("Missing operator backup output for role {custodian_role}")
+            });
             ciphertexts.insert(custodian_role, ct.to_owned());
         }
         let recovery_request = RecoveryRequest::new(
