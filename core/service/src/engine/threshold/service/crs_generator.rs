@@ -33,7 +33,9 @@ use crate::{
     engine::{
         base::{compute_info, retrieve_parameters, BaseKmsStruct, DSEP_PUBDATA_CRS},
         threshold::traits::CrsGenerator,
-        validation::validate_request_id,
+        validation::{
+            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+        },
     },
     util::{
         meta_store::{handle_res_mapping, MetaStore},
@@ -115,16 +117,8 @@ impl<
                 )
             })?;
 
-        let req_id = inner
-            .request_id
-            .ok_or_else(|| {
-                tonic::Status::new(
-                    tonic::Code::InvalidArgument,
-                    "missing request ID in CRS generation",
-                )
-            })?
-            .into();
-        validate_request_id(&req_id)?;
+        let req_id =
+            parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::CrsGenRequest)?;
 
         let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
 
@@ -235,8 +229,8 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
-        let request_id = request.into_inner().into();
-        validate_request_id(&request_id)?;
+        let request_id =
+            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)?;
         let status = {
             let guarded_meta_store = self.crs_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)

@@ -52,7 +52,10 @@ use crate::{
         },
         threshold::traits::PublicDecryptor,
         traits::BaseKms,
-        validation::{validate_public_decrypt_req, validate_request_id, DSEP_PUBLIC_DECRYPTION},
+        validation::{
+            parse_proto_request_id, validate_public_decrypt_req, RequestIdParsingErr,
+            DSEP_PUBLIC_DECRYPTION,
+        },
     },
     tonic_handle_potential_err,
     util::{
@@ -632,8 +635,10 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<PublicDecryptionResponse>, Status> {
-        let request_id = request.into_inner().into();
-        validate_request_id(&request_id)?;
+        let request_id = parse_proto_request_id(
+            &request.into_inner(),
+            RequestIdParsingErr::PublicDecResponse,
+        )?;
         let status = {
             let guarded_meta_store = self.pub_dec_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)

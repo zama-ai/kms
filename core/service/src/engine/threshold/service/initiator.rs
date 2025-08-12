@@ -22,11 +22,11 @@ use tonic_health::server::HealthReporter;
 
 // === Internal Crate ===
 use crate::{
-    anyhow_error_and_log,
     engine::{
-        base::derive_request_id, threshold::traits::Initiator, validation::validate_request_id,
+        base::derive_request_id,
+        threshold::traits::Initiator,
+        validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
-    tonic_some_or_err,
     vault::storage::{read_versioned_at_request_id, store_versioned_at_request_id, Storage},
 };
 
@@ -125,14 +125,11 @@ impl<
         Ok(())
     }
 
+    // NOTE: this function will overwrite the existing PRSS state
     pub async fn init_prss(&self, req_id: &RequestId) -> anyhow::Result<()> {
-        if self.prss_setup_z128.read().await.is_some() || self.prss_setup_z64.read().await.is_some()
-        {
-            return Err(anyhow_error_and_log("PRSS state already exists"));
-        }
-
         let own_identity = self.session_preparer.own_identity()?;
         let session_id = req_id.derive_session_id()?;
+
         //PRSS robust init requires broadcast, which is implemented with Sync network assumption
         let mut base_session = self
             .session_preparer
@@ -213,12 +210,16 @@ impl<
 {
     async fn init(&self, request: Request<v1::InitRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
-        let request_id = tonic_some_or_err(
-            inner.request_id.clone(),
-            "Request ID is not set (initiator)".to_string(),
-        )?
-        .into();
-        validate_request_id(&request_id)?;
+        let request_id =
+            parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::Init)?;
+
+        if self.prss_setup_z128.read().await.is_some() || self.prss_setup_z64.read().await.is_some()
+        {
+            return Err(tonic::Status::new(
+                tonic::Code::AlreadyExists,
+                "PRSS state already exists".to_string(),
+            ));
+        }
 
         self.init_prss(&request_id).await.map_err(|e| {
             tonic::Status::new(

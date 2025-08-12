@@ -19,8 +19,8 @@ use crate::engine::centralized::central_kms::{
 };
 use crate::engine::traits::BaseKms;
 use crate::engine::validation::{
-    validate_public_decrypt_req, validate_request_id, validate_user_decrypt_req,
-    DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
+    parse_proto_request_id, validate_public_decrypt_req, validate_user_decrypt_req,
+    RequestIdParsingErr, DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
 };
 use crate::tonic_handle_potential_err;
 use crate::util::meta_store::handle_res_mapping;
@@ -184,8 +184,8 @@ pub async fn get_user_decryption_result_impl<
     service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<UserDecryptionResponse>, Status> {
-    let request_id = request.into_inner().into();
-    validate_request_id(&request_id)?;
+    let request_id =
+        parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecResponse)?;
 
     let status = {
         let guarded_meta_store = service.user_decrypt_meta_map.read().await;
@@ -395,9 +395,11 @@ pub async fn get_public_decryption_result_impl<
     service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<PublicDecryptionResponse>, Status> {
-    let request_id = request.into_inner().into();
+    let request_id = parse_proto_request_id(
+        &request.into_inner(),
+        RequestIdParsingErr::PublicDecResponse,
+    )?;
     tracing::debug!("Received get key gen result request with id {}", request_id);
-    validate_request_id(&request_id)?;
 
     let status = {
         let guarded_meta_store = service.pub_dec_meta_store.read().await;

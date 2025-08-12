@@ -93,7 +93,8 @@ impl_endpoint! {
 
         /// Retrieves the result from a preprocessing request.
         ///
-        /// * `request` - The request ID under which the preprocessing was started.
+        /// * `request` - The request ID under which the preprocessing was started
+        ///               which must be 32 bytes lower-case hex encoding without `0x` prefix.
         ///
         /// # Returns
         /// * `Ok(Response<KeyGenPreprocResult>)` - This is an empty structure.

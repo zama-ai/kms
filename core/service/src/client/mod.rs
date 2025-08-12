@@ -10,6 +10,8 @@ use crate::engine::validation::{
     check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
     DSEP_USER_DECRYPTION,
 };
+#[cfg(feature = "non-wasm")]
+use crate::engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr};
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
@@ -923,11 +925,12 @@ impl Client {
         storage: &R,
     ) -> anyhow::Result<Option<WrappedPublicKeyOwned>> {
         // first we need to read the key type
-        let request_id = some_or_err(
-            key_gen_result.request_id.clone(),
-            "No request id".to_string(),
-        )?
-        .into();
+
+        let request_id = parse_optional_proto_request_id(
+            &key_gen_result.request_id,
+            RequestIdParsingErr::General("invalid ID while retrieving public key".to_string()),
+        )
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         tracing::debug!(
             "getting public key metadata using storage {} with request id {}",
             storage.info(),
@@ -988,11 +991,12 @@ impl Client {
             key_gen_result.key_results.get(&key_type.to_string()),
             format!("Could not find key of type {key_type}"),
         )?;
-        let request_id = some_or_err(
-            key_gen_result.request_id.clone(),
-            "No request id".to_string(),
-        )?;
-        let key: S = self.get_key(&request_id.into(), key_type, storage).await?;
+        let request_id = parse_optional_proto_request_id(
+            &key_gen_result.request_id,
+            RequestIdParsingErr::General("invalid request ID while retrieving key".to_string()),
+        )
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let key: S = self.get_key(&request_id, key_type, storage).await?;
         let key_handle = compute_handle(&key)?;
         if key_handle != pki.key_handle {
             tracing::warn!(
@@ -1046,11 +1050,12 @@ impl Client {
             crs_gen_result.crs_results.clone(),
             "Could not find CRS info".to_string(),
         )?;
-        let request_id = some_or_err(
-            crs_gen_result.request_id.clone(),
-            "No request id".to_string(),
-        )?;
-        let pp = self.get_crs(&request_id.into(), storage).await?;
+        let request_id = parse_optional_proto_request_id(
+            &crs_gen_result.request_id,
+            RequestIdParsingErr::General("invalid request ID while processing CRS".to_string()),
+        )
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let pp = self.get_crs(&request_id, storage).await?;
         let crs_handle = compute_handle(&pp)?;
         if crs_handle != crs_info.key_handle {
             tracing::warn!(
@@ -3230,7 +3235,10 @@ pub(crate) mod tests {
 
             // read the client key
             let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
-                .read_data(&req_id.into(), &PrivDataType::FheKeyInfo.to_string())
+                .read_data(
+                    &req_id.try_into().unwrap(),
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
                 .await
                 .unwrap();
             let client_key = handle.client_key;
@@ -3251,7 +3259,8 @@ pub(crate) mod tests {
                     .unwrap()
                     .base_keyset_id_for_sns_compression_key
                     .unwrap()
-                    .into();
+                    .try_into()
+                    .unwrap();
                 identical_keys_except_sns_compression_from_storage(
                     &internal_client,
                     &pub_storage,
@@ -3610,7 +3619,7 @@ pub(crate) mod tests {
                         } else {
                             let (j, req_id, inner_resp) = inner;
                             // Explicitly convert to string to avoid any type conversion issues
-                            let req_id_str = match kms_grpc::RequestId::from(req_id.clone()) {
+                            let req_id_str = match kms_grpc::RequestId::try_from(req_id.clone()).unwrap() {
                                 id => id.to_string(),
                             };
                             tracing::info!("Response in iteration {count} for server {j} and req_id {req_id_str} is: {:?}", inner_resp);
@@ -3784,7 +3793,7 @@ pub(crate) mod tests {
         for req in reqs {
             use itertools::Itertools;
 
-            let req_id: RequestId = req.clone().request_id.unwrap().into();
+            let req_id: RequestId = req.clone().request_id.unwrap().try_into().unwrap();
             let joined_responses: Vec<_> = joined_responses
                 .iter()
                 .cloned()
@@ -5394,7 +5403,7 @@ pub(crate) mod tests {
                 .clone()
                 .expect("Retrieving request_id failed");
             let mut responses = response_map
-                .get(&request_id.into())
+                .get(&request_id.try_into().unwrap())
                 .expect("Retrieving responses failed")
                 .clone();
             let domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap())
@@ -5638,11 +5647,11 @@ pub(crate) mod tests {
             let res = res.unwrap();
             tracing::info!("Client got a response from {}", res.0.request_id);
             let (req_id, resp) = res;
-            if let Entry::Vacant(e) = response_map.entry(req_id.clone().into()) {
+            if let Entry::Vacant(e) = response_map.entry(req_id.clone().try_into().unwrap()) {
                 e.insert(vec![resp.unwrap().into_inner()]);
             } else {
                 response_map
-                    .get_mut(&req_id.into())
+                    .get_mut(&req_id.try_into().unwrap())
                     .unwrap()
                     .push(resp.unwrap().into_inner());
             }

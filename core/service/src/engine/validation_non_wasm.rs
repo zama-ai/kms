@@ -20,19 +20,10 @@ use crate::{
         internal_crypto_types::{PublicEncKey, PublicSigKey, Signature},
         signcryption::internal_verify_sig,
     },
-    tonic_some_or_err,
 };
 
 pub(crate) const DSEP_PUBLIC_DECRYPTION: DomainSep = *b"PUBL_DEC";
 
-const ERR_VALIDATE_PUBLIC_DECRYPTION_NO_REQ_ID: &str =
-    "Request ID is not set in public decryption request";
-const ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID: &str =
-    "Key ID is not set in public decryption request";
-const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID: &str =
-    "Request ID is invalid in public decryption request";
-const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_KEY_ID: &str =
-    "Key ID is invalid in public decryption request";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS: &str =
     "No ciphertexts in public decryption request";
 const ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP: &str =
@@ -50,28 +41,102 @@ const ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE: &str =
 const ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_REQUEST: &str =
     "Public decryption request is None while validating public decryption responses";
 
-const ERR_VALIDATE_USER_DECRYPTION_NO_REQ_ID: &str =
-    "Request ID is not set in user decryption request";
-const ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID: &str = "Key ID is not set in user decryption request";
-const ERR_VALIDATE_USER_DECRYPTION_BAD_REQ_ID: &str =
-    "Request ID is invalid in user decryption request";
-const ERR_VALIDATE_USER_DECRYPTION_BAD_KEY_ID: &str =
-    "Key ID is invalid in user decryption request";
 const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user decryption request";
 
-/// Validates a request ID and returns an appropriate tonic error if it is invalid.
-pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), BoxedStatus> {
-    if !request_id.is_valid() {
-        tracing::warn!(
-            "The value {} is not a valid request ID!",
-            request_id.to_string()
-        );
-        return Err(BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("Invalid request id: {request_id}"),
-        )));
+#[derive(Clone)]
+pub(crate) enum RequestIdParsingErr {
+    General(String),
+    Context,
+    Init,
+
+    CrsGenRequest,
+    PreprocRequest,
+    KeyGenRequest,
+    UserDecRequest,
+    PublicDecRequest,
+    UserDecRequestBadKeyId,
+    PublicDecRequestBadKeyId,
+
+    CrsGenResponse,
+    PreprocResponse,
+    KeyGenResponse,
+    UserDecResponse,
+    PublicDecResponse,
+}
+
+impl std::fmt::Display for RequestIdParsingErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RequestIdParsingErr::General(msg) => write!(f, "{}", msg),
+            RequestIdParsingErr::Context => write!(f, "Invalid context ID"),
+            RequestIdParsingErr::Init => write!(f, "Invalid init ID"),
+
+            RequestIdParsingErr::CrsGenRequest => write!(f, "Invalid CRS generation request ID"),
+            RequestIdParsingErr::PreprocRequest => write!(f, "Invalid pre-processing request ID"),
+            RequestIdParsingErr::KeyGenRequest => write!(f, "Invalid key generation request ID"),
+            RequestIdParsingErr::UserDecRequest => write!(f, "Invalid user decryption request ID"),
+            RequestIdParsingErr::PublicDecRequest => {
+                write!(f, "Invalid public decryption request ID")
+            }
+            RequestIdParsingErr::UserDecRequestBadKeyId => {
+                write!(f, "Invalid key ID in user decryption request")
+            }
+            RequestIdParsingErr::PublicDecRequestBadKeyId => {
+                write!(f, "Invalid key ID in public decryption request")
+            }
+
+            RequestIdParsingErr::CrsGenResponse => {
+                write!(f, "Invalid get CRS generation result request ID")
+            }
+            RequestIdParsingErr::PreprocResponse => {
+                write!(f, "Invalid get pre-processing result response ID")
+            }
+            RequestIdParsingErr::KeyGenResponse => {
+                write!(f, "Invalid get key generation result response ID")
+            }
+            RequestIdParsingErr::UserDecResponse => {
+                write!(f, "Invalid get user decryption result response ID")
+            }
+            RequestIdParsingErr::PublicDecResponse => {
+                write!(f, "Invalid get public decryption result response ID")
+            }
+        }
     }
-    Ok(())
+}
+
+/// Parse a protobuf request ID and returns an appropriate tonic error if it is invalid.
+pub(crate) fn parse_optional_proto_request_id(
+    request_id: &Option<kms_grpc::kms::v1::RequestId>,
+    id_type: RequestIdParsingErr,
+) -> Result<RequestId, BoxedStatus> {
+    let req_id = request_id
+        .clone()
+        .ok_or(BoxedStatus::from(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            format!("{}: {request_id:?}", id_type),
+        )))?;
+
+    parse_proto_request_id(&req_id, id_type)
+}
+
+pub(crate) fn parse_proto_request_id(
+    request_id: &kms_grpc::kms::v1::RequestId,
+    id_type: RequestIdParsingErr,
+) -> Result<RequestId, BoxedStatus> {
+    let req_id: RequestId = request_id.try_into().map_err(|_| {
+        BoxedStatus::from(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            format!("{}: {request_id:?}", id_type),
+        ))
+    })?;
+    if !req_id.is_valid() {
+        Err(BoxedStatus::from(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            format!("{}: {request_id:?}", id_type),
+        )))
+    } else {
+        Ok(req_id)
+    }
 }
 
 /// Validates a user decryption request and returns ciphertext, FheType, request digest, client
@@ -92,27 +157,10 @@ pub fn validate_user_decrypt_req(
     RequestId,
     alloy_sol_types::Eip712Domain,
 )> {
-    let key_id: RequestId = tonic_some_or_err(
-        req.key_id.clone(),
-        format!("{ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID} (Request ID: {req:?})"),
-    )?
-    .into();
-    if !key_id.is_valid() {
-        return Err(anyhow_error_and_warn_log(format!(
-            "{ERR_VALIDATE_USER_DECRYPTION_BAD_KEY_ID} (Request ID: {key_id})"
-        )));
-    }
-
-    let request_id: RequestId = tonic_some_or_err(
-        req.request_id.clone(),
-        ERR_VALIDATE_USER_DECRYPTION_NO_REQ_ID.to_string(),
-    )?
-    .into();
-    if !request_id.is_valid() {
-        return Err(anyhow_error_and_warn_log(format!(
-            "{ERR_VALIDATE_USER_DECRYPTION_BAD_REQ_ID} (Request ID: {request_id})"
-        )));
-    }
+    let key_id =
+        parse_optional_proto_request_id(&req.key_id, RequestIdParsingErr::UserDecRequestBadKeyId)?;
+    let request_id =
+        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::UserDecRequest)?;
 
     if req.typed_ciphertexts.is_empty() {
         return Err(anyhow_error_and_warn_log(format!(
@@ -180,32 +228,18 @@ pub fn validate_user_decrypt_req(
 #[allow(clippy::type_complexity)]
 pub fn validate_public_decrypt_req(
     req: &PublicDecryptionRequest,
-) -> anyhow::Result<(Vec<TypedCiphertext>, RequestId, RequestId, Eip712Domain)> {
-    let key_id: RequestId = tonic_some_or_err(
-        req.key_id.clone(),
-        format!("{ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID} (Request ID: {req:?})"),
-    )?
-    .into();
-    if !key_id.is_valid() {
-        return Err(anyhow_error_and_warn_log(format!(
-            "{ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_KEY_ID} (Request ID: {key_id})"
-        )));
-    }
-
-    let request_id: RequestId = tonic_some_or_err(
-        req.request_id.clone(),
-        ERR_VALIDATE_PUBLIC_DECRYPTION_NO_REQ_ID.to_string(),
-    )?
-    .into();
-    if !request_id.is_valid() {
-        return Err(anyhow_error_and_warn_log(format!(
-            "{ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID} (Request ID: {request_id})"
-        )));
-    }
+) -> Result<(Vec<TypedCiphertext>, RequestId, RequestId, Eip712Domain), BoxedStatus> {
+    let key_id = parse_optional_proto_request_id(
+        &req.key_id,
+        RequestIdParsingErr::PublicDecRequestBadKeyId,
+    )?;
+    let request_id =
+        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::PublicDecRequest)?;
 
     if req.ciphertexts.is_empty() {
-        return Err(anyhow_error_and_warn_log(format!(
-            "{ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS} (Request ID: {request_id})"
+        return Err(BoxedStatus::from(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            format!("{ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS} (Request ID: {request_id})"),
         )));
     }
 
@@ -281,12 +315,16 @@ struct PublicDecryptionResponseInvariants {
     plaintexts: Vec<TypedPlaintext>,
 }
 
-impl From<PublicDecryptionResponsePayload> for PublicDecryptionResponseInvariants {
-    fn from(value: PublicDecryptionResponsePayload) -> Self {
-        Self {
-            request_id: value.request_id.clone().map(|id| id.into()),
+impl TryFrom<PublicDecryptionResponsePayload> for PublicDecryptionResponseInvariants {
+    type Error = anyhow::Error;
+    fn try_from(value: PublicDecryptionResponsePayload) -> anyhow::Result<Self> {
+        Ok(Self {
+            request_id: match value.request_id.clone() {
+                Some(id) => Some(id.try_into()?),
+                None => None,
+            },
             plaintexts: value.plaintexts.clone(),
-        }
+        })
     }
 }
 
@@ -295,10 +333,17 @@ pub(crate) fn select_most_common_public_dec(
     agg_resp: &[PublicDecryptionResponse],
 ) -> Option<PublicDecryptionResponsePayload> {
     let iter = agg_resp.iter().map(|resp| resp.payload.as_ref());
-    let idx = crate::engine::validation::select_most_common::<_, PublicDecryptionResponseInvariants>(
-        min_occurence,
-        iter,
-    );
+    let idx = match crate::engine::validation::select_most_common::<
+        _,
+        PublicDecryptionResponseInvariants,
+    >(min_occurence, iter)
+    {
+        Ok(x) => x,
+        Err(e) => {
+            tracing::error!("Error selecting most common public decryption response: {e}");
+            None
+        }
+    };
     idx.and_then(|i| agg_resp[i].payload.clone())
 }
 
@@ -457,6 +502,7 @@ mod tests {
         },
         engine::{
             base::derive_request_id,
+            validation::{parse_proto_request_id, RequestIdParsingErr},
             validation_non_wasm::{
                 select_most_common_public_dec, validate_public_decrypt_responses,
             },
@@ -465,15 +511,12 @@ mod tests {
 
     use super::{
         validate_public_decrypt_meta_data, validate_public_decrypt_req,
-        validate_public_decrypt_responses_against_request, validate_request_id,
-        validate_user_decrypt_req, verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
+        validate_public_decrypt_responses_against_request, validate_user_decrypt_req,
+        verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID,
-        ERR_VALIDATE_PUBLIC_DECRYPTION_NO_REQ_ID, ERR_VALIDATE_USER_DECRYPTION_BAD_REQ_ID,
-        ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS, ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID,
-        ERR_VALIDATE_USER_DECRYPTION_NO_REQ_ID,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
+        ERR_VALIDATE_PUBLIC_DECRYPTION_NOT_ENOUGH_RESP, ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS,
     };
 
     #[test]
@@ -509,7 +552,7 @@ mod tests {
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NO_KEY_ID));
+                .contains(&RequestIdParsingErr::PublicDecRequestBadKeyId.to_string()));
         }
 
         // empty request ID
@@ -524,7 +567,7 @@ mod tests {
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_NO_REQ_ID));
+                .contains(&RequestIdParsingErr::PublicDecRequest.to_string()));
         }
 
         // invalid request ID
@@ -542,7 +585,7 @@ mod tests {
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_REQ_ID));
+                .contains(&RequestIdParsingErr::PublicDecRequest.to_string()));
         }
 
         // empty ciphertext
@@ -620,7 +663,7 @@ mod tests {
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_USER_DECRYPTION_NO_KEY_ID));
+                .contains(&RequestIdParsingErr::UserDecRequestBadKeyId.to_string()));
         }
 
         // empty request ID
@@ -637,7 +680,7 @@ mod tests {
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_USER_DECRYPTION_NO_REQ_ID));
+                .contains(&RequestIdParsingErr::UserDecRequest.to_string()));
         }
 
         // invalid request ID
@@ -657,7 +700,7 @@ mod tests {
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
                 .to_string()
-                .contains(ERR_VALIDATE_USER_DECRYPTION_BAD_REQ_ID));
+                .contains(&RequestIdParsingErr::UserDecRequest.to_string()));
         }
 
         // empty ciphertext
@@ -734,18 +777,18 @@ mod tests {
         let bad_req_id1 = v1::RequestId {
             request_id: ['x'; ID_LENGTH].iter().collect(),
         };
-        assert!(validate_request_id(&bad_req_id1.into()).is_err());
+        assert!(parse_proto_request_id(&bad_req_id1, RequestIdParsingErr::Init).is_err());
 
         // wrong length
         let bad_req_id2 = v1::RequestId {
             request_id: ['a'; ID_LENGTH - 1].iter().collect(),
         };
-        assert!(validate_request_id(&bad_req_id2.into()).is_err());
+        assert!(parse_proto_request_id(&bad_req_id2, RequestIdParsingErr::Init).is_err());
 
         let good_req_id = v1::RequestId {
             request_id: ['a'; ID_LENGTH].iter().collect(),
         };
-        assert!(validate_request_id(&good_req_id.into()).is_err());
+        assert!(parse_proto_request_id(&good_req_id, RequestIdParsingErr::Init).is_err());
     }
 
     #[test]

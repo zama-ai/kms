@@ -62,9 +62,11 @@ use crate::{
             service::{kms_impl::compute_all_info, ThresholdFheKeys},
             traits::KeyGenerator,
         },
-        validation::validate_request_id,
+        validation::{
+            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+        },
     },
-    tonic_handle_potential_err, tonic_some_or_err,
+    tonic_handle_potential_err,
     util::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
@@ -280,6 +282,7 @@ impl<
 
         // we need to clone the req ID because async closures are not stable
         let req_id_clone = req_id;
+        let opt_compression_key_id = internal_keyset_config.get_compression_id()?;
         let keygen_background = async move {
             match internal_keyset_config.keyset_config() {
                 ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
@@ -292,7 +295,7 @@ impl<
                         sk,
                         dkg_params,
                         inner_config.to_owned(),
-                        internal_keyset_config.get_compression_id(),
+                        opt_compression_key_id,
                         eip712_domain_copy,
                         permit,
                     )
@@ -375,12 +378,8 @@ impl<
             inner.keyset_added_info,
             insecure
         );
-        let request_id: RequestId = tonic_some_or_err(
-            inner.request_id.clone(),
-            "Request ID is not set (inner key gen)".to_string(),
-        )?
-        .into();
-        validate_request_id(&request_id)?;
+        let request_id =
+            parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::KeyGenRequest)?;
 
         // Retrieve kg params and preproc_id
         let dkg_params = retrieve_parameters(inner.params)?;
@@ -388,11 +387,12 @@ impl<
         let preproc_handle = if insecure {
             PreprocHandleWithMode::Insecure
         } else {
-            let preproc_id = tonic_some_or_err(
-                inner.preproc_id.clone(),
-                "Pre-Processing ID is not set".to_string(),
-            )?
-            .into();
+            let preproc_id = parse_optional_proto_request_id(
+                &inner.preproc_id,
+                RequestIdParsingErr::General(
+                    "invalid preprocessing ID in keygen request".to_string(),
+                ),
+            )?;
             let preproc = {
                 let mut map = self.preproc_buckets.write().await;
                 map.delete(&preproc_id)
@@ -430,8 +430,8 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
-        let request_id: RequestId = request.into_inner().into();
-        validate_request_id(&request_id)?;
+        let request_id =
+            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)?;
         let status = {
             let guarded_meta_store = self.dkg_pubinfo_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
@@ -489,24 +489,24 @@ impl<
         preprocessing: &mut P,
     ) -> anyhow::Result<DecompressionKey>
     where
-        P: DKGPreprocessing<ResiduePoly<Z128, 4>> + Send + ?Sized,
+        P: DKGPreprocessing<ResiduePolyF4Z128> + Send + ?Sized,
     {
-        let from_key_id = keyset_added_info
-            .from_keyset_id_decompression_only
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                "missing from key ID for the keyset that contains the compression secret key share"
+        let from_key_id = parse_optional_proto_request_id(
+            &keyset_added_info.from_keyset_id_decompression_only,
+            RequestIdParsingErr::General("invalid from keyset ID".to_string()),
+        ).inspect_err(|e| {
+                tracing::error!("missing *from* key ID for the keyset that contains the compression secret key share: {}", e)
+            })?;
+        let to_key_id = parse_optional_proto_request_id(
+            &keyset_added_info.to_keyset_id_decompression_only,
+            RequestIdParsingErr::General("invalid to keyset ID".to_string()),
+        )
+        .inspect_err(|e| {
+            tracing::error!(
+                "missing *to* key ID for the keyset that contains the glwe secret key share: {}",
+                e
             )
-            })?
-            .into();
-        let to_key_id = keyset_added_info
-            .to_keyset_id_decompression_only
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "missing to key ID for the keyset that contains the glwe secret key share"
-                )
-            })?
-            .into();
+        })?;
 
         let private_compression_share = {
             let threshold_keys = crypto_storage
@@ -623,22 +623,21 @@ impl<
         GlweSecretKeyShare<Z128, 4>,
         CompressionPrivateKeyShares<Z128, 4>,
     )> {
-        let compression_req_id = keyset_added_info
-            .from_keyset_id_decompression_only
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                "missing from key ID for the keyset that contains the compression secret key share"
+        let compression_req_id = parse_optional_proto_request_id(
+            &keyset_added_info.from_keyset_id_decompression_only,
+            RequestIdParsingErr::General("invalid from key ID".to_string())
+        ).inspect_err(|e| {
+                tracing::error!("missing from key ID for the keyset that contains the compression secret key share: {e}")
+            })?;
+        let glwe_req_id = parse_optional_proto_request_id(
+            &keyset_added_info.to_keyset_id_decompression_only,
+            RequestIdParsingErr::General("invalid to key ID".to_string()),
+        )
+        .inspect_err(|e| {
+            tracing::error!(
+                "missing to key ID for the keyset that contains the glwe secret key share: {e}"
             )
-            })?
-            .into();
-        let glwe_req_id = keyset_added_info
-            .to_keyset_id_decompression_only
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "missing to key ID for the keyset that contains the glwe secret key share"
-                )
-            })?
-            .into();
+        })?;
 
         crypto_storage
             .refresh_threshold_fhe_keys(&glwe_req_id)
@@ -895,13 +894,15 @@ impl<
         let start = Instant::now();
         tracing::info!("Starting SNS compression key generation for request {req_id}");
 
-        let base_key_id: RequestId = match keyset_added_info
-            .base_keyset_id_for_sns_compression_key
-            .ok_or(anyhow::anyhow!(
-            "missing key ID that should be used as the base for the sns compression key generation"
-        )) {
-            Ok(k) => k.into(),
+        let base_key_id = match parse_optional_proto_request_id(
+            &keyset_added_info.base_keyset_id_for_sns_compression_key,
+            RequestIdParsingErr::General("invalid base keyset ID".to_string()),
+        ) {
+            Ok(k) => k,
             Err(e) => {
+                tracing::error!(
+                    "invalid key ID that should be used as the base for the sns compression key generation: {e}"
+                );
                 let mut guarded_meta_storage = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));
