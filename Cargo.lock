@@ -7356,7 +7356,7 @@ dependencies = [
 [[package]]
 name = "tfhe"
 version = "1.4.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git#3e25536021ef01bbc45877e51184830776255f5a"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=tm%2Fxof-keyset#57b2dca64e679bd660fbbe67da2aa4edc7baa9f7"
 dependencies = [
  "aligned-vec",
  "bincode 1.3.3",
@@ -7381,7 +7381,7 @@ dependencies = [
 [[package]]
 name = "tfhe-csprng"
 version = "0.7.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git#3e25536021ef01bbc45877e51184830776255f5a"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=tm%2Fxof-keyset#57b2dca64e679bd660fbbe67da2aa4edc7baa9f7"
 dependencies = [
  "aes",
  "getrandom 0.2.15",
@@ -7392,7 +7392,7 @@ dependencies = [
 [[package]]
 name = "tfhe-fft"
 version = "0.9.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git#3e25536021ef01bbc45877e51184830776255f5a"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=tm%2Fxof-keyset#57b2dca64e679bd660fbbe67da2aa4edc7baa9f7"
 dependencies = [
  "aligned-vec",
  "bytemuck",
@@ -7406,7 +7406,7 @@ dependencies = [
 [[package]]
 name = "tfhe-ntt"
 version = "0.6.1"
-source = "git+https://github.com/zama-ai/tfhe-rs.git#3e25536021ef01bbc45877e51184830776255f5a"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=tm%2Fxof-keyset#57b2dca64e679bd660fbbe67da2aa4edc7baa9f7"
 dependencies = [
  "aligned-vec",
  "bytemuck",
@@ -7416,7 +7416,7 @@ dependencies = [
 [[package]]
 name = "tfhe-versionable"
 version = "0.6.1"
-source = "git+https://github.com/zama-ai/tfhe-rs.git#3e25536021ef01bbc45877e51184830776255f5a"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=tm%2Fxof-keyset#57b2dca64e679bd660fbbe67da2aa4edc7baa9f7"
 dependencies = [
  "aligned-vec",
  "num-complex",
@@ -7427,7 +7427,7 @@ dependencies = [
 [[package]]
 name = "tfhe-versionable-derive"
 version = "0.6.1"
-source = "git+https://github.com/zama-ai/tfhe-rs.git#3e25536021ef01bbc45877e51184830776255f5a"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=tm%2Fxof-keyset#57b2dca64e679bd660fbbe67da2aa4edc7baa9f7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7437,7 +7437,7 @@ dependencies = [
 [[package]]
 name = "tfhe-zk-pok"
 version = "0.7.2"
-source = "git+https://github.com/zama-ai/tfhe-rs.git#3e25536021ef01bbc45877e51184830776255f5a"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?branch=tm%2Fxof-keyset#57b2dca64e679bd660fbbe67da2aa4edc7baa9f7"
 dependencies = [
  "ark-bls12-381",
  "ark-ec",
