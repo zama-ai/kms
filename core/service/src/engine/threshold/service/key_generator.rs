@@ -599,7 +599,7 @@ impl<
                         .into_iter()
                         .map(|x| x as u128)
                         .collect(),
-                    sns_params.polynomial_size,
+                    sns_params.polynomial_size(),
                 ),
                 sns_params,
             )),

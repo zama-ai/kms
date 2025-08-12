@@ -57,7 +57,7 @@ use tfhe::shortint::list_compression::{
 use tfhe::shortint::parameters::LweCiphertextCount;
 use tfhe::shortint::server_key::{
     CompressedModulusSwitchConfiguration, CompressedModulusSwitchNoiseReductionKey,
-    ModulusSwitchConfiguration, ModulusSwitchNoiseReductionKey, ShortintBootstrappingKey,
+    ModulusSwitchConfiguration, ModulusSwitchNoiseReductionKey,
 };
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe_csprng::generators::SoftwareRandomGenerator;
@@ -579,15 +579,8 @@ where
     // Conversion to fourier domain
     par_convert_standard_lwe_bootstrap_key_to_fourier(&blind_rotate_key, &mut fourier_bsk);
 
-    // TODO implement `modulus_switch_noise_reduction_key` keygen
-    let blind_rotate_key = ShortintBootstrappingKey::Classic {
-        bsk: fourier_bsk,
-        // NOTE: Not sure if it should be standard or CenteredMean
-        modulus_switch_noise_reduction_key: ModulusSwitchConfiguration::Standard,
-    };
-
     Ok(DecompressionKey {
-        blind_rotate_key,
+        blind_rotate_key: fourier_bsk,
         lwe_per_glwe: params.raw_compression_parameters.lwe_per_glwe,
     })
 }
@@ -2017,7 +2010,7 @@ pub mod tests {
         set_server_key,
         shortint::{
             client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
-            noise_squashing::NoiseSquashingKey,
+            noise_squashing::{NoiseSquashingKey, Shortint128BootstrappingKey},
             parameters::CoreCiphertextModulus,
             PBSParameters,
         },
@@ -2303,23 +2296,28 @@ pub mod tests {
     #[test]
     #[ignore]
     fn keygen_params_bk_sns_f8() {
-        keygen_params_bk_sns::<8>()
+        keygen_params_bk_sns::<8>(false)
     }
 
     #[test]
     fn keygen_params_bk_sns_f4() {
-        keygen_params_bk_sns::<4>()
+        keygen_params_bk_sns::<4>(false)
+    }
+
+    #[test]
+    fn keygen_compressed_params_bk_sns_f4() {
+        keygen_params_bk_sns::<4>(true)
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[test]
     #[ignore]
     fn keygen_params_bk_sns_f3() {
-        keygen_params_bk_sns::<3>()
+        keygen_params_bk_sns::<3>(false)
     }
 
     ///Tests related to [`PARAMS_TEST_BK_SNS`]
-    fn keygen_params_bk_sns<const EXTENSION_DEGREE: usize>()
+    fn keygen_params_bk_sns<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -2329,7 +2327,13 @@ pub mod tests {
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false);
+        run_dkg_and_save(
+            params,
+            num_parties,
+            threshold,
+            temp_dir.path(),
+            run_compressed,
+        );
 
         run_switch_and_squash(
             temp_dir.path(),
@@ -3252,7 +3256,7 @@ pub mod tests {
 
         let sns_raw_private_key = GlweSecretKey::from_container(
             big_sk_glwe.clone().unwrap().into_container(),
-            params.sns_params.polynomial_size,
+            params.sns_params.polynomial_size(),
         );
 
         let pk: FhePubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
@@ -3323,11 +3327,31 @@ pub mod tests {
         drop(bsk_out);
 
         let ck_bis = {
-            let (_, mod_switch, pt_modulus, pt_carry, ct_modulus) =
+            let (bootstrapping_key, pt_modulus, pt_carry, mod_switch) =
                 ck.clone().into_raw_parts().into_raw_parts();
+            let modulus_switch_noise_reduction_key = match bootstrapping_key {
+                Shortint128BootstrappingKey::Classic {
+                    bsk: _,
+                    modulus_switch_noise_reduction_key,
+                } => modulus_switch_noise_reduction_key,
+                Shortint128BootstrappingKey::MultiBit {
+                    bsk: _,
+                    thread_count: _,
+                    deterministic_execution: _,
+                } => todo!("Unimplemented multi-bit bootstrapping key for 128 bits"),
+            };
+
+            let bootstrapping_key = Shortint128BootstrappingKey::Classic {
+                bsk: fbsk_out,
+                modulus_switch_noise_reduction_key,
+            };
+
             tfhe::integer::noise_squashing::NoiseSquashingKey::from_raw_parts(
                 NoiseSquashingKey::from_raw_parts(
-                    fbsk_out, mod_switch, pt_modulus, pt_carry, ct_modulus,
+                    bootstrapping_key,
+                    pt_modulus,
+                    pt_carry,
+                    mod_switch,
                 ),
             )
         };

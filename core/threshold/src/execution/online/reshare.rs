@@ -879,12 +879,20 @@ mod tests {
             raw_sns_private_key.into_container()[..sns_private_key_len].to_vec(),
             sns_poly_size,
         );
-        let mut new_sns_params = sns_params;
+        let mut new_sns_params = match sns_params {
+            tfhe::shortint::parameters::NoiseSquashingParameters::Classic(params) => params,
+            tfhe::shortint::parameters::NoiseSquashingParameters::MultiBit(_) => {
+                todo!("Unsupported")
+            }
+        };
         new_sns_params.polynomial_size = sns_poly_size;
         new_sns_params.glwe_dimension = GlweDimension(sns_private_key_len);
         let new_sns_private_key =
             tfhe::integer::noise_squashing::NoiseSquashingPrivateKey::from_raw_parts(
-                NoiseSquashingPrivateKey::from_raw_parts(new_raw_sns_private_key, new_sns_params),
+                NoiseSquashingPrivateKey::from_raw_parts(
+                    new_raw_sns_private_key,
+                    tfhe::shortint::parameters::NoiseSquashingParameters::Classic(new_sns_params),
+                ),
             );
 
         let (glwe_raw, lwe_raw, params, _) = match keyset

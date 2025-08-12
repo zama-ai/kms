@@ -204,8 +204,8 @@ mod tests {
                 .clone();
 
             let wrapped_ct_big = SnsRadixOrBoolCiphertext::Radix(ct_big);
-            let msg_bits = sns_param.message_modulus.0.ilog2();
-            let carry_bits = sns_param.carry_modulus.0.ilog2();
+            let msg_bits = sns_param.message_modulus().0.ilog2();
+            let carry_bits = sns_param.carry_modulus().0.ilog2();
             assert_eq!(
                 wrapped_ct_big.packing_factor() as u32,
                 (msg_bits + carry_bits) / msg_bits
