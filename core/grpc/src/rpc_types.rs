@@ -2,7 +2,6 @@ use crate::kms::v1::{
     Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
 use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
-use crate::utils::tonic_result::BoxedStatus;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
@@ -93,9 +92,11 @@ alloy_sol_types::sol! {
     }
 }
 
+// This function needs to use the non-wasm feature because tonic is not available in wasm builds.
+#[cfg(feature = "non-wasm")]
 pub fn protobuf_to_alloy_domain_option(
     domain_ref: Option<&Eip712DomainMsg>,
-) -> Result<Eip712Domain, BoxedStatus> {
+) -> Result<Eip712Domain, crate::utils::tonic_result::BoxedStatus> {
     let inner = domain_ref.ok_or(tonic::Status::invalid_argument("missing domain"))?;
     let out = protobuf_to_alloy_domain(inner).map_err(|e| {
         tonic::Status::invalid_argument(format!(
