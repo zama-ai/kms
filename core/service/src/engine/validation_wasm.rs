@@ -69,7 +69,8 @@ pub(crate) fn check_ext_user_decryption_signature(
             )
             .map_err(|e| anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"))?,
         };
-    let hash = crate::compute_user_decrypt_message_hash(payload, eip712_domain, &unified_pk)?;
+    let hash =
+        crate::compute_user_decrypt_message_hash(payload, eip712_domain, &unified_pk, vec![])?;
 
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("recovered address: {}", addr);
@@ -523,6 +524,7 @@ mod tests {
             &payload,
             &domain,
             &eph_client_pk.to_unified(),
+            vec![],
         )
         .unwrap();
 
@@ -548,6 +550,7 @@ mod tests {
                 &payload,
                 &domain,
                 &eph_client_pk.to_unified(),
+                vec![],
             )
             .unwrap();
             assert!(check_ext_user_decryption_signature(
@@ -665,6 +668,7 @@ mod tests {
             &pivot_resp,
             &dummy_domain,
             &eph_client_pk.to_unified(),
+            vec![],
         )
         .unwrap();
 
@@ -896,12 +900,14 @@ mod tests {
                 &payload0,
                 &dummy_domain,
                 &eph_client_pk.to_unified(),
+                vec![],
             )
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
                 external_signature,
                 payload: Some(payload0),
+                extra_data: vec![],
             }
         };
 
@@ -923,12 +929,14 @@ mod tests {
                 &payload,
                 &dummy_domain,
                 &eph_client_pk.to_unified(),
+                vec![],
             )
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
                 external_signature,
                 payload: Some(payload),
+                extra_data: vec![],
             }
         };
 
@@ -950,12 +958,14 @@ mod tests {
                 &payload,
                 &dummy_domain,
                 &eph_client_pk.to_unified(),
+                vec![],
             )
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
                 external_signature,
                 payload: Some(payload),
+                extra_data: vec![],
             }
         };
 
@@ -977,12 +987,14 @@ mod tests {
                 &payload,
                 &dummy_domain,
                 &eph_client_pk.to_unified(),
+                vec![],
             )
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
                 external_signature,
                 payload: Some(payload),
+                extra_data: vec![],
             }
         };
 
@@ -1119,12 +1131,14 @@ mod tests {
                     &payload,
                     &dummy_domain,
                     &eph_client_pk.to_unified(),
+                    vec![],
                 )
                 .unwrap();
                 UserDecryptionResponse {
                     signature: vec![],
                     external_signature,
                     payload: Some(payload),
+                    extra_data: vec![],
                 }
             };
             let agg_resp = vec![resp1.clone(), resp2.clone(), bad_resp2];
@@ -1260,12 +1274,14 @@ mod tests {
                 &payload0,
                 &dummy_domain,
                 &eph_client_pk.to_unified(),
+                vec![],
             )
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
                 external_signature,
                 payload: Some(payload0),
+                extra_data: vec![],
             }
         };
 
@@ -1287,12 +1303,14 @@ mod tests {
                 &payload,
                 &dummy_domain,
                 &eph_client_pk.to_unified(),
+                vec![],
             )
             .unwrap();
             UserDecryptionResponse {
                 signature: vec![],
                 external_signature,
                 payload: Some(payload),
+                extra_data: vec![],
             }
         };
 
@@ -1360,6 +1378,7 @@ mod tests {
                 signature: vec![],
                 external_signature: vec![],
                 payload: Some(payload),
+                extra_data: vec![],
             }
         };
 
@@ -1445,6 +1464,7 @@ mod tests {
                 signature: vec![],
                 external_signature: vec![],
                 payload: Some(payload),
+                extra_data: vec![],
             }
         };
 

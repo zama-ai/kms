@@ -901,6 +901,7 @@ fn check_ext_pt_signature(
     external_handles: Vec<Vec<u8>>,
     domain: Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<()> {
     // convert received data into proper format for EIP-712 verification
     if external_sig.len() != 65 {
@@ -918,7 +919,7 @@ fn check_ext_pt_signature(
     tracing::debug!("PTs: {:?}", plaintexts);
     tracing::debug!("ext. handles: {:?}", external_handles);
 
-    let hash = compute_pt_message_hash(external_handles, plaintexts, domain);
+    let hash = compute_pt_message_hash(external_handles, plaintexts, domain, extra_data);
 
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("recovered address: {}", addr);
@@ -942,11 +943,12 @@ fn check_external_decryption_signature(
     for response in responses {
         let payload = response.payload.as_ref().unwrap();
         check_ext_pt_signature(
-            payload.external_signature(),
+            response.external_signature(),
             &payload.plaintexts,
             external_handles.to_owned(),
             domain.clone(),
             kms_addrs,
+            vec![],
         )?;
 
         for (idx, pt) in payload.plaintexts.iter().enumerate() {

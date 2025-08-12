@@ -174,7 +174,7 @@ impl<
         dec_mode: DecryptionMode,
         domain: &alloy_sol_types::Eip712Domain,
         metric_tags: Vec<(&'static str, String)>,
-    ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>)> {
+    ) -> anyhow::Result<(UserDecryptionResponsePayload, Vec<u8>, Vec<u8>)> {
         let keys = fhe_keys;
 
         let mut all_signcrypted_cts = vec![];
@@ -352,9 +352,16 @@ impl<
             degree: session_prep.threshold as u32,
         };
 
-        let external_signature =
-            compute_external_user_decrypt_signature(&sig_key, &payload, domain, client_enc_key)?;
-        Ok((payload, external_signature))
+        // NOTE: extra_data is not used in the current implementation
+        let extra_data = vec![];
+        let external_signature = compute_external_user_decrypt_signature(
+            &sig_key,
+            &payload,
+            domain,
+            client_enc_key,
+            extra_data.clone(),
+        )?;
+        Ok((payload, external_signature, extra_data))
     }
 
     #[cfg(test)]
@@ -543,9 +550,9 @@ impl<
                 };
                 let mut guarded_meta_store = meta_store.write().await;
                 match tmp {
-                    Ok((payload, sig)) => {
+                    Ok((payload, sig, extra_data)) => {
                         // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store.update(&req_id, Ok((payload, sig)));
+                        let _ = guarded_meta_store.update(&req_id, Ok((payload, sig, extra_data)));
                     }
                     Result::Err(e) => {
                         // We cannot do much if updating the storage fails at this point...
@@ -571,7 +578,7 @@ impl<
             let guarded_meta_store = self.user_decrypt_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
-        let (payload, external_signature) =
+        let (payload, external_signature, extra_data) =
             handle_res_mapping(status, &request_id, "UserDecryption").await?;
 
         let sig_payload_vec = tonic_handle_potential_err(
@@ -587,6 +594,7 @@ impl<
             signature: sig.sig.to_vec(),
             external_signature,
             payload: Some(payload),
+            extra_data,
         }))
     }
 }
@@ -737,6 +745,7 @@ mod tests {
             domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
+            extra_data: vec![],
         });
 
         // NOTE: should probably be NotFound
@@ -762,6 +771,7 @@ mod tests {
             domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
+            extra_data: vec![],
         });
         assert_eq!(
             user_decryptor
@@ -800,6 +810,7 @@ mod tests {
             domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
+            extra_data: vec![],
         });
         assert_eq!(
             user_decryptor
@@ -838,6 +849,7 @@ mod tests {
             domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
+            extra_data: vec![],
         });
         user_decryptor.user_decrypt(request).await.unwrap();
     }

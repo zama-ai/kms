@@ -596,12 +596,20 @@ impl<
                 .map(|idx| decs.get(idx).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
                 .collect();
 
+            // NOTE: extra data is not used at the moment
+            let extra_data = vec![];
+
             // Compute expensive signature OUTSIDE the lock
-            let external_sig =
-                compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, eip712_domain);
+            let external_sig = compute_external_pt_signature(
+                &sigkey,
+                ext_handles_bytes,
+                &pts,
+                extra_data.clone(),
+                eip712_domain,
+            );
 
             // Single success update with minimal lock hold time
-            let success_result = Ok((req_id, pts.clone(), external_sig));
+            let success_result = Ok((req_id, pts.clone(), external_sig, extra_data));
             let (lock_acquired_time, total_lock_time) = {
                 let lock_start = std::time::Instant::now();
                 let mut guarded_meta_store = meta_store.write().await;
@@ -632,7 +640,7 @@ impl<
             let guarded_meta_store = self.pub_dec_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
         };
-        let (retrieved_req_id, plaintexts, external_signature) =
+        let (retrieved_req_id, plaintexts, external_signature, extra_data) =
             handle_res_mapping(status, &request_id, "Decryption").await?;
 
         if request_id != retrieved_req_id {
@@ -645,9 +653,6 @@ impl<
         let sig_payload = PublicDecryptionResponsePayload {
             plaintexts,
             verification_key: server_verf_key,
-            #[allow(deprecated)] // we have to allow to fill the struct
-            digest: vec![],
-            external_signature: Some(external_signature),
             request_id: Some(retrieved_req_id.into()),
         };
 
@@ -664,6 +669,8 @@ impl<
         Ok(Response::new(PublicDecryptionResponse {
             signature: sig.sig.to_vec(),
             payload: Some(sig_payload),
+            external_signature: Some(external_signature),
+            extra_data,
         }))
     }
 }
@@ -844,6 +851,7 @@ mod tests {
             }],
             key_id: Some(bad_key_id.into()),
             domain: Some(domain),
+            extra_data: vec![],
         });
         // NOTE: should probably be NotFound
         assert_eq!(
@@ -866,6 +874,7 @@ mod tests {
             }],
             key_id: Some(key_id.into()),
             domain: None,
+            extra_data: vec![],
         });
         assert_eq!(
             public_decryptor
@@ -897,6 +906,7 @@ mod tests {
             }],
             key_id: Some(key_id.into()),
             domain: Some(domain),
+            extra_data: vec![],
         });
         assert_eq!(
             public_decryptor
@@ -926,6 +936,7 @@ mod tests {
             }],
             key_id: Some(key_id.into()),
             domain: Some(domain),
+            extra_data: vec![],
         });
         public_decryptor.public_decrypt(request).await.unwrap();
     }

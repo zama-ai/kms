@@ -133,11 +133,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                         tracing::info!("Preprocessing of request {} exiting normally.", &request_id);
                     },
                     () = token.cancelled() => {
+                        // NOTE: Any correlated randomness that was already generated will still exist in the Redis db (if we use Redis).
                         tracing::error!("Preprocessing of request {} exiting before completion because of a cancellation event.", &request_id);
-                        // Delete any stored data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let mut guarded_bucket_store = bucket_store_cancellation.write().await;
-                        let _ = guarded_bucket_store.delete(&request_id);
-                        tracing::info!("Trying to clean up any already written material.")
+                        let _ = guarded_bucket_store.update(&request_id, Result::Err("Preprocessing was cancelled".to_string()));
                     },
                 }
             }

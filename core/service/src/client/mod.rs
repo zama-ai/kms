@@ -756,6 +756,7 @@ impl Client {
             key_id: Some((*key_id).into()),
             domain: Some(domain_msg),
             request_id: Some((*request_id).into()),
+            extra_data: vec![],
         };
         Ok(req)
     }
@@ -813,6 +814,7 @@ impl Client {
                 typed_ciphertexts,
                 key_id: Some((*key_id).into()),
                 domain: Some(domain_msg),
+                extra_data: vec![],
             },
             UnifiedPublicEncKey::MlKem512(enc_pk),
             UnifiedPrivateEncKey::MlKem512(enc_sk),
@@ -861,6 +863,7 @@ impl Client {
                 typed_ciphertexts,
                 key_id: Some((*key_id).into()),
                 domain: Some(domain_msg),
+                extra_data: vec![],
             },
             UnifiedPublicEncKey::MlKem1024(enc_pk),
             UnifiedPrivateEncKey::MlKem1024(enc_sk),
