@@ -17,16 +17,17 @@ use crate::{
     },
 };
 
-pub struct DroppingOnlineDistributedKeyGen128;
+pub struct DroppingOnlineDistributedKeyGen128<const EXTENSION_DEGREE: usize>;
 
-pub struct FailingOnlineDistributedKeyGen128;
+pub struct FailingOnlineDistributedKeyGen128<const EXTENSION_DEGREE: usize>;
 
 #[tonic::async_trait]
-impl OnlineDistributedKeyGen<Z128> for DroppingOnlineDistributedKeyGen128 {
+impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGREE>
+    for DroppingOnlineDistributedKeyGen128<EXTENSION_DEGREE>
+{
     async fn keygen<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
-        const EXTENSION_DEGREE: usize,
     >(
         _base_session: &mut S,
         _preprocessing: &mut P,
@@ -50,7 +51,6 @@ impl OnlineDistributedKeyGen<Z128> for DroppingOnlineDistributedKeyGen128 {
     async fn compressed_keygen<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
-        const EXTENSION_DEGREE: usize,
     >(
         _session: &mut S,
         _preprocessing: &mut P,
@@ -67,11 +67,12 @@ impl OnlineDistributedKeyGen<Z128> for DroppingOnlineDistributedKeyGen128 {
 }
 
 #[tonic::async_trait]
-impl OnlineDistributedKeyGen<Z128> for FailingOnlineDistributedKeyGen128 {
+impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGREE>
+    for FailingOnlineDistributedKeyGen128<EXTENSION_DEGREE>
+{
     async fn keygen<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
-        const EXTENSION_DEGREE: usize,
     >(
         _base_session: &mut S,
         _preprocessing: &mut P,
@@ -89,7 +90,6 @@ impl OnlineDistributedKeyGen<Z128> for FailingOnlineDistributedKeyGen128 {
     async fn compressed_keygen<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
-        const EXTENSION_DEGREE: usize,
     >(
         _session: &mut S,
         _preprocessing: &mut P,

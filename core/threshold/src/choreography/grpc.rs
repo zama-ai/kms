@@ -935,7 +935,7 @@ where
                 }
 
                 let my_future = || async move {
-                    let keys = SecureOnlineDistributedKeyGen::keygen::<_, _, EXTENSION_DEGREE>(
+                    let keys = SecureOnlineDistributedKeyGen::keygen(
                         &mut base_session,
                         preproc.as_mut(),
                         dkg_params,
@@ -953,17 +953,19 @@ where
             }
             (DKGParams::WithoutSnS(_), None) => {
                 let sid_u128: u128 = session_id.into();
-                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
+                let mut preproc = DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
+                    sid_u128 as u64,
+                    &base_session,
+                );
                 let my_future = || async move {
-                    let keys =
-                        SecureOnlineDistributedKeyGen::<Z64>::keygen::<_, _, EXTENSION_DEGREE>(
-                            &mut base_session,
-                            &mut preproc,
-                            dkg_params,
-                            None,
-                        )
-                        .await
-                        .unwrap();
+                    let keys = SecureOnlineDistributedKeyGen::keygen(
+                        &mut base_session,
+                        &mut preproc,
+                        dkg_params,
+                        None,
+                    )
+                    .await
+                    .unwrap();
                     key_store.insert(session_id, Arc::new(keys));
                     fill_network_memory_info_single_session(base_session);
                 };
@@ -988,12 +990,11 @@ where
                 }
 
                 let my_future = || async move {
-                    let keys = SecureOnlineDistributedKeyGen::<Z128>::keygen::<
-                        _,
-                        _,
-                        EXTENSION_DEGREE,
-                    >(
-                        &mut base_session, preproc.as_mut(), dkg_params, None
+                    let keys = SecureOnlineDistributedKeyGen::keygen(
+                        &mut base_session,
+                        preproc.as_mut(),
+                        dkg_params,
+                        None,
                     )
                     .await
                     .unwrap();
@@ -1007,14 +1008,16 @@ where
             }
             (DKGParams::WithSnS(_), None) => {
                 let sid_u128: u128 = session_id.into();
-                let mut preproc = DummyPreprocessing::new(sid_u128 as u64, &base_session);
+                let mut preproc = DummyPreprocessing::<ResiduePoly<Z128, EXTENSION_DEGREE>>::new(
+                    sid_u128 as u64,
+                    &base_session,
+                );
                 let my_future = || async move {
-                    let keys = SecureOnlineDistributedKeyGen::<Z128>::keygen::<
-                        _,
-                        _,
-                        EXTENSION_DEGREE,
-                    >(
-                        &mut base_session, &mut preproc, dkg_params, None
+                    let keys = SecureOnlineDistributedKeyGen::keygen(
+                        &mut base_session,
+                        &mut preproc,
+                        dkg_params,
+                        None,
                     )
                     .await
                     .unwrap();

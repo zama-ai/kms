@@ -363,11 +363,13 @@ impl RawCompressedPubKeySet {
             seed,
         }
     }
+}
 
+impl CompressedFhePubKeySet {
     // NOTE: This is meant to be replaced by CompressedXofKeySet::decompress once introduced in TFHE-RS
     // https://github.com/zama-ai/tfhe-rs/pull/2409
     #[allow(dead_code)]
-    pub fn decompress(self) -> RawPubKeySet {
+    pub fn decompress(self) -> FhePubKeySet {
         todo!()
     }
 }

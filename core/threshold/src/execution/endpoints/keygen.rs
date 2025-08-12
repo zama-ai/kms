@@ -1082,7 +1082,7 @@ where
 /// It is used for testing since the return types are generic private types.
 /// For public use, the [OnlineDistributedKeyGen128] trait should be used instead.
 #[tonic::async_trait]
-pub trait OnlineDistributedKeyGen<Z>: Send + Sync {
+pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync {
     /// Runs the distributed key generation protocol.
     ///
     /// We have a private trait bound here to ensure that the
@@ -1091,7 +1091,6 @@ pub trait OnlineDistributedKeyGen<Z>: Send + Sync {
     async fn keygen<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
-        const EXTENSION_DEGREE: usize,
     >(
         session: &mut S,
         preprocessing: &mut P,
@@ -1115,7 +1114,6 @@ pub trait OnlineDistributedKeyGen<Z>: Send + Sync {
     async fn compressed_keygen<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
-        const EXTENSION_DEGREE: usize,
     >(
         session: &mut S,
         preprocessing: &mut P,
@@ -1128,12 +1126,17 @@ pub trait OnlineDistributedKeyGen<Z>: Send + Sync {
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>;
 }
 
-pub type SecureOnlineDistributedKeyGen128 = SecureOnlineDistributedKeyGen<Z128>;
+pub type SecureOnlineDistributedKeyGen128<const EXTENSION_DEGREE: usize> =
+    SecureOnlineDistributedKeyGen<Z128, EXTENSION_DEGREE>;
 
-pub struct SecureOnlineDistributedKeyGen<Z: BaseRing>(std::marker::PhantomData<Z>);
+pub struct SecureOnlineDistributedKeyGen<Z: BaseRing, const EXTENSION_DEGREE: usize>(
+    std::marker::PhantomData<Z>,
+);
 
 #[tonic::async_trait]
-impl<Z: BaseRing> OnlineDistributedKeyGen<Z> for SecureOnlineDistributedKeyGen<Z> {
+impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTENSION_DEGREE>
+    for SecureOnlineDistributedKeyGen<Z, EXTENSION_DEGREE>
+{
     /// Runs the distributed key generation protocol.
     ///
     /// Inputs:
@@ -1152,7 +1155,6 @@ impl<Z: BaseRing> OnlineDistributedKeyGen<Z> for SecureOnlineDistributedKeyGen<Z
     async fn keygen<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
-        const EXTENSION_DEGREE: usize,
     >(
         session: &mut S,
         preprocessing: &mut P,
@@ -1193,7 +1195,6 @@ impl<Z: BaseRing> OnlineDistributedKeyGen<Z> for SecureOnlineDistributedKeyGen<Z
     async fn compressed_keygen<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + Send + ?Sized,
-        const EXTENSION_DEGREE: usize,
     >(
         session: &mut S,
         preprocessing: &mut P,
@@ -1958,6 +1959,7 @@ where
 
 #[cfg(test)]
 pub mod tests {
+    use super::OnlineDistributedKeyGen;
     use crate::{
         algebra::{
             base_ring::{Z128, Z64},
@@ -1969,6 +1971,7 @@ pub mod tests {
             runtime::session::{LargeSession, ParameterHandles},
             tfhe_internals::{
                 parameters::{DKGParamsBasics, DKGParamsRegular, DKGParamsSnS},
+                public_keysets::FhePubKeySet,
                 utils::expanded_encrypt,
             },
         },
@@ -1976,10 +1979,7 @@ pub mod tests {
         tests::helper::tests_and_benches::execute_protocol_large,
     };
     use crate::{
-        execution::{
-            endpoints::keygen::RawPubKeySet,
-            tfhe_internals::utils::tests::reconstruct_lwe_secret_key_from_file,
-        },
+        execution::tfhe_internals::utils::tests::reconstruct_lwe_secret_key_from_file,
         networking::NetworkMode,
     };
     use crate::{
@@ -3099,12 +3099,7 @@ pub mod tests {
             let my_role = session.my_role();
             let (pk, sk) = if run_compressed {
                 let (compressed_pk, sk) =
-                    super::distributed_keygen_compressed_from_optional_compression_sk::<
-                        Z128,
-                        _,
-                        _,
-                        EXTENSION_DEGREE,
-                    >(
+                    super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::compressed_keygen(
                         &mut session,
                         &mut dkg_preproc,
                         params,
@@ -3114,14 +3109,14 @@ pub mod tests {
                     .unwrap();
                 (compressed_pk.decompress(), sk)
             } else {
-                super::distributed_keygen_from_optional_compression_sk::<
-                Z128,
-                _,
-                _,
-                EXTENSION_DEGREE,
-            >(&mut session, &mut dkg_preproc, params, compression_sk_shares.as_ref())
-            .await
-            .unwrap()
+                super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
+                    &mut session,
+                    &mut dkg_preproc,
+                    params,
+                    compression_sk_shares.as_ref(),
+                )
+                .await
+                .unwrap()
             };
 
             // make sure we used up all the preprocessing materials
@@ -3134,15 +3129,7 @@ pub mod tests {
                 assert_eq!(0, dkg_preproc.noise_len(bound));
             }
 
-            (
-                my_role,
-                pk,
-                sk.finalize_keyset(
-                    params
-                        .get_params_basics_handle()
-                        .to_classic_pbs_parameters(),
-                ),
-            )
+            (my_role, pk, sk)
         };
 
         // Sync network because we also init the PRSS in the task
@@ -3187,37 +3174,28 @@ pub mod tests {
             let my_role = session.my_role();
             let mut dkg_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
 
-            let (pk, sk) = if run_compressed {
-                let (compressed_pk, sk) =
-                    super::distributed_keygen_compressed_from_optional_compression_sk::<
-                        Z128,
-                        _,
-                        _,
+            let (pk, sk) =
+                if run_compressed {
+                    let (compressed_pk, sk) = super::SecureOnlineDistributedKeyGen128::<
                         EXTENSION_DEGREE,
-                    >(&mut session, &mut dkg_preproc, params, None)
+                    >::compressed_keygen(
+                        &mut session, &mut dkg_preproc, params, None
+                    )
                     .await
                     .unwrap();
-                (compressed_pk.decompress(), sk)
-            } else {
-                super::distributed_keygen_from_optional_compression_sk::<
-                Z128,
-                _,
-                _,
-                EXTENSION_DEGREE,
-            >(&mut session, &mut dkg_preproc, params, None)
-            .await
-            .unwrap()
-            };
+                    (compressed_pk.decompress(), sk)
+                } else {
+                    super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
+                        &mut session,
+                        &mut dkg_preproc,
+                        params,
+                        None,
+                    )
+                    .await
+                    .unwrap()
+                };
 
-            (
-                my_role,
-                pk,
-                sk.finalize_keyset(
-                    params
-                        .get_params_basics_handle()
-                        .to_classic_pbs_parameters(),
-                ),
-            )
+            (my_role, pk, sk)
         };
 
         //Async because the preprocessing is Dummy
@@ -3277,15 +3255,13 @@ pub mod tests {
             params.sns_params.polynomial_size,
         );
 
-        let pk: RawPubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
-        let pub_key_set = pk.to_pubkeyset(DKGParams::WithSnS(params));
-        let (integer_server_key, _, _, _, ck, _, _) =
-            pub_key_set.server_key.clone().into_raw_parts();
+        let pk: FhePubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
+        let (integer_server_key, _, _, _, ck, _, _) = pk.server_key.clone().into_raw_parts();
         let ck = ck.unwrap();
 
-        set_server_key(pub_key_set.server_key);
+        set_server_key(pk.server_key);
 
-        let ddec_pk = pk.compute_tfhe_hl_api_compact_public_key(DKGParams::WithSnS(params));
+        let ddec_pk = pk.public_key;
         let ddec_sk = to_hl_client_key(
             &DKGParams::WithSnS(params),
             sk_lwe.clone(),
@@ -3392,10 +3368,9 @@ pub mod tests {
             threshold,
             prefix_path,
         );
-        let pub_key_set = pk.to_pubkeyset(params);
 
-        set_server_key(pub_key_set.server_key);
-        let shortint_pk = pk.compute_tfhe_shortint_server_key(params);
+        set_server_key(pk.server_key.clone());
+        let shortint_pk = pk.server_key.clone().into_raw_parts().0.into_raw_parts();
         for _ in 0..100 {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
         }
@@ -3409,12 +3384,7 @@ pub mod tests {
                 None,
                 tfhe::Tag::default(),
             );
-            let pub_key_set = pk.to_pubkeyset(params);
-            try_tfhe_pk_compactlist_computation(
-                &tfhe_sk,
-                &pub_key_set.server_key,
-                &pub_key_set.public_key,
-            );
+            try_tfhe_pk_compactlist_computation(&tfhe_sk, &pk.server_key, &pk.public_key);
         }
     }
 
@@ -3436,11 +3406,9 @@ pub mod tests {
             prefix_path,
         );
 
-        let pub_key_set = pk.to_pubkeyset(params);
+        set_server_key(pk.server_key.clone());
 
-        set_server_key(pub_key_set.server_key);
-
-        let shortint_pk = pk.compute_tfhe_shortint_server_key(params);
+        let shortint_pk = pk.server_key.clone().into_raw_parts().0.into_raw_parts();
         for _ in 0..100 {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
         }
@@ -3469,7 +3437,7 @@ pub mod tests {
         num_parties: usize,
         threshold: usize,
         prefix_path: &Path,
-    ) -> (tfhe::shortint::ClientKey, RawPubKeySet)
+    ) -> (tfhe::shortint::ClientKey, FhePubKeySet)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
@@ -3490,7 +3458,7 @@ pub mod tests {
             params,
             prefix_path,
         );
-        let pk: RawPubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
+        let pk: FhePubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
 
         let sck = StandardAtomicPatternClientKey::from_raw_parts(
             glwe_secret_key,
