@@ -2026,9 +2026,6 @@ pub mod tests {
     use tfhe_csprng::seeders::Seeder;
 
     #[cfg(feature = "slow_tests")]
-    use super::distributed_keygen_from_optional_compression_sk;
-
-    #[cfg(feature = "slow_tests")]
     use tokio::time::Duration;
 
     #[cfg(feature = "slow_tests")]
@@ -3041,7 +3038,7 @@ pub mod tests {
         let mut task = |mut session: SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
                         _bot: Option<String>| async move {
             use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
-            let compression_sk_skares = if keyset_config.is_standard_using_existing_compression_sk()
+            let compression_sk_shares = if keyset_config.is_standard_using_existing_compression_sk()
             {
                 // we use dummy preprocessing to generate the existing compression sk
                 // because it won't consume our preprocessing materials
@@ -3103,11 +3100,16 @@ pub mod tests {
             let (pk, sk) = if run_compressed {
                 let (compressed_pk, sk) =
                     super::distributed_keygen_compressed_from_optional_compression_sk::<
-                        Z64,
+                        Z128,
                         _,
                         _,
                         EXTENSION_DEGREE,
-                    >(&mut session, &mut large_preproc, params, None)
+                    >(
+                        &mut session,
+                        &mut dkg_preproc,
+                        params,
+                        compression_sk_shares.as_ref(),
+                    )
                     .await
                     .unwrap();
                 (compressed_pk.decompress(), sk)
@@ -3117,7 +3119,7 @@ pub mod tests {
                 _,
                 _,
                 EXTENSION_DEGREE,
-            >(&mut session, &mut large_preproc, params, None)
+            >(&mut session, &mut dkg_preproc, params, compression_sk_shares.as_ref())
             .await
             .unwrap()
             };
@@ -3183,16 +3185,16 @@ pub mod tests {
     {
         let mut task = |mut session: LargeSession| async move {
             let my_role = session.my_role();
-            let mut large_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
+            let mut dkg_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
 
             let (pk, sk) = if run_compressed {
                 let (compressed_pk, sk) =
                     super::distributed_keygen_compressed_from_optional_compression_sk::<
-                        Z64,
+                        Z128,
                         _,
                         _,
                         EXTENSION_DEGREE,
-                    >(&mut session, &mut large_preproc, params, None)
+                    >(&mut session, &mut dkg_preproc, params, None)
                     .await
                     .unwrap();
                 (compressed_pk.decompress(), sk)
@@ -3202,7 +3204,7 @@ pub mod tests {
                 _,
                 _,
                 EXTENSION_DEGREE,
-            >(&mut session, &mut large_preproc, params, None)
+            >(&mut session, &mut dkg_preproc, params, None)
             .await
             .unwrap()
             };
