@@ -28,7 +28,7 @@ impl StorageReader for Vault {
             Some(k) => {
                 let mut envelope =
                     EnvelopeLoad::AppKeyBlob(self.storage.read_data(data_id, data_type).await?);
-                k.decrypt(data_id, &mut envelope).await
+                k.decrypt(&mut envelope).await
             }
             None => self.storage.read_data(data_id, data_type).await,
         }
@@ -57,29 +57,13 @@ impl Storage for Vault {
     ) -> anyhow::Result<()> {
         match self.keychain.as_mut() {
             Some(k) => {
-                let envelope = k.encrypt(data_id, data).await?;
+                let envelope = k.encrypt(data, data_type).await?;
                 match envelope {
                     EnvelopeStore::AppKeyBlob(blob) => {
                         self.storage.store_data(&blob, data_id, data_type).await?
                     }
                     EnvelopeStore::OperatorBackupOutput(ct) => {
                         self.storage.store_data(&ct, data_id, data_type).await?;
-                        // for (id, backup_output) in &backup_outputs {
-                        //     self.storage
-                        //         .store_data(
-                        //             backup_output,
-                        //             data_id,
-                        //             format!("{data_type}-backup-{id}").as_str(),
-                        //         )
-                        //         .await?;
-                        //     self.storage
-                        //         .store_bytes(
-                        //             backup_output.commitment.as_slice(),
-                        //             data_id,
-                        //             format!("{data_type}- commitment-{id}").as_str(),
-                        //         )
-                        //         .await?;
-                        // }
                     }
                 }
                 Ok(())

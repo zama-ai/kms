@@ -6,6 +6,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self};
+use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
@@ -315,6 +316,21 @@ impl fmt::Display for PrivDataType {
 impl Default for PrivDataType {
     fn default() -> Self {
         PrivDataType::FheKeyInfo // Default is private FHE key material
+    }
+}
+
+impl TryFrom<&str> for PrivDataType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        for priv_data_type in PrivDataType::iter() {
+            if value.to_ascii_lowercase().trim()
+                == priv_data_type.to_string().to_ascii_lowercase().trim()
+            {
+                return Ok(priv_data_type);
+            }
+        }
+        Err(anyhow::anyhow!("Unknown PrivDataType: {}", value))
     }
 }
 

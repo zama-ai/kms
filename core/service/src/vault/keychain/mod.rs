@@ -16,7 +16,7 @@ use aes_prng::AesRng;
 use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
 use itertools::Itertools;
-use kms_grpc::{rpc_types::PrivDataType, RequestId};
+use kms_grpc::rpc_types::PrivDataType;
 use rand::SeedableRng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{collections::BTreeMap, convert::Into};
@@ -39,7 +39,7 @@ pub enum AppKeyBlobVersioned {
 pub struct AppKeyBlob {
     pub root_key_id: String,
     pub data_key_blob: Vec<u8>,
-    pub ciphertext: Vec<u8>,
+    pub ciphertext: Vec<u8>, // Serialized [`BackupCiphertext`] since AWS requires serialized data
     pub iv: Vec<u8>,
     pub auth_tag: Vec<u8>,
 }
@@ -53,13 +53,12 @@ impl Named for AppKeyBlob {
 pub trait Keychain {
     async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
-        payload_id: &RequestId,
-        payload: &T,
+        data: &T,
+        data_type: &str,
     ) -> anyhow::Result<EnvelopeStore>;
 
     async fn decrypt<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
-        payload_id: &RequestId,
         envelope: &mut EnvelopeLoad,
     ) -> anyhow::Result<T>;
 }
