@@ -5,7 +5,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 use aes_prng::AesRng;
 use kms_grpc::{
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
-    rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal},
+    rpc_types::{optional_protobuf_to_alloy_domain, SignedPubDataHandleInternal},
     RequestId,
 };
 use observability::{
@@ -126,7 +126,7 @@ impl<
             .into();
         validate_request_id(&req_id)?;
 
-        let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref())?;
+        let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
 
         // NOTE: everything inside this function will cause an Aborted error code
         self.inner_crs_gen(

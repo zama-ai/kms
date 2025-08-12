@@ -4,7 +4,7 @@ use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal};
+use kms_grpc::rpc_types::{optional_protobuf_to_alloy_domain, SignedPubDataHandleInternal};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{ERR_CRS_GEN_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN};
@@ -73,7 +73,7 @@ pub async fn crs_gen_impl<
     let sk = Arc::clone(&service.base_kms.sig_key);
     let rng = service.base_kms.new_rng().await;
 
-    let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref())?;
+    let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
     let handle = service.tracker.spawn(
         async move {
             let _timer = _timer;

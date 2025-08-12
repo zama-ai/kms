@@ -4,7 +4,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 // === External Crates ===
 use kms_grpc::{
     kms::v1::{self, Empty, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
-    rpc_types::{protobuf_to_alloy_domain_option, PubDataType},
+    rpc_types::{optional_protobuf_to_alloy_domain, PubDataType},
     RequestId,
 };
 use observability::{
@@ -398,7 +398,7 @@ impl<
             )
         };
 
-        let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref())?;
+        let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
 
         let internal_keyset_config = tonic_handle_potential_err(
             InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info),

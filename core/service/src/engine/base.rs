@@ -186,7 +186,6 @@ pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
     let handle = compute_handle(element)?;
     let signature = crate::cryptography::signcryption::internal_sign(dsep, &handle, sk)?;
 
-    // if we get an EIP-712 domain, compute the external signature
     let external_signature = compute_external_pubdata_signature(sk, element, domain)?;
 
     Ok(SignedPubDataHandleInternal {
@@ -503,7 +502,7 @@ pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
             };
             message.eip712_signing_hash(eip712_domain)
         }
-        // TODO: at the moment we only support  integer:::DecompressionKey
+        // TODO(zama-ai/kms-internal#2714): at the moment we only support integer:::DecompressionKey
         // but this support will be dropped in favor for DecompressionUpgradeKey
         "integer::DecompressionKey" => {
             let message = FheDecompressionUpgradeKey {

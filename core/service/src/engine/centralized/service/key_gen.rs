@@ -1,7 +1,7 @@
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use kms_grpc::kms::v1::{Empty, KeyGenRequest, KeyGenResult};
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, PubDataType};
+use kms_grpc::rpc_types::{optional_protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{ERR_KEY_EXISTS, ERR_RATE_LIMIT_EXCEEDED, OP_KEYGEN};
@@ -84,7 +84,7 @@ pub async fn key_gen_impl<
     let crypto_storage = service.crypto_storage.clone();
     let sk = Arc::clone(&service.base_kms.sig_key);
 
-    let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref())?;
+    let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
     let handle = service.tracker.spawn(
         async move {
             let _timer = _timer;

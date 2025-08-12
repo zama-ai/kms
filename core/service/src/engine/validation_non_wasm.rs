@@ -9,7 +9,7 @@ use kms_grpc::{
         PublicDecryptionRequest, PublicDecryptionResponse, PublicDecryptionResponsePayload,
         TypedCiphertext, TypedPlaintext, UserDecryptionRequest,
     },
-    rpc_types::protobuf_to_alloy_domain_option,
+    rpc_types::optional_protobuf_to_alloy_domain,
 };
 use threshold_fhe::hashing::DomainSep;
 
@@ -209,7 +209,7 @@ pub fn validate_public_decrypt_req(
         )));
     }
 
-    let eip712_domain = protobuf_to_alloy_domain_option(req.domain.as_ref())?;
+    let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
     Ok((req.ciphertexts.clone(), key_id, request_id, eip712_domain))
 }

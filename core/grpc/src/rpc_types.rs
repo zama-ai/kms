@@ -94,7 +94,7 @@ alloy_sol_types::sol! {
 
 // This function needs to use the non-wasm feature because tonic is not available in wasm builds.
 #[cfg(feature = "non-wasm")]
-pub fn protobuf_to_alloy_domain_option(
+pub fn optional_protobuf_to_alloy_domain(
     domain_ref: Option<&Eip712DomainMsg>,
 ) -> Result<Eip712Domain, crate::utils::tonic_result::BoxedStatus> {
     let inner = domain_ref.ok_or(tonic::Status::invalid_argument("missing domain"))?;

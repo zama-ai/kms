@@ -497,13 +497,13 @@ mod tests {
         )
         .unwrap();
 
-        let domian = dummy_domain();
+        let domain = dummy_domain();
         let request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed
             alloy_primitives::Address::from_public_key(client_vk.pk()),
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
-            domian.verifying_contract.unwrap(),
+            domain.verifying_contract.unwrap(),
         );
 
         let payload = UserDecryptionResponsePayload {
@@ -521,7 +521,7 @@ mod tests {
         let external_sig = compute_external_user_decrypt_signature(
             &sk0,
             &payload,
-            &domian,
+            &domain,
             &eph_client_pk.to_unified(),
         )
         .unwrap();
@@ -532,7 +532,7 @@ mod tests {
                 &external_sig[0..64],
                 &payload,
                 &request,
-                &domian,
+                &domain,
                 &kms_addrs[&1],
             )
             .unwrap_err()
@@ -546,7 +546,7 @@ mod tests {
             let bad_external_sig = compute_external_user_decrypt_signature(
                 &sk_bad,
                 &payload,
-                &domian,
+                &domain,
                 &eph_client_pk.to_unified(),
             )
             .unwrap();
@@ -554,7 +554,7 @@ mod tests {
                 &bad_external_sig,
                 &payload,
                 &request,
-                &domian,
+                &domain,
                 &kms_addrs[&1],
             )
             .is_err());
@@ -586,7 +586,7 @@ mod tests {
                 &external_sig,
                 &bad_payload,
                 &request,
-                &domian,
+                &domain,
                 &kms_addrs[&1],
             )
             .unwrap_err()
@@ -600,7 +600,7 @@ mod tests {
                 &external_sig,
                 &payload,
                 &request,
-                &domian,
+                &domain,
                 &kms_addrs[&1],
             )
             .unwrap();
