@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tfhe::named::Named;
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
+use zeroize::Zeroize;
 
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::hybrid_ml_kem::{self};
@@ -22,12 +23,40 @@ struct InnerBackupPrivateKey {
     decapsulation_key: <ml_kem::kem::Kem<MlKemParams> as ml_kem::KemCore>::DecapsulationKey,
 }
 
+impl Drop for InnerBackupPrivateKey {
+    fn drop(&mut self) {
+        // Directly zeroize the underlying key bytes without creating copies
+        // This is more secure as it avoids temporary allocations of sensitive data
+        let key_bytes_ptr = self.decapsulation_key.as_bytes().as_ptr() as *mut u8;
+        let key_len = self.decapsulation_key.as_bytes().len();
+
+        // SAFETY: We're zeroizing the memory that belongs to this struct
+        // The pointer is valid and the length is correct from as_bytes()
+        unsafe {
+            std::ptr::write_bytes(key_bytes_ptr, 0, key_len);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum BackupPrivateKeyVersioned {
     V0(BackupPrivateKey),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+// NOTE:
+// The `Versionize` derive macro cannot be combined with a custom `Drop` implementation
+// or `ZeroizeOnDrop` derivation without conflicts.
+//
+// Security-wise, the current design is solid:
+// - Actual cryptographic key material resides in `InnerBackupPrivateKey`, not in the
+//   serialized `Vec<u8>` representation.
+// - Most `BackupPrivateKey` instances are short-lived and immediately used for decryption;
+//   `decrypt()` converts them into `InnerBackupPrivateKey`.
+// - `InnerBackupPrivateKey` implements a custom `Drop` with explicit memory zeroization.
+// - `BackupPrivateKey` implements `Zeroize` for manual wiping if needed.
+// - `try_from()` ensures that the intermediate `decaps_key_buf` (which *does* contain
+//   sensitive data) is securely zeroized after use.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize, Zeroize)]
 #[versionize(BackupPrivateKeyVersioned)]
 pub struct BackupPrivateKey {
     decapsulation_key: Vec<u8>,
@@ -60,6 +89,10 @@ impl TryFrom<&BackupPrivateKey> for InnerBackupPrivateKey {
 
         let decapsulation_key =
             <MlKemType as ml_kem::KemCore>::DecapsulationKey::from_bytes(&decaps_key_buf);
+
+        // Zeroize the key buffer to prevent memory disclosure attacks
+        decaps_key_buf.zeroize();
+
         Ok(Self { decapsulation_key })
     }
 }

@@ -39,7 +39,6 @@ impl ProtocolDescription for MaliciousPrssDrop {
 #[async_trait]
 impl<Z: Zero> PRSSInit<Z> for MaliciousPrssDrop {
     type OutputType = MaliciousPrssDrop;
-    /// Does nothing and returns an empty [`PRSSSetup`]
     async fn init<S: BaseSessionHandles>(
         &self,
         _session: &mut S,
@@ -371,5 +370,53 @@ impl<
             prss_setup: self.prss_setup.clone(),
             prss_state: Some(honest_state_custom_bcast),
         }
+    }
+}
+
+/// Malicious implementation of [`PrssInit`] that does not do anything
+/// and returns an empty [`PRSSSetup`]
+#[derive(Clone, Default)]
+pub struct EmptyPrss {}
+
+impl ProtocolDescription for EmptyPrss {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{indent}-EmptyPrss")
+    }
+}
+
+#[async_trait]
+impl<Z: Zero + RingWithExceptionalSequence + Invert + PRSSConversions> PRSSInit<Z> for EmptyPrss {
+    type OutputType = PRSSSetup<Z>;
+    async fn init<S: BaseSessionHandles>(
+        &self,
+        _session: &mut S,
+    ) -> anyhow::Result<Self::OutputType> {
+        Ok(PRSSSetup {
+            sets: vec![],
+            alpha_powers: vec![],
+        })
+    }
+}
+
+// PRSS that always fails on init
+#[derive(Clone, Default)]
+pub struct FailingPrss {}
+
+impl ProtocolDescription for FailingPrss {
+    fn protocol_desc(depth: usize) -> String {
+        let indent = "   ".repeat(depth);
+        format!("{indent}-FailingPrss")
+    }
+}
+
+#[async_trait]
+impl<Z: Zero + RingWithExceptionalSequence + Invert + PRSSConversions> PRSSInit<Z> for FailingPrss {
+    type OutputType = PRSSSetup<Z>;
+    async fn init<S: BaseSessionHandles>(
+        &self,
+        _session: &mut S,
+    ) -> anyhow::Result<Self::OutputType> {
+        Err(anyhow::anyhow!("This PRSS always fails"))
     }
 }
