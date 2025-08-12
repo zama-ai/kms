@@ -2,9 +2,9 @@
 
 # Usage:
 # Setup AWS CLI with the S3 credentials
-# ./cp_sns_compression_key.sh <EXISTING_KEY_ID> <NEW_KEY_ID> <PARTY_ID> <IS_PRIVATE_STORAGE> <S3_URL> <S3_BUCKET>
+# ./replace_existing_key.sh <EXISTING_KEY_ID> <NEW_KEY_ID> <PARTY_ID> <IS_PRIVATE_STORAGE> <S3_URL> <S3_BUCKET>
 # Example:
-# ./cp_sns_compression_key.sh 7e6d24be2e4b3556615c6161cb39dfba595d7ed66006523dc6340382760991ab 45e5a33b1094e59a0c4088d81c60d5bb5510ff67c12633956d2063450eea1e5b 1 false http://localhost:9000 kms
+# ./replace_existing_key.sh 7e6d24be2e4b3556615c6161cb39dfba595d7ed66006523dc6340382760991ab 45e5a33b1094e59a0c4088d81c60d5bb5510ff67c12633956d2063450eea1e5b 1 false http://localhost:9000 kms
 
 set -eu
 set -o pipefail
@@ -43,7 +43,7 @@ fi
 
 check_existence() {
     local key_path="$1"
-    if ! aws --endpoint--url "$S3_URL" s3api head-object --bucket "$S3_BUCKET" --key "$key_path" &>/dev/null; then
+    if ! aws --endpoint-url "$S3_URL" s3api head-object --bucket "$S3_BUCKET" --key "$key_path" &>/dev/null; then
         echo "Key $key_path does not exist on bucket $S3_BUCKET."
         exit 1
     fi
@@ -59,7 +59,7 @@ echo "All keys exist, proceeding with copy."
 
 # do the actual copying, this will overwrite keys on EXISTING_KEY_ID
 for key_type in "${KEY_TYPES[@]}"; do
-    aws --endpoint--url "$S3_URL" s3 cp \
+    aws --endpoint-url "$S3_URL" s3 cp \
         "s3://$S3_BUCKET/$PARTY/$key_type/$NEW_KEY_ID" \
         "s3://$S3_BUCKET/$PARTY/$key_type/$EXISTING_KEY_ID"
     # --copy-props "metadata-directive"
