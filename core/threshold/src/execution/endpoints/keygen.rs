@@ -1206,23 +1206,23 @@ pub mod tests {
     #[tokio::test]
     #[ignore]
     async fn old_keygen_params32_with_sns_f8() {
-        old_keygen_params32_with_sns::<8>().await
+        old_keygen_params32_with_sns::<8>(false).await
     }
 
     #[tokio::test]
     #[ignore]
     async fn old_keygen_params32_with_sns_f4() {
-        old_keygen_params32_with_sns::<4>().await
+        old_keygen_params32_with_sns::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test]
     #[ignore]
     async fn old_keygen_params32_with_sns_f3() {
-        old_keygen_params32_with_sns::<3>().await
+        old_keygen_params32_with_sns::<3>(false).await
     }
 
-    async fn old_keygen_params32_with_sns<const EXTENSION_DEGREE: usize>()
+    async fn old_keygen_params32_with_sns<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1237,6 +1237,7 @@ pub mod tests {
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
                 run_rerand: false,
+                run_compressed,
             },
         )
         .await
@@ -1246,24 +1247,24 @@ pub mod tests {
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_fglwe_f8() {
-        keygen_params32_no_sns_fglwe::<8>().await
+        keygen_params32_no_sns_fglwe::<8>(false).await
     }
 
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_fglwe_f4() {
-        keygen_params32_no_sns_fglwe::<4>().await
+        keygen_params32_no_sns_fglwe::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_fglwe_f3() {
-        keygen_params32_no_sns_fglwe::<3>().await
+        keygen_params32_no_sns_fglwe::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_P32_NO_SNS_FGLWE`]
-    async fn keygen_params32_no_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params32_no_sns_fglwe<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1278,6 +1279,7 @@ pub mod tests {
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
                 run_rerand: false,
+                run_compressed,
             },
         )
         .await
@@ -1287,24 +1289,24 @@ pub mod tests {
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_fglwe_f8() {
-        keygen_params8_no_sns_fglwe::<8>().await
+        keygen_params8_no_sns_fglwe::<8>(false).await
     }
 
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_fglwe_f4() {
-        keygen_params8_no_sns_fglwe::<4>().await
+        keygen_params8_no_sns_fglwe::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_fglwe_f3() {
-        keygen_params8_no_sns_fglwe::<3>().await
+        keygen_params8_no_sns_fglwe::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_P8_NO_SNS_FGLWE`]
-    async fn keygen_params8_no_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params8_no_sns_fglwe<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1319,6 +1321,7 @@ pub mod tests {
                 run_fheuint: false,
                 run_fheuint_with_compression: false,
                 run_rerand: false,
+                run_compressed,
             },
         )
         .await
@@ -1328,24 +1331,24 @@ pub mod tests {
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_lwe_f8() {
-        keygen_params32_no_sns_lwe::<8>().await
+        keygen_params32_no_sns_lwe::<8>(false).await
     }
 
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_lwe_f4() {
-        keygen_params32_no_sns_lwe::<4>().await
+        keygen_params32_no_sns_lwe::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_no_sns_lwe_f3() {
-        keygen_params32_no_sns_lwe::<3>().await
+        keygen_params32_no_sns_lwe::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_P32_NO_SNS_LWE`]
-    async fn keygen_params32_no_sns_lwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params32_no_sns_lwe<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1360,6 +1363,7 @@ pub mod tests {
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
                 run_rerand: false,
+                run_compressed,
             },
         )
         .await
@@ -1369,24 +1373,24 @@ pub mod tests {
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_lwe_f8() {
-        keygen_params8_no_sns_lwe::<8>().await
+        keygen_params8_no_sns_lwe::<8>(false).await
     }
 
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_lwe_f4() {
-        keygen_params8_no_sns_lwe::<4>().await
+        keygen_params8_no_sns_lwe::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_no_sns_lwe_f3() {
-        keygen_params8_no_sns_lwe::<3>().await
+        keygen_params8_no_sns_lwe::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_P8_NO_SNS_LWE`]
-    async fn keygen_params8_no_sns_lwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params8_no_sns_lwe<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1401,6 +1405,7 @@ pub mod tests {
                 run_fheuint: false,
                 run_fheuint_with_compression: false,
                 run_rerand: false,
+                run_compressed,
             },
         )
         .await
@@ -1410,24 +1415,30 @@ pub mod tests {
     #[tokio::test]
     #[ignore]
     async fn keygen_params_test_bk_sns_f8() {
-        keygen_params_test_bk_sns::<8>().await
+        keygen_params_test_bk_sns::<8>(false).await
     }
 
     #[tokio::test]
     #[serial_test::serial]
     async fn keygen_params_test_bk_sns_f4() {
-        keygen_params_test_bk_sns::<4>().await
+        keygen_params_test_bk_sns::<4>(false).await
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn keygen_params_test_compressed_bk_sns_f4() {
+        keygen_params_test_bk_sns::<4>(true).await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params_test_bk_sns_f3() {
-        keygen_params_test_bk_sns::<3>().await
+        keygen_params_test_bk_sns::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_TEST_BK_SNS`]
-    async fn keygen_params_test_bk_sns<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params_test_bk_sns<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1442,6 +1453,7 @@ pub mod tests {
                 run_fheuint: true,
                 run_fheuint_with_compression: true,
                 run_rerand: true,
+                run_compressed,
             },
         )
         .await
@@ -1451,35 +1463,46 @@ pub mod tests {
     #[tokio::test]
     #[ignore] // Ignored because we run the same test for degree 4 extension
     async fn integration_keygen_params_test_bk_sns_f8() {
-        integration_keygen_params_test_bk_sns::<8>(KeySetConfig::default()).await
+        integration_keygen_params_test_bk_sns::<8>(KeySetConfig::default(), false).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[serial_test::serial]
     async fn integration_keygen_params_test_bk_sns_f4() {
-        integration_keygen_params_test_bk_sns::<4>(KeySetConfig::default()).await
+        integration_keygen_params_test_bk_sns::<4>(KeySetConfig::default(), false).await
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn integration_keygen_params_test_compressed_bk_sns_f4() {
+        integration_keygen_params_test_bk_sns::<4>(KeySetConfig::default(), true).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[ignore] // Ignored because we run the same test for degree 4 extension
     async fn integration_keygen_params_test_bk_sns_f3() {
-        integration_keygen_params_test_bk_sns::<3>(KeySetConfig::default()).await
+        integration_keygen_params_test_bk_sns::<3>(KeySetConfig::default(), false).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[serial_test::serial]
     async fn integration_keygen_params_test_bk_sns_existing_compression_sk_f4() {
-        integration_keygen_params_test_bk_sns::<4>(KeySetConfig::use_existing_compression_sk())
-            .await
+        integration_keygen_params_test_bk_sns::<4>(
+            KeySetConfig::use_existing_compression_sk(),
+            false,
+        )
+        .await
     }
 
     #[cfg(feature = "slow_tests")]
     ///Tests related to [`PARAMS_TEST_BK_SNS`] using _less fake_ preprocessing
     async fn integration_keygen_params_test_bk_sns<const EXTENSION_DEGREE: usize>(
         keyset_config: KeySetConfig,
+        run_compressed: bool,
     ) where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1495,7 +1518,7 @@ pub mod tests {
             threshold,
             temp_dir.path(),
             keyset_config,
-            false,
+            run_compressed,
         )
         .await;
 
@@ -1527,24 +1550,24 @@ pub mod tests {
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_with_sns_fglwe_f8() {
-        keygen_params32_with_sns_fglwe::<8>().await
+        keygen_params32_with_sns_fglwe::<8>(false).await
     }
 
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_with_sns_fglwe_f4() {
-        keygen_params32_with_sns_fglwe::<4>().await
+        keygen_params32_with_sns_fglwe::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params32_with_sns_fglwe_f3() {
-        keygen_params32_with_sns_fglwe::<3>().await
+        keygen_params32_with_sns_fglwe::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_P32_SNS_FGLWE`]
-    async fn keygen_params32_with_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params32_with_sns_fglwe<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1559,6 +1582,7 @@ pub mod tests {
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
                 run_rerand: false,
+                run_compressed,
             },
         )
         .await
@@ -1568,24 +1592,24 @@ pub mod tests {
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_with_sns_fglwe_f8() {
-        keygen_params8_with_sns_fglwe::<8>().await
+        keygen_params8_with_sns_fglwe::<8>(false).await
     }
 
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_with_sns_fglwe_f4() {
-        keygen_params8_with_sns_fglwe::<4>().await
+        keygen_params8_with_sns_fglwe::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test]
     #[ignore]
     async fn keygen_params8_with_sns_fglwe_f3() {
-        keygen_params8_with_sns_fglwe::<3>().await
+        keygen_params8_with_sns_fglwe::<3>(false).await
     }
 
     ///Tests related to [`PARAMS_P8_REAL_WITH_SNS`]
-    async fn keygen_params8_with_sns_fglwe<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params8_with_sns_fglwe<const EXTENSION_DEGREE: usize>(run_compressed: bool)
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1600,6 +1624,7 @@ pub mod tests {
                 run_fheuint: false,
                 run_fheuint_with_compression: false,
                 run_rerand: false,
+                run_compressed,
             },
         )
         .await
@@ -1609,25 +1634,26 @@ pub mod tests {
     #[tokio::test]
     #[ignore]
     async fn keygen_params_blockchain_without_sns_f8() {
-        keygen_params_blockchain_without_sns::<8>().await
+        keygen_params_blockchain_without_sns::<8>(false).await
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     #[ignore]
     async fn keygen_params_blockchain_without_sns_f4() {
-        keygen_params_blockchain_without_sns::<4>().await
+        keygen_params_blockchain_without_sns::<4>(false).await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     #[ignore]
     async fn keygen_params_blockchain_without_sns_f3() {
-        keygen_params_blockchain_without_sns::<3>().await
+        keygen_params_blockchain_without_sns::<3>(false).await
     }
 
     ///Tests related to [`BC_PARAMS_NO_SNS`]
-    async fn keygen_params_blockchain_without_sns<const EXTENSION_DEGREE: usize>()
-    where
+    async fn keygen_params_blockchain_without_sns<const EXTENSION_DEGREE: usize>(
+        run_compressed: bool,
+    ) where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
     {
@@ -1641,6 +1667,7 @@ pub mod tests {
                 run_fheuint: true,
                 run_fheuint_with_compression: true,
                 run_rerand: true,
+                run_compressed,
             },
         )
         .await
@@ -1676,6 +1703,7 @@ pub mod tests {
         run_fheuint: bool,
         run_fheuint_with_compression: bool,
         run_rerand: bool,
+        run_compressed: bool,
     }
 
     async fn run_keygen_test<const EXTENSION_DEGREE: usize>(
@@ -1689,7 +1717,14 @@ pub mod tests {
     {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false).await;
+        run_dkg_and_save(
+            params,
+            num_parties,
+            threshold,
+            temp_dir.path(),
+            config.run_compressed,
+        )
+        .await;
 
         if config.run_switch_and_squash {
             run_switch_and_squash(

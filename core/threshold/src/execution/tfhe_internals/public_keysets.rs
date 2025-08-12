@@ -1,3 +1,4 @@
+use crate::execution::endpoints::keygen::DSEP_KG;
 use crate::execution::tfhe_internals::lwe_key::{
     to_tfhe_hl_api_compact_public_key, to_tfhe_hl_api_compressed_compact_public_key,
 };
@@ -33,6 +34,8 @@ use tfhe::{
         ciphertext::{MaxDegree, MaxNoiseLevel},
         server_key::ShortintBootstrappingKey,
     },
+    xof_key_set::CompressedXofKeySet,
+    XofSeed,
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -426,6 +429,15 @@ impl CompressedFhePubKeySet {
     // https://github.com/zama-ai/tfhe-rs/pull/2409
     #[allow(dead_code)]
     pub fn decompress(self) -> FhePubKeySet {
-        todo!()
+        let xof_seed = XofSeed::new_u128(self.seed, DSEP_KG);
+        let xof_key_set =
+            CompressedXofKeySet::from_raw_parts(xof_seed, self.public_key, self.server_key)
+                .decompress();
+
+        let (public_key, server_key) = xof_key_set.into_raw_parts();
+        FhePubKeySet {
+            public_key,
+            server_key,
+        }
     }
 }
