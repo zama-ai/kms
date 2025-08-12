@@ -4,7 +4,7 @@ use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::backup_pke::{BackupCiphertext, BackupPublicKey},
 };
-use kms_grpc::{rpc_types::PrivDataType, };
+use kms_grpc::rpc_types::PrivDataType;
 use rand::{CryptoRng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
 use tfhe::{named::Named, safe_serialization::safe_serialize, Unversionize, Versionize};
@@ -12,7 +12,7 @@ use tfhe::{named::Named, safe_serialization::safe_serialize, Unversionize, Versi
 #[derive(Clone)]
 pub struct SecretShareKeychain<R: Rng + CryptoRng> {
     rng: R,
-    backup_enc_key: BackupPublicKey, // TODO should have context ID as well
+    backup_enc_key: BackupPublicKey,
 }
 
 impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
