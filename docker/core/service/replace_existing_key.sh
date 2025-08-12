@@ -59,10 +59,9 @@ echo "All keys exist, proceeding with copy."
 
 # do the actual copying, this will overwrite keys on EXISTING_KEY_ID
 for key_type in "${KEY_TYPES[@]}"; do
-    aws --endpoint-url "$S3_URL" s3 cp \
+    aws --endpoint-url "$S3_URL" s3 mv \
         "s3://$S3_BUCKET/$PARTY/$key_type/$NEW_KEY_ID" \
         "s3://$S3_BUCKET/$PARTY/$key_type/$EXISTING_KEY_ID"
-    # --copy-props "metadata-directive"
 done
 
 echo "Successfully copied keys from $NEW_KEY_ID to $EXISTING_KEY_ID."
