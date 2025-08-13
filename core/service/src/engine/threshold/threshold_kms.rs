@@ -196,7 +196,7 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
     for ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO>
 {
     fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
-        let health_reporter = Arc::clone(&self.health_reporter);
+        let health_reporter = self.health_reporter.clone();
         let tracker = Arc::clone(&self.tracker);
         let mpc_abort_handle = self.mpc_abort_handle.abort_handle();
         let handle = {
