@@ -98,8 +98,9 @@ where
 }
 macro_rules! restore_data_type {
     ($priv_storage:expr, $backup_vault:expr, $data_type_enum:expr, $data_type:ty) => {{
+        let backup_data_type = BackupDataType::PrivData($data_type_enum).to_string();
         let req_ids = $backup_vault
-            .all_data_ids(&$data_type_enum.to_string().to_string())
+            .all_data_ids(&backup_data_type)
             .await?;
         for request_id in req_ids.iter() {
             if $priv_storage
@@ -110,15 +111,14 @@ macro_rules! restore_data_type {
                     "Data for {:?} with request ID {request_id} already exists. I am NOT overwriting it!", $data_type_enum);
                     continue;
             }
-            let cur_data_type = BackupDataType::PrivData($data_type_enum).to_string();
             let cur_data: $data_type = $backup_vault
-                .read_data(request_id, &cur_data_type.to_string())
+                .read_data(request_id, &backup_data_type)
                 .await?;
             store_versioned_at_request_id(
                 &mut **$priv_storage,
                 request_id,
                 &cur_data,
-                &cur_data_type.to_string(),
+                &$data_type_enum.to_string(),
             )
             .await?;
         }
@@ -193,12 +193,12 @@ where
 macro_rules! update_specific_backup_vault {
     ($priv_storage:expr, $backup_vault:expr, $data_type_enum:expr, $serialized_data_type:ty) => {{
         let req_ids = $priv_storage
-            .all_data_ids(&$data_type_enum.to_string().to_string())
+            .all_data_ids(&$data_type_enum.to_string())
             .await?;
+        let backup_data_type = BackupDataType::PrivData($data_type_enum).to_string();
         for request_id in req_ids.iter() {
-            let cur_data_type = BackupDataType::PrivData($data_type_enum).to_string();
             if !$backup_vault
-                .data_exists(request_id, &cur_data_type.to_string())
+                .data_exists(request_id, &backup_data_type.to_string())
                 .await?
             {
                 let cur_data: $serialized_data_type = $priv_storage
@@ -208,7 +208,7 @@ macro_rules! update_specific_backup_vault {
                     &mut *$backup_vault,
                     request_id,
                     &cur_data,
-                    &cur_data_type.to_string(),
+                    &backup_data_type.to_string(),
                 )
                 .await?;
             }
