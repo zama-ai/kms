@@ -68,7 +68,7 @@ When operating in a zero-trust environment, mTLS is used to secure P2P communica
 
 Each MPC node is identified by its **Common Name (CN)** within its certificate. This identity is validated against the certificate's **Subject Alternative Name (SAN)** list.
 
-**NOTE** : *This will be changed with support of wildcard certificate, exact requirements are still discussed here.*
+**NOTE** : *This will be changed with support of wildcard certificate, exact requirements are still discussed here. See [here](https://github.com/zama-ai/kms-internal/issues/2709)*
 
 **About the Certificates:**
 
