@@ -197,6 +197,7 @@ fn test_cleanup_on_drop() {
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
     let mut bit_redis_preprocessing = redis_factory.create_bit_preprocessing_residue_64();
+    let mut random_redis_preprocessing = redis_factory.create_base_preprocessing_residue_64();
 
     // Create a new factory because we want to have the exact same key prefix (i.e. no counter increase)
     let mut redis_factory_bis: Box<dyn PreprocessorFactory<4>> =
@@ -209,6 +210,7 @@ fn test_cleanup_on_drop() {
     );
 
     bit_redis_preprocessing.append_bits(vec![share]);
+    random_redis_preprocessing.append_randoms(vec![share]);
 
     // Make sure we can actually see the "bit" from the other preprocessing
     assert_eq!(bit_redis_preprocessing_bis.bits_len(), 1);
@@ -217,6 +219,9 @@ fn test_cleanup_on_drop() {
 
     // Check that the shares have been cleaned up
     assert_eq!(bit_redis_preprocessing_bis.bits_len(), 0);
+
+    // But not these ones
+    assert_eq!(random_redis_preprocessing.randoms_len(), 1)
 }
 
 test_triples![create_base_preprocessing_residue_64 Z64];
