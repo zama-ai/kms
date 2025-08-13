@@ -1170,7 +1170,7 @@ impl<
                         ddec_keyset_config::KeySetCompressionConfig::Generate,
                         ddec_keyset_config::ComputeKeyType::Cpu,
                     ) => {
-                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params,None).await
+                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params, None).await
                     }
                     (
                         ddec_keyset_config::KeySetCompressionConfig::UseExisting,
