@@ -1555,7 +1555,7 @@ dependencies = [
 
 [[package]]
 name = "backward-compatibility"
-version = "0.11.0-22"
+version = "0.11.0-26"
 dependencies = [
  "aes-prng",
  "alloy-primitives",
