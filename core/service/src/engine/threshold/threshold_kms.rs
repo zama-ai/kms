@@ -98,29 +98,40 @@ impl<
         BO: Sync,
     > Shutdown for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
-    async fn shutdown(&self) -> anyhow::Result<()> {
-        self.health_reporter
-            .set_not_serving::<CoreServiceEndpointServer<Self>>()
-            .await;
-        tracing::info!("Sat not serving");
-        self.tracker.close();
-        self.tracker.wait().await;
-        self.mpc_abort_handle.abort();
-        let res: anyhow::Result<()> = retry_loop!(
-            || async move {
-                if !self.mpc_abort_handle.is_finished() {
-                    return Err(anyhow::anyhow!("MPC server not done"));
+    fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
+        let health_reporter = self.health_reporter.clone();
+        let tracker = Arc::clone(&self.tracker);
+        let mpc_abort_handle = self.mpc_abort_handle.abort_handle();
+        let handle = {
+            let new_handle_clone = mpc_abort_handle.clone();
+            tokio::task::spawn(async move {
+                health_reporter
+                    .set_not_serving::<CoreServiceEndpointServer<Self>>()
+                    .await;
+                tracing::info!("Sat not serving");
+                tracker.close();
+                tracker.wait().await;
+                mpc_abort_handle.abort();
+                let res: anyhow::Result<()> = retry_loop!(
+                    || {
+                        let new_handle_clone = new_handle_clone.clone();
+                        async move {
+                            if !new_handle_clone.is_finished() {
+                                return Err(anyhow::anyhow!("MPC server not done"));
+                            }
+                            Ok(())
+                        }
+                    },
+                    100,
+                    200
+                );
+                if let Err(e) = res {
+                    tracing::error!("Error waiting for MPC server to finish: {:?}", e);
                 }
-                Ok(())
-            },
-            100,
-            200
-        );
-        if let Err(e) = res {
-            tracing::error!("Error waiting for MPC server to finish: {:?}", e);
-        }
-        tracing::info!("Threshold Core service endpoint server shutdown complete.");
-        Ok(())
+                tracing::info!("Threshold Core service endpoint server shutdown complete.");
+            })
+        };
+        Ok(handle)
     }
 }
 
@@ -140,6 +151,7 @@ impl<
     > Drop for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
     fn drop(&mut self) {
+        // Start the shutdown and let it finish in the background
         let _ = self.shutdown();
     }
 }
@@ -183,29 +195,40 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
 impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: Sync> Shutdown
     for ThresholdKms<IN, UD, PD, KG, PP, CG, CM, BO>
 {
-    async fn shutdown(&self) -> anyhow::Result<()> {
-        self.health_reporter
-            .set_not_serving::<CoreServiceEndpointServer<Self>>()
-            .await;
-        tracing::info!("Sat not serving");
-        self.tracker.close();
-        self.tracker.wait().await;
-        self.mpc_abort_handle.abort();
-        let res: anyhow::Result<()> = retry_loop!(
-            || async move {
-                if !self.mpc_abort_handle.is_finished() {
-                    return Err(anyhow::anyhow!("MPC server not done"));
+    fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
+        let health_reporter = self.health_reporter.clone();
+        let tracker = Arc::clone(&self.tracker);
+        let mpc_abort_handle = self.mpc_abort_handle.abort_handle();
+        let handle = {
+            let new_handle_clone = mpc_abort_handle.clone();
+            tokio::task::spawn(async move {
+                health_reporter
+                    .set_not_serving::<CoreServiceEndpointServer<Self>>()
+                    .await;
+                tracing::info!("Sat not serving");
+                tracker.close();
+                tracker.wait().await;
+                mpc_abort_handle.abort();
+                let res: anyhow::Result<()> = retry_loop!(
+                    || {
+                        let new_handle_clone = new_handle_clone.clone();
+                        async move {
+                            if !new_handle_clone.is_finished() {
+                                return Err(anyhow::anyhow!("MPC server not done"));
+                            }
+                            Ok(())
+                        }
+                    },
+                    100,
+                    200
+                );
+                if let Err(e) = res {
+                    tracing::error!("Error waiting for MPC server to finish: {:?}", e);
                 }
-                Ok(())
-            },
-            100,
-            200
-        );
-        if let Err(e) = res {
-            tracing::error!("Error waiting for MPC server to finish: {:?}", e);
-        }
-        tracing::info!("Threshold Core service endpoint server shutdown complete.");
-        Ok(())
+                tracing::info!("Threshold Core service endpoint server shutdown complete.");
+            })
+        };
+        Ok(handle)
     }
 }
 
