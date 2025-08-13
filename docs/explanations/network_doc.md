@@ -89,7 +89,7 @@ The custom TLS verifier (`AttestedServerVerifier` and `AttestedClientVerifier`) 
 
 ### Non-TLS Configuration (*INSECURE*)
 
-**THIS CONFIGURATION IS INSECURE**
+**THIS CONFIGURATION IS INSECURE AND REQUIRES TO COMPILE THE `core/threshold` CRATE WITH THE `insecure` FEATURE**
 
 *   **No Authentication at L6/7:** Without TLS, the gRPC server has no cryptographic way to verify the identity of the client. It trusts that any connection to its port is from a legitimate peer, and blindly trust the peer is whom it claims to be in the message's tag.
 *   **Risk:** Any attacker can impersonate an MPC node, potentially corrupting or exfiltrating data from the computation. This mode should only be used for testing.
