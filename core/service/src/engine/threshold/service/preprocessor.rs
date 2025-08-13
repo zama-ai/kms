@@ -133,7 +133,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                         tracing::info!("Preprocessing of request {} exiting normally.", &request_id);
                     },
                     () = token.cancelled() => {
-                        // NOTE: Any correlated randomness that was already generated will still exist in the Redis db (if we use Redis).
+                        // NOTE: Any correlated randomness that was already generated should be cleaned up from Redis on drop.
                         tracing::error!("Preprocessing of request {} exiting before completion because of a cancellation event.", &request_id);
                         let mut guarded_bucket_store = bucket_store_cancellation.write().await;
                         let _ = guarded_bucket_store.update(&request_id, Result::Err("Preprocessing was cancelled".to_string()));
