@@ -73,7 +73,7 @@ Each MPC node is identified by its **Common Name (CN)** within its certificate. 
 **About the Certificates:**
 
 1.  **Identity:** The `hostname` of a party (e.g., `party1.example.com`) **must** be present as the certificate's `Common Name (CN)`.
-2.  **Self-Signed or Private CA:** Certificates are expected to be self-signed, the Subject CN must match the Issuer CN.
+2.  **Self-Signed or Private CA:** Certificates are expected to be self-signed, the Subject CN (Common Name) must match the Issuer CN (Common Name).
 3.  **SAN Entry:** The Common Name **must** also be listed as a DNS entry in the Subject Alternative Name (SAN) extension.
 4.  **Trust Store:** Each node must be configured with the CA certificates of all peers it communicates with. Certificates are self-signed, each peer's certificate acts as its own CA certificate and is added to the trust stores of other nodes.
 
