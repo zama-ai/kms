@@ -39,7 +39,7 @@ sequenceDiagram
     *   **gRPC/HTTP2:** A RPC framework is used for structured communication between nodes, using unary messages.
 *   **L5/6 (Presentation/Session):** **mTLS:** Mutual TLS is employed to establish a secure and authenticated channel. Each node presents a certificate to prove its identity, and this identity is verified by its peers.
 *   **L4 (Transport):** TCP provides reliable, ordered, and error-checked delivery of a stream of bytes.
-*   **L2/3 (Data Link/Network):** It is assumed that nodes operate within a secure, private network (e.g., an AWS VPC with PrivateLink, or a VPN). This layer provides the foundational connectivity but does not, by itself, guarantee the authenticity of the communicating endpoints.
+*   **L3 (Network):** IP, we do not make any specific assumption regarding this layer.
 
 ### Communication Flow
 
