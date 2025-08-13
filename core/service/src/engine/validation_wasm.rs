@@ -446,6 +446,7 @@ mod tests {
             internal_crypto_types::{gen_sig_keys, PublicSigKey, UnifiedPublicEncKey},
             signcryption::ephemeral_encryption_key_generation,
         },
+        dummy_domain,
         engine::{
             base::compute_external_user_decrypt_signature,
             validation_wasm::{
@@ -465,15 +466,6 @@ mod tests {
         ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
     };
-
-    fn dummy_domain() -> alloy_sol_types::Eip712Domain {
-        alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        )
-    }
 
     #[test]
     fn test_check_ext_user_decryption_signature() {
@@ -496,7 +488,6 @@ mod tests {
             ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
 
-        let dummy_domain = dummy_domain();
         let ciphertext_handle = vec![5, 6, 7, 8];
 
         let mut enc_key_buf = Vec::new();
@@ -506,12 +497,14 @@ mod tests {
             crate::consts::SAFE_SER_SIZE_LIMIT,
         )
         .unwrap();
+
+        let domain = dummy_domain();
         let request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed
             alloy_primitives::Address::from_public_key(client_vk.pk()),
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
-            dummy_domain.verifying_contract.unwrap(),
+            domain.verifying_contract.unwrap(),
         );
 
         let payload = UserDecryptionResponsePayload {
@@ -529,7 +522,7 @@ mod tests {
         let external_sig = compute_external_user_decrypt_signature(
             &sk0,
             &payload,
-            &dummy_domain,
+            &domain,
             &eph_client_pk.to_unified(),
             vec![],
         )
@@ -541,7 +534,7 @@ mod tests {
                 &external_sig[0..64],
                 &payload,
                 &request,
-                &dummy_domain,
+                &domain,
                 &kms_addrs[&1],
             )
             .unwrap_err()
@@ -555,7 +548,7 @@ mod tests {
             let bad_external_sig = compute_external_user_decrypt_signature(
                 &sk_bad,
                 &payload,
-                &dummy_domain,
+                &domain,
                 &eph_client_pk.to_unified(),
                 vec![],
             )
@@ -564,7 +557,7 @@ mod tests {
                 &bad_external_sig,
                 &payload,
                 &request,
-                &dummy_domain,
+                &domain,
                 &kms_addrs[&1],
             )
             .is_err());
@@ -596,7 +589,7 @@ mod tests {
                 &external_sig,
                 &bad_payload,
                 &request,
-                &dummy_domain,
+                &domain,
                 &kms_addrs[&1],
             )
             .unwrap_err()
@@ -610,7 +603,7 @@ mod tests {
                 &external_sig,
                 &payload,
                 &request,
-                &dummy_domain,
+                &domain,
                 &kms_addrs[&1],
             )
             .unwrap();

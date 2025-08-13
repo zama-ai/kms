@@ -20,10 +20,12 @@ use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, SignedPubDataHandle, TypedPlaintext,
     UserDecryptionResponsePayload,
 };
+use kms_grpc::rpc_types::FheDecompressionUpgradeKey;
 use kms_grpc::rpc_types::{
     FhePubKey, FheServerKey, PubDataType, PublicDecryptVerification, SignedPubDataHandleInternal,
     CRS,
 };
+use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
 use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -111,7 +113,7 @@ impl KmsFheKeyHandles {
         client_key: FhePrivateKey,
         public_keys: &FhePubKeySet,
         decompression_key: Option<DecompressionKey>,
-        eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+        eip712_domain: &alloy_sol_types::Eip712Domain,
     ) -> anyhow::Result<Self> {
         let mut public_key_info = HashMap::new();
         public_key_info.insert(
@@ -179,19 +181,12 @@ pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
     sk: &PrivateSigKey,
     dsep: &DomainSep,
     element: &S,
-    domain: Option<&alloy_sol_types::Eip712Domain>,
+    domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<SignedPubDataHandleInternal> {
     let handle = compute_handle(element)?;
     let signature = crate::cryptography::signcryption::internal_sign(dsep, &handle, sk)?;
 
-    // if we get an EIP-712 domain, compute the external signature
-    let external_signature = match domain {
-        Some(domain) => compute_external_pubdata_signature(sk, element, domain)?,
-        None => {
-            tracing::warn!("Skipping external signature computation due to missing domain");
-            vec![]
-        }
-    };
+    let external_signature = compute_external_pubdata_signature(sk, element, domain)?;
 
     Ok(SignedPubDataHandleInternal {
         key_handle: handle,
@@ -510,9 +505,17 @@ pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
             };
             message.eip712_signing_hash(eip712_domain)
         }
+        // TODO(zama-ai/kms-internal#2714): at the moment we only support integer:::DecompressionKey
+        // but this support will be dropped in favor for DecompressionUpgradeKey
+        "integer::DecompressionKey" => {
+            let message = FheDecompressionUpgradeKey {
+                decompression_upgrade_key: bytes.into(),
+            };
+            message.eip712_signing_hash(eip712_domain)
+        }
         e => {
             return Err(anyhow_error_and_log(format!(
-                "Cannot compute EIP-712 signature on type {e}. Expected one of: zk::CompactPkeCrs, high_level_api::CompactPublicKey, high_level_api::ServerKey."
+                "Cannot compute EIP-712 signature on type {e}. Expected one of: zk::CompactPkeCrs, high_level_api::CompactPublicKey, high_level_api::ServerKey, integer::DecompressionKey."
             )))
         }
     };
@@ -742,9 +745,16 @@ pub fn compute_pt_message_hash(
     message_hash
 }
 
-pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> anyhow::Result<DKGParams> {
+/// Attempt to find the concrete parameters from an enum variant defined by
+/// [kms_grpc::kms::v1::FheParameter].
+///
+/// Since this function is normally used by the grpc service, we return the error code
+/// InvalidArgument if the concrete parameter does not exist.
+pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> Result<DKGParams, BoxedStatus> {
     let fhe_parameter: crate::cryptography::internal_crypto_types::WrappedDKGParams =
-        FheParameter::try_from(fhe_parameter)?.into();
+        FheParameter::try_from(fhe_parameter)
+            .map_err(|e| tonic::Status::invalid_argument(format!("DKG parameter not found: {e}")))?
+            .into();
     Ok(*fhe_parameter)
 }
 
@@ -784,6 +794,7 @@ pub(crate) mod tests {
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::internal_crypto_types::gen_sig_keys,
+        dummy_domain,
         engine::centralized::central_kms::generate_fhe_keys,
     };
     use aes_prng::AesRng;
@@ -967,7 +978,7 @@ pub(crate) mod tests {
             StandardKeySetConfig::default(),
             None,
             None,
-            None,
+            &dummy_domain(),
         )
         .unwrap();
 
@@ -1008,7 +1019,7 @@ pub(crate) mod tests {
             StandardKeySetConfig::default(),
             None,
             None,
-            None,
+            &dummy_domain(),
         )
         .unwrap();
 
@@ -1076,7 +1087,7 @@ pub(crate) mod tests {
             StandardKeySetConfig::default(),
             None,
             None,
-            None,
+            &dummy_domain(),
         )
         .unwrap();
 

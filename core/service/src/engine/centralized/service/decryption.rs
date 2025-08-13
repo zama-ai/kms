@@ -55,13 +55,12 @@ pub async fn user_decrypt_impl<
         .rate_limiter
         .start_user_decrypt()
         .await
-        .map_err(|e| {
+        .inspect_err(|_e| {
             if let Err(e) =
                 METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
             {
                 tracing::warn!("Failed to increment error counter: {:?}", e);
             }
-            Status::resource_exhausted(e.to_string())
         })?;
 
     let inner = request.into_inner();
@@ -244,13 +243,12 @@ pub async fn public_decrypt_impl<
         .rate_limiter
         .start_pub_decrypt()
         .await
-        .map_err(|e| {
+        .inspect_err(|_e| {
             if let Err(e) =
                 METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
             {
                 tracing::warn!("Failed to increment error counter: {:?}", e);
             }
-            tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string())
         })?;
 
     let start = tokio::time::Instant::now();
@@ -345,20 +343,13 @@ pub async fn public_decrypt_impl<
             match decryptions {
                 Ok(Ok(pts)) => {
                     // sign the plaintexts and handles for external verification (in fhevm)
-                    let external_sig = if let Some(domain) = eip712_domain {
-                        compute_external_pt_signature(
-                            &sigkey,
-                            ext_handles_bytes,
-                            &pts,
-                            extra_data.clone(),
-                            domain,
-                        )
-                    } else {
-                        tracing::warn!(
-                            "Skipping external signature computation due to missing domain"
-                        );
-                        vec![]
-                    };
+                    let external_sig = compute_external_pt_signature(
+                        &sigkey,
+                        ext_handles_bytes,
+                        &pts,
+                        extra_data.clone(),
+                        eip712_domain,
+                    );
 
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store

@@ -5,12 +5,12 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 use aes_prng::AesRng;
 use kms_grpc::{
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
-    rpc_types::{protobuf_to_alloy_domain_option, SignedPubDataHandleInternal},
+    rpc_types::{optional_protobuf_to_alloy_domain, SignedPubDataHandleInternal},
     RequestId,
 };
 use observability::{
     metrics,
-    metrics_names::{OP_CRS_GEN, OP_INSECURE_CRS_GEN, TAG_PARTY_ID},
+    metrics_names::{ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN, OP_INSECURE_CRS_GEN, TAG_PARTY_ID},
 };
 use threshold_fhe::{
     algebra::base_ring::Z64,
@@ -35,7 +35,6 @@ use crate::{
         threshold::traits::CrsGenerator,
         validation::validate_request_id,
     },
-    tonic_handle_potential_err,
     util::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
@@ -89,11 +88,13 @@ impl<
         request: Request<CrsGenRequest>,
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self
-            .rate_limiter
-            .start_crsgen()
-            .await
-            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+        let permit = self.rate_limiter.start_crsgen().await.inspect_err(|_e| {
+            if let Err(e) =
+                metrics::METRICS.increment_error_counter(OP_CRS_GEN, ERR_RATE_LIMIT_EXCEEDED)
+            {
+                tracing::warn!("Failed to increment error counter: {:?}", e);
+            }
+        })?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -101,19 +102,18 @@ impl<
             inner.request_id
         );
 
-        let dkg_params = retrieve_parameters(inner.params).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::NotFound,
-                format!("Can not retrieve fhe parameters with error {e}"),
-            )
-        })?;
+        let dkg_params = retrieve_parameters(inner.params)?;
         let crs_params = dkg_params
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
-        let witness_dim = tonic_handle_potential_err(
-            compute_witness_dim(&crs_params, inner.max_num_bits.map(|x| x as usize)),
-            "witness dimension computation failed".to_string(),
-        )?;
+
+        let witness_dim = compute_witness_dim(&crs_params, inner.max_num_bits.map(|x| x as usize))
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!("witness dimension computation failed: {e}"),
+                )
+            })?;
 
         let req_id = inner
             .request_id
@@ -126,14 +126,15 @@ impl<
             .into();
         validate_request_id(&req_id)?;
 
-        let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
+        let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
 
+        // NOTE: everything inside this function will cause an Aborted error code
         self.inner_crs_gen(
             req_id,
             witness_dim,
             inner.max_num_bits,
             dkg_params,
-            eip712_domain.as_ref(),
+            &eip712_domain,
             permit,
             insecure,
         )
@@ -149,7 +150,7 @@ impl<
         witness_dim: usize,
         max_num_bits: Option<u32>,
         dkg_params: DKGParams,
-        eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+        eip712_domain: &alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
         insecure: bool,
     ) -> anyhow::Result<()> {
@@ -193,7 +194,7 @@ impl<
         let meta_store_cancelled = Arc::clone(&self.crs_meta_store);
         let crypto_storage = self.crypto_storage.clone();
         let crypto_storage_cancelled = self.crypto_storage.clone();
-        let eip712_domain_copy = eip712_domain.cloned();
+        let eip712_domain_copy = eip712_domain.clone();
 
         // we need to clone the signature key because it needs to be given
         // the thread that spawns the CRS ceremony
@@ -258,7 +259,7 @@ impl<
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
-        eip712_domain: Option<alloy_sol_types::Eip712Domain>,
+        eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
         insecure: bool,
     ) {
@@ -282,12 +283,13 @@ impl<
                 let my_role = base_session.my_role();
                 // We let the first party sample the seed (we are using 1-based party IDs)
                 let input_party_id = 1;
+                let domain = eip712_domain.clone();
                 if my_role.one_based() == input_party_id {
                     let crs_res = async_generate_crs(
                         &sk,
                         params,
                         max_num_bits,
-                        eip712_domain.as_ref(),
+                        domain,
                         base_session.session_id(),
                         rng,
                     )
@@ -316,7 +318,7 @@ impl<
             })
         };
         let res_info_pp = pp.and_then(|pp| {
-            compute_info(&sk, &DSEP_PUBDATA_CRS, &pp, eip712_domain.as_ref()).map(|info| (pp, info))
+            compute_info(&sk, &DSEP_PUBDATA_CRS, &pp, &eip712_domain).map(|info| (pp, info))
         });
 
         let (pp_id, meta_data) = match res_info_pp {
@@ -340,44 +342,6 @@ impl<
             "CRS stored. CRS ceremony time was {:?} ms",
             (elapsed_time).as_millis()
         );
-    }
-
-    #[cfg(test)]
-    async fn init_test(
-        pub_storage: PubS,
-        priv_storage: PrivS,
-        session_preparer: SessionPreparer,
-    ) -> Self {
-        let crypto_storage = ThresholdCryptoMaterialStorage::new(
-            pub_storage,
-            priv_storage,
-            None,
-            HashMap::new(),
-            HashMap::new(),
-        );
-
-        let tracker = Arc::new(TaskTracker::new());
-        let ongoing = Arc::new(Mutex::new(HashMap::new()));
-        let rate_limiter = RateLimiter::default();
-        Self {
-            base_kms: session_preparer.base_kms.new_instance().await,
-            crypto_storage,
-            crs_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-            session_preparer,
-            tracker,
-            ongoing,
-            rate_limiter,
-            _ceremony: PhantomData,
-        }
-    }
-
-    #[cfg(test)]
-    fn set_bucket_size(&mut self, bucket_size: usize) {
-        let config = crate::util::rate_limiter::RateLimiterConfig {
-            bucket_size,
-            ..Default::default()
-        };
-        self.rate_limiter = RateLimiter::new(config);
     }
 }
 
@@ -462,7 +426,7 @@ impl<
 mod tests {
     use std::time::Duration;
 
-    use kms_grpc::kms::v1::FheParameter;
+    use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};
     use threshold_fhe::{
         algebra::structure_traits::Ring,
         execution::{
@@ -470,9 +434,52 @@ mod tests {
         },
     };
 
-    use crate::consts::DURATION_WAITING_ON_RESULT_SECONDS;
+    use crate::{consts::DURATION_WAITING_ON_RESULT_SECONDS, dummy_domain};
 
     use super::*;
+
+    impl<
+            PubS: Storage + Send + Sync + 'static,
+            PrivS: Storage + Send + Sync + 'static,
+            C: Ceremony + Send + Sync + 'static,
+        > RealCrsGenerator<PubS, PrivS, C>
+    {
+        async fn init_test(
+            pub_storage: PubS,
+            priv_storage: PrivS,
+            session_preparer: SessionPreparer,
+        ) -> Self {
+            let crypto_storage = ThresholdCryptoMaterialStorage::new(
+                pub_storage,
+                priv_storage,
+                None,
+                HashMap::new(),
+                HashMap::new(),
+            );
+
+            let tracker = Arc::new(TaskTracker::new());
+            let ongoing = Arc::new(Mutex::new(HashMap::new()));
+            let rate_limiter = RateLimiter::default();
+            Self {
+                base_kms: session_preparer.base_kms.new_instance().await,
+                crypto_storage,
+                crs_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+                session_preparer,
+                tracker,
+                ongoing,
+                rate_limiter,
+                _ceremony: PhantomData,
+            }
+        }
+
+        fn set_bucket_size(&mut self, bucket_size: usize) {
+            let config = crate::util::rate_limiter::RateLimiterConfig {
+                bucket_size,
+                ..Default::default()
+            };
+            self.rate_limiter = RateLimiter::new(config);
+        }
+    }
 
     #[derive(Clone, Default)]
     pub struct BrokenCeremony {}
@@ -560,29 +567,49 @@ mod tests {
             .await;
 
         // `InvalidArgument` - If the request ID is not present, valid or does not match the expected format.
-        let req = CrsGenRequest {
-            params: FheParameter::Default as i32,
-            max_num_bits: None,
-            request_id: None,
-            domain: None,
-        };
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        {
+            let req = CrsGenRequest {
+                params: FheParameter::Default as i32,
+                max_num_bits: None,
+                request_id: None,
+                domain: Some(domain),
+            };
 
-        let request = Request::new(req);
-        let res = crs_gen.crs_gen(request).await;
+            let request = Request::new(req);
+            let res = crs_gen.crs_gen(request).await;
 
-        assert_eq!(res.unwrap_err().code(), tonic::Code::InvalidArgument);
+            assert_eq!(res.unwrap_err().code(), tonic::Code::InvalidArgument);
 
-        // same for the result, should give us an error with a bad request ID
-        assert_eq!(
-            crs_gen
-                .get_result(Request::new(kms_grpc::kms::v1::RequestId {
-                    request_id: "xyz".to_string(),
-                }))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::InvalidArgument
-        );
+            // same for the result, should give us an error with a bad request ID
+            assert_eq!(
+                crs_gen
+                    .get_result(Request::new(kms_grpc::kms::v1::RequestId {
+                        request_id: "xyz".to_string(),
+                    }))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+
+        {
+            // `InvalidArgument` - If the parameters in the request are not valid.
+            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let req = CrsGenRequest {
+                params: 2,
+                max_num_bits: None,
+                request_id: Some(req_id.into()),
+                domain: Some(domain),
+            };
+
+            let request = Request::new(req);
+            let res = crs_gen.crs_gen(request).await;
+
+            assert_eq!(res.unwrap_err().code(), tonic::Code::InvalidArgument);
+        }
     }
 
     #[tokio::test]
@@ -595,21 +622,8 @@ mod tests {
             )
             .await;
 
-        // `NotFound` - If the parameters in the request are not valid.
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
-        let req = CrsGenRequest {
-            params: 2,
-            max_num_bits: None,
-            request_id: Some(req_id.into()),
-            domain: None,
-        };
-
-        let request = Request::new(req);
-        let res = crs_gen.crs_gen(request).await;
-
-        assert_eq!(res.unwrap_err().code(), tonic::Code::NotFound);
-
         // `NotFound` - If the CRS generation does not exist for `request`.
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
         assert_eq!(
             crs_gen
                 .get_result(Request::new(req_id.into()))
@@ -633,11 +647,12 @@ mod tests {
         crs_gen.set_bucket_size(1);
 
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: None,
+            domain: Some(domain),
         };
 
         let request = Request::new(req);
@@ -657,11 +672,12 @@ mod tests {
             )
             .await;
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: None,
+            domain: Some(domain.clone()),
         };
 
         let request = Request::new(req);
@@ -673,7 +689,7 @@ mod tests {
             params: 0,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: None,
+            domain: Some(domain),
         };
 
         let request = Request::new(req);
@@ -697,11 +713,12 @@ mod tests {
                 .await;
 
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: None,
+            domain: Some(domain),
         };
 
         // we expect the CRS generation call to pass, but only get an error when we try to retrieve the result
@@ -730,11 +747,12 @@ mod tests {
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
 
         // start the ceremony but immediately fetch the result, it should be not found too
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: None,
+            domain: Some(domain),
         };
 
         let request = Request::new(req);
@@ -761,11 +779,12 @@ mod tests {
 
         // Test that we can successfully generate a CRS
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req = CrsGenRequest {
             params: FheParameter::Default as i32,
             max_num_bits: None,
             request_id: Some(req_id.into()),
-            domain: None,
+            domain: Some(domain),
         };
 
         let request = Request::new(req);

@@ -14,8 +14,9 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_PUBLIC_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
-        TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+        ERR_PUBLIC_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_PUBLIC_DECRYPT_INNER,
+        OP_PUBLIC_DECRYPT_REQUEST, TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
+        TAG_TFHE_TYPE,
     },
 };
 use tfhe::FheTypes;
@@ -279,7 +280,13 @@ impl<
             .rate_limiter
             .start_pub_decrypt()
             .await
-            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+            .inspect_err(|_e| {
+                if let Err(e) = metrics::METRICS
+                    .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
+                {
+                    tracing::warn!("Failed to increment error counter: {:?}", e);
+                }
+            })?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -593,18 +600,13 @@ impl<
             let extra_data = vec![];
 
             // Compute expensive signature OUTSIDE the lock
-            let external_sig = if let Some(domain) = eip712_domain {
-                compute_external_pt_signature(
-                    &sigkey,
-                    ext_handles_bytes,
-                    &pts,
-                    extra_data.clone(),
-                    domain,
-                )
-            } else {
-                tracing::warn!("Skipping external signature computation due to missing domain");
-                vec![]
-            };
+            let external_sig = compute_external_pt_signature(
+                &sigkey,
+                ext_handles_bytes,
+                &pts,
+                extra_data.clone(),
+                eip712_domain,
+            );
 
             // Single success update with minimal lock hold time
             let success_result = Ok((req_id, pts.clone(), external_sig, extra_data));
@@ -675,7 +677,7 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use kms_grpc::kms::v1::TypedCiphertext;
+    use kms_grpc::{kms::v1::TypedCiphertext, rpc_types::alloy_to_protobuf_domain};
 
     use crate::{
         consts::TEST_PARAM,
@@ -683,6 +685,7 @@ mod tests {
             decompression::test_tools::safe_serialize_versioned,
             internal_crypto_types::gen_sig_keys,
         },
+        dummy_domain,
         engine::threshold::service::compute_all_info,
         vault::storage::ram,
     };
@@ -795,7 +798,7 @@ mod tests {
             .build();
         let ct_buf = safe_serialize_versioned(&ct);
 
-        let info = compute_all_info(&sk, &fhe_key_set, None).unwrap();
+        let info = compute_all_info(&sk, &fhe_key_set, &dummy_domain()).unwrap();
 
         let dummy_meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
         {
@@ -835,6 +838,7 @@ mod tests {
 
         let (key_id, ct_buf, public_decryptor) = setup_public_decryptor().await;
 
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
         let bad_key_id = RequestId::new_random(&mut rand::rngs::OsRng);
         let request = Request::new(PublicDecryptionRequest {
@@ -846,7 +850,7 @@ mod tests {
                 ciphertext_format: CiphertextFormat::SmallCompressed as i32,
             }],
             key_id: Some(bad_key_id.into()),
-            domain: None,
+            domain: Some(domain),
             extra_data: vec![],
         });
         // NOTE: should probably be NotFound
@@ -890,6 +894,7 @@ mod tests {
         // Set bucket size to zero, so no operations are allowed
         public_decryptor.set_bucket_size(0);
 
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
         let request = Request::new(PublicDecryptionRequest {
             request_id: Some(req_id.into()),
@@ -900,7 +905,7 @@ mod tests {
                 ciphertext_format: CiphertextFormat::SmallCompressed as i32,
             }],
             key_id: Some(key_id.into()),
-            domain: None,
+            domain: Some(domain),
             extra_data: vec![],
         });
         assert_eq!(
@@ -920,6 +925,7 @@ mod tests {
     async fn sunshine() {
         let (key_id, ct_buf, public_decryptor) = setup_public_decryptor().await;
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = Request::new(PublicDecryptionRequest {
             request_id: Some(req_id.into()),
             ciphertexts: vec![TypedCiphertext {
@@ -929,7 +935,7 @@ mod tests {
                 ciphertext_format: CiphertextFormat::SmallCompressed as i32,
             }],
             key_id: Some(key_id.into()),
-            domain: None,
+            domain: Some(domain),
             extra_data: vec![],
         });
         public_decryptor.public_decrypt(request).await.unwrap();

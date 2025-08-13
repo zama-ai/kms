@@ -9,7 +9,7 @@ use kms_grpc::{
 };
 use observability::{
     metrics,
-    metrics_names::{OP_KEYGEN_PREPROC, TAG_PARTY_ID},
+    metrics_names::{ERR_RATE_LIMIT_EXCEEDED, OP_KEYGEN_PREPROC, TAG_PARTY_ID},
 };
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
@@ -228,11 +228,13 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         &self,
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self
-            .rate_limiter
-            .start_preproc()
-            .await
-            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+        let permit = self.rate_limiter.start_preproc().await.inspect_err(|_e| {
+            if let Err(e) =
+                metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC, ERR_RATE_LIMIT_EXCEEDED)
+            {
+                tracing::warn!("Failed to increment error counter: {:?}", e);
+            }
+        })?;
 
         let inner = request.into_inner();
         let request_id: RequestId = tonic_some_or_err(
@@ -243,10 +245,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         validate_request_id(&request_id)?;
 
         //Retrieve the DKG parameters
-        let dkg_params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params),
-            "Parameter choice is not recognized".to_string(),
-        )?;
+        let dkg_params = retrieve_parameters(inner.params)?;
 
         //Ensure there's no entry in preproc buckets for that request_id
         let entry_exists = {
@@ -339,29 +338,48 @@ mod tests {
         let session_preparer = SessionPreparer::new_test_session(true);
         let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
 
-        let request = KeyGenPreprocRequest {
-            request_id: Some(kms_grpc::kms::v1::RequestId {
-                request_id: "invalid_id".to_string(),
-            }),
-            params: FheParameter::Test as i32,
-            keyset_config: None,
-        };
-        assert_eq!(
-            prep.key_gen_preproc(tonic::Request::new(request))
+        {
+            let request = KeyGenPreprocRequest {
+                request_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "invalid_id".to_string(),
+                }),
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+            assert_eq!(
+                prep.get_result(tonic::Request::new(kms_grpc::kms::v1::RequestId {
+                    request_id: "invalid_id".to_string(),
+                }))
                 .await
                 .unwrap_err()
                 .code(),
-            tonic::Code::InvalidArgument
-        );
-        assert_eq!(
-            prep.get_result(tonic::Request::new(kms_grpc::kms::v1::RequestId {
-                request_id: "invalid_id".to_string(),
-            }))
-            .await
-            .unwrap_err()
-            .code(),
-            tonic::Code::InvalidArgument
-        );
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // Invalid argument because params is invalid
+            let mut rng = AesRng::seed_from_u64(22);
+            let req_id = RequestId::new_random(&mut rng);
+            let request = KeyGenPreprocRequest {
+                request_id: Some(req_id.into()),
+                params: 10,
+                keyset_config: None,
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
     }
 
     #[tokio::test]
@@ -421,38 +439,19 @@ mod tests {
         let session_preparer = SessionPreparer::new_test_session(true);
         let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
 
-        {
-            // Aborted because request_id is None
-            let request = KeyGenPreprocRequest {
-                request_id: None,
-                params: FheParameter::Test as i32,
-                keyset_config: None,
-            };
-            assert_eq!(
-                prep.key_gen_preproc(tonic::Request::new(request))
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::Aborted
-            );
-        }
-        {
-            // Aborted because params is invalid
-            let mut rng = AesRng::seed_from_u64(22);
-            let req_id = RequestId::new_random(&mut rng);
-            let request = KeyGenPreprocRequest {
-                request_id: Some(req_id.into()),
-                params: 10,
-                keyset_config: None,
-            };
-            assert_eq!(
-                prep.key_gen_preproc(tonic::Request::new(request))
-                    .await
-                    .unwrap_err()
-                    .code(),
-                tonic::Code::Aborted
-            );
-        }
+        // Aborted because request_id is None
+        let request = KeyGenPreprocRequest {
+            request_id: None,
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+        };
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Aborted
+        );
     }
 
     #[tokio::test]
