@@ -439,8 +439,10 @@ pub(crate) fn compute_external_user_decrypt_signature(
     payload: &UserDecryptionResponsePayload,
     eip712_domain: &Eip712Domain,
     user_pk: &UnifiedPublicEncKey,
+    extra_data: Vec<u8>,
 ) -> anyhow::Result<Vec<u8>> {
-    let message_hash = compute_user_decrypt_message_hash(payload, eip712_domain, user_pk)?;
+    let message_hash =
+        compute_user_decrypt_message_hash(payload, eip712_domain, user_pk, extra_data)?;
 
     let signer = PrivateKeySigner::from_signing_key(server_sk.sk().clone());
     let signer_address = signer.address();
@@ -462,9 +464,10 @@ pub(crate) fn compute_external_pt_signature(
     server_sk: &PrivateSigKey,
     ext_handles_bytes: Vec<Vec<u8>>,
     pts: &[TypedPlaintext],
+    extra_data: Vec<u8>,
     eip712_domain: Eip712Domain,
 ) -> Vec<u8> {
-    let message_hash = compute_pt_message_hash(ext_handles_bytes, pts, eip712_domain);
+    let message_hash = compute_pt_message_hash(ext_handles_bytes, pts, eip712_domain, extra_data);
 
     let signer = PrivateKeySigner::from_signing_key(server_sk.sk().clone());
     let signer_address = signer.address();
@@ -715,6 +718,7 @@ pub fn compute_pt_message_hash(
     ext_handles_bytes: Vec<Vec<u8>>,
     pts: &[TypedPlaintext],
     eip712_domain: Eip712Domain,
+    extra_data: Vec<u8>,
 ) -> B256 {
     // convert external_handles back to U256 to be signed
     #[allow(clippy::useless_conversion)]
@@ -730,6 +734,7 @@ pub fn compute_pt_message_hash(
     let message = PublicDecryptVerification {
         ctHandles: external_handles,
         decryptedResult: pt_bytes,
+        extraData: extra_data.into(),
     };
 
     let message_hash = message.eip712_signing_hash(&eip712_domain);
@@ -749,14 +754,14 @@ pub type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
 
 // Values that need to be stored temporarily as part of an async decryption call.
 // Represents the request ID of the request and the result of the decryption (a batch of plaintests),
-// as well as an external signature on the batch.
+// an external signature on the batch and any extra data.
 #[cfg(feature = "non-wasm")]
-pub type PubDecCallValues = (RequestId, Vec<TypedPlaintext>, Vec<u8>);
+pub type PubDecCallValues = (RequestId, Vec<TypedPlaintext>, Vec<u8>, Vec<u8>);
 
 // Values that need to be stored temporarily as part of an async user decryption call.
-// Represents UserDecryptionResponsePayload, external_handles, external_signature.
+// Represents UserDecryptionResponsePayload, external_handles, external_signature and extra_data.
 #[cfg(feature = "non-wasm")]
-pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>);
+pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8>);
 
 /// Helper method which takes a [KeyGenCallValues] and returns
 /// [HashMap<String, SignedPubDataHandle>] by applying the [ToString] function on [PubDataType] for each element in the map.
