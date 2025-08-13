@@ -328,6 +328,7 @@ pub trait DKGParamsBasics: Sync {
     fn all_lwe_hat_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
     fn all_glwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
     fn all_compression_ksk_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
+    // This is the difference between the output bitsize and the input bitsize of the pksk
     fn pksk_rshift(&self) -> i8;
 }
 

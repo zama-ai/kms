@@ -163,7 +163,7 @@ where
 }
 
 ///Generates the lwe private key share and associated public key
-#[instrument(name="Gen Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen compressed Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_lwe_private_compressed_public_key_pair<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -497,7 +497,7 @@ where
     Ok(bk)
 }
 
-///Generates a Bootstrapping Key given a Glwe key in Glwe format
+///Generates a compressed Bootstrapping Key given a Glwe key in Glwe format
 ///, a Lwe key and the params for the BK generation
 #[instrument(name="Gen compressed BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_compressed_bootstrap_key<
@@ -680,6 +680,7 @@ where
     ))
 }
 
+#[instrument(name="Gen Sns Compression Key", skip(glwe_secret_key_share_sns_as_lwe, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_sns_compression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -719,6 +720,7 @@ where
     Ok((private_sns_compression_key_shares, compression_key))
 }
 
+#[instrument(name="Gen compressed Sns Compression Key", skip(glwe_secret_key_share_sns_as_lwe, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_compressed_sns_compression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -1085,6 +1087,19 @@ where
 pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync {
     /// Runs the distributed key generation protocol.
     ///
+    /// Inputs:
+    /// - `session`: the session that holds necessary information for networking
+    /// - `preprocessing`: [`DKGPreprocessing`] handle with enough triples, bits and noise available
+    /// - `params`: [`DKGParams`] parameters for the Distributed Key Generation
+    ///
+    /// Outputs:
+    /// - A [`FhePubKeySet`] composed of a [`tfhe::CompactPublicKey`] and a [`tfhe::ServerKey`]
+    /// - a [`PrivateKeySet`] composed of shares of the lwe and glwe private keys
+    ///
+    /// When using the DKGParams::WithSnS variant, the sharing domain must be ResiduePoly<Z128, EXTENSION_DEGREE>.
+    /// Note that there is some redundancy of information because we also explicitly ask the [`BaseRing`] as trait parameter
+    ///
+    ///
     /// We have a private trait bound here to ensure that the
     /// an internal type implements a private trait Finalizable.
     #[allow(private_bounds)]
@@ -1106,7 +1121,22 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
     // next release to be able to decompress the keys generated here.
     // see https://github.com/zama-ai/kms/pull/40
 
-    /// Runs the distributed key generation protocol.
+    /// Runs the distributed key generation protocol for compressed keys.
+    ///
+    /// Inputs:
+    /// - `session`: the session that holds necessary information for networking
+    /// - `preprocessing`: [`DKGPreprocessing`] handle with enough triples, bits and noise available
+    /// - `params`: [`DKGParams`] parameters for the Distributed Key Generation
+    ///
+    /// Outputs:
+    /// - A [`CompressedFhePubKeySet`] composed of a [`tfhe::CompressedCompactPublicKey`] and a [`tfhe::CompressedServerKey`] as well as the seed of the XOF to decompress the keys.
+    ///
+    /// __NOTE__ Decompressing those keys require a custom decompression technique and not the usual _decompress_ fn provided on those structs.
+    /// - a [`PrivateKeySet`] composed of shares of the lwe and glwe private keys
+    ///
+    /// When using the DKGParams::WithSnS variant, the sharing domain must be ResiduePoly<Z128, EXTENSION_DEGREE>.
+    /// Note that there is some redundancy of information because we also explicitly ask the [`BaseRing`] as trait parameter
+    ///
     ///
     /// We have a private trait bound here to ensure that the
     /// an internal type implements a private trait Finalizable.
@@ -1137,19 +1167,6 @@ pub struct SecureOnlineDistributedKeyGen<Z: BaseRing, const EXTENSION_DEGREE: us
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTENSION_DEGREE>
     for SecureOnlineDistributedKeyGen<Z, EXTENSION_DEGREE>
 {
-    /// Runs the distributed key generation protocol.
-    ///
-    /// Inputs:
-    /// - `session`: the session that holds necessary information for networking
-    /// - `preprocessing`: [`DKGPreprocessing`] handle with enough triples, bits and noise available
-    /// - `params`: [`DKGParams`] parameters for the Distributed Key Generation
-    ///
-    /// Outputs:
-    /// - A [`RawPubKeySet`] composed of the public key, the KSK, the BK and the BK_sns if required
-    /// - a [`PrivateKeySet`] composed of shares of the lwe and glwe private keys
-    ///
-    /// When using the DKGParams::WithSnS variant, the sharing domain must be ResiduePoly<Z128, EXTENSION_DEGREE>.
-    /// Note that there is some redundancy of information because we also explicitly ask the [`BaseRing`] as trait parameter
     #[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
     #[allow(private_bounds)]
     async fn keygen<
@@ -1305,7 +1322,6 @@ where
 
     tracing::info!("(Party {my_role}) Generating GLWE secret key...Done");
 
-    //Generate the compression keys if needed
     //Generate the compression keys, we'll have None if there are no
     //compression materials to generate
     let compression_material = distributed_keygen_compression_material(
@@ -1833,7 +1849,6 @@ where
     let params_basics_handle = params.get_params_basics_handle();
     let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
     //Init the XOF with the seed computed above
-    // QU: Do we want to use the same DSEP as in the regualr KG?
     let mut mpc_encryption_rng = MPCEncryptionRandomGenerator::<
         Z128,
         SoftwareRandomGenerator,

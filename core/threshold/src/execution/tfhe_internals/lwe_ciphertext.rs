@@ -162,6 +162,10 @@ pub(crate) async fn open_to_tfhers_seeded_type<
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
+    assert!(
+        !ciphertext_share_list.is_empty(),
+        "Ciphertext share list must not be empty"
+    );
     let lwe_dim = LweDimension(ciphertext_share_list[0].mask.len());
     let my_role = session.my_role();
     // Split the body from the mask, so that we can open the body which are initially secret shared

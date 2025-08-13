@@ -68,7 +68,6 @@ impl RawPubKeySet {
         );
 
         // Conversion to fourier domain
-        // TODO add `modulus_switch_noise_reduction_key` to RawPubKeySet
         par_convert_standard_lwe_bootstrap_key_to_fourier(&self.bk, &mut fourier_bsk);
 
         let pk_bk = ShortintBootstrappingKey::Classic {
