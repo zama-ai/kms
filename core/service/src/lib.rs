@@ -118,7 +118,7 @@ pub fn compute_user_decrypt_message_hash(
 }
 
 /// Create a dummy domain for testing
-#[cfg(all(feature = "non-wasm", feature = "testing"))]
+#[cfg(any(test, all(feature = "non-wasm", feature = "testing")))]
 pub(crate) fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     alloy_sol_types::eip712_domain!(
         name: "Authorization token",
