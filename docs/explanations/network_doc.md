@@ -62,8 +62,6 @@ The networking service uses a session-based model. For each MPC computation (i.e
 
 ### TLS Configuration and Requirements
 
-When operating in a zero-trust environment, mTLS is used to secure P2P communication.
-
 #### Identity and Authentication
 
 Each MPC node is identified by its **Common Name (CN)** within its certificate. This identity is validated against the certificate's **Subject Alternative Name (SAN)** list.
