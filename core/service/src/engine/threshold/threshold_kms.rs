@@ -2,7 +2,6 @@ use crate::engine::Shutdown;
 use crate::retry_loop;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
 use tonic_health::server::HealthReporter;
@@ -32,7 +31,7 @@ pub struct ThresholdKms<
     pub(crate) context_manager: CM,
     pub(crate) backup_operator: BO,
     tracker: Arc<TaskTracker>,
-    health_reporter: Arc<RwLock<HealthReporter>>,
+    health_reporter: HealthReporter,
     mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
 }
 
@@ -63,7 +62,7 @@ impl<
         context_manager: CM,
         backup_operator: BO,
         tracker: Arc<TaskTracker>,
-        health_reporter: Arc<RwLock<HealthReporter>>,
+        health_reporter: HealthReporter,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
     ) -> Self {
         Self {
@@ -100,15 +99,13 @@ impl<
     > Shutdown for ThresholdKms<IN, UD, PD, KG, IKG, PP, CG, ICG, CM, BO>
 {
     fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
-        let health_reporter = Arc::clone(&self.health_reporter);
+        let health_reporter = self.health_reporter.clone();
         let tracker = Arc::clone(&self.tracker);
         let mpc_abort_handle = self.mpc_abort_handle.abort_handle();
         let handle = {
             let new_handle_clone = mpc_abort_handle.clone();
             tokio::task::spawn(async move {
                 health_reporter
-                    .write()
-                    .await
                     .set_not_serving::<CoreServiceEndpointServer<Self>>()
                     .await;
                 tracing::info!("Sat not serving");
@@ -174,7 +171,7 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
         context_manager: CM,
         backup_operator: BO,
         tracker: Arc<TaskTracker>,
-        health_reporter: Arc<RwLock<HealthReporter>>,
+        health_reporter: HealthReporter,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
     ) -> Self {
         Self {
@@ -206,8 +203,6 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
             let new_handle_clone = mpc_abort_handle.clone();
             tokio::task::spawn(async move {
                 health_reporter
-                    .write()
-                    .await
                     .set_not_serving::<CoreServiceEndpointServer<Self>>()
                     .await;
                 tracing::info!("Sat not serving");

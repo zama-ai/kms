@@ -509,6 +509,7 @@ mod tests {
                 ciphertexts: ciphertexts.clone(),
                 key_id: None,
                 domain: Some(domain.clone()),
+                extra_data: vec![],
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -523,6 +524,7 @@ mod tests {
                 ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
+                extra_data: vec![],
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -540,6 +542,7 @@ mod tests {
                 ciphertexts: vec![],
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
+                extra_data: vec![],
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -554,6 +557,7 @@ mod tests {
                 ciphertexts: vec![],
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
+                extra_data: vec![],
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -568,6 +572,7 @@ mod tests {
                 ciphertexts: ciphertexts.clone(),
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
+                extra_data: vec![],
             };
             let (_, _, _, domain) = validate_public_decrypt_req(&req).unwrap();
             assert!(domain.is_some());
@@ -616,6 +621,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
+                extra_data: vec![],
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -632,6 +638,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
+                extra_data: vec![],
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -651,6 +658,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
+                extra_data: vec![],
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -667,6 +675,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
+                extra_data: vec![],
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -683,6 +692,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(Some(1)),
                 enc_key: enc_pk_buf.clone(),
+                extra_data: vec![],
             };
             assert_eq!(
                 "Error parsing checksummed client address: 0xD8Da6bf26964Af9d7EEd9e03e53415d37AA96045 - Bad address checksum",
@@ -701,6 +711,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: bad_enc_pk_buf,
+                extra_data: vec![],
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -717,6 +728,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
+                extra_data: vec![],
             };
             assert!(validate_user_decrypt_req(&req).is_ok());
         }
@@ -774,6 +786,7 @@ mod tests {
             key_id: Some(key_id.into()),
             typed_ciphertexts: vec![typed_ciphertext],
             domain: Some(domain_msg),
+            extra_data: vec![],
         };
 
         {
@@ -825,14 +838,11 @@ mod tests {
                 .into(),
         );
         let pivot = PublicDecryptionResponsePayload {
-            #[allow(deprecated)] // we have to allow to fill the struct
-            digest: vec![],
             verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
             plaintexts: vec![TypedPlaintext {
                 bytes: vec![1],
                 fhe_type: 1,
             }],
-            external_signature: None,
             request_id: request_id.clone(),
         };
 
@@ -878,13 +888,10 @@ mod tests {
             );
             let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: None,
                 request_id: bad_request_id,
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
@@ -912,13 +919,10 @@ mod tests {
             );
             let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: None,
                 request_id: bad_request_id,
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
@@ -942,13 +946,10 @@ mod tests {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
             let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&vk).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: None,
                 request_id: request_id.clone(),
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
@@ -972,13 +973,10 @@ mod tests {
             let (vk, _sk0) = gen_sig_keys(&mut rng);
             let bad_value = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&vk).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![0], // normally this is vec![1]
                     fhe_type: 1,
                 }],
-                external_signature: None,
                 request_id,
             };
             let bad_value_buf = bc2wrap::serialize(&bad_value).unwrap();
@@ -1035,13 +1033,10 @@ mod tests {
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: Some(vec![]),
                 request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
@@ -1056,18 +1051,17 @@ mod tests {
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
+                external_signature: Some(vec![]),
+                extra_data: vec![],
             }
         };
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: Some(vec![]),
                 request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
@@ -1082,6 +1076,8 @@ mod tests {
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
+                external_signature: Some(vec![]),
+                extra_data: vec![],
             }
         };
 
@@ -1129,8 +1125,6 @@ mod tests {
             let bad_resp = {
                 let payload = PublicDecryptionResponsePayload {
                     verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                    #[allow(deprecated)] // we have to allow to fill the struct
-                    digest: vec![],
                     plaintexts: vec![
                         TypedPlaintext {
                             bytes: vec![1],
@@ -1141,7 +1135,6 @@ mod tests {
                             fhe_type: 1,
                         },
                     ],
-                    external_signature: Some(vec![]),
                     request_id,
                 };
                 let payload_buf = bc2wrap::serialize(&payload).unwrap();
@@ -1156,6 +1149,8 @@ mod tests {
                 PublicDecryptionResponse {
                     signature: signature_buf,
                     payload: Some(payload),
+                    external_signature: Some(vec![]),
+                    extra_data: vec![],
                 }
             };
             let agg_resp = vec![resp0.clone(), bad_resp];
@@ -1210,18 +1205,16 @@ mod tests {
                     .into(),
             ),
             domain: None,
+            extra_data: vec![],
         };
 
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&1]).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: Some(vec![]),
                 request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
@@ -1236,18 +1229,17 @@ mod tests {
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
+                external_signature: Some(vec![]),
+                extra_data: vec![],
             }
         };
         let resp1 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: bc2wrap::serialize(&pks[&2]).unwrap(),
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext {
                     bytes: vec![1],
                     fhe_type: 1,
                 }],
-                external_signature: Some(vec![]),
                 request_id: request_id.clone(),
             };
             let payload_buf = bc2wrap::serialize(&payload).unwrap();
@@ -1262,6 +1254,8 @@ mod tests {
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
+                external_signature: Some(vec![]),
+                extra_data: vec![],
             }
         };
 
@@ -1319,6 +1313,7 @@ mod tests {
                         .into(),
                 ),
                 domain: None,
+                extra_data: vec![],
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
@@ -1348,6 +1343,7 @@ mod tests {
                         .into(),
                 ),
                 domain: None,
+                extra_data: vec![],
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
@@ -1382,6 +1378,7 @@ mod tests {
                         .into(),
                 ),
                 domain: None,
+                extra_data: vec![],
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
@@ -1427,15 +1424,14 @@ mod tests {
         let resp0 = {
             let payload = PublicDecryptionResponsePayload {
                 verification_key: vec![],
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: plaintexts.clone(),
-                external_signature: Some(vec![]),
                 request_id: request_id.clone(),
             };
             PublicDecryptionResponse {
                 signature: vec![],
                 payload: Some(payload),
+                external_signature: Some(vec![]),
+                extra_data: vec![],
             }
         };
 
@@ -1485,15 +1481,14 @@ mod tests {
             );
             let payload = PublicDecryptionResponsePayload {
                 verification_key: vec![],
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: plaintexts.clone(),
-                external_signature: Some(vec![]),
                 request_id: bad_request_id,
             };
             PublicDecryptionResponse {
                 signature: vec![],
                 payload: Some(payload),
+                external_signature: Some(vec![]),
+                extra_data: vec![],
             }
         };
 

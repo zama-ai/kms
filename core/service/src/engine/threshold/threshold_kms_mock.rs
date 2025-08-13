@@ -23,7 +23,6 @@ use kms_grpc::rpc_types::PubDataType;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tfhe::FheTypes;
-use tokio::sync::RwLock;
 use tokio_util::task::TaskTracker;
 use tonic::server::NamedService;
 use tonic::{transport, transport::server::TcpIncoming, Request, Response, Status};
@@ -110,7 +109,7 @@ async fn new_dummy_threshold_kms() -> (DummyThresholdKms, HealthServer<impl Heal
             DummyContextManager {},
             DummyBackupOperator {},
             Arc::new(TaskTracker::new()),
-            Arc::new(RwLock::new(threshold_health_reporter)),
+            threshold_health_reporter,
             handle,
         ),
         threshold_health_service,
@@ -160,6 +159,7 @@ impl UserDecryptor for DummyUserDecryptor {
             signature: vec![1, 2],
             external_signature: vec![1, 2, 3],
             payload: Some(payload),
+            extra_data: vec![],
         }))
     }
 }
@@ -183,12 +183,11 @@ impl PublicDecryptor for DummyPublicDecryptor {
             signature: vec![1, 2],
             payload: Some(PublicDecryptionResponsePayload {
                 verification_key: vec![],
-                #[allow(deprecated)] // we have to allow to fill the struct
-                digest: vec![],
                 plaintexts: vec![TypedPlaintext::new(42, FheTypes::Uint8)],
-                external_signature: Some(vec![23_u8; 65]),
                 request_id: Some(request.into_inner()),
             }),
+            external_signature: Some(vec![23_u8; 65]),
+            extra_data: vec![],
         }))
     }
 }
