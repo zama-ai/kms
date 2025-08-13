@@ -291,7 +291,7 @@ where
     // Convenience Storage Methods
     // =========================
 
-    // TODO it seems these methods are never used!
+    // TODO it seems these methods are never used! Should we remove them?
     /// Store CRS (public parameters + private info)
     pub async fn store_crs(
         &self,
@@ -440,8 +440,6 @@ where
     // Ensure_xxx_existence Methods
     // =========================
 
-    // TODO these methods should either be in threshold.rs or the similar methods there should be moved here
-
     /// Tries to delete all the types of key material related to a specific [RequestId].
     pub async fn purge_key_material(
         &self,
@@ -492,11 +490,10 @@ where
             result.is_err()
         };
         let f3 = async {
-            // TODO should backups also be purged here?
             match back_vault {
-                Some(mut x) => {
+                Some(mut guarded_backup_vault) => {
                     let result = delete_at_request_id(
-                        &mut (*x),
+                        &mut (*guarded_backup_vault),
                         req_id,
                         &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
                     )

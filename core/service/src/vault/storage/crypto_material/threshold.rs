@@ -41,6 +41,7 @@ pub struct ThresholdCryptoMaterialStorage<
     PrivS: Storage + Send + Sync + 'static,
 > {
     pub(crate) inner: CryptoMaterialStorage<PubS, PrivS>,
+    /// Note that `fhe_keys` should be locked after any locking of elements in `inner`.
     fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
 }
 
@@ -108,9 +109,15 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
         let mut guarded_meta_storage = meta_store.write().await;
+        // Lock the storage components in the correct order to avoid deadlocks.
+        let mut pub_storage = self.inner.public_storage.lock().await;
+        let mut priv_storage = self.inner.private_storage.lock().await;
+        let back_vault = match self.inner.backup_vault {
+            Some(ref x) => Some(x.lock().await),
+            None => None,
+        };
 
         let f1 = async {
-            let mut priv_storage = self.inner.private_storage.lock().await;
             let store_result = store_versioned_at_request_id(
                 &mut (*priv_storage),
                 key_id,
@@ -129,7 +136,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             store_result.is_ok()
         };
         let f2 = async {
-            let mut pub_storage = self.inner.public_storage.lock().await;
             let pk_result = store_pk_at_request_id(
                 &mut (*pub_storage),
                 key_id,
@@ -154,10 +160,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         };
         let threshold_key_clone = threshold_fhe_keys.clone();
         let f3 = async move {
-            // // TODO ciphertext should be versioned
-            match self.inner.backup_vault {
-                Some(ref back_vault) => {
-                    let mut guarded_backup_vault = back_vault.lock().await;
+            match back_vault {
+                Some(mut guarded_backup_vault) => {
                     let backup_result = store_versioned_at_request_id(
                         &mut (*guarded_backup_vault),
                         key_id,
@@ -177,8 +181,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 }
             }
         };
-        // TODO since each thread is locking a storage component and they are run concurrently in a single thread
-        // don't we risk deadlocks with parallel executions since we have no guaranteed on the lock order?
         let (r1, r2, r3) = tokio::join!(f1, f2, f3);
         // Try to store the new data
         tracing::info!("Storing DKG objects for key ID {}", key_id);
@@ -287,6 +289,10 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         commitments: BackupCommitments,
         meta_store: Arc<RwLock<CustodianMetaStore>>,
     ) {
+        // use guarded_meta_store as the synchronization point
+        // all other locks are taken as needed so that we don't lock up
+        // other function calls too much
+        let mut guarded_meta_store = meta_store.write().await;
         // Lock the storage needed in correct order to avoid deadlocks.
         let mut private_storage_guard = self.inner.private_storage.lock().await;
         let mut public_storage_guard = self.inner.public_storage.lock().await;
@@ -343,7 +349,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         {
             // Update meta store
             // First we insert the request ID
-            let mut guarded_meta_store = meta_store.write().await;
             // Whether things fail or not we can't do much
             match guarded_meta_store.insert(req_id) {
                 Ok(_) => {}
@@ -381,7 +386,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                                 sharing_chain.set_backup_enc_key(pub_key);
                             }
                         },
-                        None => todo!(),
+                        None => {
+                            tracing::info!(
+                                "No keychain in backup vault, skipping setting backup encryption key for request {req_id}"
+                            );
+                        },
                     }
                 },
                 None => tracing::warn!(
