@@ -34,10 +34,10 @@ sequenceDiagram
     end
 ```
 
-*   **L7 (Application):** The MPC protocol logic, which sends and receives messages required for the MPC protocol.
-*   **L6/7 (Presentation/Session):**
+*   **L7 (Application):**
+    *   The **MPC protocol** logic, which sends and receives messages required for the MPC protocol built on top of **gRPC**.
     *   **gRPC/HTTP2:** A RPC framework is used for structured communication between nodes, using unary messages.
-    *   **mTLS:** Mutual TLS is employed to establish a secure and authenticated channel. Each node presents a certificate to prove its identity, and this identity is verified by its peers.
+*   **L5/6 (Presentation/Session):** **mTLS:** Mutual TLS is employed to establish a secure and authenticated channel. Each node presents a certificate to prove its identity, and this identity is verified by its peers.
 *   **L4 (Transport):** TCP provides reliable, ordered, and error-checked delivery of a stream of bytes.
 *   **L2/3 (Data Link/Network):** It is assumed that nodes operate within a secure, private network (e.g., an AWS VPC with PrivateLink, or a VPN). This layer provides the foundational connectivity but does not, by itself, guarantee the authenticity of the communicating endpoints.
 
@@ -45,7 +45,7 @@ sequenceDiagram
 
 The networking service uses a session-based model. For each MPC computation (i.e. each new *decryption*, *preprocessing* or *DKG*), a `NetworkSession` is created with its own unique `SessionID`, which manages the communication rounds and state for that specific computation.
 
-1.  **Connection Establishment:** When a node needs to communicate with a peer, it establishes a gRPC channel. If mTLS is enabled, this involves a (*custom*) TLS handshake where both parties validate each other's certificates.
+1.  **Connection Establishment:** When a node needs to communicate with a peer, it establishes a gRPC channel. If mTLS is enabled, this involves a (*custom*) TLS handshake where both parties validate each other's certificates (see [Identity and Authentication](#identity-and-authentication)).
 2.  **Message Sending:**
     *   The application sends a message through its `NetworkSession`.
     *   The session wraps the message with metadata (session ID, sender identity, round number) into a `Tag`.
@@ -95,3 +95,4 @@ The custom TLS verifier (`AttestedServerVerifier` and `AttestedClientVerifier`) 
 
 *   **No Authentication at L6/7:** Without TLS, the gRPC server has no cryptographic way to verify the identity of the client. It trusts that any connection to its port is from a legitimate peer, and blindly trust the peer is whom it claims to be in the message's tag.
 *   **Risk:** Any attacker can impersonate an MPC node, potentially corrupting or exfiltrating data from the computation. This mode should only be used for testing.
+
