@@ -217,16 +217,9 @@ pub enum OperatorBackupOutputVersioned {
 #[versionize(OperatorBackupOutputVersioned)]
 pub struct OperatorBackupOutput {
     /// Ciphertext under the custodian's public key, using nested encryption.
-    pub ciphertext: Vec<u8>, // TODO should be made to ciphertext type
+    pub ciphertext: Vec<u8>,
     /// Signature by the operator.
     pub signature: Vec<u8>,
-    /// Commitment by the operator, which is a hash of [BackupMaterial].
-    ///
-    /// We cannot use the regular commitment routines from commitment.rs
-    /// because the operator cannot keep the opening and it cannot make it public.
-    /// As such, we need to ensure the material that is being committed
-    /// has enough entropy.
-    pub commitment: Vec<u8>, // todo is this still needed here?
 }
 
 impl Named for OperatorBackupOutput {
@@ -546,6 +539,7 @@ impl<D: BackupDecryptor> Operator<D> {
         }
 
         let mut ct_shares: BTreeMap<Role, _> = BTreeMap::new();
+        let mut commitments: BTreeMap<Role, _> = BTreeMap::new();
 
         // Zip_eq will panic in case the two iterators are not of the same length.
         // Since `plain_ij` is created in this method from `shares` such a panic can only happen in case of a bug in this method
@@ -582,6 +576,13 @@ impl<D: BackupDecryptor> Operator<D> {
             let ciphertext = enc_pk.encrypt(rng, &msg)?;
             let signature = self.signer.sign(&DSEP_BACKUP_CIPHER, &ciphertext)?;
 
+            // Commitment by the operator, which is a hash of [BackupMaterial].
+            //
+            // We cannot use the regular commitment routines from commitment.rs
+            // because the operator cannot keep the opening and it cannot make it public.
+            // As such, we need to ensure the material that is being committed
+            // has enough entropy.
+            //
             // we simply use the digest as the commitment
             // since the share should have enough entropy
             // is simply a sha3 hash with some metadata of the share
@@ -589,23 +590,19 @@ impl<D: BackupDecryptor> Operator<D> {
                 safe_serialize_hash_element_versioned(&DSEP_BACKUP_COMMITMENT, &backup_material)
                     .map_err(|e| BackupError::OperatorError(e.to_string()))?;
 
+            // 5. The ciphertext is stored by `Pij`, or stored on a non-malleable storage, e.g. a blockchain or a secure bank vault.
             ct_shares.insert(
                 role_j,
                 OperatorBackupOutput {
                     ciphertext,
                     signature,
-                    commitment: msg_digest,
                 },
             );
+            commitments.insert(role_j, msg_digest);
         }
 
-        // 5. The ciphertext is stored by `Pij`, or stored on a non-malleable storage, e.g. a blockchain or a secure bank vault.
         // 6. The commitments are stored by `P_i` and can be used to verify the shares later.
-        let com_map = ct_shares
-            .iter()
-            .map(|(role, com)| (*role, com.commitment.clone()))
-            .collect::<BTreeMap<Role, Vec<u8>>>();
-        let commitments = BackupCommitments::from_btree(com_map, &self.signer)
+        let commitments = BackupCommitments::from_btree(commitments, &self.signer)
             .map_err(|e| BackupError::OperatorError(format!("Could not sign commitments: {e}")))?;
         Ok((ct_shares, commitments))
     }
