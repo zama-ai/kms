@@ -357,26 +357,44 @@ impl<R: Ring> Drop for RedisPreprocessing<R> {
     // to it in rust.
     // NOTE: Ideally we'd Zeroize it but afaict Redis doesn't propose such functionality
     fn drop(&mut self) {
-        // Cleanup logic here
-        let mut con = match self.client.get_connection() {
-            Ok(con) => {
-                tracing::info!("Connection to redis for cleanup");
-                con
-            }
-            Err(_) => {
-                tracing::warn!("Failed to connect to redis to cleanup");
-                return;
-            }
-        };
+        let client = self.client.clone();
+        let keys = CorrelatedRandomnessType::iter()
+            .map(|randoness_type| compute_key(self.key_prefix.clone(), randoness_type))
+            .collect::<Vec<_>>();
 
-        for randomness_type in CorrelatedRandomnessType::iter() {
-            let key = compute_key(self.key_prefix.clone(), randomness_type);
+        // Defer cleanup to a tokio blocking thread
+        // to avoid blocking the potential current tokio async worker
+        // Note: This thus assumes we are inside a tokio runtime
+        tokio::task::spawn_blocking(move || {
+            // Cleanup logic here
+            let mut con = match client.get_connection() {
+                Ok(con) => {
+                    tracing::info!("Connection to redis for cleanup");
+                    con
+                }
+                Err(_) => {
+                    tracing::warn!("Failed to connect to redis to cleanup");
+                    return;
+                }
+            };
 
-            // Remove the key from Redis
-            let _: RedisResult<()> = con.del(key).inspect_err(|e| {
-                tracing::warn!("Failed to delete key from Redis: {}", e);
-            });
-        }
+            for key in keys {
+                // Log the size to know whether we actually deleted something
+                match con.llen::<&str, usize>(&key) {
+                    Ok(len) => {
+                        tracing::info!("About to delete {len} elements for key {key}")
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to get length of key {key} from Redis: {}", e);
+                    }
+                }
+
+                // In any case remove the key from Redis
+                let _: RedisResult<()> = con.del(&key).inspect_err(|e| {
+                    tracing::warn!("Failed to delete key {key} from Redis: {}", e);
+                });
+            }
+        });
     }
 }
 

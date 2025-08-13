@@ -40,8 +40,8 @@ macro_rules! test_triples {
         paste! {
 
 
-            #[test]
-            fn [<test_redis_preprocessing $z:lower>]() {
+            #[tokio::test]
+            async fn [<test_redis_preprocessing $z:lower>]() {
                 let test_key_prefix = format!("test_redis_preprocessing_{}",stringify!($z));
                 let redis_conf = RedisConf::default();
                 let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -81,8 +81,8 @@ macro_rules! test_triples {
     };
 }
 
-#[test]
-fn test_store_fetch_100_triples() {
+#[tokio::test]
+async fn test_store_fetch_100_triples() {
     let test_key_prefix = "test_store_fetch_100_triples".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -118,8 +118,8 @@ fn test_store_fetch_100_triples() {
     assert_eq!(triples, fetched_triples);
 }
 
-#[test]
-fn test_store_fetch_100_randoms() {
+#[tokio::test]
+async fn test_store_fetch_100_randoms() {
     let test_key_prefix = "test_store_fetch_100_randoms".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -141,8 +141,8 @@ fn test_store_fetch_100_randoms() {
     assert_eq!(randoms, fetched_shares);
 }
 
-#[test]
-fn test_store_fetch_100_bits() {
+#[tokio::test]
+async fn test_store_fetch_100_bits() {
     let test_key_prefix = "test_store_fetch_100_bits".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -164,8 +164,8 @@ fn test_store_fetch_100_bits() {
     assert_eq!(bits, fetched_bits);
 }
 
-#[test]
-fn test_fetch_more_than_stored() {
+#[tokio::test]
+async fn test_fetch_more_than_stored() {
     let store_count = 100;
     let fetch_count = 101;
 
@@ -191,8 +191,8 @@ fn test_fetch_more_than_stored() {
         .contains("Pop length error."));
 }
 
-#[test]
-fn test_cleanup_on_drop() {
+#[tokio::test]
+async fn test_cleanup_on_drop() {
     let test_key_prefix = "test_cleanup_on_drop".to_string();
     let redis_conf = RedisConf::default();
     let mut redis_factory = create_redis_factory(test_key_prefix.clone(), &redis_conf);
@@ -216,6 +216,10 @@ fn test_cleanup_on_drop() {
     assert_eq!(bit_redis_preprocessing_bis.bits_len(), 1);
     // Drop the preprocessing instance
     drop(bit_redis_preprocessing);
+
+    // Sleep for a while because drop of the Redis preproc is
+    // sent to a tokio blocking thread so drop might return early
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
     // Check that the shares have been cleaned up
     assert_eq!(bit_redis_preprocessing_bis.bits_len(), 0);
@@ -360,8 +364,8 @@ fn test_dkg_orchestrator_params8_small_no_sns() {
 }
 
 #[cfg(feature = "testing")]
-#[test]
-fn test_cast_fail_memory_bit_dec_preprocessing() {
+#[tokio::test]
+async fn test_cast_fail_memory_bit_dec_preprocessing() {
     use threshold_fhe::{
         algebra::galois_rings::degree_4::ResiduePolyF4Z64,
         execution::online::preprocessing::{
