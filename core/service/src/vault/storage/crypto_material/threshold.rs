@@ -53,7 +53,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
-        // current_backup_key: Option<BackupPublicKey>,
         pk_cache: HashMap<RequestId, WrappedPublicKeyOwned>,
         fhe_keys: HashMap<RequestId, ThresholdFheKeys>,
     ) -> Self {
@@ -63,7 +62,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 private_storage: Arc::new(Mutex::new(private_storage)),
                 backup_vault: backup_vault.map(|x| Arc::new(Mutex::new(x))),
                 pk_cache: Arc::new(RwLock::new(pk_cache)),
-                // current_backup_key: Arc::new(RwLock::new(current_backup_key)),
             },
             fhe_keys: Arc::new(RwLock::new(fhe_keys)),
         }

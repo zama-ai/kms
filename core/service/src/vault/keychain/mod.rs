@@ -115,9 +115,10 @@ pub async fn make_keychain(
         }
         // Note that it is only possible to use the secret share keychain if there is already a context present.
         // This presents a bootstrapping issue hence the system needs to initially NOT use the secret share keychain but once a custodian context is set up,
-        // it can switch to it by changing the configuration file and rebooting.
+        // it can switch to it by rebooting.
         KeychainConf::SecretSharing(SecretSharingKeychain {}) => {
             // If secret share backup is used with the centralized KMS, assume);
+            // that my_id is 0
             let private_vault = private_storage
                 .expect("Public vault must be provided to load custodian setup messages");
             let all_custodian_ids = private_vault

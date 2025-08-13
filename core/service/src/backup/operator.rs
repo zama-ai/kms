@@ -252,7 +252,7 @@ pub struct BackupCommitments {
     // Note that ideally we want to use a BTreeMap here,
     // but it does not implement Versionize yet.
     commitments: Vec<Vec<u8>>,
-    signature: Vec<u8>, // TODO should be made to signature type
+    signature: Vec<u8>,
 }
 
 impl Named for BackupCommitments {

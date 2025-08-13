@@ -3,6 +3,7 @@ use crate::backup::operator::{BackupCommitments, Operator, RecoveryRequest};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::backup_pke::{self, BackupCiphertext};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::{
     engine::{
@@ -238,8 +239,14 @@ where
                         );
                     }
                     PrivDataType::ContextInfo => {
-                        tracing::warn!("Types for context are not finalized yet, skipping backup");
-                        continue;
+                        backup_priv_data!(
+                            &mut rng,
+                            guarded_priv_storage,
+                            guarded_backup_vault,
+                            cur_type,
+                            ContextInfo,
+                            backup_enc_key
+                        );
                     }
                 }
             }

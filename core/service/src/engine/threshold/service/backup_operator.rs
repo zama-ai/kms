@@ -4,7 +4,11 @@ use crate::{
         attestation::{SecurityModule, SecurityModuleProxy},
         internal_crypto_types::PrivateSigKey,
     },
-    engine::threshold::{service::ThresholdFheKeys, traits::BackupOperator},
+    engine::{
+        context::ContextInfo,
+        threshold::{service::ThresholdFheKeys, traits::BackupOperator},
+    },
+    util::key_setup::FhePrivateKey,
     vault::{
         keychain::KeychainProxy,
         storage::{
@@ -155,8 +159,11 @@ where
                 );
             }
             PrivDataType::FhePrivateKey => {
-                tracing::warn!(
-                    "FhePrivateKey backup in the centralized case is not implemented yet. Skipping for now."
+                restore_data_type!(
+                    priv_storage,
+                    backup_vault,
+                    PrivDataType::FhePrivateKey,
+                    FhePrivateKey
                 );
             }
             PrivDataType::PrssSetup => {
@@ -171,8 +178,11 @@ where
                 );
             }
             PrivDataType::ContextInfo => {
-                tracing::warn!(
-                    "FhePrivateKey backup in the centralized case is not implemented yet. Skipping for now."
+                restore_data_type!(
+                    priv_storage,
+                    backup_vault,
+                    PrivDataType::ContextInfo,
+                    ContextInfo
                 );
             }
         }
@@ -245,8 +255,11 @@ where
                             );
                         }
                         PrivDataType::FhePrivateKey => {
-                            tracing::warn!(
-                                "FhePrivateKey backup in the centralized case is not implemented yet. Skipping for now."
+                            update_specific_backup_vault!(
+                                *private_storage,
+                                backup_vault,
+                                PrivDataType::FhePrivateKey,
+                                FhePrivateKey
                             );
                         }
                         PrivDataType::PrssSetup => {
@@ -263,8 +276,11 @@ where
                             );
                         }
                         PrivDataType::ContextInfo => {
-                            tracing::warn!(
-                                "FhePrivateKey backup in the centralized case is not implemented yet. Skipping for now."
+                            update_specific_backup_vault!(
+                                *private_storage,
+                                backup_vault,
+                                PrivDataType::ContextInfo,
+                                ContextInfo
                             );
                         }
                     }

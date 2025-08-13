@@ -283,7 +283,7 @@ pub enum PrivDataTypeVersioned {
 /// single entity and stored on a medium that is not readable, writable or modifiable by any other
 /// entity (without detection).
 ///
-/// Data stored with this type must either be need to kept secret and/or need to be kept authentic.
+/// Data stored with this type either need to be kept secret and/or need to be kept authentic.
 /// Thus some data may indeed be safe to release publicly, but a malicious replacement could completely
 /// compromise the entire system.
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Versionize)]
@@ -295,7 +295,6 @@ pub enum PrivDataType {
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
     CustodianInfo, // Custodian information for the custodian context
-    // PrivDecKeyShare,       // Decryption key share for a public key system used for operator backup
     ContextInfo,
 }
 
@@ -309,7 +308,6 @@ impl fmt::Display for PrivDataType {
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
             PrivDataType::CustodianInfo => write!(f, "CustodianInfo"),
             PrivDataType::ContextInfo => write!(f, "Context"),
-            // PrivDataType::PrivDecKeyShare => write!(f, "PrivDecKeyShare"),
         }
     }
 }
