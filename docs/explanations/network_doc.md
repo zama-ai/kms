@@ -4,8 +4,7 @@ This document outlines the gRPC-based peer-to-peer (P2P) communication protocol 
 
 *NOTE : The TLS handshake is simplified and could be extended in particular describing the custom checks from the work of Nikita.*
 
-```
-mermaid
+```mermaid
 sequenceDiagram
     participant Party A (App)
     participant Party A (Network Stack)
