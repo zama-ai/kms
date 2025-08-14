@@ -78,6 +78,10 @@ struct InnerRecoveryRequest {
     operator_role: Role,
 }
 
+impl Named for InnerRecoveryRequest {
+    const NAME: &'static str = "backup::InnerRecoveryRequest";
+}
+
 impl RecoveryRequest {
     pub fn new(
         enc_key: BackupPublicKey,
@@ -92,9 +96,10 @@ impl RecoveryRequest {
             backup_id,
             operator_role,
         };
-        let serialized_inner_req = bc2wrap::serialize(&inner_req).map_err(|e| {
-            anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
-        })?;
+        let mut serialized_inner_req = Vec::new();
+        safe_serialize(&inner_req, &mut serialized_inner_req, SAFE_SER_SIZE_LIMIT).map_err(
+            |e| anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}")),
+        )?;
         let signature = &crate::cryptography::signcryption::internal_sign(
             &DSEP_BACKUP_RECOVERY,
             &serialized_inner_req,
@@ -122,7 +127,13 @@ impl RecoveryRequest {
             tracing::warn!("RecoveryRequest has an invalid operator role");
             return Ok(false);
         }
-        let serialized_inner_req = bc2wrap::serialize(&self.payload).map_err(|e| {
+        let mut serialized_inner_req: Vec<u8> = Vec::new();
+        safe_serialize(
+            &self.payload,
+            &mut serialized_inner_req,
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .map_err(|e| {
             anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
         })?;
         if internal_verify_sig(
