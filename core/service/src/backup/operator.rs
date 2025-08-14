@@ -14,7 +14,7 @@ use crate::{
         internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature},
         signcryption::internal_verify_sig,
     },
-    engine::base::{safe_serialize_hash_element_versioned, DSEP_PUBDATA_KEY},
+    engine::base::safe_serialize_hash_element_versioned,
 };
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
@@ -34,7 +34,7 @@ use threshold_fhe::{
         runtime::party::Role,
         sharing::{shamir::ShamirSharings, share::Share},
     },
-    hashing::{hash_element, DomainSep},
+    hashing::DomainSep,
 };
 
 pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
@@ -166,12 +166,8 @@ impl Display for RecoveryRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "RecoveryRequest with:\n backup id: {}\n operator role: {}\n signature: {}\n ciphertext digest: {}\n encryption key digest: {}",
-            self.payload.backup_id,
-            self.payload.operator_role,
-            hex::encode(&self.signature),
-            hex::encode(hash_element(&DSEP_PUBDATA_KEY, &bc2wrap::serialize(&self.payload.cts).unwrap())),
-            hex::encode(hash_element(&DSEP_PUBDATA_KEY,  &bc2wrap::serialize(&self.payload.enc_key).unwrap()))
+            "RecoveryRequest with:\n backup id: {}\n operator role: {}",
+            self.payload.backup_id, self.payload.operator_role,
         )
     }
 }

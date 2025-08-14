@@ -21,7 +21,7 @@ use kms_lib::{
     },
     vault::{
         aws::build_aws_sdk_config,
-        keychain::{awskms::build_aws_kms_client, make_keychain},
+        keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
         storage::{
             delete_at_request_id, make_storage, s3::build_s3_client, Storage, StorageForBytes,
             StorageType,
@@ -333,7 +333,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     })
                 })
                 .as_ref()
-                .map(|k| make_keychain(k, awskms_client.clone(), security_module.clone(), None)),
+                .map(|k| {
+                    make_keychain_proxy(k, awskms_client.clone(), security_module.clone(), None)
+                }),
         )
         .await
         .transpose()?;

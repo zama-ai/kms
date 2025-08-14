@@ -84,7 +84,7 @@ pub enum EnvelopeStore {
     OperatorBackupOutput(BackupCiphertext),
 }
 
-pub async fn make_keychain(
+pub async fn make_keychain_proxy(
     keychain_conf: &KeychainConf,
     awskms_client: Option<AWSKMSClient>,
     security_module: Option<SecurityModuleProxy>,
