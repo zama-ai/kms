@@ -5,7 +5,7 @@
 use crate::{
     anyhow_error_and_warn_log,
     cryptography::internal_crypto_types::PrivateSigKey,
-    engine::{base::KmsFheKeyHandles, context::ContextInfo, threshold::service::ThresholdFheKeys},
+    engine::{context::ContextInfo, threshold::service::ThresholdFheKeys},
     grpc::metastore_status_service::CustodianMetaStore,
     util::meta_store::MetaStore,
     vault::{
@@ -27,7 +27,6 @@ use kms_grpc::{
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
-use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 use super::{check_data_exists, log_storage_success, CryptoMaterialReader};
@@ -288,155 +287,6 @@ where
     }
 
     // =========================
-    // Convenience Storage Methods
-    // =========================
-
-    // TODO it seems these methods are never used! Should we remove them?
-    /// Store CRS (public parameters + private info)
-    pub async fn store_crs(
-        &self,
-        crs_handle: &RequestId,
-        public_params: &CompactPkeCrs,
-        crs_info: &SignedPubDataHandleInternal,
-        is_threshold: bool,
-    ) -> anyhow::Result<()> {
-        // Store public CRS
-        self.store_public_serializable_data(crs_handle, public_params, PubDataType::CRS)
-            .await?;
-        log_storage_success(
-            crs_handle,
-            self.public_storage.lock().await.info(),
-            "CRS data",
-            true,
-            is_threshold,
-        );
-        // Store private CRS info
-        self.store_private_serializable_data(crs_handle, crs_info, PrivDataType::CrsInfo)
-            .await?;
-        log_storage_success(
-            crs_handle,
-            self.private_storage.lock().await.info(),
-            "CRS data",
-            false,
-            is_threshold,
-        );
-        Ok(())
-    }
-
-    /// Store FHE keys (public key, server key, key info, optional private key)
-    pub async fn store_fhe_keys(
-        &self,
-        req_id: &RequestId,
-        public_keys: &FhePubKeySet,
-        key_info: &KmsFheKeyHandles,
-        is_threshold: bool,
-        write_privkey: bool,
-    ) -> anyhow::Result<()> {
-        // Store public key
-        self.store_threshold_public_key(req_id, WrappedPublicKey::Compact(&public_keys.public_key))
-            .await?;
-        log_storage_success(
-            req_id,
-            self.public_storage.lock().await.info(),
-            "key",
-            true,
-            is_threshold,
-        );
-
-        // Store server key
-        self.store_public_serializable_data(
-            req_id,
-            &public_keys.server_key,
-            PubDataType::ServerKey,
-        )
-        .await?;
-        log_storage_success(
-            req_id,
-            self.public_storage.lock().await.info(),
-            if is_threshold {
-                "server key data"
-            } else {
-                "server signing key"
-            },
-            true,
-            is_threshold,
-        );
-
-        // Store key info
-        self.store_private_serializable_data(req_id, key_info, PrivDataType::FheKeyInfo)
-            .await?;
-        log_storage_success(
-            req_id,
-            self.private_storage.lock().await.info(),
-            "key data",
-            false,
-            is_threshold,
-        );
-
-        // Optionally store private key
-        if write_privkey {
-            self.store_private_serializable_data(
-                req_id,
-                &key_info.client_key,
-                PrivDataType::FhePrivateKey,
-            )
-            .await?;
-            log_storage_success(
-                req_id,
-                self.private_storage.lock().await.info(),
-                "individual private key",
-                false,
-                is_threshold,
-            );
-        }
-        Ok(())
-    }
-
-    /// Store threshold FHE keys
-    pub async fn store_threshold_fhe_keys(
-        &self,
-        key_id: &RequestId,
-        public_key: &tfhe::CompactPublicKey,
-        server_key: &tfhe::ServerKey,
-        threshold_fhe_keys: &ThresholdFheKeys,
-    ) -> anyhow::Result<()> {
-        // Store public key
-        self.store_threshold_public_key(key_id, WrappedPublicKey::Compact(public_key))
-            .await?;
-        log_storage_success(
-            key_id,
-            self.public_storage.lock().await.info(),
-            "key data",
-            true,
-            true,
-        );
-
-        // Store server key
-        self.store_threshold_public_server_key(key_id, server_key)
-            .await?;
-        log_storage_success(
-            key_id,
-            self.public_storage.lock().await.info(),
-            "server key data",
-            true,
-            true,
-        );
-
-        // Store private FHE key info
-        self.store_threshold_private_fhe_key_info(key_id, threshold_fhe_keys)
-            .await?;
-        log_storage_success(
-            key_id,
-            self.private_storage.lock().await.info(),
-            "key data",
-            false,
-            true,
-        );
-
-        Ok(())
-    }
-
-    // =========================
     // Ensure_xxx_existence Methods
     // =========================
 
@@ -680,7 +530,6 @@ where
             priv_result.is_err()
         };
         let f3 = async {
-            // TODO should we indeed delete backup material here?
             match back_vault {
                 Some(mut back_vault) => {
                     let vault_result = delete_at_request_id(

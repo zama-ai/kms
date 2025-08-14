@@ -27,7 +27,10 @@ use crate::{
     util::meta_store::MetaStore,
     vault::{
         keychain::KeychainProxy,
-        storage::{store_pk_at_request_id, store_versioned_at_request_id, Storage},
+        storage::{
+            crypto_material::log_storage_success, store_pk_at_request_id,
+            store_versioned_at_request_id, Storage, StorageReader,
+        },
         Vault,
     },
 };
@@ -130,6 +133,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     key_id,
                     e
                 );
+            } else {
+                log_storage_success(
+                    key_id,
+                    priv_storage.info(),
+                    &PrivDataType::FheKeyInfo.to_string(),
+                    false,
+                    true,
+                );
             }
             store_result.is_ok()
         };
@@ -142,6 +153,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             .await;
             if let Err(e) = &pk_result {
                 tracing::error!("Failed to store public key for request {}: {}", key_id, e);
+            } else {
+                log_storage_success(
+                    key_id,
+                    pub_storage.info(),
+                    &PubDataType::PublicKey.to_string(),
+                    true,
+                    true,
+                );
             }
             let server_result = store_versioned_at_request_id(
                 &mut (*pub_storage),
@@ -153,6 +172,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
             if let Err(e) = &server_result {
                 tracing::error!("Failed to store server key for request {}: {}", key_id, e);
+            } else {
+                log_storage_success(
+                    key_id,
+                    pub_storage.info(),
+                    &PubDataType::ServerKey.to_string(),
+                    true,
+                    true,
+                );
             }
             pk_result.is_ok() && server_result.is_ok()
         };
@@ -170,6 +197,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
 
                     if let Err(e) = &backup_result {
                         tracing::error!("Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}");
+                    } else {
+                        log_storage_success(
+                            key_id,
+                            guarded_backup_vault.info(),
+                            &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
+                            false,
+                            true,
+                        );
                     }
                     backup_result.is_ok()
                 }
@@ -309,6 +344,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     req_id,
                     e
                 );
+            } else {
+                log_storage_success(
+                    req_id,
+                    private_storage_guard.info(),
+                    &PrivDataType::CustodianInfo.to_string(),
+                    false,
+                    true,
+                );
             }
             custodian_context_store_res.is_ok()
         };
@@ -326,6 +369,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     req_id,
                     e
                 );
+            } else {
+                log_storage_success(
+                    req_id,
+                    public_storage_guard.info(),
+                    &PubDataType::RecoveryRequest.to_string(),
+                    true,
+                    true,
+                );
             }
             let commit_store_result = store_versioned_at_request_id(
                 &mut (*public_storage_guard),
@@ -339,6 +390,14 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                     "Failed to store commitments to the public storage for request {}: {}",
                     req_id,
                     e
+                );
+            } else {
+                log_storage_success(
+                    req_id,
+                    public_storage_guard.info(),
+                    &PubDataType::Commitments.to_string(),
+                    true,
+                    true,
                 );
             }
             recovery_store_result.is_ok() && commit_store_result.is_ok()
