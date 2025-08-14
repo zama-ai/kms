@@ -129,9 +129,11 @@ impl_endpoint! {
         ///
         /// # Returns
         /// * Errors:
-        ///    - `InvalidArgument` - If the request ID is not valid or does not match the expected format.
+        ///    - `InvalidArgument` - If the request is not valid or does not match the expected format.
         ///    - `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        ///    - `Aborted` - If an internal error occured in starting the key generation _or_ if an invalid argument was given.
+        ///    - `Aborted` - Other issues unrelated to the preprocessing protocol, e.g., missing PRSS, storage, serialization, etc.
+        ///    - `AlreadyExists` - If the request contains a request ID that was previously used.
+        ///    - `NotFound` - If the preprocessing under `preproc_id` does not exist.
         ///
         /// # Conditions
         /// * Pre-condition:
@@ -139,7 +141,7 @@ impl_endpoint! {
         ///     * `params` in `request` must be castable to a [`FheParameter`], currently this means 0 or 1.
         ///     * `preproc_id` in `request` must be present, and a valid [`RequestId`] which has already been used to start a preprocessing request with method `key_gen_preproc` that has completed successfully
         ///         and has not already been consumed by another key generation request.
-        ///     * `domain` in `request` _should_ be set, if not, then there will be no external signature on the result of the key generation.
+        ///     * `domain` in `request` must be set.
         ///     * `keyset_config` in `request` may be set or not. If not set, the default keyset configuration is used. If set, it must follow the enum constraints of [`KeySetConfig`].
         ///         I.e. be either `Standard` (0) or `DecompressionOnly` (1). Furthermore, if `Standard` is used then `standard_keyset_config` must also be set.
         ///         Furthermore, `keyset_config` must be set or not set in exactly the same was as it was in the argument for the preprocessing request started with `preproc_id`.
