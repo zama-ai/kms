@@ -248,7 +248,7 @@ pub enum PubDataType {
     VerfKey,     // Type for the servers public verification keys
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
-    CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO I think this should be in private since we don't trust the public to never be modified
+    CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO validation needs to be added, see https://github.com/zama-ai/kms-internal/issues/2723
     RecoveryRequest, // Recovery request for backup vault
     Commitments, // Commitments for the backup vault
 }

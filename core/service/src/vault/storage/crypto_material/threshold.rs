@@ -398,6 +398,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         }
     }
 
+    /// Tries to delete all the data related to a custodian context (used for backup) for a specific context id [RequestId].
+    /// WARNING: This also deletes ALL backups of a given context. Hence the method should only be used to clean up.
     pub async fn purge_backup_material(
         &self,
         req_id: &RequestId,
@@ -408,6 +410,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             .await
     }
 
+    /// Tries to delete all the types of key material related to a specific [RequestId].
+    /// WARNING: This also deletes the BACKUP of the keys. Hence the method should should only be used as cleanup after a failed DKG.
     pub async fn purge_key_material(
         &self,
         req_id: &RequestId,
@@ -421,6 +425,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             .await
     }
 
+    /// Tries to delete all the types of CRS material related to a specific [RequestId].
+    /// WARNING: This also deletes the BACKUP of the CRS data. Hence the method should should only be used as cleanup after a failed CRS generation.
     pub async fn purge_crs_material(
         &self,
         req_id: &RequestId,
