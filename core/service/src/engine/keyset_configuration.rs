@@ -1,5 +1,7 @@
 use anyhow::anyhow;
 use kms_grpc::kms::v1::{KeySetAddedInfo, KeySetType};
+#[cfg(feature = "non-wasm")]
+use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
 use threshold_fhe::execution::keyset_config as ddec_keyset_config;
 
@@ -177,7 +179,8 @@ impl InternalKeySetConfig {
             }
         }
         Ok(Self {
-            keyset_config: preproc_proto_to_keyset_config(&keyset_config)?,
+            keyset_config: preproc_proto_to_keyset_config(&keyset_config)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?,
             keyset_added_info,
         })
     }
@@ -270,10 +273,15 @@ impl InternalKeySetConfig {
 #[cfg(feature = "non-wasm")]
 pub(crate) fn preproc_proto_to_keyset_config(
     keyset_config: &Option<kms_grpc::kms::v1::KeySetConfig>,
-) -> anyhow::Result<ddec_keyset_config::KeySetConfig> {
+) -> Result<ddec_keyset_config::KeySetConfig, BoxedStatus> {
     match keyset_config {
         None => Ok(ddec_keyset_config::KeySetConfig::default()),
-        Some(inner) => Ok(WrappedKeySetConfig(*inner).try_into()?),
+        Some(inner) => Ok(WrappedKeySetConfig(*inner).try_into().map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("Failed to parse KeySetConfig: {}", e),
+            )
+        })?),
     }
 }
 

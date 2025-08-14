@@ -52,7 +52,7 @@ impl_endpoint! {
         /// * Errors:
         ///    - `InvalidArgument` - If the request ID does not match the expected format or missing.
         ///    - `Internal` - An error occured during PRSS generation.
-        ///    - `AlreadyExists` - If request ID has already been used.
+        ///    - `AlreadyExists` - If PRSS already exists. (TODO should we give an option to overwrite?)
         ///
         /// # Conditions
         /// * Pre-condition:
@@ -70,19 +70,21 @@ impl_endpoint! {
         ///
         /// # Returns
         /// * Errors:
-        ///    - `InvalidArgument` - If the request ID is not valid or does not match the expected format.
+        ///    - `InvalidArgument` - If the request is not valid or does not match the expected format.
         ///    - `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        ///    - `Aborted` - If the request ID is not given, the values in the request are not valid, or an internal problem occured.
+        ///    - `Aborted` - Other issues unrelated to the preprocessing protocol, e.g., missing PRSS, storage, serialization, etc.
+        ///    - `AlreadyExists` - If the request contains a request ID that was previously used.
         ///
         /// # Conditions
         /// * Pre-condition:
         ///     * `request_id` in `request` must be present, valid, fresh and unique [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
         ///     * `params` in `request` must be castable to a [`FheParameter`], currently this means 0 or 1.
-        ///     * `keyset_config` in `request` may be set or not. If not set, the default keyset configuration is used. If set, it must follow the enum constraints of [`KeySetConfig`].
-        ///         I.e. be either `Standard` (0) or `DecompressionOnly` (1). Furthermore, if `Standard` is used then `standard_keyset_config` must also be set.
+        ///     * `keyset_config` in `request` may be set or not. If not set, the default keyset configuration is used.
+        ///        If set, it must follow the enum constraints of [`KeySetConfig`].
+        ///        I.e. be either `Standard` (0) or `DecompressionOnly` (1).
+        ///        Furthermore, if `Standard` is used then `standard_keyset_config` must also be set.
         /// * Post-condition:
         ///     * The `request_id` in `request` has been consumed and the PRSS has been executed successfully.
-        ///     * Note that repeated calls will return without an error and have on affect on the existing execution.
         #[tracing::instrument(skip(self, request))]
         async fn key_gen_preproc(
             &self,

@@ -255,22 +255,19 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
             map.exists(&request_id)
         };
 
-        let keyset_config = tonic_handle_potential_err(
-            preproc_proto_to_keyset_config(&inner.keyset_config),
-            "Failed to process keyset config".to_string(),
-        )?;
+        let keyset_config = preproc_proto_to_keyset_config(&inner.keyset_config)?;
 
         //If the entry did not exist before, start the preproc
         if !entry_exists {
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
             tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
+            Ok(Response::new(Empty {}))
         } else {
-            tracing::warn!(
-                "Tried to generate preproc multiple times for the same Request ID {} -- skipped it!",
+            Err(tonic::Status::already_exists(format!(
+                "Preprocessing for request ID {} already exists",
                 request_id
-            );
+            )))
         }
-        Ok(Response::new(Empty {}))
     }
 
     async fn get_result(
@@ -466,6 +463,54 @@ mod tests {
                 .unwrap_err()
                 .code(),
             tonic::Code::NotFound
+        );
+    }
+
+    #[tokio::test]
+    async fn already_exists() {
+        let session_preparer = SessionPreparer::new_test_session(true);
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+        };
+        prep.key_gen_preproc(tonic::Request::new(request.clone()))
+            .await
+            .unwrap();
+
+        // try again with the same request and we should get AlreadyExists error
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+    }
+
+    #[tokio::test]
+    async fn aborted() {
+        // Starting a preprocessing request that will be aborted if there's no PRSS
+        let session_preparer = SessionPreparer::new_test_session(false);
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+        };
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Aborted
         );
     }
 

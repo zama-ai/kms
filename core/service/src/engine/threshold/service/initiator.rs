@@ -127,10 +127,13 @@ impl<
 
     // NOTE: this function will overwrite the existing PRSS state
     pub async fn init_prss(&self, req_id: &RequestId) -> anyhow::Result<()> {
+        // TODO(zama-ai/kms-internal/issues/2721),
+        // we never try to store the PRSS in meta_store, so the ID is not guaranteed to be unique
+
         let own_identity = self.session_preparer.own_identity()?;
         let session_id = req_id.derive_session_id()?;
 
-        //PRSS robust init requires broadcast, which is implemented with Sync network assumption
+        // PRSS robust init requires broadcast, which is implemented with Sync network assumption
         let mut base_session = self
             .session_preparer
             .make_base_session(session_id, NetworkMode::Sync)
