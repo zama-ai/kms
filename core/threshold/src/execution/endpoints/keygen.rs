@@ -1029,8 +1029,8 @@ pub mod tests {
             structure_traits::{ErrorCorrect, Invert, Ring, Solve},
         },
         execution::{
-            online::preprocessing::dummy::DummyPreprocessing,
-            runtime::session::{LargeSession, ParameterHandles},
+            online::preprocessing::{dummy::DummyPreprocessing, DKGPreprocessing},
+            runtime::session::{LargeSession, ParameterHandles, SmallSessionHandles},
             tfhe_internals::{
                 parameters::{DKGParamsBasics, DKGParamsRegular, DKGParamsSnS},
                 public_keysets::FhePubKeySet,
@@ -1661,6 +1661,44 @@ pub mod tests {
         )
     }
 
+    async fn generate_preproc_from_params<
+        const EXTENSION_DEGREE: usize,
+        Ses: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>> + ToBaseSession,
+    >(
+        params: &DKGParams,
+        keyset_config: KeySetConfig,
+        session: &mut Ses,
+    ) -> Box<dyn DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>>>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
+    {
+        let params_handle = params.get_params_basics_handle();
+        let batch_size = BatchParams {
+            triples: params_handle.total_triples_required(keyset_config),
+            randoms: params_handle.total_randomness_required(keyset_config),
+        };
+
+        let mut small_preproc = SecureSmallPreprocessing::default()
+            .execute(session, batch_size)
+            .await
+            .unwrap();
+
+        let mut dkg_preproc = create_memory_factory().create_dkg_preprocessing_with_sns();
+
+        dkg_preproc
+            .fill_from_base_preproc(
+                *params,
+                keyset_config,
+                session.get_mut_base_session(),
+                &mut small_preproc,
+            )
+            .await
+            .unwrap();
+
+        dkg_preproc
+    }
+
     #[cfg(feature = "slow_tests")]
     fn run_real_decompression_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
@@ -1671,7 +1709,6 @@ pub mod tests {
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     {
-        // first we need to generate two server keys
         use crate::{
             execution::{
                 endpoints::keygen::distributed_decompression_keygen_z128,
@@ -1684,6 +1721,7 @@ pub mod tests {
             file_handling::tests::{read_element, write_element},
         };
 
+        // first we need to generate two server keys
         let keyset_config = KeySetConfig::DecompressionOnly;
         let mut rng = aes_prng::AesRng::from_random_seed();
         let keyset1 = gen_key_set(params, &mut rng);
@@ -1697,8 +1735,9 @@ pub mod tests {
             .get_raw_compression_client_key()
             .unwrap()
             .into_container();
-        let glwe_key_2_poly_size = keyset2.get_raw_glwe_client_key().polynomial_size();
-        let glwe_key_2 = keyset2.get_raw_glwe_client_key().into_container();
+        let glwe_key_2 = keyset2.get_raw_glwe_client_key();
+        let glwe_key_2_poly_size = glwe_key_2.polynomial_size();
+        let glwe_key_2 = glwe_key_2.into_container();
 
         // and then secret share the secret keys
         let compression_key_shares_1 =
@@ -1725,31 +1764,8 @@ pub mod tests {
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(240))
                 .unwrap();
-            let batch_size = BatchParams {
-                triples: params
-                    .get_params_basics_handle()
-                    .total_triples_required(keyset_config),
-                randoms: params
-                    .get_params_basics_handle()
-                    .total_randomness_required(keyset_config),
-            };
-
-            let mut small_preproc = SecureSmallPreprocessing::default()
-                .execute(&mut session, batch_size)
-                .await
-                .unwrap();
-
-            let mut dkg_preproc = create_memory_factory().create_dkg_preprocessing_with_sns();
-
-            dkg_preproc
-                .fill_from_base_preproc(
-                    params,
-                    keyset_config,
-                    session.get_mut_base_session(),
-                    &mut small_preproc,
-                )
-                .await
-                .unwrap();
+            let mut dkg_preproc =
+                generate_preproc_from_params(&params, keyset_config, &mut session).await;
 
             let my_role = session.my_role();
             let prefix = prefix.unwrap();
@@ -1766,7 +1782,6 @@ pub mod tests {
             >(path_glwe_key_shares_2)
             .unwrap()[&my_role];
 
-            let params_handle = params.get_params_basics_handle();
             let private_glwe_compute_key = GlweSecretKeyShare {
                 data: glwe_key_shares_2.to_vec(),
                 polynomial_size: glwe_key_2_poly_size,
@@ -1776,7 +1791,8 @@ pub mod tests {
                     data: compression_key_shares_1.to_vec(),
                     polynomial_size: compression_key_1_poly_size,
                 },
-                params: params_handle
+                params: params
+                    .get_params_basics_handle()
                     .get_compression_decompression_params()
                     .unwrap()
                     .raw_compression_parameters,
@@ -1849,7 +1865,6 @@ pub mod tests {
             shortint::list_compression::NoiseSquashingCompressionPrivateKey,
         };
 
-        // first we need to generate two server keys
         use crate::{
             execution::{
                 endpoints::keygen::distributed_sns_compression_keygen_z128,
@@ -1898,31 +1913,8 @@ pub mod tests {
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(240))
                 .unwrap();
-            let batch_size = BatchParams {
-                triples: params
-                    .get_params_basics_handle()
-                    .total_triples_required(keyset_config),
-                randoms: params
-                    .get_params_basics_handle()
-                    .total_randomness_required(keyset_config),
-            };
-
-            let mut small_preproc = SecureSmallPreprocessing::default()
-                .execute(&mut session, batch_size)
-                .await
-                .unwrap();
-
-            let mut dkg_preproc = create_memory_factory().create_dkg_preprocessing_with_sns();
-
-            dkg_preproc
-                .fill_from_base_preproc(
-                    params,
-                    keyset_config,
-                    session.get_mut_base_session(),
-                    &mut small_preproc,
-                )
-                .await
-                .unwrap();
+            let mut dkg_preproc =
+                generate_preproc_from_params(&params, keyset_config, &mut session).await;
 
             let my_role = session.my_role();
             let prefix = prefix.unwrap();
@@ -2066,31 +2058,8 @@ pub mod tests {
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(240))
                 .unwrap();
-            let batch_size = BatchParams {
-                triples: params
-                    .get_params_basics_handle()
-                    .total_triples_required(keyset_config),
-                randoms: params
-                    .get_params_basics_handle()
-                    .total_randomness_required(keyset_config),
-            };
-
-            let mut small_preproc = SecureSmallPreprocessing::default()
-                .execute(&mut session, batch_size)
-                .await
-                .unwrap();
-
-            let mut dkg_preproc = create_memory_factory().create_dkg_preprocessing_with_sns();
-
-            dkg_preproc
-                .fill_from_base_preproc(
-                    params,
-                    keyset_config,
-                    session.get_mut_base_session(),
-                    &mut small_preproc,
-                )
-                .await
-                .unwrap();
+            let mut dkg_preproc =
+                generate_preproc_from_params(&params, keyset_config, &mut session).await;
 
             assert_ne!(0, dkg_preproc.bits_len());
             assert_ne!(0, dkg_preproc.triples_len());
