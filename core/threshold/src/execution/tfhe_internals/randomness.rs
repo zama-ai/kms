@@ -28,7 +28,6 @@ pub struct MPCEncryptionRandomGenerator<
     Gen: ByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 > {
-    //TODO: Once XOF available from TFHE-RS, need to use it here and use the correct DSEP !!
     pub mask: MPCMaskRandomGenerator<Gen>,
     pub noise: MPCNoiseRandomGenerator<Z, EXTENSION_DEGREE>,
 }
