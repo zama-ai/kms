@@ -16,13 +16,14 @@ use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
     execution::{
-        endpoints::keygen::{FhePubKeySet, PrivateKeySet, SecureOnlineDistributedKeyGen128},
+        endpoints::keygen::SecureOnlineDistributedKeyGen128,
         online::preprocessing::{
             create_memory_factory, create_redis_factory,
             orchestration::producer_traits::SecureSmallProducerFactory, DKGPreprocessing,
         },
         runtime::party::{Role, RoleAssignment},
         small_execution::prss::RobustSecurePrssInit,
+        tfhe_internals::{private_keysets::PrivateKeySet, public_keysets::FhePubKeySet},
         zk::ceremony::SecureCeremony,
     },
     networking::{
@@ -169,7 +170,11 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInitiator<PrivS, RobustSecurePrssInit>,
     RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
-    RealKeyGenerator<PubS, PrivS, SecureOnlineDistributedKeyGen128>,
+    RealKeyGenerator<
+        PubS,
+        PrivS,
+        SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+    >,
     RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
     RealContextManager<PubS, PrivS>,
@@ -181,8 +186,16 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
     RealInitiator<PrivS, RobustSecurePrssInit>,
     RealUserDecryptor<PubS, PrivS, SecureNoiseFloodPartialDecryptor>,
     RealPublicDecryptor<PubS, PrivS, SecureNoiseFloodDecryptor>,
-    RealKeyGenerator<PubS, PrivS, SecureOnlineDistributedKeyGen128>,
-    RealInsecureKeyGenerator<PubS, PrivS, SecureOnlineDistributedKeyGen128>,
+    RealKeyGenerator<
+        PubS,
+        PrivS,
+        SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+    >,
+    RealInsecureKeyGenerator<
+        PubS,
+        PrivS,
+        SecureOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+    >,
     RealPreprocessor<SecureSmallProducerFactory<ResiduePolyF4Z128>>,
     RealCrsGenerator<PubS, PrivS, SecureCeremony>,
     RealInsecureCrsGenerator<PubS, PrivS, SecureCeremony>, // doesn't matter which ceremony we use here

@@ -35,7 +35,9 @@ use kms_lib::{
 use rand::SeedableRng;
 use std::{collections::HashMap, env, path::Path};
 use tfhe::integer::compression_keys::DecompressionKey;
-use threshold_fhe::execution::{endpoints::keygen::FhePubKeySet, runtime::party::Role};
+use threshold_fhe::execution::{
+    runtime::party::Role, tfhe_internals::public_keysets::FhePubKeySet,
+};
 
 // This domain should match what is in the data_XX.rs file in backward compatibility.
 fn dummy_domain() -> alloy_sol_types::Eip712Domain {

@@ -7144,8 +7144,8 @@ pub(crate) mod tests {
         Option<NoiseSquashingCompressionPrivateKey>,
     ) {
         use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
-        use threshold_fhe::execution::{
-            endpoints::keygen::GlweSecretKeyShareEnum, tfhe_internals::utils::reconstruct_bit_vec,
+        use threshold_fhe::execution::tfhe_internals::{
+            private_keysets::GlweSecretKeyShareEnum, utils::reconstruct_bit_vec,
         };
 
         let param_handle = param.get_params_basics_handle();
@@ -7210,15 +7210,15 @@ pub(crate) mod tests {
                 sns_lwe_shares,
                 dkg_sns_param
                     .sns_params
-                    .glwe_dimension
-                    .to_equivalent_lwe_dimension(dkg_sns_param.sns_params.polynomial_size)
+                    .glwe_dimension()
+                    .to_equivalent_lwe_dimension(dkg_sns_param.sns_params.polynomial_size())
                     .0,
                 threshold,
             )
             .into_iter()
             .map(|x| x as u128)
             .collect(),
-            dkg_sns_param.sns_params.polynomial_size,
+            dkg_sns_param.sns_params.polynomial_size(),
         );
 
         let sns_compression_key_shares = all_threshold_fhe_keys

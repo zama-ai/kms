@@ -9,12 +9,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tfhe::{shortint::ClassicPBSParameters, CompactPublicKey, ConfigBuilder, ServerKey};
 use threshold_fhe::{
-    execution::{
-        endpoints::keygen::FhePubKeySet,
-        tfhe_internals::{
-            parameters::DKGParams,
-            test_feature::{gen_key_set, keygen_all_party_shares_from_keyset},
-        },
+    execution::tfhe_internals::{
+        parameters::DKGParams,
+        public_keysets::FhePubKeySet,
+        test_feature::{gen_key_set, keygen_all_party_shares_from_keyset},
     },
     session_id::SessionId,
 };

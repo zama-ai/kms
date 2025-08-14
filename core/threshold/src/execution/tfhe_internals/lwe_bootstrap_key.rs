@@ -1,19 +1,27 @@
-use std::ops::DerefMut;
+use std::ops::{Deref, DerefMut};
 
 use itertools::{EitherOrBoth, Itertools};
 use tfhe::{
     core_crypto::{
         commons::{
+            generators::MaskRandomGenerator,
+            math::random::CompressionSeed,
             parameters::GlweSize,
-            traits::{ContiguousEntityContainerMut, UnsignedInteger},
+            traits::{ByteRandomGenerator, ContiguousEntityContainerMut, UnsignedInteger},
         },
         entities::LweBootstrapKeyOwned,
+        prelude::{
+            decompress_seeded_ggsw_ciphertext_list_with_pre_seeded_generator,
+            SeededLweBootstrapKeyOwned, UnsignedTorus,
+        },
     },
     shortint::parameters::{
         CoreCiphertextModulus, DecompositionBaseLog, DecompositionLevelCount, LweDimension,
         PolynomialSize,
     },
+    Seed,
 };
+use tfhe_csprng::seeders::XofSeed;
 
 use crate::{
     algebra::{
@@ -88,6 +96,96 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweBootstrapKeyShare<Z, EXTENSI
 where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
+    pub async fn open_to_tfhers_seeded_type<Scalar: UnsignedInteger, S: BaseSessionHandles>(
+        self,
+        seed: u128,
+        session: &S,
+    ) -> anyhow::Result<SeededLweBootstrapKeyOwned<Scalar>> {
+        let encryption_type = self.encryption_type();
+        match encryption_type {
+            EncryptionType::Bits64 => debug_assert_eq!(Scalar::BITS, 64),
+            EncryptionType::Bits128 => debug_assert_eq!(Scalar::BITS, 128),
+        }
+
+        let glwe_size = self.glwe_size();
+        let polynomial_size = self.polynomial_size();
+        let decomp_base_log = self.decomposition_base_log();
+        let decomp_level_count = self.decomposition_level_count();
+        let input_lwe_dimension = self.input_lwe_dimension();
+
+        let my_role = session.my_role();
+
+        let num_bodies = self.ggsw_list.len()
+            * self.glwe_size().0
+            * self.decomposition_level_count().0
+            * self.polynomial_size().0;
+
+        let mut shared_bodies: Vec<Share<ResiduePoly<Z, EXTENSION_DEGREE>>> =
+            Vec::with_capacity(num_bodies);
+
+        self.ggsw_list.into_iter().for_each(|ggsw| {
+            ggsw.data.into_iter().for_each(|ggsw_level_matrix| {
+                ggsw_level_matrix.data.into_iter().for_each(|glwe_ctxt| {
+                    glwe_ctxt
+                        .body
+                        .into_iter()
+                        .for_each(|glwe_body| shared_bodies.push(Share::new(my_role, glwe_body)));
+                })
+            })
+        });
+
+        let bodies: Vec<Z> = open_list(&shared_bodies, session)
+            .await?
+            .iter()
+            .map(|v| v.to_scalar())
+            .try_collect()?;
+
+        let mut bootstrap_key = SeededLweBootstrapKeyOwned::new(
+            Scalar::ZERO,
+            glwe_size,
+            polynomial_size,
+            decomp_base_log,
+            decomp_level_count,
+            input_lwe_dimension,
+            CompressionSeed::from(Seed(seed)), // NOTE: key was generated using XOF so we need to use a custom decompression function
+            CoreCiphertextModulus::new_native(),
+        );
+
+        let glwe_ctxt_list = bootstrap_key.deref_mut();
+
+        let mut glwe_index = 0;
+        for mut ggsw_ctxt in glwe_ctxt_list.iter_mut() {
+            let mut glwe_ctxts = ggsw_ctxt.as_mut_seeded_glwe_list();
+            for mut glwe_ctxt in glwe_ctxts.iter_mut() {
+                let mut body = glwe_ctxt.get_mut_body();
+                let underlying_container = body.as_mut();
+                let body_start_idx = glwe_index * polynomial_size.0;
+                let body_end_idx = body_start_idx + polynomial_size.0;
+                for c_m in underlying_container
+                    .iter_mut()
+                    .zip_longest(bodies.get(body_start_idx..body_end_idx).ok_or_else(|| anyhow_error_and_log(format!("bodies of incorrect size, can't take a subslice with start_idx {body_start_idx} amd end_idx {body_end_idx}")))?.iter())
+                {
+                    if let EitherOrBoth::Both(c,m) = c_m {
+                    let m_byte_vec = m.to_byte_vec();
+                    let m = m_byte_vec
+                        .into_iter()
+                        .rev()
+                        .fold(Scalar::ZERO, |acc, byte| {
+                            acc.wrapping_shl(8)
+                                .wrapping_add(Scalar::cast_from(byte as u128))
+                        });
+                    *c = m
+                    } else {
+                        return Err(anyhow_error_and_log("zip error"));
+                    }
+                }
+                glwe_index += 1;
+            }
+        }
+
+        Ok(bootstrap_key)
+    }
+
     pub async fn open_to_tfhers_type<Scalar: UnsignedInteger, S: BaseSessionHandles>(
         self,
         session: &S,
@@ -209,4 +307,38 @@ where
 
         Ok(bootstrap_key)
     }
+}
+
+pub fn par_decompress_into_lwe_bootstrap_key_generated_from_xof<
+    Scalar: UnsignedTorus,
+    Gen: ByteRandomGenerator,
+>(
+    seeded_key_generate_with_xof: SeededLweBootstrapKeyOwned<Scalar>,
+    xof_dsep: [u8; 8],
+) -> LweBootstrapKeyOwned<Scalar> {
+    //Init the XOF
+    let seed = seeded_key_generate_with_xof
+        .deref()
+        .compression_seed()
+        .seed
+        .0;
+    let mut rng = MaskRandomGenerator::<Gen>::new(XofSeed::new_u128(seed, xof_dsep));
+
+    let mut decompressed_bsk = LweBootstrapKeyOwned::new(
+        Scalar::ZERO,
+        seeded_key_generate_with_xof.glwe_size(),
+        seeded_key_generate_with_xof.polynomial_size(),
+        seeded_key_generate_with_xof.decomposition_base_log(),
+        seeded_key_generate_with_xof.decomposition_level_count(),
+        seeded_key_generate_with_xof.input_lwe_dimension(),
+        seeded_key_generate_with_xof.ciphertext_modulus(),
+    );
+
+    decompress_seeded_ggsw_ciphertext_list_with_pre_seeded_generator::<Scalar, _, _, Gen>(
+        &mut decompressed_bsk,
+        &seeded_key_generate_with_xof,
+        &mut rng,
+    );
+
+    decompressed_bsk
 }
