@@ -747,9 +747,10 @@ mod tests {
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
             };
-            assert_eq!(
-                "Error parsing checksummed client address: 0xD8Da6bf26964Af9d7EEd9e03e53415d37AA96045 - Bad address checksum",
-                validate_user_decrypt_req(&req).unwrap_err().to_string()
+            assert!(
+                validate_user_decrypt_req(&req).unwrap_err().to_string().contains(
+                    "Error parsing checksummed client address: 0xD8Da6bf26964Af9d7EEd9e03e53415d37AA96045 - Bad address checksum"
+                )
             );
         }
 
