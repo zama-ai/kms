@@ -14,6 +14,7 @@ use tfhe::{
     Seed, Versionize,
 };
 use tfhe_versionable::VersionsDispatch;
+use tracing::instrument;
 
 use crate::{
     algebra::{
@@ -22,9 +23,13 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        online::{preprocessing::BitPreprocessing, triple::open_list},
+        online::{
+            preprocessing::{BitPreprocessing, DKGPreprocessing},
+            triple::open_list,
+        },
         runtime::session::BaseSessionHandles,
         sharing::share::Share,
+        tfhe_internals::parameters::{DKGParams, NoiseInfo},
     },
 };
 
@@ -256,6 +261,112 @@ pub fn generate_lwe_compact_public_key<Z, Gen, const EXTENSION_DEGREE: usize>(
 ///Returns a tuple (number_of_triples, number_of_randomness) required for generating a lwe key
 pub fn get_batch_param_lwe_key_gen(lwe_dimension: LweDimension) -> (usize, usize) {
     (lwe_dimension.0, lwe_dimension.0)
+}
+
+///Generates the lwe private key share and associated public key
+fn generate_lwe_key_shares<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    params: &DKGParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+) -> anyhow::Result<(
+    LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    LweCompactPublicKeyShare<Z, EXTENSION_DEGREE>,
+)>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let params = params.get_params_basics_handle();
+    let my_role = session.my_role();
+    //Init the shared LWE secret key
+    tracing::info!("(Party {my_role}) Generating LWE Secret key...Start");
+    let lwe_secret_key_share =
+        LweSecretKeyShare::new_from_preprocessing(params.lwe_hat_dimension(), preprocessing)?;
+    tracing::info!("(Party {my_role}) Generating corresponding public key...Start");
+    let NoiseInfo { amount, bound } = params.num_needed_noise_pk();
+    let vec_tuniform_noise = preprocessing
+        .next_noise_vec(amount, bound)?
+        .iter()
+        .map(|share| share.value())
+        .collect_vec();
+
+    //and fill the noise generator with noise generated above
+    mpc_encryption_rng.fill_noise(vec_tuniform_noise);
+
+    //Then actually generate the public key
+    let lwe_public_key_shared =
+        allocate_and_generate_new_lwe_compact_public_key(&lwe_secret_key_share, mpc_encryption_rng);
+
+    Ok((lwe_secret_key_share, lwe_public_key_shared))
+}
+
+///Generates the lwe private key share and associated public key
+#[instrument(name="Gen Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+pub(crate) async fn generate_lwe_private_public_key_pair<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    params: &DKGParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+) -> anyhow::Result<(
+    LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    LweCompactPublicKey<Vec<u64>>,
+)>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let (lwe_secret_key_share, lwe_public_key_shared) =
+        generate_lwe_key_shares(params, mpc_encryption_rng, session, preprocessing)?;
+
+    //Open the public key and cast it to TFHE-RS type
+    Ok((
+        lwe_secret_key_share,
+        lwe_public_key_shared.open_to_tfhers_type(session).await?,
+    ))
+}
+
+///Generates the lwe private key share and associated public key
+#[instrument(name="Gen compressed Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+pub(crate) async fn generate_lwe_private_compressed_public_key_pair<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    params: &DKGParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+    seed: u128,
+) -> anyhow::Result<(
+    LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    SeededLweCompactPublicKey<Vec<u64>>,
+)>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let (lwe_secret_key_share, lwe_public_key_shared) =
+        generate_lwe_key_shares(params, mpc_encryption_rng, session, preprocessing)?;
+
+    //Open the public key and cast it to TFHE-RS type
+    Ok((
+        lwe_secret_key_share,
+        lwe_public_key_shared
+            .open_to_tfhers_seeded_type(seed, session)
+            .await?,
+    ))
 }
 
 #[cfg(test)]

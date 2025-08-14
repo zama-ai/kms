@@ -40,11 +40,9 @@ use crate::{
             share::Share,
         },
         tfhe_internals::{
-            compression_decompression_key::{
-                CompressionPrivateKeyShares, SnsCompressionPrivateKeyShares,
-            },
-            glwe_key::GlweSecretKeyShare,
-            lwe_key::LweSecretKeyShare,
+            compression_decompression_key::CompressionPrivateKeyShares,
+            glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare,
+            sns_compression_key::SnsCompressionPrivateKeyShares,
         },
     },
     networking::value::NetworkValue,

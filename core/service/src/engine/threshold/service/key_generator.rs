@@ -34,12 +34,12 @@ use threshold_fhe::{
         online::preprocessing::DKGPreprocessing,
         runtime::session::BaseSession,
         tfhe_internals::{
-            compression_decompression_key::SnsCompressionPrivateKeyShares,
             parameters::DKGParams,
             private_keysets::{
                 CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet,
             },
             public_keysets::FhePubKeySet,
+            sns_compression_key::SnsCompressionPrivateKeyShares,
         },
     },
     networking::NetworkMode,

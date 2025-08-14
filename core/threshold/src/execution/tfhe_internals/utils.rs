@@ -257,10 +257,10 @@ where
 pub mod tests {
     use crate::algebra::base_ring::{Z128, Z64};
     use crate::algebra::galois_rings::common::ResiduePoly;
-    use crate::execution::tfhe_internals::compression_decompression_key::SnsCompressionPrivateKeyShares;
     use crate::execution::tfhe_internals::glwe_key::GlweSecretKeyShare;
     use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
     use crate::execution::tfhe_internals::private_keysets::PrivateKeySet;
+    use crate::execution::tfhe_internals::sns_compression_key::SnsCompressionPrivateKeyShares;
     use crate::file_handling::tests::read_element;
     use crate::{
         algebra::structure_traits::ErrorCorrect,
