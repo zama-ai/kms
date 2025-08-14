@@ -1536,6 +1536,26 @@ pub mod tests {
         );
     }
 
+    #[cfg(feature = "slow_tests")]
+    #[test]
+    fn decompression_keygen_f4() {
+        let params = PARAMS_TEST_BK_SNS;
+        let num_parties = 4;
+        let threshold = 1;
+        let temp_dir = tempfile::tempdir().unwrap();
+        run_real_decompression_dkg_and_save::<4>(params, num_parties, threshold, temp_dir.path())
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[test]
+    fn sns_compression_keygen_f4() {
+        let params = PARAMS_TEST_BK_SNS;
+        let num_parties = 4;
+        let threshold = 1;
+        let temp_dir = tempfile::tempdir().unwrap();
+        run_real_sns_compression_dkg_and_save::<4>(params, num_parties, threshold, temp_dir.path())
+    }
+
     struct KeygenTestConfig {
         run_switch_and_squash: bool,
         run_shortint_with_compact: bool,
@@ -1998,26 +2018,6 @@ pub mod tests {
             sns_compression_private_key,
             None,
         );
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[test]
-    fn decompression_keygen_f4() {
-        let params = PARAMS_TEST_BK_SNS;
-        let num_parties = 4;
-        let threshold = 1;
-        let temp_dir = tempfile::tempdir().unwrap();
-        run_real_decompression_dkg_and_save::<4>(params, num_parties, threshold, temp_dir.path())
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[test]
-    fn sns_compression_keygen_f4() {
-        let params = PARAMS_TEST_BK_SNS;
-        let num_parties = 4;
-        let threshold = 1;
-        let temp_dir = tempfile::tempdir().unwrap();
-        run_real_sns_compression_dkg_and_save::<4>(params, num_parties, threshold, temp_dir.path())
     }
 
     #[cfg(feature = "slow_tests")]
