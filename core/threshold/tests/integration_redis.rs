@@ -309,7 +309,7 @@ fn test_dkg_orchestrator_large(
 
             let (pk, sk) = rt_handle.block_on(async {
 
-                SecureOnlineDistributedKeyGen::<Z64>::keygen::<_, _,{ ResiduePolyF4Z64::EXTENSION_DEGREE}>(dkg_session, preproc.as_mut(), params)
+                SecureOnlineDistributedKeyGen::<Z64,{ResiduePolyF4Z64::EXTENSION_DEGREE}>::keygen(dkg_session, preproc.as_mut(), params, None)
                     .await
                     .unwrap()
             });

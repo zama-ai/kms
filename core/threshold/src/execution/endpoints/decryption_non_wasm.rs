@@ -70,8 +70,8 @@ use tracing::instrument;
 #[cfg(any(test, feature = "testing"))]
 use super::decryption::DecryptionMode;
 use super::decryption::LowLevelCiphertext;
-use super::keygen::PrivateKeySet;
 use super::reconstruct::{combine_decryptions, reconstruct_message};
+use crate::execution::tfhe_internals::private_keysets::PrivateKeySet;
 
 // NOTE: This whole trait system for noiseflood preproc is
 // a bit convoluted and could probably be refactored to be simpler.

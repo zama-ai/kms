@@ -23,19 +23,23 @@ use threshold_fhe::{
     algebra::{
         base_ring::Z128,
         galois_rings::{common::ResiduePoly, degree_4::ResiduePolyF4Z128},
+        structure_traits::Ring,
     },
     execution::{
         endpoints::keygen::{
-            distributed_decompression_keygen_z128,
-            distributed_keygen_from_optional_compression_sk_z128,
-            distributed_sns_compression_keygen_z128, CompressionPrivateKeySharesEnum, FhePubKeySet,
-            GlweSecretKeyShareEnum, OnlineDistributedKeyGen, PrivateKeySet,
+            distributed_decompression_keygen_z128, distributed_sns_compression_keygen_z128,
+            OnlineDistributedKeyGen,
         },
         keyset_config as ddec_keyset_config,
         online::preprocessing::DKGPreprocessing,
         runtime::session::BaseSession,
         tfhe_internals::{
-            compression_decompression_key::SnsCompressionPrivateKeyShares, parameters::DKGParams,
+            compression_decompression_key::SnsCompressionPrivateKeyShares,
+            parameters::DKGParams,
+            private_keysets::{
+                CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet,
+            },
+            public_keysets::FhePubKeySet,
         },
     },
     networking::NetworkMode,
@@ -91,7 +95,7 @@ use threshold_fhe::execution::tfhe_internals::{
 pub struct RealKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen<Z128> + 'static,
+    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -111,7 +115,7 @@ pub struct RealKeyGenerator<
 pub struct RealInsecureKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen<Z128> + 'static,
+    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > {
     pub real_key_generator: RealKeyGenerator<PubS, PrivS, KG>,
 }
@@ -120,7 +124,7 @@ pub struct RealInsecureKeyGenerator<
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen<Z128>,
+        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     > RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
     pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, KG>) -> Self {
@@ -145,7 +149,7 @@ impl<
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen<Z128> + 'static,
+        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     > InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
     async fn insecure_key_gen(
@@ -176,7 +180,7 @@ pub enum PreprocHandleWithMode {
 }
 
 #[cfg(feature = "insecure")]
-fn convert_to_bit(input: Vec<ResiduePoly<Z128, 4>>) -> anyhow::Result<Vec<u64>> {
+fn convert_to_bit(input: Vec<ResiduePolyF4Z128>) -> anyhow::Result<Vec<u64>> {
     let mut out = Vec::with_capacity(input.len());
     for i in input {
         let bit = i.coefs[0].0 as u64;
@@ -191,7 +195,7 @@ fn convert_to_bit(input: Vec<ResiduePoly<Z128, 4>>) -> anyhow::Result<Vec<u64>> 
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen<Z128> + 'static,
+        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     > RealKeyGenerator<PubS, PrivS, KG>
 {
     #[allow(clippy::too_many_arguments)]
@@ -1092,7 +1096,7 @@ impl<
                 CompressionPrivateKeySharesEnum::Z128(share) => share,
             }
         };
-        distributed_keygen_from_optional_compression_sk_z128(
+        KG::keygen(
             base_session,
             preprocessing,
             params,
@@ -1161,7 +1165,7 @@ impl<
                         ddec_keyset_config::KeySetCompressionConfig::Generate,
                         ddec_keyset_config::ComputeKeyType::Cpu,
                     ) => {
-                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params).await
+                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params, None).await
                     }
                     (
                         ddec_keyset_config::KeySetCompressionConfig::UseExisting,
@@ -1249,7 +1253,7 @@ impl<
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen<Z128> + 'static,
+        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     > KeyGenerator for RealKeyGenerator<PubS, PrivS, KG>
 {
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
@@ -1282,7 +1286,7 @@ mod tests {
     impl<
             PubS: Storage + Sync + Send + 'static,
             PrivS: Storage + Sync + Send + 'static,
-            KG: OnlineDistributedKeyGen<Z128> + 'static,
+            KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
         > RealKeyGenerator<PubS, PrivS, KG>
     {
         async fn init_test(
@@ -1323,7 +1327,7 @@ mod tests {
         }
     }
 
-    impl<KG: OnlineDistributedKeyGen<Z128> + 'static>
+    impl<KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static>
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>
     {
         pub async fn init_ram_keygen(session_preparer: SessionPreparer) -> Self {
@@ -1333,7 +1337,9 @@ mod tests {
         }
     }
 
-    async fn setup_key_generator<KG: OnlineDistributedKeyGen<Z128> + 'static>() -> (
+    async fn setup_key_generator<
+        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
+    >() -> (
         RequestId,
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
@@ -1367,7 +1373,10 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         //`InvalidArgument` - If the request ID is not valid or does not match the expected format.
-        let (prep_id, kg) = setup_key_generator::<DroppingOnlineDistributedKeyGen128>().await;
+        let (prep_id, kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
         let bad_key_id = kms_grpc::kms::v1::RequestId {
             request_id: "badformat".to_string(),
         };
@@ -1398,7 +1407,10 @@ mod tests {
     #[tokio::test]
     async fn resource_exhausted() {
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        let (prep_id, mut kg) = setup_key_generator::<DroppingOnlineDistributedKeyGen128>().await;
+        let (prep_id, mut kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
         let key_id = RequestId::new_random(&mut OsRng);
 
         // Set bucket size to zero, so no operations are allowed
@@ -1422,7 +1434,10 @@ mod tests {
 
     #[tokio::test]
     async fn not_found() {
-        let (_prep_id, kg) = setup_key_generator::<DroppingOnlineDistributedKeyGen128>().await;
+        let (_prep_id, kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
         let key_id = RequestId::new_random(&mut OsRng);
 
         // no need to wait because [get_result] is semi-blocking
@@ -1437,7 +1452,10 @@ mod tests {
 
     #[tokio::test]
     async fn internal() {
-        let (prep_id, kg) = setup_key_generator::<FailingOnlineDistributedKeyGen128>().await;
+        let (prep_id, kg) = setup_key_generator::<
+            FailingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
         let key_id = RequestId::new_random(&mut OsRng);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
@@ -1465,7 +1483,10 @@ mod tests {
 
     #[tokio::test]
     async fn sunshine() {
-        let (prep_id, kg) = setup_key_generator::<DroppingOnlineDistributedKeyGen128>().await;
+        let (prep_id, kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
         let key_id = RequestId::new_random(&mut OsRng);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
