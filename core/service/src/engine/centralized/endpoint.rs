@@ -14,6 +14,17 @@ use crate::engine::centralized::service::{
     get_public_decryption_result_impl, get_user_decryption_result_impl, public_decrypt_impl,
     user_decrypt_impl,
 };
+use observability::{
+    metrics::METRICS,
+    metrics_names::{
+        map_tonic_code_to_metric_tag, ERR_INVALID_REQUEST, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
+        OP_CUSTODIAN_CONTEXT_RESTORE, OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_KMS_CONTEXT,
+        OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
+        OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_KMS_CONTEXT,
+        OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
+        OP_USER_DECRYPT_RESULT,
+    },
+};
 
 #[tonic::async_trait]
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
@@ -30,6 +41,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     /// * Pre-condition:  -
     /// * Post-condition: -
     async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+        METRICS.increment_request_counter(OP_INIT);
+        METRICS.increment_error_counter(OP_INIT, ERR_INVALID_REQUEST);
         tonic_some_or_err(
             None,
             "Requesting init on centralized kms is not suported".to_string(),
@@ -51,6 +64,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         _request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
+        METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
+        METRICS.increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, ERR_INVALID_REQUEST);
         tonic_some_or_err(
             None,
             "Requesting preproc on centralized kms is not suported".to_string(),
@@ -71,6 +86,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         _request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, Status> {
+        METRICS.increment_request_counter(OP_KEYGEN_PREPROC_RESULT);
+        METRICS.increment_error_counter(OP_KEYGEN_PREPROC_RESULT, ERR_INVALID_REQUEST);
         tonic_some_or_err(
             None,
             "Requesting preproc status on centralized kms is not suported".to_string(),
@@ -109,7 +126,14 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<kms_grpc::kms::v1::KeyGenRequest>,
     ) -> Result<Response<Empty>, Status> {
-        self.key_gen(request).await
+        METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST);
+        self.key_gen(request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(
+                observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST,
+                tag,
+            );
+        })
     }
 
     /// WARNING: This method is insecure and should not be used in production.
@@ -142,7 +166,14 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::KeyGenResult>, Status> {
-        self.get_key_gen_result(request).await
+        METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_KEYGEN_RESULT);
+        self.get_key_gen_result(request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(
+                observability::metrics_names::OP_INSECURE_KEYGEN_RESULT,
+                tag,
+            );
+        })
     }
 
     /// Computes key generation.
@@ -173,7 +204,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<kms_grpc::kms::v1::KeyGenRequest>,
     ) -> Result<Response<Empty>, Status> {
-        key_gen_impl(self, request).await
+        METRICS.increment_request_counter(OP_KEYGEN_REQUEST);
+        key_gen_impl(self, request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(OP_KEYGEN_REQUEST, tag);
+        })
     }
 
     /// Retrieves the result from a key generation.
@@ -205,7 +240,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::KeyGenResult>, Status> {
-        get_key_gen_result_impl(self, request).await
+        METRICS.increment_request_counter(OP_KEYGEN_RESULT);
+        get_key_gen_result_impl(self, request)
+            .await
+            .inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS.increment_error_counter(OP_KEYGEN_RESULT, tag);
+            })
     }
 
     /// Computes a user decryption. That is, it decrypts a ciphertext and encrypts the result under a user's public key.
@@ -236,7 +277,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<kms_grpc::kms::v1::UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        user_decrypt_impl(self, request).await
+        METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
+        user_decrypt_impl(self, request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, tag);
+        })
     }
 
     /// Retrieves the result from a user decryption.
@@ -267,7 +312,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::UserDecryptionResponse>, Status> {
-        get_user_decryption_result_impl(self, request).await
+        METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
+        get_user_decryption_result_impl(self, request)
+            .await
+            .inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS.increment_error_counter(OP_USER_DECRYPT_RESULT, tag);
+            })
     }
 
     /// Computes a public decryption. That is, it decrypts a ciphertext and returns the plaintext.
@@ -293,7 +344,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<kms_grpc::kms::v1::PublicDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        public_decrypt_impl(self, request).await
+        METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
+        public_decrypt_impl(self, request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, tag);
+        })
     }
 
     /// Retrieves the result from a public decryption.
@@ -322,7 +377,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::PublicDecryptionResponse>, Status> {
-        get_public_decryption_result_impl(self, request).await
+        METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_RESULT);
+        get_public_decryption_result_impl(self, request)
+            .await
+            .inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_RESULT, tag);
+            })
     }
 
     /// Computes a CRS generation. That is, it generates a common reference string (CRS) for the KMS.
@@ -350,7 +411,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<kms_grpc::kms::v1::CrsGenRequest>,
     ) -> Result<Response<Empty>, Status> {
-        crs_gen_impl(self, request).await
+        METRICS.increment_request_counter(OP_CRS_GEN_REQUEST);
+        crs_gen_impl(self, request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(OP_CRS_GEN_REQUEST, tag);
+        })
     }
 
     /// Retrieves the result from a CRS generation.
@@ -381,7 +446,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::CrsGenResult>, Status> {
-        get_crs_gen_result_impl(self, request).await
+        METRICS.increment_request_counter(OP_CRS_GEN_RESULT);
+        get_crs_gen_result_impl(self, request)
+            .await
+            .inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS.increment_error_counter(OP_CRS_GEN_RESULT, tag);
+            })
     }
 
     /// WARNING: This method is by definition expected to be insecure and should not be used in production.
@@ -413,6 +484,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<kms_grpc::kms::v1::CrsGenRequest>,
     ) -> Result<Response<Empty>, Status> {
+        METRICS
+            .increment_request_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_REQUEST);
         self.crs_gen(request).await
     }
 
@@ -447,7 +520,14 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<kms_grpc::kms::v1::CrsGenResult>, Status> {
-        self.get_crs_gen_result(request).await
+        METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_RESULT);
+        self.get_crs_gen_result(request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(
+                observability::metrics_names::OP_INSECURE_CRS_GEN_RESULT,
+                tag,
+            );
+        })
     }
 
     /// WARNING: This method is not implemented yet and will always return an error.
@@ -466,7 +546,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<kms_grpc::kms::v1::NewKmsContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
-        new_kms_context_impl(&self.crypto_storage, request).await
+        METRICS.increment_request_counter(OP_NEW_KMS_CONTEXT);
+        new_kms_context_impl(&self.crypto_storage, request)
+            .await
+            .inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS.increment_error_counter(OP_NEW_KMS_CONTEXT, tag);
+            })
     }
 
     /// WARNING: This method is not implemented yet and will always return an error.
@@ -485,7 +571,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
     ) -> Result<Response<Empty>, Status> {
-        delete_kms_context_impl(&self.crypto_storage, request).await
+        METRICS.increment_request_counter(OP_DESTROY_KMS_CONTEXT);
+        delete_kms_context_impl(&self.crypto_storage, request)
+            .await
+            .inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS.increment_error_counter(OP_DESTROY_KMS_CONTEXT, tag);
+            })
     }
 
     /// WARNING: This method is not implemented yet and will always return an error.
@@ -504,6 +596,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         _request: Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
     ) -> Result<Response<Empty>, Status> {
+        METRICS.increment_request_counter(OP_NEW_CUSTODIAN_CONTEXT);
+        METRICS.increment_error_counter(OP_NEW_CUSTODIAN_CONTEXT, ERR_INVALID_REQUEST);
         Err(Status::unimplemented(
             "new_custodian_context is not implemented",
         ))
@@ -525,6 +619,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         _request: Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
     ) -> Result<Response<Empty>, Status> {
+        METRICS.increment_request_counter(OP_DESTROY_CUSTODIAN_CONTEXT);
+        METRICS.increment_error_counter(OP_DESTROY_CUSTODIAN_CONTEXT, ERR_INVALID_REQUEST);
         Err(Status::unimplemented(
             "destroy_custodian_context is not implemented",
         ))
@@ -550,6 +646,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<OperatorPublicKey>, Status> {
+        METRICS.increment_request_counter(OP_FETCH_PK);
+        METRICS.increment_error_counter(OP_FETCH_PK, ERR_INVALID_REQUEST);
         Err(Status::unimplemented(
             "get_operator_public_key is not implemented",
         ))
@@ -571,6 +669,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Empty>, Status> {
+        METRICS.increment_request_counter(OP_CUSTODIAN_CONTEXT_RESTORE);
+        METRICS.increment_error_counter(OP_CUSTODIAN_CONTEXT_RESTORE, ERR_INVALID_REQUEST);
         Err(Status::unimplemented(
             "custodian_backup_restore is not implemented",
         ))
