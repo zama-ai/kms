@@ -1029,8 +1029,8 @@ pub mod tests {
             structure_traits::{ErrorCorrect, Invert, Ring, Solve},
         },
         execution::{
-            online::preprocessing::{dummy::DummyPreprocessing, DKGPreprocessing},
-            runtime::session::{LargeSession, ParameterHandles, SmallSessionHandles},
+            online::preprocessing::dummy::DummyPreprocessing,
+            runtime::session::{LargeSession, ParameterHandles},
             tfhe_internals::{
                 parameters::{DKGParamsBasics, DKGParamsRegular, DKGParamsSnS},
                 public_keysets::FhePubKeySet,
@@ -1095,8 +1095,10 @@ pub mod tests {
         execution::{
             config::BatchParams,
             keyset_config::KeySetConfig,
-            online::preprocessing::create_memory_factory,
-            runtime::session::{BaseSessionHandles, SmallSession, ToBaseSession},
+            online::preprocessing::{create_memory_factory, DKGPreprocessing},
+            runtime::session::{
+                BaseSessionHandles, SmallSession, SmallSessionHandles, ToBaseSession,
+            },
             small_execution::offline::{Preprocessing, SecureSmallPreprocessing},
             tfhe_internals::test_feature::run_decompression_test,
         },
@@ -1661,6 +1663,7 @@ pub mod tests {
         )
     }
 
+    #[cfg(feature = "slow_tests")]
     async fn generate_preproc_from_params<
         const EXTENSION_DEGREE: usize,
         Ses: SmallSessionHandles<ResiduePoly<Z128, EXTENSION_DEGREE>> + ToBaseSession,
