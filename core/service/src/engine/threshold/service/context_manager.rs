@@ -153,7 +153,7 @@ where
                 internal_msg,
             );
         }
-        let mut rng = &mut self.base_kms.new_rng().await;
+        let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric keys for the operator to use to encrypt the backup
         let (backup_enc_key, backup_priv_key) = backup_pke::keygen(&mut rng)?;
         let custodian_context = InternalCustodianContext {
@@ -165,7 +165,7 @@ where
         };
         let (recovery_request, commitments) = self
             .gen_recovery_request(
-                rng,
+                &mut rng,
                 &custodian_context,
                 self.my_role,
                 context_id,
@@ -309,12 +309,11 @@ where
         let (ct_map, commitments) =
             operator.secret_share_and_encrypt(rng, &serialized_priv_key, backup_id)?;
         let mut ciphertexts = BTreeMap::new();
-        for custodian_index in 1..=custodian_context.custodian_nodes.keys().len() {
-            let custodian_role = Role::indexed_from_one(custodian_index);
+        for custodian_role in custodian_context.custodian_nodes.keys() {
             let ct = ct_map.get(&custodian_role).unwrap_or_else(|| {
                 panic!("Missing operator backup output for role {custodian_role}")
             });
-            ciphertexts.insert(custodian_role, ct.to_owned());
+            ciphertexts.insert(*custodian_role, ct.to_owned());
         }
         let recovery_request = RecoveryRequest::new(
             operator.public_key().to_owned(),

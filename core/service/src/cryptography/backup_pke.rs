@@ -223,7 +223,6 @@ impl Named for BackupCiphertext {
 #[allow(unknown_lints)]
 #[allow(non_local_effect_before_error_return)]
 pub fn keygen<R: Rng + CryptoRng>(
-    //todo change order
     rng: &mut R,
 ) -> Result<(BackupPublicKey, BackupPrivateKey), CryptographyError> {
     let (decapsulation_key, encapsulation_key) = hybrid_ml_kem::keygen::<MlKemType, _>(rng);
