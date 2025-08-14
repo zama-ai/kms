@@ -13,8 +13,9 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_RATE_LIMIT_EXCEEDED, OP_USER_DECRYPT_INNER, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID,
-        TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
+        ERR_RATE_LIMIT_EXCEEDED, ERR_USER_DECRYPTION_FAILED, OP_USER_DECRYPT_INNER,
+        OP_USER_DECRYPT_REQUEST, TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
+        TAG_TFHE_TYPE,
     },
 };
 use rand::{CryptoRng, RngCore};
@@ -465,9 +466,13 @@ impl<
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) =
             validate_user_decrypt_req(&inner).inspect_err(|e| {
                 tracing::error!(
-                    "Failed to validate user decryption request {}: {e}",
+                    error = ?e,
+                    request_id = ?inner.request_id,
+                    "Failed to validate decrypt request {}",
                     format_user_request(&inner)
                 );
+                let _ = metrics::METRICS
+                    .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_USER_DECRYPTION_FAILED);
             })?;
 
         if let Some(b) = timer.as_mut() {

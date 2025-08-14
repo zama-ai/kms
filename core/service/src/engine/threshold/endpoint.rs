@@ -255,8 +255,10 @@ impl_endpoint! {
         /// * `request` - Struct containing all the data of the request.
         ///
         /// # Errors
+        ///    - `InvalidArgument` - If the request is not valid or does not match the expected format.
         ///    - `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        ///    - `Aborted` - If an internal error occured in starting the public decryption _or_ if an invalid argument was given.
+        ///    - `AlreadyExists` - If the request contains a request ID that was previously used.
+        ///    - `Aborted` - If an internal error occured in starting the user decryption.
         ///
         /// # Conditions
         /// * Pre-condition:
