@@ -136,7 +136,7 @@ impl Named for InternalCustodianContext {
 pub struct Custodian<S: BackupSigner, D: BackupDecryptor> {
     role: Role,
     decryptor: D,
-    nested_pk: BackupPublicKey,
+    backup_pk: BackupPublicKey,
     signer: S,
     verification_key: PublicSigKey,
 }
@@ -158,12 +158,12 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         signer: S,
         verification_key: PublicSigKey,
         decryptor: D,
-        nested_pk: BackupPublicKey,
+        backup_pk: BackupPublicKey,
     ) -> Result<Self, BackupError> {
         Ok(Self {
             role,
             decryptor,
-            nested_pk,
+            backup_pk,
             signer,
             verification_key,
         })
@@ -258,14 +258,14 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
             custodian_role: self.role,
             random_value,
             timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            public_enc_key: self.nested_pk.clone(),
+            public_enc_key: self.backup_pk.clone(),
             public_verf_key: self.verification_key().clone(),
             name: custodian_name,
         })
     }
 
     pub fn public_key(&self) -> &BackupPublicKey {
-        &self.nested_pk
+        &self.backup_pk
     }
 
     pub fn verification_key(&self) -> &PublicSigKey {
