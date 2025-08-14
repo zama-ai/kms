@@ -550,7 +550,7 @@ impl Client {
         param: Option<FheParameter>,
         keyset_config: Option<KeySetConfig>,
         keyset_added_info: Option<KeySetAddedInfo>,
-        eip712_domain: Option<Eip712Domain>,
+        eip712_domain: Eip712Domain,
     ) -> anyhow::Result<KeyGenRequest> {
         let parsed_param: i32 = match param {
             Some(parsed_param) => parsed_param.into(),
@@ -562,18 +562,12 @@ impl Client {
             )));
         }
 
-        let domain = match eip712_domain {
-            Some(eip712_domain) => Some(alloy_to_protobuf_domain(&eip712_domain)?),
-            None => None,
-        };
-
         let prep_id = preproc_id.map(|res| res.into());
-
         Ok(KeyGenRequest {
             params: parsed_param,
             preproc_id: prep_id,
             request_id: Some((*request_id).into()),
-            domain,
+            domain: Some(alloy_to_protobuf_domain(&eip712_domain)?),
             keyset_config,
             keyset_added_info,
         })
@@ -585,7 +579,7 @@ impl Client {
         request_id: &RequestId,
         max_num_bits: Option<u32>,
         param: Option<FheParameter>,
-        eip712_domain: Option<Eip712Domain>,
+        eip712_domain: Eip712Domain,
     ) -> anyhow::Result<CrsGenRequest> {
         let parsed_param: i32 = match param {
             Some(parsed_param) => parsed_param.into(),
@@ -597,16 +591,11 @@ impl Client {
             )));
         }
 
-        let domain = match eip712_domain {
-            Some(eip712_domain) => Some(alloy_to_protobuf_domain(&eip712_domain)?),
-            None => None,
-        };
-
         Ok(CrsGenRequest {
             params: parsed_param,
             max_num_bits,
             request_id: Some((*request_id).into()),
-            domain,
+            domain: Some(alloy_to_protobuf_domain(&eip712_domain)?),
         })
     }
 
@@ -2263,10 +2252,13 @@ pub mod test_tools {
 
         pub async fn assert_shutdown(self) {
             // Call shutdown so we can await the server to shut down even though sending the shutdown signal already calls this
-            self.server
+            let shutdown_handle = self
+                .server
                 .shutdown()
+                .expect("Failed to execute core service server shutdown");
+            shutdown_handle
                 .await
-                .expect("Failed to await core service server shutdown");
+                .expect("Failed to await core service server shutdown completion");
             // Shut down the core server
             // The receiver should not be closed, that's why we unwrap
             self.service_shutdown_tx
@@ -2454,6 +2446,7 @@ pub(crate) mod tests {
     use crate::cryptography::internal_crypto_types::{
         UnifiedPrivateEncKey, UnifiedPublicEncKey, WrappedDKGParams,
     };
+    use crate::dummy_domain;
     use crate::engine::base::{compute_handle, derive_request_id, BaseKmsStruct, DSEP_PUBDATA_CRS};
     #[cfg(feature = "slow_tests")]
     use crate::engine::centralized::central_kms::tests::get_default_keys;
@@ -2524,15 +2517,6 @@ pub(crate) mod tests {
 
     // Time to sleep to ensure that previous servers and tests have shut down properly.
     const TIME_TO_SLEEP_MS: u64 = 500;
-
-    fn dummy_domain() -> alloy_sol_types::Eip712Domain {
-        alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        )
-    }
 
     /// Reads the testing keys for the threshold servers and starts them up, and returns a hash map
     /// of the servers, based on their ID, which starts from 1. A similar map is also returned
@@ -2929,7 +2913,8 @@ pub(crate) mod tests {
             ServingStatus::NotServing as i32,
             "Service is not in NOT SERVING status. Got status: {status}"
         );
-        let _ = server_handle.server.shutdown().await;
+        let shutdown_handle = server_handle.server.shutdown().unwrap();
+        shutdown_handle.await.unwrap();
         check_port_is_closed(mpc_port).await;
         check_port_is_closed(service_port).await;
     }
@@ -3195,6 +3180,7 @@ pub(crate) mod tests {
         let (kms_server, mut kms_client, internal_client) =
             super::test_tools::centralized_handles(&dkg_params, Some(rate_limiter_conf)).await;
 
+        let domain = dummy_domain();
         let gen_req = internal_client
             .key_gen_request(
                 request_id,
@@ -3202,7 +3188,7 @@ pub(crate) mod tests {
                 Some(params),
                 keyset_config,
                 keyset_added_info.clone(),
-                None,
+                domain,
             )
             .unwrap();
         let req_id = gen_req.request_id.clone().unwrap();
@@ -3361,8 +3347,9 @@ pub(crate) mod tests {
             // The default is 2048 which is too slow for tests, so we switch to 256
             Some(256)
         };
+        let domain = dummy_domain();
         let ceremony_req = internal_client
-            .crs_gen_request(request_id, max_num_bits, params, None)
+            .crs_gen_request(request_id, max_num_bits, params, domain)
             .unwrap();
 
         let client_request_id = ceremony_req.request_id.clone().unwrap();
@@ -3460,8 +3447,9 @@ pub(crate) mod tests {
             // The default is 2048 which is too slow for tests, so we switch to 256
             Some(256)
         };
+        let domain = dummy_domain();
         let gen_req = internal_client
-            .crs_gen_request(crs_req_id, max_num_bits, Some(params), None)
+            .crs_gen_request(crs_req_id, max_num_bits, Some(params), domain)
             .unwrap();
 
         tracing::debug!("making crs request, insecure? {insecure}");
@@ -3728,8 +3716,9 @@ pub(crate) mod tests {
         max_bits: Option<u32>,
     ) {
         let dkg_param: WrappedDKGParams = parameter.into();
+        let domain = dummy_domain();
         let crs_req = internal_client
-            .crs_gen_request(crs_req_id, max_bits, Some(parameter), None)
+            .crs_gen_request(crs_req_id, max_bits, Some(parameter), domain)
             .unwrap();
 
         let responses = launch_crs(&vec![crs_req.clone()], kms_clients, insecure).await;
@@ -5868,6 +5857,7 @@ pub(crate) mod tests {
     #[serial]
     async fn test_ratelimiter() {
         let req_id: RequestId = derive_request_id("test_ratelimiter").unwrap();
+        let domain = dummy_domain();
         purge(None, None, None, &req_id, 4).await;
         let rate_limiter_conf = RateLimiterConfig {
             bucket_size: 100,
@@ -5882,7 +5872,7 @@ pub(crate) mod tests {
 
         let req_id = derive_request_id("test rate limiter 1").unwrap();
         let req = internal_client
-            .crs_gen_request(&req_id, Some(16), Some(FheParameter::Test), None)
+            .crs_gen_request(&req_id, Some(16), Some(FheParameter::Test), domain.clone())
             .unwrap();
         let mut cur_client = kms_clients.get(&1).unwrap().clone();
         let res = cur_client.crs_gen(req).await;
@@ -5894,7 +5884,7 @@ pub(crate) mod tests {
         // processed in the kms.
         let req_id_2 = derive_request_id("test rate limiter2").unwrap();
         let req_2 = internal_client
-            .crs_gen_request(&req_id_2, Some(1), Some(FheParameter::Test), None)
+            .crs_gen_request(&req_id_2, Some(1), Some(FheParameter::Test), domain)
             .unwrap();
         let res = cur_client.crs_gen(req_2).await;
         assert_eq!(res.unwrap_err().code(), tonic::Code::ResourceExhausted);
@@ -6880,6 +6870,7 @@ pub(crate) mod tests {
             }
         };
 
+        let domain = dummy_domain();
         let req_keygen = internal_client
             .key_gen_request(
                 keygen_req_id,
@@ -6887,7 +6878,7 @@ pub(crate) mod tests {
                 Some(parameter),
                 keyset_config,
                 keyset_added_info,
-                None,
+                domain,
             )
             .unwrap();
 
@@ -6956,6 +6947,7 @@ pub(crate) mod tests {
         use threshold_fhe::execution::{
             runtime::party::Role, tfhe_internals::test_feature::to_hl_client_key,
         };
+        let domain = dummy_domain();
 
         let mut finished = Vec::new();
         // Wait at most MAX_TRIES times 15 seconds for all preprocessing to finish
@@ -7129,7 +7121,7 @@ pub(crate) mod tests {
                     Some(FheParameter::Test),
                     None,
                     None,
-                    None,
+                    domain,
                 )
                 .unwrap();
             let responses = launch_dkg(keygen_req_data.clone(), kms_clients, insecure).await;
@@ -7152,8 +7144,8 @@ pub(crate) mod tests {
         Option<NoiseSquashingCompressionPrivateKey>,
     ) {
         use tfhe::core_crypto::prelude::GlweSecretKeyOwned;
-        use threshold_fhe::execution::{
-            endpoints::keygen::GlweSecretKeyShareEnum, tfhe_internals::utils::reconstruct_bit_vec,
+        use threshold_fhe::execution::tfhe_internals::{
+            private_keysets::GlweSecretKeyShareEnum, utils::reconstruct_bit_vec,
         };
 
         let param_handle = param.get_params_basics_handle();

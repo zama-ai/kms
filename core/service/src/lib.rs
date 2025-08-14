@@ -117,6 +117,17 @@ pub fn compute_user_decrypt_message_hash(
     Ok(message_hash)
 }
 
+/// Create a dummy domain for testing
+#[cfg(any(test, all(feature = "non-wasm", feature = "testing")))]
+pub(crate) fn dummy_domain() -> alloy_sol_types::Eip712Domain {
+    alloy_sol_types::eip712_domain!(
+        name: "Authorization token",
+        version: "1",
+        chain_id: 8006,
+        verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+    )
+}
+
 // re-export DecryptionMode
 pub use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 

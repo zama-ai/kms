@@ -58,12 +58,12 @@ use tfhe::{
 };
 use tfhe::{FheTypes, ServerKey};
 #[cfg(feature = "non-wasm")]
-use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
-#[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::keyset_config::KeySetCompressionConfig;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+#[cfg(feature = "non-wasm")]
+use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
 use threshold_fhe::hashing::DomainSep;
@@ -72,6 +72,7 @@ use threshold_fhe::session_id::SessionId;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::thread_handles::ThreadHandleGroup;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 #[cfg(feature = "non-wasm")]
 use tokio_util::task::TaskTracker;
 use tonic_health::pb::health_server::{Health, HealthServer};
@@ -85,7 +86,7 @@ pub(crate) async fn async_generate_fhe_keys<PubS, PrivS>(
     keyset_config: StandardKeySetConfig,
     compression_key_id: Option<RequestId>,
     seed: Option<Seed>,
-    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    eip712_domain: alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
 where
     PubS: Storage + Sync + Send + 'static,
@@ -93,7 +94,6 @@ where
 {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
-    let eip712_domain_copy = eip712_domain.cloned();
 
     let existing_key_handle = match compression_key_id {
         Some(compression_key_id_inner) => {
@@ -115,7 +115,7 @@ where
             keyset_config,
             existing_key_handle,
             seed,
-            eip712_domain_copy.as_ref(),
+            &eip712_domain,
         );
         let _ = send.send(out);
     });
@@ -169,7 +169,7 @@ pub(crate) async fn async_generate_sns_compression_keys<PubS, PrivS>(
     storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     params: DKGParams,
     exsiting_keyset_id: &RequestId,
-    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    eip712_domain: alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
 where
     PubS: Storage + Sync + Send + 'static,
@@ -263,7 +263,7 @@ where
         server_key: new_server_key,
     };
     let handles =
-        KmsFheKeyHandles::new(sk, new_client_key, &pks, decompression_key, eip712_domain)?;
+        KmsFheKeyHandles::new(sk, new_client_key, &pks, decompression_key, &eip712_domain)?;
     Ok((pks, handles))
 }
 
@@ -272,23 +272,15 @@ pub(crate) async fn async_generate_crs(
     sk: &PrivateSigKey,
     params: DKGParams,
     max_num_bits: Option<u32>,
-    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    eip712_domain: alloy_sol_types::Eip712Domain,
     sid: SessionId,
     rng: AesRng,
 ) -> anyhow::Result<(CompactPkeCrs, SignedPubDataHandleInternal)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
-    let eip712_domain_copy = eip712_domain.cloned();
 
     rayon::spawn_fifo(move || {
-        let out = gen_centralized_crs(
-            &sk_copy,
-            &params,
-            max_num_bits,
-            eip712_domain_copy.as_ref(),
-            sid,
-            rng,
-        );
+        let out = gen_centralized_crs(&sk_copy, &params, max_num_bits, &eip712_domain, sid, rng);
         let _ = send.send(out);
     });
     recv.await?
@@ -301,7 +293,7 @@ pub fn generate_fhe_keys(
     keyset_config: StandardKeySetConfig,
     existing_key_handle: Option<KmsFheKeyHandles>,
     seed: Option<Seed>,
-    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    eip712_domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
         let client_key = match keyset_config.compression_config {
@@ -397,7 +389,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
     params: &DKGParams,
     max_num_bits: Option<u32>,
-    eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+    eip712_domain: &alloy_sol_types::Eip712Domain,
     sid: SessionId,
     mut rng: R,
 ) -> anyhow::Result<(CompactPkeCrs, SignedPubDataHandleInternal)> {
@@ -1007,16 +999,19 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Shutdown
     for RealCentralizedKms<PubS, PrivS>
 {
-    async fn shutdown(&self) -> anyhow::Result<()> {
-        self.health_reporter
-            .write()
-            .await
-            .set_not_serving::<CoreServiceEndpointServer<Self>>()
-            .await;
-        self.tracker.close();
-        self.tracker.wait().await;
-        tracing::info!("Central core service endpoint server shutdown complete.");
-        Ok(())
+    fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
+        let h_repoter = self.health_reporter.clone();
+        let tracker = self.tracker.clone();
+        let handle = tokio::task::spawn(async move {
+            h_repoter
+                .write()
+                .await
+                .set_not_serving::<CoreServiceEndpointServer<Self>>()
+                .await;
+            tracker.close();
+            tracker.wait().await;
+        });
+        Ok(handle)
     }
 }
 
@@ -1054,7 +1049,9 @@ pub(crate) mod tests {
     use crate::cryptography::signcryption::{
         decrypt_signcryption_with_link, ephemeral_signcryption_key_generation,
     };
+    use crate::dummy_domain;
     use crate::engine::base::{compute_handle, compute_info, derive_request_id};
+    use crate::engine::centralized::central_kms::async_generate_crs;
     use crate::engine::traits::Kms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
     use crate::util::file_handling::{read_element, write_element};
@@ -1065,18 +1062,15 @@ pub(crate) mod tests {
     use kms_grpc::rpc_types::{PrivDataType, WrappedPublicKey};
     use kms_grpc::RequestId;
     use rand::{RngCore, SeedableRng};
-    use serde::{Deserialize, Serialize};
     use serial_test::serial;
     use std::collections::HashMap;
     use std::str::FromStr;
     use std::{path::Path, sync::Arc};
-    use tfhe::named::Named;
-    use tfhe::Versionize;
     use tfhe::{set_server_key, FheTypes};
     use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
-    use tfhe_versionable::VersionsDispatch;
     use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+    use threshold_fhe::session_id::SessionId;
     use tokio::sync::OnceCell;
 
     static ONCE_TEST_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();
@@ -1121,7 +1115,10 @@ pub(crate) mod tests {
     }
 
     pub(crate) async fn new_pub_ram_storage_from_existing_keys(
-        keys: &HashMap<RequestId, threshold_fhe::execution::endpoints::keygen::FhePubKeySet>,
+        keys: &HashMap<
+            RequestId,
+            threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet,
+        >,
     ) -> anyhow::Result<RamStorage> {
         let mut ram_storage = RamStorage::new();
         for (cur_req_id, cur_keys) in keys {
@@ -1174,13 +1171,14 @@ pub(crate) mod tests {
         let mut rng = AesRng::seed_from_u64(100);
         let seed = Some(Seed(42));
         let (sig_pk, sig_sk) = gen_sig_keys(&mut rng);
+        let domain = dummy_domain();
         let (pub_fhe_keys, key_info) = generate_fhe_keys(
             &sig_sk,
             dkg_params,
             StandardKeySetConfig::default(),
             None,
             seed,
-            None,
+            &domain,
         )
         .unwrap();
         assert!(pub_fhe_keys.server_key.noise_squashing_key().is_some());
@@ -1193,7 +1191,7 @@ pub(crate) mod tests {
             StandardKeySetConfig::default(),
             None,
             seed,
-            None,
+            &domain,
         )
         .unwrap();
         assert!(other_pub_fhe_keys
@@ -1234,6 +1232,7 @@ pub(crate) mod tests {
     #[serial(default_keys)]
     async fn test_gen_keys() {
         let mut rng = AesRng::seed_from_u64(100);
+        let domain = dummy_domain();
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         assert!(generate_fhe_keys(
             &sig_sk,
@@ -1241,7 +1240,7 @@ pub(crate) mod tests {
             StandardKeySetConfig::default(),
             None,
             None,
-            None
+            &domain,
         )
         .is_ok());
     }
@@ -1588,21 +1587,6 @@ pub(crate) mod tests {
         assert_eq!(plaintext.fhe_type().unwrap(), FheTypes::Uint64);
     }
 
-    #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, VersionsDispatch)]
-    enum TestTypeVersioned {
-        V0(TestType),
-    }
-
-    impl Named for TestType {
-        const NAME: &'static str = "TestType";
-    }
-
-    #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, Versionize)]
-    #[versionize(TestTypeVersioned)]
-    struct TestType {
-        i: u32,
-    }
-
     #[tokio::test]
     async fn ensure_compute_info_consistency() {
         // we need compute info to work without calling the sign function from KMS,
@@ -1625,9 +1609,21 @@ pub(crate) mod tests {
             .unwrap()
         };
 
-        let value = TestType { i: 32 };
-        let expected = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, None).unwrap();
-        let actual = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, None).unwrap();
+        let domain = dummy_domain();
+        let sk = &keys.centralized_kms_keys.sig_sk;
+        let (value, _) = async_generate_crs(
+            sk,
+            TEST_PARAM,
+            Some(1),
+            domain.clone(),
+            SessionId::from(11u128),
+            AesRng::seed_from_u64(100),
+        )
+        .await
+        .unwrap();
+
+        let expected = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
+        let actual = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
         assert_eq!(expected, actual);
     }
 
@@ -1650,14 +1646,54 @@ pub(crate) mod tests {
             .unwrap()
         };
 
-        let value = TestType { i: 32 };
-        let base = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, None).unwrap();
+        let domain = dummy_domain();
+        let sk = &keys.centralized_kms_keys.sig_sk;
+        let (value, _) = async_generate_crs(
+            sk,
+            TEST_PARAM,
+            Some(1),
+            domain.clone(),
+            SessionId::from(11u128),
+            AesRng::seed_from_u64(100),
+        )
+        .await
+        .unwrap();
+
+        let base = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
+
         // Observe one char off in dsep
-        let wrong_dsep = compute_info(&kms.base_kms.sig_key, b"TESTTESU", &value, None).unwrap();
-        assert_ne!(base, wrong_dsep);
-        let new_val = TestType { i: 33 };
-        let wrong_val = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &new_val, None).unwrap();
-        assert_ne!(base, wrong_val);
+        {
+            let info = compute_info(&kms.base_kms.sig_key, b"TESTTESU", &value, &domain).unwrap();
+            assert_ne!(base, info);
+        }
+
+        // observe there's a different value
+        {
+            let (new_val, _) = async_generate_crs(
+                sk,
+                TEST_PARAM,
+                Some(1),
+                domain.clone(),
+                SessionId::from(11u128),
+                AesRng::seed_from_u64(101),
+            )
+            .await
+            .unwrap();
+            let info = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &new_val, &domain).unwrap();
+            assert_ne!(base, info);
+        }
+
+        // observe the domain is different
+        {
+            let domain = alloy_sol_types::eip712_domain!(
+                name: "Authorization token",
+                version: "2", // different from dummy_domain
+                chain_id: 8006,
+                verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+            );
+            let info = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
+            assert_ne!(base, info);
+        }
     }
 
     #[test]

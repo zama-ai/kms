@@ -1,7 +1,7 @@
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use kms_grpc::kms::v1::{Empty, KeyGenRequest, KeyGenResult};
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain_option, PubDataType};
+use kms_grpc::rpc_types::{optional_protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{ERR_KEY_EXISTS, ERR_RATE_LIMIT_EXCEEDED, OP_KEYGEN};
@@ -45,12 +45,15 @@ pub async fn key_gen_impl<
         .increment_request_counter(OP_KEYGEN)
         .map_err(|e| Status::internal(format!("Failed to increment counter: {e}")))?;
 
-    let permit = service.rate_limiter.start_keygen().await.map_err(|e| {
-        if let Err(e) = METRICS.increment_error_counter(OP_KEYGEN, ERR_RATE_LIMIT_EXCEEDED) {
-            tracing::warn!("Failed to increment error counter: {:?}", e);
-        }
-        Status::resource_exhausted(e.to_string())
-    })?;
+    let permit = service
+        .rate_limiter
+        .start_keygen()
+        .await
+        .inspect_err(|_e| {
+            if let Err(e) = METRICS.increment_error_counter(OP_KEYGEN, ERR_RATE_LIMIT_EXCEEDED) {
+                tracing::warn!("Failed to increment error counter: {:?}", e);
+            }
+        })?;
     let inner = request.into_inner();
     tracing::info!(
         "centralized key-gen with request id: {:?}",
@@ -62,10 +65,7 @@ pub async fn key_gen_impl<
     )?
     .into();
     validate_request_id(&req_id)?;
-    let params = tonic_handle_potential_err(
-        retrieve_parameters(inner.params),
-        "Parameter choice is not recognized".to_string(),
-    )?;
+    let params = retrieve_parameters(inner.params)?;
     let internal_keyset_config = tonic_handle_potential_err(
         InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info),
         "Invalid keyset config".to_string(),
@@ -84,7 +84,7 @@ pub async fn key_gen_impl<
     let crypto_storage = service.crypto_storage.clone();
     let sk = Arc::clone(&service.base_kms.sig_key);
 
-    let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
+    let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
     let handle = service.tracker.spawn(
         async move {
             let _timer = _timer;
@@ -151,7 +151,7 @@ pub(crate) async fn key_gen_background<
     sk: Arc<PrivateSigKey>,
     params: DKGParams,
     internal_keyset_config: InternalKeySetConfig,
-    eip712_domain: Option<Eip712Domain>,
+    eip712_domain: Eip712Domain,
     permit: OwnedSemaphorePermit,
 ) -> Result<(), anyhow::Error> {
     let _permit = permit;
@@ -188,7 +188,7 @@ pub(crate) async fn key_gen_background<
                 standard_key_set_config.to_owned(),
                 internal_keyset_config.get_compression_id(),
                 None,
-                eip712_domain.as_ref(),
+                eip712_domain,
             )
             .await
             {
@@ -216,23 +216,17 @@ pub(crate) async fn key_gen_background<
             let (from, to) = internal_keyset_config.get_from_and_to()?;
             let decompression_key =
                 async_generate_decompression_keys(crypto_storage.clone(), &from, &to).await?;
-            let info = match compute_info(
-                &sk,
-                &DSEP_PUBDATA_KEY,
-                &decompression_key,
-                eip712_domain.as_ref(),
-            ) {
-                Ok(info) => HashMap::from_iter(vec![(PubDataType::DecompressionKey, info)]),
-                Err(_) => {
-                    let mut guarded_meta_storage = meta_store.write().await;
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_storage.update(
-                        req_id,
-                        Err("Failed to compute decompression key info".to_string()),
-                    );
-                    anyhow::bail!("Failed to compute decompression key info");
-                }
-            };
+            let info =
+                match compute_info(&sk, &DSEP_PUBDATA_KEY, &decompression_key, &eip712_domain) {
+                    Ok(info) => HashMap::from_iter(vec![(PubDataType::DecompressionKey, info)]),
+                    Err(e) => {
+                        let mut guarded_meta_storage = meta_store.write().await;
+                        // We cannot do much if updating the storage fails at this point...
+                        let err_msg = format!("Failed to compute decompression key info: {e}");
+                        let _ = guarded_meta_storage.update(req_id, Err(err_msg.clone()));
+                        anyhow::bail!(err_msg);
+                    }
+                };
             crypto_storage
                 .write_decompression_key_with_meta_store(
                     req_id,
@@ -255,7 +249,7 @@ pub(crate) async fn key_gen_background<
                 crypto_storage.clone(),
                 params,
                 &overwrite_key_id,
-                eip712_domain.as_ref(),
+                eip712_domain,
             )
             .await
             {

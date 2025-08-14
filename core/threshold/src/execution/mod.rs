@@ -90,6 +90,10 @@ pub mod tfhe_internals {
     pub mod lwe_packing_keyswitch_key_generation;
     pub mod parameters;
     #[cfg(feature = "non-wasm")]
+    pub mod private_keysets;
+    #[cfg(feature = "non-wasm")]
+    pub mod public_keysets;
+    #[cfg(feature = "non-wasm")]
     pub mod randomness;
     mod raw_parameters;
     pub mod switch_and_squash;

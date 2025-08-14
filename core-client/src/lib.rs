@@ -1078,7 +1078,7 @@ async fn do_keygen(
         Some(param),
         keyset_config,
         keyset_added_info,
-        Some(dummy_domain()),
+        dummy_domain(),
     )?;
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
@@ -1159,12 +1159,8 @@ async fn do_crsgen(
         cc_conf.num_majority
     };
 
-    let crs_req = internal_client.crs_gen_request(
-        &req_id,
-        max_num_bits,
-        Some(param),
-        Some(dummy_domain()),
-    )?;
+    let crs_req =
+        internal_client.crs_gen_request(&req_id, max_num_bits, Some(param), dummy_domain())?;
 
     //NOTE: Extract domain from request for sanity, but if we don't use dummy_domain
     //we have an issue in the (Insecure)CrsGenResult commands

@@ -12,9 +12,6 @@ use crate::{
     execution::{
         communication::broadcast::{Broadcast, SyncReliableBroadcast},
         config::BatchParams,
-        endpoints::keygen::{
-            CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet,
-        },
         online::preprocessing::BasePreprocessing,
         runtime::{party::Role, session::BaseSessionHandles},
         sharing::{
@@ -24,7 +21,11 @@ use crate::{
         },
         tfhe_internals::{
             compression_decompression_key::CompressionPrivateKeyShares,
-            glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare,
+            glwe_key::GlweSecretKeyShare,
+            lwe_key::LweSecretKeyShare,
+            private_keysets::{
+                CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet,
+            },
         },
     },
     networking::value::BroadcastValue,

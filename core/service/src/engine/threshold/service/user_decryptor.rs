@@ -28,15 +28,13 @@ use threshold_fhe::{
         structure_traits::{ErrorCorrect, Invert, Ring, Solve},
     },
     execution::{
-        endpoints::{
-            decryption::{
-                partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec,
-                DecryptionMode, LowLevelCiphertext, OfflineNoiseFloodSession,
-                SmallOfflineNoiseFloodSession,
-            },
-            keygen::PrivateKeySet,
+        endpoints::decryption::{
+            partial_decrypt_using_noiseflooding, secure_partial_decrypt_using_bitdec,
+            DecryptionMode, LowLevelCiphertext, OfflineNoiseFloodSession,
+            SmallOfflineNoiseFloodSession,
         },
         runtime::session::SmallSession,
+        tfhe_internals::private_keysets::PrivateKeySet,
     },
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
@@ -443,11 +441,17 @@ impl<
             .increment_request_counter(OP_USER_DECRYPT_REQUEST)
             .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
-        let permit = self.rate_limiter.start_user_decrypt().await.map_err(|e| {
-            let _ = metrics::METRICS
-                .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED);
-            Status::resource_exhausted(e.to_string())
-        })?;
+        let permit = self
+            .rate_limiter
+            .start_user_decrypt()
+            .await
+            .inspect_err(|_e| {
+                if let Err(e) = metrics::METRICS
+                    .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
+                {
+                    tracing::warn!("Failed to increment error counter: {:?}", e);
+                }
+            })?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -604,6 +608,7 @@ mod tests {
             decompression::test_tools::safe_serialize_versioned,
             internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
         },
+        dummy_domain,
         engine::threshold::service::compute_all_info,
         vault::storage::ram,
     };
@@ -677,7 +682,8 @@ mod tests {
             .build();
         let ct_buf = safe_serialize_versioned(&ct);
 
-        let info = compute_all_info(&sk, &fhe_key_set, None).unwrap();
+        let domain = dummy_domain();
+        let info = compute_all_info(&sk, &fhe_key_set, &domain).unwrap();
 
         let dummy_meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
         {

@@ -1,4 +1,7 @@
-use crate::{cryptography::internal_crypto_types::gen_sig_keys, engine::base::derive_request_id};
+use crate::{
+    cryptography::internal_crypto_types::gen_sig_keys, dummy_domain,
+    engine::base::derive_request_id,
+};
 use aes_prng::AesRng;
 use kms_grpc::rpc_types::WrappedPublicKey;
 use rand::SeedableRng;
@@ -6,12 +9,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tfhe::{shortint::ClassicPBSParameters, CompactPublicKey, ConfigBuilder, ServerKey};
 use threshold_fhe::{
-    execution::{
-        endpoints::keygen::FhePubKeySet,
-        tfhe_internals::{
-            parameters::DKGParams,
-            test_feature::{gen_key_set, keygen_all_party_shares_from_keyset},
-        },
+    execution::tfhe_internals::{
+        parameters::DKGParams,
+        public_keysets::FhePubKeySet,
+        test_feature::{gen_key_set, keygen_all_party_shares_from_keyset},
     },
     session_id::SessionId,
 };
@@ -48,8 +49,9 @@ async fn write_crs() {
 
     let mut rng = AesRng::seed_from_u64(100);
     let sid = SessionId::from(0);
+    let domain = dummy_domain();
     let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-    let (pp, crs_info) = async_generate_crs(&sig_sk, TEST_PARAM, Some(1), None, sid, rng)
+    let (pp, crs_info) = async_generate_crs(&sig_sk, TEST_PARAM, Some(1), domain, sid, rng)
         .await
         .unwrap();
     let req_id = derive_request_id("write_crs").unwrap();

@@ -1,23 +1,38 @@
-#[cfg(any(test, feature = "testing"))]
-pub mod test_tools;
+cfg_if::cfg_if! {
+    if #[cfg(any(test, feature = "testing"))] {
+        pub mod test_tools;
+
+        use crate::dummy_domain;
+        use crate::engine::base::{compute_info, DSEP_PUBDATA_CRS};
+        use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
+        use crate::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
+        use crate::vault::storage::crypto_material::{
+            calculate_max_num_bits, check_data_exists, get_core_signing_key,
+        };
+        use crate::vault::storage::{store_pk_at_request_id, Storage};
+        use futures_util::future;
+        use kms_grpc::rpc_types::WrappedPublicKey;
+        use tfhe::Seed;
+        use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
+        use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+        use threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set;
+        use threshold_fhe::execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
+        use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
+        use threshold_fhe::session_id::SessionId;
+    }
+}
 
 use crate::client::ClientDataType;
 use crate::cryptography::internal_crypto_types::gen_sig_keys;
-use crate::engine::base::{compute_handle, compute_info, DSEP_PUBDATA_CRS};
-use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
-use crate::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
-use crate::vault::storage::crypto_material::{
-    calculate_max_num_bits, check_data_exists, get_core_signing_key, get_rng, log_data_exists,
-    log_storage_success,
-};
+use crate::engine::base::compute_handle;
+use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
 use crate::vault::storage::{
-    file::FileStorage, read_all_data_versioned, store_pk_at_request_id, store_text_at_request_id,
-    store_versioned_at_request_id, Storage, StorageForBytes, StorageReader, StorageType,
+    file::FileStorage, read_all_data_versioned, store_text_at_request_id,
+    store_versioned_at_request_id, StorageForBytes, StorageReader, StorageType,
 };
-use futures_util::future;
 use itertools::Itertools;
 use k256::pkcs8::EncodePrivateKey;
-use kms_grpc::rpc_types::{PrivDataType, PubDataType, WrappedPublicKey};
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
 use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, KeyUsagePurpose,
@@ -25,14 +40,6 @@ use rcgen::{
 };
 use std::collections::HashMap;
 use std::path::Path;
-use tfhe::Seed;
-use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
-use threshold_fhe::execution::{
-    tfhe_internals::test_feature::gen_key_set, zk::ceremony::public_parameters_by_trusted_setup,
-};
-use threshold_fhe::session_id::SessionId;
 use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
 
 /// Compact public key for FHE operations
@@ -260,6 +267,7 @@ where
 /// - If storage validation fails
 /// - If CRS generation fails
 /// - If storage operations fail
+#[cfg(any(test, feature = "testing"))]
 pub async fn ensure_central_crs_exists<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
@@ -315,8 +323,9 @@ where
 
     // Use proper error handling instead of unwrap
     let sid = SessionId::from(0); // we're in the centralized case, so no need sid
+    let domain = dummy_domain();
     let (pp, crs_info) =
-        match gen_centralized_crs(&sk, &dkg_params, max_num_bits_u32, None, sid, &mut rng) {
+        match gen_centralized_crs(&sk, &dkg_params, max_num_bits_u32, &domain, sid, &mut rng) {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Failed to generate centralized CRS: {}", e);
@@ -368,6 +377,7 @@ where
 /// - If storage validation fails
 /// - If key generation fails
 /// - If storage operations fail
+#[cfg(any(test, feature = "testing"))]
 pub async fn ensure_central_keys_exist<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
@@ -422,13 +432,14 @@ where
     };
 
     // Generate two sets of FHE keys with proper error handling
+    let domain = dummy_domain();
     let (fhe_pub_keys_1, key_info_1) = match generate_fhe_keys(
         &sk,
         dkg_params,
         StandardKeySetConfig::default(),
         None,
         seed,
-        None,
+        &domain,
     ) {
         Ok(result) => result,
         Err(e) => {
@@ -443,7 +454,7 @@ where
         StandardKeySetConfig::default(),
         None,
         seed,
-        None,
+        &domain,
     ) {
         Ok(result) => result,
         Err(e) => {
@@ -780,6 +791,7 @@ where
 /// # Panics
 /// - If storage access fails
 /// - If threshold parameters are invalid
+#[cfg(any(test, feature = "testing"))]
 pub async fn ensure_threshold_keys_exist<PubS, PrivS>(
     pub_storages: &mut [PubS],
     priv_storages: &mut [PrivS],
@@ -884,11 +896,12 @@ where
         keyset.public_keys.server_key.clone().into_raw_parts();
 
     // Store keys for each party
+    let domain = dummy_domain();
     for i in 1..=amount_parties {
         // Get signing key for this party
         let sk = &signing_keys[i - 1];
         // Compute info with proper error handling
-        let info = match compute_all_info(sk, &keyset.public_keys, None) {
+        let info = match compute_all_info(sk, &keyset.public_keys, &domain) {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Failed to compute key info for party {}: {}", i, e);
@@ -983,6 +996,7 @@ where
 /// - If signing key collection fails
 /// - If parameter generation fails
 /// - If CRS distribution fails
+#[cfg(any(test, feature = "testing"))]
 pub async fn ensure_threshold_crs_exists<PubS, PrivS>(
     pub_storages: &mut [PubS],
     priv_storages: &mut [PrivS],
@@ -1081,13 +1095,14 @@ where
 
     // Store the CRS for each party
     // PANICS: if the private and public storage and signing keys are not of equal length
+    let domain = dummy_domain();
     for (cur_pub, (cur_priv, cur_sk)) in pub_storages
         .iter_mut()
         .zip_eq(priv_storages.iter_mut().zip_eq(signing_keys.iter()))
     {
         // Compute signed metadata for CRS verification
         // PANICS: If signature generation fails - would compromise security model
-        let crs_info = compute_info(cur_sk, &DSEP_PUBDATA_CRS, &pp, None).unwrap_or_else(|e| {
+        let crs_info = compute_info(cur_sk, &DSEP_PUBDATA_CRS, &pp, &domain).unwrap_or_else(|e| {
             panic!("Failed to compute CRS info for party: {e}");
         });
 

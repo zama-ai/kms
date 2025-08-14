@@ -123,6 +123,7 @@ mod tests {
 
     use itertools::Itertools;
     use tfhe::{
+        boolean::prelude::LweDimension,
         core_crypto::{
             algorithms::{
                 allocate_and_generate_new_lwe_bootstrap_key, decrypt_constant_ggsw_ciphertext,
@@ -144,7 +145,10 @@ mod tests {
             CoreCiphertextModulus, DecompositionBaseLog, DecompositionLevelCount, PolynomialSize,
         },
     };
-    use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::Seeder};
+    use tfhe_csprng::{
+        generators::SoftwareRandomGenerator,
+        seeders::{Seeder, XofSeed},
+    };
 
     use crate::{
         algebra::{
@@ -152,7 +156,6 @@ mod tests {
         },
         execution::{
             online::{
-                gen_bits::{BitGenEven, SecureBitGenEven},
                 preprocessing::dummy::DummyPreprocessing,
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
@@ -160,6 +163,7 @@ mod tests {
             runtime::session::{LargeSession, ParameterHandles},
             tfhe_internals::{
                 glwe_key::GlweSecretKeyShare,
+                lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,
                 lwe_key::LweSecretKeyShare,
                 parameters::{EncryptionType, TUniformBound},
                 randomness::{
@@ -184,36 +188,29 @@ mod tests {
         let t_uniform_bound_glwe = 5_usize;
         let bk_base_log = 18_usize;
         let bk_level_count = 3_usize;
-        let seed = 0;
+        let seed = 42;
 
         let num_key_bits_lwe = lwe_dimension;
         let num_key_bits_glwe = glwe_dimension * polynomial_size;
 
         let mut task = |mut session: LargeSession| async move {
-            let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
+            let xof_seed = XofSeed::new_u128(seed, *b"TEST_GEN");
+            let mut dummy_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             //Generate the Lwe key
-            let lwe_secret_key_share = LweSecretKeyShare::<Z128, 4> {
-                data: SecureBitGenEven::gen_bits_even(
-                    num_key_bits_lwe,
-                    &mut large_preproc,
-                    &mut session,
-                )
-                .await
-                .unwrap(),
-            };
+            let lwe_secret_key_share = LweSecretKeyShare::<Z128, 4>::new_from_preprocessing(
+                LweDimension(lwe_dimension),
+                &mut dummy_preproc,
+            )
+            .unwrap();
 
             //Generate the Glwe key
-            let glwe_secret_key_share = GlweSecretKeyShare::<Z128, 4> {
-                data: SecureBitGenEven::gen_bits_even(
-                    num_key_bits_glwe,
-                    &mut large_preproc,
-                    &mut session,
-                )
-                .await
-                .unwrap(),
-                polynomial_size: PolynomialSize(polynomial_size),
-            };
+            let glwe_secret_key_share = GlweSecretKeyShare::<Z128, 4>::new_from_preprocessing(
+                num_key_bits_glwe,
+                PolynomialSize(polynomial_size),
+                &mut dummy_preproc,
+            )
+            .unwrap();
 
             //Prepare enough noise for the bk
             let t_uniform_amount =
@@ -221,7 +218,7 @@ mod tests {
             let vec_tuniform_noise = RealSecretDistributions::t_uniform(
                 t_uniform_amount,
                 TUniformBound(t_uniform_bound_glwe),
-                &mut large_preproc,
+                &mut dummy_preproc,
             )
             .unwrap()
             .iter()
@@ -229,7 +226,9 @@ mod tests {
             .collect_vec();
 
             let mut mpc_encryption_rng = MPCEncryptionRandomGenerator {
-                mask: MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(seed),
+                mask: MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(
+                    xof_seed.clone(),
+                ),
                 noise: MPCNoiseRandomGenerator {
                     vec: vec_tuniform_noise,
                 },
@@ -244,15 +243,28 @@ mod tests {
                 &mut mpc_encryption_rng,
                 EncryptionType::Bits128,
                 &mut session,
-                &mut large_preproc,
+                &mut dummy_preproc,
             )
             .await
             .unwrap();
 
             let bk = bk_share
+                .clone()
                 .open_to_tfhers_type::<u128, _>(&session)
                 .await
                 .unwrap();
+            let bk_compressed = bk_share
+                .open_to_tfhers_seeded_type(seed, &session)
+                .await
+                .unwrap();
+
+            assert_eq!(
+                bk,
+                par_decompress_into_lwe_bootstrap_key_generated_from_xof::<
+                    _,
+                    SoftwareRandomGenerator,
+                >(bk_compressed.clone(), xof_seed.domain_separator())
+            );
 
             (
                 session.my_role(),

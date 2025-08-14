@@ -5,12 +5,12 @@ use super::{
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Ring},
     execution::{
-        endpoints::keygen::PrivateKeySet,
         small_execution::{
             agree_random::DummyAgreeRandom,
             prf::PRSSConversions,
             prss::{AbortRealPrssInit, DerivePRSSState, PRSSInit, PRSSSetup},
         },
+        tfhe_internals::private_keysets::PrivateKeySet,
     },
     networking::{
         local::{LocalNetworking, LocalNetworkingProducer},

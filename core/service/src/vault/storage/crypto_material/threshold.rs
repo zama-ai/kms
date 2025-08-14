@@ -14,7 +14,7 @@ use kms_grpc::{
     RequestId,
 };
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
-use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
+use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
     backup::{

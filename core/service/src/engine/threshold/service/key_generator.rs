@@ -4,14 +4,15 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 // === External Crates ===
 use kms_grpc::{
     kms::v1::{self, Empty, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
-    rpc_types::{protobuf_to_alloy_domain_option, PubDataType},
+    rpc_types::{optional_protobuf_to_alloy_domain, PubDataType},
     RequestId,
 };
 use observability::{
     metrics,
     metrics_names::{
-        OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN,
-        OP_INSECURE_SNS_COMPRESSION_KEYGEN, OP_KEYGEN, OP_SNS_COMPRESSION_KEYGEN, TAG_PARTY_ID,
+        ERR_RATE_LIMIT_EXCEEDED, OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN,
+        OP_INSECURE_KEYGEN, OP_INSECURE_SNS_COMPRESSION_KEYGEN, OP_KEYGEN,
+        OP_SNS_COMPRESSION_KEYGEN, TAG_PARTY_ID,
     },
 };
 use tfhe::{
@@ -22,19 +23,23 @@ use threshold_fhe::{
     algebra::{
         base_ring::Z128,
         galois_rings::{common::ResiduePoly, degree_4::ResiduePolyF4Z128},
+        structure_traits::Ring,
     },
     execution::{
         endpoints::keygen::{
-            distributed_decompression_keygen_z128,
-            distributed_keygen_from_optional_compression_sk_z128,
-            distributed_sns_compression_keygen_z128, CompressionPrivateKeySharesEnum, FhePubKeySet,
-            GlweSecretKeyShareEnum, OnlineDistributedKeyGen, PrivateKeySet,
+            distributed_decompression_keygen_z128, distributed_sns_compression_keygen_z128,
+            OnlineDistributedKeyGen,
         },
         keyset_config as ddec_keyset_config,
         online::preprocessing::DKGPreprocessing,
         runtime::session::BaseSession,
         tfhe_internals::{
-            compression_decompression_key::SnsCompressionPrivateKeyShares, parameters::DKGParams,
+            compression_decompression_key::SnsCompressionPrivateKeyShares,
+            parameters::DKGParams,
+            private_keysets::{
+                CompressionPrivateKeySharesEnum, GlweSecretKeyShareEnum, PrivateKeySet,
+            },
+            public_keysets::FhePubKeySet,
         },
     },
     networking::NetworkMode,
@@ -90,7 +95,7 @@ use threshold_fhe::execution::tfhe_internals::{
 pub struct RealKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen<Z128> + 'static,
+    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
@@ -110,7 +115,7 @@ pub struct RealKeyGenerator<
 pub struct RealInsecureKeyGenerator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-    KG: OnlineDistributedKeyGen<Z128> + 'static,
+    KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
 > {
     pub real_key_generator: RealKeyGenerator<PubS, PrivS, KG>,
 }
@@ -119,7 +124,7 @@ pub struct RealInsecureKeyGenerator<
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen<Z128>,
+        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     > RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
     pub async fn from_real_keygen(value: &RealKeyGenerator<PubS, PrivS, KG>) -> Self {
@@ -144,7 +149,7 @@ impl<
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen<Z128> + 'static,
+        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     > InsecureKeyGenerator for RealInsecureKeyGenerator<PubS, PrivS, KG>
 {
     async fn insecure_key_gen(
@@ -175,7 +180,7 @@ pub enum PreprocHandleWithMode {
 }
 
 #[cfg(feature = "insecure")]
-fn convert_to_bit(input: Vec<ResiduePoly<Z128, 4>>) -> anyhow::Result<Vec<u64>> {
+fn convert_to_bit(input: Vec<ResiduePolyF4Z128>) -> anyhow::Result<Vec<u64>> {
     let mut out = Vec::with_capacity(input.len());
     for i in input {
         let bit = i.coefs[0].0 as u64;
@@ -190,7 +195,7 @@ fn convert_to_bit(input: Vec<ResiduePoly<Z128, 4>>) -> anyhow::Result<Vec<u64>> 
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen<Z128> + 'static,
+        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     > RealKeyGenerator<PubS, PrivS, KG>
 {
     #[allow(clippy::too_many_arguments)]
@@ -200,7 +205,7 @@ impl<
         internal_keyset_config: InternalKeySetConfig,
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
-        eip712_domain: Option<&alloy_sol_types::Eip712Domain>,
+        eip712_domain: &alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
         //Retrieve the right metric tag
@@ -265,7 +270,7 @@ impl<
         let sk = Arc::clone(&self.base_kms.sig_key);
         let crypto_storage = self.crypto_storage.clone();
         let crypto_storage_cancelled = self.crypto_storage.clone();
-        let eip712_domain_copy = eip712_domain.cloned();
+        let eip712_domain_copy = eip712_domain.clone();
 
         let token = CancellationToken::new();
         {
@@ -354,11 +359,13 @@ impl<
         request: Request<KeyGenRequest>,
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self
-            .rate_limiter
-            .start_keygen()
-            .await
-            .map_err(|e| tonic::Status::new(tonic::Code::ResourceExhausted, e.to_string()))?;
+        let permit = self.rate_limiter.start_keygen().await.inspect_err(|_e| {
+            if let Err(e) =
+                metrics::METRICS.increment_error_counter(OP_KEYGEN, ERR_RATE_LIMIT_EXCEEDED)
+            {
+                tracing::warn!("Failed to increment error counter: {:?}", e);
+            }
+        })?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -376,10 +383,7 @@ impl<
         validate_request_id(&request_id)?;
 
         // Retrieve kg params and preproc_id
-        let dkg_params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params),
-            "Parameter choice is not recognized".to_string(),
-        )?;
+        let dkg_params = retrieve_parameters(inner.params)?;
 
         let preproc_handle = if insecure {
             PreprocHandleWithMode::Insecure
@@ -398,7 +402,7 @@ impl<
             )
         };
 
-        let eip712_domain = protobuf_to_alloy_domain_option(inner.domain.as_ref());
+        let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
 
         let internal_keyset_config = tonic_handle_potential_err(
             InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info),
@@ -411,7 +415,7 @@ impl<
                 internal_keyset_config,
                 preproc_handle,
                 request_id,
-                eip712_domain.as_ref(),
+                &eip712_domain,
                 permit,
             )
             .await,
@@ -794,7 +798,7 @@ impl<
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
         keyset_added_info: KeySetAddedInfo,
-        eip712_domain: Option<alloy_sol_types::Eip712Domain>,
+        eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
     ) {
         let _permit = permit;
@@ -853,12 +857,7 @@ impl<
         };
 
         // Compute all the info required for storing
-        let info = match compute_info(
-            &sk,
-            &DSEP_PUBDATA_KEY,
-            &decompression_key,
-            eip712_domain.as_ref(),
-        ) {
+        let info = match compute_info(&sk, &DSEP_PUBDATA_KEY, &decompression_key, &eip712_domain) {
             Ok(info) => HashMap::from_iter(vec![(PubDataType::DecompressionKey, info)]),
             Err(_) => {
                 let mut guarded_meta_storage = meta_store.write().await;
@@ -889,7 +888,7 @@ impl<
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
         keyset_added_info: KeySetAddedInfo,
-        eip712_domain: Option<alloy_sol_types::Eip712Domain>,
+        eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
     ) {
         let _permit = permit;
@@ -985,7 +984,7 @@ impl<
         };
 
         // Compute all the info required for storing
-        let info = match compute_all_info(&sk, &fhe_pub_key_set, eip712_domain.as_ref()) {
+        let info = match compute_all_info(&sk, &fhe_pub_key_set, &eip712_domain) {
             Ok(info) => info,
             Err(_) => {
                 let mut guarded_meta_storage = meta_store.write().await;
@@ -1097,7 +1096,7 @@ impl<
                 CompressionPrivateKeySharesEnum::Z128(share) => share,
             }
         };
-        distributed_keygen_from_optional_compression_sk_z128(
+        KG::keygen(
             base_session,
             preprocessing,
             params,
@@ -1117,7 +1116,7 @@ impl<
         params: DKGParams,
         keyset_config: ddec_keyset_config::StandardKeySetConfig,
         compression_key_id: Option<RequestId>,
-        eip712_domain: Option<alloy_sol_types::Eip712Domain>,
+        eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
     ) {
         let _permit = permit;
@@ -1166,7 +1165,7 @@ impl<
                         ddec_keyset_config::KeySetCompressionConfig::Generate,
                         ddec_keyset_config::ComputeKeyType::Cpu,
                     ) => {
-                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params).await
+                        KG::keygen(&mut base_session, preproc_handle.as_mut(), params, None).await
                     }
                     (
                         ddec_keyset_config::KeySetCompressionConfig::UseExisting,
@@ -1198,7 +1197,7 @@ impl<
         };
 
         //Compute all the info required for storing
-        let info = match compute_all_info(&sk, &pub_key_set, eip712_domain.as_ref()) {
+        let info = match compute_all_info(&sk, &pub_key_set, &eip712_domain) {
             Ok(info) => info,
             Err(_) => {
                 let mut guarded_meta_storage = meta_store.write().await;
@@ -1254,7 +1253,7 @@ impl<
 impl<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
-        KG: OnlineDistributedKeyGen<Z128> + 'static,
+        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     > KeyGenerator for RealKeyGenerator<PubS, PrivS, KG>
 {
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
@@ -1271,7 +1270,7 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use kms_grpc::kms::v1::FheParameter;
+    use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};
     use rand::rngs::OsRng;
     use threshold_fhe::{
         execution::online::preprocessing::dummy::DummyPreprocessing,
@@ -1280,14 +1279,14 @@ mod tests {
         },
     };
 
-    use crate::vault::storage::ram;
+    use crate::{dummy_domain, vault::storage::ram};
 
     use super::*;
 
     impl<
             PubS: Storage + Sync + Send + 'static,
             PrivS: Storage + Sync + Send + 'static,
-            KG: OnlineDistributedKeyGen<Z128> + 'static,
+            KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
         > RealKeyGenerator<PubS, PrivS, KG>
     {
         async fn init_test(
@@ -1328,7 +1327,7 @@ mod tests {
         }
     }
 
-    impl<KG: OnlineDistributedKeyGen<Z128> + 'static>
+    impl<KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static>
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>
     {
         pub async fn init_ram_keygen(session_preparer: SessionPreparer) -> Self {
@@ -1338,7 +1337,9 @@ mod tests {
         }
     }
 
-    async fn setup_key_generator<KG: OnlineDistributedKeyGen<Z128> + 'static>() -> (
+    async fn setup_key_generator<
+        KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
+    >() -> (
         RequestId,
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
@@ -1372,16 +1373,20 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         //`InvalidArgument` - If the request ID is not valid or does not match the expected format.
-        let (prep_id, kg) = setup_key_generator::<DroppingOnlineDistributedKeyGen128>().await;
+        let (prep_id, kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
         let bad_key_id = kms_grpc::kms::v1::RequestId {
             request_id: "badformat".to_string(),
         };
 
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(bad_key_id.clone()),
             params: FheParameter::Test as i32,
             preproc_id: Some(prep_id.into()),
-            domain: None,
+            domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
         });
@@ -1402,17 +1407,21 @@ mod tests {
     #[tokio::test]
     async fn resource_exhausted() {
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        let (prep_id, mut kg) = setup_key_generator::<DroppingOnlineDistributedKeyGen128>().await;
+        let (prep_id, mut kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
         let key_id = RequestId::new_random(&mut OsRng);
 
         // Set bucket size to zero, so no operations are allowed
         kg.set_bucket_size(0);
 
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
             params: FheParameter::Test as i32,
             preproc_id: Some(prep_id.into()),
-            domain: None,
+            domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
         });
@@ -1425,7 +1434,10 @@ mod tests {
 
     #[tokio::test]
     async fn not_found() {
-        let (_prep_id, kg) = setup_key_generator::<DroppingOnlineDistributedKeyGen128>().await;
+        let (_prep_id, kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
         let key_id = RequestId::new_random(&mut OsRng);
 
         // no need to wait because [get_result] is semi-blocking
@@ -1440,14 +1452,18 @@ mod tests {
 
     #[tokio::test]
     async fn internal() {
-        let (prep_id, kg) = setup_key_generator::<FailingOnlineDistributedKeyGen128>().await;
+        let (prep_id, kg) = setup_key_generator::<
+            FailingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
         let key_id = RequestId::new_random(&mut OsRng);
 
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
             params: FheParameter::Test as i32,
             preproc_id: Some(prep_id.into()),
-            domain: None,
+            domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
         });
@@ -1467,14 +1483,18 @@ mod tests {
 
     #[tokio::test]
     async fn sunshine() {
-        let (prep_id, kg) = setup_key_generator::<DroppingOnlineDistributedKeyGen128>().await;
+        let (prep_id, kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
         let key_id = RequestId::new_random(&mut OsRng);
 
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
             params: FheParameter::Test as i32,
             preproc_id: Some(prep_id.into()),
-            domain: None,
+            domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
         });

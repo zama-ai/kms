@@ -106,7 +106,7 @@ where
         Arc::clone(&self.public_storage)
     }
 
-    /// Getter for private_storage  
+    /// Getter for private_storage
     pub fn get_private_storage(&self) -> Arc<Mutex<PrivS>> {
         Arc::clone(&self.private_storage)
     }
