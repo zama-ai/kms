@@ -310,7 +310,7 @@ where
             operator.secret_share_and_encrypt(rng, &serialized_priv_key, backup_id)?;
         let mut ciphertexts = BTreeMap::new();
         for custodian_role in custodian_context.custodian_nodes.keys() {
-            let ct = ct_map.get(&custodian_role).unwrap_or_else(|| {
+            let ct = ct_map.get(custodian_role).unwrap_or_else(|| {
                 panic!("Missing operator backup output for role {custodian_role}")
             });
             ciphertexts.insert(*custodian_role, ct.to_owned());
