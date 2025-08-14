@@ -22,11 +22,11 @@ use tonic_health::server::HealthReporter;
 
 // === Internal Crate ===
 use crate::{
-    anyhow_error_and_log,
     engine::{
-        base::derive_request_id, threshold::traits::Initiator, validation::validate_request_id,
+        base::derive_request_id,
+        threshold::traits::Initiator,
+        validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
-    tonic_some_or_err,
     vault::storage::{read_versioned_at_request_id, store_versioned_at_request_id, Storage},
 };
 
@@ -125,15 +125,15 @@ impl<
         Ok(())
     }
 
+    // NOTE: this function will overwrite the existing PRSS state
     pub async fn init_prss(&self, req_id: &RequestId) -> anyhow::Result<()> {
-        if self.prss_setup_z128.read().await.is_some() || self.prss_setup_z64.read().await.is_some()
-        {
-            return Err(anyhow_error_and_log("PRSS state already exists"));
-        }
+        // TODO(zama-ai/kms-internal/issues/2721),
+        // we never try to store the PRSS in meta_store, so the ID is not guaranteed to be unique
 
         let own_identity = self.session_preparer.own_identity()?;
         let session_id = req_id.derive_session_id()?;
-        //PRSS robust init requires broadcast, which is implemented with Sync network assumption
+
+        // PRSS robust init requires broadcast, which is implemented with Sync network assumption
         let mut base_session = self
             .session_preparer
             .make_base_session(session_id, NetworkMode::Sync)
@@ -213,12 +213,16 @@ impl<
 {
     async fn init(&self, request: Request<v1::InitRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
-        let request_id = tonic_some_or_err(
-            inner.request_id.clone(),
-            "Request ID is not set (initiator)".to_string(),
-        )?
-        .into();
-        validate_request_id(&request_id)?;
+        let request_id =
+            parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::Init)?;
+
+        if self.prss_setup_z128.read().await.is_some() || self.prss_setup_z64.read().await.is_some()
+        {
+            return Err(tonic::Status::new(
+                tonic::Code::AlreadyExists,
+                "PRSS state already exists".to_string(),
+            ));
+        }
 
         self.init_prss(&request_id).await.map_err(|e| {
             tonic::Status::new(
@@ -373,36 +377,59 @@ mod tests {
         let session_preparer = SessionPreparer::new_test_session(false);
         let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(session_preparer);
 
-        let bad_req_id = kms_grpc::kms::v1::RequestId {
-            request_id: "bad req id".to_string(),
-        };
-        assert_eq!(
-            initiator
-                .init(tonic::Request::new(InitRequest {
-                    request_id: Some(bad_req_id)
-                }))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::InvalidArgument
-        );
+        {
+            // bad request ID
+            let bad_req_id = kms_grpc::kms::v1::RequestId {
+                request_id: "bad req id".to_string(),
+            };
+            assert_eq!(
+                initiator
+                    .init(tonic::Request::new(InitRequest {
+                        request_id: Some(bad_req_id)
+                    }))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // missing request ID
+            assert_eq!(
+                initiator
+                    .init(tonic::Request::new(InitRequest { request_id: None }))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
     }
 
     #[tokio::test]
-    async fn aborted() {
+    async fn already_exists() {
         let session_preparer = SessionPreparer::new_test_session(false);
         let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(session_preparer);
 
+        let mut rng = AesRng::seed_from_u64(42);
+        let req_id = RequestId::new_random(&mut rng);
+        initiator
+            .init(tonic::Request::new(InitRequest {
+                request_id: Some(req_id.into()),
+            }))
+            .await
+            .unwrap();
+
+        // try the same again and we should see an AlreadyExists error
         assert_eq!(
             initiator
                 .init(tonic::Request::new(InitRequest {
-                    // this is set to none
-                    request_id: None
+                    request_id: Some(req_id.into()),
                 }))
                 .await
                 .unwrap_err()
                 .code(),
-            tonic::Code::Aborted
+            tonic::Code::AlreadyExists
         );
     }
 

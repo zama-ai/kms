@@ -5,7 +5,10 @@ use kms_grpc::{
 use tonic::{Request, Response, Status};
 
 use crate::{
-    engine::context::ContextInfo,
+    engine::{
+        context::ContextInfo,
+        validation::{parse_optional_proto_request_id, RequestIdParsingErr},
+    },
     vault::storage::{
         crypto_material::CentralizedCryptoMaterialStorage, delete_context_at_request_id, Storage,
     },
@@ -73,15 +76,14 @@ pub async fn delete_kms_context_impl<
     crypto_storage: &CentralizedCryptoMaterialStorage<PubS, PrivS>,
     request: Request<DestroyKmsContextRequest>,
 ) -> Result<Response<Empty>, Status> {
-    let context_id = request
-        .into_inner()
-        .context_id
-        .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
+    let context_id = parse_optional_proto_request_id(
+        &request.into_inner().context_id,
+        RequestIdParsingErr::Context,
+    )?;
     let storage_ref = crypto_storage.inner.private_storage.clone();
     let mut guarded_priv_storage = storage_ref.lock().await;
 
-    let kms_context_id = context_id.into();
-    delete_context_at_request_id(&mut *guarded_priv_storage, &kms_context_id)
+    delete_context_at_request_id(&mut *guarded_priv_storage, &context_id)
         .await
         .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
     Ok(Response::new(Empty {}))

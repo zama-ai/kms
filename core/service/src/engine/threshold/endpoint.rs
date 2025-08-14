@@ -43,16 +43,16 @@ macro_rules! impl_endpoint {
 
 impl_endpoint! {
     impl CoreServiceEndpoint {
-        /// Initializes the centralized KMS service.
+        /// Initializes the threshold KMS service.
         /// This involves executing the PRSS protocol to generate secret shared correlated randomness.
         ///
-        /// * `_request` - Struct containing all the data of the request.
+        /// * `request` - Struct containing the request ID, which must be 32 bytes lower-case hex encoding without `0x` prefix.
         ///
         /// # Returns
         /// * Errors:
-        ///    - `InvalidArgument` - If the request ID is not valid or does not match the expected format.
+        ///    - `InvalidArgument` - If the request ID does not match the expected format or missing.
         ///    - `Internal` - An error occured during PRSS generation.
-        ///    - `Aborted` - If the request ID is not given.
+        ///    - `AlreadyExists` - If PRSS already exists. (TODO should we give an option to overwrite?)
         ///
         /// # Conditions
         /// * Pre-condition:
@@ -70,19 +70,21 @@ impl_endpoint! {
         ///
         /// # Returns
         /// * Errors:
-        ///    - `InvalidArgument` - If the request ID is not valid or does not match the expected format.
+        ///    - `InvalidArgument` - If the request is not valid or does not match the expected format.
         ///    - `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        ///    - `Aborted` - If the request ID is not given, the values in the request are not valid, or an internal problem occured.
+        ///    - `Aborted` - Other issues unrelated to the preprocessing protocol, e.g., missing PRSS, storage, serialization, etc.
+        ///    - `AlreadyExists` - If the request contains a request ID that was previously used.
         ///
         /// # Conditions
         /// * Pre-condition:
         ///     * `request_id` in `request` must be present, valid, fresh and unique [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
         ///     * `params` in `request` must be castable to a [`FheParameter`], currently this means 0 or 1.
-        ///     * `keyset_config` in `request` may be set or not. If not set, the default keyset configuration is used. If set, it must follow the enum constraints of [`KeySetConfig`].
-        ///         I.e. be either `Standard` (0) or `DecompressionOnly` (1). Furthermore, if `Standard` is used then `standard_keyset_config` must also be set.
+        ///     * `keyset_config` in `request` may be set or not. If not set, the default keyset configuration is used.
+        ///        If set, it must follow the enum constraints of [`KeySetConfig`].
+        ///        I.e. be either `Standard` (0) or `DecompressionOnly` (1).
+        ///        Furthermore, if `Standard` is used then `standard_keyset_config` must also be set.
         /// * Post-condition:
         ///     * The `request_id` in `request` has been consumed and the PRSS has been executed successfully.
-        ///     * Note that repeated calls will return without an error and have on affect on the existing execution.
         #[tracing::instrument(skip(self, request))]
         async fn key_gen_preproc(
             &self,
@@ -93,7 +95,8 @@ impl_endpoint! {
 
         /// Retrieves the result from a preprocessing request.
         ///
-        /// * `request` - The request ID under which the preprocessing was started.
+        /// * `request` - The request ID under which the preprocessing was started
+        ///               which must be 32 bytes lower-case hex encoding without `0x` prefix.
         ///
         /// # Returns
         /// * `Ok(Response<KeyGenPreprocResult>)` - This is an empty structure.
@@ -126,9 +129,11 @@ impl_endpoint! {
         ///
         /// # Returns
         /// * Errors:
-        ///    - `InvalidArgument` - If the request ID is not valid or does not match the expected format.
+        ///    - `InvalidArgument` - If the request is not valid or does not match the expected format.
         ///    - `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        ///    - `Aborted` - If an internal error occured in starting the key generation _or_ if an invalid argument was given.
+        ///    - `Aborted` - Other issues unrelated to the preprocessing protocol, e.g., missing PRSS, storage, serialization, etc.
+        ///    - `AlreadyExists` - If the request contains a request ID that was previously used.
+        ///    - `NotFound` - If the preprocessing under `preproc_id` does not exist.
         ///
         /// # Conditions
         /// * Pre-condition:
@@ -136,7 +141,7 @@ impl_endpoint! {
         ///     * `params` in `request` must be castable to a [`FheParameter`], currently this means 0 or 1.
         ///     * `preproc_id` in `request` must be present, and a valid [`RequestId`] which has already been used to start a preprocessing request with method `key_gen_preproc` that has completed successfully
         ///         and has not already been consumed by another key generation request.
-        ///     * `domain` in `request` _should_ be set, if not, then there will be no external signature on the result of the key generation.
+        ///     * `domain` in `request` must be set.
         ///     * `keyset_config` in `request` may be set or not. If not set, the default keyset configuration is used. If set, it must follow the enum constraints of [`KeySetConfig`].
         ///         I.e. be either `Standard` (0) or `DecompressionOnly` (1). Furthermore, if `Standard` is used then `standard_keyset_config` must also be set.
         ///         Furthermore, `keyset_config` must be set or not set in exactly the same was as it was in the argument for the preprocessing request started with `preproc_id`.
@@ -186,14 +191,17 @@ impl_endpoint! {
         /// * `request` - Struct containing all the data of the request.
         ///
         /// # Errors
+        ///    - `InvalidArgument` - If the request is not valid or does not match the expected format.
         ///    - `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        ///    - `Aborted` - If an internal error occured in starting the user decryption _or_ if an invalid argument was given.
+        ///    - `AlreadyExists` - If the request contains a request ID that was previously used.
+        ///    - `Aborted` - If an internal error occured in starting the user decryption.
         ///
         /// # Conditions
         /// * Pre-condition:
         ///     * `request_id` in `request` must be present, valid, fresh and unique [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
         ///     * `typed_ciphertexts` in `request` must be a non-empty vector of [`TypedCiphertext`]s, where each ciphertext is a valid ciphertext for the keyset present in the KMS (see below).
         ///                  Observe that the KMS does _not_ check the validity of the ciphertexts!
+        ///                  TODO: consider checking these before starting the user decryption protocol.
         ///     * `key_id` in `request` must be present, valid [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
         ///                  Furthermore, it must have been successfully generated by the KMS previous using the `key_gen` or `insecure_key_gen` methods.
         ///                  The `key_id` must also match the one used to encrypt the the ciphertexts in `typed_ciphertexts`.
@@ -247,8 +255,10 @@ impl_endpoint! {
         /// * `request` - Struct containing all the data of the request.
         ///
         /// # Errors
+        ///    - `InvalidArgument` - If the request is not valid or does not match the expected format.
         ///    - `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        ///    - `Aborted` - If an internal error occured in starting the public decryption _or_ if an invalid argument was given.
+        ///    - `AlreadyExists` - If the request contains a request ID that was previously used.
+        ///    - `Aborted` - If an internal error occured in starting the user decryption.
         ///
         /// # Conditions
         /// * Pre-condition:
@@ -303,10 +313,10 @@ impl_endpoint! {
         ///
         /// # Returns
         /// * Errors:
-        ///    - `InvalidArgument` - If the request ID is not present, valid or does not match the expected format.
-        ///    - `NotFound` - If the parameters in the request are not valid.
+        ///    - `InvalidArgument` - If the request does not match the expected format.
         ///    - `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        ///    - `Aborted` - If an internal error occured in starting the crs generation _or_ if an invalid argument was given.
+        ///    - `AlreadyExists` - If the request contains a request ID that was previously used.
+        ///    - `Aborted` - If another error occured before starting the crs generation.
         ///
         /// # Conditions
         /// * Pre-condition:

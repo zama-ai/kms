@@ -8,6 +8,9 @@ use tfhe_versionable::VersionsDispatch;
 
 use crate::{
     cryptography::internal_crypto_types::{PublicEncKey, PublicSigKey},
+    engine::validation::{
+        parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+    },
     vault::storage::{
         crypto_material::get_core_signing_key, read_context_at_request_id, StorageReader,
     },
@@ -306,18 +309,25 @@ impl TryFrom<kms_grpc::kms::v1::KmsContext> for ContextInfo {
 
     fn try_from(value: kms_grpc::kms::v1::KmsContext) -> anyhow::Result<Self> {
         let software_version = bc2wrap::deserialize(&value.software_version)?;
+        let previous_context_id = match value.previous_context_id {
+            Some(id) => Some(parse_proto_request_id(
+                &id,
+                RequestIdParsingErr::General("invalid previous context ID".to_string()),
+            )?),
+            None => None,
+        };
+
         Ok(ContextInfo {
             kms_nodes: value
                 .kms_nodes
                 .into_iter()
                 .map(NodeInfo::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
-            context_id: RequestId::from(
-                value
-                    .context_id
-                    .ok_or_else(|| anyhow::anyhow!("Missing context_id"))?,
-            ),
-            previous_context_id: value.previous_context_id.map(RequestId::from),
+            context_id: parse_optional_proto_request_id(
+                &value.context_id,
+                RequestIdParsingErr::Context,
+            )?,
+            previous_context_id,
             software_version,
             threshold: value.threshold as u32,
         })

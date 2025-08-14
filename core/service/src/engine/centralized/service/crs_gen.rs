@@ -17,9 +17,10 @@ use tracing::Instrument;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::base::retrieve_parameters;
 use crate::engine::centralized::central_kms::{async_generate_crs, RealCentralizedKms};
-use crate::engine::validation::validate_request_id;
+use crate::engine::validation::{
+    parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+};
 use crate::tonic_handle_potential_err;
-use crate::tonic_some_or_err;
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::Storage;
@@ -52,12 +53,8 @@ pub async fn crs_gen_impl<
         })?;
 
     let inner = request.into_inner();
-    let req_id = tonic_some_or_err(
-        inner.request_id,
-        "Request ID is not set (crs gen)".to_string(),
-    )?
-    .into();
-    validate_request_id(&req_id)?;
+    let req_id =
+        parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::CrsGenRequest)?;
     let params = retrieve_parameters(inner.params)?;
 
     {
@@ -112,9 +109,9 @@ pub async fn get_crs_gen_result_impl<
     service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<CrsGenResult>, Status> {
-    let request_id = request.into_inner().into();
+    let request_id =
+        parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)?;
     tracing::debug!("Received CRS gen result request with id {}", request_id);
-    validate_request_id(&request_id)?;
 
     let status = {
         let guarded_meta_store = service.crs_meta_map.read().await;
