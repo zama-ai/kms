@@ -138,7 +138,7 @@ where
                 restore_data_type!(
                     priv_storage,
                     backup_vault,
-                    PrivDataType::FheKeyInfo,
+                    cur_type,
                     ThresholdFheKeys
                 );
             }
