@@ -249,7 +249,7 @@ impl<
                                 }
                                 None => {
                                     return Err(anyhow!(
-                                        "User decryption with session ID {} could not be retrived",
+                                        "User decryption with session ID {} could not be retrived for {dec_mode}",
                                         session_id.to_string()
                                     ))
                                 }
@@ -289,7 +289,7 @@ impl<
                                 }
                                 None => {
                                     return Err(anyhow!(
-                                        "User decryption with session ID {} could not be retrived",
+                                        "User decryption with session ID {} could not be retrived for {dec_mode}",
                                         session_id.to_string()
                                     ))
                                 }
@@ -463,13 +463,12 @@ impl<
             inner.request_id
         );
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) =
-            tonic_handle_potential_err(
-                validate_user_decrypt_req(&inner),
-                format!(
-                    "Failed to validate user decryption request: {}",
+            validate_user_decrypt_req(&inner).inspect_err(|e| {
+                tracing::error!(
+                    "Failed to validate user decryption request {}: {e}",
                     format_user_request(&inner)
-                ),
-            )?;
+                );
+            })?;
 
         if let Some(b) = timer.as_mut() {
             //We log but we don't want to return early because timer failed
@@ -482,6 +481,28 @@ impl<
         let crypto_storage = self.crypto_storage.clone();
         let mut rng = self.base_kms.new_rng().await;
         let sig_key = Arc::clone(&self.base_kms.sig_key);
+
+        // Do some checks before we start modifying the database
+        {
+            let guarded_meta_store = self.user_decrypt_meta_store.read().await;
+
+            if guarded_meta_store.exists(&req_id) {
+                return Err(Status::already_exists(format!(
+                    "User decryption request with ID {} already exists",
+                    req_id
+                )));
+            }
+
+            if !tonic_handle_potential_err(
+                crypto_storage.threshold_fhe_keys_exists(&key_id).await,
+                "Could not check threshold fhe key existance".to_string(),
+            )? {
+                return Err(Status::not_found(format!(
+                    "Threshold FHE keys with key ID {} not found",
+                    key_id,
+                )));
+            }
+        }
 
         // Below we write to the meta-store.
         // After writing, the the meta-store on this [req_id] will be in the "Started" state
@@ -604,11 +625,13 @@ impl<
 mod tests {
     use kms_grpc::{kms::v1::CiphertextFormat, rpc_types::alloy_to_protobuf_domain};
     use tfhe::FheTypes;
+    use threshold_fhe::execution::{
+        runtime::session::ParameterHandles, tfhe_internals::utils::expanded_encrypt,
+    };
 
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::{
-            decompression::test_tools::safe_serialize_versioned,
             internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
         },
         dummy_domain,
@@ -628,7 +651,7 @@ mod tests {
         >;
 
         async fn partial_decrypt(
-            _noiseflood_session: &mut Self::Prep,
+            noiseflood_session: &mut Self::Prep,
             _server_key: &tfhe::integer::ServerKey,
             _ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
             _ct: LowLevelCiphertext,
@@ -638,7 +661,13 @@ mod tests {
             u32,
             std::time::Duration,
         )> {
-            Ok((HashMap::new(), 1, std::time::Duration::from_millis(100)))
+            let session = noiseflood_session.get_mut_base_session();
+            let sid: u128 = session.session_id().into();
+            Ok((
+                HashMap::from_iter([(format!("{sid}"), vec![])]),
+                1,
+                std::time::Duration::from_millis(100),
+            ))
         }
     }
 
@@ -664,7 +693,9 @@ mod tests {
         enc_key_buf
     }
 
-    async fn setup_user_decryptor() -> (
+    async fn setup_user_decryptor(
+        with_prss: bool,
+    ) -> (
         RequestId,
         Vec<u8>,
         RealUserDecryptor<ram::RamStorage, ram::RamStorage, DummyNoiseFloodPartialDecryptor>,
@@ -672,7 +703,7 @@ mod tests {
         let mut rng = rand::rngs::OsRng;
         let (_pk, sk) = gen_sig_keys(&mut rng);
         let param = TEST_PARAM;
-        let session_preparer = SessionPreparer::new_test_session(false);
+        let session_preparer = SessionPreparer::new_test_session(with_prss);
         let user_decryptor = RealUserDecryptor::init_test_dummy_decryptor(session_preparer).await;
 
         let key_id = RequestId::new_random(&mut rng);
@@ -680,10 +711,16 @@ mod tests {
         // make a dummy private keyset
         let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, &mut rng);
 
-        let ct = tfhe::CompactCiphertextList::builder(&fhe_key_set.public_key)
-            .push(255u8)
-            .build();
-        let ct_buf = safe_serialize_versioned(&ct);
+        // Not a huge deal if we clone this server key since we only use small/test parameters
+        tfhe::set_server_key(fhe_key_set.server_key.clone());
+        let ct: tfhe::FheUint8 = expanded_encrypt(&fhe_key_set.public_key, 255u8, 8).unwrap();
+        let mut ct_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &ct,
+            &mut ct_buf,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
 
         let domain = dummy_domain();
         let info = compute_all_info(&sk, &fhe_key_set, &domain).unwrap();
@@ -719,81 +756,133 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_abort() {
-        let (_key_id, ct_buf, user_decryptor) = setup_user_decryptor().await;
+    async fn invalid_argument() {
+        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true).await;
 
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-        let domain = alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        );
+        let domain = dummy_domain();
 
-        // `Aborted` - If an internal error occured in starting the user decryption _or_ if an invalid argument was given.
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
-        let bad_key_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        {
+            let bad_req_id = kms_grpc::kms::v1::RequestId {
+                request_id: "invalid_id".to_string(),
+            };
+            let request = Request::new(UserDecryptionRequest {
+                enc_key: make_dummy_enc_pk(),
+                typed_ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::BigExpanded as i32,
+                }],
+                key_id: Some(key_id.into()),
+                domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
+                request_id: Some(bad_req_id),
+                client_address: client_address.to_checksum(None),
+                extra_data: vec![],
+            });
+            assert_eq!(
+                user_decryptor
+                    .user_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
 
-        let request = Request::new(UserDecryptionRequest {
-            enc_key: make_dummy_enc_pk(),
-            typed_ciphertexts: vec![TypedCiphertext {
-                ciphertext: ct_buf.clone(),
-                fhe_type: FheTypes::Uint8 as i32,
-                external_handle: vec![],
-                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
-            }],
-            key_id: Some(bad_key_id.into()),
-            domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
-            request_id: Some(req_id.into()),
-            client_address: client_address.to_checksum(None),
-            extra_data: vec![],
-        });
-
-        // NOTE: should probably be NotFound
-        assert_eq!(
-            user_decryptor
-                .user_decrypt(request)
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Aborted
-        );
-
-        // use an existing request ID should also abort
-        let request = Request::new(UserDecryptionRequest {
-            enc_key: make_dummy_enc_pk(),
-            typed_ciphertexts: vec![TypedCiphertext {
-                ciphertext: ct_buf.clone(),
-                fhe_type: FheTypes::Uint8 as i32,
-                external_handle: vec![],
-                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
-            }],
-            key_id: Some(bad_key_id.into()),
-            domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
-            request_id: Some(req_id.into()),
-            client_address: client_address.to_checksum(None),
-            extra_data: vec![],
-        });
-        assert_eq!(
-            user_decryptor
-                .user_decrypt(request)
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Aborted
-        );
+        {
+            // empty typed ciphertexts
+            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let request = Request::new(UserDecryptionRequest {
+                enc_key: make_dummy_enc_pk(),
+                typed_ciphertexts: vec![],
+                key_id: Some(key_id.into()),
+                domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
+                request_id: Some(req_id.into()),
+                client_address: client_address.to_checksum(None),
+                extra_data: vec![],
+            });
+            assert_eq!(
+                user_decryptor
+                    .user_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // missing domain
+            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let request = Request::new(UserDecryptionRequest {
+                enc_key: make_dummy_enc_pk(),
+                typed_ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::BigExpanded as i32,
+                }],
+                key_id: Some(key_id.into()),
+                domain: None,
+                request_id: Some(req_id.into()),
+                client_address: client_address.to_checksum(None),
+                extra_data: vec![],
+            });
+            assert_eq!(
+                user_decryptor
+                    .user_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // bad client address
+            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let request = Request::new(UserDecryptionRequest {
+                enc_key: make_dummy_enc_pk(),
+                typed_ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::BigExpanded as i32,
+                }],
+                key_id: Some(key_id.into()),
+                domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
+                request_id: Some(req_id.into()),
+                client_address: "bad client address".to_string(),
+                extra_data: vec![],
+            });
+            assert_eq!(
+                user_decryptor
+                    .user_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            let bad_req_id = kms_grpc::kms::v1::RequestId {
+                request_id: "invalid_id".to_string(),
+            };
+            assert_eq!(
+                user_decryptor
+                    .get_result(Request::new(bad_req_id))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
     }
 
     #[tokio::test]
-    async fn test_resource_exhausted() {
-        let (key_id, ct_buf, mut user_decryptor) = setup_user_decryptor().await;
+    async fn resource_exhausted() {
+        let (key_id, ct_buf, mut user_decryptor) = setup_user_decryptor(true).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-        let domain = alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        );
+        let domain = dummy_domain();
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
         // Set bucket size to zero, so no operations are allowed
         user_decryptor.set_bucket_size(0);
@@ -805,7 +894,7 @@ mod tests {
                 ciphertext: ct_buf.clone(),
                 fhe_type: FheTypes::Uint8 as i32,
                 external_handle: vec![],
-                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
+                ciphertext_format: CiphertextFormat::BigExpanded as i32,
             }],
             key_id: Some(key_id.into()),
             domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
@@ -827,15 +916,90 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sunshine() {
-        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor().await;
+    async fn not_found() {
+        let (_key_id, ct_buf, user_decryptor) = setup_user_decryptor(true).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-        let domain = alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        let domain = dummy_domain();
+
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let bad_key_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let request = Request::new(UserDecryptionRequest {
+            enc_key: make_dummy_enc_pk(),
+            typed_ciphertexts: vec![TypedCiphertext {
+                ciphertext: ct_buf.clone(),
+                fhe_type: FheTypes::Uint8 as i32,
+                external_handle: vec![],
+                ciphertext_format: CiphertextFormat::BigExpanded as i32,
+            }],
+            key_id: Some(bad_key_id.into()),
+            domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
+            request_id: Some(req_id.into()),
+            client_address: client_address.to_checksum(None),
+            extra_data: vec![],
+        });
+        assert_eq!(
+            user_decryptor
+                .user_decrypt(request)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::NotFound
         );
+
+        let another_req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        assert_eq!(
+            user_decryptor
+                .get_result(Request::new(another_req_id.into()))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::NotFound
+        );
+    }
+
+    #[tokio::test]
+    async fn already_exists() {
+        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true).await;
+        let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
+        let domain = dummy_domain();
+
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let request = UserDecryptionRequest {
+            enc_key: make_dummy_enc_pk(),
+            typed_ciphertexts: vec![TypedCiphertext {
+                ciphertext: ct_buf.clone(),
+                fhe_type: FheTypes::Uint8 as i32,
+                external_handle: vec![],
+                ciphertext_format: CiphertextFormat::BigExpanded as i32,
+            }],
+            key_id: Some(key_id.into()),
+            domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
+            request_id: Some(req_id.into()),
+            client_address: client_address.to_checksum(None),
+            extra_data: vec![],
+        };
+        user_decryptor
+            .user_decrypt(Request::new(request.clone()))
+            .await
+            .unwrap();
+
+        // try sending the same request again
+        assert_eq!(
+            user_decryptor
+                .user_decrypt(Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+    }
+
+    #[tokio::test]
+    async fn sunshine() {
+        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true).await;
+        let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
+        let domain = dummy_domain();
+
         // finally everything is ok
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
         let request = Request::new(UserDecryptionRequest {
@@ -844,7 +1008,9 @@ mod tests {
                 ciphertext: ct_buf.clone(),
                 fhe_type: FheTypes::Uint8 as i32,
                 external_handle: vec![],
-                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
+                // NOTE: because the way [setup_user_decryptor] is implemented,
+                // the ciphertext format must be SmallExpanded for the dummy decryptor to work
+                ciphertext_format: CiphertextFormat::SmallExpanded as i32,
             }],
             key_id: Some(key_id.into()),
             domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
@@ -853,5 +1019,9 @@ mod tests {
             extra_data: vec![],
         });
         user_decryptor.user_decrypt(request).await.unwrap();
+        user_decryptor
+            .get_result(Request::new(req_id.into()))
+            .await
+            .unwrap();
     }
 }

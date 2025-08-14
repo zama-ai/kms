@@ -407,7 +407,8 @@ impl<
             }
         }
 
-        // TODO consider moving this block of code further down the stack,
+        // TODO(zama-ai/kms-internal/issues/2722)
+        // consider moving this block of code further down the stack,
         // preferrably right before running the threshold protocol,
         // because if some error happens later on, e.g., in launch_dkg,
         // then the preprocessing is essentially lost

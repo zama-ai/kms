@@ -187,7 +187,7 @@ impl<C: KemCore> Visitor<'_> for PublicEncKeyVisitor<C> {
             Ok(array) => array,
             Err(_) => {
                 let msg = "ML-KEM Public Enc Key Byte array of incorrect length";
-                tracing::warn!(msg);
+                tracing::error!(msg);
                 return Err(serde::de::Error::custom(msg));
             }
         };

@@ -248,6 +248,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         .await
     }
 
+    /// Check if the threshold FHE keys exist in the storage.
+    pub async fn threshold_fhe_keys_exists(&self, req_id: &RequestId) -> anyhow::Result<bool> {
+        CryptoMaterialStorage::<PubS, PrivS>::threshold_fhe_keys_exist(&self.inner, req_id).await
+    }
+
     /// Refresh the key materials for decryption in the threshold case.
     /// That is, if the key material is not in the cache,
     /// an attempt is made to read from the storage to update the cache.

@@ -15,7 +15,7 @@ use threshold_fhe::hashing::DomainSep;
 
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 use crate::{
-    anyhow_error_and_log, anyhow_error_and_warn_log,
+    anyhow_error_and_log,
     cryptography::{
         internal_crypto_types::{PublicEncKey, PublicSigKey, Signature},
         signcryption::internal_verify_sig,
@@ -148,32 +148,39 @@ pub(crate) fn parse_proto_request_id(
 #[allow(clippy::type_complexity)]
 pub fn validate_user_decrypt_req(
     req: &UserDecryptionRequest,
-) -> anyhow::Result<(
-    Vec<TypedCiphertext>,
-    Vec<u8>,
-    UnifiedPublicEncKey,
-    alloy_primitives::Address,
-    RequestId,
-    RequestId,
-    alloy_sol_types::Eip712Domain,
-)> {
+) -> Result<
+    (
+        Vec<TypedCiphertext>,
+        Vec<u8>,
+        UnifiedPublicEncKey,
+        alloy_primitives::Address,
+        RequestId,
+        RequestId,
+        alloy_sol_types::Eip712Domain,
+    ),
+    BoxedStatus,
+> {
     let key_id =
         parse_optional_proto_request_id(&req.key_id, RequestIdParsingErr::UserDecRequestBadKeyId)?;
     let request_id =
         parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::UserDecRequest)?;
 
     if req.typed_ciphertexts.is_empty() {
-        return Err(anyhow_error_and_warn_log(format!(
-            "{ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS} (Request ID: {request_id})"
+        return Err(BoxedStatus::from(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            format!("{ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS} (Request ID: {request_id})"),
         )));
     }
 
     let client_verf_key = alloy_primitives::Address::parse_checksummed(&req.client_address, None)
         .map_err(|e| {
-        anyhow::anyhow!(
-            "Error parsing checksummed client address: {} - {e}",
-            &req.client_address,
-        )
+        BoxedStatus::from(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            format!(
+                "Error parsing checksummed client address: {} - {e}",
+                &req.client_address
+            ),
+        ))
     })?;
 
     let domain = match verify_user_decrypt_eip712(req) {
@@ -182,14 +189,22 @@ pub fn validate_user_decrypt_req(
             domain
         }
         Err(e) => {
-            return Err(anyhow_error_and_log(format!(
-                "Signature verification failed with error {e} for request: {:?}",
-                req.request_id,
+            return Err(BoxedStatus::from(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!(
+                    "Signature verification failed with error {e} for request: {:?}",
+                    req.request_id,
+                ),
             )));
         }
     };
 
-    let (link, _) = req.compute_link_checked()?;
+    let (link, _) = req.compute_link_checked().map_err(|e| {
+        BoxedStatus::from(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            format!("Error computing link: {e}"),
+        ))
+    })?;
     // NOTE: we need to do some backward compatibility support here so
     // first try to deserialize it using the old format
     let client_enc_key = match bc2wrap::deserialize::<PublicEncKey<ml_kem::MlKem1024>>(&req.enc_key)
@@ -203,9 +218,10 @@ pub fn validate_user_decrypt_req(
             crate::consts::SAFE_SER_SIZE_LIMIT,
         )
         .map_err(|e| {
-            anyhow::anyhow!(
-                "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
-            )
+            BoxedStatus::from(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"),
+            ))
         })?,
     };
     Ok((
