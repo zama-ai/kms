@@ -135,36 +135,21 @@ where
     for cur_type in PrivDataType::iter() {
         match cur_type {
             PrivDataType::FheKeyInfo => {
-                restore_data_type!(
-                    priv_storage,
-                    backup_vault,
-                    cur_type,
-                    ThresholdFheKeys
-                );
+                restore_data_type!(priv_storage, backup_vault, cur_type, ThresholdFheKeys);
             }
             PrivDataType::SigningKey => {
-                restore_data_type!(
-                    priv_storage,
-                    backup_vault,
-                    PrivDataType::SigningKey,
-                    PrivateSigKey
-                );
+                restore_data_type!(priv_storage, backup_vault, cur_type, PrivateSigKey);
             }
             PrivDataType::CrsInfo => {
                 restore_data_type!(
                     priv_storage,
                     backup_vault,
-                    PrivDataType::CrsInfo,
+                    cur_type,
                     SignedPubDataHandleInternal
                 );
             }
             PrivDataType::FhePrivateKey => {
-                restore_data_type!(
-                    priv_storage,
-                    backup_vault,
-                    PrivDataType::FhePrivateKey,
-                    FhePrivateKey
-                );
+                restore_data_type!(priv_storage, backup_vault, cur_type, FhePrivateKey);
             }
             PrivDataType::PrssSetup => {
                 tracing::info!("PRSS setup data is not backed up currently. Skipping for now.");
@@ -173,17 +158,12 @@ where
                 restore_data_type!(
                     priv_storage,
                     backup_vault,
-                    PrivDataType::CustodianInfo,
+                    cur_type,
                     InternalCustodianContext
                 );
             }
             PrivDataType::ContextInfo => {
-                restore_data_type!(
-                    priv_storage,
-                    backup_vault,
-                    PrivDataType::ContextInfo,
-                    ContextInfo
-                );
+                restore_data_type!(priv_storage, backup_vault, cur_type, ContextInfo);
             }
         }
     }
@@ -234,7 +214,7 @@ where
                             update_specific_backup_vault!(
                                 *private_storage,
                                 backup_vault,
-                                PrivDataType::SigningKey,
+                                cur_type,
                                 PrivateSigKey
                             );
                         }
@@ -242,7 +222,7 @@ where
                             update_specific_backup_vault!(
                                 *private_storage,
                                 backup_vault,
-                                PrivDataType::FheKeyInfo,
+                                cur_type,
                                 ThresholdFheKeys
                             );
                         }
@@ -250,7 +230,7 @@ where
                             update_specific_backup_vault!(
                                 *private_storage,
                                 backup_vault,
-                                PrivDataType::CrsInfo,
+                                cur_type,
                                 SignedPubDataHandleInternal
                             );
                         }
@@ -258,7 +238,7 @@ where
                             update_specific_backup_vault!(
                                 *private_storage,
                                 backup_vault,
-                                PrivDataType::FhePrivateKey,
+                                cur_type,
                                 FhePrivateKey
                             );
                         }
@@ -271,7 +251,7 @@ where
                             update_specific_backup_vault!(
                                 *private_storage,
                                 backup_vault,
-                                PrivDataType::CustodianInfo,
+                                cur_type,
                                 InternalCustodianContext
                             );
                         }
@@ -279,7 +259,7 @@ where
                             update_specific_backup_vault!(
                                 *private_storage,
                                 backup_vault,
-                                PrivDataType::ContextInfo,
+                                cur_type,
                                 ContextInfo
                             );
                         }
