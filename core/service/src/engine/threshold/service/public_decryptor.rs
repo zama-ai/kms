@@ -14,9 +14,8 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_PUBLIC_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_PUBLIC_DECRYPT_INNER,
-        OP_PUBLIC_DECRYPT_REQUEST, TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
-        TAG_TFHE_TYPE,
+        ERR_PUBLIC_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
+        TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
     },
 };
 use tfhe::FheTypes;
@@ -261,30 +260,10 @@ impl<
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
-            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-            .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
-                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            })
-            .map(|b| b.start())
-            .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-            .ok();
+            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+            .start();
 
-        let _request_counter = metrics::METRICS
-            .increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST)
-            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
-
-        let permit = self
-            .rate_limiter
-            .start_pub_decrypt()
-            .await
-            .inspect_err(|_e| {
-                if let Err(e) = metrics::METRICS
-                    .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
-                {
-                    tracing::warn!("Failed to increment error counter: {:?}", e);
-                }
-            })?;
+        let permit = self.rate_limiter.start_pub_decrypt().await?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -295,24 +274,9 @@ impl<
         let (ciphertexts, key_id, req_id, eip712_domain) = tonic_handle_potential_err(
             validate_public_decrypt_req(&inner),
             format!("Failed to validate decrypt request {inner:?}"),
-        )
-        .map_err(|e| {
-            tracing::error!(
-                error = ?e,
-                request_id = ?inner.request_id,
-                "Failed to validate decrypt request"
-            );
-            let _ = metrics::METRICS
-                .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_PUBLIC_DECRYPTION_FAILED);
-            e
-        })?;
+        )?;
 
-        if let Some(b) = timer.as_mut() {
-            //We log but we don't want to return early because timer failed
-            let _ = b
-                .tags([(TAG_KEY_ID, key_id.as_str())])
-                .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
-        }
+        timer.tags([(TAG_KEY_ID, key_id.as_str())]);
         tracing::debug!(
             request_id = ?req_id,
             key_id = ?key_id,
@@ -362,23 +326,15 @@ impl<
         for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
             let inner_timer = metrics::METRICS
                 .time_operation(OP_PUBLIC_DECRYPT_INNER)
-                .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-                .and_then(|b| {
-                    b.tags([
-                        (TAG_PARTY_ID, self.session_preparer.my_id.to_string()),
-                        (TAG_KEY_ID, key_id.as_str()),
-                        (
-                            TAG_PUBLIC_DECRYPTION_KIND,
-                            dec_mode.as_str_name().to_string(),
-                        ),
-                    ])
-                    .map_err(|e| {
-                        tracing::warn!("Failed to a tag in party_id, key_id or request_id : {}", e)
-                    })
-                })
-                .map(|b| b.start())
-                .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-                .ok();
+                .tags([
+                    (TAG_PARTY_ID, self.session_preparer.my_id.to_string()),
+                    (TAG_KEY_ID, key_id.as_str()),
+                    (
+                        TAG_PUBLIC_DECRYPTION_KIND,
+                        dec_mode.as_str_name().to_string(),
+                    ),
+                ])
+                .start();
             let internal_sid = tonic_handle_potential_err(
                 req_id.derive_session_id_with_counter(ctr as u64),
                 "failed to derive session ID from counter".to_string(),
@@ -411,9 +367,7 @@ impl<
                 // Capture the inner_timer inside the decryption tasks, such that when the task
                 // exits, the timer is dropped and thus exported
                 let mut inner_timer = inner_timer;
-                inner_timer
-                    .as_mut()
-                    .map(|b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
+                inner_timer.tag(TAG_TFHE_TYPE, fhe_type_string);
 
                 let ciphertext = &typed_ciphertext.ciphertext;
                 let ct_format = typed_ciphertext.ciphertext_format();
@@ -519,6 +473,8 @@ impl<
                         anyhow::bail!("Unsupported fhe type {:?}", unsupported_fhe_type);
                     }
                 };
+                // We don't update the error counter here but rather in the signature task
+                // so we only update it once even if there are multiple decryption task that fail
                 match res_plaintext {
                     Ok(plaintext) => Ok((ctr, plaintext)),
                     Result::Err(e) => Err(anyhow_error_and_log(format!(
@@ -536,13 +492,12 @@ impl<
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
         let party_id = self.session_preparer.my_id;
-        let dec_sig_future = |_permit| async move {
+        let dec_sig_future = move |_permit| async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
             let _timer = timer;
             // NOTE: _permit should be dropped at the end of this function
             let mut decs = HashMap::new();
-            let error_msg: Option<String> = None;
 
             // Collect all results first, without holding any locks
             while let Some(resp) = dec_tasks.pop() {
@@ -551,40 +506,22 @@ impl<
                         decs.insert(idx, plaintext);
                     }
                     Ok(Err(e)) => {
-                        let msg = format!("Failed decryption with err: {e:?}");
+                        let msg = format!("Failed decryption {req_id} with err: {e:?}");
                         tracing::error!(msg);
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(&req_id, Err(msg));
                         // exit mgmt task early in case of error
-                        return;
+                        return Err(());
                     }
                     Err(e) => {
-                        let msg = format!("Failed decryption with JoinError: {e:?}");
+                        let msg = format!("Failed decryption {req_id} with JoinError: {e:?}");
                         tracing::error!(msg);
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(&req_id, Err(msg));
                         // exit mgmt task early in case of error
-                        return;
+                        return Err(());
                     }
                 }
-            }
-
-            // Handle error case with single lock acquisition
-            if let Some(msg) = error_msg {
-                let (lock_acquired_time, total_lock_time) = {
-                    let lock_start = std::time::Instant::now();
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let lock_acquired_time = lock_start.elapsed();
-                    let _ = guarded_meta_store.update(&req_id, Err(msg));
-                    let total_lock_time = lock_start.elapsed();
-                    (lock_acquired_time, total_lock_time)
-                };
-                // Log after lock is released
-                tracing::warn!(
-                    "MetaStore ERROR update - req_id={}, lock_acquired_in={:?}, total_lock_held={:?}",
-                    req_id, lock_acquired_time, total_lock_time
-                );
-                return;
             }
 
             // Prepare success data outside of lock
@@ -612,7 +549,9 @@ impl<
                 let lock_start = std::time::Instant::now();
                 let mut guarded_meta_store = meta_store.write().await;
                 let lock_acquired_time = lock_start.elapsed();
-                let _ = guarded_meta_store.update(&req_id, success_result);
+                guarded_meta_store
+                    .update(&req_id, success_result)
+                    .map_err(|_| ())?;
                 let total_lock_time = lock_start.elapsed();
                 (lock_acquired_time, total_lock_time)
             };
@@ -621,9 +560,20 @@ impl<
                 "MetaStore SUCCESS update - req_id={}, key_id={}, party_id={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
                 req_id, key_id, party_id, pts.len(), lock_acquired_time, total_lock_time
             );
+            Ok(())
         };
-        self.tracker
-            .spawn(dec_sig_future(permit).instrument(tracing::Span::current()));
+        // Increment the error counter if ever the task fails
+        self.tracker.spawn(async move {
+            let res = dec_sig_future(permit)
+                .instrument(tracing::Span::current())
+                .await;
+            if res.is_err() {
+                metrics::METRICS.increment_error_counter(
+                    OP_PUBLIC_DECRYPT_REQUEST,
+                    ERR_PUBLIC_DECRYPTION_FAILED,
+                );
+            }
+        });
 
         Ok(Response::new(Empty {}))
     }

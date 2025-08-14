@@ -10,9 +10,9 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_RATE_LIMIT_EXCEEDED, OP_DECOMPRESSION_KEYGEN, OP_INSECURE_DECOMPRESSION_KEYGEN,
-        OP_INSECURE_KEYGEN, OP_INSECURE_SNS_COMPRESSION_KEYGEN, OP_KEYGEN,
-        OP_SNS_COMPRESSION_KEYGEN, TAG_PARTY_ID,
+        ERR_CANCELLED, ERR_KEYGEN_FAILED, OP_DECOMPRESSION_KEYGEN,
+        OP_INSECURE_DECOMPRESSION_KEYGEN, OP_INSECURE_KEYGEN, OP_INSECURE_SNS_COMPRESSION_KEYGEN,
+        OP_KEYGEN, OP_SNS_COMPRESSION_KEYGEN, TAG_PARTY_ID,
     },
 };
 use tfhe::{
@@ -237,19 +237,16 @@ impl<
             ) => OP_INSECURE_SNS_COMPRESSION_KEYGEN,
         };
 
-        let _request_counter = metrics::METRICS
-            .increment_request_counter(op_tag)
-            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
+        // On top of the global KG request counter, we also increment the specific operation counter
+        // as such, the sum of the specific operation counter is supposed to be equal the global KG
+        // counter
+        metrics::METRICS.increment_request_counter(op_tag);
 
         // Prepare the timer before giving it to the tokio task
         // that runs the computation
         let timer = metrics::METRICS
             .time_operation(op_tag)
-            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-            .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
-                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            });
+            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string());
         // Update status
         {
             let mut guarded_meta_store = self.dkg_pubinfo_meta_store.write().await;
@@ -335,9 +332,13 @@ impl<
         self.tracker
             .spawn(async move {
                 //Start the metric timer, it will end on drop
-                let _timer = timer.map(|b| b.start());
+                let _timer = timer.start();
                 tokio::select! {
-                    () = keygen_background => {
+                    res = keygen_background => {
+                        if res.is_err() {
+                            // We use the more specific tag to increment the error counter
+                            metrics::METRICS.increment_error_counter(op_tag, ERR_KEYGEN_FAILED);
+                        }
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&req_id);
                         tracing::info!("Key generation of request {} exiting normally.", req_id);
@@ -347,6 +348,8 @@ impl<
                         // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let guarded_meta_store = meta_store_cancelled.write().await;
                         crypto_storage_cancelled.purge_key_material(&req_id, guarded_meta_store).await;
+                        // We use the more specific tag to increment the error counter
+                        metrics::METRICS.increment_error_counter(op_tag, ERR_CANCELLED);
                         tracing::info!("Trying to clean up any already written material.")
                     },
                 }
@@ -359,13 +362,9 @@ impl<
         request: Request<KeyGenRequest>,
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self.rate_limiter.start_keygen().await.inspect_err(|_e| {
-            if let Err(e) =
-                metrics::METRICS.increment_error_counter(OP_KEYGEN, ERR_RATE_LIMIT_EXCEEDED)
-            {
-                tracing::warn!("Failed to increment error counter: {:?}", e);
-            }
-        })?;
+        // Note: We increase the request counter only in launch_dkg
+        // so we don't increase the error counter here either
+        let permit = self.rate_limiter.start_keygen().await?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -800,7 +799,7 @@ impl<
         keyset_added_info: KeySetAddedInfo,
         eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
-    ) {
+    ) -> Result<(), ()> {
         let _permit = permit;
         let start = Instant::now();
         let dkg_res = match preproc_handle_w_mode {
@@ -852,7 +851,7 @@ impl<
                 let mut guarded_meta_storage = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));
-                return;
+                return Err(());
             }
         };
 
@@ -864,10 +863,12 @@ impl<
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_storage
                     .update(req_id, Err("Failed to compute key info".to_string()));
-                return;
+                return Err(());
             }
         };
 
+        //Note: We can't easily check here whether we succeeded writing to the meta store
+        //thus we can't increment the error counter if it fails
         crypto_storage
             .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)
             .await;
@@ -876,6 +877,7 @@ impl<
             "Decompression DKG protocol took {} ms to complete for request {req_id}",
             start.elapsed().as_millis()
         );
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -890,7 +892,7 @@ impl<
         keyset_added_info: KeySetAddedInfo,
         eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
-    ) {
+    ) -> Result<(), ()> {
         let _permit = permit;
         let start = Instant::now();
         tracing::info!("Starting SNS compression key generation for request {req_id}");
@@ -905,7 +907,7 @@ impl<
                 let mut guarded_meta_storage = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));
-                return;
+                return Err(());
             }
         };
 
@@ -959,7 +961,7 @@ impl<
                 let mut guarded_meta_storage = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));
-                return;
+                return Err(());
             }
         };
 
@@ -979,7 +981,7 @@ impl<
                     req_id,
                     Err(format!("Failed to add sns compression key due to {e}")),
                 );
-                return;
+                return Err(());
             }
         };
 
@@ -991,10 +993,12 @@ impl<
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_storage
                     .update(req_id, Err("Failed to compute key info".to_string()));
-                return;
+                return Err(());
             }
         };
 
+        // Note: We can't easily check here whether we succeeded writing to the meta store
+        // thus we can't increment the error counter if it fails
         crypto_storage
             .write_threshold_keys_with_meta_store(
                 req_id,
@@ -1009,6 +1013,7 @@ impl<
             "Sns compression DKG protocol took {} ms to complete for request {req_id}",
             start.elapsed().as_millis()
         );
+        Ok(())
     }
 
     // TODO(2674)
@@ -1118,7 +1123,7 @@ impl<
         compression_key_id: Option<RequestId>,
         eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
-    ) {
+    ) -> Result<(), ()> {
         let _permit = permit;
         let start = Instant::now();
         let dkg_res = match preproc_handle_w_mode {
@@ -1150,7 +1155,7 @@ impl<
                                     .to_string(),
                             ),
                         );
-                            return;
+                            return Err(());
                         }
                     }
                 }
@@ -1192,7 +1197,7 @@ impl<
                 let mut guarded_meta_storage = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));
-                return;
+                return Err(());
             }
         };
 
@@ -1204,7 +1209,7 @@ impl<
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_storage
                     .update(req_id, Err("Failed to compute key info".to_string()));
-                return;
+                return Err(());
             }
         };
 
@@ -1232,6 +1237,9 @@ impl<
             decompression_key,
             pk_meta_data: info.clone(),
         };
+
+        //Note: We can't easily check here whether we succeeded writing to the meta store
+        //thus we can't increment the error counter if it fails
         crypto_storage
             .write_threshold_keys_with_meta_store(
                 req_id,
@@ -1246,6 +1254,7 @@ impl<
             "DKG protocol took {} ms to complete for request {req_id}",
             start.elapsed().as_millis()
         );
+        Ok(())
     }
 }
 
