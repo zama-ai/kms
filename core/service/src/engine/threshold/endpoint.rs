@@ -313,10 +313,10 @@ impl_endpoint! {
         ///
         /// # Returns
         /// * Errors:
-        ///    - `InvalidArgument` - If the request ID is not present, valid or does not match the expected format.
-        ///    - `NotFound` - If the parameters in the request are not valid.
+        ///    - `InvalidArgument` - If the request does not match the expected format.
         ///    - `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        ///    - `Aborted` - If an internal error occured in starting the crs generation _or_ if an invalid argument was given.
+        ///    - `AlreadyExists` - If the request contains a request ID that was previously used.
+        ///    - `Aborted` - If another error occured before starting the crs generation.
         ///
         /// # Conditions
         /// * Pre-condition:

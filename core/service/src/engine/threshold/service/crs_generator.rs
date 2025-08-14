@@ -6,6 +6,7 @@ use aes_prng::AesRng;
 use kms_grpc::{
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
     rpc_types::{optional_protobuf_to_alloy_domain, SignedPubDataHandleInternal},
+    utils::tonic_result::tonic_handle_potential_err,
     RequestId,
 };
 use observability::{
@@ -122,7 +123,30 @@ impl<
 
         let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
 
+        // Validate the request ID before proceeding
+        {
+            let guarded_meta_store = self.crs_meta_store.read().await;
+
+            if guarded_meta_store.exists(&req_id) {
+                return Err(Status::already_exists(format!(
+                    "CRS gen request with ID {} already exists",
+                    req_id
+                )));
+            }
+
+            if tonic_handle_potential_err(
+                self.crypto_storage.crs_exists(&req_id).await,
+                "Could not check crs existance in storage".to_string(),
+            )? {
+                return Err(Status::already_exists(format!(
+                    "CRS with key ID {} already exists",
+                    req_id,
+                )));
+            }
+        }
+
         // NOTE: everything inside this function will cause an Aborted error code
+        // so before calling it we should do as much validation as possible without modifying state
         self.inner_crs_gen(
             req_id,
             witness_dim,
@@ -560,9 +584,9 @@ mod tests {
             )
             .await;
 
-        // `InvalidArgument` - If the request ID is not present, valid or does not match the expected format.
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         {
+            // missing request ID
             let req = CrsGenRequest {
                 params: FheParameter::Default as i32,
                 max_num_bits: None,
@@ -589,11 +613,11 @@ mod tests {
         }
 
         {
-            // `InvalidArgument` - If the parameters in the request are not valid.
+            // use the wrong fhe parameter
             let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let req = CrsGenRequest {
-                params: 2,
+                params: 200, // wrong parameter
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: Some(domain),
@@ -603,6 +627,42 @@ mod tests {
             let res = crs_gen.crs_gen(request).await;
 
             assert_eq!(res.unwrap_err().code(), tonic::Code::InvalidArgument);
+        }
+
+        {
+            // missing domain
+            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req = CrsGenRequest {
+                params: FheParameter::Default as i32,
+                max_num_bits: None,
+                request_id: Some(req_id.into()),
+                domain: None,
+            };
+
+            let request = Request::new(req);
+            assert_eq!(
+                crs_gen.crs_gen(request).await.unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+
+        {
+            // wrong domain
+            let mut domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            domain.verifying_contract = "wrong_contract".to_string();
+            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req = CrsGenRequest {
+                params: FheParameter::Default as i32,
+                max_num_bits: None,
+                request_id: Some(req_id.into()),
+                domain: Some(domain),
+            };
+
+            let request = Request::new(req);
+            assert_eq!(
+                crs_gen.crs_gen(request).await.unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
         }
     }
 
@@ -616,7 +676,6 @@ mod tests {
             )
             .await;
 
-        // `NotFound` - If the CRS generation does not exist for `request`.
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
         assert_eq!(
             crs_gen
@@ -653,45 +712,6 @@ mod tests {
         let res = crs_gen.crs_gen(request).await;
 
         assert_eq!(res.unwrap_err().code(), tonic::Code::ResourceExhausted);
-    }
-
-    #[tokio::test]
-    async fn aborted() {
-        // We use non existing PRSS to simulate an abort failure
-        let session_preparer = SessionPreparer::new_test_session(false);
-
-        let crs_gen =
-            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
-                session_preparer,
-            )
-            .await;
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let req = CrsGenRequest {
-            params: FheParameter::Default as i32,
-            max_num_bits: None,
-            request_id: Some(req_id.into()),
-            domain: Some(domain.clone()),
-        };
-
-        let request = Request::new(req);
-        let _ = crs_gen.crs_gen(request).await.unwrap();
-
-        // Send a the request again, it should return an error
-        // because the session has already been used.
-        let req = CrsGenRequest {
-            params: 0,
-            max_num_bits: None,
-            request_id: Some(req_id.into()),
-            domain: Some(domain),
-        };
-
-        let request = Request::new(req);
-
-        assert_eq!(
-            crs_gen.crs_gen(request).await.unwrap_err().code(),
-            tonic::Code::Aborted
-        );
     }
 
     #[tokio::test]
@@ -758,6 +778,34 @@ mod tests {
                 .unwrap_err()
                 .code(),
             tonic::Code::Unavailable
+        );
+    }
+
+    #[tokio::test]
+    async fn already_exists() {
+        let session_preparer = SessionPreparer::new_test_session(true);
+
+        let crs_gen =
+            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
+                session_preparer,
+            )
+            .await;
+
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let req = CrsGenRequest {
+            params: FheParameter::Default as i32,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: Some(domain),
+        };
+
+        crs_gen.crs_gen(Request::new(req.clone())).await.unwrap();
+
+        // we send the same request again, it should return an error
+        assert_eq!(
+            crs_gen.crs_gen(Request::new(req)).await.unwrap_err().code(),
+            tonic::Code::AlreadyExists
         );
     }
 

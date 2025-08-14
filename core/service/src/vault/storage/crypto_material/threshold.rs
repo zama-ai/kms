@@ -81,6 +81,11 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             .await
     }
 
+    /// Check if the CRS under [req_id] exists in the storage.
+    pub async fn crs_exists(&self, req_id: &RequestId) -> anyhow::Result<bool> {
+        CryptoMaterialStorage::<PubS, PrivS>::crs_exists(&self.inner, req_id).await
+    }
+
     /// Write the key materials (result of a keygen) to storage and cache
     /// for the threshold KMS.
     /// The [meta_store] is updated to "Done" if the procedure is successful.
