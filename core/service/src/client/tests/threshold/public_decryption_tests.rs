@@ -1,6 +1,6 @@
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::tests::threshold::common::threshold_handles;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;

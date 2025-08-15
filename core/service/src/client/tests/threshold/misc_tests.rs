@@ -2,27 +2,42 @@ use crate::client::test_tools::check_port_is_closed;
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::{await_server_ready, get_health_client, get_status};
 use crate::consts::DEFAULT_AMOUNT_PARTIES;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+#[cfg(feature = "insecure")]
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::DEFAULT_THRESHOLD;
 use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};
+#[cfg(feature = "insecure")]
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
+#[cfg(feature = "slow_tests")]
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::RealThresholdKms;
-use crate::util::key_setup::test_tools::{purge, EncryptionConfig, TestingPlaintext};
+use crate::util::key_setup::test_tools::purge;
+#[cfg(feature = "insecure")]
+use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
+#[cfg(feature = "slow_tests")]
 use crate::util::rate_limiter::RateLimiterConfig;
 #[cfg(feature = "insecure")]
 use crate::vault::storage::delete_all_at_request_id;
-use crate::vault::storage::{file::FileStorage, StorageType};
+use crate::vault::storage::file::FileStorage;
+#[cfg(feature = "insecure")]
+use crate::vault::storage::StorageType;
+#[cfg(feature = "insecure")]
 use crate::vault::storage::{make_storage, StorageReader};
-use kms_grpc::kms::v1::{Empty, FheParameter, InitRequest};
+#[cfg(feature = "insecure")]
+use kms_grpc::kms::v1::Empty;
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+use kms_grpc::kms::v1::FheParameter;
+use kms_grpc::kms::v1::InitRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+#[cfg(feature = "insecure")]
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::RequestId;
 use serial_test::serial;
 use std::str::FromStr;
+#[cfg(feature = "insecure")]
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
+#[cfg(feature = "insecure")]
 use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::networking::grpc::GrpcServer;
 use tokio::task::JoinSet;
