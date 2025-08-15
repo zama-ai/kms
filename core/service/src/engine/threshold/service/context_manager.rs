@@ -262,6 +262,7 @@ where
 
         // Then store the results
         self.crypto_storage
+            .inner
             .write_backup_keys_with_meta_store(
                 &context_id,
                 backup_enc_key,
