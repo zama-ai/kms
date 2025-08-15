@@ -978,7 +978,6 @@ impl<
             crypto_storage: crypto_storage.inner.clone(),
             custodian_meta_store: Arc::clone(&custodian_meta_store),
             my_role: Role::indexed_from_one(1), // Centralized KMS is always party 1
-            tracker: Arc::clone(&tracker),
         };
         let backup_operator = RealBackupOperator {
             crypto_storage: crypto_storage.inner.clone(),

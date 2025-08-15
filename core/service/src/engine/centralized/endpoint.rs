@@ -1,8 +1,4 @@
 use crate::engine::centralized::central_kms::CentralizedKms;
-use crate::engine::centralized::central_kms::RealCentralizedKms;
-use crate::engine::centralized::service::{
-    delete_kms_context_impl, new_custodian_context_impl, new_kms_context_impl,
-};
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::tonic_some_or_err;
 use crate::vault::storage::Storage;
@@ -526,14 +522,14 @@ impl<
     /// # Conditions
     /// * Pre-condition:  -
     /// * Post-condition: -
-    #[tracing::instrument(skip(self, _request))]
+    #[tracing::instrument(skip(self, request))]
     async fn destroy_custodian_context(
         &self,
-        _request: Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
+        request: Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
     ) -> Result<Response<Empty>, Status> {
-        Err(Status::unimplemented(
-            "destroy_custodian_context is not implemented",
-        ))
+        self.context_manager
+            .destroy_custodian_context(request)
+            .await
     }
 
     /// WARNING: This method is not implemented yet.
@@ -551,14 +547,12 @@ impl<
     /// # Conditions
     /// * Pre-condition:  -
     /// * Post-condition: -
-    #[tracing::instrument(skip(self, _request))]
+    #[tracing::instrument(skip(self, request))]
     async fn get_operator_public_key(
         &self,
-        _request: Request<Empty>,
+        request: Request<Empty>,
     ) -> Result<Response<OperatorPublicKey>, Status> {
-        Err(Status::unimplemented(
-            "get_operator_public_key is not implemented",
-        ))
+        self.backup_operator.get_operator_public_key(request).await
     }
 
     /// WARNING: This method is not fully implemented yet.
@@ -572,13 +566,11 @@ impl<
     /// # Conditions
     /// * Pre-condition:  -
     /// * Post-condition: -
-    #[tracing::instrument(skip(self, _request))]
+    #[tracing::instrument(skip(self, request))]
     async fn custodian_backup_restore(
         &self,
-        _request: Request<Empty>,
+        request: Request<Empty>,
     ) -> Result<Response<Empty>, Status> {
-        Err(Status::unimplemented(
-            "custodian_backup_restore is not implemented",
-        ))
+        self.backup_operator.custodian_backup_restore(request).await
     }
 }

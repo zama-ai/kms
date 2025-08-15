@@ -567,7 +567,6 @@ where
         crypto_storage: crypto_storage.inner.clone(),
         custodian_meta_store,
         my_role: Role::indexed_from_one(config.my_id),
-        tracker: Arc::clone(&tracker),
     };
 
     let backup_operator = RealBackupOperator {
