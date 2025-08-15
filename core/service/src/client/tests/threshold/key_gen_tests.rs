@@ -1,38 +1,42 @@
+cfg_if::cfg_if! {
+   if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
+    use crate::client::Client;
+    use crate::consts::MAX_TRIES;
+    use crate::cryptography::internal_crypto_types::WrappedDKGParams;
+    use crate::dummy_domain;
+    use crate::engine::base::derive_request_id;
+    use crate::engine::threshold::service::ThresholdFheKeys;
+    use crate::util::key_setup::test_tools::purge;
+    use crate::vault::storage::StorageReader;
+    use crate::vault::storage::{file::FileStorage, StorageType};
+    use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
+    use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+    use kms_grpc::rpc_types::PrivDataType;
+    use kms_grpc::rpc_types::PubDataType;
+    use kms_grpc::RequestId;
+    use serial_test::serial;
+    use std::collections::HashMap;
+    use std::str::FromStr;
+    use tfhe::integer::compression_keys::DecompressionKey;
+    use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
+    use threshold_fhe::execution::runtime::party::Role;
+    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+    use tokio::task::JoinSet;
+    use tonic::transport::Channel;
+}}
+
+#[cfg(feature = "slow_tests")]
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-use crate::client::Client;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-use crate::consts::MAX_TRIES;
+#[cfg(feature = "insecure")]
 use crate::consts::TEST_PARAM;
+#[cfg(feature = "slow_tests")]
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
-use crate::cryptography::internal_crypto_types::WrappedDKGParams;
-use crate::dummy_domain;
-use crate::engine::base::derive_request_id;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-use crate::engine::threshold::service::ThresholdFheKeys;
-use crate::util::key_setup::test_tools::purge;
+#[cfg(feature = "slow_tests")]
 use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::storage::StorageReader;
-use crate::vault::storage::{file::FileStorage, StorageType};
-use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
-use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::PrivDataType;
-use kms_grpc::rpc_types::PubDataType;
-use kms_grpc::RequestId;
-use serial_test::serial;
-use std::collections::HashMap;
-use std::str::FromStr;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+#[cfg(feature = "slow_tests")]
 use std::sync::Arc;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-use tfhe::integer::compression_keys::DecompressionKey;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
-use threshold_fhe::execution::runtime::party::Role;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+#[cfg(feature = "slow_tests")]
 use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
-use tokio::task::JoinSet;
-use tonic::transport::Channel;
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 #[allow(dead_code)]

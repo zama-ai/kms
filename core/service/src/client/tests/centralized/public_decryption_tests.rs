@@ -2,10 +2,9 @@ use crate::client::test_tools::centralized_handles;
 use crate::client::tests::common::{assert_plaintext, TIME_TO_SLEEP_MS};
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::TEST_CENTRAL_KEY_ID;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use crate::consts::TEST_PARAM;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;

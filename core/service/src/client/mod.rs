@@ -1,15 +1,13 @@
 use crate::anyhow_error_and_log;
-use crate::cryptography::internal_crypto_types::{
-    PrivateSigKey, PublicSigKey, UnifiedPrivateEncKey,
-};
-use crate::cryptography::internal_crypto_types::{Signature, UnifiedPublicEncKey};
+use crate::cryptography::internal_crypto_types::Signature;
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 #[cfg(feature = "non-wasm")]
 use futures_util::future::{try_join_all, TryFutureExt};
 use itertools::Itertools;
-use kms_grpc::kms::v1::{UserDecryptionRequest, UserDecryptionResponse};
+use kms_grpc::kms::v1::UserDecryptionRequest;
 use kms_grpc::rpc_types::UserDecryptionLinker;
 use rand::SeedableRng;
 use std::collections::HashMap;
@@ -102,10 +100,10 @@ pub struct TestingUserDecryptionTranscript {
     // request
     request: Option<UserDecryptionRequest>,
     // We keep the unified keys here because for legacy tests we need to produce legacy transcripts
-    eph_sk: UnifiedPrivateEncKey,
-    eph_pk: UnifiedPublicEncKey,
+    eph_sk: crate::cryptography::internal_crypto_types::UnifiedPrivateEncKey,
+    eph_pk: crate::cryptography::internal_crypto_types::UnifiedPublicEncKey,
     // response
-    agg_resp: Vec<UserDecryptionResponse>,
+    agg_resp: Vec<kms_grpc::kms::v1::UserDecryptionResponse>,
 }
 
 #[wasm_bindgen]

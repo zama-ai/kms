@@ -4,7 +4,7 @@ use crate::client::Client;
 #[cfg(feature = "wasm_tests")]
 use crate::client::TestingUserDecryptionTranscript;
 use crate::client::{ParsedUserDecryptionRequest, ServerIdentities};
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+#[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_THRESHOLD_KEY_ID_4P;
@@ -18,15 +18,16 @@ use crate::engine::base::derive_request_id;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 #[cfg(feature = "wasm_tests")]
 use crate::util::file_handling::write_element;
+#[cfg(feature = "wasm_tests")]
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
 };
 use crate::vault::storage::crypto_material::get_core_signing_key;
 use crate::vault::storage::{file::FileStorage, StorageType};
-use kms_grpc::kms::v1::{
-    TypedCiphertext, TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse,
-};
+#[cfg(feature = "wasm_tests")]
+use kms_grpc::kms::v1::TypedPlaintext;
+use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest, UserDecryptionResponse};
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 use kms_grpc::RequestId;
 use serial_test::serial;

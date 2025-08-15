@@ -1,24 +1,24 @@
+cfg_if::cfg_if! {
+   if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
 use crate::client::Client;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
 use crate::engine::base::{derive_request_id, DSEP_PUBDATA_CRS};
 use crate::util::key_setup::max_threshold;
 use crate::util::key_setup::test_tools::purge;
-
 use crate::vault::storage::{file::FileStorage, StorageType};
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use kms_grpc::kms::v1::CrsGenRequest;
 use kms_grpc::kms::v1::{Empty, FheParameter};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::RequestId;
 use serial_test::serial;
 use std::collections::HashMap;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use std::sync::Arc;
 use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
+}}
 
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
