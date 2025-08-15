@@ -1,10 +1,10 @@
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
-    BackupOperator, ContextManager, CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator,
-    PublicDecryptor, UserDecryptor,
+    CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
+use crate::engine::traits::{BackupOperator, ContextManager};
 use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use tonic::{Request, Response, Status};
@@ -519,7 +519,7 @@ impl_endpoint! {
 
         /// WARNING: This method is not implemented yet and will always return an error.
         ///
-        /// Contructs a new custodian context. That is, updates the internal state of custodians used for backup.
+        /// Constructs a new custodian context. That is, updates the internal state of custodians used for backup.
         ///
         /// Currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
         ///
@@ -538,7 +538,7 @@ impl_endpoint! {
 
         /// WARNING: This method is not implemented yet and will always return an error.
         ///
-        /// Destroyes a custodian context. That is, updates the internal state and configuration files to start used a new custodian context and removes the old one.
+        /// Destroys a custodian context. That is, updates the internal state and configuration files to start used a new custodian context and removes the old one.
         ///
         /// Currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
         ///

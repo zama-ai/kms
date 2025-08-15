@@ -5,7 +5,8 @@ use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::fmt::{self};
+use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
@@ -248,9 +249,9 @@ pub enum PubDataType {
     VerfKey,     // Type for the servers public verification keys
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
-    CACert,                // Certificate that signs TLS certificates used by MPC nodes
-    CustodianSetupMessage, // Backup custodian public keys (self-signed)
-    PublicEncKey,          // Classical non-FHE Public encryption key, e.g. used for backup
+    CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO validation needs to be added, see https://github.com/zama-ai/kms-internal/issues/2723
+    RecoveryRequest, // Recovery request for backup vault
+    Commitments, // Commitments for the backup vault
 }
 
 impl fmt::Display for PubDataType {
@@ -264,10 +265,15 @@ impl fmt::Display for PubDataType {
             PubDataType::VerfAddress => write!(f, "VerfAddress"),
             PubDataType::DecompressionKey => write!(f, "DecompressionKey"),
             PubDataType::CACert => write!(f, "CACert"),
-            PubDataType::CustodianSetupMessage => write!(f, "CustodianSetupMessage"),
-            PubDataType::PublicEncKey => write!(f, "PublicEncKey"),
+            PubDataType::RecoveryRequest => write!(f, "RecoveryRequest"),
+            PubDataType::Commitments => write!(f, "Commitments"),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum PrivDataTypeVersioned {
+    V0(PrivDataType),
 }
 
 /// PrivDataType
@@ -277,13 +283,19 @@ impl fmt::Display for PubDataType {
 /// signatures. Data of this type is supposed to only be readable, writable and modifiable by a
 /// single entity and stored on a medium that is not readable, writable or modifiable by any other
 /// entity (without detection).
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
+///
+/// Data stored with this type either need to be kept secret and/or need to be kept authentic.
+/// Thus some data may indeed be safe to release publicly, but a malicious replacement could completely
+/// compromise the entire system.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Versionize)]
+#[versionize(PrivDataTypeVersioned)]
 pub enum PrivDataType {
     SigningKey,
     FheKeyInfo,
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
+    CustodianInfo, // Custodian information for the custodian context
     ContextInfo,
 }
 
@@ -295,7 +307,42 @@ impl fmt::Display for PrivDataType {
             PrivDataType::CrsInfo => write!(f, "CrsInfo"),
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
+            PrivDataType::CustodianInfo => write!(f, "CustodianInfo"),
             PrivDataType::ContextInfo => write!(f, "Context"),
+        }
+    }
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for PrivDataType {
+    fn default() -> Self {
+        PrivDataType::FheKeyInfo // Default is private FHE key material
+    }
+}
+
+impl TryFrom<&str> for PrivDataType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        for priv_data_type in PrivDataType::iter() {
+            if value.to_ascii_lowercase().trim()
+                == priv_data_type.to_string().to_ascii_lowercase().trim()
+            {
+                return Ok(priv_data_type);
+            }
+        }
+        Err(anyhow::anyhow!("Unknown PrivDataType: {}", value))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
+pub enum BackupDataType {
+    PrivData(PrivDataType), // Backup of a piece of private data
+}
+impl fmt::Display for BackupDataType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BackupDataType::PrivData(data_type) => write!(f, "PrivData({data_type})"),
         }
     }
 }

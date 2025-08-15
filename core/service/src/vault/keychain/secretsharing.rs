@@ -1,92 +1,61 @@
 use super::{EnvelopeLoad, EnvelopeStore, Keychain};
 use crate::{
     anyhow_error_and_log,
-    backup::{custodian::CustodianSetupMessage, operator::Operator},
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::{
-        backup_pke::{self, BackupPrivateKey},
-        internal_crypto_types::{PrivateSigKey, PublicSigKey},
-    },
+    cryptography::backup_pke::{BackupCiphertext, BackupPublicKey},
 };
-use k256::ecdsa::SigningKey;
-use kms_grpc::RequestId;
-use rand::rngs::OsRng;
+use kms_grpc::rpc_types::PrivDataType;
+use rand::{CryptoRng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::BTreeSet;
-use tfhe::{
-    named::Named,
-    safe_serialization::{safe_deserialize, safe_serialize},
-    Unversionize, Versionize,
-};
-use threshold_fhe::execution::runtime::party::Role;
+use tfhe::{named::Named, safe_serialization::safe_serialize, Unversionize, Versionize};
 
-#[derive(Debug, Clone)]
-pub struct SecretShareKeychain {
-    operator: Operator<PrivateSigKey, BackupPrivateKey>,
-    num_shares: usize,
+#[derive(Clone)]
+pub struct SecretShareKeychain<R: Rng + CryptoRng> {
+    rng: R,
+    backup_enc_key: BackupPublicKey,
 }
 
-impl SecretShareKeychain {
-    pub fn new(
-        custodian_messages: Vec<CustodianSetupMessage>,
-        my_role: Role,
-        signer: PrivateSigKey,
-        threshold: usize,
-    ) -> anyhow::Result<Self> {
-        let (public_key, decryptor) = backup_pke::keygen(&mut OsRng).unwrap();
-        let verification_key = PublicSigKey::new(*SigningKey::verifying_key(signer.sk()));
-        let num_shares = custodian_messages.len();
-        let operator = Operator::new(
-            my_role,
-            custodian_messages,
-            signer,
-            verification_key,
-            decryptor,
-            public_key,
-            threshold,
-        )?;
-        Ok(Self {
-            operator,
-            num_shares,
-        })
+impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
+    pub fn new(rng: R, backup_enc_key: BackupPublicKey) -> Self {
+        Self {
+            rng,
+            backup_enc_key,
+        }
     }
 
     pub fn operator_public_key_bytes(&self) -> Vec<u8> {
-        self.operator.public_key_bytes()
+        self.backup_enc_key.encapsulation_key.clone()
+    }
+
+    pub fn set_backup_enc_key(&mut self, backup_enc_key: BackupPublicKey) {
+        self.backup_enc_key = backup_enc_key;
     }
 }
 
-impl Keychain for SecretShareKeychain {
-    fn envelope_share_ids(&self) -> Option<BTreeSet<Role>> {
-        Some(BTreeSet::from_iter(
-            (0..self.num_shares).map(Role::indexed_from_zero),
-        ))
-    }
-
+impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
     async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
-        payload_id: &RequestId,
-        payload: &T,
+        data: &T,
+        data_type: &str,
     ) -> anyhow::Result<EnvelopeStore> {
+        let priv_data_type: PrivDataType = data_type.try_into()?;
         let mut payload_bytes = Vec::new();
-        safe_serialize(payload, &mut payload_bytes, SAFE_SER_SIZE_LIMIT)?;
-        self.operator
-            .secret_share_and_encrypt(&mut OsRng, &payload_bytes, *payload_id)
-            .map(EnvelopeStore::OperatorBackupOutput)
-            .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt backup: {e}")))
+        safe_serialize(data, &mut payload_bytes, SAFE_SER_SIZE_LIMIT)?;
+        let raw_ct = self
+            .backup_enc_key
+            .encrypt(&mut self.rng, &payload_bytes)
+            .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt backup: {e}")))?;
+        let ct = BackupCiphertext {
+            ciphertext: raw_ct,
+            priv_data_type,
+        };
+        Ok(EnvelopeStore::OperatorBackupOutput(ct))
     }
 
     async fn decrypt<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
-        payload_id: &RequestId,
-        envelope: &mut EnvelopeLoad,
+        _envelope: &mut EnvelopeLoad,
     ) -> anyhow::Result<T> {
-        let EnvelopeLoad::OperatorRecoveryInput(rs, cs) = envelope else {
-            anyhow::bail!("Expected multi-share encrypted data")
-        };
-        let payload_bytes = self.operator.verify_and_recover(rs, cs, *payload_id)?;
-        let mut buf = std::io::Cursor::new(&payload_bytes);
-        safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT)
-            .map_err(|e| anyhow_error_and_log(format!("Cannot decrypt backup: {e}")))
+        anyhow::bail!("Decryption not supported for SecretShareKeychain; decryption key is purged after initial secret sharing");
     }
 }

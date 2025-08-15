@@ -19,9 +19,10 @@ use crate::engine::base::{
 };
 use crate::engine::centralized::central_kms::{
     async_generate_decompression_keys, async_generate_fhe_keys,
-    async_generate_sns_compression_keys, RealCentralizedKms,
+    async_generate_sns_compression_keys, CentralizedKms,
 };
 use crate::engine::keyset_configuration::InternalKeySetConfig;
+use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::validation::validate_request_id;
 use crate::tonic_handle_potential_err;
 use crate::tonic_some_or_err;
@@ -33,8 +34,10 @@ use crate::vault::storage::Storage;
 pub async fn key_gen_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<KeyGenRequest>,
 ) -> Result<Response<Empty>, Status> {
     let _timer = METRICS
@@ -119,8 +122,10 @@ pub async fn key_gen_impl<
 pub async fn get_key_gen_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<KeyGenResult>, Status> {
     let request_id = request.into_inner().into();
