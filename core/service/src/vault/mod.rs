@@ -1,17 +1,15 @@
-use futures_util::future::try_join;
+use keychain::{EnvelopeLoad, EnvelopeStore, Keychain, KeychainProxy};
 use kms_grpc::RequestId;
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::{BTreeMap, HashSet};
-use tfhe::{named::Named, Unversionize, Versionize};
-
-use keychain::{EnvelopeLoad, EnvelopeStore, Keychain, KeychainProxy};
+use std::collections::HashSet;
 use storage::{Storage, StorageForBytes, StorageProxy, StorageReader};
+use tfhe::{named::Named, Unversionize, Versionize};
 
 pub mod aws;
 pub mod keychain;
 pub mod storage;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Vault {
     pub storage: StorageProxy,
     pub keychain: Option<KeychainProxy>,
@@ -26,32 +24,9 @@ impl StorageReader for Vault {
     ) -> anyhow::Result<T> {
         match self.keychain.as_ref() {
             Some(k) => {
-                let mut envelope = match k.envelope_share_ids() {
-                    Some(ids) => {
-                        let mut rs = BTreeMap::new();
-                        let mut cs = BTreeMap::new();
-                        for id in &ids {
-                            let (recovery, commitment) = try_join(
-                                self.storage.read_data(
-                                    data_id,
-                                    format!("{data_type}-recovery-{id}").as_str(),
-                                ),
-                                self.storage.load_bytes(
-                                    data_id,
-                                    format!("{data_type}-commitment-{id}").as_str(),
-                                ),
-                            )
-                            .await?;
-                            rs.insert(*id, recovery);
-                            cs.insert(*id, commitment);
-                        }
-                        EnvelopeLoad::OperatorRecoveryInput(rs, cs)
-                    }
-                    None => {
-                        EnvelopeLoad::AppKeyBlob(self.storage.read_data(data_id, data_type).await?)
-                    }
-                };
-                k.decrypt(data_id, &mut envelope).await
+                let mut envelope =
+                    EnvelopeLoad::AppKeyBlob(self.storage.read_data(data_id, data_type).await?);
+                k.decrypt(&mut envelope).await
             }
             None => self.storage.read_data(data_id, data_type).await,
         }
@@ -80,28 +55,13 @@ impl Storage for Vault {
     ) -> anyhow::Result<()> {
         match self.keychain.as_mut() {
             Some(k) => {
-                let envelope = k.encrypt(data_id, data).await?;
+                let envelope = k.encrypt(data, data_type).await?;
                 match envelope {
                     EnvelopeStore::AppKeyBlob(blob) => {
                         self.storage.store_data(&blob, data_id, data_type).await?
                     }
-                    EnvelopeStore::OperatorBackupOutput(backup_outputs) => {
-                        for (id, backup_output) in &backup_outputs {
-                            self.storage
-                                .store_data(
-                                    backup_output,
-                                    data_id,
-                                    format!("{data_type}-backup-{id}").as_str(),
-                                )
-                                .await?;
-                            self.storage
-                                .store_bytes(
-                                    backup_output.commitment.as_slice(),
-                                    data_id,
-                                    format!("{data_type}- commitment-{id}").as_str(),
-                                )
-                                .await?;
-                        }
+                    EnvelopeStore::OperatorBackupOutput(ct) => {
+                        self.storage.store_data(&ct, data_id, data_type).await?;
                     }
                 }
                 Ok(())

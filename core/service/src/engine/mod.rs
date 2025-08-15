@@ -4,11 +4,15 @@ mod server;
 pub use server::*;
 
 #[cfg(feature = "non-wasm")]
+pub mod backup_operator;
+#[cfg(feature = "non-wasm")]
 pub mod base;
 #[cfg(feature = "non-wasm")]
 pub mod centralized;
 #[cfg(feature = "non-wasm")]
 pub mod context;
+#[cfg(feature = "non-wasm")]
+pub mod context_manager;
 #[cfg(feature = "non-wasm")]
 pub mod keyset_configuration;
 #[cfg(feature = "non-wasm")]

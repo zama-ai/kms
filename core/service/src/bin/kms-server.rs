@@ -13,7 +13,7 @@ use kms_lib::{
     grpc::MetaStoreStatusServiceImpl,
     vault::{
         aws::build_aws_sdk_config,
-        keychain::{awskms::build_aws_kms_client, make_keychain},
+        keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
         storage::{
             crypto_material::get_core_signing_key, make_storage, read_text_at_request_id,
             s3::build_s3_client, StorageCache, StorageType,
@@ -197,16 +197,7 @@ async fn main() -> anyhow::Result<()> {
             .private_vault
             .as_ref()
             .and_then(|v| v.keychain.as_ref())
-            .map(|k| {
-                make_keychain(
-                    k,
-                    awskms_client.clone(),
-                    security_module.clone(),
-                    None,
-                    None,
-                    None,
-                )
-            }),
+            .map(|k| make_keychain_proxy(k, awskms_client.clone(), security_module.clone(), None)),
     )
     .await
     .transpose()
@@ -249,13 +240,11 @@ async fn main() -> anyhow::Result<()> {
             .as_ref()
             .and_then(|v| v.keychain.as_ref())
             .map(|k| {
-                make_keychain(
+                make_keychain_proxy(
                     k,
                     awskms_client.clone(),
                     security_module.clone(),
-                    Some(&public_vault),
-                    party_role,
-                    Some(sk.clone()),
+                    Some(&private_vault),
                 )
             }),
     )
@@ -446,6 +435,7 @@ async fn main() -> anyhow::Result<()> {
                 Some(Arc::clone(kms.get_user_dec_meta_store())), // user_dec_store
                 Some(Arc::clone(kms.get_crs_meta_store())),     // crs_store
                 None, // preproc_store - not available in centralized mode
+                Some(Arc::clone(kms.get_custodian_meta_store())), // custodian_store
             ));
             run_server(
                 core_config.service,
