@@ -1,6 +1,6 @@
 use super::*;
 use crate::cryptography::internal_crypto_types::{
-    PrivateSigKey, PublicSigKey, SigncryptionKeyPair, SigncryptionPrivKey, SigncryptionPubKey,
+    PublicSigKey, SigncryptionKeyPair, SigncryptionPrivKey, SigncryptionPubKey,
     UnifiedPrivateEncKey, UnifiedSigncryptionKeyPair, UnifiedSigncryptionKeyPairOwned,
 };
 use crate::cryptography::internal_crypto_types::{Signature, UnifiedPublicEncKey};
@@ -12,18 +12,12 @@ use crate::engine::validation::{
     DSEP_USER_DECRYPTION,
 };
 use crate::{anyhow_error_and_log, some_or_err};
-use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
-use alloy_sol_types::SolStruct;
-#[cfg(feature = "non-wasm")]
-use futures_util::future::{try_join_all, TryFutureExt};
 use itertools::Itertools;
 use kms_grpc::kms::v1::{
     TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
 };
-use kms_grpc::rpc_types::{fhe_types_to_num_blocks, UserDecryptionLinker};
-use rand::SeedableRng;
-use std::collections::HashMap;
+use kms_grpc::rpc_types::fhe_types_to_num_blocks;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::FheTypes;
@@ -39,47 +33,17 @@ use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::sharing::shamir::{
     fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings,
 };
-use threshold_fhe::execution::tfhe_internals::parameters::{
-    AugmentedCiphertextParameters, DKGParams,
-};
-use wasm_bindgen::prelude::*;
+use threshold_fhe::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::consts::SAFE_SER_SIZE_LIMIT;
-        use crate::consts::{DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES};
         use crate::cryptography::signcryption::ephemeral_encryption_key_generation;
-        use crate::engine::base::compute_handle;
-        use crate::engine::base::BaseKmsStruct;
-        use crate::engine::base::DSEP_PUBDATA_CRS;
-        use crate::engine::base::DSEP_PUBDATA_KEY;
-        use crate::engine::traits::BaseKms;
-        use crate::engine::validation::validate_public_decrypt_responses_against_request;
-        use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
-        use crate::vault::storage::{
-            crypto_material::{
-                get_client_signing_key, get_client_verification_key, get_core_verification_key,
-            },
-            Storage, StorageReader,
-        };
-        use kms_grpc::kms::v1::{
-            CrsGenRequest, CrsGenResult, FheParameter, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
-            KeySetAddedInfo, KeySetConfig, PublicDecryptionRequest, PublicDecryptionResponse,
-            TypedCiphertext,
-        };
+        use kms_grpc::kms::v1::TypedCiphertext;
         use kms_grpc::rpc_types::{
-            alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
+            alloy_to_protobuf_domain,
         };
         use kms_grpc::RequestId;
-        use std::fmt;
-        use tfhe::zk::CompactPkeCrs;
-        use tfhe::ServerKey;
-        use tfhe_versionable::{Unversionize, Versionize};
-        use threshold_fhe::hashing::DomainSep;
-        use tonic::transport::Channel;
-        use tonic_health::pb::health_client::HealthClient;
-        use tonic_health::pb::HealthCheckRequest;
-        use tonic_health::ServingStatus;
     }
 }
 

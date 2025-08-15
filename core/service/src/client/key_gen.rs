@@ -1,85 +1,21 @@
 use super::*;
-use crate::cryptography::internal_crypto_types::{
-    PrivateSigKey, PublicSigKey, SigncryptionKeyPair, SigncryptionPrivKey, SigncryptionPubKey,
-    UnifiedPrivateEncKey, UnifiedSigncryptionKeyPair, UnifiedSigncryptionKeyPairOwned,
-};
-use crate::cryptography::internal_crypto_types::{Signature, UnifiedPublicEncKey};
-use crate::cryptography::signcryption::{
-    decrypt_signcryption_with_link, insecure_decrypt_ignoring_signature, internal_verify_sig,
-};
-use crate::engine::validation::{
-    check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
-    DSEP_USER_DECRYPTION,
-};
 use crate::{anyhow_error_and_log, some_or_err};
-use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
-use alloy_sol_types::SolStruct;
-#[cfg(feature = "non-wasm")]
-use futures_util::future::{try_join_all, TryFutureExt};
-use itertools::Itertools;
-use kms_grpc::kms::v1::{
-    TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
-};
-use kms_grpc::rpc_types::{fhe_types_to_num_blocks, UserDecryptionLinker};
-use rand::SeedableRng;
-use std::collections::HashMap;
-use std::num::Wrapping;
-use tfhe::shortint::ClassicPBSParameters;
-use tfhe::FheTypes;
-use threshold_fhe::algebra::base_ring::{Z128, Z64};
-use threshold_fhe::algebra::error_correction::MemoizedExceptionals;
-use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4;
-use threshold_fhe::algebra::structure_traits::{BaseRing, ErrorCorrect, Ring};
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::endpoints::reconstruct::{
-    combine_decryptions, reconstruct_packed_message,
-};
-use threshold_fhe::execution::runtime::party::Role;
-use threshold_fhe::execution::sharing::shamir::{
-    fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings,
-};
-use threshold_fhe::execution::tfhe_internals::parameters::{
-    AugmentedCiphertextParameters, DKGParams,
-};
-use wasm_bindgen::prelude::*;
-
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
-        use crate::consts::SAFE_SER_SIZE_LIMIT;
-        use crate::consts::{DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES};
-        use crate::cryptography::signcryption::ephemeral_encryption_key_generation;
         use crate::engine::base::compute_handle;
-        use crate::engine::base::BaseKmsStruct;
-        use crate::engine::base::DSEP_PUBDATA_CRS;
         use crate::engine::base::DSEP_PUBDATA_KEY;
-        use crate::engine::traits::BaseKms;
-        use crate::engine::validation::validate_public_decrypt_responses_against_request;
-        use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
-        use crate::vault::storage::{
-            crypto_material::{
-                get_client_signing_key, get_client_verification_key, get_core_verification_key,
-            },
-            Storage, StorageReader,
-        };
+        use crate::vault::storage::StorageReader;
         use kms_grpc::kms::v1::{
-            CrsGenRequest, CrsGenResult, FheParameter, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
-            KeySetAddedInfo, KeySetConfig, PublicDecryptionRequest, PublicDecryptionResponse,
-            TypedCiphertext,
+             FheParameter, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
+            KeySetAddedInfo, KeySetConfig,
         };
         use kms_grpc::rpc_types::{
             alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
         };
         use kms_grpc::RequestId;
-        use std::fmt;
-        use tfhe::zk::CompactPkeCrs;
         use tfhe::ServerKey;
         use tfhe_versionable::{Unversionize, Versionize};
-        use threshold_fhe::hashing::DomainSep;
-        use tonic::transport::Channel;
-        use tonic_health::pb::health_client::HealthClient;
-        use tonic_health::pb::HealthCheckRequest;
-        use tonic_health::ServingStatus;
     }
 }
 
@@ -302,95 +238,18 @@ impl Client {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::test_tools::ServerHandle;
+    use crate::vault::storage::StorageReader;
+
     use super::Client;
-    use crate::client::test_tools::check_port_is_closed;
-    #[cfg(feature = "wasm_tests")]
-    use crate::client::TestingUserDecryptionTranscript;
-    use crate::client::{await_server_ready, get_health_client, get_status};
-    use crate::client::{ParsedUserDecryptionRequest, ServerIdentities};
-    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-    use crate::consts::DEFAULT_PARAM;
-    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-    use crate::consts::MAX_TRIES;
-    use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
-    use crate::consts::{DEFAULT_AMOUNT_PARTIES, TEST_CENTRAL_KEY_ID};
-    #[cfg(feature = "slow_tests")]
-    use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID_4P};
-    use crate::consts::{DEFAULT_THRESHOLD, TEST_THRESHOLD_KEY_ID_10P};
-    use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};
-    use crate::cryptography::internal_crypto_types::{PrivateSigKey, Signature};
-    use crate::cryptography::internal_crypto_types::{
-        UnifiedPrivateEncKey, UnifiedPublicEncKey, WrappedDKGParams,
-    };
-    use crate::dummy_domain;
-    use crate::engine::base::{compute_handle, derive_request_id, BaseKmsStruct, DSEP_PUBDATA_CRS};
-    #[cfg(feature = "slow_tests")]
-    use crate::engine::centralized::central_kms::tests::get_default_keys;
-    use crate::engine::centralized::central_kms::RealCentralizedKms;
-    use crate::engine::threshold::service::RealThresholdKms;
-    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-    use crate::engine::threshold::service::ThresholdFheKeys;
-    use crate::engine::traits::BaseKms;
-    use crate::engine::validation::DSEP_USER_DECRYPTION;
-    #[cfg(feature = "wasm_tests")]
-    use crate::util::file_handling::write_element;
-    use crate::util::key_setup::max_threshold;
-    use crate::util::key_setup::test_tools::{
-        compute_cipher_from_stored_key, purge, EncryptionConfig, TestingPlaintext,
-    };
-    use crate::util::rate_limiter::RateLimiterConfig;
-    use crate::vault::storage::crypto_material::get_core_signing_key;
-    #[cfg(feature = "insecure")]
-    use crate::vault::storage::delete_all_at_request_id;
-    use crate::vault::storage::{file::FileStorage, StorageType};
-    use crate::vault::storage::{make_storage, StorageReader};
-    use crate::vault::Vault;
-    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-    use kms_grpc::kms::v1::CrsGenRequest;
-    use kms_grpc::kms::v1::{
-        Empty, FheParameter, InitRequest, KeySetAddedInfo, KeySetConfig, KeySetType,
-        TypedCiphertext, TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse,
-    };
-    use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-    use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
-    use kms_grpc::rpc_types::{fhe_types_to_num_blocks, PrivDataType};
-    use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
+    use kms_grpc::rpc_types::PubDataType;
     use kms_grpc::RequestId;
-    use serial_test::serial;
-    use std::collections::{hash_map::Entry, HashMap};
-    use std::str::FromStr;
-    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-    use std::sync::Arc;
     use tfhe::core_crypto::prelude::{
         decrypt_lwe_ciphertext, divide_round, ContiguousEntityContainer, LweCiphertextOwned,
     };
-    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-    use tfhe::integer::compression_keys::DecompressionKey;
     use tfhe::prelude::ParameterSetConformant;
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey;
-    #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-    use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
     use tfhe::shortint::server_key::ModulusSwitchConfiguration;
-    use tfhe::zk::CompactPkeCrs;
-    use tfhe::Tag;
-    use tfhe::{FheTypes, ProvenCompactCiphertextList};
-    use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-    use threshold_fhe::execution::runtime::party::Role;
-    use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-    #[cfg(feature = "wasm_tests")]
-    use threshold_fhe::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
-    use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
-    use threshold_fhe::networking::grpc::GrpcServer;
-    use tokio::task::JoinSet;
-    use tonic::server::NamedService;
-    use tonic::transport::Channel;
-    use tonic_health::pb::health_check_response::ServingStatus;
-    use tonic_health::pb::HealthCheckRequest;
-
-    // Time to sleep to ensure that previous servers and tests have shut down properly.
-    const TIME_TO_SLEEP_MS: u64 = 500;
 
     pub(crate) fn check_conformance(server_key: tfhe::ServerKey, client_key: tfhe::ClientKey) {
         let pbs_params = client_key.computation_parameters();

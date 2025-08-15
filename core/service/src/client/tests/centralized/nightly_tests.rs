@@ -1,12 +1,12 @@
 use crate::client::tests::centralized::crs_gen_tests::crs_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::decryption_centralized;
 use crate::client::tests::centralized::user_decryption_tests::user_decryption_centralized;
-use crate::consts::{DEFAULT_AMOUNT_PARTIES, DEFAULT_PARAM};
-use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID};
+use crate::consts::DEFAULT_CENTRAL_KEY_ID;
+use crate::consts::DEFAULT_PARAM;
 use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::{purge, TestingPlaintext};
-use kms_grpc::{kms::v1::FheParameter, RequestId};
+use kms_grpc::kms::v1::FheParameter;
 use serial_test::serial;
 
 #[cfg(feature = "slow_tests")]

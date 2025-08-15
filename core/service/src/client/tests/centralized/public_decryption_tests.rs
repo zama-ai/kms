@@ -1,93 +1,22 @@
-use crate::client::test_tools::check_port_is_closed;
-use crate::client::test_tools::ServerHandle;
-use crate::client::tests::threshold_handles;
-use crate::client::Client;
-#[cfg(feature = "wasm_tests")]
-use crate::client::TestingUserDecryptionTranscript;
-use crate::client::{await_server_ready, get_health_client, get_status};
-use crate::client::{ParsedUserDecryptionRequest, ServerIdentities};
+use crate::client::test_tools::centralized_handles;
+use crate::client::tests::common::{assert_plaintext, TIME_TO_SLEEP_MS};
+#[cfg(feature = "slow_tests")]
+use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 use crate::consts::DEFAULT_PARAM;
+use crate::consts::TEST_CENTRAL_KEY_ID;
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-use crate::consts::MAX_TRIES;
-use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
-use crate::consts::{DEFAULT_AMOUNT_PARTIES, TEST_CENTRAL_KEY_ID};
-#[cfg(feature = "slow_tests")]
-use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_THRESHOLD_KEY_ID_4P};
-use crate::consts::{DEFAULT_THRESHOLD, TEST_THRESHOLD_KEY_ID_10P};
-use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};
-use crate::cryptography::internal_crypto_types::{PrivateSigKey, Signature};
-use crate::cryptography::internal_crypto_types::{
-    UnifiedPrivateEncKey, UnifiedPublicEncKey, WrappedDKGParams,
-};
+use crate::consts::TEST_PARAM;
 use crate::dummy_domain;
-use crate::engine::base::{compute_handle, derive_request_id, BaseKmsStruct, DSEP_PUBDATA_CRS};
-#[cfg(feature = "slow_tests")]
-use crate::engine::centralized::central_kms::tests::get_default_keys;
-use crate::engine::centralized::central_kms::RealCentralizedKms;
-use crate::engine::threshold::service::RealThresholdKms;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-use crate::engine::threshold::service::ThresholdFheKeys;
-use crate::engine::traits::BaseKms;
-use crate::engine::validation::DSEP_USER_DECRYPTION;
-#[cfg(feature = "wasm_tests")]
-use crate::util::file_handling::write_element;
-use crate::util::key_setup::max_threshold;
+use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::{
-    compute_cipher_from_stored_key, purge, EncryptionConfig, TestingPlaintext,
+    compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
 };
-use crate::util::rate_limiter::RateLimiterConfig;
-use crate::vault::storage::crypto_material::get_core_signing_key;
-#[cfg(feature = "insecure")]
-use crate::vault::storage::delete_all_at_request_id;
-use crate::vault::storage::{file::FileStorage, StorageType};
-use crate::vault::storage::{make_storage, StorageReader};
-use crate::vault::Vault;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-use kms_grpc::kms::v1::CrsGenRequest;
-use kms_grpc::kms::v1::{
-    Empty, FheParameter, InitRequest, KeySetAddedInfo, KeySetConfig, KeySetType, TypedCiphertext,
-    TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse,
-};
-use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
-use kms_grpc::rpc_types::{fhe_types_to_num_blocks, PrivDataType};
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
+use kms_grpc::kms::v1::{Empty, TypedCiphertext};
 use kms_grpc::RequestId;
 use serial_test::serial;
-use std::collections::{hash_map::Entry, HashMap};
-use std::str::FromStr;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-use std::sync::Arc;
-use tfhe::core_crypto::prelude::{
-    decrypt_lwe_ciphertext, divide_round, ContiguousEntityContainer, LweCiphertextOwned,
-};
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-use tfhe::integer::compression_keys::DecompressionKey;
-use tfhe::prelude::ParameterSetConformant;
-use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
-use tfhe::shortint::client_key::atomic_pattern::AtomicPatternClientKey;
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
-use tfhe::shortint::list_compression::NoiseSquashingCompressionPrivateKey;
-use tfhe::shortint::server_key::ModulusSwitchConfiguration;
-use tfhe::zk::CompactPkeCrs;
-use tfhe::Tag;
-use tfhe::{FheTypes, ProvenCompactCiphertextList};
-use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
-use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-#[cfg(feature = "wasm_tests")]
-use threshold_fhe::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
-use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
-use threshold_fhe::networking::grpc::GrpcServer;
 use tokio::task::JoinSet;
-use tonic::server::NamedService;
-use tonic::transport::Channel;
-use tonic_health::pb::health_check_response::ServingStatus;
-use tonic_health::pb::HealthCheckRequest;
-
-// Time to sleep to ensure that previous servers and tests have shut down properly.
-const TIME_TO_SLEEP_MS: u64 = 500;
 
 #[tokio::test]
 #[serial]
@@ -206,8 +135,7 @@ pub(crate) async fn decryption_centralized(
 ) {
     assert!(parallelism > 0);
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (kms_server, kms_client, mut internal_client) =
-        crate::client::test_tools::centralized_handles(dkg_params, None).await;
+    let (kms_server, kms_client, mut internal_client) = centralized_handles(dkg_params, None).await;
     let mut cts = Vec::new();
     for (i, msg) in msgs.clone().into_iter().enumerate() {
         let (ct, ct_format, fhe_type) =
@@ -325,7 +253,7 @@ pub(crate) async fn decryption_centralized(
 
         // check that the plaintexts are correct
         for (i, plaintext) in received_plaintexts.iter().enumerate() {
-            crate::client::tests::common::assert_plaintext(&msgs[i], plaintext);
+            assert_plaintext(&msgs[i], plaintext);
         }
     }
 
