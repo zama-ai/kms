@@ -7,6 +7,17 @@ use crate::engine::threshold::traits::{
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
+use observability::{
+    metrics::METRICS,
+    metrics_names::{
+        map_tonic_code_to_metric_tag, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
+        OP_CUSTODIAN_CONTEXT_RESTORE, OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_KMS_CONTEXT,
+        OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
+        OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_KMS_CONTEXT,
+        OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
+        OP_USER_DECRYPT_RESULT,
+    },
+};
 use tonic::{Request, Response, Status};
 
 macro_rules! impl_endpoint {
@@ -43,7 +54,7 @@ macro_rules! impl_endpoint {
 
 impl_endpoint! {
     impl CoreServiceEndpoint {
-        /// Initializes the centralized KMS service.
+        /// Initializes the threshold KMS service.
         /// This involves executing the PRSS protocol to generate secret shared correlated randomness.
         ///
         /// * `_request` - Struct containing all the data of the request.
@@ -60,7 +71,13 @@ impl_endpoint! {
         /// * Post-condition:
         ///     * The `request_id` in `request` has been consumed and the PRSS has been executed successfully.
         async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
-            self.initiator.init(request).await
+            METRICS.increment_request_counter(OP_INIT);
+            self.initiator.init(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_INIT, tag);
+            })
+
         }
 
         /// Computes the preprocessed material needed for a single key generation.
@@ -88,7 +105,12 @@ impl_endpoint! {
             &self,
             request: Request<KeyGenPreprocRequest>,
         ) -> Result<Response<Empty>, Status> {
-            self.keygen_preprocessor.key_gen_preproc(request).await
+            METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
+            self.keygen_preprocessor.key_gen_preproc(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, tag);
+            })
         }
 
         /// Retrieves the result from a preprocessing request.
@@ -116,7 +138,13 @@ impl_endpoint! {
             &self,
             request: Request<RequestId>,
         ) -> Result<Response<KeyGenPreprocResult>, Status> {
-            self.keygen_preprocessor.get_result(request).await
+            METRICS.increment_request_counter(OP_KEYGEN_PREPROC_RESULT);
+            self.keygen_preprocessor.get_result(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_KEYGEN_PREPROC_RESULT, tag);
+            })
+
         }
 
         /// Computes key generation.
@@ -146,7 +174,13 @@ impl_endpoint! {
         ///     * `preproc_id` in `request` has been consumed and the preprocessing under this ID cannot be used anymore.
         #[tracing::instrument(skip(self, request))]
         async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
-            self.key_generator.key_gen(request).await
+            METRICS.increment_request_counter(OP_KEYGEN_REQUEST);
+            self.key_generator.key_gen(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_KEYGEN_REQUEST, tag);
+            })
+
         }
 
         /// Retrieves the result from a key generation.
@@ -177,7 +211,13 @@ impl_endpoint! {
             &self,
             request: Request<RequestId>,
         ) -> Result<Response<KeyGenResult>, Status> {
-            self.key_generator.get_result(request).await
+            METRICS.increment_request_counter(OP_KEYGEN_RESULT);
+            self.key_generator.get_result(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_KEYGEN_RESULT, tag);
+            })
+
         }
 
         /// Computes a user decryption. That is, it decrypts a ciphertext and encrypts the result under a user's public key.
@@ -207,7 +247,13 @@ impl_endpoint! {
             &self,
             request: Request<UserDecryptionRequest>,
         ) -> Result<Response<Empty>, Status> {
-            self.user_decryptor.user_decrypt(request).await
+            METRICS.increment_request_counter(OP_USER_DECRYPT_REQUEST);
+            self.user_decryptor.user_decrypt(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_USER_DECRYPT_REQUEST, tag);
+            })
+
         }
 
         /// Retrieves the result from a user decryption.
@@ -238,7 +284,14 @@ impl_endpoint! {
             &self,
             request: Request<RequestId>,
         ) -> Result<Response<UserDecryptionResponse>, Status> {
-            self.user_decryptor.get_result(request).await
+            METRICS.increment_request_counter(OP_USER_DECRYPT_RESULT);
+            self.user_decryptor.get_result(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_USER_DECRYPT_RESULT, tag);
+            })
+
+
         }
 
         /// Computes a public decryption. That is, it decrypts a ciphertext and returns the plaintext.
@@ -263,7 +316,13 @@ impl_endpoint! {
             &self,
             request: Request<PublicDecryptionRequest>,
         ) -> Result<Response<Empty>, Status> {
-            self.decryptor.public_decrypt(request).await
+            METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST);
+            self.decryptor.public_decrypt(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, tag);
+            })
+
         }
 
         /// Retrieves the result from a public decryption.
@@ -292,8 +351,13 @@ impl_endpoint! {
             &self,
             request: Request<RequestId>,
         ) -> Result<Response<PublicDecryptionResponse>, Status> {
-            self.decryptor.get_result(request).await
-        }
+            METRICS.increment_request_counter(OP_PUBLIC_DECRYPT_RESULT);
+            self.decryptor.get_result(request).await .inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_PUBLIC_DECRYPT_RESULT, tag);
+            })
+       }
 
 
         /// Computes a CRS generation. That is, it generates a common reference string (CRS) for the KMS.
@@ -318,7 +382,13 @@ impl_endpoint! {
         ///     * `request_id` in `request` has been consumed and the CRS generation has been started in the background using `request_id` as identifier.
         #[tracing::instrument(skip(self, request))]
         async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
-            self.crs_generator.crs_gen(request).await
+            METRICS.increment_request_counter(OP_CRS_GEN_REQUEST);
+            self.crs_generator.crs_gen(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_CRS_GEN_REQUEST, tag);
+            })
+
         }
 
         /// Retrieves the result from a CRS generation.
@@ -348,7 +418,14 @@ impl_endpoint! {
             &self,
             request: Request<RequestId>,
         ) -> Result<Response<CrsGenResult>, Status> {
-            self.crs_generator.get_result(request).await
+            METRICS.increment_request_counter(OP_CRS_GEN_RESULT);
+            self.crs_generator.get_result(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_CRS_GEN_RESULT, tag);
+            })
+
+
         }
 
         /// WARNING: This method is by definition expected to be insecure and should not be used in production.
@@ -381,7 +458,13 @@ impl_endpoint! {
         #[cfg(feature = "insecure")]
         #[tracing::instrument(skip(self, request))]
         async fn insecure_key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
-            self.insecure_key_generator.insecure_key_gen(request).await
+            METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST);
+            self.insecure_key_generator.insecure_key_gen(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST, tag);
+            })
+
         }
 
         /// WARNING: This method is insecure and should not be used in production.
@@ -415,7 +498,14 @@ impl_endpoint! {
             &self,
             request: Request<RequestId>,
         ) -> Result<Response<KeyGenResult>, Status> {
-            self.insecure_key_generator.get_result(request).await
+            METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_KEYGEN_RESULT);
+            self.insecure_key_generator.get_result(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(observability::metrics_names::OP_INSECURE_KEYGEN_RESULT, tag);
+            })
+
+
         }
 
         /// WARNING: This method is by definition expected to be insecure and should not be used in production.
@@ -443,7 +533,13 @@ impl_endpoint! {
         #[cfg(feature = "insecure")]
         #[tracing::instrument(skip(self, request))]
         async fn insecure_crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
-            self.insecure_crs_generator.insecure_crs_gen(request).await
+            METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_REQUEST);
+            self.insecure_crs_generator.insecure_crs_gen(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_REQUEST, tag);
+            })
+
         }
 
         /// WARNING: This method is by definition expected to be insecure and should not be used in production.
@@ -476,7 +572,14 @@ impl_endpoint! {
             &self,
             request: Request<RequestId>,
         ) -> Result<Response<CrsGenResult>, Status> {
-            self.insecure_crs_generator.get_result(request).await
+            METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_RESULT);
+            self.insecure_crs_generator.get_result(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_RESULT, tag);
+            })
+
+
         }
 
         /// WARNING: This method is not implemented yet and will always return an error.
@@ -495,7 +598,13 @@ impl_endpoint! {
             &self,
             request: Request<NewKmsContextRequest>,
         ) -> Result<Response<Empty>, Status> {
-            self.context_manager.new_kms_context(request).await
+            METRICS.increment_request_counter(OP_NEW_KMS_CONTEXT);
+            self.context_manager.new_kms_context(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_NEW_KMS_CONTEXT, tag);
+            })
+
         }
 
         /// WARNING: This method is not implemented yet and will always return an error.
@@ -514,7 +623,13 @@ impl_endpoint! {
             &self,
             request: Request<DestroyKmsContextRequest>,
         ) -> Result<Response<Empty>, Status> {
-            self.context_manager.destroy_kms_context(request).await
+            METRICS.increment_request_counter(OP_DESTROY_KMS_CONTEXT);
+            self.context_manager.destroy_kms_context(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_DESTROY_KMS_CONTEXT, tag);
+            })
+
         }
 
         /// WARNING: This method is not implemented yet and will always return an error.
@@ -533,7 +648,13 @@ impl_endpoint! {
             &self,
             request: Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
         ) -> Result<Response<Empty>, Status> {
-            self.context_manager.new_custodian_context(request).await
+            METRICS.increment_request_counter(OP_NEW_CUSTODIAN_CONTEXT);
+            self.context_manager.new_custodian_context(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_NEW_CUSTODIAN_CONTEXT, tag);
+            })
+
         }
 
         /// WARNING: This method is not implemented yet and will always return an error.
@@ -552,7 +673,13 @@ impl_endpoint! {
             &self,
             request: Request<kms_grpc::kms::v1::DestroyCustodianContextRequest>,
         ) -> Result<Response<Empty>, Status> {
-            self.context_manager.destroy_custodian_context(request).await
+            METRICS.increment_request_counter(OP_DESTROY_CUSTODIAN_CONTEXT);
+            self.context_manager.destroy_custodian_context(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_DESTROY_CUSTODIAN_CONTEXT, tag);
+            })
+
         }
 
         /// WARNING: This method is not fully implemented yet.
@@ -573,7 +700,13 @@ impl_endpoint! {
             &self,
             request: Request<kms_grpc::kms::v1::Empty>,
         ) -> Result<Response<kms_grpc::kms::v1::OperatorPublicKey>, Status> {
-            self.backup_operator.get_operator_public_key(request).await
+            METRICS.increment_request_counter(OP_FETCH_PK);
+            self.backup_operator.get_operator_public_key(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_FETCH_PK, tag);
+            })
+
         }
 
         /// WARNING: This method is not fully implemented yet.
@@ -590,7 +723,13 @@ impl_endpoint! {
             &self,
             request: Request<kms_grpc::kms::v1::Empty>,
         ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
-            self.backup_operator.custodian_backup_restore(request).await
+            METRICS.increment_request_counter(OP_CUSTODIAN_CONTEXT_RESTORE);
+            self.backup_operator.custodian_backup_restore(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_CUSTODIAN_CONTEXT_RESTORE, tag);
+            })
+
         }
     }
 }

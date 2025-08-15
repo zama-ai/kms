@@ -10,7 +10,10 @@ use kms_grpc::{
 };
 use observability::{
     metrics,
-    metrics_names::{ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN, OP_INSECURE_CRS_GEN, TAG_PARTY_ID},
+    metrics_names::{
+        ERR_CANCELLED, ERR_CRS_GEN_FAILED, ERR_INVALID_REQUEST, OP_CRS_GEN_REQUEST,
+        OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
+    },
 };
 use threshold_fhe::{
     algebra::base_ring::Z64,
@@ -28,7 +31,6 @@ use tracing::Instrument;
 
 // === Internal Crate ===
 use crate::{
-    anyhow_error_and_log,
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
         base::{compute_info, retrieve_parameters, BaseKmsStruct, DSEP_PUBDATA_CRS},
@@ -88,13 +90,7 @@ impl<
         request: Request<CrsGenRequest>,
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self.rate_limiter.start_crsgen().await.inspect_err(|_e| {
-            if let Err(e) =
-                metrics::METRICS.increment_error_counter(OP_CRS_GEN, ERR_RATE_LIMIT_EXCEEDED)
-            {
-                tracing::warn!("Failed to increment error counter: {:?}", e);
-            }
-        })?;
+        let permit = self.rate_limiter.start_crsgen().await?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -156,34 +152,24 @@ impl<
     ) -> anyhow::Result<()> {
         //Retrieve the correct tag
         let op_tag = if insecure {
-            OP_INSECURE_CRS_GEN
+            OP_INSECURE_CRS_GEN_REQUEST
         } else {
-            OP_CRS_GEN
+            OP_CRS_GEN_REQUEST
         };
-
-        let _request_counter = metrics::METRICS
-            .increment_request_counter(op_tag)
-            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
         // Prepare the timer before giving it to the tokio task
         // that runs the computation
         let timer = metrics::METRICS
             .time_operation(op_tag)
-            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-            .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
-                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            });
+            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string());
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
-            guarded_meta_store.insert(&req_id).map_err(|e| {
-                anyhow_error_and_log(format!(
-                    "failed to insert to meta store in inner_crs_gen with error: {e}"
-                ))
-            })?;
+            guarded_meta_store.insert(&req_id)?;
         }
 
-        let session_id = req_id.derive_session_id()?;
+        let session_id = req_id.derive_session_id().inspect_err(|_| {
+            metrics::METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
+        })?;
         // CRS ceremony requires a sync network
         let session = self
             .session_preparer
@@ -212,9 +198,13 @@ impl<
         self.tracker
             .spawn(async move {
                 //Start the metric timer, it will end on drop
-                let _timer = timer.map(|b| b.start());
+                let _timer = timer.start();
                 tokio::select! {
-                    () = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, permit, insecure) => {
+                   res  = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, permit, insecure) => {
+                        // Increment the error counter if ever the task fails
+                        if res.is_err() {
+                            metrics::METRICS.increment_error_counter(op_tag, ERR_CRS_GEN_FAILED);
+                        }
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&req_id);
                         tracing::info!("CRS generation of request {} exiting normally.", req_id);
@@ -224,6 +214,7 @@ impl<
                         // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let guarded_meta_store= meta_store_cancelled.write().await;
                         crypto_storage_cancelled.purge_crs_material(&req_id, guarded_meta_store).await;
+                        metrics::METRICS.increment_error_counter(op_tag, ERR_CANCELLED);
                         tracing::info!("Trying to clean up any already written material.")
                     },
                 }
@@ -262,7 +253,7 @@ impl<
         eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
         insecure: bool,
-    ) {
+    ) -> Result<(), ()> {
         tracing::info!(
             "Starting crs gen background process for req_id={req_id:?} with witness_dim={witness_dim} and max_num_bits={max_num_bits:?}"
         );
@@ -299,7 +290,7 @@ impl<
                         Err(e) => {
                             let mut guarded_meta_store = meta_store.write().await;
                             let _ = guarded_meta_store.update(req_id, Err(e.to_string()));
-                            return;
+                            return Err(());
                         }
                     };
                     transfer_crs(&base_session, Some(crs), input_party_id).await
@@ -327,11 +318,13 @@ impl<
                 let mut guarded_meta_store = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_store.update(req_id, Err(e.to_string()));
-                return;
+                return Err(());
             }
         };
 
         tracing::info!("CRS generation completed for req_id={req_id:?}, storing the CRS.");
+        //Note: We can't easily check here whether we succeeded writing to the meta store
+        //thus we can't increment the error counter if it fails
         crypto_storage
             .write_crs_with_meta_store(req_id, pp_id, meta_data, meta_store)
             .await;
@@ -342,6 +335,7 @@ impl<
             "CRS stored. CRS ceremony time was {:?} ms",
             (elapsed_time).as_millis()
         );
+        Ok(())
     }
 }
 
