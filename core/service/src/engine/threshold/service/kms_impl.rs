@@ -55,7 +55,9 @@ use crate::{
     consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
     cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
     engine::{
+        backup_operator::RealBackupOperator,
         base::{compute_info, BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY},
+        context_manager::RealContextManager,
         prepare_shutdown_signals,
         threshold::{
             service::public_decryptor::SecureNoiseFloodDecryptor,
@@ -79,7 +81,6 @@ use crate::{
 
 // === Current Module Imports ===
 use super::{
-    backup_operator::RealBackupOperator, context_manager::RealContextManager,
     crs_generator::RealCrsGenerator, initiator::RealInitiator, key_generator::RealKeyGenerator,
     preprocessor::RealPreprocessor, public_decryptor::RealPublicDecryptor,
     session::SessionPreparer, user_decryptor::RealUserDecryptor,
