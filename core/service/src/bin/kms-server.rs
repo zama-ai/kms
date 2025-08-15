@@ -425,6 +425,7 @@ async fn main() -> anyhow::Result<()> {
                 public_vault,
                 private_vault,
                 backup_vault,
+                security_module,
                 sk,
                 core_config.rate_limiter_conf,
             )

@@ -5,12 +5,12 @@ use crate::cryptography::backup_pke::{self, BackupCiphertext};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::ThresholdFheKeys;
+use crate::engine::traits::ContextManager;
+use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::{
-    engine::{
-        base::BaseKmsStruct, threshold::traits::ContextManager, validation::validate_request_id,
-    },
+    engine::{base::BaseKmsStruct, validation::validate_request_id},
     grpc::metastore_status_service::CustodianMetaStore,
-    vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
+    vault::storage::Storage,
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
@@ -33,7 +33,7 @@ pub struct RealContextManager<
     PrivS: Storage + Sync + Send + 'static,
 > {
     pub base_kms: BaseKmsStruct,
-    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    pub crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     pub custodian_meta_store: Arc<RwLock<CustodianMetaStore>>,
     pub my_role: Role,
     pub tracker: Arc<TaskTracker>,
@@ -138,7 +138,7 @@ where
             }
         };
         validate_request_id(&context_id)?;
-        let backup_vault = match self.crypto_storage.inner.backup_vault {
+        let backup_vault = match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
         };
@@ -179,7 +179,7 @@ where
         let (lock_acquired_time, total_lock_time) = {
             let lock_start = std::time::Instant::now();
             let lock_acquired_time = lock_start.elapsed();
-            let guarded_priv_storage = self.crypto_storage.inner.private_storage.lock().await;
+            let guarded_priv_storage = self.crypto_storage.private_storage.lock().await;
             let mut guarded_backup_vault = backup_vault.lock().await;
             for cur_type in PrivDataType::iter() {
                 // We need to match on each type to manually specify the data type and to ensure that we do not forget anything in case the enum is extended
@@ -262,7 +262,6 @@ where
 
         // Then store the results
         self.crypto_storage
-            .inner
             .write_backup_keys_with_meta_store(
                 &context_id,
                 backup_enc_key,

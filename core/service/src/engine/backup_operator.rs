@@ -4,16 +4,13 @@ use crate::{
         attestation::{SecurityModule, SecurityModuleProxy},
         internal_crypto_types::PrivateSigKey,
     },
-    engine::{
-        context::ContextInfo,
-        threshold::{service::ThresholdFheKeys, traits::BackupOperator},
-    },
+    engine::{context::ContextInfo, threshold::service::ThresholdFheKeys, traits::BackupOperator},
     util::key_setup::FhePrivateKey,
     vault::{
         keychain::KeychainProxy,
         storage::{
-            crypto_material::ThresholdCryptoMaterialStorage, store_versioned_at_request_id,
-            Storage, StorageReader,
+            crypto_material::CryptoMaterialStorage, store_versioned_at_request_id, Storage,
+            StorageReader,
         },
         Vault,
     },
@@ -32,7 +29,7 @@ pub struct RealBackupOperator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 > {
-    pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
+    pub crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     pub security_module: Option<SecurityModuleProxy>,
 }
 
@@ -46,7 +43,7 @@ where
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<OperatorPublicKey>, Status> {
-        match self.crypto_storage.inner.backup_vault {
+        match self.crypto_storage.backup_vault {
             Some(ref v) => {
                 let v = v.lock().await;
                 match v.keychain {
@@ -78,7 +75,7 @@ where
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Empty>, Status> {
-        match self.crypto_storage.inner.backup_vault {
+        match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let private_storage = self.crypto_storage.get_private_storage().clone();
                 let mut private_storage = private_storage.lock().await;
@@ -239,7 +236,7 @@ where
     PrivS: Storage + Sync + Send + 'static,
 {
     pub async fn update_backup_vault(&self) -> anyhow::Result<()> {
-        match self.crypto_storage.inner.backup_vault {
+        match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let private_storage = self.crypto_storage.get_private_storage().clone();
                 let private_storage = private_storage.lock().await;

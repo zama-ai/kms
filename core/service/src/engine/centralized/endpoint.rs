@@ -1,7 +1,5 @@
-use crate::engine::centralized::central_kms::RealCentralizedKms;
-use crate::engine::centralized::service::{
-    delete_kms_context_impl, new_custodian_context_impl, new_kms_context_impl,
-};
+use crate::engine::centralized::central_kms::CentralizedKms;
+use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::tonic_some_or_err;
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
@@ -18,8 +16,12 @@ use crate::engine::centralized::service::{
 };
 
 #[tonic::async_trait]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
-    CoreServiceEndpoint for RealCentralizedKms<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        CM: ContextManager + Sync + Send + 'static,
+        BO: BackupOperator + Sync + Send + 'static,
+    > CoreServiceEndpoint for CentralizedKms<PubS, PrivS, CM, BO>
 {
     /// Initializes the centralized KMS service.
     ///
@@ -468,7 +470,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<kms_grpc::kms::v1::NewKmsContextRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
-        new_kms_context_impl(&self.crypto_storage, request).await
+        self.context_manager.new_kms_context(request).await
     }
 
     /// WARNING: This method is not implemented yet and will always return an error.
@@ -487,7 +489,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
     ) -> Result<Response<Empty>, Status> {
-        delete_kms_context_impl(&self.crypto_storage, request).await
+        self.context_manager.destroy_kms_context(request).await
     }
 
     /// WARNING: This method is not implemented yet and will always return an error.
@@ -501,12 +503,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     /// # Conditions
     /// * Pre-condition:  -
     /// * Post-condition: -
-    #[tracing::instrument(skip(self, _request))]
+    #[tracing::instrument(skip(self, request))]
     async fn new_custodian_context(
         &self,
-        _request: Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
+        request: Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
     ) -> Result<Response<Empty>, Status> {
-        new_custodian_context_impl(&self, _request).await
+        self.context_manager.new_custodian_context(request).await
     }
 
     /// WARNING: This method is not implemented yet and will always return an error.

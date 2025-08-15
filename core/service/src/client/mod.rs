@@ -6,6 +6,7 @@ use crate::cryptography::internal_crypto_types::{Signature, UnifiedPublicEncKey}
 use crate::cryptography::signcryption::{
     decrypt_signcryption_with_link, insecure_decrypt_ignoring_signature, internal_verify_sig,
 };
+use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::validation::{
     check_ext_user_decryption_signature, validate_user_decrypt_responses_against_request,
     DSEP_USER_DECRYPTION,
@@ -1940,7 +1941,6 @@ async fn get_status(
 pub mod test_tools {
     use super::*;
     use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
-    use crate::engine::centralized::central_kms::RealCentralizedKms;
     use crate::engine::threshold::service::new_real_threshold_kms;
     use crate::engine::{run_server, Shutdown};
     use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
@@ -2346,7 +2346,7 @@ pub mod test_tools {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let sk = get_core_signing_key(&priv_storage).await.unwrap();
         let (kms, health_service) =
-            RealCentralizedKms::new(pub_storage, priv_storage, None, sk, rate_limiter_conf)
+            RealCentralizedKms::new(pub_storage, priv_storage, None, None, sk, rate_limiter_conf)
                 .await
                 .expect("Could not create KMS");
         let arc_kms = Arc::new(kms);

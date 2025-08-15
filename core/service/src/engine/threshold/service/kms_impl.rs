@@ -564,14 +564,14 @@ where
 
     let context_manager = RealContextManager {
         base_kms: base_kms.new_instance().await,
-        crypto_storage: crypto_storage.clone(),
+        crypto_storage: crypto_storage.inner.clone(),
         custodian_meta_store,
         my_role: Role::indexed_from_one(config.my_id),
         tracker: Arc::clone(&tracker),
     };
 
     let backup_operator = RealBackupOperator {
-        crypto_storage: crypto_storage.clone(),
+        crypto_storage: crypto_storage.inner.clone(),
         security_module,
     };
     // Update backup vault if it exists

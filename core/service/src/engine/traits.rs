@@ -1,10 +1,19 @@
 use kms_grpc::kms::v1::CiphertextFormat;
+use kms_grpc::kms::v1::DestroyCustodianContextRequest;
+use kms_grpc::kms::v1::DestroyKmsContextRequest;
+use kms_grpc::kms::v1::Empty;
+use kms_grpc::kms::v1::NewCustodianContextRequest;
+use kms_grpc::kms::v1::NewKmsContextRequest;
+use kms_grpc::kms::v1::OperatorPublicKey;
 use kms_grpc::kms::v1::TypedPlaintext;
 use rand::CryptoRng;
 use rand::RngCore;
 use serde::Serialize;
 use tfhe::FheTypes;
 use threshold_fhe::hashing::DomainSep;
+use tonic::Request;
+use tonic::Response;
+use tonic::Status;
 
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::cryptography::internal_crypto_types::PublicSigKey;
@@ -51,4 +60,40 @@ pub trait Kms: BaseKms {
         enc_key: &UnifiedPublicEncKey,
         client_address: &alloy_primitives::Address,
     ) -> anyhow::Result<Vec<u8>>;
+}
+
+#[tonic::async_trait]
+pub trait ContextManager {
+    async fn new_kms_context(
+        &self,
+        request: Request<NewKmsContextRequest>,
+    ) -> Result<Response<Empty>, Status>;
+
+    async fn destroy_kms_context(
+        &self,
+        request: Request<DestroyKmsContextRequest>,
+    ) -> Result<Response<Empty>, Status>;
+
+    async fn new_custodian_context(
+        &self,
+        request: Request<NewCustodianContextRequest>,
+    ) -> Result<Response<Empty>, Status>;
+
+    async fn destroy_custodian_context(
+        &self,
+        request: Request<DestroyCustodianContextRequest>,
+    ) -> Result<Response<Empty>, Status>;
+}
+
+#[tonic::async_trait]
+pub trait BackupOperator {
+    async fn get_operator_public_key(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<OperatorPublicKey>, Status>;
+
+    async fn custodian_backup_restore(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<Empty>, Status>;
 }
