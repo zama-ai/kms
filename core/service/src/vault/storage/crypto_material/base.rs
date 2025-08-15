@@ -4,11 +4,16 @@
 //! both centralized and threshold KMS variants.
 use crate::{
     anyhow_error_and_warn_log,
-    cryptography::internal_crypto_types::PrivateSigKey,
+    backup::{
+        custodian::InternalCustodianContext,
+        operator::{BackupCommitments, RecoveryRequest},
+    },
+    cryptography::{backup_pke::BackupPublicKey, internal_crypto_types::PrivateSigKey},
     engine::{context::ContextInfo, threshold::service::ThresholdFheKeys},
     grpc::metastore_status_service::CustodianMetaStore,
     util::meta_store::MetaStore,
     vault::{
+        keychain::KeychainProxy,
         storage::{
             delete_all_at_request_id, delete_at_request_id, delete_pk_at_request_id,
             read_all_data_versioned, store_context_at_request_id, store_pk_at_request_id,
@@ -580,6 +585,159 @@ where
         }
     }
 
+    /// Write the backup keys to the storage and update the meta store.
+    /// This methods writes all the material associated with backups to storage,
+    /// and updates the meta store accordingly.
+    ///
+    /// This means that the public encryption key for backup is written to the public storage.
+    /// The same goes for the commitments to the custodian shares and the recovery request.
+    /// Finally the custodian context, with the information about the custodian nodes, is also written to public storage.
+    /// The private key for decrypting backups is written to the private storage.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn write_backup_keys_with_meta_store(
+        &self,
+        req_id: &RequestId,
+        pub_key: BackupPublicKey,
+        recovery_request: RecoveryRequest,
+        custodian_context: InternalCustodianContext,
+        commitments: BackupCommitments,
+        meta_store: Arc<RwLock<CustodianMetaStore>>,
+    ) {
+        // use guarded_meta_store as the synchronization point
+        // all other locks are taken as needed so that we don't lock up
+        // other function calls too much
+        let mut guarded_meta_store = meta_store.write().await;
+        // Lock the storage needed in correct order to avoid deadlocks.
+        let mut private_storage_guard = self.private_storage.lock().await;
+        let mut public_storage_guard = self.public_storage.lock().await;
+
+        let priv_storage_future = async {
+            let custodian_context_store_res = store_versioned_at_request_id(
+                &mut (*private_storage_guard),
+                req_id,
+                &custodian_context,
+                &PrivDataType::CustodianInfo.to_string(),
+            )
+            .await;
+            if let Err(e) = &custodian_context_store_res {
+                tracing::error!(
+                    "Failed to store custodian context to private storage for request {}: {}",
+                    req_id,
+                    e
+                );
+            } else {
+                log_storage_success(
+                    req_id,
+                    private_storage_guard.info(),
+                    &PrivDataType::CustodianInfo.to_string(),
+                    false,
+                    true,
+                );
+            }
+            custodian_context_store_res.is_ok()
+        };
+        let pub_storage_future = async {
+            let recovery_store_result = store_versioned_at_request_id(
+                &mut (*public_storage_guard),
+                req_id,
+                &recovery_request,
+                &PubDataType::RecoveryRequest.to_string(),
+            )
+            .await;
+            if let Err(e) = &recovery_store_result {
+                tracing::error!(
+                    "Failed to store recovery request to the public storage for request {}: {}",
+                    req_id,
+                    e
+                );
+            } else {
+                log_storage_success(
+                    req_id,
+                    public_storage_guard.info(),
+                    &PubDataType::RecoveryRequest.to_string(),
+                    true,
+                    true,
+                );
+            }
+            let commit_store_result = store_versioned_at_request_id(
+                &mut (*public_storage_guard),
+                req_id,
+                &commitments,
+                &PubDataType::Commitments.to_string(),
+            )
+            .await;
+            if let Err(e) = &recovery_store_result {
+                tracing::error!(
+                    "Failed to store commitments to the public storage for request {}: {}",
+                    req_id,
+                    e
+                );
+            } else {
+                log_storage_success(
+                    req_id,
+                    public_storage_guard.info(),
+                    &PubDataType::Commitments.to_string(),
+                    true,
+                    true,
+                );
+            }
+            recovery_store_result.is_ok() && commit_store_result.is_ok()
+        };
+        let (priv_res, pub_res) = tokio::join!(priv_storage_future, pub_storage_future);
+        {
+            // Update meta store
+            // First we insert the request ID
+            // Whether things fail or not we can't do much
+            match guarded_meta_store.insert(req_id) {
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::error!("Failed to insert request ID {req_id} into meta store: {e}",);
+                    self.purge_backup_material(req_id, guarded_meta_store).await;
+                    return;
+                }
+            };
+            // If everything is ok, we update the meta store with a success
+            if priv_res && pub_res {
+                if let Err(e) = guarded_meta_store.update(req_id, Ok(custodian_context)) {
+                    tracing::error!("Failed to update meta store for request {req_id}: {e}");
+                    self.purge_backup_material(req_id, guarded_meta_store).await;
+                }
+            } else {
+                self.purge_backup_material(req_id, guarded_meta_store).await;
+                tracing::error!(
+                    "Failed to store backup keys for request {}: priv_res: {}, pub_res: {}",
+                    req_id,
+                    priv_res,
+                    pub_res,
+                );
+            }
+        }
+        // Finally update the current backup key in the storage
+        {
+            match self.backup_vault {
+                Some(ref vault) => {
+                    let mut guarded_backup_vault = vault.lock().await;
+                    match &mut guarded_backup_vault.keychain {
+                        Some(keychain) => {
+                            if let KeychainProxy::SecretSharing(sharing_chain) = keychain {
+                                // Store the public key in the secret sharing keychain
+                                sharing_chain.set_backup_enc_key(pub_key);
+                            }
+                        },
+                        None => {
+                            tracing::info!(
+                                "No keychain in backup vault, skipping setting backup encryption key for request {req_id}"
+                            );
+                        },
+                    }
+                },
+                None => tracing::warn!(
+                    "No backup vault configured, skipping setting backup encryption key for request {req_id}"
+                ),
+            }
+        }
+    }
+
     /// Tries to delete all the data related to a custodian context (used for backup) for a specific context id [RequestId].
     /// WARNING: This also deletes ALL backups of a given context. Hence the method should only be used to clean up.
     pub async fn purge_backup_material(
@@ -681,6 +839,7 @@ where
         }
     }
 
+    /// Note that we're not storing a shortint decompression key
     pub async fn write_decompression_key_with_meta_store(
         &self,
         req_id: &RequestId,
