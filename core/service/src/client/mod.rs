@@ -4,8 +4,6 @@ use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
-#[cfg(feature = "non-wasm")]
-use futures_util::future::{try_join_all, TryFutureExt};
 use itertools::Itertools;
 use kms_grpc::kms::v1::UserDecryptionRequest;
 use kms_grpc::rpc_types::UserDecryptionLinker;
@@ -32,6 +30,7 @@ cfg_if::cfg_if! {
         use tonic_health::pb::health_client::HealthClient;
         use tonic_health::pb::HealthCheckRequest;
         use tonic_health::ServingStatus;
+        use futures_util::future::{try_join_all, TryFutureExt};
     }
 }
 
