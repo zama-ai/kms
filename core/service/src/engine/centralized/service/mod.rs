@@ -7,13 +7,15 @@
 // - key_gen.rs: Key generation implementation
 
 // Module components
-mod operator_context;
 mod crs_gen;
+mod custodian_context;
 mod decryption;
 mod key_gen;
+mod operator_context;
 
 // Re-export all the service components
-pub use operator_context::*;
 pub use crs_gen::*;
+pub use custodian_context::*;
 pub use decryption::*;
 pub use key_gen::*;
+pub use operator_context::*;

@@ -1,5 +1,7 @@
 use crate::engine::centralized::central_kms::RealCentralizedKms;
-use crate::engine::centralized::service::{delete_kms_context_impl, new_kms_context_impl};
+use crate::engine::centralized::service::{
+    delete_kms_context_impl, new_custodian_context_impl, new_kms_context_impl,
+};
 use crate::tonic_some_or_err;
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
@@ -504,9 +506,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         _request: Request<kms_grpc::kms::v1::NewCustodianContextRequest>,
     ) -> Result<Response<Empty>, Status> {
-        Err(Status::unimplemented(
-            "new_custodian_context is not implemented",
-        ))
+        new_custodian_context_impl(&self, _request).await
     }
 
     /// WARNING: This method is not implemented yet and will always return an error.
