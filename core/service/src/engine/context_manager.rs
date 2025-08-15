@@ -7,6 +7,7 @@ use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
+use crate::vault::Vault;
 use crate::{
     engine::{base::BaseKmsStruct, validation::validate_request_id},
     grpc::metastore_status_service::CustodianMetaStore,
@@ -90,37 +91,54 @@ where
     }
 }
 
-macro_rules! backup_priv_data {
-    ($rng:expr, $guarded_priv_storage:expr, $guarded_backup_vault:expr, $cur_type:expr, $data_type:ty, $pub_enc_key:expr) => {
-        let data_ids = $guarded_priv_storage
-            .all_data_ids(&$cur_type.to_string())
+async fn backup_priv_data<
+    S1: Storage + Sync + Send + 'static,
+    T: serde::de::DeserializeOwned
+        + tfhe::Unversionize
+        + tfhe::named::Named
+        + Send
+        + serde::ser::Serialize
+        + tfhe::Versionize
+        + Sync
+        + 'static,
+>(
+    rng: &mut AesRng,
+    priv_storage: &S1,
+    backup_vault: &mut Vault,
+    data_type_enum: PrivDataType,
+    pub_enc_key: &backup_pke::BackupPublicKey,
+) -> anyhow::Result<()>
+where
+    for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
+{
+    let data_ids = priv_storage
+        .all_data_ids(&data_type_enum.to_string())
+        .await?;
+    for data_id in data_ids.iter() {
+        let data: T = priv_storage
+            .read_data(&data_id, &data_type_enum.to_string())
             .await?;
-        for data_id in data_ids {
-            let data: $data_type = $guarded_priv_storage
-                .read_data(&data_id, &$cur_type.to_string())
-                .await?;
-            let mut serialized_data = Vec::new();
-            safe_serialize(&data, &mut serialized_data, SAFE_SER_SIZE_LIMIT)?;
-            let encrypted_data = $pub_enc_key.encrypt($rng, &serialized_data)?;
-            let enc_ct = BackupCiphertext {
-                ciphertext: encrypted_data,
-                priv_data_type: $cur_type,
-            };
-
-            // Delete the old backup data
-            // Observe that no backups from previous contexts are deleted, only current context.
-            $guarded_backup_vault
-                .delete_data(&data_id, &$cur_type.to_string())
-                .await?;
-            $guarded_backup_vault
-                .store_data(
-                    &enc_ct,
-                    &data_id,
-                    &BackupDataType::PrivData($cur_type).to_string(),
-                )
-                .await?;
-        }
-    };
+        let mut serialized_data = Vec::new();
+        safe_serialize(&data, &mut serialized_data, SAFE_SER_SIZE_LIMIT)?;
+        let encrypted_data = pub_enc_key.encrypt(rng, &serialized_data)?;
+        let enc_ct = BackupCiphertext {
+            ciphertext: encrypted_data,
+            priv_data_type: data_type_enum,
+        };
+        // Delete the old backup data
+        // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
+        backup_vault
+            .delete_data(&data_id, &data_type_enum.to_string())
+            .await?;
+        backup_vault
+            .store_data(
+                &enc_ct,
+                &data_id,
+                &BackupDataType::PrivData(data_type_enum).to_string(),
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 impl<PubS, PrivS> RealContextManager<PubS, PrivS>
@@ -185,68 +203,68 @@ where
                 // We need to match on each type to manually specify the data type and to ensure that we do not forget anything in case the enum is extended
                 match cur_type {
                     PrivDataType::SigningKey => {
-                        backup_priv_data!(
+                        backup_priv_data::<PrivS, PrivateSigKey>(
                             &mut rng,
-                            guarded_priv_storage,
-                            guarded_backup_vault,
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
                             cur_type,
-                            PrivateSigKey,
-                            backup_enc_key
-                        );
+                            &backup_enc_key,
+                        )
+                        .await?;
                     }
                     PrivDataType::FheKeyInfo => {
-                        backup_priv_data!(
+                        backup_priv_data::<PrivS, ThresholdFheKeys>(
                             &mut rng,
-                            guarded_priv_storage,
-                            guarded_backup_vault,
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
                             cur_type,
-                            ThresholdFheKeys,
-                            backup_enc_key
-                        );
+                            &backup_enc_key,
+                        )
+                        .await?;
                     }
                     PrivDataType::CrsInfo => {
-                        backup_priv_data!(
+                        backup_priv_data::<PrivS, SignedPubDataHandleInternal>(
                             &mut rng,
-                            guarded_priv_storage,
-                            guarded_backup_vault,
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
                             cur_type,
-                            SignedPubDataHandleInternal,
-                            backup_enc_key
-                        );
+                            &backup_enc_key,
+                        )
+                        .await?;
                     }
                     PrivDataType::FhePrivateKey => {
-                        backup_priv_data!(
+                        backup_priv_data::<PrivS, ClientKey>(
                             &mut rng,
-                            guarded_priv_storage,
-                            guarded_backup_vault,
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
                             cur_type,
-                            ClientKey,
-                            backup_enc_key
-                        );
+                            &backup_enc_key,
+                        )
+                        .await?;
                     }
                     PrivDataType::PrssSetup => {
                         // We will not back up PRSS setup data
                         continue;
                     }
                     PrivDataType::CustodianInfo => {
-                        backup_priv_data!(
+                        backup_priv_data::<PrivS, InternalCustodianContext>(
                             &mut rng,
-                            guarded_priv_storage,
-                            guarded_backup_vault,
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
                             cur_type,
-                            InternalCustodianContext,
-                            backup_enc_key
-                        );
+                            &backup_enc_key,
+                        )
+                        .await?;
                     }
                     PrivDataType::ContextInfo => {
-                        backup_priv_data!(
+                        backup_priv_data::<PrivS, ContextInfo>(
                             &mut rng,
-                            guarded_priv_storage,
-                            guarded_backup_vault,
+                            &guarded_priv_storage,
+                            &mut guarded_backup_vault,
                             cur_type,
-                            ContextInfo,
-                            backup_enc_key
-                        );
+                            &backup_enc_key,
+                        )
+                        .await?;
                     }
                 }
             }
