@@ -96,33 +96,50 @@ where
         }
     }
 }
-macro_rules! restore_data_type {
-    ($priv_storage:expr, $backup_vault:expr, $data_type_enum:expr, $data_type:ty) => {{
-        let backup_data_type = BackupDataType::PrivData($data_type_enum).to_string();
-        let req_ids = $backup_vault
-            .all_data_ids(&backup_data_type)
-            .await?;
-        for request_id in req_ids.iter() {
-            if $priv_storage
-                .data_exists(request_id, &$data_type_enum.to_string())
-                .await?
-            {
-                tracing::warn!(
-                    "Data for {:?} with request ID {request_id} already exists. I am NOT overwriting it!", $data_type_enum);
-                    continue;
-            }
-            let cur_data: $data_type = $backup_vault
-                .read_data(request_id, &backup_data_type)
-                .await?;
-            store_versioned_at_request_id(
-                &mut **$priv_storage,
-                request_id,
-                &cur_data,
-                &$data_type_enum.to_string(),
-            )
-            .await?;
+
+async fn restore_data_type<
+    S1: Storage + Sync + Send + 'static,
+    T: serde::de::DeserializeOwned
+        + tfhe::Unversionize
+        + tfhe::named::Named
+        + Send
+        + serde::ser::Serialize
+        + tfhe::Versionize
+        + Sync
+        + 'static,
+>(
+    priv_storage: &mut S1,
+    backup_vault: &Vault,
+    data_type_enum: PrivDataType,
+) -> anyhow::Result<()>
+where
+    for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
+{
+    let backup_data_type = BackupDataType::PrivData(data_type_enum).to_string();
+    let req_ids = backup_vault.all_data_ids(&backup_data_type).await?;
+    for request_id in req_ids.iter() {
+        if priv_storage
+            .data_exists(request_id, &data_type_enum.to_string())
+            .await?
+        {
+            tracing::warn!(
+                "Data for {:?} with request ID {request_id} already exists. I am NOT overwriting it!",
+                data_type_enum
+            );
+            continue;
         }
-    }};
+        let cur_data: T = backup_vault
+            .read_data(request_id, &backup_data_type)
+            .await?;
+        store_versioned_at_request_id(
+            priv_storage,
+            request_id,
+            &cur_data,
+            &data_type_enum.to_string(),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 async fn restore_data<PrivS>(
@@ -135,65 +152,85 @@ where
     for cur_type in PrivDataType::iter() {
         match cur_type {
             PrivDataType::FheKeyInfo => {
-                restore_data_type!(priv_storage, backup_vault, cur_type, ThresholdFheKeys);
+                restore_data_type::<PrivS, ThresholdFheKeys>(priv_storage, backup_vault, cur_type)
+                    .await?;
             }
             PrivDataType::SigningKey => {
-                restore_data_type!(priv_storage, backup_vault, cur_type, PrivateSigKey);
+                restore_data_type::<PrivS, PrivateSigKey>(priv_storage, backup_vault, cur_type)
+                    .await?;
             }
             PrivDataType::CrsInfo => {
-                restore_data_type!(
+                restore_data_type::<PrivS, SignedPubDataHandleInternal>(
                     priv_storage,
                     backup_vault,
                     cur_type,
-                    SignedPubDataHandleInternal
-                );
+                )
+                .await?;
             }
             PrivDataType::FhePrivateKey => {
-                restore_data_type!(priv_storage, backup_vault, cur_type, FhePrivateKey);
+                restore_data_type::<PrivS, FhePrivateKey>(priv_storage, backup_vault, cur_type)
+                    .await?;
             }
             PrivDataType::PrssSetup => {
                 tracing::info!("PRSS setup data is not backed up currently. Skipping for now.");
             }
             PrivDataType::CustodianInfo => {
-                restore_data_type!(
+                restore_data_type::<PrivS, InternalCustodianContext>(
                     priv_storage,
                     backup_vault,
                     cur_type,
-                    InternalCustodianContext
-                );
+                )
+                .await?;
             }
             PrivDataType::ContextInfo => {
-                restore_data_type!(priv_storage, backup_vault, cur_type, ContextInfo);
+                restore_data_type::<PrivS, ContextInfo>(priv_storage, backup_vault, cur_type)
+                    .await?;
             }
         }
     }
     Ok(())
 }
 
-macro_rules! update_specific_backup_vault {
-    ($priv_storage:expr, $backup_vault:expr, $data_type_enum:expr, $serialized_data_type:ty) => {{
-        let req_ids = $priv_storage
-            .all_data_ids(&$data_type_enum.to_string())
-            .await?;
-        let backup_data_type = BackupDataType::PrivData($data_type_enum).to_string();
-        for request_id in req_ids.iter() {
-            if !$backup_vault
-                .data_exists(request_id, &backup_data_type.to_string())
-                .await?
-            {
-                let cur_data: $serialized_data_type = $priv_storage
-                    .read_data(request_id, &$data_type_enum.to_string())
-                    .await?;
-                store_versioned_at_request_id(
-                    &mut *$backup_vault,
-                    request_id,
-                    &cur_data,
-                    &backup_data_type.to_string(),
-                )
+async fn update_specific_backup_vault<
+    S1: Storage + Sync + Send + 'static,
+    T: serde::de::DeserializeOwned
+        + tfhe::Unversionize
+        + tfhe::named::Named
+        + Send
+        + serde::ser::Serialize
+        + tfhe::Versionize
+        + Sync
+        + 'static,
+>(
+    priv_storage: &S1,
+    backup_vault: &mut Vault,
+    data_type_enum: PrivDataType,
+) -> anyhow::Result<()>
+where
+    for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
+{
+    let req_ids = priv_storage
+        .all_data_ids(&data_type_enum.to_string())
+        .await?;
+    let backup_data_type = BackupDataType::PrivData(data_type_enum).to_string();
+    for request_id in req_ids.iter() {
+        if !backup_vault
+            .data_exists(request_id, &backup_data_type.to_string())
+            .await?
+        {
+            let cur_data: T = priv_storage
+                .read_data(request_id, &data_type_enum.to_string())
                 .await?;
-            }
+            store_versioned_at_request_id(
+                backup_vault,
+                request_id,
+                &cur_data,
+                &backup_data_type.to_string(),
+            )
+            .await?;
         }
-    }};
+    }
+    Ok(())
 }
 
 impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
@@ -211,36 +248,36 @@ where
                 for cur_type in PrivDataType::iter() {
                     match cur_type {
                         PrivDataType::SigningKey => {
-                            update_specific_backup_vault!(
-                                *private_storage,
-                                backup_vault,
+                            update_specific_backup_vault::<PrivS, PrivateSigKey>(
+                                &private_storage,
+                                &mut backup_vault,
                                 cur_type,
-                                PrivateSigKey
-                            );
+                            )
+                            .await?;
                         }
                         PrivDataType::FheKeyInfo => {
-                            update_specific_backup_vault!(
-                                *private_storage,
-                                backup_vault,
+                            update_specific_backup_vault::<PrivS, ThresholdFheKeys>(
+                                &private_storage,
+                                &mut backup_vault,
                                 cur_type,
-                                ThresholdFheKeys
-                            );
+                            )
+                            .await?;
                         }
                         PrivDataType::CrsInfo => {
-                            update_specific_backup_vault!(
-                                *private_storage,
-                                backup_vault,
+                            update_specific_backup_vault::<PrivS, SignedPubDataHandleInternal>(
+                                &private_storage,
+                                &mut backup_vault,
                                 cur_type,
-                                SignedPubDataHandleInternal
-                            );
+                            )
+                            .await?;
                         }
                         PrivDataType::FhePrivateKey => {
-                            update_specific_backup_vault!(
-                                *private_storage,
-                                backup_vault,
+                            update_specific_backup_vault::<PrivS, FhePrivateKey>(
+                                &private_storage,
+                                &mut backup_vault,
                                 cur_type,
-                                FhePrivateKey
-                            );
+                            )
+                            .await?;
                         }
                         PrivDataType::PrssSetup => {
                             tracing::info!(
@@ -248,20 +285,20 @@ where
                             );
                         }
                         PrivDataType::CustodianInfo => {
-                            update_specific_backup_vault!(
-                                *private_storage,
-                                backup_vault,
+                            update_specific_backup_vault::<PrivS, InternalCustodianContext>(
+                                &private_storage,
+                                &mut backup_vault,
                                 cur_type,
-                                InternalCustodianContext
-                            );
+                            )
+                            .await?;
                         }
                         PrivDataType::ContextInfo => {
-                            update_specific_backup_vault!(
-                                *private_storage,
-                                backup_vault,
+                            update_specific_backup_vault::<PrivS, ContextInfo>(
+                                &private_storage,
+                                &mut backup_vault,
                                 cur_type,
-                                ContextInfo
-                            );
+                            )
+                            .await?;
                         }
                     }
                 }
