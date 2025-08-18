@@ -1,10 +1,8 @@
-use crate::anyhow_error_and_log;
 use crate::cryptography::internal_crypto_types::Signature;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
-use itertools::Itertools;
 use kms_grpc::kms::v1::UserDecryptionRequest;
 use kms_grpc::rpc_types::UserDecryptionLinker;
 use rand::SeedableRng;
@@ -15,6 +13,8 @@ use wasm_bindgen::prelude::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
+        use crate::anyhow_error_and_log;
+        use itertools::Itertools;
         use crate::consts::{DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES};
         use crate::engine::base::BaseKmsStruct;
         use crate::engine::traits::BaseKms;

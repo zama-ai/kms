@@ -1,9 +1,9 @@
 use super::*;
-use crate::{anyhow_error_and_log, some_or_err};
-use alloy_sol_types::Eip712Domain;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
+        use crate::{anyhow_error_and_log, some_or_err};
+        use alloy_sol_types::Eip712Domain;
         use crate::engine::base::compute_handle;
         use crate::engine::base::DSEP_PUBDATA_CRS;
         use crate::vault::storage::StorageReader;

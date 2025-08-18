@@ -1,12 +1,12 @@
 use super::*;
-use crate::cryptography::internal_crypto_types::PublicSigKey;
-use crate::cryptography::internal_crypto_types::Signature;
-use crate::{anyhow_error_and_log, some_or_err};
-use alloy_sol_types::Eip712Domain;
-use kms_grpc::kms::v1::TypedPlaintext;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
+        use crate::cryptography::internal_crypto_types::PublicSigKey;
+        use crate::cryptography::internal_crypto_types::Signature;
+        use crate::{anyhow_error_and_log, some_or_err};
+        use alloy_sol_types::Eip712Domain;
+        use kms_grpc::kms::v1::TypedPlaintext;
         use crate::engine::base::BaseKmsStruct;
         use crate::engine::traits::BaseKms;
         use crate::engine::validation::validate_public_decrypt_responses_against_request;
