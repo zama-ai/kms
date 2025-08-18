@@ -205,12 +205,12 @@ impl InternalKeySetConfig {
                     (Some(from), Some(to)) => (
                         parse_proto_request_id(
                             &from,
-                            RequestIdParsingErr::General("invalid from ID".to_string()),
+                            RequestIdParsingErr::Other("invalid from ID".to_string()),
                         )
                         .map_err(|e| anyhow::anyhow!("Failed to parse from ID: {}", e))?,
                         parse_proto_request_id(
                             &to,
-                            RequestIdParsingErr::General("invalid to ID".to_string()),
+                            RequestIdParsingErr::Other("invalid to ID".to_string()),
                         )
                         .map_err(|e| anyhow::anyhow!("Failed to parse to ID: {}", e))?,
                     ),
@@ -230,7 +230,7 @@ impl InternalKeySetConfig {
                 match added_info.base_keyset_id_for_sns_compression_key.to_owned() {
                     Some(inner) => parse_proto_request_id(
                         &inner,
-                        RequestIdParsingErr::General(
+                        RequestIdParsingErr::Other(
                             "invalid base key ID for sns compression key".to_string(),
                         ),
                     )
@@ -261,7 +261,7 @@ impl InternalKeySetConfig {
         {
             let key_id = parse_proto_request_id(
                 &inner,
-                RequestIdParsingErr::General("invalid compression keyset ID".to_string()),
+                RequestIdParsingErr::Other("invalid compression keyset ID".to_string()),
             )?;
             Ok(Some(key_id))
         } else {

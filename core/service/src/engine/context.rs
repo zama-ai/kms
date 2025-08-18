@@ -312,7 +312,7 @@ impl TryFrom<kms_grpc::kms::v1::KmsContext> for ContextInfo {
         let previous_context_id = match value.previous_context_id {
             Some(id) => Some(parse_proto_request_id(
                 &id,
-                RequestIdParsingErr::General("invalid previous context ID".to_string()),
+                RequestIdParsingErr::Other("invalid previous context ID".to_string()),
             )?),
             None => None,
         };

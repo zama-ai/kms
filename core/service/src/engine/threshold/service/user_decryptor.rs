@@ -628,7 +628,9 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use aes_prng::AesRng;
     use kms_grpc::{kms::v1::CiphertextFormat, rpc_types::alloy_to_protobuf_domain};
+    use rand::SeedableRng;
     use tfhe::FheTypes;
     use threshold_fhe::execution::{
         runtime::session::ParameterHandles, tfhe_internals::utils::expanded_encrypt,
@@ -684,9 +686,8 @@ mod tests {
         }
     }
 
-    fn make_dummy_enc_pk() -> Vec<u8> {
-        let (enc_pk, _enc_sk) =
-            ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rand::rngs::OsRng);
+    fn make_dummy_enc_pk(rng: &mut AesRng) -> Vec<u8> {
+        let (enc_pk, _enc_sk) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(rng);
         let mut enc_key_buf = Vec::new();
         // The key is freshly generated, so we can safely unwrap the serialization
         tfhe::safe_serialization::safe_serialize(
@@ -705,7 +706,7 @@ mod tests {
         Vec<u8>,
         RealUserDecryptor<ram::RamStorage, ram::RamStorage, DummyNoiseFloodPartialDecryptor>,
     ) {
-        let mut rng = rand::rngs::OsRng;
+        let mut rng = AesRng::seed_from_u64(123);
         let (_pk, sk) = gen_sig_keys(&mut rng);
         let param = TEST_PARAM;
         let session_preparer = SessionPreparer::new_test_session(with_prss);
@@ -763,6 +764,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true).await;
+        let mut rng = AesRng::seed_from_u64(123);
 
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
@@ -772,7 +774,7 @@ mod tests {
                 request_id: "invalid_id".to_string(),
             };
             let request = Request::new(UserDecryptionRequest {
-                enc_key: make_dummy_enc_pk(),
+                enc_key: make_dummy_enc_pk(&mut rng),
                 typed_ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf.clone(),
                     fhe_type: FheTypes::Uint8 as i32,
@@ -794,12 +796,11 @@ mod tests {
                 tonic::Code::InvalidArgument
             );
         }
-
         {
             // empty typed ciphertexts
-            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req_id = RequestId::new_random(&mut rng);
             let request = Request::new(UserDecryptionRequest {
-                enc_key: make_dummy_enc_pk(),
+                enc_key: make_dummy_enc_pk(&mut rng),
                 typed_ciphertexts: vec![],
                 key_id: Some(key_id.into()),
                 domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
@@ -818,9 +819,9 @@ mod tests {
         }
         {
             // missing domain
-            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req_id = RequestId::new_random(&mut rng);
             let request = Request::new(UserDecryptionRequest {
-                enc_key: make_dummy_enc_pk(),
+                enc_key: make_dummy_enc_pk(&mut rng),
                 typed_ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf.clone(),
                     fhe_type: FheTypes::Uint8 as i32,
@@ -844,9 +845,9 @@ mod tests {
         }
         {
             // bad client address
-            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req_id = RequestId::new_random(&mut rng);
             let request = Request::new(UserDecryptionRequest {
-                enc_key: make_dummy_enc_pk(),
+                enc_key: make_dummy_enc_pk(&mut rng),
                 typed_ciphertexts: vec![TypedCiphertext {
                     ciphertext: ct_buf.clone(),
                     fhe_type: FheTypes::Uint8 as i32,
@@ -881,20 +882,49 @@ mod tests {
                 tonic::Code::InvalidArgument
             );
         }
+        {
+            let req_id = RequestId::new_random(&mut rng);
+            let bad_key_id = kms_grpc::kms::v1::RequestId {
+                request_id: "invalid_key_id".to_string(),
+            };
+            let request = Request::new(UserDecryptionRequest {
+                enc_key: make_dummy_enc_pk(&mut rng),
+                typed_ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::BigExpanded as i32,
+                }],
+                key_id: Some(bad_key_id),
+                domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
+                request_id: Some(req_id.into()),
+                client_address: client_address.to_checksum(None),
+                extra_data: vec![],
+            });
+            assert_eq!(
+                user_decryptor
+                    .user_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
     }
 
     #[tokio::test]
     async fn resource_exhausted() {
         let (key_id, ct_buf, mut user_decryptor) = setup_user_decryptor(true).await;
+        let mut rng = AesRng::seed_from_u64(123);
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
         // Set bucket size to zero, so no operations are allowed
         user_decryptor.set_bucket_size(0);
 
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req_id = RequestId::new_random(&mut rng);
         let request = Request::new(UserDecryptionRequest {
-            enc_key: make_dummy_enc_pk(),
+            enc_key: make_dummy_enc_pk(&mut rng),
             typed_ciphertexts: vec![TypedCiphertext {
                 ciphertext: ct_buf.clone(),
                 fhe_type: FheTypes::Uint8 as i32,
@@ -923,13 +953,14 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         let (_key_id, ct_buf, user_decryptor) = setup_user_decryptor(true).await;
+        let mut rng = AesRng::seed_from_u64(123);
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
-        let bad_key_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req_id = RequestId::new_random(&mut rng);
+        let bad_key_id = RequestId::new_random(&mut rng);
         let request = Request::new(UserDecryptionRequest {
-            enc_key: make_dummy_enc_pk(),
+            enc_key: make_dummy_enc_pk(&mut rng),
             typed_ciphertexts: vec![TypedCiphertext {
                 ciphertext: ct_buf.clone(),
                 fhe_type: FheTypes::Uint8 as i32,
@@ -951,7 +982,7 @@ mod tests {
             tonic::Code::NotFound
         );
 
-        let another_req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let another_req_id = RequestId::new_random(&mut rng);
         assert_eq!(
             user_decryptor
                 .get_result(Request::new(another_req_id.into()))
@@ -965,12 +996,13 @@ mod tests {
     #[tokio::test]
     async fn already_exists() {
         let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true).await;
+        let mut rng = AesRng::seed_from_u64(123);
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req_id = RequestId::new_random(&mut rng);
         let request = UserDecryptionRequest {
-            enc_key: make_dummy_enc_pk(),
+            enc_key: make_dummy_enc_pk(&mut rng),
             typed_ciphertexts: vec![TypedCiphertext {
                 ciphertext: ct_buf.clone(),
                 fhe_type: FheTypes::Uint8 as i32,
@@ -1006,9 +1038,10 @@ mod tests {
         let domain = dummy_domain();
 
         // finally everything is ok
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let mut rng = AesRng::seed_from_u64(123);
+        let req_id = RequestId::new_random(&mut rng);
         let request = Request::new(UserDecryptionRequest {
-            enc_key: make_dummy_enc_pk(),
+            enc_key: make_dummy_enc_pk(&mut rng),
             typed_ciphertexts: vec![TypedCiphertext {
                 ciphertext: ct_buf.clone(),
                 fhe_type: FheTypes::Uint8 as i32,

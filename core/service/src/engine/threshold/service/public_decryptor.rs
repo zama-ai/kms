@@ -701,7 +701,9 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use aes_prng::AesRng;
     use kms_grpc::{kms::v1::TypedCiphertext, rpc_types::alloy_to_protobuf_domain};
+    use rand::SeedableRng;
     use threshold_fhe::execution::{
         runtime::session::ParameterHandles, tfhe_internals::utils::expanded_encrypt,
     };
@@ -806,7 +808,7 @@ mod tests {
         Vec<u8>,
         RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
-        let mut rng = rand::rngs::OsRng;
+        let mut rng = AesRng::seed_from_u64(12);
         let (_pk, sk) = gen_sig_keys(&mut rng);
         let param = TEST_PARAM;
         let session_preparer = SessionPreparer::new_test_session(with_prss);
@@ -870,7 +872,8 @@ mod tests {
         public_decryptor.set_bucket_size(0);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let mut rng = AesRng::seed_from_u64(12);
+        let req_id = RequestId::new_random(&mut rng);
         let request = Request::new(PublicDecryptionRequest {
             request_id: Some(req_id.into()),
             ciphertexts: vec![TypedCiphertext {
@@ -899,7 +902,8 @@ mod tests {
     #[tokio::test]
     async fn already_exists() {
         let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true).await;
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let mut rng = AesRng::seed_from_u64(12);
+        let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = PublicDecryptionRequest {
             request_id: Some(req_id.into()),
@@ -930,8 +934,9 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         let (_key_id, ct_buf, public_decryptor) = setup_public_decryptor(true).await;
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
-        let bad_key_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let mut rng = AesRng::seed_from_u64(12);
+        let req_id = RequestId::new_random(&mut rng);
+        let bad_key_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = Request::new(PublicDecryptionRequest {
             request_id: Some(req_id.into()),
@@ -955,7 +960,7 @@ mod tests {
         );
 
         // try to get result for a non-existing request ID
-        let another_req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let another_req_id = RequestId::new_random(&mut rng);
         assert_eq!(
             public_decryptor
                 .get_result(Request::new(another_req_id.into()))
@@ -969,6 +974,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true).await;
+        let mut rng = AesRng::seed_from_u64(13);
         {
             // Bad request ID
             let bad_req_id = kms_grpc::kms::v1::RequestId {
@@ -998,7 +1004,7 @@ mod tests {
         }
         {
             // empty ciphertexts
-            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req_id = RequestId::new_random(&mut rng);
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let request = Request::new(PublicDecryptionRequest {
                 request_id: Some(req_id.into()),
@@ -1018,7 +1024,7 @@ mod tests {
         }
         {
             // bad key ID
-            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req_id = RequestId::new_random(&mut rng);
             let bad_key_id = kms_grpc::kms::v1::RequestId {
                 request_id: "invalid_request_id".to_string(),
             };
@@ -1046,7 +1052,7 @@ mod tests {
         }
         {
             // missing domain
-            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req_id = RequestId::new_random(&mut rng);
             let request = Request::new(PublicDecryptionRequest {
                 request_id: Some(req_id.into()),
                 ciphertexts: vec![TypedCiphertext {
@@ -1070,7 +1076,7 @@ mod tests {
         }
         {
             // wrong domain
-            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req_id = RequestId::new_random(&mut rng);
             let mut domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             domain.verifying_contract = "invalid_contract".to_string();
             let request = Request::new(PublicDecryptionRequest {
@@ -1112,7 +1118,8 @@ mod tests {
     #[tokio::test]
     async fn sunshine() {
         let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true).await;
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let mut rng = AesRng::seed_from_u64(13);
+        let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = Request::new(PublicDecryptionRequest {
             request_id: Some(req_id.into()),
@@ -1129,6 +1136,8 @@ mod tests {
             extra_data: vec![],
         });
         public_decryptor.public_decrypt(request).await.unwrap();
+        // there's no need to check the decryption result since it's a dummy protocol
+        // and always produces the same response
         public_decryptor
             .get_result(Request::new(req_id.into()))
             .await

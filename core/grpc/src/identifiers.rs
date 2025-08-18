@@ -24,6 +24,9 @@ pub enum IdentifierError {
 
     #[error("Invalid hex format: {0}")]
     InvalidHexFormat(#[from] hex::FromHexError),
+
+    #[error("Validation failure")]
+    ValidationFailure,
 }
 
 /// KeyId represents a unique identifier for a key in the system
@@ -349,7 +352,11 @@ macro_rules! impl_identifiers {
                     type Error = IdentifierError;
 
                     fn try_from(proto: v1::RequestId) -> Result<Self, Self::Error> {
-                        Self::from_str(&proto.request_id)
+                        let out = Self::from_str(&proto.request_id)?;
+                        if !out.is_valid() {
+                            return Err(Self::Error::ValidationFailure);
+                        }
+                        Ok(out)
                     }
                 }
 
@@ -357,21 +364,11 @@ macro_rules! impl_identifiers {
                     type Error = IdentifierError;
 
                     fn try_from(proto: &'a v1::RequestId) -> Result<Self, Self::Error> {
-                        Self::from_str(&proto.request_id)
-                    }
-                }
-
-                impl TryFrom<Option<v1::RequestId>> for $type {
-                    type Error = IdentifierError;
-
-                    fn try_from(opt: Option<v1::RequestId>) -> Result<Self, Self::Error> {
-                        match opt {
-                            Some(proto) => $type::try_from(proto),
-                            None => Err(IdentifierError::InvalidLength {
-                                expected: ID_LENGTH,
-                                actual: 0,
-                            }),
+                        let out = Self::from_str(&proto.request_id)?;
+                        if !out.is_valid() {
+                            return Err(Self::Error::ValidationFailure);
                         }
+                        Ok(out)
                     }
                 }
             };

@@ -928,7 +928,7 @@ impl Client {
 
         let request_id = parse_optional_proto_request_id(
             &key_gen_result.request_id,
-            RequestIdParsingErr::General("invalid ID while retrieving public key".to_string()),
+            RequestIdParsingErr::Other("invalid ID while retrieving public key".to_string()),
         )
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         tracing::debug!(
@@ -993,7 +993,7 @@ impl Client {
         )?;
         let request_id = parse_optional_proto_request_id(
             &key_gen_result.request_id,
-            RequestIdParsingErr::General("invalid request ID while retrieving key".to_string()),
+            RequestIdParsingErr::Other("invalid request ID while retrieving key".to_string()),
         )
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let key: S = self.get_key(&request_id, key_type, storage).await?;
@@ -1052,7 +1052,7 @@ impl Client {
         )?;
         let request_id = parse_optional_proto_request_id(
             &crs_gen_result.request_id,
-            RequestIdParsingErr::General("invalid request ID while processing CRS".to_string()),
+            RequestIdParsingErr::Other("invalid request ID while processing CRS".to_string()),
         )
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let pp = self.get_crs(&request_id, storage).await?;
@@ -6897,7 +6897,7 @@ pub(crate) mod tests {
         }
 
         wait_for_keygen_result(
-            req_keygen.request_id.clone().try_into().unwrap(),
+            req_keygen.request_id.clone().unwrap().try_into().unwrap(),
             preproc_req_id,
             kms_clients,
             internal_client,

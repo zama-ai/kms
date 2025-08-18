@@ -45,7 +45,7 @@ const ERR_VALIDATE_USER_DECRYPTION_EMPTY_CTS: &str = "No ciphertexts in user dec
 
 #[derive(Clone)]
 pub(crate) enum RequestIdParsingErr {
-    General(String),
+    Other(String),
     Context,
     Init,
 
@@ -67,7 +67,7 @@ pub(crate) enum RequestIdParsingErr {
 impl std::fmt::Display for RequestIdParsingErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RequestIdParsingErr::General(msg) => write!(f, "{}", msg),
+            RequestIdParsingErr::Other(msg) => write!(f, "Other request ID error: {}", msg),
             RequestIdParsingErr::Context => write!(f, "Invalid context ID"),
             RequestIdParsingErr::Init => write!(f, "Invalid init ID"),
 
@@ -123,20 +123,12 @@ pub(crate) fn parse_proto_request_id(
     request_id: &kms_grpc::kms::v1::RequestId,
     id_type: RequestIdParsingErr,
 ) -> Result<RequestId, BoxedStatus> {
-    let req_id: RequestId = request_id.try_into().map_err(|_| {
+    request_id.try_into().map_err(|_| {
         BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,
             format!("{}: {request_id:?}", id_type),
         ))
-    })?;
-    if !req_id.is_valid() {
-        Err(BoxedStatus::from(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            format!("{}: {request_id:?}", id_type),
-        )))
-    } else {
-        Ok(req_id)
-    }
+    })
 }
 
 /// Validates a user decryption request and returns ciphertext, FheType, request digest, client

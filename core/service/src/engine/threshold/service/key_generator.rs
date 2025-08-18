@@ -417,7 +417,7 @@ impl<
         } else {
             let preproc_id = parse_optional_proto_request_id(
                 &inner.preproc_id,
-                RequestIdParsingErr::General(
+                RequestIdParsingErr::Other(
                     "invalid preprocessing ID in keygen request".to_string(),
                 ),
             )?;
@@ -514,13 +514,13 @@ impl<
     {
         let from_key_id = parse_optional_proto_request_id(
             &keyset_added_info.from_keyset_id_decompression_only,
-            RequestIdParsingErr::General("invalid from keyset ID".to_string()),
+            RequestIdParsingErr::Other("invalid from keyset ID".to_string()),
         ).inspect_err(|e| {
                 tracing::error!("missing *from* key ID for the keyset that contains the compression secret key share: {}", e)
             })?;
         let to_key_id = parse_optional_proto_request_id(
             &keyset_added_info.to_keyset_id_decompression_only,
-            RequestIdParsingErr::General("invalid to keyset ID".to_string()),
+            RequestIdParsingErr::Other("invalid to keyset ID".to_string()),
         )
         .inspect_err(|e| {
             tracing::error!(
@@ -646,13 +646,13 @@ impl<
     )> {
         let compression_req_id = parse_optional_proto_request_id(
             &keyset_added_info.from_keyset_id_decompression_only,
-            RequestIdParsingErr::General("invalid from key ID".to_string())
+            RequestIdParsingErr::Other("invalid from key ID".to_string())
         ).inspect_err(|e| {
                 tracing::error!("missing from key ID for the keyset that contains the compression secret key share: {e}")
             })?;
         let glwe_req_id = parse_optional_proto_request_id(
             &keyset_added_info.to_keyset_id_decompression_only,
-            RequestIdParsingErr::General("invalid to key ID".to_string()),
+            RequestIdParsingErr::Other("invalid to key ID".to_string()),
         )
         .inspect_err(|e| {
             tracing::error!(
@@ -917,7 +917,7 @@ impl<
 
         let base_key_id = match parse_optional_proto_request_id(
             &keyset_added_info.base_keyset_id_for_sns_compression_key,
-            RequestIdParsingErr::General("invalid base keyset ID".to_string()),
+            RequestIdParsingErr::Other("invalid base keyset ID".to_string()),
         ) {
             Ok(k) => k,
             Err(e) => {
@@ -1365,7 +1365,7 @@ mod tests {
     async fn setup_key_generator<
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     >() -> (
-        Vec<RequestId>,
+        [RequestId; 4],
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
         let session_preparer = SessionPreparer::new_test_session(false);
@@ -1374,9 +1374,11 @@ mod tests {
         )
         .await;
 
-        let prep_ids = (0..4)
+        let prep_ids: [RequestId; 4] = (0..4)
             .map(|_| RequestId::new_random(&mut OsRng))
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
 
         // We need to setup the preprocessor metastore so that keygen will pass
         for prep_id in &prep_ids {
