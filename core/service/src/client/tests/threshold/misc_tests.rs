@@ -50,7 +50,7 @@ use tonic_health::pb::health_check_response::ServingStatus;
 ///
 /// The crux of the test is based on the fact that the MPC servers serve immidiately but the core server only serves after
 /// the PRSS initialization has been completed.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_threshold_health_endpoint_availability() {
     // make sure the store does not contain any PRSS info (currently stored under ID PRSS_INIT_REQ_ID)
@@ -172,7 +172,7 @@ async fn test_threshold_health_endpoint_availability() {
 }
 
 /// Validate that dropping the server signal triggers the server to shut down
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_threshold_close_after_drop() {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
@@ -233,7 +233,7 @@ async fn test_threshold_close_after_drop() {
 }
 
 /// Validate that shutdown signals work
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_threshold_shutdown() {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
