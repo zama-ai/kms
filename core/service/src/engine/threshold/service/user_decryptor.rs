@@ -701,21 +701,21 @@ mod tests {
 
     async fn setup_user_decryptor(
         with_prss: bool,
+        rng: &mut AesRng,
     ) -> (
         RequestId,
         Vec<u8>,
         RealUserDecryptor<ram::RamStorage, ram::RamStorage, DummyNoiseFloodPartialDecryptor>,
     ) {
-        let mut rng = AesRng::seed_from_u64(123);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
         let session_preparer = SessionPreparer::new_test_session(with_prss);
         let user_decryptor = RealUserDecryptor::init_test_dummy_decryptor(session_preparer).await;
 
-        let key_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(rng);
 
         // make a dummy private keyset
-        let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, &mut rng);
+        let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, rng);
 
         // Not a huge deal if we clone this server key since we only use small/test parameters
         tfhe::set_server_key(fhe_key_set.server_key.clone());
@@ -763,8 +763,8 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_argument() {
-        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true).await;
-        let mut rng = AesRng::seed_from_u64(123);
+        let mut rng = AesRng::seed_from_u64(1123);
+        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true, &mut rng).await;
 
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
@@ -914,8 +914,8 @@ mod tests {
 
     #[tokio::test]
     async fn resource_exhausted() {
-        let (key_id, ct_buf, mut user_decryptor) = setup_user_decryptor(true).await;
         let mut rng = AesRng::seed_from_u64(123);
+        let (key_id, ct_buf, mut user_decryptor) = setup_user_decryptor(true, &mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
@@ -952,8 +952,8 @@ mod tests {
 
     #[tokio::test]
     async fn not_found() {
-        let (_key_id, ct_buf, user_decryptor) = setup_user_decryptor(true).await;
         let mut rng = AesRng::seed_from_u64(123);
+        let (_key_id, ct_buf, user_decryptor) = setup_user_decryptor(true, &mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 
@@ -995,8 +995,8 @@ mod tests {
 
     #[tokio::test]
     async fn already_exists() {
-        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true).await;
         let mut rng = AesRng::seed_from_u64(123);
+        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true, &mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 
@@ -1033,12 +1033,12 @@ mod tests {
 
     #[tokio::test]
     async fn sunshine() {
-        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true).await;
+        let mut rng = AesRng::seed_from_u64(123);
+        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true, &mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 
         // finally everything is ok
-        let mut rng = AesRng::seed_from_u64(123);
         let req_id = RequestId::new_random(&mut rng);
         let request = Request::new(UserDecryptionRequest {
             enc_key: make_dummy_enc_pk(&mut rng),

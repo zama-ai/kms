@@ -803,22 +803,22 @@ mod tests {
 
     async fn setup_public_decryptor(
         with_prss: bool,
+        rng: &mut AesRng,
     ) -> (
         RequestId,
         Vec<u8>,
         RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
-        let mut rng = AesRng::seed_from_u64(12);
-        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
         let session_preparer = SessionPreparer::new_test_session(with_prss);
         let public_decryptor =
             RealPublicDecryptor::init_test_dummy_decryptor(session_preparer).await;
 
-        let key_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(rng);
 
         // make a dummy private keyset
-        let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, &mut rng);
+        let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, rng);
 
         // Not a huge deal if we clone this server key since we only use small/test parameters
         tfhe::set_server_key(fhe_key_set.server_key.clone());
@@ -866,13 +866,13 @@ mod tests {
     #[tokio::test]
     async fn test_resource_exhausted() {
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        let (key_id, ct_buf, mut public_decryptor) = setup_public_decryptor(true).await;
+        let mut rng = AesRng::seed_from_u64(12);
+        let (key_id, ct_buf, mut public_decryptor) = setup_public_decryptor(true, &mut rng).await;
 
         // Set bucket size to zero, so no operations are allowed
         public_decryptor.set_bucket_size(0);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let mut rng = AesRng::seed_from_u64(12);
         let req_id = RequestId::new_random(&mut rng);
         let request = Request::new(PublicDecryptionRequest {
             request_id: Some(req_id.into()),
@@ -901,8 +901,8 @@ mod tests {
 
     #[tokio::test]
     async fn already_exists() {
-        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true).await;
         let mut rng = AesRng::seed_from_u64(12);
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = PublicDecryptionRequest {
@@ -933,8 +933,8 @@ mod tests {
 
     #[tokio::test]
     async fn not_found() {
-        let (_key_id, ct_buf, public_decryptor) = setup_public_decryptor(true).await;
-        let mut rng = AesRng::seed_from_u64(12);
+        let mut rng = AesRng::seed_from_u64(1123);
+        let (_key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
         let bad_key_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
@@ -973,8 +973,8 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_argument() {
-        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true).await;
         let mut rng = AesRng::seed_from_u64(13);
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
         {
             // Bad request ID
             let bad_req_id = kms_grpc::kms::v1::RequestId {
@@ -1117,8 +1117,8 @@ mod tests {
 
     #[tokio::test]
     async fn sunshine() {
-        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true).await;
         let mut rng = AesRng::seed_from_u64(13);
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = Request::new(PublicDecryptionRequest {
