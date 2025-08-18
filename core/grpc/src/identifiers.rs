@@ -22,11 +22,14 @@ pub enum IdentifierError {
     #[error("Invalid identifier length: expected {expected} bytes, got {actual}")]
     InvalidLength { expected: usize, actual: usize },
 
-    #[error("Invalid hex format: {0}")]
+    #[error("Invalid hex format in identifier: {0}")]
     InvalidHexFormat(#[from] hex::FromHexError),
 
-    #[error("Validation failure")]
+    #[error("Identifier validation failure")]
     ValidationFailure,
+
+    #[error("Cannot convert to identifier because Option is None")]
+    MissingIdentifier,
 }
 
 /// KeyId represents a unique identifier for a key in the system
@@ -369,6 +372,17 @@ macro_rules! impl_identifiers {
                             return Err(Self::Error::ValidationFailure);
                         }
                         Ok(out)
+                    }
+                }
+
+                impl TryFrom<Option<v1::RequestId>> for $type {
+                    type Error = IdentifierError;
+
+                    fn try_from(opt: Option<v1::RequestId>) -> Result<Self, Self::Error> {
+                        match opt {
+                            Some(proto) => $type::try_from(proto),
+                            None => Err(IdentifierError::MissingIdentifier),
+                        }
                     }
                 }
             };
