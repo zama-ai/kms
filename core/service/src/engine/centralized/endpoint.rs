@@ -486,7 +486,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     ) -> Result<Response<Empty>, Status> {
         METRICS
             .increment_request_counter(observability::metrics_names::OP_INSECURE_CRS_GEN_REQUEST);
-        self.crs_gen(request).await
+        self.crs_gen(request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(
+                observability::metrics_names::OP_INSECURE_CRS_GEN_REQUEST,
+                tag,
+            );
+        })
     }
 
     /// WARNING: This method is by definition expected to be insecure and should not be used in production.
