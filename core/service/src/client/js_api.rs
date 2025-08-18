@@ -75,7 +75,7 @@ use crate::cryptography::internal_crypto_types::{
 use bc2wrap::{deserialize, serialize};
 use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::UserDecryptionResponse;
-use kms_grpc::kms::v1::{Eip712DomainMsg, TypedPlaintext};
+use kms_grpc::kms::v1::{Eip712DomainMsg, TypedPlaintext, UserDecryptionResponsePayload};
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 use threshold_fhe::execution::tfhe_internals::parameters::BC_PARAMS_SNS;
 
@@ -422,7 +422,7 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
             payload: match hex_resp.payload {
                 Some(inner) => {
                     let buf = hex::decode(&inner)?;
-                    Some(deserialize::<()>(&buf)?)
+                    Some(deserialize::<UserDecryptionResponsePayload>(&buf)?)
                 }
                 None => None,
             },

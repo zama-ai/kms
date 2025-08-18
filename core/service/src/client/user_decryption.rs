@@ -14,9 +14,7 @@ use crate::engine::validation::{
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use itertools::Itertools;
-use kms_grpc::kms::v1::{
-    TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
-};
+use kms_grpc::kms::v1::{TypedPlaintext, UserDecryptionResponse, UserDecryptionResponsePayload};
 use kms_grpc::rpc_types::fhe_types_to_num_blocks;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
@@ -39,7 +37,7 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::consts::SAFE_SER_SIZE_LIMIT;
         use crate::cryptography::signcryption::ephemeral_encryption_key_generation;
-        use kms_grpc::kms::v1::TypedCiphertext;
+        use kms_grpc::kms::v1::{TypedCiphertext,UserDecryptionRequest};
         use kms_grpc::rpc_types::{
             alloy_to_protobuf_domain,
         };

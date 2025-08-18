@@ -1,4 +1,3 @@
-use crate::cryptography::internal_crypto_types::Signature;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
@@ -13,6 +12,7 @@ use wasm_bindgen::prelude::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
+        use crate::cryptography::internal_crypto_types::Signature;
         use crate::anyhow_error_and_log;
         use itertools::Itertools;
         use crate::consts::{DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES};
