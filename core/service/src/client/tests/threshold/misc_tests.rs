@@ -1,10 +1,8 @@
 use crate::client::test_tools::check_port_is_closed;
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::{await_server_ready, get_health_client, get_status};
-use crate::consts::DEFAULT_AMOUNT_PARTIES;
 #[cfg(feature = "insecure")]
 use crate::consts::DEFAULT_PARAM;
-use crate::consts::DEFAULT_THRESHOLD;
 use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};
 #[cfg(feature = "insecure")]
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
@@ -54,21 +52,14 @@ use tonic_health::pb::health_check_response::ServingStatus;
 #[serial]
 async fn test_threshold_health_endpoint_availability() {
     // make sure the store does not contain any PRSS info (currently stored under ID PRSS_INIT_REQ_ID)
-    let req_id = &derive_request_id(&format!(
-        "PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_{DEFAULT_AMOUNT_PARTIES}_{DEFAULT_THRESHOLD}"
-    ))
-    .unwrap();
-    purge(None, None, None, req_id, DEFAULT_AMOUNT_PARTIES).await;
+    let req_id = &derive_request_id(&format!("PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_4_1")).unwrap();
+    purge(None, None, None, req_id, 4).await;
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
 
     // DON'T setup PRSS in order to ensure the server is not ready yet
     let (kms_servers, kms_clients, mut internal_client) =
         crate::client::tests::threshold::common::threshold_handles(
-            TEST_PARAM,
-            DEFAULT_AMOUNT_PARTIES,
-            false,
-            None,
-            None,
+            TEST_PARAM, 4, false, None, None,
         )
         .await;
 
@@ -123,7 +114,7 @@ async fn test_threshold_health_endpoint_availability() {
 
     // Now initialize and check that the server is serving
     let mut req_tasks = JoinSet::new();
-    for i in 1..=DEFAULT_AMOUNT_PARTIES as u32 {
+    for i in 1..=4 {
         let mut cur_client = kms_clients.get(&i).unwrap().clone();
         req_tasks.spawn(async move {
             let req_id = RequestId::from_str(PRSS_INIT_REQ_ID).unwrap();
@@ -177,14 +168,8 @@ async fn test_threshold_health_endpoint_availability() {
 async fn test_threshold_close_after_drop() {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (mut kms_servers, _kms_clients, _internal_client) =
-        crate::client::tests::threshold::common::threshold_handles(
-            TEST_PARAM,
-            DEFAULT_AMOUNT_PARTIES,
-            true,
-            None,
-            None,
-        )
-        .await;
+        crate::client::tests::threshold::common::threshold_handles(TEST_PARAM, 4, true, None, None)
+            .await;
 
     // Get health client for main server 1
     let mut core_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
@@ -238,14 +223,8 @@ async fn test_threshold_close_after_drop() {
 async fn test_threshold_shutdown() {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (mut kms_servers, kms_clients, mut internal_client) =
-        crate::client::tests::threshold::common::threshold_handles(
-            TEST_PARAM,
-            DEFAULT_AMOUNT_PARTIES,
-            true,
-            None,
-            None,
-        )
-        .await;
+        crate::client::tests::threshold::common::threshold_handles(TEST_PARAM, 4, true, None, None)
+            .await;
     // Ensure that the servers are ready
     for cur_handle in kms_servers.values() {
         let service_name = <CoreServiceEndpointServer<
