@@ -172,8 +172,8 @@ where
     Ok(bk_share)
 }
 
-///Generates a Bootstrapping Key given a Glwe key in Glwe format
-///, a Lwe key and the params for the BK generation
+/// Generates a Bootstrapping Key given a Glwe key in Glwe format
+/// , a Lwe key and the params for the BK generation
 #[instrument(name="Gen BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub(crate) async fn generate_bootstrap_key<
     Z: BaseRing,
@@ -211,8 +211,8 @@ where
     Ok(bk)
 }
 
-///Generates a compressed Bootstrapping Key given a Glwe key in Glwe format
-///, a Lwe key and the params for the BK generation
+/// Generates a compressed Bootstrapping Key given a Glwe key in Glwe format
+/// , a Lwe key and the params for the BK generation
 #[instrument(name="Gen compressed BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub(crate) async fn generate_compressed_bootstrap_key<
     Z: BaseRing,

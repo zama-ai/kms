@@ -394,7 +394,7 @@ where
     tracing::info!("(Party {my_role}) Generating KSK...Done");
 
     //Computing and opening BK can take a while, so we increase the timeout
-    //(in theory we should be a async setting here anyway)
+    //(in theory we should be in async setting here anyway)
     session.network().set_timeout_for_bk()?;
     //Compute the bootstrapping keys
     let bk = generate_bootstrap_key(
@@ -419,7 +419,7 @@ where
             )?;
 
             //Computing and opening BK SNS can take a while, so we increase the timeout
-            //(in theory we should be a async setting here anyway)
+            //(in theory we should be in async setting here anyway)
             session.network().set_timeout_for_bk_sns()?;
 
             tracing::info!("(Party {my_role}) Generating SnS GLWE...Done");
@@ -686,7 +686,7 @@ where
     tracing::info!("(Party {my_role}) Generating KSK...Done");
 
     //Computing and opening BK can take a while, so we increase the timeout
-    //(in theory we should be a async setting here anyway)
+    //(in theory we should be in async setting here anyway)
     session.network().set_timeout_for_bk()?;
     //Compute the bootstrapping keys
     let bk = generate_compressed_bootstrap_key(
@@ -712,7 +712,7 @@ where
             )?;
 
             //Computing and opening BK SNS can take a while, so we increase the timeout
-            //(in theory we should be a async setting here anyway)
+            //(in theory we should be in async setting here anyway)
             session.network().set_timeout_for_bk_sns()?;
 
             tracing::info!("(Party {my_role}) Generating SnS GLWE...Done");

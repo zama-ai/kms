@@ -258,12 +258,12 @@ pub fn generate_lwe_compact_public_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     generator.unsigned_torus_slice_wrapping_add_random_noise_custom_mod_assign(body);
 }
 
-///Returns a tuple (number_of_triples, number_of_randomness) required for generating a lwe key
+/// Returns a tuple (number_of_triples, number_of_randomness) required for generating a lwe key
 pub fn get_batch_param_lwe_key_gen(lwe_dimension: LweDimension) -> (usize, usize) {
     (lwe_dimension.0, lwe_dimension.0)
 }
 
-///Generates the lwe private key share and associated public key
+/// Generates the lwe private key share and associated public key
 fn generate_lwe_key_shares<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -306,7 +306,7 @@ where
     Ok((lwe_secret_key_share, lwe_public_key_shared))
 }
 
-///Generates the lwe private key share and associated public key
+/// Generates the lwe private key share and associated public key
 #[instrument(name="Gen Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub(crate) async fn generate_lwe_private_public_key_pair<
     Z: BaseRing,
@@ -336,7 +336,7 @@ where
     ))
 }
 
-///Generates the lwe private key share and associated public key
+/// Generates the lwe private key share and associated public key
 #[instrument(name="Gen compressed Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub(crate) async fn generate_lwe_private_compressed_public_key_pair<
     Z: BaseRing,
