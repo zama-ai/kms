@@ -318,6 +318,8 @@ jobs:
           version: stable
 
       - name: Get job log
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh run view --job ${{ github.job.id }} --log | grep "test result"
 
