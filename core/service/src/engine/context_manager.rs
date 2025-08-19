@@ -116,7 +116,7 @@ where
         .await?;
     for data_id in data_ids.iter() {
         let data: T = priv_storage
-            .read_data(&data_id, &data_type_enum.to_string())
+            .read_data(data_id, &data_type_enum.to_string())
             .await?;
         let mut serialized_data = Vec::new();
         safe_serialize(&data, &mut serialized_data, SAFE_SER_SIZE_LIMIT)?;
@@ -128,12 +128,12 @@ where
         // Delete the old backup data
         // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
         backup_vault
-            .delete_data(&data_id, &data_type_enum.to_string())
+            .delete_data(data_id, &data_type_enum.to_string())
             .await?;
         backup_vault
             .store_data(
                 &enc_ct,
-                &data_id,
+                data_id,
                 &BackupDataType::PrivData(data_type_enum).to_string(),
             )
             .await?;
