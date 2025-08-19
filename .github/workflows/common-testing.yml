@@ -304,8 +304,10 @@ jobs:
 
       - name: Set Slack color
         id: slack_color
+        env:
+          JOB_RESULT: ${{ steps.tests.outcome }}
         run: |
-          if [ "${{ steps.tests.outcome }}" = "success" ]; then
+          if [ "${JOB_RESULT}" = "success" ]; then
             echo "color=good" >> "$GITHUB_OUTPUT"
           else
             echo "color=danger" >> "$GITHUB_OUTPUT"
