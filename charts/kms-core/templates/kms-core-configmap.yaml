@@ -41,7 +41,6 @@ data:
     path = "/keys"
     {{ end }}
 
-
     {{ if .Values.kmsCore.privateVault.s3.enabled }}
     [private_vault.storage.s3]
     bucket = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET}"
@@ -58,6 +57,21 @@ data:
     root_key_id = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID}"
     root_key_spec = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC}"
     {{ end }}
+    {{- if .Values.kmsCore.backupVault.s3.enabled }}
+    [backup_vault.storage.s3]
+    bucket = "${KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET}"
+      {{- if .Values.kmsCore.backupVault.s3.path }}
+    prefix = "${KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX}"
+      {{- end }}
+    {{- else }}
+    [backup_vault.storage.file]
+    path = "./backup-keys"
+    {{- end }}
+    {{- if .Values.kmsCore.nitroEnclave.enabled }}
+    [backup_vault.keychain.aws_kms]
+    root_key_id = "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID}"
+    root_key_spec = "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC}"
+    {{- end }}
   kms-gen-keys.toml: |
     [keygen]
     enabled = true
