@@ -64,7 +64,11 @@ on:
         required: true
       AWS_SECRET_KEY_S3_USER:
         required: true
-      SLACK_WEBHOOK_URL:
+      SLACK_CHANNEL:
+        required: true
+      SLACK_USERNAME:
+        required: true
+      SLACK_WEBHOOK:
         required: true
 
 env:
@@ -308,37 +312,16 @@ jobs:
           fi
 
       - name: Post a message in a channel
-        uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a  # v2.1.1
+        uses: rtCamp/action-slack-notify@e31e87e03dd19038e411e38ae27cbad084a90661
         env:
           ACTION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+          SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           SLACK_ICON: ":github-octocat:"
           SLACK_TITLE: "GitHub Action tests result"
-        with:
-          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
-          webhook-type: incoming-webhook
-          payload: |
-            attachments:
-              - color: ${{ steps.slack_color.outputs.color }}
-                blocks:
-                  - type: "section"
-                    text:
-                      type: "mrkdwn"
-                      text: "${{ env.SLACK_ICON }} *${{ env.SLACK_TITLE }}*\n"
-                  - type: "divider"
-                  - type: "section"
-                    fields:
-                      - type: "mrkdwn"
-                        text: "*Commit*\n${{ github.sha }}"
-                      - type: "mrkdwn"
-                        text: "*Status*\n${{ steps.tests.outcome }}"
-                      - type: "mrkdwn"
-                        text: "*Args*\n${{inputs.args-tests}}"
-                      - type: "mrkdwn"
-                        text: "*Run ID*\n${{ github.run_id }}"
-                  - type: "context"
-                    elements:
-                      - type: "mrkdwn"
-                        text: "<${{ env.ACTION_RUN_URL }}|View GitHub Action Run>"
+          SLACK_COLOR: ${{ steps.slack_color.outputs.color }}
+          SLACK_MESSAGE: "GitHub Action tests result ${{ steps.tests.outcome }} for args: ${{ inputs.args-tests }}"
 
       - name: Generate unique ID
         id: unique-id
