@@ -7,7 +7,7 @@ use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
 use kms_grpc::rpc_types::{optional_protobuf_to_alloy_domain, SignedPubDataHandleInternal};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
-use observability::metrics_names::{ERR_CRS_GEN_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN};
+use observability::metrics_names::{ERR_CRS_GEN_FAILED, OP_CRS_GEN_REQUEST};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::session_id::SessionId;
 use tokio::sync::{OwnedSemaphorePermit, RwLock};
@@ -34,23 +34,9 @@ pub async fn crs_gen_impl<
     request: Request<CrsGenRequest>,
 ) -> Result<Response<Empty>, Status> {
     tracing::info!("Received CRS generation request");
-    let _timer = METRICS
-        .time_operation(OP_CRS_GEN)
-        .map_err(|e| Status::internal(format!("Failed to start metrics: {e}")))?
-        .start();
-    METRICS
-        .increment_request_counter(OP_CRS_GEN)
-        .map_err(|e| Status::internal(format!("Failed to increment counter: {e}")))?;
+    let _timer = METRICS.time_operation(OP_CRS_GEN_REQUEST).start();
 
-    let permit = service
-        .rate_limiter
-        .start_crsgen()
-        .await
-        .inspect_err(|_e| {
-            if let Err(e) = METRICS.increment_error_counter(OP_CRS_GEN, ERR_RATE_LIMIT_EXCEEDED) {
-                tracing::warn!("Failed to increment error counter: {:?}", e);
-            }
-        })?;
+    let permit = service.rate_limiter.start_crsgen().await?;
 
     let inner = request.into_inner();
     let req_id =
@@ -87,6 +73,7 @@ pub async fn crs_gen_impl<
             )
             .await
             {
+                METRICS.increment_error_counter(OP_CRS_GEN_REQUEST, ERR_CRS_GEN_FAILED);
                 tracing::error!("CRS generation of request {} failed: {}", req_id, e);
             } else {
                 tracing::info!(
@@ -157,9 +144,6 @@ pub(crate) async fn crs_gen_background<
                         "Failed CRS generation for CRS with ID {req_id}: {e}"
                     )),
                 );
-                METRICS
-                    .increment_error_counter(OP_CRS_GEN, ERR_CRS_GEN_FAILED)
-                    .ok();
                 return Err(anyhow::anyhow!("Failed CRS generation: {}", e));
             }
         };

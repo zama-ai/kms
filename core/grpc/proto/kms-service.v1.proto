@@ -41,6 +41,7 @@ service CoreServiceEndpoint {
   //
   // This involves executing the PRSS protocol to generate secret shared correlated randomness.
   // This is a synchronous call and an successful response suggests the initialization completed.
+  // TODO(zama-ai/kms-internal/issues/2724) consider adding an option to regenerate the PRSS.
   //
   // # Parameters
   // * `request` - Struct containing the request ID, which must be 32 bytes lower-case hex encoding without `0x` prefix.
@@ -74,7 +75,7 @@ service CoreServiceEndpoint {
   //   I.e. be either `Standard` (0) or `DecompressionOnly` (1).
   //   Furthermore, if `Standard` is used then `standard_keyset_config` must also be set.
   // ## Post-condition:
-  // * The `request_id` in `request` has been consumed and the PRSS has been executed successfully.
+  // * The `request_id` in `request` has been consumed and the preprocessing has started successfully in the background.
   rpc KeyGenPreproc(kms.v1.KeyGenPreprocRequest) returns (kms.v1.Empty);
 
   // Retrieves the result from a preprocessing request.
@@ -86,7 +87,7 @@ service CoreServiceEndpoint {
   //   which must be 32 bytes lower-case hex encoding without `0x` prefix.
   //
   // # Returns
-  // * `Ok(Response<KeyGenPreprocResult>)` - This is an empty structure.
+  // * `Response<KeyGenPreprocResult>` - This is an empty structure.
   //
   // # Conditions
   // ## Pre-condition:
