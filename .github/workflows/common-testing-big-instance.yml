@@ -70,7 +70,7 @@ on:
         required: true
       SLACK_CHANNEL:
         required: true
-      SLACK_USERNAME:
+      BOT_USERNAME:
         required: true
       SLACK_WEBHOOK:
         required: true
