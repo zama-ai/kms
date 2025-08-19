@@ -1,33 +1,23 @@
 use super::*;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "non-wasm")] {
-        use crate::cryptography::internal_crypto_types::PublicSigKey;
-        use crate::cryptography::internal_crypto_types::Signature;
-        use crate::{anyhow_error_and_log, some_or_err};
-        use alloy_sol_types::Eip712Domain;
-        use kms_grpc::kms::v1::TypedPlaintext;
-        use crate::engine::base::BaseKmsStruct;
-        use crate::engine::traits::BaseKms;
-        use crate::engine::validation::validate_public_decrypt_responses_against_request;
-        use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
-        use kms_grpc::kms::v1::{
-            PublicDecryptionRequest, PublicDecryptionResponse,
-            TypedCiphertext,
-        };
-        use kms_grpc::rpc_types::{
-            alloy_to_protobuf_domain,
-        };
-        use kms_grpc::RequestId;
-    }
-}
+use crate::cryptography::internal_crypto_types::PublicSigKey;
+use crate::cryptography::internal_crypto_types::Signature;
+use crate::engine::base::BaseKmsStruct;
+use crate::engine::traits::BaseKms;
+use crate::engine::validation::validate_public_decrypt_responses_against_request;
+use crate::engine::validation::DSEP_PUBLIC_DECRYPTION;
+use crate::{anyhow_error_and_log, some_or_err};
+use alloy_sol_types::Eip712Domain;
+use kms_grpc::kms::v1::TypedPlaintext;
+use kms_grpc::kms::v1::{PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext};
+use kms_grpc::rpc_types::alloy_to_protobuf_domain;
+use kms_grpc::RequestId;
 
 impl Client {
     /// Creates a decryption request to send to the KMS servers.
     ///
     /// The key_id should be the request ID of the key generation
     /// request that generated the key which should be used for public decryption
-    #[cfg(feature = "non-wasm")]
     pub fn public_decryption_request(
         &mut self,
         ciphertexts: Vec<TypedCiphertext>,
@@ -60,7 +50,6 @@ impl Client {
     ///
     /// __NOTE__: If the original request is not provided, we can __not__ check
     /// that the response correctly contains the digest of the request.
-    #[cfg(feature = "non-wasm")]
     pub fn process_decryption_resp(
         &self,
         request: Option<PublicDecryptionRequest>,

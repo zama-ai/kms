@@ -1,31 +1,24 @@
 use super::*;
-cfg_if::cfg_if! {
-    if #[cfg(feature = "non-wasm")] {
-        use crate::{anyhow_error_and_log, some_or_err};
-        use alloy_sol_types::Eip712Domain;
-        use crate::engine::base::compute_handle;
-        use crate::engine::base::DSEP_PUBDATA_KEY;
-        use crate::vault::storage::StorageReader;
-        use kms_grpc::kms::v1::{
-             FheParameter, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
-            KeySetAddedInfo, KeySetConfig,
-        };
-        use kms_grpc::rpc_types::{
-            alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
-        };
-        use kms_grpc::RequestId;
-        use tfhe::ServerKey;
-        use tfhe_versionable::{Unversionize, Versionize};
-    }
-}
-
+use crate::engine::base::compute_handle;
+use crate::engine::base::DSEP_PUBDATA_KEY;
+use crate::vault::storage::StorageReader;
+use crate::{anyhow_error_and_log, some_or_err};
+use alloy_sol_types::Eip712Domain;
+use kms_grpc::kms::v1::{
+    FheParameter, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult, KeySetAddedInfo, KeySetConfig,
+};
+use kms_grpc::rpc_types::{
+    alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
+};
+use kms_grpc::RequestId;
+use tfhe::ServerKey;
+use tfhe_versionable::{Unversionize, Versionize};
 impl Client {
     /// Generates a key gen request.
     ///
     /// The key generated will then be stored under the request_id handle.
     /// In the threshold case, we also need to reference the preprocessing we want to consume via
     /// its [`RequestId`] it can be set to None in the centralized case
-    #[cfg(feature = "non-wasm")]
     pub fn key_gen_request(
         &self,
         request_id: &RequestId,
@@ -59,7 +52,6 @@ impl Client {
     // NOTE: we're not checking it against the request
     // since this part of the client is only used for testing
     // see https://github.com/zama-ai/kms-core/issues/911
-    #[cfg(feature = "non-wasm")]
     pub async fn process_get_key_gen_resp<R: StorageReader>(
         &self,
         resp: &KeyGenResult,
@@ -78,7 +70,6 @@ impl Client {
         Ok((pk, server_key))
     }
 
-    #[cfg(feature = "non-wasm")]
     pub fn preproc_request(
         &self,
         request_id: &RequestId,
@@ -102,7 +93,6 @@ impl Client {
     /// The method will return the key if retrieval and validation is successful,
     /// but will return None in case the signature is invalid or does not match the actual key
     /// handle.
-    #[cfg(feature = "non-wasm")]
     pub async fn retrieve_server_key<R: StorageReader>(
         &self,
         key_gen_result: &KeyGenResult,
@@ -122,7 +112,6 @@ impl Client {
     /// The method will return the key if retrieval and validation is successful,
     /// but will return None in case the signature is invalid or does not match the actual key
     /// handle.
-    #[cfg(feature = "non-wasm")]
     pub async fn retrieve_public_key<R: StorageReader>(
         &self,
         key_gen_result: &KeyGenResult,
@@ -163,7 +152,6 @@ impl Client {
     /// The method will return the key if retrieval and validation is successful,
     /// but will return None in case the signature is invalid or does not match the actual key
     /// handle.
-    #[cfg(feature = "non-wasm")]
     pub async fn retrieve_decompression_key<R: StorageReader>(
         &self,
         key_gen_result: &KeyGenResult,
@@ -175,7 +163,6 @@ impl Client {
         Ok(decompression_key)
     }
 
-    #[cfg(feature = "non-wasm")]
     pub(crate) async fn retrieve_key<
         S: serde::de::DeserializeOwned
             + serde::Serialize
@@ -222,7 +209,6 @@ impl Client {
     }
 
     /// Get a key from a public storage depending on the data type
-    #[cfg(feature = "non-wasm")]
     pub(crate) async fn get_key<
         S: serde::de::DeserializeOwned + Unversionize + tfhe::named::Named + Send,
         R: StorageReader,

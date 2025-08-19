@@ -1,25 +1,16 @@
 use super::*;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "non-wasm")] {
-        use crate::{anyhow_error_and_log, some_or_err};
-        use alloy_sol_types::Eip712Domain;
-        use crate::engine::base::compute_handle;
-        use crate::engine::base::DSEP_PUBDATA_CRS;
-        use crate::vault::storage::StorageReader;
-        use kms_grpc::kms::v1::{
-            CrsGenRequest, CrsGenResult, FheParameter
-        };
-        use kms_grpc::rpc_types::{
-            alloy_to_protobuf_domain, PubDataType,
-        };
-        use kms_grpc::RequestId;
-        use tfhe::zk::CompactPkeCrs;
-    }
-}
+use crate::engine::base::compute_handle;
+use crate::engine::base::DSEP_PUBDATA_CRS;
+use crate::vault::storage::StorageReader;
+use crate::{anyhow_error_and_log, some_or_err};
+use alloy_sol_types::Eip712Domain;
+use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, FheParameter};
+use kms_grpc::rpc_types::{alloy_to_protobuf_domain, PubDataType};
+use kms_grpc::RequestId;
+use tfhe::zk::CompactPkeCrs;
 
 impl Client {
-    #[cfg(feature = "non-wasm")]
     pub fn crs_gen_request(
         &self,
         request_id: &RequestId,
@@ -53,7 +44,6 @@ impl Client {
     /// This function takes care of finding the CRS that is returned by
     /// the majority and ensuring that this involves agreement by at least
     /// `min_agree_count` of the parties.
-    #[cfg(feature = "non-wasm")]
     pub async fn process_distributed_crs_result<S: StorageReader>(
         &self,
         request_id: &RequestId,
@@ -164,7 +154,6 @@ impl Client {
     // NOTE: we're not checking it against the request
     // since this part of the client is only used for testing
     // see https://github.com/zama-ai/kms-core/issues/911
-    #[cfg(feature = "non-wasm")]
     pub async fn process_get_crs_resp<R: StorageReader>(
         &self,
         crs_gen_result: &CrsGenResult,
@@ -202,7 +191,6 @@ impl Client {
     }
 
     /// Get a CRS from a public storage
-    #[cfg(feature = "non-wasm")]
     pub async fn get_crs<R: StorageReader>(
         &self,
         crs_id: &RequestId,

@@ -41,10 +41,15 @@ pub mod js_api;
 #[cfg(feature = "non-wasm")]
 pub mod test_tools;
 
+#[cfg(feature = "non-wasm")]
 pub mod crs_gen;
+#[cfg(feature = "non-wasm")]
 pub mod key_gen;
+#[cfg(feature = "non-wasm")]
 pub mod public_decryption;
-pub mod user_decryption;
+#[cfg(feature = "non-wasm")]
+pub mod user_decryption_non_wasm;
+pub mod user_decryption_wasm;
 
 /// For user decryption, we only use the Addr variant,
 /// for everything else, we use the Pk variant.
