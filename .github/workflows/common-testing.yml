@@ -313,16 +313,6 @@ jobs:
             echo "color=danger" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: sersoft-gmbh/setup-gh-cli-action@2d02c06e284b7d55e954d6d6406e7a886f45a818  # v2
-        with:
-          version: stable
-
-      - name: Get job log
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh run view --job ${{ github.job.id }} --log | grep "test result"
-
       - name: Post nightly tests results in a channel
         if: always() && github.event_name == 'schedule'
         uses: rtCamp/action-slack-notify@e31e87e03dd19038e411e38ae27cbad084a90661
