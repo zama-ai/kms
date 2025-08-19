@@ -35,7 +35,6 @@ use threshold_fhe::execution::sharing::shamir::{
     fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings,
 };
 use threshold_fhe::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
-#[cfg(feature = "wasm_tests")]
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsError, JsValue};
 
