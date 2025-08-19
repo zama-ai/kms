@@ -298,19 +298,27 @@ jobs:
           cat ~/.aws/config &&
           RUST_BACKTRACE=full cargo test ${ARGS_TESTS:+$ARGS_TESTS}
 
+      - name: Set Slack color
+        id: slack_color
+        run: |
+          if [ "${{ steps.tests.outcome }}" = "success" ]; then
+            echo "color=good" >> $GITHUB_OUTPUT
+          else
+            echo "color=danger" >> $GITHUB_OUTPUT
+          fi
+
       - name: Post a message in a channel
         uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a  # v2.1.1
         env:
           ACTION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SLACK_ICON: ":github-octocat:"
           SLACK_TITLE: "GitHub Action tests result"
-          SLACK_COLOR: ${{ steps.tests.outcome == 'success' && 'good' || 'danger' }}
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: |
             attachments:
-              - color: "${{ env.SLACK_COLOR }}"
+              - color: "${{ steps.slack_color.outputs.color }}"
                 blocks:
                   - type: "section"
                     text:
