@@ -304,28 +304,33 @@ jobs:
           ACTION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SLACK_ICON: ":github-octocat:"
           SLACK_TITLE: "GitHub Action tests result"
+          SLACK_COLOR: ${{ steps.tests.outcome == 'success' && 'good' || 'danger' }}
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: |
-            blocks:
-              - type: "section"
-                text:
-                  type: "mrkdwn"
-                  text: "${{ env.SLACK_ICON }} *${{ env.SLACK_TITLE }}*\n"
-              - type: "divider"
-              - type: "section"
-                fields:
-                  - type: "mrkdwn"
-                    text: "*Commit*\n${{ github.sha }}"
-                  - type: "mrkdwn"
-                    text: "*Status*\n${{ steps.tests.outcome }}"
-                  - type: "mrkdwn"
-                    text: "*Run ID*\n${{ github.run_id }}"
-              - type: "context"
-                elements:
-                  - type: "mrkdwn"
-                    text: "<${{ env.ACTION_RUN_URL }}|View GitHub Action Run>"
+            attachments:
+              - color: "${{ env.SLACK_COLOR }}"
+                blocks:
+                  - type: "section"
+                    text:
+                      type: "mrkdwn"
+                      text: "${{ env.SLACK_ICON }} *${{ env.SLACK_TITLE }}*\n"
+                  - type: "divider"
+                  - type: "section"
+                    fields:
+                      - type: "mrkdwn"
+                        text: "*Commit*\n${{ github.sha }}"
+                      - type: "mrkdwn"
+                        text: "*Status*\n${{ steps.tests.outcome }}"
+                      - type: "mrkdwn"
+                        text: "*Args*\n${{inputs.args-tests}}"
+                      - type: "mrkdwn"
+                        text: "*Run ID*\n${{ github.run_id }}"
+                  - type: "context"
+                    elements:
+                      - type: "mrkdwn"
+                        text: "<${{ env.ACTION_RUN_URL }}|View GitHub Action Run>"
 
       - name: Generate unique ID
         id: unique-id
