@@ -311,17 +311,18 @@ jobs:
             echo "color=danger" >> $GITHUB_OUTPUT
           fi
 
-      - name: Post a message in a channel
+      - name: Post nightly tests results in a channel
+        if: always() && github.event_name == 'schedule'
         uses: rtCamp/action-slack-notify@e31e87e03dd19038e411e38ae27cbad084a90661
         env:
           ACTION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
           SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          SLACK_ICON: ":github-octocat:"
-          SLACK_TITLE: "GitHub Action tests result"
+          SLACK_ICON_EMOJI: ":github-octocat:"
+          SLACK_TITLE: "Nightly Tests Result"
           SLACK_COLOR: ${{ steps.slack_color.outputs.color }}
-          SLACK_MESSAGE: "GitHub Action tests result ${{ steps.tests.outcome }} for args: ${{ inputs.args-tests }}"
+          SLACK_MESSAGE: "${{ steps.tests.outcome }} \nFor args: ${{ inputs.args-tests }}"
 
       - name: Generate unique ID
         id: unique-id
