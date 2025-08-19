@@ -4,7 +4,7 @@ use kms_grpc::kms::v1::{Empty, KeyGenRequest, KeyGenResult};
 use kms_grpc::rpc_types::{optional_protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
-use observability::metrics_names::{ERR_KEY_EXISTS, ERR_RATE_LIMIT_EXCEEDED, OP_KEYGEN};
+use observability::metrics_names::{ERR_KEYGEN_FAILED, ERR_KEY_EXISTS, OP_KEYGEN};
 use std::collections::HashMap;
 use std::sync::Arc;
 use threshold_fhe::execution::keyset_config::KeySetConfig;
@@ -37,23 +37,9 @@ pub async fn key_gen_impl<
     service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<KeyGenRequest>,
 ) -> Result<Response<Empty>, Status> {
-    let _timer = METRICS
-        .time_operation(OP_KEYGEN)
-        .map_err(|e| Status::internal(format!("Failed to start metrics: {e}")))?
-        .start();
-    METRICS
-        .increment_request_counter(OP_KEYGEN)
-        .map_err(|e| Status::internal(format!("Failed to increment counter: {e}")))?;
+    let _timer = METRICS.time_operation(OP_KEYGEN).start();
 
-    let permit = service
-        .rate_limiter
-        .start_keygen()
-        .await
-        .inspect_err(|_e| {
-            if let Err(e) = METRICS.increment_error_counter(OP_KEYGEN, ERR_RATE_LIMIT_EXCEEDED) {
-                tracing::warn!("Failed to increment error counter: {:?}", e);
-            }
-        })?;
+    let permit = service.rate_limiter.start_keygen().await?;
     let inner = request.into_inner();
     tracing::info!(
         "centralized key-gen with request id: {:?}",
@@ -100,6 +86,7 @@ pub async fn key_gen_impl<
             )
             .await
             {
+                METRICS.increment_error_counter(OP_KEYGEN, ERR_KEYGEN_FAILED);
                 tracing::error!("Key generation of request {} failed: {}", req_id, e);
             } else {
                 tracing::info!(
@@ -164,12 +151,7 @@ pub(crate) async fn key_gen_background<
             .is_ok()
         {
             let mut guarded_meta_store = meta_store.write().await;
-            METRICS
-                .increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS)
-                .map_err(|e| {
-                    tracing::warn!("Failed to increment error counter: {:?}", e);
-                    anyhow::anyhow!("Failed to increment error counter: {:?}", e)
-                })?;
+            METRICS.increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS);
             let _ = guarded_meta_store.update(
                 req_id,
                 Err(format!(
