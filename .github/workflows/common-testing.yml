@@ -306,13 +306,13 @@ jobs:
         id: slack_color
         run: |
           if [ "${{ steps.tests.outcome }}" = "success" ]; then
-            echo "color=good" >> $GITHUB_OUTPUT
+            echo "color=good" >> "$GITHUB_OUTPUT"
           else
-            echo "color=danger" >> $GITHUB_OUTPUT
+            echo "color=danger" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Post nightly tests results in a channel
-        # if: always() && github.event_name == 'schedule'
+        if: always() && github.event_name == 'schedule'
         uses: rtCamp/action-slack-notify@e31e87e03dd19038e411e38ae27cbad084a90661
         env:
           ACTION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
