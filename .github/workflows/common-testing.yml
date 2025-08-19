@@ -318,7 +318,7 @@ jobs:
           webhook-type: incoming-webhook
           payload: |
             attachments:
-              - color: "${{ steps.slack_color.outputs.color }}"
+              - color: ${{ steps.slack_color.outputs.color }}
                 blocks:
                   - type: "section"
                     text:
