@@ -302,16 +302,30 @@ jobs:
         uses: slackapi/slack-github-action@91efab103c0de0a537f72a35f6b8cda0ee76bf0a  # v2.1.1
         env:
           ACTION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SLACK_ICON: ":github-octocat:"
+          SLACK_TITLE: "GitHub Action tests result"
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: |
-            text: "*GitHub Action tests result*: ${{ steps.tests.outcome }}\n${{ env.ACTION_RUN_URL }}"
             blocks:
               - type: "section"
                 text:
                   type: "mrkdwn"
-                  text: "GitHub Action tests result: ${{ steps.tests.outcome }}\n${{ env.ACTION_RUN_URL }}"
+                  text: "${{ env.SLACK_ICON }} *${{ env.SLACK_TITLE }}*\n"
+              - type: "divider"
+              - type: "section"
+                fields:
+                  - type: "mrkdwn"
+                    text: "*Commit*\n${{ github.sha }}"
+                  - type: "mrkdwn"
+                    text: "*Status*\n${{ steps.tests.outcome }}"
+                  - type: "mrkdwn"
+                    text: "*Run ID*\n${{ github.run_id }}"
+              - type: "context"
+                elements:
+                  - type: "mrkdwn"
+                    text: "<${{ env.ACTION_RUN_URL }}|View GitHub Action Run>"
 
       - name: Generate unique ID
         id: unique-id
