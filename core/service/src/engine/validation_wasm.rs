@@ -11,7 +11,7 @@ use threshold_fhe::hashing::DomainSep;
 
 use crate::{
     anyhow_error_and_log,
-    client::{compute_link, ParsedUserDecryptionRequest},
+    client::user_decryption_wasm::{compute_link, ParsedUserDecryptionRequest},
     cryptography::{
         internal_crypto_types::{PublicEncKey, PublicSigKey, Signature, UnifiedPublicEncKey},
         signcryption::internal_verify_sig,
@@ -441,7 +441,9 @@ mod tests {
     use rand::SeedableRng;
 
     use crate::{
-        client::{compute_link, CiphertextHandle, ParsedUserDecryptionRequest},
+        client::user_decryption_wasm::{
+            compute_link, CiphertextHandle, ParsedUserDecryptionRequest,
+        },
         cryptography::{
             internal_crypto_types::{gen_sig_keys, PublicSigKey, UnifiedPublicEncKey},
             signcryption::ephemeral_encryption_key_generation,

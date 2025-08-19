@@ -1,6 +1,6 @@
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
-    use crate::client::Client;
+    use crate::client::client_wasm::Client;
     use crate::consts::MAX_TRIES;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::dummy_domain;

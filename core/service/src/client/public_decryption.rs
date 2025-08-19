@@ -1,5 +1,4 @@
-use super::*;
-
+use crate::client::client_wasm::Client;
 use crate::cryptography::internal_crypto_types::PublicSigKey;
 use crate::cryptography::internal_crypto_types::Signature;
 use crate::engine::base::BaseKmsStruct;

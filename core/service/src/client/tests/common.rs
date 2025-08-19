@@ -1,4 +1,4 @@
-use crate::client::Client;
+use crate::client::client_wasm::Client;
 use crate::consts::TEST_PARAM;
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;

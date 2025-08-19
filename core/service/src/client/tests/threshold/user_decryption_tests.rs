@@ -1,9 +1,9 @@
+use crate::client::client_wasm::{Client, ServerIdentities};
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::tests::threshold::common::threshold_handles;
-use crate::client::Client;
+use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 #[cfg(feature = "wasm_tests")]
-use crate::client::TestingUserDecryptionTranscript;
-use crate::client::{ParsedUserDecryptionRequest, ServerIdentities};
+use crate::client::user_decryption_wasm::TestingUserDecryptionTranscript;
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_PARAM;
 #[cfg(feature = "slow_tests")]

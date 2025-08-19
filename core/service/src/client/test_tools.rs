@@ -1,4 +1,4 @@
-use super::*;
+use crate::client::client_wasm::Client;
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::threshold::service::new_real_threshold_kms;
@@ -20,12 +20,17 @@ use futures_util::FutureExt;
 use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::networking::grpc::GrpcServer;
 use tonic::server::NamedService;
 use tonic::transport::{Channel, Uri};
+use tonic_health::pb::health_client::HealthClient;
+use tonic_health::pb::HealthCheckRequest;
+use tonic_health::ServingStatus;
 
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
@@ -480,4 +485,54 @@ pub async fn centralized_handles(
         .await
         .unwrap();
     (kms_server, kms_client, internal_client)
+}
+
+/// Wait for a server to be ready for requests. I.e. wait until it enters the SERVING state.
+/// Note that this method may panic if the server does not become ready within a certain time frame.
+pub async fn await_server_ready(service_name: &str, port: u16) {
+    let mut wrapped_client = get_health_client(port).await;
+    let mut client_tries = 1;
+    while wrapped_client.is_err() {
+        if client_tries >= MAX_TRIES {
+            panic!("Failed to start health client on server {service_name} on port {port}");
+        }
+        wrapped_client = get_health_client(port).await;
+        client_tries += 1;
+    }
+    // We can safely unwrap here since we know the wrapped client does not contain an error
+    let mut client = wrapped_client.unwrap();
+    let mut status = get_status(&mut client, service_name).await;
+    let mut service_tries = 1;
+    while status.is_err()
+        || status
+            .clone()
+            .is_ok_and(|status| status == ServingStatus::NotServing as i32)
+    {
+        if service_tries >= MAX_TRIES {
+            panic!(
+                "Failed to get health status on {service_name} on port {port}. Status: {status:?}"
+            );
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        status = get_status(&mut client, service_name).await;
+        service_tries += 1;
+    }
+}
+
+pub(crate) async fn get_health_client(port: u16) -> anyhow::Result<HealthClient<Channel>> {
+    let server_address = &format!("{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{port}");
+    let channel_builder = Channel::from_shared(server_address.to_string())?;
+    let channel = channel_builder.connect().await?;
+    Ok(HealthClient::new(channel))
+}
+
+pub(crate) async fn get_status(
+    health_client: &mut HealthClient<Channel>,
+    service_name: &str,
+) -> Result<i32, tonic::Status> {
+    let request = tonic::Request::new(HealthCheckRequest {
+        service: service_name.to_string(),
+    });
+    let response = health_client.check(request).await?;
+    Ok(response.into_inner().status)
 }

@@ -1,4 +1,4 @@
-use super::*;
+use crate::client::client_wasm::Client;
 use crate::cryptography::internal_crypto_types::{
     PublicSigKey, SigncryptionKeyPair, SigncryptionPrivKey, SigncryptionPubKey,
     UnifiedPrivateEncKey, UnifiedSigncryptionKeyPair, UnifiedSigncryptionKeyPairOwned,
@@ -13,9 +13,12 @@ use crate::engine::validation::{
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
+use alloy_sol_types::SolStruct;
 use itertools::Itertools;
-use kms_grpc::kms::v1::{TypedPlaintext, UserDecryptionResponse, UserDecryptionResponsePayload};
-use kms_grpc::rpc_types::fhe_types_to_num_blocks;
+use kms_grpc::kms::v1::{
+    TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
+};
+use kms_grpc::rpc_types::{fhe_types_to_num_blocks, UserDecryptionLinker};
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::FheTypes;
@@ -32,6 +35,9 @@ use threshold_fhe::execution::sharing::shamir::{
     fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings,
 };
 use threshold_fhe::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
+#[cfg(feature = "wasm_tests")]
+use wasm_bindgen::prelude::wasm_bindgen;
+use wasm_bindgen::{JsError, JsValue};
 
 impl Client {
     /// Processes the aggregated user decryption responses to attempt to decrypt
@@ -748,6 +754,223 @@ impl Client {
         }
         Ok(out)
     }
+}
+
+// This testing struct needs to be outside of js_api module
+// since it is needed in the tests to generate the right files for js/wasm tests.
+#[cfg(feature = "wasm_tests")]
+#[wasm_bindgen]
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct TestingUserDecryptionTranscript {
+    // client
+    pub(crate) server_addrs: std::collections::HashMap<u32, alloy_primitives::Address>,
+    pub(crate) client_address: alloy_primitives::Address,
+    pub(crate) client_sk: Option<crate::cryptography::internal_crypto_types::PrivateSigKey>,
+    pub(crate) degree: u32,
+    pub(crate) params: threshold_fhe::execution::tfhe_internals::parameters::DKGParams,
+    // example pt and ct
+    pub(crate) fhe_types: Vec<i32>,
+    pub(crate) pts: Vec<Vec<u8>>,
+    pub(crate) cts: Vec<Vec<u8>>,
+    // request
+    pub(crate) request: Option<UserDecryptionRequest>,
+    // We keep the unified keys here because for legacy tests we need to produce legacy transcripts
+    pub(crate) eph_sk: crate::cryptography::internal_crypto_types::UnifiedPrivateEncKey,
+    pub(crate) eph_pk: crate::cryptography::internal_crypto_types::UnifiedPublicEncKey,
+    // response
+    pub(crate) agg_resp: Vec<kms_grpc::kms::v1::UserDecryptionResponse>,
+}
+
+#[wasm_bindgen]
+#[derive(serde::Serialize, Debug)]
+pub struct CiphertextHandle(Vec<u8>);
+
+impl CiphertextHandle {
+    pub fn new(handle: Vec<u8>) -> Self {
+        CiphertextHandle(handle)
+    }
+}
+
+/// Validity of this struct is not checked.
+#[wasm_bindgen]
+pub struct ParsedUserDecryptionRequest {
+    // We allow dead_code because these are required to parse from JSON
+    #[allow(dead_code)]
+    signature: Option<alloy_primitives::Signature>,
+    #[allow(dead_code)]
+    client_address: alloy_primitives::Address,
+    enc_key: Vec<u8>,
+    ciphertext_handles: Vec<CiphertextHandle>,
+    eip712_verifying_contract: alloy_primitives::Address,
+}
+
+impl ParsedUserDecryptionRequest {
+    pub fn new(
+        signature: Option<alloy_primitives::Signature>,
+        client_address: alloy_primitives::Address,
+        enc_key: Vec<u8>,
+        ciphertext_handles: Vec<CiphertextHandle>,
+        eip712_verifying_contract: alloy_primitives::Address,
+    ) -> Self {
+        Self {
+            signature,
+            client_address,
+            enc_key,
+            ciphertext_handles,
+            eip712_verifying_contract,
+        }
+    }
+
+    pub fn enc_key(&self) -> &[u8] {
+        &self.enc_key
+    }
+}
+
+pub(crate) fn hex_decode_js_err(msg: &str) -> Result<Vec<u8>, JsError> {
+    if msg.len() >= 2 {
+        if msg[0..2] == *"0x" {
+            hex::decode(&msg[2..]).map_err(|e| JsError::new(&e.to_string()))
+        } else {
+            hex::decode(msg).map_err(|e| JsError::new(&e.to_string()))
+        }
+    } else {
+        Err(JsError::new(
+            "cannot decode hex string with fewer than 2 characters",
+        ))
+    }
+}
+
+// we need this type because the json fields are hex-encoded
+// which cannot be converted to Vec<u8> automatically.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct ParsedUserDecryptionRequestHex {
+    signature: Option<String>,
+    client_address: String,
+    enc_key: String,
+    ciphertext_handles: Vec<String>,
+    eip712_verifying_contract: String,
+}
+
+impl TryFrom<&ParsedUserDecryptionRequestHex> for ParsedUserDecryptionRequest {
+    type Error = JsError;
+
+    fn try_from(req_hex: &ParsedUserDecryptionRequestHex) -> Result<Self, Self::Error> {
+        let signature_buf = req_hex
+            .signature
+            .as_ref()
+            .map(|sig| hex_decode_js_err(sig))
+            .transpose()?;
+        let signature = signature_buf
+            .map(|buf| alloy_primitives::Signature::try_from(buf.as_slice()))
+            .transpose()
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        let client_address =
+            alloy_primitives::Address::parse_checksummed(&req_hex.client_address, None)
+                .map_err(|e| JsError::new(&e.to_string()))?;
+        let eip712_verifying_contract =
+            alloy_primitives::Address::parse_checksummed(&req_hex.eip712_verifying_contract, None)
+                .map_err(|e| JsError::new(&e.to_string()))?;
+        let out = Self {
+            signature,
+            client_address,
+            enc_key: hex_decode_js_err(&req_hex.enc_key)?,
+            ciphertext_handles: req_hex
+                .ciphertext_handles
+                .iter()
+                .map(|hdl_str| hex_decode_js_err(hdl_str).map(CiphertextHandle))
+                .collect::<Result<Vec<_>, JsError>>()?,
+            eip712_verifying_contract,
+        };
+        Ok(out)
+    }
+}
+
+impl TryFrom<JsValue> for ParsedUserDecryptionRequest {
+    type Error = JsError;
+
+    fn try_from(value: JsValue) -> Result<Self, Self::Error> {
+        // JsValue -> JsClientUserDecryptionRequestHex
+        let req_hex: ParsedUserDecryptionRequestHex =
+            serde_wasm_bindgen::from_value(value).map_err(|e| JsError::new(&e.to_string()))?;
+
+        // JsClientUserDecryptionRequestHex -> JsClientUserDecryptionRequest
+        ParsedUserDecryptionRequest::try_from(&req_hex)
+    }
+}
+
+impl From<&ParsedUserDecryptionRequest> for ParsedUserDecryptionRequestHex {
+    fn from(value: &ParsedUserDecryptionRequest) -> Self {
+        Self {
+            signature: value
+                .signature
+                .as_ref()
+                .map(|sig| hex::encode(sig.as_bytes())),
+            client_address: value.client_address.to_checksum(None),
+            enc_key: hex::encode(&value.enc_key),
+            ciphertext_handles: value
+                .ciphertext_handles
+                .iter()
+                .map(|hdl| hex::encode(&hdl.0))
+                .collect::<Vec<_>>(),
+            eip712_verifying_contract: value.eip712_verifying_contract.to_checksum(None),
+        }
+    }
+}
+
+impl TryFrom<&UserDecryptionRequest> for ParsedUserDecryptionRequest {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &UserDecryptionRequest) -> Result<Self, Self::Error> {
+        let domain = value
+            .domain
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Missing domain"))?;
+
+        let client_address =
+            alloy_primitives::Address::parse_checksummed(&value.client_address, None)?;
+
+        let eip712_verifying_contract =
+            alloy_primitives::Address::parse_checksummed(domain.verifying_contract.clone(), None)?;
+
+        let ciphertext_handles = value
+            .typed_ciphertexts
+            .iter()
+            .map(|ct| CiphertextHandle(ct.external_handle.clone()))
+            .collect::<Vec<_>>();
+
+        let out = Self {
+            signature: None,
+            client_address,
+            enc_key: value.enc_key.clone(),
+            ciphertext_handles,
+            eip712_verifying_contract,
+        };
+        Ok(out)
+    }
+}
+
+/// Compute the link as (eip712_signing_hash(pk, domain) || hash(ciphertext handles)).
+/// TODO
+pub fn compute_link(
+    req: &ParsedUserDecryptionRequest,
+    domain: &Eip712Domain,
+) -> anyhow::Result<Vec<u8>> {
+    // check consistency
+    let handles = req
+        .ciphertext_handles
+        .iter()
+        .map(|x| alloy_primitives::FixedBytes::<32>::left_padding_from(&x.0))
+        .collect::<Vec<_>>();
+
+    let linker = UserDecryptionLinker {
+        publicKey: req.enc_key.clone().into(),
+        handles,
+        userAddress: req.client_address,
+    };
+
+    let link = linker.eip712_signing_hash(domain).to_vec();
+
+    Ok(link)
 }
 
 /// Helper method for combining reconstructed messages after decryption.

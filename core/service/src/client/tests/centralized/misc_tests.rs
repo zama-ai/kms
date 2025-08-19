@@ -1,7 +1,7 @@
-use crate::client::tests::common::TIME_TO_SLEEP_MS;
 #[cfg(feature = "slow_tests")]
-use crate::client::Client;
-use crate::client::{get_health_client, get_status};
+use crate::client::client_wasm::Client;
+use crate::client::test_tools::{get_health_client, get_status};
+use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::consts::TEST_PARAM;
 #[cfg(feature = "slow_tests")]

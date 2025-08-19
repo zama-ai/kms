@@ -1,6 +1,7 @@
-use crate::client::test_tools::check_port_is_closed;
+use crate::client::test_tools::{
+    await_server_ready, check_port_is_closed, get_health_client, get_status,
+};
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
-use crate::client::{await_server_ready, get_health_client, get_status};
 #[cfg(feature = "insecure")]
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};

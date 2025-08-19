@@ -1,5 +1,6 @@
-use super::*;
+use std::collections::HashMap;
 
+use crate::client::client_wasm::Client;
 use crate::engine::base::compute_handle;
 use crate::engine::base::DSEP_PUBDATA_CRS;
 use crate::vault::storage::StorageReader;

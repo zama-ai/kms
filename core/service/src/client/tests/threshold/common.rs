@@ -1,5 +1,5 @@
+use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
-use crate::client::Client;
 use crate::util::key_setup::max_threshold;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::make_storage;

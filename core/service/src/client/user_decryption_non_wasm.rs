@@ -1,4 +1,4 @@
-use super::*;
+use crate::client::client_wasm::Client;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::internal_crypto_types::UnifiedPrivateEncKey;
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;

@@ -1,5 +1,6 @@
+use crate::client::client_wasm::ServerIdentities;
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
-use crate::client::{ParsedUserDecryptionRequest, ServerIdentities};
+use crate::client::user_decryption_wasm::ParsedUserDecryptionRequest;
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 #[cfg(feature = "slow_tests")]
@@ -361,7 +362,8 @@ pub(crate) async fn user_decryption_centralized(
             use threshold_fhe::execution::tfhe_internals::parameters::PARAMS_TEST_BK_SNS;
 
             use crate::{
-                client::TestingUserDecryptionTranscript, util::file_handling::write_element,
+                client::user_decryption_wasm::TestingUserDecryptionTranscript,
+                util::file_handling::write_element,
             };
             let transcript = TestingUserDecryptionTranscript {
                 server_addrs: internal_client.get_server_addrs(),

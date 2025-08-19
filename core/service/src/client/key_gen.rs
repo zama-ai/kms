@@ -1,4 +1,4 @@
-use super::*;
+use crate::client::client_wasm::Client;
 use crate::engine::base::compute_handle;
 use crate::engine::base::DSEP_PUBDATA_KEY;
 use crate::vault::storage::StorageReader;
@@ -13,6 +13,7 @@ use kms_grpc::rpc_types::{
 use kms_grpc::RequestId;
 use tfhe::ServerKey;
 use tfhe_versionable::{Unversionize, Versionize};
+
 impl Client {
     /// Generates a key gen request.
     ///
@@ -226,7 +227,7 @@ impl Client {
 pub(crate) mod tests {
     use crate::vault::storage::StorageReader;
 
-    use super::Client;
+    use crate::client::client_wasm::Client;
     use kms_grpc::rpc_types::PubDataType;
     use kms_grpc::RequestId;
     use tfhe::core_crypto::prelude::{
