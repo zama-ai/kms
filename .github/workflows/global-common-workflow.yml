@@ -170,7 +170,7 @@ jobs:
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
 
   ############################################################################
@@ -232,7 +232,7 @@ jobs:
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
 
   # Builds Docker image for core-client
@@ -288,7 +288,7 @@ jobs:
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
 
   ############################################################################
@@ -369,7 +369,7 @@ jobs:
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
 
   # Builds the core service Docker image
@@ -463,7 +463,7 @@ jobs:
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
 
   # Runs extended threshold tests on main/release branches
@@ -488,7 +488,7 @@ jobs:
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
 
   # Simplified build process for Dependabot PRs
@@ -509,7 +509,7 @@ jobs:
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-      SLACK_USERNAME: ${{ secrets.BOT_USERNAME }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
 
 
