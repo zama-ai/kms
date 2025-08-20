@@ -202,9 +202,10 @@ struct UserDecryptionResponseInvariants {
     signcrypted_ciphertext_metadata: Vec<TypedSigncryptedCiphertextInvariants>,
 }
 
-impl From<UserDecryptionResponsePayload> for UserDecryptionResponseInvariants {
-    fn from(value: UserDecryptionResponsePayload) -> Self {
-        Self {
+impl TryFrom<UserDecryptionResponsePayload> for UserDecryptionResponseInvariants {
+    type Error = anyhow::Error;
+    fn try_from(value: UserDecryptionResponsePayload) -> anyhow::Result<Self> {
+        Ok(Self {
             degree: value.degree,
             digest: value.digest,
             signcrypted_ciphertext_metadata: value
@@ -212,17 +213,17 @@ impl From<UserDecryptionResponsePayload> for UserDecryptionResponseInvariants {
                 .into_iter()
                 .map(|x| x.into())
                 .collect(),
-        }
+        })
     }
 }
 
 pub(crate) fn select_most_common<'a, P, T>(
     min_occurence: usize,
     agg_resp: impl Iterator<Item = Option<&'a P>>,
-) -> Option<usize>
+) -> anyhow::Result<Option<usize>>
 where
     P: Clone + 'a,
-    T: From<P> + std::cmp::Eq + std::hash::Hash,
+    T: TryFrom<P, Error = anyhow::Error> + std::cmp::Eq + std::hash::Hash,
 {
     // this hashmap is keyed on [T]
     // and its values contain a tuple (x, y), where x is the occurence and y is the original index
@@ -231,7 +232,7 @@ where
         match resp {
             Some(inner) => {
                 occurence_map
-                    .entry(inner.clone().into())
+                    .entry(inner.clone().try_into()?)
                     .or_insert_with(|| (0, i))
                     .0 += 1;
             }
@@ -247,7 +248,7 @@ where
         .sorted_by(|a, b| a.0.cmp(&b.0))
         .next_back();
 
-    match first {
+    Ok(match first {
         Some(inner) => {
             if inner.0 >= min_occurence {
                 Some(inner.1)
@@ -256,7 +257,7 @@ where
             }
         }
         None => None,
-    }
+    })
 }
 
 fn select_most_common_user_dec(
@@ -264,7 +265,13 @@ fn select_most_common_user_dec(
     agg_resp: &[UserDecryptionResponse],
 ) -> Option<UserDecryptionResponsePayload> {
     let iter = agg_resp.iter().map(|resp| resp.payload.as_ref());
-    let idx = select_most_common::<_, UserDecryptionResponseInvariants>(min_occurence, iter);
+    let idx = match select_most_common::<_, UserDecryptionResponseInvariants>(min_occurence, iter) {
+        Ok(x) => x,
+        Err(e) => {
+            tracing::error!("Error selecting most common user decryption response: {e}");
+            None
+        }
+    };
     idx.and_then(|i| agg_resp[i].payload.clone())
 }
 

@@ -547,11 +547,11 @@ pub(crate) async fn user_decryption_threshold(
         let res = res.unwrap();
         tracing::info!("Client got a response from {}", res.0.request_id);
         let (req_id, resp) = res;
-        if let Entry::Vacant(e) = response_map.entry(req_id.clone().into()) {
+        if let Entry::Vacant(e) = response_map.entry(req_id.clone().try_into().unwrap()) {
             e.insert(vec![resp.unwrap().into_inner()]);
         } else {
             response_map
-                .get_mut(&req_id.into())
+                .get_mut(&req_id.try_into().unwrap())
                 .unwrap()
                 .push(resp.unwrap().into_inner());
         }
@@ -645,7 +645,7 @@ async fn process_batch_threshold_user_decryption(
             .clone()
             .expect("Retrieving request_id failed");
         let mut responses = response_map
-            .get(&request_id.into())
+            .get(&request_id.try_into().unwrap())
             .expect("Retrieving responses failed")
             .clone();
         let domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap())

@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use crate::client::client_wasm::Client;
 use crate::engine::base::compute_handle;
 use crate::engine::base::DSEP_PUBDATA_CRS;
+use crate::engine::validation::parse_optional_proto_request_id;
+use crate::engine::validation::RequestIdParsingErr;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
@@ -164,11 +166,12 @@ impl Client {
             crs_gen_result.crs_results.clone(),
             "Could not find CRS info".to_string(),
         )?;
-        let request_id = some_or_err(
-            crs_gen_result.request_id.clone(),
-            "No request id".to_string(),
-        )?;
-        let pp = self.get_crs(&request_id.into(), storage).await?;
+        let request_id = parse_optional_proto_request_id(
+            &crs_gen_result.request_id,
+            RequestIdParsingErr::Other("invalid request ID while processing CRS".to_string()),
+        )
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let pp = self.get_crs(&request_id, storage).await?;
         let crs_handle = compute_handle(&pp)?;
         if crs_handle != crs_info.key_handle {
             tracing::warn!(

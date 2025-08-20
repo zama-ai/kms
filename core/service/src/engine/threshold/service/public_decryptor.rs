@@ -51,7 +51,10 @@ use crate::{
         },
         threshold::traits::PublicDecryptor,
         traits::BaseKms,
-        validation::{validate_public_decrypt_req, validate_request_id, DSEP_PUBLIC_DECRYPTION},
+        validation::{
+            parse_proto_request_id, validate_public_decrypt_req, RequestIdParsingErr,
+            DSEP_PUBLIC_DECRYPTION,
+        },
     },
     tonic_handle_potential_err,
     util::{
@@ -271,10 +274,40 @@ impl<
             "Received new decryption request"
         );
 
-        let (ciphertexts, key_id, req_id, eip712_domain) = tonic_handle_potential_err(
-            validate_public_decrypt_req(&inner),
-            format!("Failed to validate decrypt request {inner:?}"),
-        )?;
+        let (ciphertexts, key_id, req_id, eip712_domain) = validate_public_decrypt_req(&inner)
+            .inspect_err(|e| {
+                tracing::error!(
+                    error = ?e,
+                    request_id = ?inner.request_id,
+                    "Failed to validate decrypt request"
+                );
+                let _ = metrics::METRICS.increment_error_counter(
+                    OP_PUBLIC_DECRYPT_REQUEST,
+                    ERR_PUBLIC_DECRYPTION_FAILED,
+                );
+            })?;
+
+        // Do some checks before we start modifying the database
+        {
+            let guarded_meta_store = self.pub_dec_meta_store.read().await;
+
+            if guarded_meta_store.exists(&req_id) {
+                return Err(Status::already_exists(format!(
+                    "Public decryption request with ID {} already exists",
+                    req_id
+                )));
+            }
+
+            if !tonic_handle_potential_err(
+                self.crypto_storage.threshold_fhe_keys_exists(&key_id).await,
+                "Could not check threshold fhe key existance".to_string(),
+            )? {
+                return Err(Status::not_found(format!(
+                    "Threshold FHE keys with key ID {} not found",
+                    key_id,
+                )));
+            }
+        }
 
         timer.tags([(TAG_KEY_ID, key_id.as_str())]);
         tracing::debug!(
@@ -301,6 +334,7 @@ impl<
             let total_lock_time = lock_start.elapsed();
             (lock_acquired_time, total_lock_time)
         };
+
         // Log after lock is released
         tracing::info!(
             "MetaStore INITIAL insert - req_id={}, key_id={}, party_id={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
@@ -582,8 +616,10 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<PublicDecryptionResponse>, Status> {
-        let request_id = request.into_inner().into();
-        validate_request_id(&request_id)?;
+        let request_id = parse_proto_request_id(
+            &request.into_inner(),
+            RequestIdParsingErr::PublicDecResponse,
+        )?;
         let status = {
             let guarded_meta_store = self.pub_dec_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
@@ -625,17 +661,16 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use aes_prng::AesRng;
     use kms_grpc::{kms::v1::TypedCiphertext, rpc_types::alloy_to_protobuf_domain};
+    use rand::SeedableRng;
+    use threshold_fhe::execution::{
+        runtime::session::ParameterHandles, tfhe_internals::utils::expanded_encrypt,
+    };
 
     use crate::{
-        consts::TEST_PARAM,
-        cryptography::{
-            decompression::test_tools::safe_serialize_versioned,
-            internal_crypto_types::gen_sig_keys,
-        },
-        dummy_domain,
-        engine::threshold::service::compute_all_info,
-        vault::storage::ram,
+        consts::TEST_PARAM, cryptography::internal_crypto_types::gen_sig_keys, dummy_domain,
+        engine::threshold::service::compute_all_info, vault::storage::ram,
     };
 
     use super::*;
@@ -650,7 +685,7 @@ mod tests {
         >;
 
         async fn decrypt<T>(
-            _noiseflood_session: &mut Self::Prep,
+            noiseflood_session: &mut Self::Prep,
             _server_key: &tfhe::integer::ServerKey,
             _ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
             _ct: LowLevelCiphertext,
@@ -662,7 +697,9 @@ mod tests {
             ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>:
                 ErrorCorrect + Invert + Solve,
         {
-            let results = HashMap::new();
+            let session = noiseflood_session.get_mut_base_session();
+            let sid: u128 = session.session_id().into();
+            let results = HashMap::from_iter([(format!("{sid}"), T::cast_from(0u128))]);
             let elapsed_time = Duration::from_secs(0);
             Ok((results, elapsed_time))
         }
@@ -724,27 +761,35 @@ mod tests {
         }
     }
 
-    async fn setup_public_decryptor() -> (
+    async fn setup_public_decryptor(
+        with_prss: bool,
+        rng: &mut AesRng,
+    ) -> (
         RequestId,
         Vec<u8>,
         RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
-        let mut rng = rand::rngs::OsRng;
-        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
-        let session_preparer = SessionPreparer::new_test_session(false);
+        let session_preparer = SessionPreparer::new_test_session(with_prss);
         let public_decryptor =
             RealPublicDecryptor::init_test_dummy_decryptor(session_preparer).await;
 
-        let key_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(rng);
 
         // make a dummy private keyset
-        let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, &mut rng);
+        let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, rng);
 
-        let ct = tfhe::CompactCiphertextList::builder(&fhe_key_set.public_key)
-            .push(255u8)
-            .build();
-        let ct_buf = safe_serialize_versioned(&ct);
+        // Not a huge deal if we clone this server key since we only use small/test parameters
+        tfhe::set_server_key(fhe_key_set.server_key.clone());
+        let ct: tfhe::FheUint8 = expanded_encrypt(&fhe_key_set.public_key, 255u8, 8).unwrap();
+        let mut ct_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &ct,
+            &mut ct_buf,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
 
         let info = compute_all_info(&sk, &fhe_key_set, &dummy_domain()).unwrap();
 
@@ -779,71 +824,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_aborted() {
-        // `Aborted` - If an internal error occured in starting the public decryption
-        // _or_ if an invalid argument was given.
-        // here we use the wrong key ID
-
-        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor().await;
-
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
-        let bad_key_id = RequestId::new_random(&mut rand::rngs::OsRng);
-        let request = Request::new(PublicDecryptionRequest {
-            request_id: Some(req_id.into()),
-            ciphertexts: vec![TypedCiphertext {
-                ciphertext: ct_buf.clone(),
-                fhe_type: FheTypes::Uint8 as i32,
-                external_handle: vec![],
-                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
-            }],
-            key_id: Some(bad_key_id.into()),
-            domain: Some(domain),
-            extra_data: vec![],
-        });
-        // NOTE: should probably be NotFound
-        assert_eq!(
-            public_decryptor
-                .public_decrypt(request)
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Aborted
-        );
-
-        // use an existing request ID should also abort
-        let request = Request::new(PublicDecryptionRequest {
-            request_id: Some(req_id.into()),
-            ciphertexts: vec![TypedCiphertext {
-                ciphertext: ct_buf.clone(),
-                fhe_type: FheTypes::Uint8 as i32,
-                external_handle: vec![],
-                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
-            }],
-            key_id: Some(key_id.into()),
-            domain: None,
-            extra_data: vec![],
-        });
-        assert_eq!(
-            public_decryptor
-                .public_decrypt(request)
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Aborted
-        );
-    }
-
-    #[tokio::test]
     async fn test_resource_exhausted() {
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        let (key_id, ct_buf, mut public_decryptor) = setup_public_decryptor().await;
+        let mut rng = AesRng::seed_from_u64(12);
+        let (key_id, ct_buf, mut public_decryptor) = setup_public_decryptor(true, &mut rng).await;
 
         // Set bucket size to zero, so no operations are allowed
         public_decryptor.set_bucket_size(0);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req_id = RequestId::new_random(&mut rng);
         let request = Request::new(PublicDecryptionRequest {
             request_id: Some(req_id.into()),
             ciphertexts: vec![TypedCiphertext {
@@ -870,9 +860,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sunshine() {
-        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor().await;
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+    async fn already_exists() {
+        let mut rng = AesRng::seed_from_u64(12);
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request = PublicDecryptionRequest {
+            request_id: Some(req_id.into()),
+            ciphertexts: vec![TypedCiphertext {
+                ciphertext: ct_buf,
+                fhe_type: FheTypes::Uint8 as i32,
+                external_handle: vec![],
+                ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+            }],
+            key_id: Some(key_id.into()),
+            domain: Some(domain),
+            extra_data: vec![],
+        };
+        public_decryptor
+            .public_decrypt(Request::new(request.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            public_decryptor
+                .public_decrypt(Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+    }
+
+    #[tokio::test]
+    async fn not_found() {
+        let mut rng = AesRng::seed_from_u64(1123);
+        let (_key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+        let bad_key_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = Request::new(PublicDecryptionRequest {
             request_id: Some(req_id.into()),
@@ -880,12 +904,203 @@ mod tests {
                 ciphertext: ct_buf,
                 fhe_type: FheTypes::Uint8 as i32,
                 external_handle: vec![],
-                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
+                ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+            }],
+            key_id: Some(bad_key_id.into()),
+            domain: Some(domain),
+            extra_data: vec![],
+        });
+        assert_eq!(
+            public_decryptor
+                .public_decrypt(request)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::NotFound
+        );
+
+        // try to get result for a non-existing request ID
+        let another_req_id = RequestId::new_random(&mut rng);
+        assert_eq!(
+            public_decryptor
+                .get_result(Request::new(another_req_id.into()))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::NotFound
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_argument() {
+        let mut rng = AesRng::seed_from_u64(13);
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
+        {
+            // Bad request ID
+            let bad_req_id = kms_grpc::kms::v1::RequestId {
+                request_id: "invalid_request_id".to_string(),
+            };
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(bad_req_id),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+                }],
+                key_id: Some(key_id.into()),
+                domain: Some(domain),
+                extra_data: vec![],
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // empty ciphertexts
+            let req_id = RequestId::new_random(&mut rng);
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![],
+                key_id: Some(key_id.into()),
+                domain: Some(domain),
+                extra_data: vec![],
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // bad key ID
+            let req_id = RequestId::new_random(&mut rng);
+            let bad_key_id = kms_grpc::kms::v1::RequestId {
+                request_id: "invalid_request_id".to_string(),
+            };
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+                }],
+                key_id: Some(bad_key_id),
+                domain: Some(domain),
+                extra_data: vec![],
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // missing domain
+            let req_id = RequestId::new_random(&mut rng);
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+                }],
+                key_id: Some(key_id.into()),
+                domain: None,
+                extra_data: vec![],
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // wrong domain
+            let req_id = RequestId::new_random(&mut rng);
+            let mut domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            domain.verifying_contract = "invalid_contract".to_string();
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf,
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+                }],
+                key_id: Some(key_id.into()),
+                domain: Some(domain),
+                extra_data: vec![],
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // bad request ID while getting response
+            assert_eq!(
+                public_decryptor
+                    .get_result(Request::new(kms_grpc::kms::v1::RequestId {
+                        request_id: "invalid_request_id".to_string(),
+                    },))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn sunshine() {
+        let mut rng = AesRng::seed_from_u64(13);
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request = Request::new(PublicDecryptionRequest {
+            request_id: Some(req_id.into()),
+            ciphertexts: vec![TypedCiphertext {
+                ciphertext: ct_buf,
+                fhe_type: FheTypes::Uint8 as i32,
+                external_handle: vec![],
+                // NOTE: because the way [setup_public_decryptor] is implemented,
+                // the ciphertext format must be SmallExpanded for the dummy decryptor to work
+                ciphertext_format: CiphertextFormat::SmallExpanded as i32,
             }],
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
         });
         public_decryptor.public_decrypt(request).await.unwrap();
+        // there's no need to check the decryption result since it's a dummy protocol
+        // and always produces the same response
+        public_decryptor
+            .get_result(Request::new(req_id.into()))
+            .await
+            .unwrap();
     }
 }

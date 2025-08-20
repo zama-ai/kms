@@ -3,79 +3,52 @@ package kms_service.v1;
 
 import "kms.v1.proto";
 
+// WARNING: This service is insecure and should not be used in production.
+//
+// Since this is the insecure endpoint, we do not duplicate
+// the documentation. Please see the documentation of the secure endpoint.
+// All insecure RPCs (i.e., the ones that have `Insecure` in the prefix)
+// have the same semantics as the secure ones.
 service CoreServiceEndpoint {
-  // Perform the threshold KMS initialization.
-  // This call returns an error on the centralized KMS.
   rpc Init(kms.v1.InitRequest) returns (kms.v1.Empty);
 
-  // Start generating preprocessing materials for key generation asynchronously.
-  // This call returns an error on the centralized KMS.
   rpc KeyGenPreproc(kms.v1.KeyGenPreprocRequest) returns (kms.v1.Empty);
 
-  // This call returns an error on the centralized KMS.
   rpc GetKeyGenPreprocResult(kms.v1.RequestId) returns (kms.v1.KeyGenPreprocResult);
 
-  // Generate new keys asynchronously.
   rpc KeyGen(kms.v1.KeyGenRequest) returns (kms.v1.Empty);
 
-  // Return a URI where they can be accessed.
-  // The keys at the URI contains signature and authentication information.
-  // NOTE: Unprivileged and insecure call
   rpc GetKeyGenResult(kms.v1.RequestId) returns (kms.v1.KeyGenResult);
 
-  // Generate new keys asynchronously.
   rpc InsecureKeyGen(kms.v1.KeyGenRequest) returns (kms.v1.Empty);
 
-  // Return a URI where they can be accessed.
-  // The keys at the URI contains signature and authentication information.
-  // NOTE: Unprivileged and insecure call
   rpc GetInsecureKeyGenResult(kms.v1.RequestId) returns (kms.v1.KeyGenResult);
 
-  // Perform public decryption of a ciphertext and return the signed plaintext.
   rpc PublicDecrypt(kms.v1.PublicDecryptionRequest) returns (kms.v1.Empty);
 
-  // Get the public decryption result.
-  // This query fails if the result is not available yet.
   rpc GetPublicDecryptionResult(kms.v1.RequestId) returns (kms.v1.PublicDecryptionResponse);
 
-  // Perform user decryption of a ciphertext under a user-specified key and return a signcrypted
-  // share of the decrypted plaintext.
   rpc UserDecrypt(kms.v1.UserDecryptionRequest) returns (kms.v1.Empty);
 
-  // Get the user decryption result.
-  // This query fails if the result is not available yet.
   rpc GetUserDecryptionResult(kms.v1.RequestId) returns (kms.v1.UserDecryptionResponse);
 
-  // Start the CRS generation protocol asynchronously.
   rpc CrsGen(kms.v1.CrsGenRequest) returns (kms.v1.Empty);
 
-  // Get a reference to the CRS.
-  // This query fails if the result is not available yet.
   rpc GetCrsGenResult(kms.v1.RequestId) returns (kms.v1.CrsGenResult);
 
-  // Start the insecure CRS generation protocol asynchronously.
   rpc InsecureCrsGen(kms.v1.CrsGenRequest) returns (kms.v1.Empty);
 
-  // Get a reference to the insecure CRS.
-  // This query fails if the result is not available yet.
   rpc GetInsecureCrsGenResult(kms.v1.RequestId) returns (kms.v1.CrsGenResult);
 
-  // Create a new KMS context, it may be created without an existing one.
   rpc NewKmsContext(kms.v1.NewKmsContextRequest) returns (kms.v1.Empty);
 
-  // Destroy an existing KMS context.
   rpc DestroyKmsContext(kms.v1.DestroyKmsContextRequest) returns (kms.v1.Empty);
 
-  // Create a new custodian context, it may be created without an existing one.
   rpc NewCustodianContext(kms.v1.NewCustodianContextRequest) returns (kms.v1.Empty);
 
-  // Destroy an existing custodian context.
   rpc DestroyCustodianContext(kms.v1.DestroyCustodianContextRequest) returns (kms.v1.Empty);
 
-  // Get the public key that a custodian can use to encrypt a backup share
-  // before sending it to the KMS.
   rpc GetOperatorPublicKey(kms.v1.Empty) returns (kms.v1.OperatorPublicKey);
 
-  // Restore the contents of the KMS private storage from custodian backup shares.
   rpc CustodianBackupRestore(kms.v1.Empty) returns (kms.v1.Empty);
 }

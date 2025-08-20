@@ -22,8 +22,14 @@ pub enum IdentifierError {
     #[error("Invalid identifier length: expected {expected} bytes, got {actual}")]
     InvalidLength { expected: usize, actual: usize },
 
-    #[error("Invalid hex format: {0}")]
+    #[error("Invalid hex format in identifier: {0}")]
     InvalidHexFormat(#[from] hex::FromHexError),
+
+    #[error("Identifier validation failure")]
+    ValidationFailure,
+
+    #[error("Cannot convert to identifier because Option is None")]
+    MissingIdentifier,
 }
 
 /// KeyId represents a unique identifier for a key in the system
@@ -332,35 +338,6 @@ macro_rules! impl_identifiers {
                     }
                 }
 
-                impl From<v1::RequestId> for $type {
-                    fn from(proto: v1::RequestId) -> Self {
-                        // Trim any whitespace from the request_id string before parsing
-                        let trimmed_request_id = proto.request_id.trim();
-                        Self::from_str(trimmed_request_id).unwrap_or_else(|err| {
-                            tracing::warn!("Failed to parse RequestId from protobuf: {}", err);
-                            // Create a special fallback that's all zeros
-                            // Note: This will be considered invalid by ".is_valid()" method
-                            Self([0u8; ID_LENGTH])
-                        })
-                    }
-                }
-
-                impl<'a> From<&'a v1::RequestId> for $type {
-                    fn from(proto: &'a v1::RequestId) -> Self {
-                        // Trim any whitespace from the request_id string before parsing
-                        let trimmed_request_id = proto.request_id.trim();
-                        Self::from_str(trimmed_request_id).unwrap_or_else(|err| {
-                            tracing::warn!(
-                                "Failed to parse RequestId from protobuf reference: {}",
-                                err
-                            );
-                            // Create a special fallback that's all zeros
-                            // Note: This will be considered invalid by ".is_valid()" method
-                            Self([0u8; ID_LENGTH])
-                        })
-                    }
-                }
-
                 // Additional reverse conversion implementations
                 impl From<$type> for String {
                     fn from(id: $type) -> Self {
@@ -374,16 +351,37 @@ macro_rules! impl_identifiers {
                     }
                 }
 
+                impl TryFrom<v1::RequestId> for $type {
+                    type Error = IdentifierError;
+
+                    fn try_from(proto: v1::RequestId) -> Result<Self, Self::Error> {
+                        let out = Self::from_str(&proto.request_id)?;
+                        if !out.is_valid() {
+                            return Err(Self::Error::ValidationFailure);
+                        }
+                        Ok(out)
+                    }
+                }
+
+                impl<'a> TryFrom<&'a v1::RequestId> for $type {
+                    type Error = IdentifierError;
+
+                    fn try_from(proto: &'a v1::RequestId) -> Result<Self, Self::Error> {
+                        let out = Self::from_str(&proto.request_id)?;
+                        if !out.is_valid() {
+                            return Err(Self::Error::ValidationFailure);
+                        }
+                        Ok(out)
+                    }
+                }
+
                 impl TryFrom<Option<v1::RequestId>> for $type {
                     type Error = IdentifierError;
 
                     fn try_from(opt: Option<v1::RequestId>) -> Result<Self, Self::Error> {
                         match opt {
-                            Some(proto) => Ok($type::from(proto)),
-                            None => Err(IdentifierError::InvalidLength {
-                                expected: ID_LENGTH,
-                                actual: 0,
-                            }),
+                            Some(proto) => $type::try_from(proto),
+                            None => Err(IdentifierError::MissingIdentifier),
                         }
                     }
                 }
@@ -494,7 +492,7 @@ mod tests {
         assert_eq!(proto_id.request_id, hex_str);
 
         // Convert back from protobuf
-        let id2 = KeyId::from(proto_id);
+        let id2 = KeyId::try_from(proto_id).unwrap();
         assert_eq!(id, id2);
     }
 
@@ -550,7 +548,7 @@ mod tests {
         assert_eq!(proto_id.request_id, hex_str);
 
         // Convert back to RequestId
-        let id2 = RequestId::from(proto_id);
+        let id2 = RequestId::try_from(proto_id).unwrap();
 
         // Verify the conversion preserved the value
         assert_eq!(id, id2);
@@ -566,7 +564,7 @@ mod tests {
         };
 
         // Convert to RequestId (which should trim whitespace)
-        let id = RequestId::from(proto_id);
+        let id = RequestId::try_from(proto_id).unwrap();
 
         // Verify the conversion trimmed whitespace
         assert_eq!(
@@ -593,7 +591,7 @@ mod tests {
         };
 
         // Convert to RequestId (which should handle the 0x prefix)
-        let id = RequestId::from(proto_id);
+        let id = RequestId::try_from(proto_id).unwrap();
 
         // Verify the conversion handled the prefix
         assert_eq!(
@@ -620,7 +618,7 @@ mod tests {
         };
 
         // Convert to RequestId
-        let id = RequestId::from(proto_id);
+        let id = RequestId::try_from(proto_id).unwrap();
 
         // Convert to u128 (using the last 16 bytes)
         let value: u128 = id.try_into().unwrap();
@@ -640,11 +638,8 @@ mod tests {
             request_id: "0102030405".to_string(),
         };
 
-        // Convert to RequestId (should fallback to zeros)
-        let id = RequestId::from(proto_id);
-
-        // Verify the conversion resulted in an invalid ID
-        assert!(!id.is_valid());
+        // Convert to RequestId (should fail)
+        RequestId::try_from(proto_id).unwrap_err();
 
         // Create an invalid v1::RequestId (non-hex characters)
         let proto_id = v1::RequestId {
@@ -652,10 +647,7 @@ mod tests {
                 .to_string(),
         };
 
-        // Convert to RequestId (should fallback to zeros)
-        let id = RequestId::from(proto_id);
-
-        // Verify the conversion resulted in an invalid ID
-        assert!(!id.is_valid());
+        // Convert to RequestId (should fail)
+        RequestId::try_from(proto_id).unwrap_err();
     }
 }

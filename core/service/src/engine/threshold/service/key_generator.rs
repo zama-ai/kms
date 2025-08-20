@@ -62,9 +62,11 @@ use crate::{
             service::{kms_impl::compute_all_info, ThresholdFheKeys},
             traits::KeyGenerator,
         },
-        validation::validate_request_id,
+        validation::{
+            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+        },
     },
-    tonic_handle_potential_err, tonic_some_or_err,
+    tonic_handle_potential_err,
     util::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
@@ -277,6 +279,7 @@ impl<
 
         // we need to clone the req ID because async closures are not stable
         let req_id_clone = req_id;
+        let opt_compression_key_id = internal_keyset_config.get_compression_id()?;
         let keygen_background = async move {
             match internal_keyset_config.keyset_config() {
                 ddec_keyset_config::KeySetConfig::Standard(inner_config) => {
@@ -289,7 +292,7 @@ impl<
                         sk,
                         dkg_params,
                         inner_config.to_owned(),
-                        internal_keyset_config.get_compression_id(),
+                        opt_compression_key_id,
                         eip712_domain_copy,
                         permit,
                     )
@@ -374,24 +377,49 @@ impl<
             inner.keyset_added_info,
             insecure
         );
-        let request_id: RequestId = tonic_some_or_err(
-            inner.request_id.clone(),
-            "Request ID is not set (inner key gen)".to_string(),
-        )?
-        .into();
-        validate_request_id(&request_id)?;
+        let request_id =
+            parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::KeyGenRequest)?;
 
         // Retrieve kg params and preproc_id
         let dkg_params = retrieve_parameters(inner.params)?;
 
+        let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
+
+        let internal_keyset_config =
+            InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info).map_err(
+                |e| {
+                    tonic::Status::new(
+                        tonic::Code::InvalidArgument,
+                        format!("Failed to parse KeySetConfig: {}", e),
+                    )
+                },
+            )?;
+
+        // Check for existance of request ID
+        {
+            let guarded_meta_store = self.dkg_pubinfo_meta_store.read().await;
+            if guarded_meta_store.exists(&request_id) {
+                return Err(tonic::Status::new(
+                    tonic::Code::AlreadyExists,
+                    format!("Request ID {} already exists for keygen", request_id),
+                ));
+            }
+        }
+
+        // TODO(zama-ai/kms-internal/issues/2722)
+        // consider moving this block of code further down the stack,
+        // preferrably right before running the threshold protocol,
+        // because if some error happens later on, e.g., in launch_dkg,
+        // then the preprocessing is essentially lost
         let preproc_handle = if insecure {
             PreprocHandleWithMode::Insecure
         } else {
-            let preproc_id = tonic_some_or_err(
-                inner.preproc_id.clone(),
-                "Pre-Processing ID is not set".to_string(),
-            )?
-            .into();
+            let preproc_id = parse_optional_proto_request_id(
+                &inner.preproc_id,
+                RequestIdParsingErr::Other(
+                    "invalid preprocessing ID in keygen request".to_string(),
+                ),
+            )?;
             let preproc = {
                 let mut map = self.preproc_buckets.write().await;
                 map.delete(&preproc_id)
@@ -400,13 +428,6 @@ impl<
                 handle_res_mapping(preproc, &preproc_id, "Preprocessing").await?,
             )
         };
-
-        let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
-
-        let internal_keyset_config = tonic_handle_potential_err(
-            InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info),
-            "Invalid keyset config".to_string(),
-        )?;
 
         tonic_handle_potential_err(
             self.launch_dkg(
@@ -429,8 +450,8 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
-        let request_id: RequestId = request.into_inner().into();
-        validate_request_id(&request_id)?;
+        let request_id =
+            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)?;
         let status = {
             let guarded_meta_store = self.dkg_pubinfo_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
@@ -488,24 +509,24 @@ impl<
         preprocessing: &mut P,
     ) -> anyhow::Result<DecompressionKey>
     where
-        P: DKGPreprocessing<ResiduePoly<Z128, 4>> + Send + ?Sized,
+        P: DKGPreprocessing<ResiduePolyF4Z128> + Send + ?Sized,
     {
-        let from_key_id = keyset_added_info
-            .from_keyset_id_decompression_only
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                "missing from key ID for the keyset that contains the compression secret key share"
+        let from_key_id = parse_optional_proto_request_id(
+            &keyset_added_info.from_keyset_id_decompression_only,
+            RequestIdParsingErr::Other("invalid from keyset ID".to_string()),
+        ).inspect_err(|e| {
+                tracing::error!("missing *from* key ID for the keyset that contains the compression secret key share: {}", e)
+            })?;
+        let to_key_id = parse_optional_proto_request_id(
+            &keyset_added_info.to_keyset_id_decompression_only,
+            RequestIdParsingErr::Other("invalid to keyset ID".to_string()),
+        )
+        .inspect_err(|e| {
+            tracing::error!(
+                "missing *to* key ID for the keyset that contains the glwe secret key share: {}",
+                e
             )
-            })?
-            .into();
-        let to_key_id = keyset_added_info
-            .to_keyset_id_decompression_only
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "missing to key ID for the keyset that contains the glwe secret key share"
-                )
-            })?
-            .into();
+        })?;
 
         let private_compression_share = {
             let threshold_keys = crypto_storage
@@ -622,22 +643,21 @@ impl<
         GlweSecretKeyShare<Z128, 4>,
         CompressionPrivateKeyShares<Z128, 4>,
     )> {
-        let compression_req_id = keyset_added_info
-            .from_keyset_id_decompression_only
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                "missing from key ID for the keyset that contains the compression secret key share"
+        let compression_req_id = parse_optional_proto_request_id(
+            &keyset_added_info.from_keyset_id_decompression_only,
+            RequestIdParsingErr::Other("invalid from key ID".to_string())
+        ).inspect_err(|e| {
+                tracing::error!("missing from key ID for the keyset that contains the compression secret key share: {e}")
+            })?;
+        let glwe_req_id = parse_optional_proto_request_id(
+            &keyset_added_info.to_keyset_id_decompression_only,
+            RequestIdParsingErr::Other("invalid to key ID".to_string()),
+        )
+        .inspect_err(|e| {
+            tracing::error!(
+                "missing to key ID for the keyset that contains the glwe secret key share: {e}"
             )
-            })?
-            .into();
-        let glwe_req_id = keyset_added_info
-            .to_keyset_id_decompression_only
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "missing to key ID for the keyset that contains the glwe secret key share"
-                )
-            })?
-            .into();
+        })?;
 
         crypto_storage
             .refresh_threshold_fhe_keys(&glwe_req_id)
@@ -897,13 +917,15 @@ impl<
         let start = Instant::now();
         tracing::info!("Starting SNS compression key generation for request {req_id}");
 
-        let base_key_id: RequestId = match keyset_added_info
-            .base_keyset_id_for_sns_compression_key
-            .ok_or(anyhow::anyhow!(
-            "missing key ID that should be used as the base for the sns compression key generation"
-        )) {
-            Ok(k) => k.into(),
+        let base_key_id = match parse_optional_proto_request_id(
+            &keyset_added_info.base_keyset_id_for_sns_compression_key,
+            RequestIdParsingErr::Other("invalid base keyset ID".to_string()),
+        ) {
+            Ok(k) => k,
             Err(e) => {
+                tracing::error!(
+                    "invalid key ID that should be used as the base for the sns compression key generation: {e}"
+                );
                 let mut guarded_meta_storage = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_storage.update(req_id, Err(e.to_string()));
@@ -1279,7 +1301,10 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};
+    use kms_grpc::{
+        kms::v1::{FheParameter, KeySetConfig},
+        rpc_types::alloy_to_protobuf_domain,
+    };
     use rand::rngs::OsRng;
     use threshold_fhe::{
         execution::online::preprocessing::dummy::DummyPreprocessing,
@@ -1349,7 +1374,7 @@ mod tests {
     async fn setup_key_generator<
         KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static,
     >() -> (
-        RequestId,
+        [RequestId; 4],
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
         let session_preparer = SessionPreparer::new_test_session(false);
@@ -1358,10 +1383,14 @@ mod tests {
         )
         .await;
 
-        let prep_id = RequestId::new_random(&mut OsRng);
+        let prep_ids: [RequestId; 4] = (0..4)
+            .map(|_| RequestId::new_random(&mut OsRng))
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
 
         // We need to setup the preprocessor metastore so that keygen will pass
-        {
+        for prep_id in &prep_ids {
             let session_id = prep_id.derive_session_id().unwrap();
             let dummy_prep = Box::new(DummyPreprocessing::<ResiduePolyF4Z128>::new(
                 42,
@@ -1371,55 +1400,102 @@ mod tests {
                     .unwrap(),
             ));
             let mut guarded_prep_bucket = kg.preproc_buckets.write().await;
-            (*guarded_prep_bucket).insert(&prep_id).unwrap();
+            (*guarded_prep_bucket).insert(prep_id).unwrap();
             (*guarded_prep_bucket)
-                .update(&prep_id, Ok(Arc::new(Mutex::new(dummy_prep))))
+                .update(prep_id, Ok(Arc::new(Mutex::new(dummy_prep))))
                 .unwrap();
         }
-        (prep_id, kg)
+        (prep_ids, kg)
     }
 
     #[tokio::test]
     async fn invalid_argument() {
-        //`InvalidArgument` - If the request ID is not valid or does not match the expected format.
-        let (prep_id, kg) = setup_key_generator::<
+        //`InvalidArgument` - If the request is not valid or does not match the expected format.
+        let (prep_ids, kg) = setup_key_generator::<
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let bad_key_id = kms_grpc::kms::v1::RequestId {
-            request_id: "badformat".to_string(),
-        };
+        let prep_id = prep_ids[0];
+        {
+            // bad request ID format
+            let bad_key_id = kms_grpc::kms::v1::RequestId {
+                request_id: "badformat".to_string(),
+            };
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let request = tonic::Request::new(KeyGenRequest {
+                request_id: Some(bad_key_id.clone()),
+                params: FheParameter::Test as i32,
+                preproc_id: Some(prep_id.into()),
+                domain: Some(domain),
+                keyset_config: None,
+                keyset_added_info: None,
+            });
 
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let request = tonic::Request::new(KeyGenRequest {
-            request_id: Some(bad_key_id.clone()),
-            params: FheParameter::Test as i32,
-            preproc_id: Some(prep_id.into()),
-            domain: Some(domain),
-            keyset_config: None,
-            keyset_added_info: None,
-        });
+            assert_eq!(
+                kg.key_gen(request).await.unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+            assert_eq!(
+                kg.get_result(tonic::Request::new(bad_key_id))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // bad domain
+            let key_id = RequestId::new_random(&mut OsRng);
+            let mut domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            domain.verifying_contract = "bad_contract".to_string();
 
-        assert_eq!(
-            kg.key_gen(request).await.unwrap_err().code(),
-            tonic::Code::InvalidArgument
-        );
-        assert_eq!(
-            kg.get_result(tonic::Request::new(bad_key_id))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::InvalidArgument
-        );
+            let request = tonic::Request::new(KeyGenRequest {
+                request_id: Some(key_id.into()),
+                params: FheParameter::Test as i32,
+                preproc_id: Some(prep_id.into()),
+                domain: Some(domain),
+                keyset_config: None,
+                keyset_added_info: None,
+            });
+
+            assert_eq!(
+                kg.key_gen(request).await.unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // bad keyset_config
+            let key_id = RequestId::new_random(&mut OsRng);
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let keyset_config = KeySetConfig {
+                keyset_type: 100, // bad keyset type
+                standard_keyset_config: None,
+            };
+
+            let request = tonic::Request::new(KeyGenRequest {
+                request_id: Some(key_id.into()),
+                params: FheParameter::Test as i32,
+                preproc_id: Some(prep_id.into()),
+                domain: Some(domain),
+                keyset_config: Some(keyset_config),
+                keyset_added_info: None,
+            });
+
+            assert_eq!(
+                kg.key_gen(request).await.unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
     }
 
     #[tokio::test]
     async fn resource_exhausted() {
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        let (prep_id, mut kg) = setup_key_generator::<
+        let (prep_ids, mut kg) = setup_key_generator::<
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
+        let prep_id = prep_ids[0];
         let key_id = RequestId::new_random(&mut OsRng);
 
         // Set bucket size to zero, so no operations are allowed
@@ -1443,28 +1519,51 @@ mod tests {
 
     #[tokio::test]
     async fn not_found() {
-        let (_prep_id, kg) = setup_key_generator::<
+        let (_prep_ids, kg) = setup_key_generator::<
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
-        let key_id = RequestId::new_random(&mut OsRng);
 
-        // no need to wait because [get_result] is semi-blocking
-        assert_eq!(
-            kg.get_result(tonic::Request::new(key_id.into()))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::NotFound
-        );
+        // use a random prep ID and it should be not found
+        {
+            let key_id = RequestId::new_random(&mut OsRng);
+            let bad_prep_id = RequestId::new_random(&mut OsRng);
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let request = tonic::Request::new(KeyGenRequest {
+                request_id: Some(key_id.into()),
+                params: FheParameter::Test as i32,
+                preproc_id: Some(bad_prep_id.into()),
+                domain: Some(domain),
+                keyset_config: None,
+                keyset_added_info: None,
+            });
+
+            assert_eq!(
+                kg.key_gen(request).await.unwrap_err().code(),
+                tonic::Code::NotFound
+            );
+        }
+
+        {
+            // the result is not found since it's a fresh key ID
+            let key_id = RequestId::new_random(&mut OsRng);
+            assert_eq!(
+                kg.get_result(tonic::Request::new(key_id.into()))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::NotFound
+            );
+        }
     }
 
     #[tokio::test]
     async fn internal() {
-        let (prep_id, kg) = setup_key_generator::<
+        let (prep_ids, kg) = setup_key_generator::<
             FailingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
+        let prep_id = prep_ids[0];
         let key_id = RequestId::new_random(&mut OsRng);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
@@ -1491,15 +1590,64 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sunshine() {
-        let (prep_id, kg) = setup_key_generator::<
+    async fn already_exists() {
+        let (prep_ids, kg) = setup_key_generator::<
             DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         >()
         .await;
+        let prep_id0 = prep_ids[0];
+        let prep_id1 = prep_ids[1];
+        let key_id = RequestId::new_random(&mut OsRng);
+
+        // do one keygen
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request0 = KeyGenRequest {
+            request_id: Some(key_id.into()),
+            params: FheParameter::Test as i32,
+            preproc_id: Some(prep_id0.into()),
+            domain: Some(domain.clone()),
+            keyset_config: None,
+            keyset_added_info: None,
+        };
+
+        kg.key_gen(tonic::Request::new(request0)).await.unwrap();
+
+        // try to do it again with the same key ID
+        // NOTE: we need to use a different preproc ID to avoid the `NotFound` error
+        let request1 = KeyGenRequest {
+            request_id: Some(key_id.into()),
+            params: FheParameter::Test as i32,
+            preproc_id: Some(prep_id1.into()),
+            domain: Some(domain),
+            keyset_config: None,
+            keyset_added_info: None,
+        };
+        assert_eq!(
+            kg.key_gen(tonic::Request::new(request1))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+    }
+
+    #[tokio::test]
+    async fn aborted() {
+        // TODO this is not easy to test since it requires meta store to fail
+        // we don't have a trait for meta store
+    }
+
+    #[tokio::test]
+    async fn sunshine() {
+        let (prep_ids, kg) = setup_key_generator::<
+            DroppingOnlineDistributedKeyGen128<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+        >()
+        .await;
+        let prep_id = prep_ids[0];
         let key_id = RequestId::new_random(&mut OsRng);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let request = tonic::Request::new(KeyGenRequest {
+        let tonic_req = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
             params: FheParameter::Test as i32,
             preproc_id: Some(prep_id.into()),
@@ -1508,7 +1656,7 @@ mod tests {
             keyset_added_info: None,
         });
 
-        kg.key_gen(request).await.unwrap();
+        kg.key_gen(tonic_req).await.unwrap();
 
         // no need to wait because [get_result] is semi-blocking
         kg.get_result(tonic::Request::new(key_id.into()))

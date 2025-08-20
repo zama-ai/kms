@@ -1,6 +1,8 @@
 use crate::client::client_wasm::Client;
 use crate::engine::base::compute_handle;
 use crate::engine::base::DSEP_PUBDATA_KEY;
+use crate::engine::validation::parse_optional_proto_request_id;
+use crate::engine::validation::RequestIdParsingErr;
 use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
@@ -119,11 +121,11 @@ impl Client {
         storage: &R,
     ) -> anyhow::Result<Option<WrappedPublicKeyOwned>> {
         // first we need to read the key type
-        let request_id = some_or_err(
-            key_gen_result.request_id.clone(),
-            "No request id".to_string(),
-        )?
-        .into();
+        let request_id = parse_optional_proto_request_id(
+            &key_gen_result.request_id,
+            RequestIdParsingErr::Other("invalid ID while retrieving public key".to_string()),
+        )
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         tracing::debug!(
             "getting public key metadata using storage {} with request id {}",
             storage.info(),
@@ -182,11 +184,12 @@ impl Client {
             key_gen_result.key_results.get(&key_type.to_string()),
             format!("Could not find key of type {key_type}"),
         )?;
-        let request_id = some_or_err(
-            key_gen_result.request_id.clone(),
-            "No request id".to_string(),
-        )?;
-        let key: S = self.get_key(&request_id.into(), key_type, storage).await?;
+        let request_id = parse_optional_proto_request_id(
+            &key_gen_result.request_id,
+            RequestIdParsingErr::Other("invalid request ID while retrieving key".to_string()),
+        )
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let key: S = self.get_key(&request_id, key_type, storage).await?;
         let key_handle = compute_handle(&key)?;
         if key_handle != pki.key_handle {
             tracing::warn!(

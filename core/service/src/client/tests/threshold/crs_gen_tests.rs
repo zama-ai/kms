@@ -201,7 +201,7 @@ async fn wait_for_crsgen_result(
     for req in reqs {
         use itertools::Itertools;
 
-        let req_id: RequestId = req.clone().request_id.unwrap().into();
+        let req_id: RequestId = req.clone().request_id.unwrap().try_into().unwrap();
         let joined_responses: Vec<_> = joined_responses
             .iter()
             .cloned()
@@ -409,7 +409,7 @@ macro_rules! par_poll_responses {
                         } else {
                             let (j, req_id, inner_resp) = inner;
                             // Explicitly convert to string to avoid any type conversion issues
-                            let req_id_str = match kms_grpc::RequestId::from(req_id.clone()) {
+                            let req_id_str = match kms_grpc::RequestId::try_from(req_id.clone()).unwrap() {
                                 id => id.to_string(),
                             };
                             tracing::info!("Response in iteration {count} for server {j} and req_id {req_id_str} is: {:?}", inner_resp);

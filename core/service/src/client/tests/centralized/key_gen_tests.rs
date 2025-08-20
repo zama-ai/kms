@@ -216,7 +216,10 @@ async fn key_gen_centralized(
 
         // read the client key
         let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
-            .read_data(&req_id.into(), &PrivDataType::FheKeyInfo.to_string())
+            .read_data(
+                &req_id.try_into().unwrap(),
+                &PrivDataType::FheKeyInfo.to_string(),
+            )
             .await
             .unwrap();
         let client_key = handle.client_key;
@@ -237,7 +240,8 @@ async fn key_gen_centralized(
                 .unwrap()
                 .base_keyset_id_for_sns_compression_key
                 .unwrap()
-                .into();
+                .try_into()
+                .unwrap();
             crate::client::key_gen::tests::identical_keys_except_sns_compression_from_storage(
                 &internal_client,
                 &pub_storage,

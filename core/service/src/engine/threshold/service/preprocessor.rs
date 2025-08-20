@@ -40,8 +40,12 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     engine::{
-        base::retrieve_parameters, keyset_configuration::preproc_proto_to_keyset_config,
-        threshold::traits::KeyGenPreprocessor, validation::validate_request_id,
+        base::retrieve_parameters,
+        keyset_configuration::preproc_proto_to_keyset_config,
+        threshold::traits::KeyGenPreprocessor,
+        validation::{
+            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+        },
     },
     tonic_handle_potential_err, tonic_some_or_err,
     util::{
@@ -242,12 +246,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         let permit = self.rate_limiter.start_preproc().await?;
 
         let inner = request.into_inner();
-        let request_id: RequestId = tonic_some_or_err(
-            inner.request_id.clone(),
-            "Request ID is not set (key_gen_preproc)".to_string(),
-        )?
-        .into();
-        validate_request_id(&request_id)?;
+        let request_id = parse_optional_proto_request_id(
+            &inner.request_id,
+            RequestIdParsingErr::PreprocRequest,
+        )?;
 
         //Retrieve the DKG parameters
         let dkg_params = retrieve_parameters(inner.params)?;
@@ -258,10 +260,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
             map.exists(&request_id)
         };
 
-        let keyset_config = tonic_handle_potential_err(
-            preproc_proto_to_keyset_config(&inner.keyset_config),
-            "Failed to process keyset config".to_string(),
-        )?;
+        let keyset_config = preproc_proto_to_keyset_config(&inner.keyset_config)?;
 
         // If the entry did not exist before, start the preproc
         // NOTE: We currently consider an existing entry is NOT an error
@@ -269,21 +268,21 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
             // We don't increment the error counter here but rather in launch_dkg_preproc
             tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
+            Ok(Response::new(Empty {}))
         } else {
-            tracing::warn!(
-                "Tried to generate preproc multiple times for the same Request ID {} -- skipped it!",
+            Err(tonic::Status::already_exists(format!(
+                "Preprocessing for request ID {} already exists",
                 request_id
-            );
+            )))
         }
-        Ok(Response::new(Empty {}))
     }
 
     async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, Status> {
-        let request_id = request.into_inner().into();
-        validate_request_id(&request_id)?;
+        let request_id =
+            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse)?;
 
         let status = {
             let guarded_meta_store = self.preproc_buckets.read().await;
@@ -371,6 +370,21 @@ mod tests {
             );
         }
         {
+            // Invalid argument because request ID is empty
+            let request = KeyGenPreprocRequest {
+                request_id: None,
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
             // Invalid argument because params is invalid
             let mut rng = AesRng::seed_from_u64(22);
             let req_id = RequestId::new_random(&mut rng);
@@ -441,27 +455,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aborted() {
-        // `Aborted` - If the request ID is not given, the values in the request are not valid, or an internal problem occured.
-        let session_preparer = SessionPreparer::new_test_session(true);
-        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
-
-        // Aborted because request_id is None
-        let request = KeyGenPreprocRequest {
-            request_id: None,
-            params: FheParameter::Test as i32,
-            keyset_config: None,
-        };
-        assert_eq!(
-            prep.key_gen_preproc(tonic::Request::new(request))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Aborted
-        );
-    }
-
-    #[tokio::test]
     async fn not_found() {
         // `NotFound` - If the preprocessing does not exist for `request`.
         let session_preparer = SessionPreparer::new_test_session(true);
@@ -477,6 +470,54 @@ mod tests {
                 .unwrap_err()
                 .code(),
             tonic::Code::NotFound
+        );
+    }
+
+    #[tokio::test]
+    async fn already_exists() {
+        let session_preparer = SessionPreparer::new_test_session(true);
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+        };
+        prep.key_gen_preproc(tonic::Request::new(request.clone()))
+            .await
+            .unwrap();
+
+        // try again with the same request and we should get AlreadyExists error
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+    }
+
+    #[tokio::test]
+    async fn aborted() {
+        // Starting a preprocessing request that will be aborted if there's no PRSS
+        let session_preparer = SessionPreparer::new_test_session(false);
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+        };
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Aborted
         );
     }
 
