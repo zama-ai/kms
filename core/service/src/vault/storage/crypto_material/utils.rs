@@ -8,7 +8,7 @@ use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use crate::vault::storage::StorageReader;
 use crate::{
     anyhow_error_and_warn_log,
-    client::ClientDataType,
+    client::client_non_wasm::ClientDataType,
     vault::storage::{read_all_data_versioned, Storage},
 };
 use aes_prng::AesRng;

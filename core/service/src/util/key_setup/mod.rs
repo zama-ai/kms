@@ -22,7 +22,7 @@ cfg_if::cfg_if! {
     }
 }
 
-use crate::client::ClientDataType;
+use crate::client::client_non_wasm::ClientDataType;
 use crate::cryptography::internal_crypto_types::gen_sig_keys;
 use crate::engine::base::compute_handle;
 use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
