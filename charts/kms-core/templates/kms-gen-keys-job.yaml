@@ -35,8 +35,11 @@ spec:
             - name: S3_ENDPOINT
               value: "http://minio:9000/{{ .Values.kmsCore.publicVault.s3.bucket }}/{{ .Values.kmsCore.publicVault.s3.path }}"
             {{- else }}
-            - name: S3_ENDPOINT
-              value: "https://{{ .Values.kmsCore.publicVault.s3.bucket }}.s3.{{ .Values.kmsCore.aws.region }}.amazonaws.com{{ if .Values.kmsCore.publicVault.s3.path }}/{{ .Values.kmsCore.publicVault.s3.path }}{{ end }}"
+            - name: {{ .Values.kmsCore.envFrom.configmap.key.coreClientS3Endpoint }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.coreClientS3Endpoint }}{{ end }}"
             {{- end }}
             - name: OBJECT_FOLDER
               {{- if .Values.kmsCore.thresholdMode.peersList }}
