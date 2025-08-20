@@ -253,7 +253,7 @@ message PublicDecryptionResponse {
 
   // the signature on external_decryption_result for the external recipient
   // (e.g. using EIP712 for fhevm)
-  optional bytes external_signature = 2;
+  bytes external_signature = 2;
 
   // The payload that is signed
   PublicDecryptionResponsePayload payload = 3;

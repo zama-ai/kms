@@ -653,7 +653,7 @@ impl<
         Ok(Response::new(PublicDecryptionResponse {
             signature: sig.sig.to_vec(),
             payload: Some(sig_payload),
-            external_signature: Some(external_signature),
+            external_signature,
             extra_data,
         }))
     }

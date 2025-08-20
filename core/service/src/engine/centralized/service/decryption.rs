@@ -381,7 +381,7 @@ pub async fn get_public_decryption_result_impl<
     Ok(Response::new(PublicDecryptionResponse {
         signature: sig.sig.to_vec(),
         payload: Some(kms_sig_payload),
-        external_signature: Some(external_signature),
+        external_signature,
         extra_data,
     }))
 }

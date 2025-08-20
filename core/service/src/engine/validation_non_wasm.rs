@@ -1097,8 +1097,8 @@ mod tests {
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
-                external_signature: Some(vec![]),
-                extra_data: vec![],
+                external_signature: vec![],
+                extra_data: vec![1, 2, 3, 4], // some extra data that is different from resp1
             }
         };
         let resp1 = {
@@ -1122,7 +1122,7 @@ mod tests {
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
-                external_signature: Some(vec![]),
+                external_signature: vec![],
                 extra_data: vec![],
             }
         };
@@ -1195,7 +1195,7 @@ mod tests {
                 PublicDecryptionResponse {
                     signature: signature_buf,
                     payload: Some(payload),
-                    external_signature: Some(vec![]),
+                    external_signature: vec![],
                     extra_data: vec![],
                 }
             };
@@ -1275,8 +1275,8 @@ mod tests {
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
-                external_signature: Some(vec![]),
-                extra_data: vec![],
+                external_signature: vec![],
+                extra_data: vec![1, 2, 3], // some extra data, independent of resp1
             }
         };
         let resp1 = {
@@ -1300,7 +1300,7 @@ mod tests {
             PublicDecryptionResponse {
                 signature: signature_buf,
                 payload: Some(payload),
-                external_signature: Some(vec![]),
+                external_signature: vec![],
                 extra_data: vec![],
             }
         };
@@ -1476,7 +1476,7 @@ mod tests {
             PublicDecryptionResponse {
                 signature: vec![],
                 payload: Some(payload),
-                external_signature: Some(vec![]),
+                external_signature: vec![],
                 extra_data: vec![],
             }
         };
@@ -1533,7 +1533,7 @@ mod tests {
             PublicDecryptionResponse {
                 signature: vec![],
                 payload: Some(payload),
-                external_signature: Some(vec![]),
+                external_signature: vec![],
                 extra_data: vec![],
             }
         };

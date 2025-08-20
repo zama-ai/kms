@@ -67,16 +67,27 @@
 //! ```
 //! node --test tests/js
 //! ```
+use crate::client::client_wasm::{Client, ServerIdentities};
+use crate::client::user_decryption_wasm::{
+    ParsedUserDecryptionRequest, ParsedUserDecryptionRequestHex, TestingUserDecryptionTranscript,
+};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::hybrid_ml_kem;
-use crate::cryptography::internal_crypto_types::{PrivateEncKey, PublicEncKey};
+use crate::cryptography::internal_crypto_types::{
+    PrivateEncKey, PublicEncKey, UnifiedPrivateEncKey, UnifiedPublicEncKey,
+};
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
+use aes_prng::AesRng;
 use bc2wrap::{deserialize, serialize};
-use kms_grpc::kms::v1::Eip712DomainMsg;
 use kms_grpc::kms::v1::FheParameter;
+use kms_grpc::kms::v1::UserDecryptionResponse;
+use kms_grpc::kms::v1::{Eip712DomainMsg, TypedPlaintext, UserDecryptionResponsePayload};
 use kms_grpc::rpc_types::protobuf_to_alloy_domain;
+use rand::SeedableRng;
+use std::collections::HashMap;
+use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::tfhe_internals::parameters::BC_PARAMS_SNS;
-
-use super::*;
+use wasm_bindgen::{prelude::wasm_bindgen, JsError, JsValue};
 
 // Since wasm_bindgen is limited, namely it says
 // structs with #[wasm_bindgen] cannot have lifetime or type parameters currently
@@ -419,7 +430,7 @@ fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<UserDecryptionResponse>> {
             payload: match hex_resp.payload {
                 Some(inner) => {
                     let buf = hex::decode(&inner)?;
-                    Some(deserialize(&buf)?)
+                    Some(deserialize::<UserDecryptionResponsePayload>(&buf)?)
                 }
                 None => None,
             },
