@@ -3,9 +3,7 @@ use super::{
     Keychain,
 };
 use crate::{
-    anyhow_error_and_log,
-    consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::{attestation::SecurityModule, backup_pke::BackupCiphertext},
+    anyhow_error_and_log, consts::SAFE_SER_SIZE_LIMIT, cryptography::attestation::SecurityModule,
     some_or_err,
 };
 use aes::{
@@ -24,7 +22,6 @@ use aws_sdk_kms::{
 };
 use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
 use hyper_rustls::HttpsConnectorBuilder;
-use kms_grpc::rpc_types::PrivDataType;
 use rand::{CryptoRng, Rng};
 use rasn::{
     ber::de::{Decoder, DecoderOptions},
@@ -193,13 +190,7 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
             &envelope.auth_tag,
         )?;
         let mut buf = std::io::Cursor::new(&envelope.ciphertext);
-        let backup_ct: BackupCiphertext =
-            safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))?;
-        safe_deserialize::<T>(
-            std::io::Cursor::new(&backup_ct.ciphertext),
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .map_err(|e| {
+        safe_deserialize::<T>(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| {
             anyhow::anyhow!(
                 "Could not deserialize backed up ciphertext: {}",
                 e.to_string()
@@ -215,9 +206,8 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
     async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
-        data_type: &str,
+        _data_type: &str,
     ) -> anyhow::Result<EnvelopeStore> {
-        let priv_data_type: PrivDataType = data_type.try_into()?;
         // request enclave attestation before making an AWS KMS request, so the
         // attestation is fresh and not older than 5 minutes
         let attestation = self
@@ -250,15 +240,9 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
             gen_data_key_response_ciphertext_blob.into_inner(),
             &self.recipient_sk,
         )?;
-        let mut payload_bytes = Vec::new();
-        safe_serialize(data, &mut payload_bytes, SAFE_SER_SIZE_LIMIT)?;
-        let backup_ct = BackupCiphertext {
-            ciphertext: payload_bytes,
-            priv_data_type,
-        };
-        // Serialize the backup ciphertext
+        // encrypt the app key under the data key
         let mut blob_bytes = Vec::new();
-        safe_serialize(&backup_ct, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
+        safe_serialize(data, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
         // encrypt the app key under the data key
         let iv = self.security_module.get_random(APP_BLOB_NONCE_SIZE).await?;
         let auth_tag = encrypt_under_data_key(&mut blob_bytes, &data_key, &iv)?;
@@ -280,25 +264,14 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
         &self,
         envelope: &mut EnvelopeLoad,
     ) -> anyhow::Result<T> {
-        // First unwrap the backed up ciphertext from the envelope
-        let backup_ct: BackupCiphertext = AWSKMSKeychain::<S, Symm, R>::decrypt(
+        AWSKMSKeychain::<S, Symm, R>::decrypt(
             self,
             &mut envelope
                 .clone()
                 .try_as_app_key_blob()
                 .ok_or(anyhow::anyhow!("Expected single share encrypted data"))?,
         )
-        .await?;
-        safe_deserialize::<T>(
-            std::io::Cursor::new(&backup_ct.ciphertext),
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "Could not deserialize backed up ciphertext: {}",
-                e.to_string()
-            )
-        })
+        .await
     }
 }
 
@@ -306,9 +279,8 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
     async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
-        data_type: &str,
+        _data_type: &str,
     ) -> anyhow::Result<EnvelopeStore> {
-        let priv_data_type: PrivDataType = data_type.try_into()?;
         // generate a fresh data key
         let data_key = self.security_module.get_random(Aes256::key_size()).await?;
         let enc_data_key = self
@@ -316,16 +288,9 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
             .pk
             .encrypt(&mut self.rng, Oaep::new::<Sha256>(), data_key.as_ref())
             .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt data key: {e}")))?;
-        let mut payload_bytes = Vec::new();
-        safe_serialize(data, &mut payload_bytes, SAFE_SER_SIZE_LIMIT)?;
-        let backup_ct = BackupCiphertext {
-            ciphertext: payload_bytes,
-            priv_data_type,
-        };
-        // Serialize the backup ciphertext
-        let mut blob_bytes = Vec::new();
-        safe_serialize(&backup_ct, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
         // encrypt the app key under the data key
+        let mut blob_bytes = Vec::new();
+        safe_serialize(data, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
         let iv = self.security_module.get_random(APP_BLOB_NONCE_SIZE).await?;
         let auth_tag = encrypt_under_data_key(&mut blob_bytes, &data_key, &iv)?;
         Ok(EnvelopeStore::AppKeyBlob(AppKeyBlob {
