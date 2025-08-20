@@ -10,7 +10,7 @@ use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
-        backup_pke::BackupPublicKey,
+        backup_pke::{BackupPrivateKey, BackupPublicKey},
         internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature},
         signcryption::internal_verify_sig,
     },
@@ -184,18 +184,18 @@ impl Display for RecoveryRequest {
 }
 
 #[derive(Clone)]
-pub struct Operator<D: BackupDecryptor> {
+pub struct Operator {
     my_role: Role,
     custodian_keys: Vec<(BackupPublicKey, PublicSigKey)>,
     signer: PrivateSigKey,
     // the public component of [signer] above
     verification_key: PublicSigKey,
-    decryptor: D,
+    decryptor: BackupPrivateKey,
     public_key: BackupPublicKey,
     threshold: usize,
 }
 
-impl<D: BackupDecryptor> std::fmt::Debug for Operator<D> {
+impl std::fmt::Debug for Operator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Operator")
             .field("my_id", &self.my_role)
@@ -401,13 +401,13 @@ impl Named for BackupMaterial {
     const NAME: &'static str = "backup::BackupShares";
 }
 
-impl<D: BackupDecryptor> Operator<D> {
+impl Operator {
     pub fn new(
         my_role: Role,
         custodian_messages: Vec<InternalCustodianSetupMessage>,
         signer: PrivateSigKey,
         operator_verf_key: PublicSigKey,
-        decryptor: D,
+        decryptor: BackupPrivateKey,
         operator_enc_key: BackupPublicKey,
         threshold: usize,
     ) -> Result<Self, BackupError> {

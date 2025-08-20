@@ -234,7 +234,7 @@ mod tests {
             seed_phrase::custodian_from_seed_phrase,
         },
         cryptography::{
-            backup_pke::{self, BackupPrivateKey},
+            backup_pke::{self},
             internal_crypto_types::gen_sig_keys,
         },
         engine::base::derive_request_id,
@@ -429,7 +429,7 @@ mod tests {
         setup_msgs: Vec<InternalCustodianSetupMessage>,
         backup_id: RequestId,
         msg: &[u8],
-    ) -> (BackupCommitments, Operator<BackupPrivateKey>) {
+    ) -> (BackupCommitments, Operator) {
         let request_path = root_path.join(format!(
             "operator-{operator_role}{MAIN_SEPARATOR}{backup_id}-request.bin"
         ));
@@ -480,7 +480,7 @@ mod tests {
     async fn decrypt_recovery(
         root_path: &Path,
         amount_custodians: usize,
-        operator: &Operator<BackupPrivateKey>,
+        operator: &Operator,
         commitment: &BackupCommitments,
         backup_id: RequestId,
     ) -> Vec<u8> {

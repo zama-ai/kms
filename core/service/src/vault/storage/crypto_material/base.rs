@@ -721,7 +721,7 @@ where
                         Some(keychain) => {
                             if let KeychainProxy::SecretSharing(sharing_chain) = keychain {
                                 // Store the public key in the secret sharing keychain
-                                sharing_chain.set_backup_enc_key(pub_key);
+                                sharing_chain.set_backup_enc_key(*req_id, pub_key);
                             }
                         },
                         None => {
