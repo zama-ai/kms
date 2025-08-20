@@ -186,7 +186,7 @@ impl PublicDecryptor for DummyPublicDecryptor {
                 plaintexts: vec![TypedPlaintext::new(42, FheTypes::Uint8)],
                 request_id: Some(request.into_inner()),
             }),
-            external_signature: Some(vec![23_u8; 65]),
+            external_signature: vec![23_u8; 65],
             extra_data: vec![],
         }))
     }
