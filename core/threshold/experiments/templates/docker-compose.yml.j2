@@ -1,7 +1,7 @@
 services:
 {% for i in range(n_parties) %}
   p{{ i+1 }}:
-    image: {{protocol}}-core:latest
+    image: {{image_name}}:latest
     hostname: p{{ i+1 }}
     cap_add:
       - NET_ADMIN
