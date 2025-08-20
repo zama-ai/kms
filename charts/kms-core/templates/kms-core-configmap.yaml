@@ -33,7 +33,7 @@ data:
     {{ if .Values.kmsCore.publicVault.s3.enabled }}
     [public_vault.storage.s3]
     bucket = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}"
-      {{ if .Values.kmsCore.publicVault.s3.path }}
+      {{ if .Values.kmsCore.publicVault.s3.prefix }}
     prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX}"
       {{ end }}
     {{ else }}
@@ -44,7 +44,7 @@ data:
     {{ if .Values.kmsCore.privateVault.s3.enabled }}
     [private_vault.storage.s3]
     bucket = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET}"
-      {{ if .Values.kmsCore.publicVault.s3.path }}
+      {{ if .Values.kmsCore.publicVault.s3.prefix }}
     prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX}"
       {{ end }}
 
@@ -60,7 +60,7 @@ data:
     {{- if .Values.kmsCore.backupVault.s3.enabled }}
     [backup_vault.storage.s3]
     bucket = "${KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET}"
-      {{- if .Values.kmsCore.backupVault.s3.path }}
+      {{- if .Values.kmsCore.backupVault.s3.prefix }}
     prefix = "${KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX}"
       {{- end }}
     {{- else }}
