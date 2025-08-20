@@ -372,7 +372,7 @@ jobs:
       packages: write
       attestations: write
     needs:
-      # - test-core-service
+      - test-core-service
       - docker-golden-image
     if: >-
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
