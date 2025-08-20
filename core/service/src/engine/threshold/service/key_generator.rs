@@ -54,14 +54,11 @@ use crate::{
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
         base::{
-            compute_info, convert_key_response, retrieve_parameters, BaseKmsStruct,
-            KeyGenCallValues, DSEP_PUBDATA_KEY,
+            compute_info_decompression_keygen, compute_info_standard_keygen, retrieve_parameters,
+            BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY,
         },
         keyset_configuration::InternalKeySetConfig,
-        threshold::{
-            service::{kms_impl::compute_all_info, ThresholdFheKeys},
-            traits::KeyGenerator,
-        },
+        threshold::{service::ThresholdFheKeys, traits::KeyGenerator},
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -145,6 +142,11 @@ impl<
         }
     }
 }
+#[cfg(feature = "insecure")]
+lazy_static::lazy_static! {
+    pub static ref INSECURE_PREPROCESSING_ID: RequestId =
+        crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap();
+}
 
 #[cfg(feature = "insecure")]
 #[tonic::async_trait]
@@ -177,7 +179,12 @@ impl<
 // more clear to label the variants as `Secure`
 // and `Insecure`.
 pub enum PreprocHandleWithMode {
-    Secure(Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>),
+    Secure(
+        (
+            RequestId,
+            Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>,
+        ),
+    ),
     Insecure,
 }
 
@@ -424,9 +431,10 @@ impl<
                 let mut map = self.preproc_buckets.write().await;
                 map.delete(&preproc_id)
             };
-            PreprocHandleWithMode::Secure(
+            PreprocHandleWithMode::Secure((
+                preproc_id,
                 handle_res_mapping(preproc, &preproc_id, "Preprocessing").await?,
-            )
+            ))
         };
 
         tonic_handle_potential_err(
@@ -457,9 +465,21 @@ impl<
             guarded_meta_store.retrieve(&request_id)
         };
         let res = handle_res_mapping(status, &request_id, "DKG").await?;
+        if res.key_id != request_id {
+            return Err(Status::internal(format!(
+                "Key generation result not found for request ID: {}",
+                request_id
+            )));
+        }
         Ok(Response::new(KeyGenResult {
             request_id: Some(request_id.into()),
-            key_results: convert_key_response(res),
+            preprocessing_id: Some(res.preprocessing_id.into()),
+            key_digests: res
+                .key_digest_map
+                .into_iter()
+                .map(|(data_type, info)| (data_type.to_string(), info))
+                .collect::<HashMap<_, _>>(),
+            external_signature: res.external_signature,
         }))
     }
 
@@ -822,7 +842,7 @@ impl<
     ) -> Result<(), ()> {
         let _permit = permit;
         let start = Instant::now();
-        let dkg_res = match preproc_handle_w_mode {
+        let (prep_id, dkg_res) = match preproc_handle_w_mode {
             PreprocHandleWithMode::Insecure => {
                 // sanity check to make sure we're using the insecure feature
                 #[cfg(not(feature = "insecure"))]
@@ -831,35 +851,41 @@ impl<
                 }
                 #[cfg(feature = "insecure")]
                 {
-                    match Self::get_glwe_and_compression_key_shares(
-                        keyset_added_info,
-                        crypto_storage.clone(),
+                    (
+                        INSECURE_PREPROCESSING_ID.clone(),
+                        match Self::get_glwe_and_compression_key_shares(
+                            keyset_added_info,
+                            crypto_storage.clone(),
+                        )
+                        .await
+                        {
+                            Ok((glwe_shares, compression_shares)) => {
+                                Self::reconstruct_glwe_and_compression_key_shares(
+                                    &base_session,
+                                    params,
+                                    glwe_shares,
+                                    compression_shares,
+                                )
+                                .await
+                            }
+                            Err(e) => Err(e),
+                        },
                     )
-                    .await
-                    {
-                        Ok((glwe_shares, compression_shares)) => {
-                            Self::reconstruct_glwe_and_compression_key_shares(
-                                &base_session,
-                                params,
-                                glwe_shares,
-                                compression_shares,
-                            )
-                            .await
-                        }
-                        Err(e) => Err(e),
-                    }
                 }
             }
-            PreprocHandleWithMode::Secure(preproc_handle) => {
+            PreprocHandleWithMode::Secure((prep_id, preproc_handle)) => {
                 let mut preproc_handle = preproc_handle.lock().await;
-                Self::decompression_key_gen_closure(
-                    &mut base_session,
-                    crypto_storage.clone(),
-                    params,
-                    keyset_added_info,
-                    preproc_handle.as_mut(),
+                (
+                    prep_id,
+                    Self::decompression_key_gen_closure(
+                        &mut base_session,
+                        crypto_storage.clone(),
+                        params,
+                        keyset_added_info,
+                        preproc_handle.as_mut(),
+                    )
+                    .await,
                 )
-                .await
             }
         };
 
@@ -876,8 +902,15 @@ impl<
         };
 
         // Compute all the info required for storing
-        let info = match compute_info(&sk, &DSEP_PUBDATA_KEY, &decompression_key, &eip712_domain) {
-            Ok(info) => HashMap::from_iter(vec![(PubDataType::DecompressionKey, info)]),
+        let info = match compute_info_decompression_keygen(
+            &sk,
+            &DSEP_PUBDATA_KEY,
+            &prep_id,
+            &req_id,
+            &decompression_key,
+            &eip712_domain,
+        ) {
+            Ok(info) => info,
             Err(_) => {
                 let mut guarded_meta_storage = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
@@ -933,7 +966,7 @@ impl<
             }
         };
 
-        let dkg_res = match preproc_handle_w_mode {
+        let (prep_id, dkg_res) = match preproc_handle_w_mode {
             PreprocHandleWithMode::Insecure => {
                 // sanity check to make sure we're using the insecure feature
                 #[cfg(not(feature = "insecure"))]
@@ -942,36 +975,44 @@ impl<
                 }
                 #[cfg(feature = "insecure")]
                 {
-                    match Self::reconstruct_sns_sk(
-                        &base_session,
-                        params,
-                        &base_key_id,
-                        crypto_storage.clone(),
+                    (
+                        INSECURE_PREPROCESSING_ID.clone(),
+                        match Self::reconstruct_sns_sk(
+                            &base_session,
+                            params,
+                            &base_key_id,
+                            crypto_storage.clone(),
+                        )
+                        .await
+                        {
+                            Ok(sns_sk) => {
+                                initialize_sns_compression_key_materials(
+                                    &mut base_session,
+                                    params,
+                                    sns_sk,
+                                )
+                                .await
+                            }
+                            Err(e) => {
+                                Err(anyhow::anyhow!("sns sk reconstruction failed with {}", e))
+                            }
+                        },
                     )
-                    .await
-                    {
-                        Ok(sns_sk) => {
-                            initialize_sns_compression_key_materials(
-                                &mut base_session,
-                                params,
-                                sns_sk,
-                            )
-                            .await
-                        }
-                        Err(e) => Err(anyhow::anyhow!("sns sk reconstruction failed with {}", e)),
-                    }
                 }
             }
-            PreprocHandleWithMode::Secure(preproc_handle) => {
+            PreprocHandleWithMode::Secure((prep_id, preproc_handle)) => {
                 let mut preproc_handle = preproc_handle.lock().await;
-                Self::sns_compression_key_gen_closure(
-                    &mut base_session,
-                    crypto_storage.clone(),
-                    params,
-                    &base_key_id,
-                    preproc_handle.as_mut(),
+                (
+                    prep_id,
+                    Self::sns_compression_key_gen_closure(
+                        &mut base_session,
+                        crypto_storage.clone(),
+                        params,
+                        &base_key_id,
+                        preproc_handle.as_mut(),
+                    )
+                    .await,
                 )
-                .await
             }
         };
 
@@ -1008,7 +1049,15 @@ impl<
         };
 
         // Compute all the info required for storing
-        let info = match compute_all_info(&sk, &fhe_pub_key_set, &eip712_domain) {
+        //
+        let info = match compute_info_standard_keygen(
+            &sk,
+            &DSEP_PUBDATA_KEY,
+            &prep_id,
+            req_id,
+            &fhe_pub_key_set,
+            &eip712_domain,
+        ) {
             Ok(info) => info,
             Err(_) => {
                 let mut guarded_meta_storage = meta_store.write().await;
@@ -1148,7 +1197,7 @@ impl<
     ) -> Result<(), ()> {
         let _permit = permit;
         let start = Instant::now();
-        let dkg_res = match preproc_handle_w_mode {
+        let (prep_id, dkg_res) = match preproc_handle_w_mode {
             PreprocHandleWithMode::Insecure => {
                 // sanity check to make sure we're using the insecure feature
                 #[cfg(not(feature = "insecure"))]
@@ -1159,32 +1208,35 @@ impl<
                 }
                 #[cfg(feature = "insecure")]
                 {
-                    match (
-                        keyset_config.compression_config,
-                        keyset_config.computation_key_type,
-                    ) {
-                        (
-                            ddec_keyset_config::KeySetCompressionConfig::Generate,
-                            ddec_keyset_config::ComputeKeyType::Cpu,
-                        ) => initialize_key_material(&mut base_session, params).await,
-                        _ => {
-                            // TODO insecure keygen from existing compression key is not supported
-                            let mut guarded_meta_storage = meta_store.write().await;
-                            let _ = guarded_meta_storage.update(
+                    (
+                        INSECURE_PREPROCESSING_ID.clone(),
+                        match (
+                            keyset_config.compression_config,
+                            keyset_config.computation_key_type,
+                        ) {
+                            (
+                                ddec_keyset_config::KeySetCompressionConfig::Generate,
+                                ddec_keyset_config::ComputeKeyType::Cpu,
+                            ) => initialize_key_material(&mut base_session, params).await,
+                            _ => {
+                                // TODO insecure keygen from existing compression key is not supported
+                                let mut guarded_meta_storage = meta_store.write().await;
+                                let _ = guarded_meta_storage.update(
                             req_id,
                             Err(
                                 "insecure keygen from existing compression key is not supported"
                                     .to_string(),
                             ),
                         );
-                            return Err(());
-                        }
-                    }
+                                return Err(());
+                            }
+                        },
+                    )
                 }
             }
-            PreprocHandleWithMode::Secure(preproc_handle) => {
+            PreprocHandleWithMode::Secure((prep_id, preproc_handle)) => {
                 let mut preproc_handle = preproc_handle.lock().await;
-                match (
+                (prep_id, match (
                     keyset_config.compression_config,
                     keyset_config.computation_key_type,
                 ) {
@@ -1207,7 +1259,7 @@ impl<
                         )
                         .await
                     }
-                }
+                })
             }
         };
 
@@ -1224,7 +1276,14 @@ impl<
         };
 
         //Compute all the info required for storing
-        let info = match compute_all_info(&sk, &pub_key_set, &eip712_domain) {
+        let info = match compute_info_standard_keygen(
+            &sk,
+            &DSEP_PUBDATA_KEY,
+            &prep_id,
+            req_id,
+            &pub_key_set,
+            &eip712_domain,
+        ) {
             Ok(info) => info,
             Err(_) => {
                 let mut guarded_meta_storage = meta_store.write().await;

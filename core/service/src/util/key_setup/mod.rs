@@ -3,7 +3,7 @@ cfg_if::cfg_if! {
         pub mod test_tools;
 
         use crate::dummy_domain;
-        use crate::engine::base::{compute_info, DSEP_PUBDATA_CRS};
+        use crate::engine::base::{DSEP_PUBDATA_CRS};
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
         use crate::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{

@@ -17,7 +17,7 @@ use std::{str::FromStr, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::{
-    engine::base::{KeyGenCallValues, PubDecCallValues, UserDecryptCallValues},
+    engine::base::{CrsGenCallValues, KeyGenCallValues, PubDecCallValues, UserDecryptCallValues},
     util::meta_store::MetaStore,
 };
 use kms_grpc::{
@@ -28,7 +28,6 @@ use kms_grpc::{
         ListRequestsResponse, MetaStoreInfo, MetaStoreType, RequestProcessingStatus,
         RequestStatusInfo,
     },
-    rpc_types::SignedPubDataHandleInternal,
 };
 
 use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
@@ -46,7 +45,7 @@ pub type PubDecMetaStore = MetaStore<PubDecCallValues>;
 pub type UserDecryptMetaStore = MetaStore<UserDecryptCallValues>;
 
 /// MetaStore for CRS (Common Reference String) data
-pub type CrsMetaStore = MetaStore<SignedPubDataHandleInternal>;
+pub type CrsMetaStore = MetaStore<CrsGenCallValues>;
 
 /// MetaStore for DKG (Distributed Key Generation) preprocessing buckets
 pub type BucketMetaStore = Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>;

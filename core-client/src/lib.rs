@@ -879,7 +879,7 @@ fn check_ext_pubdata_signature<D: Serialize + Versionize + Named>(
     tracing::debug!("ext. signature: {:?}", sig);
     tracing::debug!("EIP-712 domain: {:?}", domain);
 
-    let hash = compute_external_pubdata_message_hash(data, domain)?;
+    let hash = sign_sol_struct(data, domain)?;
 
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("reconstructed address: {}", addr);

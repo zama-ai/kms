@@ -128,23 +128,14 @@ message KeyGenResult {
   // The 32 Byte / 256 Bit ID of the key generation request, without `0x` prefix.
   RequestId request_id = 1;
 
-  // The results of the key generation, a map from key type (e.g. Public,
-  // Server, Sns key) to the signed key data.
-  map<string, SignedPubDataHandle> key_results = 2;
-}
+  // preprocessing ID used for keygen
+  RequestId preprocessing_id = 2;
 
-// The result of generation of a public key
-message SignedPubDataHandle {
-  // The key handle;
-  // This is a 256 bits `SHAKE-256` hash of the `tfhe::safe_serialization` of the
-  // underlying struct using [`DSEP_HANDLE`] as domain seperator. 
-  // This handle serves as the `URI` to locate the actual object in the `storage`.
-  string key_handle = 1;
-  // Plain ECDSA Signature on the key handle.
-  bytes signature = 2;
-  // The signature on the key for the external recipient
-  // (e.g. using EIP712 for fhevm)
-  bytes external_signature = 3;
+  // mapping of key type string to digest
+  // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5])
+  map<string, bytes> key_digests = 3;
+
+  bytes external_signature = 4;
 }
 
 // Keeping the fields in lowercase is important because
@@ -174,8 +165,9 @@ message CrsGenResult {
   // The 32 Byte / 256 Bit ID of the crs generation request, without `0x`
   // prefix.
   RequestId request_id = 1;
-  // The struct holding the signature and the handle of the CRS
-  SignedPubDataHandle crs_results = 2;
+
+  bytes crs_digest = 2;
+  bytes external_signature = 4;
 }
 
 // This enum tells the KMS how to deserialize ciphertexts.

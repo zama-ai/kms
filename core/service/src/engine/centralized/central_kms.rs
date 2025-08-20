@@ -6,6 +6,8 @@ use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signcryption::{signcrypt, SigncryptionPayload};
+#[cfg(feature = "non-wasm")]
+use crate::engine::base::CrsGenCallValues;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenCallValues, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::traits::{BaseKms, Kms};
@@ -30,8 +32,6 @@ use kms_grpc::kms::v1::{CiphertextFormat, TypedCiphertext, TypedPlaintext};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::PrivDataType;
-#[cfg(feature = "non-wasm")]
-use kms_grpc::rpc_types::SignedPubDataHandleInternal;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng, RngCore};
@@ -64,8 +64,6 @@ use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
 use threshold_fhe::hashing::DomainSep;
 #[cfg(feature = "non-wasm")]
-use threshold_fhe::session_id::SessionId;
-#[cfg(feature = "non-wasm")]
 use threshold_fhe::thread_handles::ThreadHandleGroup;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
@@ -81,6 +79,7 @@ pub(crate) async fn async_generate_fhe_keys<PubS, PrivS>(
     params: DKGParams,
     keyset_config: StandardKeySetConfig,
     compression_key_id: Option<RequestId>,
+    key_id: &RequestId,
     seed: Option<Seed>,
     eip712_domain: alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
@@ -90,6 +89,7 @@ where
 {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
+    let key_id_copy = key_id.to_owned();
 
     let existing_key_handle = match compression_key_id {
         Some(compression_key_id_inner) => {
@@ -110,6 +110,7 @@ where
             params,
             keyset_config,
             existing_key_handle,
+            &key_id_copy,
             seed,
             &eip712_domain,
         );
@@ -165,6 +166,7 @@ pub(crate) async fn async_generate_sns_compression_keys<PubS, PrivS>(
     storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     params: DKGParams,
     exsiting_keyset_id: &RequestId,
+    key_id: &RequestId,
     eip712_domain: alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
 where
@@ -258,8 +260,14 @@ where
         public_key: compact_public_key,
         server_key: new_server_key,
     };
-    let handles =
-        KmsFheKeyHandles::new(sk, new_client_key, &pks, decompression_key, &eip712_domain)?;
+    let handles = KmsFheKeyHandles::new(
+        sk,
+        new_client_key,
+        key_id,
+        &pks,
+        decompression_key,
+        &eip712_domain,
+    )?;
     Ok((pks, handles))
 }
 
@@ -269,14 +277,22 @@ pub(crate) async fn async_generate_crs(
     params: DKGParams,
     max_num_bits: Option<u32>,
     eip712_domain: alloy_sol_types::Eip712Domain,
-    sid: SessionId,
+    req_id: &RequestId,
     rng: AesRng,
-) -> anyhow::Result<(CompactPkeCrs, SignedPubDataHandleInternal)> {
+) -> anyhow::Result<(CompactPkeCrs, CrsGenCallValues)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
+    let req_id_copy = req_id.to_owned();
 
     rayon::spawn_fifo(move || {
-        let out = gen_centralized_crs(&sk_copy, &params, max_num_bits, &eip712_domain, sid, rng);
+        let out = gen_centralized_crs(
+            &sk_copy,
+            &params,
+            max_num_bits,
+            &eip712_domain,
+            &req_id_copy,
+            rng,
+        );
         let _ = send.send(out);
     });
     recv.await?
@@ -288,6 +304,7 @@ pub fn generate_fhe_keys(
     params: DKGParams,
     keyset_config: StandardKeySetConfig,
     existing_key_handle: Option<KmsFheKeyHandles>,
+    key_id: &RequestId,
     seed: Option<Seed>,
     eip712_domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
@@ -326,8 +343,14 @@ pub fn generate_fhe_keys(
             public_key,
             server_key,
         };
-        let handles =
-            KmsFheKeyHandles::new(sk, client_key, &pks, decompression_key, eip712_domain)?;
+        let handles = KmsFheKeyHandles::new(
+            sk,
+            client_key,
+            key_id,
+            &pks,
+            decompression_key,
+            eip712_domain,
+        )?;
         Ok((pks, handles))
     };
     match panic::catch_unwind(f) {
@@ -386,9 +409,10 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     params: &DKGParams,
     max_num_bits: Option<u32>,
     eip712_domain: &alloy_sol_types::Eip712Domain,
-    sid: SessionId,
+    req_id: &RequestId,
     mut rng: R,
-) -> anyhow::Result<(CompactPkeCrs, SignedPubDataHandleInternal)> {
+) -> anyhow::Result<(CompactPkeCrs, CrsGenCallValues)> {
+    let sid = req_id.derive_session_id()?;
     let internal_pp = public_parameters_by_trusted_setup(
         &params
             .get_params_basics_handle()
@@ -401,9 +425,10 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
         .get_params_basics_handle()
         .get_compact_pk_enc_params();
     let pp = internal_pp.try_into_tfhe_zk_pok_pp(&pke_params, sid)?;
-    let crs_info = crate::engine::base::compute_info(
+    let crs_info = crate::engine::base::compute_info_crs(
         sk,
         &crate::engine::base::DSEP_PUBDATA_CRS,
+        req_id,
         &pp,
         eip712_domain,
     )?;
@@ -448,7 +473,7 @@ pub struct RealCentralizedKms<
     // Map storing ongoing user decryption requests.
     pub(crate) user_decrypt_meta_map: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     // Map storing ongoing CRS generation requests.
-    pub(crate) crs_meta_map: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
+    pub(crate) crs_meta_map: Arc<RwLock<MetaStore<CrsGenCallValues>>>,
     // Rate limiting
     pub(crate) rate_limiter: RateLimiter,
     // Health reporter for the the grpc server
@@ -902,7 +927,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             .iter()
             .map(|(id, info)| (id.to_owned(), info.public_key_info.to_owned()))
             .collect();
-        let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
+        let crs_info: HashMap<RequestId, CrsGenCallValues> =
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
         let crypto_storage = CentralizedCryptoMaterialStorage::new(
@@ -962,7 +987,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     }
 
     /// Get a reference to the CRS generation MetaStore
-    pub fn get_crs_meta_store(&self) -> &Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>> {
+    pub fn get_crs_meta_store(&self) -> &Arc<RwLock<MetaStore<CrsGenCallValues>>> {
         &self.crs_meta_map
     }
 }

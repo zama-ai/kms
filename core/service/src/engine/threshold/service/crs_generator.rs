@@ -5,7 +5,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 use aes_prng::AesRng;
 use kms_grpc::{
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
-    rpc_types::{optional_protobuf_to_alloy_domain, SignedPubDataHandleInternal},
+    rpc_types::optional_protobuf_to_alloy_domain,
     utils::tonic_result::tonic_handle_potential_err,
     RequestId,
 };
@@ -34,7 +34,10 @@ use tracing::Instrument;
 use crate::{
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
-        base::{compute_info, retrieve_parameters, BaseKmsStruct, DSEP_PUBDATA_CRS},
+        base::{
+            compute_info_crs, retrieve_parameters, BaseKmsStruct, CrsGenCallValues,
+            DSEP_PUBDATA_CRS,
+        },
         threshold::traits::CrsGenerator,
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
@@ -72,7 +75,7 @@ pub struct RealCrsGenerator<
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
-    pub crs_meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
+    pub crs_meta_store: Arc<RwLock<MetaStore<CrsGenCallValues>>>,
     pub session_preparer: SessionPreparer,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
@@ -251,9 +254,20 @@ impl<
             guarded_meta_store.retrieve(&request_id)
         };
         let crs_data = handle_res_mapping(status, &request_id, "CRS generation").await?;
+
+        if crs_data.crs_id != request_id {
+            return Err(Status::new(
+                tonic::Code::Internal,
+                format!(
+                    "Request ID mismatch: expected {}, got {}",
+                    request_id, crs_data.crs_id
+                ),
+            ));
+        }
         Ok(Response::new(CrsGenResult {
             request_id: Some(request_id.into()),
-            crs_results: Some(crs_data.into()),
+            crs_digest: crs_data.crs_digest,
+            external_signature: crs_data.external_signature,
         }))
     }
 
@@ -264,7 +278,7 @@ impl<
         max_num_bits: Option<u32>,
         mut base_session: BaseSession,
         rng: AesRng,
-        meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
+        meta_store: Arc<RwLock<MetaStore<CrsGenCallValues>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         sk: Arc<PrivateSigKey>,
         params: DKGParams,
@@ -294,15 +308,8 @@ impl<
                 let input_party_id = 1;
                 let domain = eip712_domain.clone();
                 if my_role.one_based() == input_party_id {
-                    let crs_res = async_generate_crs(
-                        &sk,
-                        params,
-                        max_num_bits,
-                        domain,
-                        base_session.session_id(),
-                        rng,
-                    )
-                    .await;
+                    let crs_res =
+                        async_generate_crs(&sk, params, max_num_bits, domain, req_id, rng).await;
                     let crs = match crs_res {
                         Ok((crs, _)) => crs,
                         Err(e) => {
@@ -326,12 +333,14 @@ impl<
                 internal.try_into_tfhe_zk_pok_pp(&pke_params, base_session.session_id())
             })
         };
+
         let res_info_pp = pp.and_then(|pp| {
-            compute_info(&sk, &DSEP_PUBDATA_CRS, &pp, &eip712_domain).map(|info| (pp, info))
+            compute_info_crs(&sk, &DSEP_PUBDATA_CRS, req_id, &pp, &eip712_domain)
+                .map(|pub_info| (pp, pub_info))
         });
 
-        let (pp_id, meta_data) = match res_info_pp {
-            Ok((meta, pp_id)) => (meta, pp_id),
+        let (pp, crs_info) = match res_info_pp {
+            Ok((pp, pp_id)) => (pp, pp_id),
             Err(e) => {
                 let mut guarded_meta_store = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
@@ -344,7 +353,7 @@ impl<
         //Note: We can't easily check here whether we succeeded writing to the meta store
         //thus we can't increment the error counter if it fails
         crypto_storage
-            .write_crs_with_meta_store(req_id, pp_id, meta_data, meta_store)
+            .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)
             .await;
 
         let crs_stop_timer = Instant::now();

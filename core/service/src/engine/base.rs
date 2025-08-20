@@ -1,4 +1,5 @@
 use super::traits::BaseKms;
+use crate::compute_user_decrypt_message_hash;
 use crate::consts::ID_LENGTH;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::decompression;
@@ -6,7 +7,6 @@ use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signcryption::internal_verify_sig;
 use crate::util::key_setup::FhePrivateKey;
-use crate::{anyhow_error_and_log, compute_user_decrypt_message_hash};
 use aes_prng::AesRng;
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Bytes, FixedBytes, Uint};
@@ -17,13 +17,11 @@ use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, FheParameter, SignedPubDataHandle, TypedPlaintext,
-    UserDecryptionResponsePayload,
+    CiphertextFormat, FheParameter, TypedPlaintext, UserDecryptionResponsePayload,
 };
-use kms_grpc::rpc_types::FheDecompressionUpgradeKey;
 use kms_grpc::rpc_types::{
-    FhePubKey, FheServerKey, PubDataType, PublicDecryptVerification, SignedPubDataHandleInternal,
-    CRS,
+    CrsgenVerification, FheDecompressionUpgradeKey, KeygenVerification, PrepKeygenVerification,
+    PubDataType, PublicDecryptVerification,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
@@ -36,6 +34,7 @@ use tfhe::integer::compression_keys::DecompressionKey;
 use tfhe::integer::BooleanBlock;
 use tfhe::named::Named;
 use tfhe::safe_serialization::safe_deserialize;
+use tfhe::zk::CompactPkeCrs;
 use tfhe::FheUint80;
 use tfhe::{
     FheBool, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
@@ -68,6 +67,11 @@ pub(crate) const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
 /// Domain separator for CRS (Common Reference String) data
 pub(crate) const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
 
+lazy_static::lazy_static! {
+    pub static ref CENTRALIZED_DUMMY_PREPROCESSING_ID: RequestId =
+        crate::engine::base::derive_request_id("CENTRALIZED_DUMMY_PREPROCESSING_ID").unwrap();
+}
+
 #[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum KmsFheKeyHandlesVersioned {
@@ -89,7 +93,8 @@ pub struct KmsFheKeyHandles {
     pub decompression_key: Option<DecompressionKey>,
 
     /// Maps public key types to their corresponding signed handles and metadata
-    pub public_key_info: HashMap<PubDataType, SignedPubDataHandleInternal>,
+    /// NOTE to reviewer: this is a breaking change but we're not deploying centralized KMS yet, is it ok?
+    pub public_key_info: KeyGenCallValues,
 }
 
 impl Named for KmsFheKeyHandles {
@@ -111,29 +116,20 @@ impl KmsFheKeyHandles {
     pub fn new(
         sig_key: &PrivateSigKey,
         client_key: FhePrivateKey,
-        public_keys: &FhePubKeySet,
+        key_id: &RequestId,
+        keyset: &FhePubKeySet,
         decompression_key: Option<DecompressionKey>,
         eip712_domain: &alloy_sol_types::Eip712Domain,
     ) -> anyhow::Result<Self> {
-        let mut public_key_info = HashMap::new();
-        public_key_info.insert(
-            PubDataType::PublicKey,
-            compute_info(
-                sig_key,
-                &crate::engine::base::DSEP_PUBDATA_KEY,
-                &public_keys.public_key,
-                eip712_domain,
-            )?,
-        );
-        public_key_info.insert(
-            PubDataType::ServerKey,
-            compute_info(
-                sig_key,
-                &DSEP_PUBDATA_KEY,
-                &public_keys.server_key,
-                eip712_domain,
-            )?,
-        );
+        let public_key_info = compute_info_standard_keygen(
+            sig_key,
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            &CENTRALIZED_DUMMY_PREPROCESSING_ID,
+            key_id,
+            keyset,
+            eip712_domain,
+        )?;
+
         Ok(KmsFheKeyHandles {
             client_key,
             decompression_key,
@@ -168,31 +164,97 @@ pub fn derive_request_id(name: &str) -> anyhow::Result<RequestId> {
     Ok(RequestId::from_str(&res_hex)?)
 }
 
-/// Computes and signs a unique handle for a serializable element.
-///
-/// # Process
-/// 1. Serializes the element
-/// 2. Computes a unique handle
-/// 3. Signs the handle using the provided key
-///
-/// # Security
-/// Uses domain separation to prevent signature misuse.
-pub(crate) fn compute_info<S: Serialize + Versionize + Named>(
+pub(crate) fn compute_info_crs(
     sk: &PrivateSigKey,
-    dsep: &DomainSep,
-    element: &S,
+    domain_separator: &DomainSep,
+    crs_id: &RequestId,
+    pp: &CompactPkeCrs,
     domain: &alloy_sol_types::Eip712Domain,
-) -> anyhow::Result<SignedPubDataHandleInternal> {
-    let handle = compute_handle(element)?;
-    let signature = crate::cryptography::signcryption::internal_sign(dsep, &handle, sk)?;
+) -> anyhow::Result<CrsGenCallValues> {
+    let max_num_bits = pp.max_num_messages().0; // TODO check
+    let crs_digest = safe_serialize_hash_element_versioned(domain_separator, pp)?;
 
-    let external_signature = compute_external_pubdata_signature(sk, element, domain)?;
+    let sol_type = CrsgenVerification {
+        // TODO check endianness
+        crsId: alloy_primitives::U256::from_be_slice(crs_id.as_bytes()),
+        maxBitLength: alloy_primitives::U256::from_be_slice(&max_num_bits.to_be_bytes()),
+        crsDigest: crs_digest.to_vec().into(),
+    };
+    let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
 
-    Ok(SignedPubDataHandleInternal {
-        key_handle: handle,
-        signature: bc2wrap::serialize(&signature)?,
+    Ok(CrsGenCallValues {
+        crs_id: crs_id.clone(),
+        crs_digest,
         external_signature,
     })
+}
+
+pub(crate) fn compute_info_standard_keygen(
+    sk: &PrivateSigKey,
+    domain_separator: &DomainSep,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    keyset: &FhePubKeySet,
+    domain: &alloy_sol_types::Eip712Domain,
+) -> anyhow::Result<KeyGenCallValues> {
+    let server_key_digest =
+        safe_serialize_hash_element_versioned(domain_separator, &keyset.server_key)?;
+    let public_key_digest =
+        safe_serialize_hash_element_versioned(domain_separator, &keyset.public_key)?;
+
+    let sol_type = KeygenVerification {
+        // TODO check endianness
+        prepKeygenId: alloy_primitives::U256::from_be_slice(prep_id.as_bytes()),
+        keyId: alloy_primitives::U256::from_be_slice(key_id.as_bytes()),
+        serverKeyDigest: server_key_digest.to_vec().into(),
+        publicKeyDigest: public_key_digest.to_vec().into(),
+    };
+    let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
+
+    Ok(KeyGenCallValues {
+        key_id: *key_id,
+        preprocessing_id: *prep_id,
+        key_digest_map: HashMap::from([
+            (PubDataType::ServerKey, server_key_digest),
+            (PubDataType::PublicKey, public_key_digest),
+        ]),
+        external_signature,
+    })
+}
+
+pub(crate) fn compute_info_decompression_keygen(
+    sk: &PrivateSigKey,
+    domain_separator: &DomainSep,
+    prep_id: &RequestId,
+    key_id: &RequestId,
+    decompression_key: &DecompressionKey,
+    domain: &alloy_sol_types::Eip712Domain,
+) -> anyhow::Result<KeyGenCallValues> {
+    let key_digest = safe_serialize_hash_element_versioned(domain_separator, decompression_key)?;
+
+    let sol_type = FheDecompressionUpgradeKey {
+        decompressionUpgradeKeyDigest: key_digest.to_vec().into(),
+    };
+    let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
+
+    Ok(KeyGenCallValues {
+        key_id: *key_id,
+        preprocessing_id: *prep_id,
+        key_digest_map: HashMap::from([(PubDataType::DecompressionKey, key_digest)]),
+        external_signature,
+    })
+}
+
+pub(crate) fn compute_info_preprocessing<S: Serialize + Versionize + Named>(
+    sk: &PrivateSigKey,
+    prep_id: &RequestId,
+    domain: &alloy_sol_types::Eip712Domain,
+) -> anyhow::Result<Vec<u8>> {
+    let sol_type = PrepKeygenVerification {
+        // TODO check endianness
+        prepKeygenId: alloy_primitives::U256::from_be_slice(prep_id.as_bytes()),
+    };
+    compute_external_pubdata_signature(sk, &sol_type, domain)
 }
 
 /// Computes a unique handle for an element using its hash digest.
@@ -480,56 +542,22 @@ pub(crate) fn compute_external_pt_signature(
     signature
 }
 
-/// Safely serialize some public data, convert it to a solidity type byte array and compute the EIP-712 message hash for external verification (e.g. in fhevm).
-pub fn compute_external_pubdata_message_hash<D: Serialize + Versionize + Named>(
+pub fn sign_sol_struct<D: SolStruct>(
     data: &D,
     eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<B256> {
-    let bytes = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_EXTERNAL, data)?;
-
-    // distinguish between the different types of public data we can sign according to their type name and sign it with EIP-712
-    let message_hash = match D::NAME {
-        "zk::CompactPkeCrs" => {
-            let message = CRS { crs: bytes.into() };
-            message.eip712_signing_hash(eip712_domain)
-        }
-        "high_level_api::CompactPublicKey" => {
-            let message = FhePubKey {
-                pubkey: bytes.into(),
-            };
-            message.eip712_signing_hash(eip712_domain)
-        }
-        "high_level_api::ServerKey" => {
-            let message = FheServerKey {
-                server_key: bytes.into(),
-            };
-            message.eip712_signing_hash(eip712_domain)
-        }
-        // TODO(zama-ai/kms-internal#2714): at the moment we only support integer:::DecompressionKey
-        // but this support will be dropped in favor for DecompressionUpgradeKey
-        "integer::DecompressionKey" => {
-            let message = FheDecompressionUpgradeKey {
-                decompression_upgrade_key: bytes.into(),
-            };
-            message.eip712_signing_hash(eip712_domain)
-        }
-        e => {
-            return Err(anyhow_error_and_log(format!(
-                "Cannot compute EIP-712 signature on type {e}. Expected one of: zk::CompactPkeCrs, high_level_api::CompactPublicKey, high_level_api::ServerKey, integer::DecompressionKey."
-            )))
-        }
-    };
+    let message_hash = data.eip712_signing_hash(eip712_domain);
     tracing::info!("Public Data EIP-712 Message hash: {:?}", message_hash);
     Ok(message_hash)
 }
 
 /// take some public data (e.g. public key or CRS) and sign it using EIP-712 for external verification (e.g. in fhevm).
-pub fn compute_external_pubdata_signature<D: Serialize + Versionize + Named>(
+pub fn compute_external_pubdata_signature<D: SolStruct>(
     client_sk: &PrivateSigKey,
     data: &D,
     eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
-    let message_hash = compute_external_pubdata_message_hash(data, eip712_domain)?;
+    let message_hash = sign_sol_struct(data, eip712_domain)?;
 
     let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
     let signer_address = signer.address();
@@ -758,9 +786,45 @@ pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> Result<DKGParams, Boxed
     Ok(*fhe_parameter)
 }
 
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum KeyGenCallValuesVersioned {
+    V0(KeyGenCallValues),
+}
+
 // Values that need to be stored temporarily as part of an async key generation call.
 #[cfg(feature = "non-wasm")]
-pub type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
+#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[versionize(KeyGenCallValuesVersioned)]
+pub struct KeyGenCallValues {
+    pub(crate) key_id: RequestId,
+    pub(crate) preprocessing_id: RequestId,
+    pub(crate) key_digest_map: HashMap<PubDataType, Vec<u8>>,
+    pub(crate) external_signature: Vec<u8>,
+}
+
+impl Named for KeyGenCallValues {
+    /// Returns the type name for versioning and serialization
+    const NAME: &'static str = "KeyGenCallValues";
+}
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum CrsGenCallValuesVersioned {
+    V0(CrsGenCallValues),
+}
+
+#[cfg(feature = "non-wasm")]
+#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[versionize(CrsGenCallValuesVersioned)]
+pub struct CrsGenCallValues {
+    pub(crate) crs_id: RequestId,
+    pub(crate) crs_digest: Vec<u8>,
+    pub(crate) external_signature: Vec<u8>,
+}
+
+impl Named for CrsGenCallValues {
+    /// Returns the type name for versioning and serialization
+    const NAME: &'static str = "CrsGenCallValues";
+}
 
 // Values that need to be stored temporarily as part of an async decryption call.
 // Represents the request ID of the request and the result of the decryption (a batch of plaintests),
@@ -772,21 +836,6 @@ pub type PubDecCallValues = (RequestId, Vec<TypedPlaintext>, Vec<u8>, Vec<u8>);
 // Represents UserDecryptionResponsePayload, external_handles, external_signature and extra_data.
 #[cfg(feature = "non-wasm")]
 pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8>);
-
-/// Helper method which takes a [KeyGenCallValues] and returns
-/// [HashMap<String, SignedPubDataHandle>] by applying the [ToString] function on [PubDataType] for each element in the map.
-/// The function is needed since protobuf does not support enums in maps.
-pub(crate) fn convert_key_response(
-    key_info_map: KeyGenCallValues,
-) -> HashMap<String, SignedPubDataHandle> {
-    key_info_map
-        .into_iter()
-        .map(|(key_type, key_info)| {
-            let key_type = key_type.to_string();
-            (key_type, key_info.into())
-        })
-        .collect()
-}
 
 #[cfg(test)]
 pub(crate) mod tests {

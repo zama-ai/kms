@@ -3,7 +3,10 @@ use crate::{
         attestation::{SecurityModule, SecurityModuleProxy},
         internal_crypto_types::PrivateSigKey,
     },
-    engine::threshold::{service::ThresholdFheKeys, traits::BackupOperator},
+    engine::{
+        base::CrsGenCallValues,
+        threshold::{service::ThresholdFheKeys, traits::BackupOperator},
+    },
     vault::{
         keychain::KeychainProxy,
         storage::{
@@ -15,7 +18,7 @@ use crate::{
 };
 use kms_grpc::{
     kms::v1::{Empty, OperatorPublicKey},
-    rpc_types::{PrivDataType, SignedPubDataHandleInternal},
+    rpc_types::PrivDataType,
     utils::tonic_result::tonic_handle_potential_err,
 };
 use tokio::sync::MutexGuard;
@@ -140,7 +143,7 @@ where
         priv_storage,
         backup_vault,
         PrivDataType::CrsInfo,
-        SignedPubDataHandleInternal
+        CrsGenCallValues
     );
     Ok(())
 }
@@ -199,7 +202,7 @@ where
                     *private_storage,
                     backup_vault,
                     PrivDataType::CrsInfo,
-                    SignedPubDataHandleInternal
+                    CrsGenCallValues
                 );
                 Ok(())
             }

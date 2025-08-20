@@ -1,7 +1,7 @@
+use crate::kms::v1::UserDecryptionResponsePayload;
 use crate::kms::v1::{
     Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
 };
-use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
@@ -66,32 +66,69 @@ alloy_sol_types::sol! {
     }
 }
 
-// Solidity struct for signing the FHE public key
 alloy_sol_types::sol! {
-    struct FhePubKey {
-        bytes pubkey;
+    struct CrsgenVerification {
+        /// @notice The ID of the generated CRS.
+        uint256 crsId;
+        /// @notice The max bit length of the generated CRS.
+        uint256 maxBitLength;
+        /// @notice The digest of the generated CRS.
+        bytes crsDigest;
     }
 }
 
-// Solidity struct for signing the FHE server key
 alloy_sol_types::sol! {
-    struct FheServerKey {
-        bytes server_key;
+    struct PrepKeygenVerification {
+        /// @notice The ID of the preprocessing keygen step.
+        uint256 prepKeygenId;
     }
 }
 
-// Solidity struct for signing the CRS
 alloy_sol_types::sol! {
-    struct CRS {
-        bytes crs;
+    struct KeygenVerification {
+        /// @notice The ID of the preprocessed step.
+        uint256 prepKeygenId;
+        /// @notice The ID of the generated key.
+        uint256 keyId;
+        /// @notice The digest of the generated server key.
+        bytes serverKeyDigest;
+        /// @notice The digest of the generated public key.
+        bytes publicKeyDigest;
     }
 }
 
 // Solidity struct for DecompressionUpgradeKey
 alloy_sol_types::sol! {
     struct FheDecompressionUpgradeKey {
-        bytes decompression_upgrade_key;
+        bytes decompressionUpgradeKeyDigest;
     }
+}
+
+/// The format of what will be stored, and returned in gRPC, as a result of CRS generation in the KMS
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
+pub enum SignedPubDataHandleInternalVersioned {
+    V0(SignedPubDataHandleInternal),
+}
+
+/// This type is the internal type that corresponds to
+/// the generate protobuf type `SignedPubDataHandle`.
+///
+/// It's needed because we are not able to derive versioned
+/// for the protobuf type.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(SignedPubDataHandleInternalVersioned)]
+pub struct SignedPubDataHandleInternal {
+    // Digest (the 256-bit hex-encoded value, computed using compute_info/handle)
+    pub key_handle: String,
+    // The signature on the handle
+    pub signature: Vec<u8>,
+    // The signature on the key for the external recipient
+    // (e.g. using EIP712 for fhevm)
+    pub external_signature: Vec<u8>,
+}
+
+impl Named for SignedPubDataHandleInternal {
+    const NAME: &'static str = "SignedPubDataHandleInternal";
 }
 
 // This function needs to use the non-wasm feature because tonic is not available in wasm builds.
@@ -165,66 +202,6 @@ pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712D
         salt: domain.salt.map(|x| x.to_vec()),
     };
     Ok(domain_msg)
-}
-
-/// The format of what will be stored, and returned in gRPC, as a result of CRS generation in the KMS
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
-pub enum SignedPubDataHandleInternalVersioned {
-    V0(SignedPubDataHandleInternal),
-}
-
-/// This type is the internal type that corresponds to
-/// the generate protobuf type `SignedPubDataHandle`.
-///
-/// It's needed because we are not able to derive versioned
-/// for the protobuf type.
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(SignedPubDataHandleInternalVersioned)]
-pub struct SignedPubDataHandleInternal {
-    // Digest (the 256-bit hex-encoded value, computed using compute_info/handle)
-    pub key_handle: String,
-    // The signature on the handle
-    pub signature: Vec<u8>,
-    // The signature on the key for the external recipient
-    // (e.g. using EIP712 for fhevm)
-    pub external_signature: Vec<u8>,
-}
-
-impl Named for SignedPubDataHandleInternal {
-    const NAME: &'static str = "SignedPubDataHandleInternal";
-}
-
-impl SignedPubDataHandleInternal {
-    pub fn new(
-        key_handle: String,
-        signature: Vec<u8>,
-        external_signature: Vec<u8>,
-    ) -> SignedPubDataHandleInternal {
-        SignedPubDataHandleInternal {
-            key_handle,
-            signature,
-            external_signature,
-        }
-    }
-}
-
-impl From<SignedPubDataHandle> for SignedPubDataHandleInternal {
-    fn from(handle: SignedPubDataHandle) -> Self {
-        SignedPubDataHandleInternal {
-            key_handle: handle.key_handle,
-            signature: handle.signature,
-            external_signature: handle.external_signature,
-        }
-    }
-}
-impl From<SignedPubDataHandleInternal> for SignedPubDataHandle {
-    fn from(crs: SignedPubDataHandleInternal) -> Self {
-        SignedPubDataHandle {
-            key_handle: crs.key_handle,
-            signature: crs.signature,
-            external_signature: crs.external_signature,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]

@@ -5,7 +5,11 @@
 use crate::{
     anyhow_error_and_warn_log,
     cryptography::internal_crypto_types::PrivateSigKey,
-    engine::{base::KmsFheKeyHandles, context::ContextInfo, threshold::service::ThresholdFheKeys},
+    engine::{
+        base::{CrsGenCallValues, KeyGenCallValues, KmsFheKeyHandles},
+        context::ContextInfo,
+        threshold::service::ThresholdFheKeys,
+    },
     util::meta_store::MetaStore,
     vault::{
         storage::{
@@ -437,10 +441,7 @@ where
     pub async fn purge_key_material(
         &self,
         req_id: &RequestId,
-        mut guarded_meta_store: RwLockWriteGuard<
-            '_,
-            MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>,
-        >,
+        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenCallValues>>,
     ) {
         let f1 = async {
             let mut pub_storage = self.public_storage.lock().await;
@@ -535,8 +536,8 @@ where
         &self,
         req_id: &RequestId,
         pp: CompactPkeCrs,
-        crs_info: SignedPubDataHandleInternal,
-        meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
+        crs_info: CrsGenCallValues,
+        meta_store: Arc<RwLock<MetaStore<CrsGenCallValues>>>,
     ) {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
@@ -632,7 +633,7 @@ where
     pub async fn purge_crs_material(
         &self,
         req_id: &RequestId,
-        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<SignedPubDataHandleInternal>>,
+        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenCallValues>>,
     ) {
         let f1 = async {
             let mut pub_storage = self.public_storage.lock().await;
@@ -723,8 +724,8 @@ where
         &self,
         req_id: &RequestId,
         decompression_key: DecompressionKey,
-        info: HashMap<PubDataType, SignedPubDataHandleInternal>,
-        meta_store: Arc<RwLock<MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>>>,
+        info: KeyGenCallValues,
+        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
     ) {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
