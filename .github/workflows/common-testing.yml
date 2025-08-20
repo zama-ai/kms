@@ -315,7 +315,7 @@ jobs:
 
       - name: Post nightly tests results in a channel
         if: always() && github.event_name == 'schedule'
-        uses: rtCamp/action-slack-notify@e31e87e03dd19038e411e38ae27cbad084a90661
+        uses: rtCamp/action-slack-notify@e31e87e03dd19038e411e38ae27cbad084a90661 # v2.3.3
         env:
           ACTION_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
