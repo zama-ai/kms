@@ -1,6 +1,6 @@
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Ring},
-    error::error_handler::{anyhow_error_and_log, log_error_wrapper},
+    error::error_handler::anyhow_error_and_log,
     execution::{
         runtime::session::BaseSessionHandles,
         sharing::{
@@ -8,8 +8,8 @@ use crate::{
             share::Share,
         },
     },
+    thread_handles::spawn_compute_bound,
 };
-use anyhow::Context;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
@@ -74,57 +74,61 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
             triples.len()
         )));
     }
-    let mut to_open = Vec::with_capacity(2 * amount);
-    // Compute the shares of epsilon and rho and merge them together into a single list
-    for ((cur_x, cur_y), cur_trip) in x_vec.iter().zip_eq(y_vec).zip_eq(&triples) {
-        if cur_x.owner() != cur_y.owner()
-            || cur_trip.a.owner() != cur_x.owner()
-            || cur_trip.b.owner() != cur_x.owner()
-            || cur_trip.c.owner() != cur_x.owner()
-        {
-            tracing::warn!("Trying to multiply with shares of different owners. This will always result in an incorrect share");
-        }
-        let share_epsilon = cur_trip.a + *cur_x;
-        let share_rho = cur_trip.b + *cur_y;
-        to_open.push(share_epsilon);
-        to_open.push(share_rho);
-    }
+    let x_vec_cloned = x_vec.to_owned();
+    let y_vec_cloned = y_vec.to_owned();
+    let (triples_a, (triples_b, triples_c)): (Vec<_>, (Vec<_>, Vec<_>)) = triples
+        .into_iter()
+        .map(|triple| (triple.a, (triple.b, triple.c)))
+        .unzip();
+
+    let triples_a_cloned = triples_a.clone();
+    let to_open: Vec<Share<Z>> = spawn_compute_bound(move || {
+        x_vec_cloned.into_iter().zip_eq(
+            y_vec_cloned
+                .into_iter()
+                .zip(triples_a_cloned.into_iter().zip_eq(triples_b.into_iter())),
+        ).fold(Vec::with_capacity(2*amount), |mut acc, (cur_x, (cur_y, (cur_a, cur_b)))| {
+            if cur_x.owner() != cur_y.owner()
+                || cur_a.owner() != cur_x.owner()
+                || cur_b.owner() != cur_x.owner()
+            {
+                tracing::warn!("Trying to multiply with shares of different owners. This will always result in an incorrect share");
+            }
+            let share_epsilon = cur_a + cur_x;
+            let share_rho = cur_b + cur_y;
+            acc.push(share_epsilon);
+            acc.push(share_rho);
+            acc
+    })
+    }).await?;
+
     //NOTE: That's a lot of memory manipulation, could execute the "linear equation loop" with epsilonrho directly
     // Open and seperate the list of both epsilon and rho values into two lists of values
-    let mut epsilonrho = open_list(&to_open, session).await?;
-    let mut epsilon_vec = Vec::with_capacity(amount);
-    let mut rho_vec = Vec::with_capacity(amount);
-    // Indicator variable if the current element is an epsilson value (or rho value)
-    let mut epsilon_val = false;
-    // Go through the list from the back
-    while let Some(cur_val) = epsilonrho.pop() {
-        match epsilon_val {
-            true => epsilon_vec.push(cur_val),
-            false => rho_vec.push(cur_val),
-        }
-        // Flip the indicator
-        epsilon_val = !epsilon_val;
+    let epsilonrho = open_list(&to_open, session).await?;
+
+    if 2 * amount != epsilonrho.len() {
+        return Err(anyhow_error_and_log(format!(
+            "Inconsistent share lengths: epsilonrho_vec: {:?}. Expected {:?}",
+            epsilonrho.len(),
+            2 * amount
+        )));
     }
     // Compute the linear equation of shares to get the result
-    let mut res = Vec::with_capacity(amount);
-    for i in 0..amount {
-        let y = *y_vec
-            .get(i)
-            .with_context(|| log_error_wrapper("Missing y value"))?;
-        // Observe that the list of epsilons and rhos have already been reversed above, because of the use of pop,
-        // so we get the elements in the original order by popping again here
-        let epsilon = epsilon_vec
-            .pop()
-            .with_context(|| log_error_wrapper("Missing epsilon value"))?;
-        let rho = rho_vec
-            .pop()
-            .with_context(|| log_error_wrapper("Missing rho value"))?;
-        let trip = triples
-            .get(i)
-            .with_context(|| log_error_wrapper("Missing triple"))?;
-        res.push(y * epsilon - trip.a * rho + trip.c);
-    }
-    Ok(res)
+    let y_vec_cloned = y_vec.to_owned();
+
+    spawn_compute_bound(move || {
+        let epsilon_rho_vec = epsilonrho.chunks(2);
+        y_vec_cloned
+            .into_iter()
+            .zip_eq(epsilon_rho_vec.zip_eq(triples_a.into_iter().zip_eq(triples_c.into_iter())))
+            .map(|(curr_y, (curr_epsilonrho, (curr_a, curr_c)))| {
+                //curr_epsilonrho is a pair of shares, so we need to extract them
+                //first is epsilon then rho
+                curr_y * curr_epsilonrho[0] - curr_a * curr_epsilonrho[1] + curr_c
+            })
+            .collect()
+    })
+    .await
 }
 
 /// Opens a single secret
