@@ -22,7 +22,7 @@ use kms_grpc::{
 use kms_lib::{
     backup::{
         custodian::{Custodian, InternalCustodianSetupMessage},
-        operator::{Operator, InnerOperatorBackupOutput},
+        operator::{InnerOperatorBackupOutput, Operator},
     },
     cryptography::{
         backup_pke,
