@@ -5,6 +5,7 @@ use kms_grpc::rpc_types::optional_protobuf_to_alloy_domain;
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{ERR_KEYGEN_FAILED, ERR_KEY_EXISTS, OP_KEYGEN};
+use std::collections::HashMap;
 use std::sync::Arc;
 use threshold_fhe::execution::keyset_config::KeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -14,7 +15,7 @@ use tracing::Instrument;
 
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::base::{
-    compute_info_decompression_keygen, retrieve_parameters, KeyGenCallValues,
+    compute_info_decompression_keygen, retrieve_parameters, KeyGenMetadata,
     CENTRALIZED_DUMMY_PREPROCESSING_ID, DSEP_PUBDATA_KEY,
 };
 use crate::engine::centralized::central_kms::{
@@ -115,24 +116,43 @@ pub async fn get_key_gen_result_impl<
         let guarded_meta_store = service.key_meta_map.read().await;
         guarded_meta_store.retrieve(&request_id)
     };
-    let pub_key_handles = handle_res_mapping(status, &request_id, "Key generation").await?;
+    let res = handle_res_mapping(status, &request_id, "Key generation").await?;
 
-    if request_id != pub_key_handles.key_id {
-        return Err(Status::internal(format!(
-            "Request ID mismatch: expected {}, got {}",
-            request_id, pub_key_handles.key_id
-        )));
+    match res {
+        KeyGenMetadata::Current(res) => {
+            if request_id != res.key_id {
+                return Err(Status::internal(format!(
+                    "Request ID mismatch: expected {}, got {}",
+                    request_id, res.key_id
+                )));
+            }
+            Ok(Response::new(KeyGenResult {
+                request_id: Some(request_id.into()),
+                preprocessing_id: Some((*CENTRALIZED_DUMMY_PREPROCESSING_ID).into()),
+                key_digests: res
+                    .key_digest_map
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v))
+                    .collect(),
+                external_signature: res.external_signature,
+            }))
+        }
+        KeyGenMetadata::LegacyV0(_res) => {
+            tracing::warn!(
+                "Legacy key generation result for request ID: {}",
+                request_id
+            );
+            Ok(Response::new(KeyGenResult {
+                request_id: Some(request_id.into()),
+                preprocessing_id: None,
+                // we do not attempt to convert the legacy key digest map
+                // because it does not match the format to the current one
+                // since no domain separation is used
+                key_digests: HashMap::new(),
+                external_signature: vec![],
+            }))
+        }
     }
-    Ok(Response::new(KeyGenResult {
-        request_id: Some(request_id.into()),
-        preprocessing_id: Some((*CENTRALIZED_DUMMY_PREPROCESSING_ID).into()),
-        key_digests: pub_key_handles
-            .key_digest_map
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect(),
-        external_signature: pub_key_handles.external_signature,
-    }))
 }
 
 /// Background task for key generation
@@ -142,7 +162,7 @@ pub(crate) async fn key_gen_background<
     PrivS: Storage + Send + Sync + 'static,
 >(
     req_id: &RequestId,
-    meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+    meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     sk: Arc<PrivateSigKey>,
     params: DKGParams,

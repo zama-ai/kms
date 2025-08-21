@@ -11,7 +11,7 @@ use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{FheTypes, Versionize};
-use tfhe_versionable::VersionsDispatch;
+use tfhe_versionable::{Version, VersionsDispatch};
 
 pub use crate::identifiers::{KeyId, RequestId, ID_LENGTH};
 
@@ -130,6 +130,29 @@ pub struct SignedPubDataHandleInternal {
 impl Named for SignedPubDataHandleInternal {
     const NAME: &'static str = "SignedPubDataHandleInternal";
 }
+
+impl SignedPubDataHandleInternal {
+    pub fn new(
+        key_handle: String,
+        signature: Vec<u8>,
+        external_signature: Vec<u8>,
+    ) -> SignedPubDataHandleInternal {
+        SignedPubDataHandleInternal {
+            key_handle,
+            signature,
+            external_signature,
+        }
+    }
+}
+
+/// Wrapper struct to allow upgrading of CrsGenCallValues.
+/// This is needed because `SignedPubDataHandleInternal`
+/// still need to be supported for other types so it cannot derive Version.
+/// See https://github.com/zama-ai/tfhe-rs/blob/main/utils/tfhe-versionable/examples/transparent_then_not.rs
+/// for more details.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Version)]
+#[repr(transparent)]
+pub struct CrsGenSignedPubDataHandleInternalWrapper(pub SignedPubDataHandleInternal);
 
 // This function needs to use the non-wasm feature because tonic is not available in wasm builds.
 #[cfg(feature = "non-wasm")]

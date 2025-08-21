@@ -105,18 +105,35 @@ pub async fn get_crs_gen_result_impl<
     };
     let crs_info = handle_res_mapping(status, &request_id, "CRS").await?;
 
-    if request_id != crs_info.crs_id {
-        return Err(Status::internal(format!(
-            "Request ID mismatch: expected {}, got {}",
-            request_id, crs_info.crs_id
-        )));
-    }
+    match crs_info {
+        CrsGenCallValues::LegacyV0(_) => {
+            // This is a legacy result, we cannot return the crs_digest or external_signature
+            // as they're signed using a different SolStruct and hashed using a different domain separator
+            tracing::warn!(
+                "Received a legacy CRS generation result,
+                not returning crs_digest or external_signature"
+            );
+            Ok(Response::new(CrsGenResult {
+                request_id: Some(request_id.into()),
+                crs_digest: vec![],
+                external_signature: vec![],
+            }))
+        }
+        CrsGenCallValues::Current(crs_info) => {
+            if request_id != crs_info.crs_id {
+                return Err(Status::internal(format!(
+                    "Request ID mismatch: expected {}, got {}",
+                    request_id, crs_info.crs_id
+                )));
+            }
 
-    Ok(Response::new(CrsGenResult {
-        request_id: Some(request_id.into()),
-        crs_digest: crs_info.crs_digest,
-        external_signature: crs_info.external_signature,
-    }))
+            Ok(Response::new(CrsGenResult {
+                request_id: Some(request_id.into()),
+                crs_digest: crs_info.crs_digest,
+                external_signature: crs_info.external_signature,
+            }))
+        }
+    }
 }
 
 /// Background task for CRS generation

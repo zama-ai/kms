@@ -55,7 +55,7 @@ use crate::{
     engine::{
         base::{
             compute_info_decompression_keygen, compute_info_standard_keygen, retrieve_parameters,
-            BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY,
+            BaseKmsStruct, KeyGenMetadata, DSEP_PUBDATA_KEY,
         },
         keyset_configuration::InternalKeySetConfig,
         threshold::{service::ThresholdFheKeys, traits::KeyGenerator},
@@ -79,6 +79,8 @@ use super::{session::SessionPreparer, BucketMetaStore};
 
 // === Insecure Feature-Specific Imports ===
 #[cfg(feature = "insecure")]
+use crate::engine::base::INSECURE_PREPROCESSING_ID;
+#[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::InsecureKeyGenerator;
 #[cfg(feature = "insecure")]
 use tfhe::shortint::noise_squashing::NoiseSquashingPrivateKey;
@@ -100,7 +102,7 @@ pub struct RealKeyGenerator<
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     // TODO eventually add mode to allow for nlarge as well.
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
-    pub dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+    pub dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     pub session_preparer: SessionPreparer,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
@@ -143,12 +145,6 @@ impl<
     }
 }
 #[cfg(feature = "insecure")]
-lazy_static::lazy_static! {
-    pub static ref INSECURE_PREPROCESSING_ID: RequestId =
-        crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap();
-}
-
-#[cfg(feature = "insecure")]
 #[tonic::async_trait]
 impl<
         PubS: Storage + Sync + Send + 'static,
@@ -178,6 +174,7 @@ impl<
 // This is essentially the same as an Option, but it's
 // more clear to label the variants as `Secure`
 // and `Insecure`.
+#[allow(clippy::type_complexity)]
 pub enum PreprocHandleWithMode {
     Secure(
         (
@@ -465,22 +462,42 @@ impl<
             guarded_meta_store.retrieve(&request_id)
         };
         let res = handle_res_mapping(status, &request_id, "DKG").await?;
-        if res.key_id != request_id {
-            return Err(Status::internal(format!(
-                "Key generation result not found for request ID: {}",
-                request_id
-            )));
+
+        match res {
+            KeyGenMetadata::Current(res) => {
+                if res.key_id != request_id {
+                    return Err(Status::internal(format!(
+                        "Key generation result not found for request ID: {}",
+                        request_id
+                    )));
+                }
+                Ok(Response::new(KeyGenResult {
+                    request_id: Some(request_id.into()),
+                    preprocessing_id: Some(res.preprocessing_id.into()),
+                    key_digests: res
+                        .key_digest_map
+                        .into_iter()
+                        .map(|(data_type, info)| (data_type.to_string(), info))
+                        .collect::<HashMap<_, _>>(),
+                    external_signature: res.external_signature,
+                }))
+            }
+            KeyGenMetadata::LegacyV0(_res) => {
+                tracing::warn!(
+                    "Legacy key generation result for request ID: {}",
+                    request_id
+                );
+                Ok(Response::new(KeyGenResult {
+                    request_id: Some(request_id.into()),
+                    preprocessing_id: None,
+                    // we do not attempt to convert the legacy key digest map
+                    // because it does not match the format to the current one
+                    // since no domain separation is used
+                    key_digests: HashMap::new(),
+                    external_signature: vec![],
+                }))
+            }
         }
-        Ok(Response::new(KeyGenResult {
-            request_id: Some(request_id.into()),
-            preprocessing_id: Some(res.preprocessing_id.into()),
-            key_digests: res
-                .key_digest_map
-                .into_iter()
-                .map(|(data_type, info)| (data_type.to_string(), info))
-                .collect::<HashMap<_, _>>(),
-            external_signature: res.external_signature,
-        }))
     }
 
     async fn sns_compression_key_gen_closure<P>(
@@ -831,7 +848,7 @@ impl<
     pub async fn decompression_key_gen_background(
         req_id: &RequestId,
         mut base_session: BaseSession,
-        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
         sk: Arc<PrivateSigKey>,
@@ -852,7 +869,7 @@ impl<
                 #[cfg(feature = "insecure")]
                 {
                     (
-                        INSECURE_PREPROCESSING_ID.clone(),
+                        *INSECURE_PREPROCESSING_ID,
                         match Self::get_glwe_and_compression_key_shares(
                             keyset_added_info,
                             crypto_storage.clone(),
@@ -906,7 +923,7 @@ impl<
             &sk,
             &DSEP_PUBDATA_KEY,
             &prep_id,
-            &req_id,
+            req_id,
             &decompression_key,
             &eip712_domain,
         ) {
@@ -937,7 +954,7 @@ impl<
     pub async fn sns_compression_key_gen_background(
         req_id: &RequestId,
         mut base_session: BaseSession,
-        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
         sk: Arc<PrivateSigKey>,
@@ -976,7 +993,7 @@ impl<
                 #[cfg(feature = "insecure")]
                 {
                     (
-                        INSECURE_PREPROCESSING_ID.clone(),
+                        *INSECURE_PREPROCESSING_ID,
                         match Self::reconstruct_sns_sk(
                             &base_session,
                             params,
@@ -1185,7 +1202,7 @@ impl<
     async fn key_gen_background(
         req_id: &RequestId,
         mut base_session: BaseSession,
-        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         preproc_handle_w_mode: PreprocHandleWithMode,
         sk: Arc<PrivateSigKey>,
@@ -1209,7 +1226,7 @@ impl<
                 #[cfg(feature = "insecure")]
                 {
                     (
-                        INSECURE_PREPROCESSING_ID.clone(),
+                        *INSECURE_PREPROCESSING_ID,
                         match (
                             keyset_config.compression_config,
                             keyset_config.computation_key_type,
@@ -1316,7 +1333,7 @@ impl<
             integer_server_key,
             sns_key,
             decompression_key,
-            pk_meta_data: info.clone(),
+            meta_data: info.clone(),
         };
 
         //Note: We can't easily check here whether we succeeded writing to the meta store

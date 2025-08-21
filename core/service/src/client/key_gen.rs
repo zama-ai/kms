@@ -1,5 +1,5 @@
 use crate::client::client_wasm::Client;
-use crate::engine::base::compute_handle;
+use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::engine::base::DSEP_PUBDATA_KEY;
 use crate::engine::validation::parse_optional_proto_request_id;
 use crate::engine::validation::RequestIdParsingErr;
@@ -9,10 +9,12 @@ use alloy_sol_types::Eip712Domain;
 use kms_grpc::kms::v1::{
     FheParameter, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult, KeySetAddedInfo, KeySetConfig,
 };
+use kms_grpc::rpc_types::KeygenVerification;
 use kms_grpc::rpc_types::{
     alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
 };
 use kms_grpc::RequestId;
+use tfhe::CompactPublicKey;
 use tfhe::ServerKey;
 use tfhe_versionable::{Unversionize, Versionize};
 
@@ -61,10 +63,14 @@ impl Client {
         storage: &R,
     ) -> anyhow::Result<(WrappedPublicKeyOwned, ServerKey)> {
         let pk = some_or_err(
-            self.retrieve_public_key(resp, storage).await?,
+            self.retrieve_public_key_no_verification(resp, storage)
+                .await?,
             "Could not validate public key".to_string(),
         )?;
-        let server_key: ServerKey = match self.retrieve_server_key(resp, storage).await? {
+        let server_key: ServerKey = match self
+            .retrieve_server_key_no_verification(resp, storage)
+            .await?
+        {
             Some(server_key) => server_key,
             None => {
                 return Err(anyhow_error_and_log("Could not validate server key"));
@@ -96,13 +102,13 @@ impl Client {
     /// The method will return the key if retrieval and validation is successful,
     /// but will return None in case the signature is invalid or does not match the actual key
     /// handle.
-    pub async fn retrieve_server_key<R: StorageReader>(
+    async fn retrieve_server_key_no_verification<R: StorageReader>(
         &self,
         key_gen_result: &KeyGenResult,
         storage: &R,
     ) -> anyhow::Result<Option<ServerKey>> {
         if let Some(server_key) = self
-            .retrieve_key(key_gen_result, PubDataType::ServerKey, storage)
+            .retrieve_key_no_verification(key_gen_result, PubDataType::ServerKey, storage)
             .await?
         {
             Ok(Some(server_key))
@@ -111,11 +117,71 @@ impl Client {
         }
     }
 
+    // NOTE: this only checks the signature is valid against one of the server addresses
+    pub async fn retrieve_server_key_and_public_key<R: StorageReader>(
+        &self,
+        preproc_id: &RequestId,
+        key_id: &RequestId,
+        key_gen_result: &KeyGenResult,
+        domain: &Eip712Domain,
+        storage: &R,
+    ) -> anyhow::Result<Option<(ServerKey, CompactPublicKey)>> {
+        let (server_key, public_key) = match tokio::try_join!(
+            self.retrieve_server_key_no_verification(key_gen_result, storage),
+            self.retrieve_public_key_no_verification(key_gen_result, storage)
+        )? {
+            (Some(sk), Some(pk)) => (sk, pk),
+            _ => {
+                return Ok(None);
+            }
+        };
+
+        let WrappedPublicKeyOwned::Compact(public_key) = public_key;
+
+        let server_key_digest =
+            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key)?;
+        let public_key_digest =
+            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key)?;
+
+        let actual_preproc_id: RequestId = some_or_err(
+            key_gen_result.preprocessing_id.clone(),
+            "Key generation result does not contain a preprocessing ID".to_string(),
+        )?
+        .try_into()?;
+
+        let actual_key_id: RequestId = some_or_err(
+            key_gen_result.request_id.clone(),
+            "Key generation result does not contain a request ID".to_string(),
+        )?
+        .try_into()?;
+
+        if *preproc_id != actual_preproc_id {
+            return Err(anyhow::anyhow!("Preprocessing ID in key generation result does not match the provided preprocessing ID"));
+        }
+
+        if *key_id != actual_key_id {
+            return Err(anyhow::anyhow!(
+                "Key ID in key generation result does not match the provided key ID"
+            ));
+        }
+
+        let sol_type = KeygenVerification {
+            prepKeygenId: alloy_primitives::U256::from_be_slice(preproc_id.as_bytes()),
+            keyId: alloy_primitives::U256::from_be_slice(key_id.as_bytes()),
+            serverKeyDigest: server_key_digest.to_vec().into(),
+            publicKeyDigest: public_key_digest.to_vec().into(),
+        };
+
+        self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
+
+        Ok(Some((server_key, public_key)))
+    }
+
     /// Retrieve and validate a public key based on the result from storage.
     /// The method will return the key if retrieval and validation is successful,
     /// but will return None in case the signature is invalid or does not match the actual key
     /// handle.
-    pub async fn retrieve_public_key<R: StorageReader>(
+    async fn retrieve_public_key_no_verification<R: StorageReader>(
         &self,
         key_gen_result: &KeyGenResult,
         storage: &R,
@@ -144,7 +210,7 @@ impl Client {
         );
         let wrapped_pk = match pk_type {
             PublicKeyType::Compact => self
-                .retrieve_key(key_gen_result, PubDataType::PublicKey, storage)
+                .retrieve_key_no_verification(key_gen_result, PubDataType::PublicKey, storage)
                 .await?
                 .map(WrappedPublicKeyOwned::Compact),
         };
@@ -161,12 +227,12 @@ impl Client {
         storage: &R,
     ) -> anyhow::Result<Option<tfhe::integer::compression_keys::DecompressionKey>> {
         let decompression_key = self
-            .retrieve_key(key_gen_result, PubDataType::DecompressionKey, storage)
+            .retrieve_key_no_verification(key_gen_result, PubDataType::DecompressionKey, storage)
             .await?;
         Ok(decompression_key)
     }
 
-    pub(crate) async fn retrieve_key<
+    pub(crate) async fn retrieve_key_no_verification<
         S: serde::de::DeserializeOwned
             + serde::Serialize
             + Versionize
@@ -180,32 +246,30 @@ impl Client {
         key_type: PubDataType,
         storage: &R,
     ) -> anyhow::Result<Option<S>> {
-        let pki = some_or_err(
-            key_gen_result.key_results.get(&key_type.to_string()),
-            format!("Could not find key of type {key_type}"),
-        )?;
+        let key_digest = key_gen_result
+            .key_digests
+            .get(&key_type.to_string())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Key type {} not found in key generation result",
+                    key_type.to_string()
+                )
+            })?;
+
         let request_id = parse_optional_proto_request_id(
             &key_gen_result.request_id,
             RequestIdParsingErr::Other("invalid request ID while retrieving key".to_string()),
         )
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
         let key: S = self.get_key(&request_id, key_type, storage).await?;
-        let key_handle = compute_handle(&key)?;
-        if key_handle != pki.key_handle {
+        let actual_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &key)?;
+
+        if actual_digest != *key_digest {
             tracing::warn!(
                 "Computed key handle {} of retrieved key does not match expected key handle {}",
-                key_handle,
-                pki.key_handle,
-            );
-            return Ok(None);
-        }
-        if self
-            .verify_server_signature(&DSEP_PUBDATA_KEY, &key_handle, &pki.signature)
-            .is_err()
-        {
-            tracing::warn!(
-                "Could not verify server signature for key handle {}",
-                key_handle,
+                hex::encode(&actual_digest),
+                hex::encode(key_digest),
             );
             return Ok(None);
         }

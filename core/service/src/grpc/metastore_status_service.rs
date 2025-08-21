@@ -17,7 +17,7 @@ use std::{str::FromStr, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::{
-    engine::base::{CrsGenCallValues, KeyGenCallValues, PubDecCallValues, UserDecryptCallValues},
+    engine::base::{CrsGenCallValues, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues},
     util::meta_store::MetaStore,
 };
 use kms_grpc::{
@@ -36,7 +36,7 @@ use threshold_fhe::execution::online::preprocessing::DKGPreprocessing;
 // Type aliases for the different MetaStore types used in the system
 
 /// MetaStore for Key Generation data, mapping request IDs to public data handles
-pub type KeyGenMetaStore = MetaStore<KeyGenCallValues>;
+pub type KeyGenMetaStore = MetaStore<KeyGenMetadata>;
 
 /// MetaStore for Public Decryption data, storing (ciphertext, plaintext, signature) tuples
 pub type PubDecMetaStore = MetaStore<PubDecCallValues>;

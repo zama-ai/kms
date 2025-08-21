@@ -18,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{self};
 use strum::{EnumIter, IntoEnumIterator};
 use tfhe::{named::Named, Unversionize, Versionize};
-use threshold_fhe::{execution::runtime::party::Role, hashing::DomainSep};
+use threshold_fhe::execution::runtime::party::Role;
 use tracing;
 
 pub mod crypto_material;

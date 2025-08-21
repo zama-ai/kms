@@ -28,7 +28,10 @@ use kms_lib::{
         backup_pke,
         internal_crypto_types::{gen_sig_keys, PrivateSigKey, PublicSigKey},
     },
-    engine::{base::KmsFheKeyHandles, threshold::service::ThresholdFheKeys},
+    engine::{
+        base::{KeyGenMetadata, KmsFheKeyHandles},
+        threshold::service::ThresholdFheKeys,
+    },
     util::key_setup::FhePublicKey,
     vault::keychain::AppKeyBlob,
 };
@@ -152,9 +155,11 @@ fn test_kms_fhe_key_handles(
     let decompression_key: Option<DecompressionKey> =
         load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
 
+    let key_id = RequestId::zeros();
     let new_versionized = KmsFheKeyHandles::new(
         &private_sig_key,
         client_key,
+        &key_id,
         &fhe_pub_key_set,
         decompression_key,
         &dummy_domain(),
@@ -194,6 +199,10 @@ fn test_threshold_fhe_keys(
     let sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey> =
         load_and_unversionize_auxiliary(dir, test, &test.sns_key_filename, format)?;
 
+    // NOTE: we use the old HashMap type here, instead of KeyGenMetadata
+    // this is ok because we never explicitly write pk_meta_data to dist so there's no need
+    // to read the new type KeyGenMetadata.
+    // But we still need to fetch the correct information so that we can do the comparison.
     let pk_meta_data: HashMap<PubDataType, SignedPubDataHandleInternal> =
         load_and_unversionize_auxiliary(dir, test, &test.info_filename, format)?;
 
@@ -207,7 +216,7 @@ fn test_threshold_fhe_keys(
         integer_server_key,
         sns_key,
         decompression_key,
-        pk_meta_data,
+        meta_data: KeyGenMetadata::LegacyV0(pk_meta_data),
     };
 
     // Retrieve the key parameters from the new KMS handle
@@ -224,11 +233,11 @@ fn test_threshold_fhe_keys(
             ),
             format,
         ))
-    } else if original_versionized.pk_meta_data != new_versionized.pk_meta_data {
+    } else if original_versionized.meta_data != new_versionized.meta_data {
         Err(test.failure(
             format!(
                 "Invalid KMS FHE key handles because of different public key info:\n Expected :\n{:?}\nGot:\n{:?}",
-                original_versionized.pk_meta_data, new_versionized.pk_meta_data
+                original_versionized.meta_data, new_versionized.meta_data
             ),
             format,
         ))

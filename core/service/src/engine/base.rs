@@ -19,9 +19,13 @@ use k256::ecdsa::SigningKey;
 use kms_grpc::kms::v1::{
     CiphertextFormat, FheParameter, TypedPlaintext, UserDecryptionResponsePayload,
 };
+#[cfg(feature = "non-wasm")]
+use kms_grpc::rpc_types::CrsGenSignedPubDataHandleInternalWrapper;
+#[cfg(feature = "non-wasm")]
+use kms_grpc::rpc_types::SignedPubDataHandleInternal;
 use kms_grpc::rpc_types::{
-    CrsgenVerification, FheDecompressionUpgradeKey, KeygenVerification, PrepKeygenVerification,
-    PubDataType, PublicDecryptVerification,
+    CrsgenVerification, FheDecompressionUpgradeKey, KeygenVerification, PubDataType,
+    PublicDecryptVerification,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
@@ -41,6 +45,8 @@ use tfhe::{
     FheUint4, FheUint512, FheUint64, FheUint8,
 };
 use tfhe::{FheTypes, Versionize};
+use tfhe_versionable::Upgrade;
+use tfhe_versionable::Version;
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::execution::endpoints::decryption::RadixOrBoolCiphertext;
 use threshold_fhe::execution::endpoints::decryption::{
@@ -48,6 +54,7 @@ use threshold_fhe::execution::endpoints::decryption::{
 };
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
+use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
 use threshold_fhe::hashing::hash_element;
 use threshold_fhe::hashing::serialize_hash_element;
 use threshold_fhe::hashing::DomainSep;
@@ -60,22 +67,35 @@ use tracing::error;
 pub(crate) const DSEP_REQUEST_ID: DomainSep = *b"REQST_ID";
 /// Domain separator for handle generation
 pub(crate) const DSEP_HANDLE: DomainSep = *b"_HANDLE_";
-/// Domain separator for external public data
-pub(crate) const DSEP_PUBDATA_EXTERNAL: DomainSep = *b"PDAT_EXT";
 /// Domain separator for public key data
-pub(crate) const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
+pub const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
 /// Domain separator for CRS (Common Reference String) data
-pub(crate) const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
+pub const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
 
 lazy_static::lazy_static! {
     pub static ref CENTRALIZED_DUMMY_PREPROCESSING_ID: RequestId =
         crate::engine::base::derive_request_id("CENTRALIZED_DUMMY_PREPROCESSING_ID").unwrap();
+
+    pub static ref INSECURE_PREPROCESSING_ID: RequestId =
+        crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap();
 }
 
 #[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum KmsFheKeyHandlesVersioned {
-    V0(KmsFheKeyHandles),
+    V0(KmsFheKeyHandlesV0),
+    V1(KmsFheKeyHandles),
+}
+
+impl Upgrade<KmsFheKeyHandles> for KmsFheKeyHandlesV0 {
+    type Error = std::convert::Infallible;
+    fn upgrade(self) -> Result<KmsFheKeyHandles, Self::Error> {
+        Ok(KmsFheKeyHandles {
+            client_key: self.client_key,
+            decompression_key: self.decompression_key,
+            public_key_info: KeyGenMetadata::LegacyV0(self.public_key_info),
+        })
+    }
 }
 
 /// Centralized KMS private key material storage
@@ -93,8 +113,7 @@ pub struct KmsFheKeyHandles {
     pub decompression_key: Option<DecompressionKey>,
 
     /// Maps public key types to their corresponding signed handles and metadata
-    /// NOTE to reviewer: this is a breaking change but we're not deploying centralized KMS yet, is it ok?
-    pub public_key_info: KeyGenCallValues,
+    pub public_key_info: KeyGenMetadata,
 }
 
 impl Named for KmsFheKeyHandles {
@@ -138,6 +157,19 @@ impl KmsFheKeyHandles {
     }
 }
 
+#[cfg(feature = "non-wasm")]
+#[derive(Clone, Serialize, Deserialize, Version)]
+pub struct KmsFheKeyHandlesV0 {
+    /// Client's private key for FHE operations
+    pub client_key: FhePrivateKey,
+
+    /// Optional key for ciphertext decompression
+    pub decompression_key: Option<DecompressionKey>,
+
+    /// Maps public key types to their corresponding signed handles and metadata
+    pub public_key_info: HashMap<PubDataType, SignedPubDataHandleInternal>,
+}
+
 /// Derives a deterministic request ID from an input string.
 ///
 /// # Usage
@@ -171,22 +203,21 @@ pub(crate) fn compute_info_crs(
     pp: &CompactPkeCrs,
     domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<CrsGenCallValues> {
-    let max_num_bits = pp.max_num_messages().0; // TODO check
+    let max_num_bits = max_num_bits_from_crs(pp);
     let crs_digest = safe_serialize_hash_element_versioned(domain_separator, pp)?;
 
     let sol_type = CrsgenVerification {
-        // TODO check endianness
         crsId: alloy_primitives::U256::from_be_slice(crs_id.as_bytes()),
         maxBitLength: alloy_primitives::U256::from_be_slice(&max_num_bits.to_be_bytes()),
         crsDigest: crs_digest.to_vec().into(),
     };
     let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
 
-    Ok(CrsGenCallValues {
-        crs_id: crs_id.clone(),
+    Ok(CrsGenCallValues::new(
+        *crs_id,
         crs_digest,
         external_signature,
-    })
+    ))
 }
 
 pub(crate) fn compute_info_standard_keygen(
@@ -196,14 +227,13 @@ pub(crate) fn compute_info_standard_keygen(
     key_id: &RequestId,
     keyset: &FhePubKeySet,
     domain: &alloy_sol_types::Eip712Domain,
-) -> anyhow::Result<KeyGenCallValues> {
+) -> anyhow::Result<KeyGenMetadata> {
     let server_key_digest =
         safe_serialize_hash_element_versioned(domain_separator, &keyset.server_key)?;
     let public_key_digest =
         safe_serialize_hash_element_versioned(domain_separator, &keyset.public_key)?;
 
     let sol_type = KeygenVerification {
-        // TODO check endianness
         prepKeygenId: alloy_primitives::U256::from_be_slice(prep_id.as_bytes()),
         keyId: alloy_primitives::U256::from_be_slice(key_id.as_bytes()),
         serverKeyDigest: server_key_digest.to_vec().into(),
@@ -211,15 +241,15 @@ pub(crate) fn compute_info_standard_keygen(
     };
     let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
 
-    Ok(KeyGenCallValues {
-        key_id: *key_id,
-        preprocessing_id: *prep_id,
-        key_digest_map: HashMap::from([
+    Ok(KeyGenMetadata::new(
+        *key_id,
+        *prep_id,
+        HashMap::from([
             (PubDataType::ServerKey, server_key_digest),
             (PubDataType::PublicKey, public_key_digest),
         ]),
         external_signature,
-    })
+    ))
 }
 
 pub(crate) fn compute_info_decompression_keygen(
@@ -229,7 +259,7 @@ pub(crate) fn compute_info_decompression_keygen(
     key_id: &RequestId,
     decompression_key: &DecompressionKey,
     domain: &alloy_sol_types::Eip712Domain,
-) -> anyhow::Result<KeyGenCallValues> {
+) -> anyhow::Result<KeyGenMetadata> {
     let key_digest = safe_serialize_hash_element_versioned(domain_separator, decompression_key)?;
 
     let sol_type = FheDecompressionUpgradeKey {
@@ -237,25 +267,24 @@ pub(crate) fn compute_info_decompression_keygen(
     };
     let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
 
-    Ok(KeyGenCallValues {
-        key_id: *key_id,
-        preprocessing_id: *prep_id,
-        key_digest_map: HashMap::from([(PubDataType::DecompressionKey, key_digest)]),
+    Ok(KeyGenMetadata::new(
+        *key_id,
+        *prep_id,
+        HashMap::from([(PubDataType::DecompressionKey, key_digest)]),
         external_signature,
-    })
+    ))
 }
 
-pub(crate) fn compute_info_preprocessing<S: Serialize + Versionize + Named>(
-    sk: &PrivateSigKey,
-    prep_id: &RequestId,
-    domain: &alloy_sol_types::Eip712Domain,
-) -> anyhow::Result<Vec<u8>> {
-    let sol_type = PrepKeygenVerification {
-        // TODO check endianness
-        prepKeygenId: alloy_primitives::U256::from_be_slice(prep_id.as_bytes()),
-    };
-    compute_external_pubdata_signature(sk, &sol_type, domain)
-}
+// pub(crate) fn compute_info_preprocessing<S: Serialize + Versionize + Named>(
+//     sk: &PrivateSigKey,
+//     prep_id: &RequestId,
+//     domain: &alloy_sol_types::Eip712Domain,
+// ) -> anyhow::Result<Vec<u8>> {
+//     let sol_type = PrepKeygenVerification {
+//         prepKeygenId: alloy_primitives::U256::from_be_slice(prep_id.as_bytes()),
+//     };
+//     compute_external_pubdata_signature(sk, &sol_type, domain)
+// }
 
 /// Computes a unique handle for an element using its hash digest.
 ///
@@ -787,40 +816,104 @@ pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> Result<DKGParams, Boxed
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum KeyGenCallValuesVersioned {
-    V0(KeyGenCallValues),
+pub enum KeyGenMetadataInnerVersioned {
+    V0(KeyGenMetadataInner),
 }
 
-// Values that need to be stored temporarily as part of an async key generation call.
-#[cfg(feature = "non-wasm")]
-#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
-#[versionize(KeyGenCallValuesVersioned)]
-pub struct KeyGenCallValues {
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(KeyGenMetadataInnerVersioned)]
+pub struct KeyGenMetadataInner {
     pub(crate) key_id: RequestId,
     pub(crate) preprocessing_id: RequestId,
     pub(crate) key_digest_map: HashMap<PubDataType, Vec<u8>>,
     pub(crate) external_signature: Vec<u8>,
 }
 
-impl Named for KeyGenCallValues {
-    /// Returns the type name for versioning and serialization
-    const NAME: &'static str = "KeyGenCallValues";
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum KeyGenMetadataVersioned {
+    V0(KeyGenMetadata),
 }
 
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum CrsGenCallValuesVersioned {
-    V0(CrsGenCallValues),
+// Values that need to be stored temporarily as part of an async key generation call.
+#[cfg(feature = "non-wasm")]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, Versionize)]
+#[versionize(KeyGenMetadataVersioned)]
+pub enum KeyGenMetadata {
+    Current(KeyGenMetadataInner),
+    LegacyV0(HashMap<PubDataType, SignedPubDataHandleInternal>),
+}
+
+impl Named for KeyGenMetadata {
+    /// Returns the type name for versioning and serialization
+    const NAME: &'static str = "KeyGenMetadata";
+}
+
+impl KeyGenMetadata {
+    pub fn new(
+        key_id: RequestId,
+        preprocessing_id: RequestId,
+        key_digest_map: HashMap<PubDataType, Vec<u8>>,
+        external_signature: Vec<u8>,
+    ) -> Self {
+        KeyGenMetadata::Current(KeyGenMetadataInner {
+            key_id,
+            preprocessing_id,
+            key_digest_map,
+            external_signature,
+        })
+    }
 }
 
 #[cfg(feature = "non-wasm")]
-#[derive(Clone, Serialize, Deserialize, Versionize)]
-#[versionize(CrsGenCallValuesVersioned)]
-pub struct CrsGenCallValues {
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum CrsGenMetadataInnerVersioned {
+    V0(CrsGenMetadataInner),
+}
+
+#[cfg(feature = "non-wasm")]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(CrsGenMetadataInnerVersioned)]
+pub struct CrsGenMetadataInner {
     pub(crate) crs_id: RequestId,
     pub(crate) crs_digest: Vec<u8>,
     pub(crate) external_signature: Vec<u8>,
 }
 
+#[cfg(feature = "non-wasm")]
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum CrsGenCallValuesVersioned {
+    V0(CrsGenSignedPubDataHandleInternalWrapper),
+    V1(CrsGenCallValues),
+}
+
+#[cfg(feature = "non-wasm")]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(CrsGenCallValuesVersioned)]
+pub enum CrsGenCallValues {
+    Current(CrsGenMetadataInner),
+    LegacyV0(SignedPubDataHandleInternal),
+}
+
+#[cfg(feature = "non-wasm")]
+impl Upgrade<CrsGenCallValues> for CrsGenSignedPubDataHandleInternalWrapper {
+    type Error = std::convert::Infallible;
+    fn upgrade(self) -> Result<CrsGenCallValues, Self::Error> {
+        Ok(CrsGenCallValues::LegacyV0(self.0))
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+impl CrsGenCallValues {
+    pub fn new(crs_id: RequestId, crs_digest: Vec<u8>, external_signature: Vec<u8>) -> Self {
+        CrsGenCallValues::Current(CrsGenMetadataInner {
+            crs_id,
+            crs_digest,
+            external_signature,
+        })
+    }
+}
+
+#[cfg(feature = "non-wasm")]
 impl Named for CrsGenCallValues {
     /// Returns the type name for versioning and serialization
     const NAME: &'static str = "CrsGenCallValues";
@@ -847,7 +940,7 @@ pub(crate) mod tests {
         engine::centralized::central_kms::generate_fhe_keys,
     };
     use aes_prng::AesRng;
-    use kms_grpc::kms::v1::CiphertextFormat;
+    use kms_grpc::{kms::v1::CiphertextFormat, RequestId};
     use rand::{RngCore, SeedableRng};
     use tfhe::{prelude::SquashNoise, safe_serialization::safe_serialize, FheTypes, FheUint32};
     use threshold_fhe::execution::{
@@ -1021,11 +1114,13 @@ pub(crate) mod tests {
         // we just use small ciphertexts for these tests
         let mut rng = AesRng::seed_from_u64(100);
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             StandardKeySetConfig::default(),
             None,
+            &key_id,
             None,
             &dummy_domain(),
         )
@@ -1062,11 +1157,13 @@ pub(crate) mod tests {
         // we just use small ciphertexts for these tests
         let mut rng = AesRng::seed_from_u64(100);
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             StandardKeySetConfig::default(),
             None,
+            &key_id,
             None,
             &dummy_domain(),
         )
@@ -1130,11 +1227,13 @@ pub(crate) mod tests {
         // we just use small ciphertexts for these tests
         let mut rng = AesRng::seed_from_u64(100);
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             StandardKeySetConfig::default(),
             None,
+            &key_id,
             None,
             &dummy_domain(),
         )
@@ -1181,4 +1280,8 @@ pub(crate) mod tests {
             .unwrap();
         }
     }
+
+    // fn test_compute_external_pubdata_signature() {
+    //     // TODO
+    // }
 }

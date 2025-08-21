@@ -6,7 +6,7 @@ use crate::{
     anyhow_error_and_warn_log,
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
-        base::{CrsGenCallValues, KeyGenCallValues, KmsFheKeyHandles},
+        base::{CrsGenCallValues, KeyGenMetadata, KmsFheKeyHandles},
         context::ContextInfo,
         threshold::service::ThresholdFheKeys,
     },
@@ -441,7 +441,7 @@ where
     pub async fn purge_key_material(
         &self,
         req_id: &RequestId,
-        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenCallValues>>,
+        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
     ) {
         let f1 = async {
             let mut pub_storage = self.public_storage.lock().await;
@@ -724,8 +724,8 @@ where
         &self,
         req_id: &RequestId,
         decompression_key: DecompressionKey,
-        info: KeyGenCallValues,
-        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        info: KeyGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up

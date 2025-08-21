@@ -15,7 +15,7 @@ use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
     engine::{
-        base::{CrsGenCallValues, KeyGenCallValues},
+        base::{CrsGenCallValues, KeyGenMetadata},
         threshold::service::ThresholdFheKeys,
     },
     util::meta_store::MetaStore,
@@ -97,8 +97,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         key_id: &RequestId,
         threshold_fhe_keys: ThresholdFheKeys,
         fhe_key_set: FhePubKeySet,
-        info: KeyGenCallValues,
-        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        info: KeyGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
@@ -280,7 +280,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     pub async fn purge_key_material(
         &self,
         req_id: &RequestId,
-        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenCallValues>>,
+        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
     ) {
         self.inner
             .purge_key_material(req_id, guarded_meta_store)
@@ -302,8 +302,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         req_id: &RequestId,
         decompression_key: DecompressionKey,
-        info: KeyGenCallValues,
-        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        info: KeyGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
         self.inner
             .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)

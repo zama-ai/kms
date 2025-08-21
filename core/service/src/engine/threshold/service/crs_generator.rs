@@ -255,20 +255,37 @@ impl<
         };
         let crs_data = handle_res_mapping(status, &request_id, "CRS generation").await?;
 
-        if crs_data.crs_id != request_id {
-            return Err(Status::new(
-                tonic::Code::Internal,
-                format!(
-                    "Request ID mismatch: expected {}, got {}",
-                    request_id, crs_data.crs_id
-                ),
-            ));
+        match crs_data {
+            CrsGenCallValues::Current(crs_data) => {
+                if crs_data.crs_id != request_id {
+                    return Err(Status::new(
+                        tonic::Code::Internal,
+                        format!(
+                            "Request ID mismatch: expected {}, got {}",
+                            request_id, crs_data.crs_id
+                        ),
+                    ));
+                }
+                Ok(Response::new(CrsGenResult {
+                    request_id: Some(request_id.into()),
+                    crs_digest: crs_data.crs_digest,
+                    external_signature: crs_data.external_signature,
+                }))
+            }
+            CrsGenCallValues::LegacyV0(_) => {
+                // This is a legacy result, we cannot return the crs_digest or external_signature
+                // as they're signed using a different SolStruct and hashed using a different domain separator
+                tracing::warn!(
+                    "Received a legacy CRS generation result,
+                not returning crs_digest or external_signature"
+                );
+                Ok(Response::new(CrsGenResult {
+                    request_id: Some(request_id.into()),
+                    crs_digest: vec![],
+                    external_signature: vec![],
+                }))
+            }
         }
-        Ok(Response::new(CrsGenResult {
-            request_id: Some(request_id.into()),
-            crs_digest: crs_data.crs_digest,
-            external_signature: crs_data.external_signature,
-        }))
     }
 
     #[allow(clippy::too_many_arguments)]

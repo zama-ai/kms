@@ -14,7 +14,7 @@ use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
-    engine::base::{CrsGenCallValues, KeyGenCallValues, KmsFheKeyHandles},
+    engine::base::{CrsGenCallValues, KeyGenMetadata, KmsFheKeyHandles},
     util::meta_store::MetaStore,
     vault::{
         storage::{store_pk_at_request_id, store_versioned_at_request_id, Storage},
@@ -77,8 +77,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         req_id: &RequestId,
         decompression_key: DecompressionKey,
-        info: KeyGenCallValues,
-        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        info: KeyGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
         self.inner
             .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)
@@ -96,7 +96,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         key_id: &RequestId,
         key_info: KmsFheKeyHandles,
         fhe_key_set: FhePubKeySet,
-        meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up

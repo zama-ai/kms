@@ -54,7 +54,7 @@ use crate::{
     consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
     cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
     engine::{
-        base::{BaseKmsStruct, CrsGenCallValues, KeyGenCallValues, DSEP_PUBDATA_KEY},
+        base::{BaseKmsStruct, CrsGenCallValues, KeyGenMetadata},
         prepare_shutdown_signals,
         threshold::{
             service::{
@@ -106,7 +106,7 @@ pub struct ThresholdFheKeys {
     pub integer_server_key: tfhe::integer::ServerKey,
     pub sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey>,
     pub decompression_key: Option<DecompressionKey>,
-    pub pk_meta_data: KeyGenCallValues,
+    pub meta_data: KeyGenMetadata,
 }
 
 /// These are the internal key materials (public and private)
@@ -124,7 +124,13 @@ impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV0 {
     type Error = std::convert::Infallible;
 
     fn upgrade(self) -> Result<ThresholdFheKeys, Self::Error> {
-        todo!()
+        Ok(ThresholdFheKeys {
+            private_keys: self.private_keys,
+            integer_server_key: self.integer_server_key,
+            sns_key: self.sns_key,
+            decompression_key: self.decompression_key,
+            meta_data: KeyGenMetadata::LegacyV0(self.pk_meta_data),
+        })
     }
 }
 
@@ -154,7 +160,7 @@ impl std::fmt::Debug for ThresholdFheKeys {
             .field("private_keys", &"ommitted")
             .field("server_key", &"ommitted")
             .field("decompression_key", &"ommitted")
-            .field("pk_meta_data", &self.pk_meta_data)
+            .field("pk_meta_data", &self.meta_data)
             .field("ksk", &"ommitted")
             .finish()
     }
@@ -229,7 +235,7 @@ where
     let mut public_key_info = HashMap::new();
     let mut pk_map = HashMap::new();
     for (id, info) in key_info_versioned.clone().into_iter() {
-        public_key_info.insert(id, info.pk_meta_data.clone());
+        public_key_info.insert(id, info.meta_data.clone());
 
         let pk = read_pk_at_request_id(&public_storage, &id).await?;
         pk_map.insert(id, pk);
@@ -665,14 +671,14 @@ mod tests {
             let priv_key_set = Self {
                 private_keys: priv_key_set,
                 integer_server_key,
-                sns_key: None,
-                decompression_key: None,
-                pk_meta_data: KeyGenCallValues {
-                    key_id: RequestId::zeros(),
-                    preprocessing_id: RequestId::zeros(),
-                    key_digest_map: HashMap::new(),
-                    external_signature: vec![],
-                },
+                sns_key,
+                decompression_key,
+                meta_data: KeyGenMetadata::new(
+                    RequestId::zeros(),
+                    RequestId::zeros(),
+                    HashMap::new(),
+                    vec![],
+                ),
             };
 
             (priv_key_set, pub_key_set)

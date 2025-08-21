@@ -9,7 +9,7 @@ use crate::cryptography::signcryption::{signcrypt, SigncryptionPayload};
 #[cfg(feature = "non-wasm")]
 use crate::engine::base::CrsGenCallValues;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
-use crate::engine::base::{KeyGenCallValues, PubDecCallValues, UserDecryptCallValues};
+use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::traits::{BaseKms, Kms};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::engine::Shutdown;
@@ -73,6 +73,7 @@ use tonic_health::pb::health_server::{Health, HealthServer};
 use tonic_health::server::HealthReporter;
 
 #[cfg(feature = "non-wasm")]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn async_generate_fhe_keys<PubS, PrivS>(
     sk: &PrivateSigKey,
     storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
@@ -467,7 +468,7 @@ pub struct RealCentralizedKms<
     pub(crate) base_kms: BaseKmsStruct,
     pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     // Map storing ongoing key generation requests.
-    pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
+    pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     // Map storing ongoing public decryption requests.
     pub(crate) pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     // Map storing ongoing user decryption requests.
@@ -972,7 +973,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     RealCentralizedKms<PubS, PrivS>
 {
     /// Get a reference to the key generation MetaStore
-    pub fn get_key_gen_meta_store(&self) -> &Arc<RwLock<MetaStore<KeyGenCallValues>>> {
+    pub fn get_key_gen_meta_store(&self) -> &Arc<RwLock<MetaStore<KeyGenMetadata>>> {
         &self.key_meta_map
     }
 
@@ -1047,8 +1048,7 @@ pub(crate) mod tests {
         decrypt_signcryption_with_link, ephemeral_signcryption_key_generation,
     };
     use crate::dummy_domain;
-    use crate::engine::base::{compute_handle, compute_info, derive_request_id};
-    use crate::engine::centralized::central_kms::async_generate_crs;
+    use crate::engine::base::{compute_handle, derive_request_id};
     use crate::engine::traits::Kms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
     use crate::util::file_handling::{read_element, write_element};
@@ -1067,7 +1067,6 @@ pub(crate) mod tests {
     use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
     use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-    use threshold_fhe::session_id::SessionId;
     use tokio::sync::OnceCell;
 
     static ONCE_TEST_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();
@@ -1174,6 +1173,7 @@ pub(crate) mod tests {
             dkg_params,
             StandardKeySetConfig::default(),
             None,
+            &RequestId::from_str(key_id).unwrap(),
             seed,
             &domain,
         )
@@ -1187,6 +1187,7 @@ pub(crate) mod tests {
             dkg_params,
             StandardKeySetConfig::default(),
             None,
+            &RequestId::from_str(other_key_id).unwrap(),
             seed,
             &domain,
         )
@@ -1231,11 +1232,13 @@ pub(crate) mod tests {
         let mut rng = AesRng::seed_from_u64(100);
         let domain = dummy_domain();
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
         assert!(generate_fhe_keys(
             &sig_sk,
             DEFAULT_PARAM,
             StandardKeySetConfig::default(),
             None,
+            &key_id,
             None,
             &domain,
         )
@@ -1582,115 +1585,6 @@ pub(crate) mod tests {
             assert_eq!(plaintext.as_u64(), msg);
         }
         assert_eq!(plaintext.fhe_type().unwrap(), FheTypes::Uint64);
-    }
-
-    #[tokio::test]
-    async fn ensure_compute_info_consistency() {
-        // we need compute info to work without calling the sign function from KMS,
-        // i.e., only using a signing key
-        // this test makes sure the output is consistent
-        let keys = get_test_keys().await;
-        let (kms, _health_service) = {
-            RealCentralizedKms::new(
-                new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
-                    .await
-                    .unwrap(),
-                new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
-                    .await
-                    .unwrap(),
-                None,
-                keys.centralized_kms_keys.sig_sk.clone(),
-                None,
-            )
-            .await
-            .unwrap()
-        };
-
-        let domain = dummy_domain();
-        let sk = &keys.centralized_kms_keys.sig_sk;
-        let (value, _) = async_generate_crs(
-            sk,
-            TEST_PARAM,
-            Some(1),
-            domain.clone(),
-            SessionId::from(11u128),
-            AesRng::seed_from_u64(100),
-        )
-        .await
-        .unwrap();
-
-        let expected = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
-        let actual = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
-        assert_eq!(expected, actual);
-    }
-
-    #[tokio::test]
-    async fn compute_info_negative() {
-        let keys = get_test_keys().await;
-        let (kms, _health_service) = {
-            RealCentralizedKms::new(
-                new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
-                    .await
-                    .unwrap(),
-                new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
-                    .await
-                    .unwrap(),
-                None,
-                keys.centralized_kms_keys.sig_sk.clone(),
-                None,
-            )
-            .await
-            .unwrap()
-        };
-
-        let domain = dummy_domain();
-        let sk = &keys.centralized_kms_keys.sig_sk;
-        let (value, _) = async_generate_crs(
-            sk,
-            TEST_PARAM,
-            Some(1),
-            domain.clone(),
-            SessionId::from(11u128),
-            AesRng::seed_from_u64(100),
-        )
-        .await
-        .unwrap();
-
-        let base = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
-
-        // Observe one char off in dsep
-        {
-            let info = compute_info(&kms.base_kms.sig_key, b"TESTTESU", &value, &domain).unwrap();
-            assert_ne!(base, info);
-        }
-
-        // observe there's a different value
-        {
-            let (new_val, _) = async_generate_crs(
-                sk,
-                TEST_PARAM,
-                Some(1),
-                domain.clone(),
-                SessionId::from(11u128),
-                AesRng::seed_from_u64(101),
-            )
-            .await
-            .unwrap();
-            let info = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &new_val, &domain).unwrap();
-            assert_ne!(base, info);
-        }
-
-        // observe the domain is different
-        {
-            let domain = alloy_sol_types::eip712_domain!(
-                name: "Authorization token",
-                version: "2", // different from dummy_domain
-                chain_id: 8006,
-                verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-            );
-            let info = compute_info(&kms.base_kms.sig_key, b"TESTTEST", &value, &domain).unwrap();
-            assert_ne!(base, info);
-        }
     }
 
     #[test]

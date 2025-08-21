@@ -1,16 +1,15 @@
+use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::vault::storage::{file::FileStorage, StorageType};
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
     consts::TEST_PARAM,
-    cryptography::internal_crypto_types::{Signature, WrappedDKGParams},
+    cryptography::internal_crypto_types::WrappedDKGParams,
     dummy_domain,
-    engine::{
-        base::{compute_handle, derive_request_id, BaseKmsStruct, DSEP_PUBDATA_CRS},
-        traits::BaseKms,
-    },
+    engine::base::{derive_request_id, DSEP_PUBDATA_CRS},
     util::{key_setup::test_tools::purge, rate_limiter::RateLimiterConfig},
     vault::storage::StorageReader,
 };
+use kms_grpc::rpc_types::CrsgenVerification;
 use kms_grpc::{
     kms::v1::{Empty, FheParameter},
     rpc_types::PubDataType,
@@ -19,6 +18,7 @@ use kms_grpc::{
 use serial_test::serial;
 use tfhe::zk::CompactPkeCrs;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
@@ -69,7 +69,7 @@ async fn crs_gen_centralized_manual(
     };
     let domain = dummy_domain();
     let ceremony_req = internal_client
-        .crs_gen_request(request_id, max_num_bits, params, domain)
+        .crs_gen_request(request_id, max_num_bits, params, &domain)
         .unwrap();
 
     let client_request_id = ceremony_req.request_id.clone().unwrap();
@@ -99,27 +99,30 @@ async fn crs_gen_centralized_manual(
     // // check that the received request id matches the one we sent in the request
     assert_eq!(rvcd_req_id, client_request_id);
 
-    let crs_info = resp.crs_results.unwrap();
     let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
     // check that CRS signature is verified correctly for the current version
     let crs_unversioned: CompactPkeCrs = pub_storage
         .read_data(request_id, &PubDataType::CRS.to_string())
         .await
         .unwrap();
-    let client_handle = compute_handle(&crs_unversioned).unwrap();
-    assert_eq!(&client_handle, &crs_info.key_handle);
 
+    let actual_digest =
+        safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs_unversioned).unwrap();
+    assert_eq!(actual_digest, resp.crs_digest);
+
+    let max_num_bits = max_num_bits_from_crs(&crs_unversioned);
     // try verification with each of the server keys; at least one must pass
-    let crs_sig: Signature = bc2wrap::deserialize(&crs_info.signature).unwrap();
-    let mut verified = false;
-    let server_pks = internal_client.get_server_pks().unwrap();
-    for vk in server_pks.values() {
-        let v = BaseKmsStruct::verify_sig(&DSEP_PUBDATA_CRS, &client_handle, &crs_sig, vk).is_ok();
-        verified = verified || v;
-    }
-
-    // check that verification (with at least 1 server key) worked
-    assert!(verified);
+    internal_client
+        .verify_external_signature(
+            &CrsgenVerification {
+                crsId: alloy_primitives::U256::from_be_slice(request_id.as_bytes()),
+                maxBitLength: alloy_primitives::U256::from_be_slice(&max_num_bits.to_be_bytes()),
+                crsDigest: actual_digest.to_vec().into(),
+            },
+            &domain,
+            &resp.external_signature,
+        )
+        .unwrap();
 
     kms_server.assert_shutdown().await;
 }
@@ -151,7 +154,7 @@ pub(crate) async fn crs_gen_centralized(
     };
     let domain = dummy_domain();
     let gen_req = internal_client
-        .crs_gen_request(crs_req_id, max_num_bits, Some(params), domain)
+        .crs_gen_request(crs_req_id, max_num_bits, Some(params), &domain)
         .unwrap();
 
     tracing::debug!("making crs request, insecure? {insecure}");
@@ -190,7 +193,7 @@ pub(crate) async fn crs_gen_centralized(
     let inner_resp = response.unwrap().into_inner();
     let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
     let pp = internal_client
-        .process_get_crs_resp(&inner_resp, &pub_storage)
+        .process_get_crs_resp(&inner_resp, &domain, &pub_storage)
         .await
         .unwrap()
         .unwrap();
