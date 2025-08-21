@@ -298,7 +298,7 @@ pub(crate) fn dkg_fill_from_triples_and_bit_preproc<Z: Ring>(
     // Generate noise needed for compression key
     let ksk_noise = params_basics_handles.all_compression_ksk_noise(keyset_config);
     prep.append_noises(
-        RealSecretDistributions::from_noise_info(ksk_noise.clone(), preprocessing_bits)?,
+        RealSecretDistributions::from_noise_info(ksk_noise, preprocessing_bits)?,
         ksk_noise.bound,
     );
 

@@ -13,6 +13,7 @@ use crate::{
         sharing::share::Share,
         tfhe_internals::parameters::NoiseInfo,
     },
+    thread_handles::spawn_compute_bound,
 };
 
 use crate::{algebra::structure_traits::Ring, execution::online::preprocessing::DKGPreprocessing};
@@ -27,7 +28,7 @@ pub struct DkgBitProcessor<Z: Ring + Clone, T: DKGPreprocessing<Z>> {
     bit_receiver_channels: Vec<Mutex<Receiver<Vec<Share<Z>>>>>,
 }
 
-impl<Z: Ring + Clone, T: DKGPreprocessing<Z>> DkgBitProcessor<Z, T> {
+impl<Z: Ring + Clone, T: DKGPreprocessing<Z> + 'static> DkgBitProcessor<Z, T> {
     pub fn new(
         output_writer: Arc<RwLock<T>>,
         tuniform_productions: Vec<NoiseInfo>,
@@ -51,7 +52,9 @@ impl<Z: Ring + Clone, T: DKGPreprocessing<Z>> DkgBitProcessor<Z, T> {
         let mut receiver_iterator = inner_bit_receiver_channels.iter().cycle();
         let mut bit_batch = Vec::new();
         for tuniform_production in self.tuniform_productions.iter_mut() {
-            let tuniform_req_bits = tuniform_production.tuniform_bound().0 + 2;
+            let current_bound_info = tuniform_production.bound;
+            let current_bound = tuniform_production.tuniform_bound();
+            let tuniform_req_bits = current_bound.0 + 2;
             while tuniform_production.amount != 0 {
                 if bit_batch.len() < tuniform_req_bits {
                     bit_batch.extend(
@@ -70,30 +73,36 @@ impl<Z: Ring + Clone, T: DKGPreprocessing<Z>> DkgBitProcessor<Z, T> {
                             })?,
                     );
                 }
+                let output_writer = self.output_writer.clone();
 
-                let num_bits_available = bit_batch.len();
-                let num_tuniform = std::cmp::min(
-                    tuniform_production.amount,
-                    num_integer::Integer::div_floor(&num_bits_available, &tuniform_req_bits),
-                );
-                let mut bit_preproc = InMemoryBitPreprocessing {
-                    available_bits: bit_batch
-                        .drain(..num_tuniform * tuniform_req_bits)
-                        .collect(),
-                };
-                (*self
-                    .output_writer
-                    .write()
-                    .map_err(|e| anyhow_error_and_log(format!("Locking Error: {e}")))?)
-                .append_noises(
-                    RealSecretDistributions::t_uniform(
-                        num_tuniform,
-                        tuniform_production.bound.get_bound(),
-                        &mut bit_preproc,
-                    )?,
-                    tuniform_production.bound,
-                );
+                let current_amount = tuniform_production.amount;
+                let (num_tuniform, remaining_bit_batch) = spawn_compute_bound(move || {
+                    let num_bits_available = bit_batch.len();
+                    let num_tuniform = std::cmp::min(
+                        current_amount,
+                        num_integer::Integer::div_floor(&num_bits_available, &tuniform_req_bits),
+                    );
+                    let mut bit_preproc = InMemoryBitPreprocessing {
+                        available_bits: bit_batch
+                            .drain(..num_tuniform * tuniform_req_bits)
+                            .collect(),
+                    };
+                    (output_writer
+                        .write()
+                        .map_err(|e| anyhow_error_and_log(format!("Locking Error: {e}")))?)
+                    .append_noises(
+                        RealSecretDistributions::t_uniform(
+                            num_tuniform,
+                            current_bound,
+                            &mut bit_preproc,
+                        )?,
+                        current_bound_info,
+                    );
+                    Ok::<_, anyhow::Error>((num_tuniform, bit_batch))
+                })
+                .await??;
                 tuniform_production.amount -= num_tuniform;
+                bit_batch = remaining_bit_batch;
             }
         }
 
