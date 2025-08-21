@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use tonic::async_trait;
-use tracing::{info_span, instrument};
+use tracing::instrument;
 
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, ZConsts},
@@ -100,10 +100,9 @@ impl BitGenOdd for RealBitGenOdd {
         let r_vec: Vec<Z> = {
             let prss_state = session.prss_as_mut();
 
-            let prss_span = info_span!("PRSS-MASK.Next", batch_size = amount);
-            prss_span
-                .in_scope(|| (0..amount).map(|_| prss_state.mask_next(own_role, 1)))
-                .try_collect::<_, Vec<Z>, _>()?
+            prss_state
+                .mask_next_vec(own_role, 1, amount)
+                .await?
                 .into_iter()
                 .map(|x| x + dist_shift)
                 .collect()

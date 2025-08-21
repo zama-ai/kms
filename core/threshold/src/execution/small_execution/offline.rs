@@ -2,7 +2,7 @@ use anyhow::Context;
 use itertools::Itertools;
 use std::collections::HashMap;
 use tonic::async_trait;
-use tracing::{info_span, instrument};
+use tracing::instrument;
 
 use super::prss::PRSSPrimitives;
 use crate::error::error_handler::log_error_wrapper;
@@ -12,6 +12,7 @@ use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
 use crate::execution::runtime::session::BaseSessionHandles;
 use crate::execution::sharing::shamir::RevealOp;
+use crate::thread_handles::spawn_compute_bound;
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Ring},
     execution::{
@@ -114,17 +115,13 @@ async fn next_random_batch<Z: Ring, Ses: SmallSessionHandles<Z>>(
 ) -> anyhow::Result<Vec<Share<Z>>> {
     let my_role = session.my_role();
     //Create telemetry span to record all calls to PRSS.Next
-    let prss_span = info_span!("PRSS.Next", batch_size = amount);
-    let res = prss_span.in_scope(|| {
-        let mut res = Vec::with_capacity(amount);
-        for _ in 0..amount {
-            res.push(Share::new(
-                my_role,
-                session.prss_as_mut().prss_next(my_role)?,
-            ));
-        }
-        Ok::<_, anyhow::Error>(res)
-    })?;
+    let res = session
+        .prss_as_mut()
+        .prss_next_vec(my_role, amount)
+        .await?
+        .into_iter()
+        .map(|x| Share::new(my_role, x))
+        .collect();
     Ok(res)
 }
 
@@ -139,75 +136,78 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
     broadcast: &BCast,
 ) -> anyhow::Result<Vec<Triple<Z>>> {
     let counters = session.prss().get_counters();
+    let my_role = session.my_role();
+    let threshold = session.threshold();
     let prss_base_ctr = counters.prss_ctr;
     let przs_base_ctr = counters.przs_ctr;
 
-    let vec_x_single = prss_list(session, amount)?;
-    let vec_y_single = prss_list(session, amount)?;
-    let vec_v_single = prss_list(session, amount)?;
-    let vec_z_double = przs_list(session, amount)?;
+    let all_prss = session
+        .prss_as_mut()
+        .prss_next_vec(my_role, 3 * amount)
+        .await?;
+    let vec_z_double: Vec<_> = session
+        .prss_as_mut()
+        .przs_next_vec(my_role, threshold, amount)
+        .await?;
 
-    let mut vec_d_double = Vec::with_capacity(amount);
-    for i in 0..amount {
-        let x_single = vec_x_single
-            .get(i)
-            .with_context(|| log_error_wrapper("Expected x does not exist"))?
-            .to_owned();
-        let y_single = vec_y_single
-            .get(i)
-            .with_context(|| log_error_wrapper("Expected y does not exist"))?
-            .to_owned();
-        let v_single = vec_v_single
-            .get(i)
-            .with_context(|| log_error_wrapper("Expected v does not exist"))?
-            .to_owned();
-        let z_double = vec_z_double
-            .get(i)
-            .with_context(|| log_error_wrapper("Expected z does not exist"))?
-            .to_owned();
-        let v_double = z_double + v_single;
-        let d_double = x_single * y_single + v_double;
-        vec_d_double.push(d_double)
+    let all_prss_cloned = all_prss.clone();
+    let vec_z_double_cloned = vec_z_double.clone();
+    let vec_d_double = spawn_compute_bound( move ||{
+    let mut all_prss = all_prss_cloned.into_iter();
+    let vec_x_single: Vec<_> = all_prss.by_ref().take(amount).collect();
+    let vec_y_single: Vec<_> = all_prss.by_ref().take(amount).collect();
+    let vec_v_single: Vec<_> = all_prss.by_ref().take(amount).collect();
+
+    if vec_x_single.len() != amount
+        || vec_y_single.len() != amount
+        || vec_v_single.len() != amount
+        || vec_z_double.len() != amount
+    {
+        return Err(anyhow::anyhow!(
+            "BUG: Not all expected values were generated, x={}, y={}, v={}, z={}. Expected {amount}.",
+            vec_x_single.len(),
+            vec_y_single.len(),
+            vec_v_single.len(),
+            vec_z_double.len(),
+        ));
     }
 
+    Ok(vec_x_single
+        .into_iter()
+        .zip_eq(vec_y_single.into_iter())
+        .zip_eq(vec_v_single.into_iter())
+        .zip_eq(vec_z_double_cloned.into_iter())
+        .map(|(((x, y), v), z)| x * y + (z + v))
+        .collect_vec())
+    }).await??;
+
     let broadcast_res = broadcast
-        .broadcast_from_all_w_corrupt_set_update(session, vec_d_double.clone().into())
+        .broadcast_from_all_w_corrupt_set_update(session, vec_d_double.into())
         .await?;
 
     //Try reconstructing 2t sharings of d, a None means reconstruction failed.
-    let recons_vec_d = reconstruct_d_values(session, amount, broadcast_res.clone())?;
+    let recons_vec_d = reconstruct_d_values(session, amount, broadcast_res.clone()).await?;
 
+    let mut all_prss = all_prss.into_iter();
+    let vec_x_single: Vec<_> = all_prss.by_ref().take(amount).collect();
+    let vec_y_single: Vec<_> = all_prss.by_ref().take(amount).collect();
+    let vec_v_single: Vec<_> = all_prss.by_ref().take(amount).collect();
     let mut triples = Vec::with_capacity(amount);
     let mut bad_triples_idx = Vec::new();
-    for i in 0..amount {
+    for (i, (x, (y, z))) in vec_x_single
+        .into_iter()
+        .zip_eq(vec_y_single.into_iter().zip_eq(vec_v_single.into_iter()))
+        .enumerate()
+    {
         //If we managed to reconstruct, we store the triple
         if let Some(d) = recons_vec_d
             .get(i)
             .with_context(|| log_error_wrapper("Not all expected d values exist"))?
         {
             triples.push(Triple {
-                a: Share::new(
-                    session.my_role(),
-                    vec_x_single
-                        .get(i)
-                        .with_context(|| log_error_wrapper("Not all expected x values exist"))?
-                        .to_owned(),
-                ),
-                b: Share::new(
-                    session.my_role(),
-                    vec_y_single
-                        .get(i)
-                        .with_context(|| log_error_wrapper("Not all expected y values exist"))?
-                        .to_owned(),
-                ),
-                c: Share::new(
-                    session.my_role(),
-                    d.to_owned()
-                        - vec_v_single
-                            .get(i)
-                            .with_context(|| log_error_wrapper("Not all expected v values exist"))?
-                            .to_owned(),
-                ),
+                a: Share::new(session.my_role(), x),
+                b: Share::new(session.my_role(), y),
+                c: Share::new(session.my_role(), d.to_owned() - z),
             });
         //If reconstruction failed, it's a bad triple and we will run cheater identification
         } else {
@@ -239,7 +239,7 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
 /// Helper method to parse the result of the broadcast by taking the ith share from each party and combine them in a vector for which reconstruction is then computed.
 /// Returns a list of length `amount` which contains the reconstructed values.
 /// In case a wrong amount of elements or a wrong type is returned then the culprit is added to the list of corrupt parties.
-fn reconstruct_d_values<Z, Ses: BaseSessionHandles>(
+async fn reconstruct_d_values<Z, Ses: BaseSessionHandles>(
     session: &mut Ses,
     amount: usize,
     d_recons: HashMap<Role, BroadcastValue<Z>>,
@@ -289,20 +289,19 @@ where
 
     //We know we may not be able to correct all errors, thus we set max_errors to maximum number of errors the code can correct,
     //and deal with failure with the cheater identification strategy
-    let max_errors = (session.num_parties()
-        - session.corrupt_roles().len()
-        - (2 * session.threshold() as usize + 1))
-        / 2;
+    let degree = 2 * session.threshold() as usize;
+    let max_errors = (session.num_parties() - session.corrupt_roles().len() - (degree + 1)) / 2;
 
-    Ok(collected_shares
-        .into_iter()
-        .map(|cur_collection| {
-            let sharing = ShamirSharings::create(cur_collection);
-            sharing
-                .err_reconstruct(2 * session.threshold() as usize, max_errors)
-                .ok()
-        })
-        .collect_vec())
+    spawn_compute_bound(move || {
+        collected_shares
+            .into_iter()
+            .map(|cur_collection| {
+                let sharing = ShamirSharings::create(cur_collection);
+                sharing.err_reconstruct(degree, max_errors).ok()
+            })
+            .collect_vec()
+    })
+    .await
 }
 
 /// Helper method which takes the list of d shares of each party (the result of the broadcast)
@@ -857,8 +856,8 @@ mod test {
     /// Unit testing of [`reconstruct_d_values`]
     /// Test what happens when a party send a wrong type of value
     #[tracing_test::traced_test]
-    #[test]
-    fn test_wrong_type() {
+    #[tokio::test]
+    async fn test_wrong_type() {
         let mut session = get_networkless_base_session_for_parties(4, 1, Role::indexed_from_one(1));
         // Observe party 1 inputs a vector of size 1 and party 2 inputs a single element
         let d_recons = HashMap::from([
@@ -874,7 +873,9 @@ mod test {
             ),
         ]);
         assert!(session.corrupt_roles().is_empty());
-        let res = reconstruct_d_values(&mut session, 1, d_recons).unwrap();
+        let res = reconstruct_d_values(&mut session, 1, d_recons)
+            .await
+            .unwrap();
         assert_eq!(1, session.corrupt_roles().len());
         assert!(session.corrupt_roles().contains(&Role::indexed_from_one(2)));
         assert!(logs_contain(

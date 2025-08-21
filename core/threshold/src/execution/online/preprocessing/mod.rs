@@ -155,20 +155,17 @@ where
     ) -> anyhow::Result<Vec<ResiduePoly<Z128, EXTENSION_DEGREE>>>;
 
     /// Fill the masks directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
-    fn fill_from_small_session(
+    async fn fill_from_small_session(
         &mut self,
         session: &mut SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         amount: usize,
     ) -> anyhow::Result<()> {
         let own_role = session.my_role();
 
-        let prss_span = tracing::info_span!("PRSS-MASK.Next", batch_size = amount);
-        let masks = prss_span.in_scope(|| {
-            (0..amount)
-                .map(|_| session.prss_state.mask_next(own_role, B_SWITCH_SQUASH))
-                .try_collect()
-        })?;
-
+        let masks = session
+            .prss_state
+            .mask_next_vec(own_role, B_SWITCH_SQUASH, amount)
+            .await?;
         self.append_masks(masks);
 
         Ok(())
