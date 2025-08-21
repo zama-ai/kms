@@ -6,9 +6,9 @@ use kms_grpc::kms::v1::{
 };
 use observability::metrics::METRICS;
 use observability::metrics_names::{
-    ERR_KEY_NOT_FOUND, ERR_PUBLIC_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED,
-    ERR_USER_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID,
-    TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
+    ERR_KEY_NOT_FOUND, ERR_PUBLIC_DECRYPTION_FAILED, ERR_USER_DECRYPTION_FAILED,
+    OP_PUBLIC_DECRYPT_REQUEST, OP_USER_DECRYPT_REQUEST, TAG_KEY_ID, TAG_PARTY_ID,
+    TAG_PUBLIC_DECRYPTION_KIND,
 };
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
@@ -19,8 +19,8 @@ use crate::engine::centralized::central_kms::{
 };
 use crate::engine::traits::BaseKms;
 use crate::engine::validation::{
-    validate_public_decrypt_req, validate_request_id, validate_user_decrypt_req,
-    DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
+    parse_proto_request_id, validate_public_decrypt_req, validate_user_decrypt_req,
+    RequestIdParsingErr, DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
 };
 use crate::tonic_handle_potential_err;
 use crate::util::meta_store::handle_res_mapping;
@@ -37,31 +37,11 @@ pub async fn user_decrypt_impl<
     // Start timing and counting before any operations
     let mut timer = METRICS
         .time_operation(OP_USER_DECRYPT_REQUEST)
-        .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-        .and_then(|b| {
-            // Use a constant party ID since this is the central KMS
-            b.tag(TAG_PARTY_ID, "central")
-                .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-        })
-        .map(|b| b.start())
-        .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-        .ok();
+        // Use a constant party ID since this is the central KMS
+        .tag(TAG_PARTY_ID, "central")
+        .start();
 
-    let _request_counter = METRICS
-        .increment_request_counter(OP_USER_DECRYPT_REQUEST)
-        .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
-
-    let permit = service
-        .rate_limiter
-        .start_user_decrypt()
-        .await
-        .inspect_err(|_e| {
-            if let Err(e) =
-                METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
-            {
-                tracing::warn!("Failed to increment error counter: {:?}", e);
-            }
-        })?;
+    let permit = service.rate_limiter.start_user_decrypt().await?;
 
     let inner = request.into_inner();
 
@@ -71,12 +51,7 @@ pub async fn user_decrypt_impl<
             format!("Failed to validate user decryption request: {inner:?}"),
         )?;
 
-    if let Some(b) = timer.as_mut() {
-        //We log but we don't want to return early because timer failed
-        let _ = b
-            .tags([(TAG_KEY_ID, key_id.as_str())])
-            .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
-    }
+    timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
     {
         let mut guarded_meta_store = service.user_decrypt_meta_map.write().await;
@@ -116,11 +91,7 @@ pub async fn user_decrypt_impl<
                 Ok(k) => k,
                 Err(e) => {
                     let mut guarded_meta_store = meta_store.write().await;
-                    if let Err(e) =
-                        METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND)
-                    {
-                        tracing::warn!("Failed to increment error counter: {:?}", e);
-                    }
+                    METRICS.increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
                     let _ = guarded_meta_store.update(
                         &request_id,
                         Err(format!("Failed to get key ID {key_id} with error {e:?}")),
@@ -160,12 +131,10 @@ pub async fn user_decrypt_impl<
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store
                         .update(&request_id, Err(format!("Failed user decryption: {e}")));
-                    METRICS
-                        .increment_error_counter(
-                            OP_USER_DECRYPT_REQUEST,
-                            ERR_USER_DECRYPTION_FAILED,
-                        )
-                        .ok();
+                    METRICS.increment_error_counter(
+                        OP_USER_DECRYPT_REQUEST,
+                        ERR_USER_DECRYPTION_FAILED,
+                    );
                 }
             }
         }
@@ -184,8 +153,8 @@ pub async fn get_user_decryption_result_impl<
     service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<UserDecryptionResponse>, Status> {
-    let request_id = request.into_inner().into();
-    validate_request_id(&request_id)?;
+    let request_id =
+        parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecResponse)?;
 
     let status = {
         let guarded_meta_store = service.user_decrypt_meta_map.read().await;
@@ -225,31 +194,11 @@ pub async fn public_decrypt_impl<
     // Start timing and counting before any operations
     let mut timer = METRICS
         .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
-        .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-        .and_then(|b| {
-            // Use a constant party ID since this is the central KMS
-            b.tag(TAG_PARTY_ID, "central")
-                .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-        })
-        .map(|b| b.start())
-        .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-        .ok();
+        // Use a constant party ID since this is the central KMS
+        .tag(TAG_PARTY_ID, "central")
+        .start();
 
-    METRICS
-        .increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST)
-        .map_err(|e| Status::internal(e.to_string()))?;
-
-    let permit = service
-        .rate_limiter
-        .start_pub_decrypt()
-        .await
-        .inspect_err(|_e| {
-            if let Err(e) =
-                METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
-            {
-                tracing::warn!("Failed to increment error counter: {:?}", e);
-            }
-        })?;
+    let permit = service.rate_limiter.start_pub_decrypt().await?;
 
     let start = tokio::time::Instant::now();
     let inner = request.into_inner();
@@ -259,12 +208,7 @@ pub async fn public_decrypt_impl<
         format!("Failed to validate decrypt request {inner:?}"),
     )?;
 
-    if let Some(b) = timer.as_mut() {
-        //We log but we don't want to return early because timer failed
-        let _ = b
-            .tags([(TAG_KEY_ID, key_id.as_str())])
-            .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
-    }
+    timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
     tracing::info!(
         "Decrypting {} ciphertexts using key {} with request id {}",
@@ -307,11 +251,7 @@ pub async fn public_decrypt_impl<
                 Ok(k) => k,
                 Err(e) => {
                     let mut guarded_meta_store = meta_store.write().await;
-                    if let Err(e) = METRICS
-                        .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND)
-                    {
-                        tracing::warn!("Failed to increment error counter: {:?}", e);
-                    }
+                    METRICS.increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_KEY_NOT_FOUND);
                     let _ = guarded_meta_store.update(
                         &request_id,
                         Err(format!("Failed to get key ID {key_id} with error {e:?}")),
@@ -368,12 +308,10 @@ pub async fn public_decrypt_impl<
                 }
                 Ok(Err(e)) => {
                     let mut guarded_meta_store = meta_store.write().await;
-                    if let Err(e) = METRICS.increment_error_counter(
+                    METRICS.increment_error_counter(
                         OP_PUBLIC_DECRYPT_REQUEST,
                         ERR_PUBLIC_DECRYPTION_FAILED,
-                    ) {
-                        tracing::warn!("Failed to increment error counter: {:?}", e);
-                    }
+                    );
                     let _ = guarded_meta_store.update(
                         &request_id,
                         Err(format!("Error during decryption computation: {e}")),
@@ -395,9 +333,11 @@ pub async fn get_public_decryption_result_impl<
     service: &RealCentralizedKms<PubS, PrivS>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<PublicDecryptionResponse>, Status> {
-    let request_id = request.into_inner().into();
+    let request_id = parse_proto_request_id(
+        &request.into_inner(),
+        RequestIdParsingErr::PublicDecResponse,
+    )?;
     tracing::debug!("Received get key gen result request with id {}", request_id);
-    validate_request_id(&request_id)?;
 
     let status = {
         let guarded_meta_store = service.pub_dec_meta_store.read().await;
@@ -441,7 +381,7 @@ pub async fn get_public_decryption_result_impl<
     Ok(Response::new(PublicDecryptionResponse {
         signature: sig.sig.to_vec(),
         payload: Some(kms_sig_payload),
-        external_signature: Some(external_signature),
+        external_signature,
         extra_data,
     }))
 }

@@ -180,7 +180,7 @@ impl InnerBackupPublicKey {
         rng: &mut R,
         msg: &[u8],
     ) -> Result<Vec<u8>, CryptographyError> {
-        let inner = hybrid_ml_kem::enc::<MlKemType, _>(rng, msg, &self.encapsulation_key).unwrap();
+        let inner = hybrid_ml_kem::enc::<MlKemType, _>(rng, msg, &self.encapsulation_key)?;
         let mut ct_buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(&inner, &mut ct_buf, SAFE_SER_SIZE_LIMIT)
             .map_err(|e| CryptographyError::BincodeError(e.to_string()))?;

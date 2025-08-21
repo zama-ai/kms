@@ -29,7 +29,7 @@ fn test_request_id_core_structure_and_api_consistency() {
     // 3. Validate protobuf conversion (Status API uses this)
     let proto_id: kms_grpc::kms::v1::RequestId = request_id.into();
     assert_eq!(proto_id.request_id, VALID_HEX_1);
-    let from_proto = RequestId::from(proto_id);
+    let from_proto = RequestId::try_from(proto_id).unwrap();
     assert_eq!(request_id, from_proto);
 
     // 4. Validate Status API response structure
@@ -101,7 +101,7 @@ fn test_request_id_compile_time_interface_stability() {
     let proto = kms_grpc::kms::v1::RequestId {
         request_id: VALID_HEX_1.to_string(),
     };
-    let _: RequestId = RequestId::from(proto);
+    let _: RequestId = RequestId::try_from(proto).unwrap();
 
     // Byte slice operations for internal use
     let slice_ref: &[u8] = request_id.as_ref();

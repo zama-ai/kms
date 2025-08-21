@@ -3,18 +3,6 @@ use opentelemetry::{global, KeyValue};
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use thiserror::Error;
-
-/// Error types for metrics operations
-#[derive(Debug, Error)]
-pub enum MetricError {
-    #[error("Invalid tag: {0}")]
-    InvalidTag(String),
-    #[error("Failed to record metric: {0}")]
-    RecordingFailed(String),
-    #[error("Failed to initialize metric: {0}")]
-    InitializationError(String),
-}
 
 /// Type-safe wrapper for metric tags
 #[derive(Debug, Clone)]
@@ -24,15 +12,12 @@ pub struct MetricTag {
 }
 
 impl MetricTag {
-    pub fn new(key: &'static str, value: impl Into<String>) -> Result<Self, MetricError> {
+    pub fn new(key: &'static str, value: impl Into<String>) -> Self {
         let value = value.into();
-        if key.is_empty() {
-            return Err(MetricError::InvalidTag("Tag key cannot be empty".into()));
+        if key.is_empty() || value.is_empty() {
+            tracing::warn!("Tag key or value is empty {key}:{value}");
         }
-        if value.is_empty() {
-            return Err(MetricError::InvalidTag("Tag value cannot be empty".into()));
-        }
-        Ok(Self { key, value })
+        Self { key, value }
     }
 
     fn into_key_value(self) -> KeyValue {
@@ -48,11 +33,11 @@ pub struct TaggedMetric<T> {
 }
 
 impl<T> TaggedMetric<T> {
-    fn new(metric: T, name: &'static str) -> Result<Self, MetricError> {
-        Ok(Self {
+    fn new(metric: T, name: &'static str) -> Self {
+        Self {
             metric,
-            default_tags: vec![MetricTag::new("name", name)?],
-        })
+            default_tags: vec![MetricTag::new("name", name)],
+        }
     }
 
     fn with_tags(&self, tags: &[MetricTag]) -> Vec<KeyValue> {
@@ -85,12 +70,18 @@ pub struct CoreMetrics {
     trace_guard: Arc<Mutex<Option<Box<dyn std::any::Any + Send + Sync>>>>,
 }
 
+impl Default for CoreMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CoreMetrics {
-    pub fn new() -> Result<Self, MetricError> {
+    pub fn new() -> Self {
         Self::with_config(MetricsConfig::default())
     }
 
-    pub fn with_config(config: MetricsConfig) -> Result<Self, MetricError> {
+    pub fn with_config(config: MetricsConfig) -> Self {
         let meter = global::meter("kms");
 
         // Store metric names as static strings
@@ -181,18 +172,18 @@ impl CoreMetrics {
         //Record 0 just to make sure the gauge is exported
         gauge.record(0, &[]);
 
-        Ok(Self {
-            request_counter: TaggedMetric::new(request_counter, "operations")?,
-            error_counter: TaggedMetric::new(error_counter, "errors")?,
-            network_rx_counter: TaggedMetric::new(network_rx_counter, "network_rx")?,
-            network_tx_counter: TaggedMetric::new(network_tx_counter, "network_tx")?,
-            duration_histogram: TaggedMetric::new(duration_histogram, "duration")?,
-            size_histogram: TaggedMetric::new(size_histogram, "size")?,
-            cpu_load_gauge: TaggedMetric::new(cpu_gauge, "cpu_load")?,
-            memory_usage_gauge: TaggedMetric::new(memory_gauge, "memory_usage")?,
-            gauge: TaggedMetric::new(gauge, "active_operations")?,
+        Self {
+            request_counter: TaggedMetric::new(request_counter, "operations"),
+            error_counter: TaggedMetric::new(error_counter, "errors"),
+            network_rx_counter: TaggedMetric::new(network_rx_counter, "network_rx"),
+            network_tx_counter: TaggedMetric::new(network_tx_counter, "network_tx"),
+            duration_histogram: TaggedMetric::new(duration_histogram, "duration"),
+            size_histogram: TaggedMetric::new(size_histogram, "size"),
+            cpu_load_gauge: TaggedMetric::new(cpu_gauge, "cpu_load"),
+            memory_usage_gauge: TaggedMetric::new(memory_gauge, "memory_usage"),
+            gauge: TaggedMetric::new(gauge, "active_operations"),
             trace_guard: Arc::new(Mutex::new(None)),
-        })
+        }
     }
 
     /// Set the trace guard to keep the file handle open
@@ -202,33 +193,24 @@ impl CoreMetrics {
         }
     }
 
-    fn create_operation_tag(operation: impl Into<String>) -> Result<MetricTag, MetricError> {
+    fn create_operation_tag(operation: impl Into<String>) -> MetricTag {
         MetricTag::new("operation", operation)
     }
 
     // Counter methods
-    pub fn increment_request_counter(
-        &self,
-        operation: impl Into<String>,
-    ) -> Result<(), MetricError> {
-        let tags = vec![Self::create_operation_tag(operation)?];
+    pub fn increment_request_counter(&self, operation: impl Into<String>) {
+        let tags = vec![Self::create_operation_tag(operation)];
         self.request_counter
             .metric
             .add(1, &self.request_counter.with_tags(&tags));
-        Ok(())
     }
 
-    pub fn increment_error_counter(
-        &self,
-        operation: impl Into<String>,
-        error: impl Into<String>,
-    ) -> Result<(), MetricError> {
-        let mut tags = vec![Self::create_operation_tag(operation)?];
-        tags.push(MetricTag::new("error", error)?);
+    pub fn increment_error_counter(&self, operation: impl Into<String>, error: impl Into<String>) {
+        let mut tags = vec![Self::create_operation_tag(operation)];
+        tags.push(MetricTag::new("error", error));
         self.error_counter
             .metric
             .add(1, &self.error_counter.with_tags(&tags));
-        Ok(())
     }
 
     pub fn increment_network_rx_counter(&self, bytes: u64) {
@@ -249,24 +231,19 @@ impl CoreMetrics {
         operation: impl AsRef<str>,
         duration: Duration,
         extra_tags: &[(&'static str, String)],
-    ) -> Result<(), MetricError> {
-        let mut tags = vec![Self::create_operation_tag(operation.as_ref())?];
+    ) {
+        let mut tags = vec![Self::create_operation_tag(operation.as_ref())];
         for (key, value) in extra_tags {
-            tags.push(MetricTag::new(key, value)?);
+            tags.push(MetricTag::new(key, value));
         }
 
         self.duration_histogram.metric.record(
             duration.as_millis() as f64,
             &self.duration_histogram.with_tags(&tags),
         );
-        Ok(())
     }
 
-    pub fn observe_duration(
-        &self,
-        operation: impl AsRef<str>,
-        duration: Duration,
-    ) -> Result<(), MetricError> {
+    pub fn observe_duration(&self, operation: impl AsRef<str>, duration: Duration) {
         self.record_duration_with_tags(operation, duration, &[])
     }
 
@@ -275,37 +252,32 @@ impl CoreMetrics {
         operation: impl AsRef<str>,
         duration: Duration,
         tags: &[(&'static str, String)],
-    ) -> Result<(), MetricError> {
+    ) {
         self.record_duration_with_tags(operation, duration, tags)
     }
 
-    pub fn observe_size(&self, operation: impl Into<String>, size: f64) -> Result<(), MetricError> {
-        let tags = vec![Self::create_operation_tag(operation)?];
+    pub fn observe_size(&self, operation: impl Into<String>, size: f64) {
+        let tags = vec![Self::create_operation_tag(operation)];
         self.size_histogram
             .metric
             .record(size, &self.size_histogram.with_tags(&tags));
-        Ok(())
     }
 
     // Gauge methods
-    pub fn gauge(&self, operation: impl Into<String>, value: i64) -> Result<(), MetricError> {
-        let tags = vec![Self::create_operation_tag(operation)?];
+    pub fn gauge(&self, operation: impl Into<String>, value: i64) {
+        let tags = vec![Self::create_operation_tag(operation)];
         self.gauge
             .metric
             .record(value, &self.gauge.with_tags(&tags));
-        Ok(())
     }
 
     /// Start building a duration guard for timing an operation
-    pub fn time_operation(
-        &self,
-        operation: impl Into<String>,
-    ) -> Result<DurationGuardBuilder<'_>, MetricError> {
-        Ok(DurationGuardBuilder {
+    pub fn time_operation(&self, operation: impl Into<String>) -> DurationGuardBuilder<'_> {
+        DurationGuardBuilder {
             metrics: self,
             operation: operation.into(),
             tags: Vec::new(),
-        })
+        }
     }
 
     /// Record the current CPU load into the gauge
@@ -333,25 +305,22 @@ pub struct DurationGuardBuilder<'a> {
 
 impl<'a> DurationGuardBuilder<'a> {
     /// Add a single tag
-    pub fn tag(mut self, key: &'static str, value: impl Into<String>) -> Result<Self, MetricError> {
+    pub fn tag(mut self, key: &'static str, value: impl Into<String>) -> Self {
         let value = value.into();
         // Validate tag before adding
-        MetricTag::new(key, value.clone())?;
+        MetricTag::new(key, value.clone());
         self.tags.push((key, value));
-        Ok(self)
+        self
     }
 
     /// Add multiple tags at once
-    pub fn tags(
-        mut self,
-        tags: impl IntoIterator<Item = (&'static str, String)>,
-    ) -> Result<Self, MetricError> {
+    pub fn tags(mut self, tags: impl IntoIterator<Item = (&'static str, String)>) -> Self {
         for (key, value) in tags {
             // Validate each tag before adding
-            MetricTag::new(key, value.clone())?;
+            MetricTag::new(key, value.clone());
             self.tags.push((key, value));
         }
-        Ok(self)
+        self
     }
 
     /// Start timing the operation
@@ -381,41 +350,37 @@ impl DurationGuard<'_> {
     pub fn record_now(mut self) -> Duration {
         let duration = self.start.elapsed();
         self.metrics
-            .record_duration_with_tags(&self.operation, duration, &self.tags)
-            .unwrap();
+            .record_duration_with_tags(&self.operation, duration, &self.tags);
         self.record_on_drop = false;
         duration
     }
 
     /// Add a single tag
-    pub fn tag(&mut self, key: &'static str, value: impl Into<String>) -> Result<(), MetricError> {
+    pub fn tag(&mut self, key: &'static str, value: impl Into<String>) {
         let value = value.into();
         // Validate tag before adding
-        MetricTag::new(key, value.clone())?;
+        MetricTag::new(key, value.clone());
         self.tags.push((key, value));
-        Ok(())
     }
 
     /// Add multiple tags at once
-    pub fn tags(
-        &mut self,
-        tags: impl IntoIterator<Item = (&'static str, String)>,
-    ) -> Result<(), MetricError> {
+    pub fn tags(&mut self, tags: impl IntoIterator<Item = (&'static str, String)>) {
         for (key, value) in tags {
             // Validate each tag before adding
-            MetricTag::new(key, value.clone())?;
+            MetricTag::new(key, value.clone());
             self.tags.push((key, value));
         }
-        Ok(())
     }
 }
 
 impl Drop for DurationGuard<'_> {
     fn drop(&mut self) {
         if self.record_on_drop {
-            self.metrics
-                .record_duration_with_tags(&self.operation, self.start.elapsed(), &self.tags)
-                .unwrap();
+            self.metrics.record_duration_with_tags(
+                &self.operation,
+                self.start.elapsed(),
+                &self.tags,
+            );
         }
     }
 }
@@ -423,7 +388,7 @@ impl Drop for DurationGuard<'_> {
 // Global metrics instance
 lazy_static::lazy_static! {
     pub static ref METRICS: CoreMetrics = {
-        CoreMetrics::new().unwrap()
+        CoreMetrics::new()
     };
 }
 

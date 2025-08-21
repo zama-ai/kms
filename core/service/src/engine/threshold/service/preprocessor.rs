@@ -9,7 +9,9 @@ use kms_grpc::{
 };
 use observability::{
     metrics,
-    metrics_names::{ERR_RATE_LIMIT_EXCEEDED, OP_KEYGEN_PREPROC, TAG_PARTY_ID},
+    metrics_names::{
+        ERR_CANCELLED, ERR_USER_PREPROC_FAILED, OP_KEYGEN_PREPROC_REQUEST, TAG_PARTY_ID,
+    },
 };
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
@@ -38,8 +40,12 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     engine::{
-        base::retrieve_parameters, keyset_configuration::preproc_proto_to_keyset_config,
-        threshold::traits::KeyGenPreprocessor, validation::validate_request_id,
+        base::retrieve_parameters,
+        keyset_configuration::preproc_proto_to_keyset_config,
+        threshold::traits::KeyGenPreprocessor,
+        validation::{
+            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+        },
     },
     tonic_handle_potential_err, tonic_some_or_err,
     util::{
@@ -74,19 +80,11 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         request_id: RequestId,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
-        let _request_counter = metrics::METRICS
-            .increment_request_counter(OP_KEYGEN_PREPROC)
-            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
-
         // Prepare the timer before giving it to the tokio task
         // that runs the computation
         let timer = metrics::METRICS
-            .time_operation(OP_KEYGEN_PREPROC)
-            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-            .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
-                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            });
+            .time_operation(OP_KEYGEN_PREPROC_REQUEST)
+            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string());
         {
             let mut guarded_meta_store = self.preproc_buckets.write().await;
             guarded_meta_store.insert(&request_id)?;
@@ -97,6 +95,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let sids = (0..self.num_sessions_preproc)
             .map(|ctr| request_id.derive_session_id_with_counter(ctr as u64))
             .collect::<anyhow::Result<Vec<_>>>()?;
+
         let base_sessions = {
             let mut res = Vec::with_capacity(sids.len());
             for sid in sids {
@@ -117,6 +116,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             (*self.prss_setup.read().await).clone(),
             "No PRSS setup exists".to_string(),
         )?;
+
         let token = CancellationToken::new();
         {
             self.ongoing.lock().await.insert(request_id, token.clone());
@@ -125,9 +125,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         self.tracker.spawn(
             async move {
                 //Start the metric timer, it will end on drop
-                let _timer = timer.map(|b| b.start());
+                let _timer = timer.start();
                  tokio::select! {
-                    () = Self::preprocessing_background(&request_id, base_sessions, bucket_store, prss_setup, own_identity, dkg_params, keyset_config, factory, permit) => {
+                    res = Self::preprocessing_background(&request_id, base_sessions, bucket_store, prss_setup, own_identity, dkg_params, keyset_config, factory, permit) => {
+                        if res.is_err() {
+                            metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, ERR_USER_PREPROC_FAILED);
+                        }
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&request_id);
                         tracing::info!("Preprocessing of request {} exiting normally.", &request_id);
@@ -137,6 +140,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                         tracing::error!("Preprocessing of request {} exiting before completion because of a cancellation event.", &request_id);
                         let mut guarded_bucket_store = bucket_store_cancellation.write().await;
                         let _ = guarded_bucket_store.update(&request_id, Result::Err("Preprocessing was cancelled".to_string()));
+                        metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, ERR_CANCELLED);
                     },
                 }
             }
@@ -156,7 +160,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         keyset_config: ddec_keyset_config::KeySetConfig,
         factory: Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
         permit: OwnedSemaphorePermit,
-    ) {
+    ) -> Result<(), ()> {
         let _permit = permit; // dropped at the end of the function
         fn create_sessions(
             base_sessions: Vec<BaseSession>,
@@ -206,17 +210,28 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             }
         };
 
-        // Update the bucket store with the result (success or error)
         let mut guarded_meta_store = bucket_store.write().await;
+
         // We cannot do much if updating the storage fails at this point...
-        let _ = guarded_meta_store.update(req_id, handle_update.clone());
+        let meta_store_write = guarded_meta_store.update(req_id, handle_update.clone());
 
         // Log completion status
-        if handle_update.is_ok() {
-            tracing::info!("Preproc Finished Successfully P[{:?}]", own_identity);
-        } else {
-            tracing::info!("Preproc Failed P[{:?}]", own_identity);
+        match (handle_update, meta_store_write) {
+            (Ok(_), Ok(_)) => tracing::info!("Preproc Finished Successfully P[{:?}]", own_identity),
+            (Err(e), _) => {
+                tracing::error!("Preproc Failed P[{:?}] with error: {}", own_identity, e);
+                return Err(());
+            }
+            (_, Err(e)) => {
+                tracing::info!(
+                    "Preproc Failed due to meta store issue P[{:?}] with error: {}",
+                    own_identity,
+                    e
+                );
+                return Err(());
+            }
         }
+        Ok(())
     }
 }
 
@@ -228,21 +243,13 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         &self,
         request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self.rate_limiter.start_preproc().await.inspect_err(|_e| {
-            if let Err(e) =
-                metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC, ERR_RATE_LIMIT_EXCEEDED)
-            {
-                tracing::warn!("Failed to increment error counter: {:?}", e);
-            }
-        })?;
+        let permit = self.rate_limiter.start_preproc().await?;
 
         let inner = request.into_inner();
-        let request_id: RequestId = tonic_some_or_err(
-            inner.request_id.clone(),
-            "Request ID is not set (key_gen_preproc)".to_string(),
-        )?
-        .into();
-        validate_request_id(&request_id)?;
+        let request_id = parse_optional_proto_request_id(
+            &inner.request_id,
+            RequestIdParsingErr::PreprocRequest,
+        )?;
 
         //Retrieve the DKG parameters
         let dkg_params = retrieve_parameters(inner.params)?;
@@ -253,30 +260,29 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
             map.exists(&request_id)
         };
 
-        let keyset_config = tonic_handle_potential_err(
-            preproc_proto_to_keyset_config(&inner.keyset_config),
-            "Failed to process keyset config".to_string(),
-        )?;
+        let keyset_config = preproc_proto_to_keyset_config(&inner.keyset_config)?;
 
-        //If the entry did not exist before, start the preproc
+        // If the entry did not exist before, start the preproc
+        // NOTE: We currently consider an existing entry is NOT an error
         if !entry_exists {
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
+            // We don't increment the error counter here but rather in launch_dkg_preproc
             tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
+            Ok(Response::new(Empty {}))
         } else {
-            tracing::warn!(
-                "Tried to generate preproc multiple times for the same Request ID {} -- skipped it!",
+            Err(tonic::Status::already_exists(format!(
+                "Preprocessing for request ID {} already exists",
                 request_id
-            );
+            )))
         }
-        Ok(Response::new(Empty {}))
     }
 
     async fn get_result(
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, Status> {
-        let request_id = request.into_inner().into();
-        validate_request_id(&request_id)?;
+        let request_id =
+            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse)?;
 
         let status = {
             let guarded_meta_store = self.preproc_buckets.read().await;
@@ -364,6 +370,21 @@ mod tests {
             );
         }
         {
+            // Invalid argument because request ID is empty
+            let request = KeyGenPreprocRequest {
+                request_id: None,
+                params: FheParameter::Test as i32,
+                keyset_config: None,
+            };
+            assert_eq!(
+                prep.key_gen_preproc(tonic::Request::new(request))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
             // Invalid argument because params is invalid
             let mut rng = AesRng::seed_from_u64(22);
             let req_id = RequestId::new_random(&mut rng);
@@ -434,27 +455,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aborted() {
-        // `Aborted` - If the request ID is not given, the values in the request are not valid, or an internal problem occured.
-        let session_preparer = SessionPreparer::new_test_session(true);
-        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
-
-        // Aborted because request_id is None
-        let request = KeyGenPreprocRequest {
-            request_id: None,
-            params: FheParameter::Test as i32,
-            keyset_config: None,
-        };
-        assert_eq!(
-            prep.key_gen_preproc(tonic::Request::new(request))
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Aborted
-        );
-    }
-
-    #[tokio::test]
     async fn not_found() {
         // `NotFound` - If the preprocessing does not exist for `request`.
         let session_preparer = SessionPreparer::new_test_session(true);
@@ -470,6 +470,54 @@ mod tests {
                 .unwrap_err()
                 .code(),
             tonic::Code::NotFound
+        );
+    }
+
+    #[tokio::test]
+    async fn already_exists() {
+        let session_preparer = SessionPreparer::new_test_session(true);
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+        };
+        prep.key_gen_preproc(tonic::Request::new(request.clone()))
+            .await
+            .unwrap();
+
+        // try again with the same request and we should get AlreadyExists error
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+    }
+
+    #[tokio::test]
+    async fn aborted() {
+        // Starting a preprocessing request that will be aborted if there's no PRSS
+        let session_preparer = SessionPreparer::new_test_session(false);
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+
+        let mut rng = AesRng::seed_from_u64(22);
+        let req_id = RequestId::new_random(&mut rng);
+        let request = KeyGenPreprocRequest {
+            request_id: Some(req_id.into()),
+            params: FheParameter::Test as i32,
+            keyset_config: None,
+        };
+        assert_eq!(
+            prep.key_gen_preproc(tonic::Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Aborted
         );
     }
 
