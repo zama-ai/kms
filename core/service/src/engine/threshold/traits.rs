@@ -116,8 +116,10 @@ pub trait BackupOperator {
         request: Request<Empty>,
     ) -> Result<Response<OperatorPublicKey>, Status>;
 
-    async fn custodian_backup_restore(
+    async fn custodian_backup_recovery(
         &self,
-        request: Request<Empty>,
+        request: Request<BackupRecoveryRequest>,
     ) -> Result<Response<Empty>, Status>;
+
+    async fn backup_restore(&self, request: Request<Empty>) -> Result<Response<Empty>, Status>;
 }

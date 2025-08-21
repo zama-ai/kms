@@ -6,7 +6,7 @@ use crate::{
     anyhow_error_and_warn_log,
     backup::{
         custodian::InternalCustodianContext,
-        operator::{BackupCommitments, RecoveryRequest},
+        operator::{BackupCommitments, InternalRecoveryRequest},
     },
     cryptography::{backup_pke::BackupPublicKey, internal_crypto_types::PrivateSigKey},
     engine::{context::ContextInfo, threshold::service::ThresholdFheKeys},
@@ -598,7 +598,7 @@ where
         &self,
         req_id: &RequestId,
         pub_key: BackupPublicKey,
-        recovery_request: RecoveryRequest,
+        recovery_request: InternalRecoveryRequest,
         custodian_context: InternalCustodianContext,
         commitments: BackupCommitments,
         meta_store: Arc<RwLock<CustodianMetaStore>>,

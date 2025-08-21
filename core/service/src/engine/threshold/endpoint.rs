@@ -586,11 +586,32 @@ impl_endpoint! {
         /// * Pre-condition:  -
         /// * Post-condition: -
         #[tracing::instrument(skip(self, request))]
-        async fn custodian_backup_restore(
+        async fn custodian_backup_recovery(
+            &self,
+            request: Request<kms_grpc::kms::v1::BackupRecoveryRequest>,
+        ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
+            self.backup_operator.custodian_backup_recovery(request.try_into().map_err(|e| {
+                tracing::error!("Failed to convert request: {}", e);
+                Status::invalid_argument("Invalid request")
+            })?).await
+        }
+
+        #[tracing::instrument(skip(self, request))]
+        async fn backup_restore(
             &self,
             request: Request<kms_grpc::kms::v1::Empty>,
         ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
-            self.backup_operator.custodian_backup_restore(request).await
+            self.backup_operator.backup_restore(request).await
+        }
+
+        #[tracing::instrument(skip(self, _request))]
+        async fn custodian_recovery_init(
+            &self,
+            _request: Request<kms_grpc::kms::v1::Empty>,
+        ) -> Result<Response<kms_grpc::kms::v1::RecoveryRequest>, Status> {
+            Err(Status::unimplemented(
+                "custodian_recovery_init is not implemented",
+            ))
         }
     }
 }

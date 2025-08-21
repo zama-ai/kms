@@ -358,9 +358,16 @@ impl BackupOperator for DummyBackupOperator {
         }))
     }
 
-    async fn custodian_backup_restore(
+    async fn custodian_backup_recovery(
         &self,
-        _request: Request<kms_grpc::kms::v1::Empty>,
+        _request: tonic::Request<kms_grpc::kms::v1::BackupRecoveryRequest>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
+        Ok(Response::new(kms_grpc::kms::v1::Empty {}))
+    }
+
+    async fn backup_restore(
+        &self,
+        _request: tonic::Request<kms_grpc::kms::v1::Empty>,
     ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
         Ok(Response::new(kms_grpc::kms::v1::Empty {}))
     }

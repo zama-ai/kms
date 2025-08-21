@@ -62,6 +62,12 @@ service CoreServiceEndpoint {
   // before sending it to the KMS.
   rpc GetOperatorPublicKey(kms.v1.Empty) returns (kms.v1.OperatorPublicKey);
 
-  // Restore the contents of the KMS private storage from custodian backup shares.
-  rpc CustodianBackupRestore(kms.v1.Empty) returns (kms.v1.Empty);
+  // Restore the contents of the KMS private storage from the backup vault.
+  rpc BackupRestore(kms.v1.Empty) returns (kms.v1.Empty);
+
+  // Initialize custodian-based recovery by making a backup recovery request towards the custodians
+  rpc CustodianRecoveryInit(kms.v1.Empty) returns (kms.v1.RecoveryRequest);
+  
+  // Recover the master decryption key secret shared with custodians as part of a custodian-based backup recovery
+  rpc CustodianBackupRecovery(kms.v1.BackupRecoveryRequest) returns (kms.v1.Empty);
 }

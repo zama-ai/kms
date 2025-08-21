@@ -18,7 +18,7 @@ use crate::{
         Vault,
     },
 };
-use kms_grpc::rpc_types::BackupDataType;
+use kms_grpc::{kms::v1::BackupRecoveryRequest, rpc_types::BackupDataType};
 use kms_grpc::{
     kms::v1::{Empty, OperatorPublicKey},
     rpc_types::{PrivDataType, SignedPubDataHandleInternal},
@@ -74,10 +74,61 @@ where
         }
     }
 
-    async fn custodian_backup_restore(
+    /// Recover the backup master decryption key previously secret shared with the custodians.
+    /// That is, the method can only be used if custodian based backup is used and the backup recovery has
+    /// been initialized on the KMS using `custodian_recovery_init`.
+    ///
+    /// Observe that the decryption key is NOT persisted on disc and in fact removed immediately after a call to `backup_restore`
+    /// in order to minimize the possibility of leakage.
+    async fn custodian_backup_recovery(
         &self,
-        _request: Request<Empty>,
+        _request: Request<BackupRecoveryRequest>,
     ) -> Result<Response<Empty>, Status> {
+        match self.crypto_storage.inner.backup_vault {
+            Some(ref backup_vault) => {
+                let backup_vault: tokio::sync::MutexGuard<'_, Vault> = backup_vault.lock().await;
+                match backup_vault.keychain {
+                    Some(KeychainProxy::SecretSharing(ref _keychain)) => {
+                        // TODO need to call verify_and_recover and store the key temporarely
+                        // let private_storage = self.crypto_storage.get_private_storage().clone();
+                        // let mut private_storage = private_storage.lock().await;
+                        // let custodian_recovery_output =
+                        //     request.into_inner().custodian_recovery_output;
+                        // tonic_handle_potential_err(
+                        //     keychain
+                        //         .custodian_backup_recovery(
+                        //             &mut private_storage,
+                        //             custodian_recovery_output,
+                        //         )
+                        //         .await,
+                        //     "Failed to restore".to_string(),
+                        // )?;
+                        todo!()
+                    }
+                    _ => Err(Status::new(
+                        tonic::Code::Unavailable,
+                        "Backup vault is not setup with a keychain for custodian-based backup recovery",
+                    )),
+                }
+            }
+            None => Err(Status::new(
+                tonic::Code::Unavailable,
+                "Backup vault is not configured",
+            )),
+        }
+    }
+
+    /// Restores the private data from the backup vault.
+    /// More specifically data in the backup vault will be used to fill the private storage.
+    /// In case data elements already exists in the private storage a warning will be logged,
+    /// and the function will continue to recover any other data elements not already in the private storage.
+    /// Thus in case of corruption of the data already in the private store, these elements needs to be
+    /// deleted before running the restore.
+    ///
+    /// Observe that if secret sharing is used for backup (i.e. with a master key being shared with a set of custodians)
+    /// then [`custodian_recovery`] _must_ be called first in order to ensure that the master key is restored,
+    /// which is needed to allow decryption of the backup data.
+    async fn backup_restore(&self, _request: Request<Empty>) -> Result<Response<Empty>, Status> {
         match self.crypto_storage.inner.backup_vault {
             Some(ref backup_vault) => {
                 let private_storage = self.crypto_storage.get_private_storage().clone();

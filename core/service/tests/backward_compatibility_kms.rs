@@ -22,7 +22,7 @@ use kms_grpc::{
 use kms_lib::{
     backup::{
         custodian::{Custodian, InternalCustodianSetupMessage},
-        operator::{Operator, OperatorBackupOutput},
+        operator::{Operator, InnerOperatorBackupOutput},
     },
     cryptography::{
         backup_pke,
@@ -282,7 +282,7 @@ fn test_operator_backup_output(
     test: &OperatorBackupOutputTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let original_operator_backup_output: OperatorBackupOutput =
+    let original_operator_backup_output: InnerOperatorBackupOutput =
         load_and_unversionize(dir, test, format)?;
 
     let mut rng = AesRng::seed_from_u64(test.seed);

@@ -3,7 +3,7 @@ use clap::Parser;
 use kms_lib::{
     backup::{
         custodian::{Custodian, InternalCustodianSetupMessage},
-        operator::{OperatorBackupOutput, RecoveryRequest},
+        operator::{InnerOperatorBackupOutput, InternalRecoveryRequest},
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
     consts::RND_SIZE,
@@ -159,7 +159,7 @@ async fn main() -> Result<(), anyhow::Error> {
             );
             let verf_key: PublicSigKey =
                 safe_read_element_versioned(&params.operator_verf_key).await?;
-            let recovery_request: RecoveryRequest =
+            let recovery_request: InternalRecoveryRequest =
                 safe_read_element_versioned(&params.recovery_request_path).await?;
             if !recovery_request
                 .is_valid(&verf_key)
@@ -175,7 +175,7 @@ async fn main() -> Result<(), anyhow::Error> {
             .expect("Failed to reconstruct custodians");
             tracing::info!("Custodian initialized successfully");
             let mut rng = get_rng(params.randomness.as_ref());
-            let custodian_backup: &OperatorBackupOutput = recovery_request
+            let custodian_backup: &InnerOperatorBackupOutput = recovery_request
                 .ciphertexts()
                 .get(&Role::indexed_from_one(params.custodian_role))
                 .unwrap_or_else(|| {
@@ -229,8 +229,8 @@ mod tests {
     use kms_grpc::RequestId;
     use kms_lib::{
         backup::{
-            custodian::{CustodianRecoveryOutput, InternalCustodianSetupMessage},
-            operator::{BackupCommitments, Operator, RecoveryRequest},
+            custodian::InternalCustodianSetupMessage,
+            operator::{BackupCommitments, InternalRecoveryRequest, Operator},
             seed_phrase::custodian_from_seed_phrase,
         },
         cryptography::{
@@ -460,7 +460,7 @@ mod tests {
             let ct = ct_map.get(&custodian_role).unwrap();
             ciphertexts.insert(custodian_role, ct.to_owned());
         }
-        let recovery_request = RecoveryRequest::new(
+        let recovery_request = InternalRecoveryRequest::new(
             operator.public_key().to_owned(),
             &signing_key,
             ciphertexts,
@@ -490,7 +490,7 @@ mod tests {
                 "operator-{}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin",
                 operator.role()
             ));
-            let payload: CustodianRecoveryOutput =
+            let payload: InternalCustodianRecoveryOutput =
                 safe_read_element_versioned(&Path::new(&recovery_path))
                     .await
                     .unwrap();

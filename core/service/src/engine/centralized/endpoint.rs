@@ -3,7 +3,8 @@ use crate::engine::centralized::service::{delete_kms_context_impl, new_kms_conte
 use crate::tonic_some_or_err;
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
-    self, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult, OperatorPublicKey,
+    self, BackupRecoveryRequest, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
+    OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use tonic::{Request, Response, Status};
@@ -567,12 +568,30 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     /// * Pre-condition:  -
     /// * Post-condition: -
     #[tracing::instrument(skip(self, _request))]
-    async fn custodian_backup_restore(
+    async fn custodian_backup_recovery(
         &self,
-        _request: Request<Empty>,
+        _request: Request<BackupRecoveryRequest>,
     ) -> Result<Response<Empty>, Status> {
         Err(Status::unimplemented(
-            "custodian_backup_restore is not implemented",
+            "custodian_backup_recovery is not implemented",
+        ))
+    }
+
+    #[tracing::instrument(skip(self, _request))]
+    async fn backup_restore(
+        &self,
+        _request: Request<kms_grpc::kms::v1::Empty>,
+    ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
+        Err(Status::unimplemented("backup_restore is not implemented"))
+    }
+
+    #[tracing::instrument(skip(self, _request))]
+    async fn custodian_recovery_init(
+        &self,
+        _request: Request<kms_grpc::kms::v1::Empty>,
+    ) -> Result<Response<kms_grpc::kms::v1::RecoveryRequest>, Status> {
+        Err(Status::unimplemented(
+            "custodian_recovery_init is not implemented",
         ))
     }
 }

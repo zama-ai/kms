@@ -1,5 +1,5 @@
 use crate::backup::custodian::{InternalCustodianContext, InternalCustodianSetupMessage};
-use crate::backup::operator::{BackupCommitments, Operator, RecoveryRequest};
+use crate::backup::operator::{BackupCommitments, InternalRecoveryRequest, Operator};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::backup_pke::{self, BackupCiphertext};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
@@ -308,7 +308,7 @@ where
         backup_id: RequestId,
         pub_enc_key: backup_pke::BackupPublicKey,
         priv_key: backup_pke::BackupPrivateKey,
-    ) -> anyhow::Result<(RecoveryRequest, BackupCommitments)> {
+    ) -> anyhow::Result<(InternalRecoveryRequest, BackupCommitments)> {
         let verification_key = (*self.base_kms.sig_key).clone().into();
         let operator = Operator::new(
             my_role,
@@ -334,7 +334,7 @@ where
             });
             ciphertexts.insert(*custodian_role, ct.to_owned());
         }
-        let recovery_request = RecoveryRequest::new(
+        let recovery_request = InternalRecoveryRequest::new(
             operator.public_key().to_owned(),
             &self.base_kms.sig_key,
             ciphertexts,
