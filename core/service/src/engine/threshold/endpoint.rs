@@ -590,10 +590,7 @@ impl_endpoint! {
             &self,
             request: Request<kms_grpc::kms::v1::BackupRecoveryRequest>,
         ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
-            self.backup_operator.custodian_backup_recovery(request.try_into().map_err(|e| {
-                tracing::error!("Failed to convert request: {}", e);
-                Status::invalid_argument("Invalid request")
-            })?).await
+            self.backup_operator.custodian_backup_recovery(request).await
         }
 
         #[tracing::instrument(skip(self, request))]

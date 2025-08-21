@@ -6106,9 +6106,7 @@ pub(crate) mod tests {
             resp_tasks.spawn(async move {
                 let req = Empty {};
                 // send query
-                cur_client
-                    .custodian_backup_restore(tonic::Request::new(req))
-                    .await
+                cur_client.backup_restore(tonic::Request::new(req)).await
             });
         }
         while let Some(res) = resp_tasks.join_next().await {
@@ -6259,7 +6257,7 @@ pub(crate) mod tests {
                 let req = Empty {};
                 // send query
                 cur_client
-                    .custodian_backup_restore(tonic::Request::new(req))
+                    .backup_restore(tonic::Request::new(req))
                     .await
             });
         }

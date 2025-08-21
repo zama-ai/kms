@@ -221,7 +221,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
             signature: sigt_i_j,
             ciphertext: st_i_j,
             custodian_role: self.role,
-            operator_role: operator_role,
+            operator_role,
         })
     }
 

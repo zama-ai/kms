@@ -226,7 +226,7 @@ fn get_rng(randomness: Option<&String>) -> AesRng {
 mod tests {
     use crate::{get_rng, SEED_PHRASE_DESC};
     use assert_cmd::Command;
-    use kms_grpc::RequestId;
+    use kms_grpc::{rpc_types::InternalCustodianRecoveryOutput, RequestId};
     use kms_lib::{
         backup::{
             custodian::InternalCustodianSetupMessage,
