@@ -1040,7 +1040,7 @@ impl TryFrom<BackupRecoveryRequest> for InternalBackupRecoveryRequest {
                 .ok_or_else(|| {
                     anyhow::anyhow!("Missing custodian context ID in BackupRestoreRequest")
                 })?
-                .into(),
+                .try_into()?,
             threshold: value.threshold,
             custodian_recovery_outputs: value
                 .custodian_recovery_outputs

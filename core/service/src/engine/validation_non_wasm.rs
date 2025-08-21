@@ -62,6 +62,8 @@ pub(crate) enum RequestIdParsingErr {
     KeyGenResponse,
     UserDecResponse,
     PublicDecResponse,
+
+    CustodianContext,
 }
 
 impl std::fmt::Display for RequestIdParsingErr {
@@ -99,6 +101,9 @@ impl std::fmt::Display for RequestIdParsingErr {
             }
             RequestIdParsingErr::PublicDecResponse => {
                 write!(f, "Invalid get public decryption result response ID")
+            }
+            RequestIdParsingErr::CustodianContext => {
+                write!(f, "Invalid new custodian context result response ID")
             }
         }
     }

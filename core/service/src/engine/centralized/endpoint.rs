@@ -19,7 +19,7 @@ use observability::{
     metrics::METRICS,
     metrics_names::{
         map_tonic_code_to_metric_tag, ERR_INVALID_REQUEST, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
-        OP_CUSTODIAN_CONTEXT_RESTORE, OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_KMS_CONTEXT,
+        OP_CUSTODIAN_BACKUP_RECOVERY, OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_KMS_CONTEXT,
         OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
         OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_KMS_CONTEXT,
         OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
@@ -307,8 +307,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         _request: Request<BackupRecoveryRequest>,
     ) -> Result<Response<Empty>, Status> {
-        METRICS.increment_request_counter(OP_CUSTODIAN_CONTEXT_RESTORE);
-        METRICS.increment_error_counter(OP_CUSTODIAN_CONTEXT_RESTORE, ERR_INVALID_REQUEST);
+        METRICS.increment_request_counter(OP_CUSTODIAN_BACKUP_RECOVERY);
+        METRICS.increment_error_counter(OP_CUSTODIAN_BACKUP_RECOVERY, ERR_INVALID_REQUEST);
         Err(Status::unimplemented(
             "custodian_backup_recovery is not implemented",
         ))

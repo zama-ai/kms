@@ -40,7 +40,8 @@ pub const OP_NEW_KMS_CONTEXT: &str = "new_kms_context";
 pub const OP_DESTROY_KMS_CONTEXT: &str = "destroy_kms_context";
 pub const OP_NEW_CUSTODIAN_CONTEXT: &str = "new_custodian_context";
 pub const OP_DESTROY_CUSTODIAN_CONTEXT: &str = "destroy_custodian_context";
-pub const OP_CUSTODIAN_CONTEXT_RESTORE: &str = "custodian_context_restore";
+pub const OP_CUSTODIAN_BACKUP_RECOVERY: &str = "custodian_backup_recovery";
+pub const OP_BACKUP_RESTORE: &str = "backup_restore";
 
 // PK fetch
 pub const OP_FETCH_PK: &str = "fetch_pk";

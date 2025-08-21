@@ -181,7 +181,7 @@ pub async fn setup_threshold_no_client<
                 service_listener,
                 cur_arc_server,
                 Arc::new(crate::grpc::MetaStoreStatusServiceImpl::new(
-                    None, None, None, None, None,
+                    None, None, None, None, None, None,
                 )),
                 cur_health_service,
                 server_shutdown_rx.map(drop),
@@ -429,7 +429,7 @@ pub async fn setup_centralized_no_client<
             listener,
             arc_kms,
             Arc::new(crate::grpc::MetaStoreStatusServiceImpl::new(
-                None, None, None, None, None,
+                None, None, None, None, None, None,
             )),
             health_service,
             rx.map(drop),

@@ -5,11 +5,10 @@ use crate::cryptography::backup_pke::{self, BackupCiphertext};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::ThresholdFheKeys;
+use crate::engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr};
 use crate::vault::Vault;
 use crate::{
-    engine::{
-        base::BaseKmsStruct, threshold::traits::ContextManager, validation::validate_request_id,
-    },
+    engine::{base::BaseKmsStruct, threshold::traits::ContextManager},
     grpc::metastore_status_service::CustodianMetaStore,
     vault::storage::{crypto_material::ThresholdCryptoMaterialStorage, Storage},
 };
@@ -147,15 +146,10 @@ where
     PrivS: Storage + Sync + Send + 'static,
 {
     async fn inner_new_custodian_context(&self, context: CustodianContext) -> anyhow::Result<()> {
-        let context_id: RequestId = match context.context_id {
-            Some(id) => id.into(),
-            None => {
-                return Err(anyhow::anyhow!(
-                    "Context ID is required in NewCustodianContextRequest"
-                ))
-            }
-        };
-        validate_request_id(&context_id)?;
+        let context_id: RequestId = parse_optional_proto_request_id(
+            &context.context_id,
+            RequestIdParsingErr::CustodianContext,
+        )?;
         let backup_vault = match self.crypto_storage.inner.backup_vault {
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
@@ -177,7 +171,10 @@ where
         let custodian_context = InternalCustodianContext {
             context_id,
             threshold: context.threshold,
-            previous_context_id: context.previous_context_id.map(Into::into),
+            previous_context_id: Some(parse_optional_proto_request_id(
+                &context.previous_context_id,
+                RequestIdParsingErr::CustodianContext,
+            )?),
             custodian_nodes: node_map,
             backup_enc_key: backup_enc_key.clone(),
         };
