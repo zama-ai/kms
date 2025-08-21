@@ -5,6 +5,7 @@ use super::{
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Solve},
     execution::{runtime::session::BaseSessionHandles, sharing::share::Share},
+    thread_handles::spawn_compute_bound,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -47,6 +48,8 @@ impl BitGenEven for SecureBitGenEven {
         let a = preproc.next_random_vec(amount)?;
         let triples = preproc.next_triple_vec(amount)?;
         let s = mult_list(&a, &a, triples, session).await?;
+        // Assumption that since we are just adding it's pretty computationally cheap
+        // and can stay on tokio thread
         let v = a
             .iter()
             .zip_eq(s) // May panic but would imply a bug in `mult_list`
@@ -54,16 +57,19 @@ impl BitGenEven for SecureBitGenEven {
             .collect_vec();
         let opened_v_vec = open_list(&v, session).await?;
 
-        opened_v_vec
-            .iter()
-            .zip_eq(a) // May panic but would imply a bug in `open_list`
-            .map(|(cur_v, cur_a)| {
-                let cur_r = Z::solve(cur_v)?;
-                let cur_d = Z::ZERO - (Z::ONE + Z::TWO * cur_r);
-                let cur_b = (cur_a - cur_r) * Z::invert(cur_d)?;
-                Ok(cur_b)
-            })
-            .collect()
+        spawn_compute_bound(move || {
+            opened_v_vec
+                .iter()
+                .zip_eq(a) // May panic but would imply a bug in `open_list`
+                .map(|(cur_v, cur_a)| {
+                    let cur_r = Z::solve(cur_v)?;
+                    let cur_d = Z::ZERO - (Z::ONE + Z::TWO * cur_r);
+                    let cur_b = (cur_a - cur_r) * Z::invert(cur_d)?;
+                    Ok(cur_b)
+                })
+                .try_collect()
+        })
+        .await?
     }
 }
 

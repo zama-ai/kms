@@ -168,6 +168,17 @@ impl<Z: Ring> MulAssign<Z> for Share<Z> {
         self.value *= rhs;
     }
 }
+
+impl<Z: Ring> Mul<u128> for Share<Z> {
+    type Output = Share<Z>;
+    fn mul(self, rhs: u128) -> Self::Output {
+        Self {
+            value: self.value.mul_by_u128(rhs),
+            owner: self.owner,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::num::Wrapping;
