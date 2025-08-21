@@ -359,7 +359,7 @@ where
     }
 
     /// Fill the masks directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
-    fn fill_from_small_session(
+    async fn fill_from_small_session(
         &mut self,
         _session: &mut SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         _amount: usize,

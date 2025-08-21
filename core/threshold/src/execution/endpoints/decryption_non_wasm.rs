@@ -68,7 +68,7 @@ use tfhe::shortint::PBSOrder;
 use tokio::task::JoinSet;
 use tokio::time::{Duration, Instant};
 use tracing::info_span;
-use tracing::instrument;
+use tracing::{instrument, Instrument};
 
 #[cfg(any(test, feature = "testing"))]
 use super::decryption::DecryptionMode;
@@ -128,7 +128,6 @@ where
     /// Load precomputed init data for noise flooding.
     ///
     /// Note: this is actually a synchronous function. It just needs to be async to implement the trait (which is async in the Large case)
-    /// TODO: we should move the slow parts to rayon
     async fn init_prep_noiseflooding(
         &mut self,
         num_ctxt: usize,
@@ -138,17 +137,13 @@ where
         let own_role = session.my_role();
 
         let prss_span = info_span!("PRSS-MASK.Next", batch_size = num_ctxt);
-        let masks = prss_span.in_scope(|| {
-            (0..num_ctxt)
-                .map(|_| {
-                    self.session
-                        .get_mut()
-                        .prss_as_mut()
-                        .mask_next(own_role, B_SWITCH_SQUASH)
-                })
-                .try_collect()
-        })?;
-
+        let masks = self
+            .session
+            .get_mut()
+            .prss_as_mut()
+            .mask_next_vec(own_role, B_SWITCH_SQUASH, num_ctxt)
+            .instrument(prss_span)
+            .await?;
         sns_preprocessing.append_masks(masks);
         Ok(sns_preprocessing)
     }
