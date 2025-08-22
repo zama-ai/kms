@@ -256,7 +256,7 @@ impl<
     > PublicDecryptor for RealPublicDecryptor<PubS, PrivS, Dec>
 {
     #[tracing::instrument(skip(self, request), fields(
-        party_id = ?self.session_preparer_getter.name(),
+        party = ?self.session_preparer_getter.name(),
         operation = "decrypt"
     ))]
     async fn public_decrypt(
@@ -283,7 +283,13 @@ impl<
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
-            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+            .tag(
+                TAG_PARTY_ID,
+                session_preparer
+                    .my_role()
+                    .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?
+                    .to_string(),
+            )
             .start();
 
         let permit = self.rate_limiter.start_pub_decrypt().await?;
@@ -353,8 +359,8 @@ impl<
 
         // Log after lock is released
         tracing::info!(
-            "MetaStore INITIAL insert - req_id={}, key_id={}, party_id={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-            req_id, key_id, self.session_preparer.my_id, ciphertexts.len(), lock_acquired_time, total_lock_time
+            "MetaStore INITIAL insert - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
+            req_id, key_id, session_preparer.my_role().map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?, ciphertexts.len(), lock_acquired_time, total_lock_time
         );
 
         tonic_handle_potential_err(
@@ -377,7 +383,13 @@ impl<
             let inner_timer = metrics::METRICS
                 .time_operation(OP_PUBLIC_DECRYPT_INNER)
                 .tags([
-                    (TAG_PARTY_ID, self.session_preparer.my_id.to_string()),
+                    (
+                        TAG_PARTY_ID,
+                        session_preparer
+                            .my_role()
+                            .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?
+                            .to_string(),
+                    ),
                     (TAG_KEY_ID, key_id.as_str()),
                     (
                         TAG_PUBLIC_DECRYPTION_KIND,
@@ -541,7 +553,9 @@ impl<
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
-        let party_id = self.session_preparer.my_id;
+        let party = session_preparer
+            .my_role()
+            .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?;
         let dec_sig_future = move |_permit| async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
@@ -607,8 +621,8 @@ impl<
             };
             // Log after lock is released
             tracing::info!(
-                "MetaStore SUCCESS update - req_id={}, key_id={}, party_id={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-                req_id, key_id, party_id, pts.len(), lock_acquired_time, total_lock_time
+                "MetaStore SUCCESS update - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
+                req_id, key_id, party, pts.len(), lock_acquired_time, total_lock_time
             );
             Ok(())
         };
@@ -686,7 +700,7 @@ mod tests {
 
     use crate::{
         consts::TEST_PARAM, cryptography::internal_crypto_types::gen_sig_keys, dummy_domain,
-        engine::threshold::service::compute_all_info, vault::storage::ram,
+        engine::threshold::service::{compute_all_info, session::SessionPreparerManager}, vault::storage::ram,
     };
 
     use super::*;
@@ -733,9 +747,10 @@ mod tests {
         > RealPublicDecryptor<PubS, PrivS, Dec>
     {
         async fn init_test(
+            base_kms: BaseKmsStruct,
             pub_storage: PubS,
             priv_storage: PrivS,
-            session_preparer: SessionPreparer,
+            session_preparer_getter: SessionPreparerGetter,
         ) -> Self {
             let crypto_storage = ThresholdCryptoMaterialStorage::new(
                 pub_storage,
@@ -749,10 +764,10 @@ mod tests {
             let rate_limiter = RateLimiter::default();
 
             Self {
-                base_kms: session_preparer.base_kms.new_instance().await,
+                base_kms,
                 crypto_storage,
                 pub_dec_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-                session_preparer: Arc::new(session_preparer.new_instance().await),
+                session_preparer_getter,
                 tracker,
                 rate_limiter,
                 decryption_mode: DecryptionMode::NoiseFloodSmall,
@@ -770,10 +785,13 @@ mod tests {
     }
 
     impl RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor> {
-        async fn init_test_dummy_decryptor(session_preparer: SessionPreparer) -> Self {
+        async fn init_test_dummy_decryptor(
+            base_kms: BaseKmsStruct,
+            session_preparer_getter: SessionPreparerGetter,
+        ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(pub_storage, priv_storage, session_preparer).await
+            Self::init_test(base_kms, pub_storage, priv_storage, session_preparer_getter).await
         }
     }
 
@@ -785,11 +803,27 @@ mod tests {
         Vec<u8>,
         RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
-        let (_pk, sk) = gen_sig_keys(rng);
+        let mut rng = rand::rngs::OsRng;
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let base_kms = BaseKmsStruct::new(sk.clone()).unwrap();
         let param = TEST_PARAM;
-        let session_preparer = SessionPreparer::new_test_session(with_prss);
-        let public_decryptor =
-            RealPublicDecryptor::init_test_dummy_decryptor(session_preparer).await;
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(None)),
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+        let public_decryptor = RealPublicDecryptor::init_test_dummy_decryptor(
+            base_kms,
+            session_preparer_manager.make_getter(),
+        )
+        .await;
 
         let key_id = RequestId::new_random(rng);
 
@@ -861,6 +895,7 @@ mod tests {
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         });
         assert_eq!(
             public_decryptor
@@ -1110,6 +1145,7 @@ mod tests {
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         });
         public_decryptor.public_decrypt(request).await.unwrap();
         // there's no need to check the decryption result since it's a dummy protocol

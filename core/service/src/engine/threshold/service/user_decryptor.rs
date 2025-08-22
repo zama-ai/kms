@@ -362,9 +362,10 @@ impl<
 
     #[cfg(test)]
     async fn init_test(
+        base_kms: BaseKmsStruct,
         pub_storage: PubS,
         priv_storage: PrivS,
-        session_preparer: SessionPreparer,
+        session_preparer_getter: SessionPreparerGetter,
     ) -> Self {
         let crypto_storage = ThresholdCryptoMaterialStorage::new(
             pub_storage,
@@ -378,10 +379,10 @@ impl<
         let rate_limiter = RateLimiter::default();
 
         Self {
-            base_kms: session_preparer.base_kms.new_instance().await,
+            base_kms,
             crypto_storage,
             user_decrypt_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-            session_preparer: Arc::new(session_preparer.new_instance().await),
+            session_preparer_getter,
             tracker,
             rate_limiter,
             decryption_mode: DecryptionMode::NoiseFloodSmall,
@@ -442,7 +443,13 @@ impl<
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_REQUEST)
-            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+            .tag(
+                TAG_PARTY_ID,
+                session_preparer
+                    .my_role()
+                    .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?
+                    .to_string(),
+            )
             .start();
 
         let permit = self.rate_limiter.start_user_decrypt().await?;
@@ -630,7 +637,7 @@ mod tests {
             internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
         },
         dummy_domain,
-        engine::threshold::service::compute_all_info,
+        engine::threshold::service::{compute_all_info, session::SessionPreparerManager},
         vault::storage::ram,
     };
 
@@ -667,10 +674,13 @@ mod tests {
     }
 
     impl RealUserDecryptor<ram::RamStorage, ram::RamStorage, DummyNoiseFloodPartialDecryptor> {
-        pub async fn init_test_dummy_decryptor(session_preparer: SessionPreparer) -> Self {
+        pub async fn init_test_dummy_decryptor(
+            base_kms: BaseKmsStruct,
+            session_preparer_getter: SessionPreparerGetter,
+        ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(pub_storage, priv_storage, session_preparer).await
+            Self::init_test(base_kms, pub_storage, priv_storage, session_preparer_getter).await
         }
     }
 
@@ -697,8 +707,24 @@ mod tests {
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
-        let session_preparer = SessionPreparer::new_test_session(with_prss);
-        let user_decryptor = RealUserDecryptor::init_test_dummy_decryptor(session_preparer).await;
+        let base_kms = BaseKmsStruct::new(sk.clone()).unwrap();
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(None)),
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+        let user_decryptor = RealUserDecryptor::init_test_dummy_decryptor(
+            base_kms,
+            session_preparer_manager.make_getter(),
+        )
+        .await;
 
         let key_id = RequestId::new_random(rng);
 
@@ -925,6 +951,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         });
         assert_eq!(
             user_decryptor
@@ -1044,6 +1071,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         });
         user_decryptor.user_decrypt(request).await.unwrap();
         user_decryptor

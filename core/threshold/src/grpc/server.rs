@@ -12,7 +12,6 @@ use crate::experimental::choreography::grpc::ExperimentalGrpcChoreography;
 use crate::malicious_execution::malicious_moby::add_strategy_to_router;
 use crate::networking::constants::NETWORK_TIMEOUT_LONG;
 use crate::networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
-use crate::networking::Networking;
 use observability::telemetry::make_span;
 use std::sync::Arc;
 use tokio::sync::RwLock;

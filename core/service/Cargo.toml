@@ -68,7 +68,6 @@ threshold-fhe = { workspace = true, default-features = false, features = [
 enum_dispatch.workspace = true
 futures-util.workspace = true
 kms-grpc = { workspace = true, default-features = false }
-futures-util.workspace = true
 hex.workspace = true
 http = "=0.2.12"
 hyper-rustls = { version = "=0.24.2", optional = true }

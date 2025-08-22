@@ -174,7 +174,8 @@ async fn build_tls_config(
         TlsConf::FullAuto {
             ref trusted_releases,
         } => {
-            let security_module = security_module.as_ref()
+            let security_module = security_module
+                .as_ref()
                 .unwrap_or_else(|| panic!("TLS identity and security module not present"));
             tracing::info!(
                 "Using TLS certificate with Nitro remote attestation signed by onboard CA"
@@ -462,7 +463,7 @@ async fn main() -> anyhow::Result<()> {
                             threshold_config.my_id,
                             peers,
                             tls_config,
-                            security_module,
+                            security_module.clone(),
                             &public_vault,
                             &sk,
                         )

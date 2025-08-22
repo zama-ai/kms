@@ -191,7 +191,7 @@ impl<
         // that runs the computation
         let timer = metrics::METRICS
             .time_operation(op_tag)
-            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string());
+            .tag(TAG_PARTY_ID, session_preparer.my_role()?.to_string());
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
             guarded_meta_store.insert(&req_id)?;
@@ -199,8 +199,7 @@ impl<
 
         let session_id = req_id.derive_session_id()?;
         // CRS ceremony requires a sync network
-        let session = self
-            .session_preparer
+        let session = session_preparer
             .make_base_session(session_id, NetworkMode::Sync)
             .await?;
 
@@ -452,11 +451,17 @@ mod tests {
     use threshold_fhe::{
         algebra::structure_traits::Ring,
         execution::{
-            runtime::session::BaseSessionHandles, zk::ceremony::FinalizedInternalPublicParameter,
+            runtime::session::BaseSessionHandles, small_execution::prss::PRSSSetup,
+            zk::ceremony::FinalizedInternalPublicParameter,
         },
     };
 
-    use crate::{consts::DURATION_WAITING_ON_RESULT_SECONDS, dummy_domain};
+    use crate::{
+        consts::DURATION_WAITING_ON_RESULT_SECONDS,
+        cryptography::internal_crypto_types::gen_sig_keys,
+        dummy_domain,
+        engine::threshold::service::session::{SessionPreparer, SessionPreparerManager},
+    };
 
     use super::*;
 
@@ -467,9 +472,10 @@ mod tests {
         > RealCrsGenerator<PubS, PrivS, C>
     {
         async fn init_test(
+            base_kms: BaseKmsStruct,
             pub_storage: PubS,
             priv_storage: PrivS,
-            session_preparer: SessionPreparer,
+            session_preparer_getter: SessionPreparerGetter,
         ) -> Self {
             let crypto_storage = ThresholdCryptoMaterialStorage::new(
                 pub_storage,
@@ -483,10 +489,10 @@ mod tests {
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
             let rate_limiter = RateLimiter::default();
             Self {
-                base_kms: session_preparer.base_kms.new_instance().await,
+                base_kms,
                 crypto_storage,
                 crs_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-                session_preparer,
+                session_preparer_getter,
                 tracker,
                 ongoing,
                 rate_limiter,
@@ -540,39 +546,51 @@ mod tests {
     }
 
     impl RealCrsGenerator<ram::RamStorage, ram::RamStorage, InsecureCeremony> {
-        async fn init_test_insecure_ceremony(session_preparer: SessionPreparer) -> Self {
+        async fn init_test_insecure_ceremony(
+            base_kms: BaseKmsStruct,
+            session_preparer_getter: SessionPreparerGetter,
+        ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
             RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test(
+                base_kms,
                 pub_storage,
                 priv_storage,
-                session_preparer,
+                session_preparer_getter,
             )
             .await
         }
     }
 
     impl RealCrsGenerator<ram::RamStorage, ram::RamStorage, BrokenCeremony> {
-        async fn init_test_broken_ceremony(session_preparer: SessionPreparer) -> Self {
+        async fn init_test_broken_ceremony(
+            base_kms: BaseKmsStruct,
+            session_preparer_getter: SessionPreparerGetter,
+        ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
             RealCrsGenerator::<ram::RamStorage, ram::RamStorage, BrokenCeremony>::init_test(
+                base_kms,
                 pub_storage,
                 priv_storage,
-                session_preparer,
+                session_preparer_getter,
             )
             .await
         }
     }
 
     impl RealCrsGenerator<ram::RamStorage, ram::RamStorage, SlowCeremony> {
-        async fn init_test_slow_ceremony(session_preparer: SessionPreparer) -> Self {
+        async fn init_test_slow_ceremony(
+            base_kms: BaseKmsStruct,
+            session_preparer_getter: SessionPreparerGetter,
+        ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
             RealCrsGenerator::<ram::RamStorage, ram::RamStorage, SlowCeremony>::init_test(
+                base_kms,
                 pub_storage,
                 priv_storage,
-                session_preparer,
+                session_preparer_getter,
             )
             .await
         }
@@ -580,11 +598,33 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_argument() {
-        let session_preparer = SessionPreparer::new_test_session(true);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            prss_setup_z128,
+            prss_setup_z64,
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
 
         let crs_gen =
             RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
-                session_preparer,
+                base_kms,
+                session_preparer_manager.make_getter(),
             )
             .await;
 
@@ -596,6 +636,7 @@ mod tests {
                 max_num_bits: None,
                 request_id: None,
                 domain: Some(domain),
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             };
 
             let request = Request::new(req);
@@ -625,6 +666,7 @@ mod tests {
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: Some(domain),
+                context_id: None,
             };
 
             let request = Request::new(req);
@@ -672,11 +714,33 @@ mod tests {
 
     #[tokio::test]
     async fn not_found() {
-        let session_preparer = SessionPreparer::new_test_session(true);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            prss_setup_z128,
+            prss_setup_z64,
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
 
         let crs_gen =
             RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
-                session_preparer,
+                base_kms,
+                session_preparer_manager.make_getter(),
             )
             .await;
 
@@ -693,11 +757,33 @@ mod tests {
 
     #[tokio::test]
     async fn resource_exhausted() {
-        let session_preparer = SessionPreparer::new_test_session(true);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            prss_setup_z128,
+            prss_setup_z64,
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
 
         let mut crs_gen =
             RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
-                session_preparer,
+                base_kms,
+                session_preparer_manager.make_getter(),
             )
             .await;
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
@@ -710,6 +796,7 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
 
         let request = Request::new(req);
@@ -722,11 +809,33 @@ mod tests {
     async fn internal_failure() {
         // Even if the CRS ceremony fails, we should not return an error
         // because it's happening in the background.
-        let session_preparer = SessionPreparer::new_test_session(true);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            prss_setup_z128,
+            prss_setup_z64,
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
 
         let crs_gen =
-                RealCrsGenerator::<ram::RamStorage, ram::RamStorage, BrokenCeremony>::init_test_broken_ceremony(
-                    session_preparer,
+            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, BrokenCeremony>::init_test_broken_ceremony(
+                base_kms,
+                session_preparer_manager.make_getter(),
                 )
                 .await;
 
@@ -737,6 +846,7 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
 
         // we expect the CRS generation call to pass, but only get an error when we try to retrieve the result
@@ -754,11 +864,33 @@ mod tests {
 
     #[tokio::test]
     async fn unavailable() {
-        let session_preparer = SessionPreparer::new_test_session(true);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            prss_setup_z128,
+            prss_setup_z64,
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
 
         let crs_gen =
             RealCrsGenerator::<ram::RamStorage, ram::RamStorage, SlowCeremony>::init_test_slow_ceremony(
-                session_preparer,
+                base_kms,
+                session_preparer_manager.make_getter(),
             )
             .await;
 
@@ -771,6 +903,7 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
 
         let request = Request::new(req);
@@ -815,11 +948,33 @@ mod tests {
 
     #[tokio::test]
     async fn sunshine() {
-        let session_preparer = SessionPreparer::new_test_session(true);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            prss_setup_z128,
+            prss_setup_z64,
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
 
         let crs_gen =
             RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
-                session_preparer,
+                base_kms,
+                session_preparer_manager.make_getter(),
             )
             .await;
 
@@ -831,6 +986,7 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
 
         let request = Request::new(req);

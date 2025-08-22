@@ -11,7 +11,7 @@ use kms_grpc::{
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
-        runtime::session::ParameterHandles,
+        runtime::{party::Role, session::ParameterHandles},
         small_execution::prss::{PRSSInit, PRSSSetup},
     },
     networking::NetworkMode,
@@ -42,7 +42,7 @@ pub struct RealInitiator<
     pub prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
     pub private_storage: Arc<Mutex<PrivS>>,
     pub session_preparer_manager: SessionPreparerManager,
-    pub health_reporter: Arc<RwLock<HealthReporter>>,
+    pub health_reporter: HealthReporter,
     pub(crate) _init: PhantomData<Init>,
     // This is needed as a workaround to initialize the session preparer
     pub threshold_config: ThresholdPartyConf,
@@ -66,9 +66,9 @@ impl<
 
         let prss_setup_z128_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
-            let parameters = self
-                .session_preparer
-                .get_session_parameters(req_id.derive_session_id()?)?;
+            let parameters = session_preparer
+                .get_session_parameters(req_id.derive_session_id()?)
+                .await?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
                 &derive_request_id(&format!(
@@ -97,9 +97,9 @@ impl<
 
         let prss_setup_z64_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
-            let parameters = self
-                .session_preparer
-                .get_session_parameters(req_id.derive_session_id()?)?;
+            let parameters = session_preparer
+                .get_session_parameters(req_id.derive_session_id()?)
+                .await?;
             read_versioned_at_request_id(
                 &(*guarded_private_storage),
                 &derive_request_id(&format!(
@@ -161,10 +161,7 @@ impl<
             base_session.parameters.num_parties(),
             base_session.parameters.threshold()
         );
-        tracing::info!(
-            "Role assignments: {:?}",
-            base_session.parameters.roles()
-        );
+        tracing::info!("Role assignments: {:?}", base_session.parameters.roles());
 
         // It seems we cannot do something like
         // `Init::default().init(&mut base_session).await?;`
@@ -290,6 +287,8 @@ mod tests {
     use crate::{
         client::test_tools::{self},
         consts::PRSS_INIT_REQ_ID,
+        cryptography::internal_crypto_types::gen_sig_keys,
+        engine::base::BaseKmsStruct,
         util::key_setup::test_tools::purge,
         vault::storage::{file::FileStorage, ram, StorageType},
     };
@@ -297,7 +296,7 @@ mod tests {
     use kms_grpc::kms::v1::InitRequest;
     use rand::SeedableRng;
     use threshold_fhe::{
-        execution::runtime::party::Role,
+        execution::{endpoints::decryption::DecryptionMode, runtime::party::Role},
         malicious_execution::small_execution::malicious_prss::{EmptyPrss, FailingPrss},
     };
 
@@ -306,14 +305,32 @@ mod tests {
                 + PRSSInit<ResiduePolyF4Z128, OutputType = PRSSSetup<ResiduePolyF4Z128>>,
         > RealInitiator<ram::RamStorage, Init>
     {
-        fn init_test(session_preparer: SessionPreparer) -> Self {
+        fn init_test(
+            base_kms: BaseKmsStruct,
+            session_preparer_manager: SessionPreparerManager,
+        ) -> Self {
             Self {
                 prss_setup_z128: Arc::new(RwLock::new(None)),
                 prss_setup_z64: Arc::new(RwLock::new(None)),
                 private_storage: Arc::new(Mutex::new(ram::RamStorage::new())),
-                session_preparer,
+                session_preparer_manager,
                 health_reporter: HealthReporter::new(),
                 _init: PhantomData,
+                threshold_config: ThresholdPartyConf {
+                    listen_address: "localhost".to_string(),
+                    listen_port: 5001,
+                    tls: None,
+                    threshold: 1,
+                    my_id: 1,
+                    dec_capacity: 0,
+                    min_dec_cache: 0,
+                    preproc_redis: None,
+                    num_sessions_preproc: None,
+                    peers: None,
+                    core_to_core_net: None,
+                    decryption_mode: DecryptionMode::NoiseFloodSmall,
+                },
+                base_kms,
             }
         }
     }
@@ -409,8 +426,24 @@ mod tests {
 
     #[tokio::test]
     async fn sunshine() {
-        let session_preparer = SessionPreparer::new_test_session(false);
-        let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(session_preparer);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(None)),
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+        let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(
+            base_kms,
+            session_preparer_manager,
+        );
 
         let mut rng = AesRng::seed_from_u64(42);
         let req_id = RequestId::new_random(&mut rng);
@@ -423,8 +456,24 @@ mod tests {
     }
     #[tokio::test]
     async fn invalid_argument() {
-        let session_preparer = SessionPreparer::new_test_session(false);
-        let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(session_preparer);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(None)),
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+        let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(
+            base_kms,
+            session_preparer_manager,
+        );
 
         {
             // bad request ID
@@ -484,8 +533,24 @@ mod tests {
 
     #[tokio::test]
     async fn internal() {
-        let session_preparer = SessionPreparer::new_test_session(false);
-        let initiator = RealInitiator::<ram::RamStorage, FailingPrss>::init_test(session_preparer);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(None)),
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+        let initiator = RealInitiator::<ram::RamStorage, FailingPrss>::init_test(
+            base_kms,
+            session_preparer_manager,
+        );
 
         let mut rng = AesRng::seed_from_u64(42);
         let req_id = RequestId::new_random(&mut rng);

@@ -1358,7 +1358,7 @@ pub(crate) mod tests {
             let mut vec_y = Vec::with_capacity(4);
             for (pn, r) in results.iter().cloned() {
                 if pn != party {
-                let point_pn = ResiduePolyF4Z128::get_from_exceptional_sequence(0).unwrap();
+                    let point_pn = ResiduePolyF4Z128::get_from_exceptional_sequence(0).unwrap();
                     vec_x.push(
                         (0..num_secrets)
                             .map(|i| {
