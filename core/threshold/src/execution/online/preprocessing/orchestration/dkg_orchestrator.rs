@@ -26,7 +26,7 @@ use crate::{
             },
             triple::Triple,
         },
-        runtime::session::{LargeSession, ParameterHandles, SmallSession},
+        runtime::session::{DeSerializationRunTime, LargeSession, ParameterHandles, SmallSession},
         sharing::share::Share,
         small_execution::prf::PRSSConversions,
         tfhe_internals::parameters::{DKGParams, NoiseInfo},
@@ -342,6 +342,11 @@ where
 
         //Ensures sessions are sorted by session id
         sessions.sort_by_key(|session| session.session_id());
+
+        // Set the deserialization runtime for each session
+        for session in sessions.iter_mut() {
+            session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
+        }
 
         //Dedicate 1 in 20 sessions to raw triples, the rest to bits
         let num_basic_sessions = div_ceil(sessions.len(), 20);

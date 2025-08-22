@@ -10,7 +10,7 @@ use crate::{
             preprocessing::{DKGPreprocessing, RandomPreprocessing},
             triple::open_list,
         },
-        runtime::session::BaseSessionHandles,
+        runtime::session::{BaseSessionHandles, DeSerializationRunTime},
         tfhe_internals::{
             compression_decompression_key::CompressionPrivateKeyShares,
             compression_decompression_key_generation::{
@@ -226,6 +226,8 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
     {
+        // Messages exchanged are big so we deserialize them on Rayon
+        session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
         if Z::BIT_LENGTH == 64 {
             if let DKGParams::WithSnS(_) = params {
                 return Err(anyhow_error_and_log(
@@ -266,6 +268,8 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
     {
+        // Messages exchanged are big so we deserialize them on Rayon
+        session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
         if Z::BIT_LENGTH == 64 {
             if let DKGParams::WithSnS(_) = params {
                 return Err(anyhow_error_and_log(

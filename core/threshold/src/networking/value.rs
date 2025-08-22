@@ -5,6 +5,7 @@ use crate::execution::large_execution::local_single_share::MapsSharesChallenges;
 use crate::execution::large_execution::vss::{
     ExchangedDataRound1, ValueOrPoly, VerificationValues,
 };
+use crate::execution::runtime::session::DeSerializationRunTime;
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::tfhe_internals::public_keysets::FhePubKeySet;
 use crate::execution::zk::ceremony;
@@ -12,6 +13,7 @@ use crate::execution::{runtime::party::Role, small_execution::prss::PartySet};
 #[cfg(feature = "experimental")]
 use crate::experimental::bgv::basics::PublicBgvKeySet;
 use crate::hashing::{serialize_hash_element, DomainSep};
+use crate::thread_handles::spawn_compute_bound;
 use crate::{
     commitment::{Commitment, Opening},
     execution::small_execution::prf::PrfKey,
@@ -127,14 +129,30 @@ impl<Z: Eq + Zero> AsRef<NetworkValue<Z>> for NetworkValue<Z> {
     }
 }
 
+// Note we do not offload the serialization to rayon as
+// benchmark show serialization is faster than deserialization
+// and sending to rayon implies a clone which makes it significantly slower
 impl<Z: Ring> NetworkValue<Z> {
     pub fn to_network(&self) -> Vec<u8> {
         bc2wrap::serialize(self).unwrap()
     }
 
-    pub fn from_network(serialized: anyhow::Result<Vec<u8>>) -> anyhow::Result<Self> {
-        bc2wrap::deserialize::<Self>(&serialized?)
-            .map_err(|_e| anyhow_error_and_log("failed to parse value"))
+    pub async fn from_network(
+        serialized: anyhow::Result<Vec<u8>>,
+        serialization_runtime: DeSerializationRunTime,
+    ) -> anyhow::Result<Self> {
+        match serialization_runtime {
+            DeSerializationRunTime::Tokio => bc2wrap::deserialize::<Self>(&serialized?)
+                .map_err(|_e| anyhow_error_and_log("failed to parse value")),
+            DeSerializationRunTime::Rayon => {
+                // offload to rayon threadpool
+                spawn_compute_bound(move || {
+                    bc2wrap::deserialize::<Self>(&serialized?)
+                        .map_err(|_e| anyhow_error_and_log("failed to parse value"))
+                })
+                .await?
+            }
+        }
     }
 }
 
@@ -191,10 +209,12 @@ mod tests {
 
         let task1 = tokio::spawn(async move {
             let recv = net_bob.receive(&alice).await;
-            let received_key = match NetworkValue::<Z128>::from_network(recv) {
-                Ok(NetworkValue::PubKeySet(key)) => key,
-                _ => panic!(),
-            };
+            let received_key =
+                match NetworkValue::<Z128>::from_network(recv, DeSerializationRunTime::Tokio).await
+                {
+                    Ok(NetworkValue::PubKeySet(key)) => key,
+                    _ => panic!(),
+                };
             assert_eq!(*received_key, pk);
         });
 
