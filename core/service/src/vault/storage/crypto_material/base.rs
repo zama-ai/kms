@@ -608,26 +608,17 @@ where
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
         let mut guarded_meta_store = meta_store.write().await;
-
+        let req_id = custodian_context.context_id;
         let (priv_res, pub_res) = {
             // Lock the storage needed in correct order to avoid deadlocks.
             let mut public_storage_guard = self.public_storage.lock().await;
             let mut private_storage_guard = self.private_storage.lock().await;
 
-                    let req_id = custodian_context.context_id;
-        let priv_storage_future = async {
-            let custodian_context_store_res = store_versioned_at_request_id(
-                &mut (*private_storage_guard),
-                &req_id,
-                custodian_context,
-                &PrivDataType::CustodianInfo.to_string(),
-            )
-            .await;
-            if let Err(e) = &custodian_context_store_res {
-                tracing::error!(
-                    "Failed to store custodian context to private storage for request {}: {}",
-                    req_id,
-                    &custodian_context,
+            let priv_storage_future = async {
+                let custodian_context_store_res = store_versioned_at_request_id(
+                    &mut (*private_storage_guard),
+                    &req_id,
+                    custodian_context,
                     &PrivDataType::CustodianInfo.to_string(),
                 )
                 .await;
@@ -651,8 +642,8 @@ where
             let pub_storage_future = async {
                 let recovery_store_result = store_versioned_at_request_id(
                     &mut (*public_storage_guard),
-                    req_id,
-                    &recovery_request,
+                    &req_id,
+                    recovery_request,
                     &PubDataType::RecoveryRequest.to_string(),
                 )
                 .await;
@@ -673,8 +664,8 @@ where
                 }
                 let commit_store_result = store_versioned_at_request_id(
                     &mut (*public_storage_guard),
-                    req_id,
-                    &commitments,
+                    &req_id,
+                    commitments,
                     &PubDataType::Commitments.to_string(),
                 )
                 .await;
