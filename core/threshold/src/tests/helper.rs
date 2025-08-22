@@ -261,7 +261,7 @@ pub mod tests {
         tests::test_data_setup::tests::{ensure_keys_exist, REAL_PARAMETERS, TEST_PARAMETERS},
     };
     use aes_prng::AesRng;
-    use futures_util::future::{join_all, Future, FutureExt};
+    use futures_util::future::{join, join_all, Future, FutureExt};
     use itertools::Itertools;
     use rand::SeedableRng;
     use std::fs;
@@ -513,8 +513,8 @@ pub mod tests {
             task_malicious(session, malicious_strategy.clone()).map(move |output| (party, output))
         });
 
-        let results_honest = join_all(honest_tasks).await;
-        let results_malicious = join_all(malicious_tasks).await;
+        let (results_honest, results_malicious) =
+            join(join_all(honest_tasks), join_all(malicious_tasks)).await;
 
         // test that the number of rounds is as expected
         if let Some(e_r) = params.expected_rounds {
@@ -605,8 +605,8 @@ pub mod tests {
             task_malicious(session, malicious_strategy.clone()).map(move |output| (party, output))
         });
 
-        let results_honest = join_all(honest_tasks).await;
-        let results_malicious = join_all(malicious_tasks).await;
+        let (results_honest, results_malicious) =
+            join(join_all(honest_tasks), join_all(malicious_tasks)).await;
 
         // test that the number of rounds is as expected
         if let Some(e_r) = params.expected_rounds {

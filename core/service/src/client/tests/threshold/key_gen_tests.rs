@@ -100,6 +100,7 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
 #[case(4)]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+#[tracing_test::traced_test]
 async fn default_insecure_dkg(#[case] amount_parties: usize) {
     // NOTE: amount_parties must not be too high
     // because every party will load all the keys and each ServerKey is 1.5 GB

@@ -53,6 +53,7 @@ use tonic_health::pb::health_check_response::ServingStatus;
 /// the PRSS initialization has been completed.
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+#[tracing_test::traced_test]
 async fn test_threshold_health_endpoint_availability() {
     // make sure the store does not contain any PRSS info (currently stored under ID PRSS_INIT_REQ_ID)
     let req_id = &derive_request_id(&format!("PRSSSetup_Z128_ID_{PRSS_INIT_REQ_ID}_4_1")).unwrap();
@@ -129,7 +130,13 @@ async fn test_threshold_health_endpoint_availability() {
         });
     }
     while let Some(inner) = req_tasks.join_next().await {
-        assert!(inner.unwrap().is_ok());
+        match inner {
+            Ok(resp) => match resp {
+                Ok(resp) => tracing::info!("Init response: {resp:?}"),
+                Err(e) => panic!("Init request failed: {e}"),
+            },
+            Err(e) => panic!("Init request failed: {e}"),
+        }
     }
     let status = get_status(&mut main_health_client, core_service_name)
         .await
@@ -168,6 +175,7 @@ async fn test_threshold_health_endpoint_availability() {
 /// Validate that dropping the server signal triggers the server to shut down
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
+#[tracing_test::traced_test]
 async fn test_threshold_close_after_drop() {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (mut kms_servers, _kms_clients, _internal_client) =
