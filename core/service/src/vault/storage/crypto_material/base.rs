@@ -403,71 +403,74 @@ where
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
         let mut guarded_meta_store = meta_store.write().await;
-        // Enforce locking order for internal types
-        let mut pub_storage = self.public_storage.lock().await;
-        let mut priv_storage = self.private_storage.lock().await;
-        let back_vault = match self.backup_vault {
-            Some(ref x) => Some(x.lock().await),
-            None => None,
-        };
 
-        let f1 = async {
-            let result = store_versioned_at_request_id(
-                &mut (*priv_storage),
-                req_id,
-                &crs_info,
-                &PrivDataType::CrsInfo.to_string(),
-            )
-            .await;
-            if let Err(e) = &result {
-                tracing::error!(
-                    "Failed to store CRS info to private storage for request {}: {}",
+        let (r1, r2, r3) = {
+            // Enforce locking order for internal types
+            let mut pub_storage = self.public_storage.lock().await;
+            let mut priv_storage = self.private_storage.lock().await;
+            let back_vault = match self.backup_vault {
+                Some(ref x) => Some(x.lock().await),
+                None => None,
+            };
+
+            let f1 = async {
+                let result = store_versioned_at_request_id(
+                    &mut (*priv_storage),
                     req_id,
-                    e
-                );
-            }
-            result.is_ok()
-        };
-        let f2 = async {
-            let result = store_versioned_at_request_id(
-                &mut (*pub_storage),
-                req_id,
-                &pp,
-                &PubDataType::CRS.to_string(),
-            )
-            .await;
-            if let Err(e) = &result {
-                tracing::error!(
-                    "Failed to store CRS to public storage for request {}: {}",
-                    req_id,
-                    e
-                );
-            }
-            result.is_ok()
-        };
-        let f3 = async {
-            match back_vault {
-                Some(mut guarded_backup_vault) => {
-                    let backup_result = store_versioned_at_request_id(
-                        &mut (*guarded_backup_vault),
+                    &crs_info,
+                    &PrivDataType::CrsInfo.to_string(),
+                )
+                .await;
+                if let Err(e) = &result {
+                    tracing::error!(
+                        "Failed to store CRS info to private storage for request {}: {}",
                         req_id,
-                        &crs_info,
-                        &BackupDataType::PrivData(PrivDataType::CrsInfo).to_string(),
-                    )
-                    .await;
+                        e
+                    );
+                }
+                result.is_ok()
+            };
+            let f2 = async {
+                let result = store_versioned_at_request_id(
+                    &mut (*pub_storage),
+                    req_id,
+                    &pp,
+                    &PubDataType::CRS.to_string(),
+                )
+                .await;
+                if let Err(e) = &result {
+                    tracing::error!(
+                        "Failed to store CRS to public storage for request {}: {}",
+                        req_id,
+                        e
+                    );
+                }
+                result.is_ok()
+            };
+            let f3 = async {
+                match back_vault {
+                    Some(mut guarded_backup_vault) => {
+                        let backup_result = store_versioned_at_request_id(
+                            &mut (*guarded_backup_vault),
+                            req_id,
+                            &crs_info,
+                            &BackupDataType::PrivData(PrivDataType::CrsInfo).to_string(),
+                        )
+                        .await;
 
-                    if let Err(e) = &backup_result {
-                        tracing::error!("Failed to store encrypted crs info to backup storage for request {req_id}: {e}");
+                        if let Err(e) = &backup_result {
+                            tracing::error!("Failed to store encrypted crs info to backup storage for request {req_id}: {e}");
+                        }
+                        backup_result.is_ok()
                     }
-                    backup_result.is_ok()
+                    None => {
+                        tracing::warn!("No backup vault configured. Skipping backup of CRS material for request {req_id}");
+                        true
+                    }
                 }
-                None => {
-                    tracing::warn!("No backup vault configured. Skipping backup of CRS material for request {req_id}");
-                    true
-                }
-            }
+            };
+            tokio::join!(f1, f2, f3)
         };
-        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
 
         if r1
             && r2
@@ -605,11 +608,13 @@ where
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
         let mut guarded_meta_store = meta_store.write().await;
-        // Lock the storage needed in correct order to avoid deadlocks.
-        let mut private_storage_guard = self.private_storage.lock().await;
-        let mut public_storage_guard = self.public_storage.lock().await;
 
-        let req_id = custodian_context.context_id;
+        let (priv_res, pub_res) = {
+            // Lock the storage needed in correct order to avoid deadlocks.
+            let mut public_storage_guard = self.public_storage.lock().await;
+            let mut private_storage_guard = self.private_storage.lock().await;
+
+                    let req_id = custodian_context.context_id;
         let priv_storage_future = async {
             let custodian_context_store_res = store_versioned_at_request_id(
                 &mut (*private_storage_guard),
@@ -622,67 +627,76 @@ where
                 tracing::error!(
                     "Failed to store custodian context to private storage for request {}: {}",
                     req_id,
-                    e
-                );
-            } else {
-                log_storage_success(
-                    req_id,
-                    private_storage_guard.info(),
+                    &custodian_context,
                     &PrivDataType::CustodianInfo.to_string(),
-                    false,
-                    true,
-                );
-            }
-            custodian_context_store_res.is_ok()
-        };
-        let pub_storage_future = async {
-            let recovery_store_result = store_versioned_at_request_id(
-                &mut (*public_storage_guard),
-                &req_id,
-                recovery_request,
-                &PubDataType::RecoveryRequest.to_string(),
-            )
-            .await;
-            if let Err(e) = &recovery_store_result {
-                tracing::error!(
-                    "Failed to store recovery request to the public storage for request {}: {}",
+                )
+                .await;
+                if let Err(e) = &custodian_context_store_res {
+                    tracing::error!(
+                        "Failed to store custodian context to private storage for request {}: {}",
+                        req_id,
+                        e
+                    );
+                } else {
+                    log_storage_success(
+                        req_id,
+                        private_storage_guard.info(),
+                        &PrivDataType::CustodianInfo.to_string(),
+                        false,
+                        true,
+                    );
+                }
+                custodian_context_store_res.is_ok()
+            };
+            let pub_storage_future = async {
+                let recovery_store_result = store_versioned_at_request_id(
+                    &mut (*public_storage_guard),
                     req_id,
-                    e
-                );
-            } else {
-                log_storage_success(
-                    req_id,
-                    public_storage_guard.info(),
+                    &recovery_request,
                     &PubDataType::RecoveryRequest.to_string(),
-                    true,
-                    true,
-                );
-            }
-            let commit_store_result = store_versioned_at_request_id(
-                &mut (*public_storage_guard),
-                &req_id,
-                commitments,
-                &PubDataType::Commitments.to_string(),
-            )
-            .await;
-            if let Err(e) = &recovery_store_result {
-                tracing::error!(
-                    "Failed to store commitments to the public storage for request {}: {}",
+                )
+                .await;
+                if let Err(e) = &recovery_store_result {
+                    tracing::error!(
+                        "Failed to store recovery request to the public storage for request {}: {}",
+                        req_id,
+                        e
+                    );
+                } else {
+                    log_storage_success(
+                        req_id,
+                        public_storage_guard.info(),
+                        &PubDataType::RecoveryRequest.to_string(),
+                        true,
+                        true,
+                    );
+                }
+                let commit_store_result = store_versioned_at_request_id(
+                    &mut (*public_storage_guard),
                     req_id,
-                    e
-                );
-            } else {
-                log_storage_success(
-                    req_id,
-                    public_storage_guard.info(),
+                    &commitments,
                     &PubDataType::Commitments.to_string(),
-                    true,
-                    true,
-                );
-            }
-            recovery_store_result.is_ok() && commit_store_result.is_ok()
+                )
+                .await;
+                if let Err(e) = &recovery_store_result {
+                    tracing::error!(
+                        "Failed to store commitments to the public storage for request {}: {}",
+                        req_id,
+                        e
+                    );
+                } else {
+                    log_storage_success(
+                        req_id,
+                        public_storage_guard.info(),
+                        &PubDataType::Commitments.to_string(),
+                        true,
+                        true,
+                    );
+                }
+                recovery_store_result.is_ok() && commit_store_result.is_ok()
+            };
+            tokio::join!(priv_storage_future, pub_storage_future)
         };
-        let (priv_res, pub_res) = tokio::join!(priv_storage_future, pub_storage_future);
         {
             // Update meta store
             // First we insert the request ID
