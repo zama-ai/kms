@@ -182,6 +182,7 @@ async fn internal_receive_from_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
     session: &'a B,
     check_fn: &'a (dyn Fn(&Role, &'a B) -> anyhow::Result<bool> + Sync + Send + 'a),
 ) -> anyhow::Result<()> {
+    let deserialization_runtime = session.get_deserialization_runtime();
     for cur_sender in senders {
         // Ensure we want to receive from that sender (e.g. not from ourself or a malicious party)
         if check_fn(cur_sender, session)? {
@@ -197,7 +198,7 @@ async fn internal_receive_from_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
                             "Timed out with deadline {deadline:?} from {role_to_receive_from:?} : {e:?}"
                         )))
                     });
-                match NetworkValue::<Z>::from_network(received) {
+                match NetworkValue::<Z>::from_network(received,deserialization_runtime).await {
                     Ok(val) => (role_to_receive_from, val),
                     // We got an unexpected type of value from the network.
                     _ => (role_to_receive_from, NetworkValue::Bot),
@@ -255,6 +256,7 @@ pub async fn generic_receive_from_all_senders<V, Z: Ring, B: BaseSessionHandles>
 ) where
     V: std::marker::Send + 'static,
 {
+    let deserialization_runtime = session.get_deserialization_runtime();
     let binding = HashSet::new();
     let non_answering_parties = non_answering_parties.unwrap_or(&binding);
     for sender in senders {
@@ -267,11 +269,15 @@ pub async fn generic_receive_from_all_senders<V, Z: Ring, B: BaseSessionHandles>
                 let stripped_message = timeout_at(timeout, networking.receive(&sender)).await;
                 match stripped_message {
                     Ok(stripped_message) => {
-                        let stripped_message =
-                            match NetworkValue::<Z>::from_network(stripped_message) {
-                                Ok(x) => match_network_value_fn(x, &my_role),
-                                Err(e) => Err(e),
-                            };
+                        let stripped_message = match NetworkValue::<Z>::from_network(
+                            stripped_message,
+                            deserialization_runtime,
+                        )
+                        .await
+                        {
+                            Ok(x) => match_network_value_fn(x, &my_role),
+                            Err(e) => Err(e),
+                        };
                         Ok((sender, stripped_message))
                     }
                     Err(e) => {

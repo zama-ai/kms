@@ -33,7 +33,10 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        runtime::{party::Role, session::BaseSessionHandles},
+        runtime::{
+            party::Role,
+            session::{BaseSessionHandles, DeSerializationRunTime},
+        },
         sharing::{
             input::robust_input,
             shamir::{InputOp, ShamirSharings},
@@ -216,6 +219,8 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
 {
+    // Keys are big so we use rayon for (de)serialization
+    session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
     let own_role = session.my_role();
     let params_basic_handle = params.get_params_basics_handle();
 
@@ -662,6 +667,8 @@ async fn transfer_network_value<S: BaseSessionHandles>(
     network_value: Option<NetworkValue<Z128>>,
     input_party_id: usize,
 ) -> anyhow::Result<NetworkValue<Z128>> {
+    // We are transferring only big things here, so always pick rayon
+    let deserialization_runtime = DeSerializationRunTime::Rayon;
     session.network().increase_round_counter().await;
     if session.my_role().one_based() == input_party_id {
         // send the value
@@ -704,7 +711,7 @@ async fn transfer_network_value<S: BaseSessionHandles>(
         }))
         .await??;
 
-        Ok(NetworkValue::<Z128>::from_network(data)?)
+        Ok(NetworkValue::<Z128>::from_network(data, deserialization_runtime).await?)
     }
 }
 
