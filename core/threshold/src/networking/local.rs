@@ -341,7 +341,9 @@ struct LocalTaggedValue {
 #[cfg(test)]
 mod tests {
 
-    use crate::networking::value::NetworkValue;
+    use crate::{
+        execution::runtime::session::DeSerializationRunTime, networking::value::NetworkValue,
+    };
 
     use super::*;
     use std::num::Wrapping;
@@ -359,8 +361,15 @@ mod tests {
         let task1 = tokio::spawn(async move {
             let recv = net_bob.receive(&alice).await;
             assert_eq!(
-                bc2wrap::serialize(&NetworkValue::<Wrapping::<u64>>::from_network(recv).unwrap())
-                    .unwrap(),
+                bc2wrap::serialize(
+                    &NetworkValue::<Wrapping::<u64>>::from_network(
+                        recv,
+                        DeSerializationRunTime::Tokio
+                    )
+                    .await
+                    .unwrap()
+                )
+                .unwrap(),
                 bc2wrap::serialize(&NetworkValue::RingValue(Wrapping::<u64>(1234))).unwrap()
             );
         });
