@@ -23,6 +23,17 @@ use std::{
 
 pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
 
+/// Enum to decide where to run (de)serialization
+/// of MPC messages.
+/// Everything related to ddec should probably stay
+/// on Tokio as messages are small, but everything
+/// related to DKG should be sent to rayon
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum DeSerializationRunTime {
+    Tokio,
+    Rayon,
+}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionParameters {
     threshold: u8,
@@ -31,6 +42,7 @@ pub struct SessionParameters {
     my_role: Role,
     role_assignments: HashMap<Role, Identity>,
     all_sorted_roles: Vec<Role>,
+    deserialization_runtime: DeSerializationRunTime,
 }
 
 pub trait ParameterHandles: Sync + Send {
@@ -45,6 +57,8 @@ pub trait ParameterHandles: Sync + Send {
     fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>);
     fn to_parameters(&self) -> SessionParameters;
     fn get_all_sorted_roles(&self) -> &Vec<Role>;
+    fn get_deserialization_runtime(&self) -> DeSerializationRunTime;
+    fn set_deserialization_runtime(&mut self, serialization_runtime: DeSerializationRunTime);
 }
 
 fn role_from_role_assignments(
@@ -98,6 +112,7 @@ impl SessionParameters {
             my_role,
             role_assignments,
             all_sorted_roles,
+            deserialization_runtime: DeSerializationRunTime::Tokio,
         };
 
         Ok(res)
@@ -155,6 +170,14 @@ impl ParameterHandles for SessionParameters {
 
     fn get_all_sorted_roles(&self) -> &Vec<Role> {
         &self.all_sorted_roles
+    }
+
+    fn get_deserialization_runtime(&self) -> DeSerializationRunTime {
+        self.deserialization_runtime
+    }
+
+    fn set_deserialization_runtime(&mut self, serialization_runtime: DeSerializationRunTime) {
+        self.deserialization_runtime = serialization_runtime;
     }
 }
 
@@ -235,6 +258,15 @@ impl ParameterHandles for BaseSession {
 
     fn get_all_sorted_roles(&self) -> &Vec<Role> {
         self.parameters.get_all_sorted_roles()
+    }
+
+    fn get_deserialization_runtime(&self) -> DeSerializationRunTime {
+        self.parameters.get_deserialization_runtime()
+    }
+
+    fn set_deserialization_runtime(&mut self, serialization_runtime: DeSerializationRunTime) {
+        self.parameters
+            .set_deserialization_runtime(serialization_runtime);
     }
 }
 
@@ -356,6 +388,15 @@ impl<Z: Ring> ParameterHandles for SmallSession<Z> {
     fn get_all_sorted_roles(&self) -> &Vec<Role> {
         self.base_session.get_all_sorted_roles()
     }
+
+    fn get_deserialization_runtime(&self) -> DeSerializationRunTime {
+        self.base_session.get_deserialization_runtime()
+    }
+
+    fn set_deserialization_runtime(&mut self, serialization_runtime: DeSerializationRunTime) {
+        self.base_session
+            .set_deserialization_runtime(serialization_runtime);
+    }
 }
 
 impl<Z: Ring> BaseSessionHandles for SmallSession<Z> {
@@ -471,6 +512,15 @@ impl ParameterHandles for LargeSession {
 
     fn get_all_sorted_roles(&self) -> &Vec<Role> {
         self.base_session.get_all_sorted_roles()
+    }
+
+    fn get_deserialization_runtime(&self) -> DeSerializationRunTime {
+        self.base_session.get_deserialization_runtime()
+    }
+
+    fn set_deserialization_runtime(&mut self, serialization_runtime: DeSerializationRunTime) {
+        self.base_session
+            .set_deserialization_runtime(serialization_runtime);
     }
 }
 impl BaseSessionHandles for LargeSession {
