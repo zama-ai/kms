@@ -108,111 +108,114 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
         let mut guarded_meta_storage = meta_store.write().await;
-        // Lock the storage components in the correct order to avoid deadlocks.
-        let mut pub_storage = self.inner.public_storage.lock().await;
-        let mut priv_storage = self.inner.private_storage.lock().await;
-        let back_vault = match self.inner.backup_vault {
-            Some(ref x) => Some(x.lock().await),
-            None => None,
-        };
 
-        let f1 = async {
-            let store_result = store_versioned_at_request_id(
-                &mut (*priv_storage),
-                key_id,
-                &threshold_fhe_keys,
-                &PrivDataType::FheKeyInfo.to_string(),
-            )
-            .await;
+        let (r1, r2, r3) = {
+            // Lock the storage components in the correct order to avoid deadlocks.
+            let mut pub_storage = self.inner.public_storage.lock().await;
+            let mut priv_storage = self.inner.private_storage.lock().await;
+            let back_vault = match self.inner.backup_vault {
+                Some(ref x) => Some(x.lock().await),
+                None => None,
+            };
 
-            if let Err(e) = &store_result {
-                tracing::error!(
-                    "Failed to store threshold FHE keys to private storage for request {}: {}",
+            let f1 = async {
+                let store_result = store_versioned_at_request_id(
+                    &mut (*priv_storage),
                     key_id,
-                    e
-                );
-            } else {
-                log_storage_success(
-                    key_id,
-                    priv_storage.info(),
+                    &threshold_fhe_keys,
                     &PrivDataType::FheKeyInfo.to_string(),
-                    false,
-                    true,
-                );
-            }
-            store_result.is_ok()
-        };
-        let f2 = async {
-            let pk_result = store_pk_at_request_id(
-                &mut (*pub_storage),
-                key_id,
-                WrappedPublicKey::Compact(&fhe_key_set.public_key),
-            )
-            .await;
-            if let Err(e) = &pk_result {
-                tracing::error!("Failed to store public key for request {}: {}", key_id, e);
-            } else {
-                log_storage_success(
-                    key_id,
-                    pub_storage.info(),
-                    &PubDataType::PublicKey.to_string(),
-                    true,
-                    true,
-                );
-            }
-            let server_result = store_versioned_at_request_id(
-                &mut (*pub_storage),
-                key_id,
-                &fhe_key_set.server_key,
-                &PubDataType::ServerKey.to_string(),
-            )
-            .await;
+                )
+                .await;
 
-            if let Err(e) = &server_result {
-                tracing::error!("Failed to store server key for request {}: {}", key_id, e);
-            } else {
-                log_storage_success(
-                    key_id,
-                    pub_storage.info(),
-                    &PubDataType::ServerKey.to_string(),
-                    true,
-                    true,
-                );
-            }
-            pk_result.is_ok() && server_result.is_ok()
-        };
-        let threshold_key_clone = threshold_fhe_keys.clone();
-        let f3 = async move {
-            match back_vault {
-                Some(mut guarded_backup_vault) => {
-                    let backup_result = store_versioned_at_request_id(
-                        &mut (*guarded_backup_vault),
+                if let Err(e) = &store_result {
+                    tracing::error!(
+                        "Failed to store threshold FHE keys to private storage for request {}: {}",
                         key_id,
-                        &threshold_key_clone,
-                        &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
-                    )
-                    .await;
+                        e
+                    );
+                } else {
+                    log_storage_success(
+                        key_id,
+                        priv_storage.info(),
+                        &PrivDataType::FheKeyInfo.to_string(),
+                        false,
+                        true,
+                    );
+                }
+                store_result.is_ok()
+            };
+            let f2 = async {
+                let pk_result = store_pk_at_request_id(
+                    &mut (*pub_storage),
+                    key_id,
+                    WrappedPublicKey::Compact(&fhe_key_set.public_key),
+                )
+                .await;
+                if let Err(e) = &pk_result {
+                    tracing::error!("Failed to store public key for request {}: {}", key_id, e);
+                } else {
+                    log_storage_success(
+                        key_id,
+                        pub_storage.info(),
+                        &PubDataType::PublicKey.to_string(),
+                        true,
+                        true,
+                    );
+                }
+                let server_result = store_versioned_at_request_id(
+                    &mut (*pub_storage),
+                    key_id,
+                    &fhe_key_set.server_key,
+                    &PubDataType::ServerKey.to_string(),
+                )
+                .await;
 
-                    if let Err(e) = &backup_result {
-                        tracing::error!("Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}");
-                    } else {
-                        log_storage_success(
+                if let Err(e) = &server_result {
+                    tracing::error!("Failed to store server key for request {}: {}", key_id, e);
+                } else {
+                    log_storage_success(
+                        key_id,
+                        pub_storage.info(),
+                        &PubDataType::ServerKey.to_string(),
+                        true,
+                        true,
+                    );
+                }
+                pk_result.is_ok() && server_result.is_ok()
+            };
+            let threshold_key_clone = threshold_fhe_keys.clone();
+            let f3 = async move {
+                match back_vault {
+                    Some(mut guarded_backup_vault) => {
+                        let backup_result = store_versioned_at_request_id(
+                            &mut (*guarded_backup_vault),
                             key_id,
-                            guarded_backup_vault.info(),
+                            &threshold_key_clone,
                             &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
-                            false,
-                            true,
-                        );
+                        )
+                        .await;
+
+                        if let Err(e) = &backup_result {
+                            tracing::error!("Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}");
+                        } else {
+                            log_storage_success(
+                                key_id,
+                                guarded_backup_vault.info(),
+                                &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
+                                false,
+                                true,
+                            );
+                        }
+                        backup_result.is_ok()
                     }
-                    backup_result.is_ok()
+                    None => {
+                        tracing::warn!("No backup vault configured. Skipping backup of key material for request {key_id}");
+                        true
+                    }
                 }
-                None => {
-                    tracing::warn!("No backup vault configured. Skipping backup of key material for request {key_id}");
-                    true
-                }
-            }
+            };
+            tokio::join!(f1, f2, f3)
         };
-        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
         // Try to store the new data
         tracing::info!("Storing DKG objects for key ID {}", key_id);
 
