@@ -36,6 +36,7 @@ impl Client {
             max_num_bits,
             request_id: Some((*request_id).into()),
             domain: Some(alloy_to_protobuf_domain(&eip712_domain)?),
+            context_id: None,
         })
     }
 

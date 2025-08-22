@@ -22,11 +22,16 @@ use tonic_health::server::HealthReporter;
 
 // === Internal Crate ===
 use crate::{
+    conf::threshold::ThresholdPartyConf,
     engine::{
         base::derive_request_id,
-        threshold::{service::session::{SessionPreparer, DEFAULT_CONTEXT_ID_ARR}, traits::Initiator},
+        threshold::{
+            service::session::{SessionPreparer, DEFAULT_CONTEXT_ID_ARR},
+            traits::Initiator,
+        },
         validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
+    tonic_some_or_err,
     vault::storage::{read_versioned_at_request_id, store_versioned_at_request_id, Storage},
 };
 
@@ -150,8 +155,7 @@ impl<
         let session_id = req_id.derive_session_id()?;
 
         // PRSS robust init requires broadcast, which is implemented with Sync network assumption
-        let mut base_session = self
-            .session_preparer
+        let mut base_session = session_preparer
             .make_base_session(session_id, NetworkMode::Sync)
             .await?;
 
@@ -506,8 +510,25 @@ mod tests {
 
     #[tokio::test]
     async fn already_exists() {
-        let session_preparer = SessionPreparer::new_test_session(false);
-        let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(session_preparer);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(None)),
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+
+        let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(
+            base_kms,
+            session_preparer_manager,
+        );
 
         let mut rng = AesRng::seed_from_u64(42);
         let req_id = RequestId::new_random(&mut rng);

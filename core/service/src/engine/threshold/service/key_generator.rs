@@ -400,7 +400,7 @@ impl<
                 |e| {
                     tonic::Status::new(
                         tonic::Code::InvalidArgument,
-                        format!("Failed to parse KeySetConfig: {}", e),
+                        format!("Failed to parse KeySetConfig: {e}"),
                     )
                 },
             )?;
@@ -411,7 +411,7 @@ impl<
             if guarded_meta_store.exists(&request_id) {
                 return Err(tonic::Status::new(
                     tonic::Code::AlreadyExists,
-                    format!("Request ID {} already exists for keygen", request_id),
+                    format!("Request ID {request_id} already exists for keygen"),
                 ));
             }
         }
@@ -446,7 +446,17 @@ impl<
                 preproc_handle,
                 request_id,
                 &eip712_domain,
-                inner.context_id.as_ref().map(|id| id.into()),
+                inner
+                    .context_id
+                    .as_ref()
+                    .map(|id| id.try_into())
+                    .transpose()
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::InvalidArgument,
+                            format!("invalid context id: {e}"),
+                        )
+                    })?,
                 permit,
             )
             .await,
@@ -1467,6 +1477,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
 
             assert_eq!(
@@ -1494,6 +1505,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
 
             assert_eq!(
@@ -1517,6 +1529,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: Some(keyset_config),
                 keyset_added_info: None,
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
 
             assert_eq!(
@@ -1575,6 +1588,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
 
             assert_eq!(
@@ -1648,6 +1662,7 @@ mod tests {
             domain: Some(domain.clone()),
             keyset_config: None,
             keyset_added_info: None,
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
 
         kg.key_gen(tonic::Request::new(request0)).await.unwrap();
@@ -1661,6 +1676,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
         assert_eq!(
             kg.key_gen(tonic::Request::new(request1))

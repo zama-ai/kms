@@ -67,7 +67,7 @@ pub(crate) enum RequestIdParsingErr {
 impl std::fmt::Display for RequestIdParsingErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RequestIdParsingErr::Other(msg) => write!(f, "Other request ID error: {}", msg),
+            RequestIdParsingErr::Other(msg) => write!(f, "Other request ID error: {msg}"),
             RequestIdParsingErr::Context => write!(f, "Invalid context ID"),
             RequestIdParsingErr::Init => write!(f, "Invalid init ID"),
 
@@ -113,7 +113,7 @@ pub(crate) fn parse_optional_proto_request_id(
         .clone()
         .ok_or(BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,
-            format!("{}: {request_id:?}", id_type),
+            format!("{id_type}: {request_id:?}"),
         )))?;
 
     parse_proto_request_id(&req_id, id_type)
@@ -126,7 +126,7 @@ pub(crate) fn parse_proto_request_id(
     request_id.try_into().map_err(|_| {
         BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,
-            format!("{}: {request_id:?}", id_type),
+            format!("{id_type}: {request_id:?}"),
         ))
     })
 }
