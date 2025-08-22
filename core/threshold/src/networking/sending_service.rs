@@ -33,7 +33,7 @@ use crate::{
 
 #[cfg(feature = "choreographer")]
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
-use super::grpc::{CoreToCoreNetworkConfig, MessageQueueStore, OptionConfigWrapper};
+use super::grpc::{MessageQueueStore, OptionConfigWrapper};
 use super::{NetworkMode, Networking};
 use crate::thread_handles::ThreadHandleGroup;
 
@@ -280,12 +280,15 @@ impl SendingService for GrpcSendingService {
     }
 
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
-    fn add_connection(&self, other: Role) -> anyhow::Result<UnboundedSender<SendValueRequest>> {
+    async fn add_connection(
+        &self,
+        other: Role,
+    ) -> anyhow::Result<UnboundedSender<SendValueRequest>> {
         // 1. Create channel first (no allocation issues)
         let (sender, receiver) = unbounded_channel::<SendValueRequest>();
 
         // 2. Connect to party (can fail, so do before any spawning)
-        let network_channel = self.connect_to_party(other.clone()).await?;
+        let network_channel = self.connect_to_party(other).await?;
 
         // 3. Configurable backoff with initial_interval from config
         let exponential_backoff = ExponentialBackoff::<SystemClock> {
@@ -317,7 +320,7 @@ impl SendingService for GrpcSendingService {
         let mut result = HashMap::with_capacity(others.len());
 
         for other in others {
-            match self.add_connection(other.clone()).await {
+            match self.add_connection(other).await {
                 Ok(sender) => {
                     result.insert(other, sender);
                 }
@@ -419,16 +422,13 @@ impl Networking for NetworkSession {
         // Lock the counter to ensure no modifications happens while receiving
         // This may cause an error if someone tries to increase the round counter at the same time
         // however, this would imply incorrect use of the networking API and thus we want to fail fast.
-        let counter_lock = self
-            .round_counter
-            .read()
-            .await;
+        let counter_lock = self.round_counter.read().await;
         let rx = self.receiving_channels.get(sender).ok_or_else(|| {
             anyhow_error_and_log(format!(
                 "couldn't retrieve receiving channel for P:{sender:?}"
             ))
         })?;
-        let mut rx = rx.value().2.lock().await;
+        let mut rx = rx.value().1.lock().await;
 
         tracing::debug!("Waiting to receive from {:?}", sender);
 
@@ -589,7 +589,7 @@ mod tests {
             let networking_1 =
                 GrpcNetworkingManager::new(role, None, None, false, role_assignment.clone())
                     .unwrap();
-            let networking_server_1 = networking_1.new_server();
+            let networking_server_1 = networking_1.new_server(TlsExtensionGetter::default());
             let network_stack_1 = networking_1
                 .make_session(
                     sid,
@@ -602,8 +602,6 @@ mod tests {
             handles.add(std::thread::spawn(move || {
                 let runtime = tokio::runtime::Runtime::new().unwrap();
                 let _guard = runtime.enter();
-                let networking = GrpcNetworkingManager::new(id.clone(), None, None).unwrap();
-                let networking_server = networking.new_server(TlsExtensionGetter::default());
 
                 let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(3));
 
@@ -618,14 +616,6 @@ mod tests {
                 tokio::spawn(async move {
                     let _res = futures::join!(core_future);
                 });
-
-                let network_stack = networking
-                    .make_session(
-                        sid,
-                        role_assignment.clone(),
-                        crate::networking::NetworkMode::Sync,
-                    )
-                    .unwrap();
 
                 let (send, recv) = tokio::sync::oneshot::channel();
                 if role.one_based() == 1 {
@@ -653,7 +643,7 @@ mod tests {
 
         let networking_2 =
             GrpcNetworkingManager::new(role_2, None, None, false, role_assignment.clone()).unwrap();
-        let networking_server_2 = networking_2.new_server();
+        let networking_server_2 = networking_2.new_server(TlsExtensionGetter::default());
         let network_stack_2 = networking_2
             .make_session(
                 sid,
@@ -668,8 +658,6 @@ mod tests {
             std::thread::sleep(Duration::from_secs(5));
             let runtime = tokio::runtime::Runtime::new().unwrap();
             let _guard = runtime.enter();
-            let networking = GrpcNetworkingManager::new(id.clone(), None, None).unwrap();
-            let networking_server = networking.new_server(TlsExtensionGetter::default());
 
             let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(3));
 
@@ -685,14 +673,6 @@ mod tests {
                 println!("Spinning up second server");
                 let _res = futures::join!(core_future);
             });
-
-            let network_stack = networking
-                .make_session(
-                    sid,
-                    role_assignment.clone(),
-                    crate::networking::NetworkMode::Sync,
-                )
-                .unwrap();
 
             let (send, recv) = tokio::sync::oneshot::channel();
             tokio::spawn(async move {

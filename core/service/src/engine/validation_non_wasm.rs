@@ -1441,6 +1441,7 @@ mod tests {
                 ),
                 domain: None,
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,

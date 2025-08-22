@@ -50,11 +50,9 @@ use itertools::Itertools;
 #[cfg(any(test, feature = "testing"))]
 use rand::SeedableRng;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::Wrapping;
 use std::ops::Mul;
-#[cfg(any(test, feature = "testing"))]
-use std::sync::Arc;
 use tfhe::core_crypto::prelude::{keyswitch_lwe_ciphertext, LweCiphertext, LweKeyswitchKey};
 use tfhe::integer::noise_squashing::NoiseSquashingKey;
 use tfhe::integer::ServerKey;
@@ -729,8 +727,9 @@ where
         runtime,
         ct,
         mode,
-        &[],
+        HashSet::new(),
     )
+    .await
 }
 
 /// Test the threshold decryption for a given 64-bit TFHE-rs ciphertext
@@ -741,7 +740,7 @@ where
 /// The malicious set is a list of party indices (starting at 0)
 /// that will run (potentially) decryption protocol defined by the MalDec trait.
 #[cfg(any(test, feature = "testing"))]
-fn threshold_decrypt64_maybe_malicious<
+async fn threshold_decrypt64_maybe_malicious<
     Z: Ring,
     MalDec: OnlineNoiseFloodDecryption<EXTENSION_DEGREE>,
     const EXTENSION_DEGREE: usize,
@@ -749,8 +748,8 @@ fn threshold_decrypt64_maybe_malicious<
     runtime: &DistributedTestRuntime<Z, EXTENSION_DEGREE>,
     ct: &RadixOrBoolCiphertext,
     mode: DecryptionMode,
-    malicious_set: &[usize],
-) -> anyhow::Result<HashMap<Identity, Z64>>
+    malicious_set: HashSet<Role>,
+) -> anyhow::Result<HashMap<Role, Z64>>
 where
     ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
     ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -785,7 +784,7 @@ where
         let net = runtime.user_nets[&role].clone();
         let threshold = runtime.threshold;
         let ct = ct.clone();
-        let malicious_set = malicious_set.to_vec();
+        let malicious_set = malicious_set.clone();
 
         let party_keyshare = runtime
             .keyshares
@@ -819,7 +818,7 @@ where
                         .init_prep_noiseflooding(ct.len())
                         .await
                         .unwrap();
-                    let out = if malicious_set.contains(&index_id) {
+                    let out = if malicious_set.contains(&role) {
                         run_decryption_noiseflood_64::<EXTENSION_DEGREE, _, _, MalDec>(
                             session_noiseflood.session.get_mut(),
                             &mut noiseflood_preprocessing,
@@ -858,7 +857,7 @@ where
                         .init_prep_noiseflooding(ct.len())
                         .await
                         .unwrap();
-                    let out = if malicious_set.contains(&index_id) {
+                    let out = if malicious_set.contains(&role) {
                         run_decryption_noiseflood_64::<EXTENSION_DEGREE, _, _, MalDec>(
                             session_noiseflood.session.get_mut(),
                             &mut noiseflood_preprocessing,
@@ -895,7 +894,7 @@ where
                     let mut prep = secure_init_prep_bitdec_large_session(&mut session, ct.len())
                         .await
                         .unwrap();
-                    let out = if malicious_set.contains(&index_id) {
+                    let out = if malicious_set.contains(&role) {
                         unimplemented!("malicious unimplemented")
                     } else {
                         run_decryption_bitdec_64(
@@ -921,7 +920,7 @@ where
                     let mut prep = secure_init_prep_bitdec_small_session(&mut session, ct.len())
                         .await
                         .unwrap();
-                    let out = if malicious_set.contains(&index_id) {
+                    let out = if malicious_set.contains(&role) {
                         unimplemented!("malicious unimplemented")
                     } else {
                         run_decryption_bitdec_64(
@@ -1295,7 +1294,7 @@ mod tests {
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;
-    use std::sync::Arc;
+    use std::{collections::HashSet, sync::Arc};
     use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
     use tfhe::{prelude::FheEncrypt, FheUint8};
 
@@ -1339,43 +1338,43 @@ mod tests {
 
     #[tokio::test]
     async fn test_large_threshold_decrypt_f4() {
-        test_large_threshold_decrypt::<4>(1, 5, &[]).await
+        test_large_threshold_decrypt::<4>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test]
     async fn test_large_threshold_decrypt_f3() {
-        test_large_threshold_decrypt::<3>(1, 5, &[]).await
+        test_large_threshold_decrypt::<3>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_5")]
     #[tokio::test]
     async fn test_large_threshold_decrypt_f5() {
-        test_large_threshold_decrypt::<5>(1, 5, &[]).await
+        test_large_threshold_decrypt::<5>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_6")]
     #[tokio::test]
     async fn test_large_threshold_decrypt_f6() {
-        test_large_threshold_decrypt::<6>(1, 5, &[]).await
+        test_large_threshold_decrypt::<6>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_7")]
     #[tokio::test]
     async fn test_large_threshold_decrypt_f7() {
-        test_large_threshold_decrypt::<7>(1, 5, &[]).await
+        test_large_threshold_decrypt::<7>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_8")]
     #[tokio::test]
     async fn test_large_threshold_decrypt_f8() {
-        test_large_threshold_decrypt::<8>(1, 5, &[]).await
+        test_large_threshold_decrypt::<8>(1, 5, HashSet::new()).await
     }
 
     async fn test_large_threshold_decrypt<const EXTENSION_DEGREE: usize>(
         threshold: usize,
         num_parties: usize,
-        malicious_set: &[usize],
+        malicious_set: HashSet<Role>,
     ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -1410,8 +1409,9 @@ mod tests {
             &runtime,
             &ct,
             DecryptionMode::NoiseFloodLarge,
-            malicious_set,
+            malicious_set.clone(),
         )
+        .await
         .unwrap();
         assert!(!malicious_set.contains(&Role::indexed_from_one(1)));
         let out_dec = &results_dec[&Role::indexed_from_one(1)];
@@ -1422,48 +1422,48 @@ mod tests {
 
     #[tokio::test]
     async fn test_small_threshold_decrypt_f4() {
-        test_small_threshold_decrypt::<4>(1, 4, &[]).await
+        test_small_threshold_decrypt::<4>(1, 4, HashSet::new()).await
     }
 
     #[tokio::test]
     async fn test_small_threshold_decrypt_malicious_f4() {
-        test_small_threshold_decrypt::<4>(1, 4, &[1]).await
+        test_small_threshold_decrypt::<4>(1, 4, HashSet::from([Role::indexed_from_one(1)])).await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test]
     async fn test_small_threshold_decrypt_f3() {
-        test_small_threshold_decrypt::<3>(1, 4, &[]).await
+        test_small_threshold_decrypt::<3>(1, 4, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_5")]
     #[tokio::test]
     async fn test_small_threshold_decrypt_f5() {
-        test_small_threshold_decrypt::<5>(1, 4, &[]).await
+        test_small_threshold_decrypt::<5>(1, 4, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_6")]
     #[tokio::test]
     async fn test_small_threshold_decrypt_f6() {
-        test_small_threshold_decrypt::<6>(1, 4, &[]).await
+        test_small_threshold_decrypt::<6>(1, 4, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_7")]
     #[tokio::test]
     async fn test_small_threshold_decrypt_f7() {
-        test_small_threshold_decrypt::<7>(1, 4, &[]).await
+        test_small_threshold_decrypt::<7>(1, 4, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_8")]
     #[tokio::test]
     async fn test_small_threshold_decrypt_f8() {
-        test_small_threshold_decrypt::<8>(1, 4, &[]).await
+        test_small_threshold_decrypt::<8>(1, 4, HashSet::new()).await
     }
 
     async fn test_small_threshold_decrypt<const EXTENSION_DEGREE: usize>(
         threshold: usize,
         num_parties: usize,
-        malicious_set: &[u&Role::indexed_from_one(1)size],
+        malicious_set: HashSet<Role>,
     ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -1498,8 +1498,9 @@ mod tests {
             &runtime,
             &ct,
             DecryptionMode::NoiseFloodSmall,
-            malicious_set,
+            malicious_set.clone(),
         )
+        .await
         .unwrap();
         assert!(!malicious_set.contains(&Role::indexed_from_one(1)));
         let out_dec = &results_dec[&Role::indexed_from_one(1)];
@@ -1510,43 +1511,43 @@ mod tests {
 
     #[tokio::test]
     async fn test_small_bitdec_threshold_decrypt_f4() {
-        test_small_bitdec_threshold_decrypt::<4>(1, 5, &[]).await
+        test_small_bitdec_threshold_decrypt::<4>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test]
     async fn test_small_bitdec_threshold_decrypt_f3() {
-        test_small_bitdec_threshold_decrypt::<3>(1, 5, &[]).await
+        test_small_bitdec_threshold_decrypt::<3>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_5")]
     #[tokio::test]
     async fn test_small_bitdec_threshold_decrypt_f5() {
-        test_small_bitdec_threshold_decrypt::<5>(1, 5, &[]).await
+        test_small_bitdec_threshold_decrypt::<5>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_6")]
     #[tokio::test]
     async fn test_small_bitdec_threshold_decrypt_f6() {
-        test_small_bitdec_threshold_decrypt::<6>(1, 5, &[]).await
+        test_small_bitdec_threshold_decrypt::<6>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_7")]
     #[tokio::test]
     async fn test_small_bitdec_threshold_decrypt_f7() {
-        test_small_bitdec_threshold_decrypt::<7>(1, 5, &[]).await
+        test_small_bitdec_threshold_decrypt::<7>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_8")]
     #[tokio::test]
     async fn test_small_bitdec_threshold_decrypt_f8() {
-        test_small_bitdec_threshold_decrypt::<8>(1, 5, &[]).await
+        test_small_bitdec_threshold_decrypt::<8>(1, 5, HashSet::new()).await
     }
 
     async fn test_small_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>(
         threshold: usize,
         num_parties: usize,
-        malicious_set: &[usize],
+        malicious_set: HashSet<Role>,
     ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -1593,7 +1594,13 @@ mod tests {
             _,
             DroppingOnlineNoiseFloodDecryption,
             EXTENSION_DEGREE,
-        >(&runtime, &ct, DecryptionMode::BitDecSmall, malicious_set)
+        >(
+            &runtime,
+            &ct,
+            DecryptionMode::BitDecSmall,
+            malicious_set.clone(),
+        )
+        .await
         .unwrap();
         assert!(!malicious_set.contains(&Role::indexed_from_one(1)));
         let out_dec = &results_dec[&Role::indexed_from_one(1)];
@@ -1604,43 +1611,43 @@ mod tests {
 
     #[tokio::test]
     async fn test_large_bitdec_threshold_decrypt_f4() {
-        test_large_bitdec_threshold_decrypt::<4>(1, 5, &[]).await
+        test_large_bitdec_threshold_decrypt::<4>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test]
     async fn test_large_bitdec_threshold_decrypt_f3() {
-        test_large_bitdec_threshold_decrypt::<3>(1, 5, &[]).await
+        test_large_bitdec_threshold_decrypt::<3>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_5")]
     #[tokio::test]
     async fn test_large_bitdec_threshold_decrypt_f5() {
-        test_large_bitdec_threshold_decrypt::<5>(1, 5, &[]).await
+        test_large_bitdec_threshold_decrypt::<5>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_6")]
     #[tokio::test]
     async fn test_large_bitdec_threshold_decrypt_f6() {
-        test_large_bitdec_threshold_decrypt::<6>(1, 5, &[]).await
+        test_large_bitdec_threshold_decrypt::<6>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_7")]
     #[tokio::test]
     async fn test_large_bitdec_threshold_decrypt_f7() {
-        test_large_bitdec_threshold_decrypt::<7>(1, 5, &[]).await
+        test_large_bitdec_threshold_decrypt::<7>(1, 5, HashSet::new()).await
     }
 
     #[cfg(feature = "extension_degree_8")]
     #[tokio::test]
     async fn test_large_bitdec_threshold_decrypt_f8() {
-        test_large_bitdec_threshold_decrypt::<8>(1, 5, &[]).await
+        test_large_bitdec_threshold_decrypt::<8>(1, 5, HashSet::new()).await
     }
 
     async fn test_large_bitdec_threshold_decrypt<const EXTENSION_DEGREE: usize>(
         threshold: usize,
         num_parties: usize,
-        malicious_set: &[usize],
+        malicious_set: HashSet<Role>,
     ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
@@ -1687,7 +1694,13 @@ mod tests {
             _,
             DroppingOnlineNoiseFloodDecryption,
             EXTENSION_DEGREE,
-        >(&runtime, &ct, DecryptionMode::BitDecLarge, malicious_set)
+        >(
+            &runtime,
+            &ct,
+            DecryptionMode::BitDecLarge,
+            malicious_set.clone(),
+        )
+        .await
         .unwrap();
         assert!(!malicious_set.contains(&Role::indexed_from_one(1)));
         let out_dec = &results_dec[&Role::indexed_from_one(1)];

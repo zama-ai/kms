@@ -21,16 +21,12 @@ use threshold_fhe::{
             create_memory_factory, create_redis_factory,
             orchestration::producer_traits::SecureSmallProducerFactory, DKGPreprocessing,
         },
-        runtime::party::{Role, RoleAssignment},
+        runtime::party::Role,
         small_execution::prss::RobustSecurePrssInit,
         tfhe_internals::{private_keysets::PrivateKeySet, public_keysets::FhePubKeySet},
         zk::ceremony::SecureCeremony,
     },
-    networking::{
-        grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
-        Networking, NetworkingStrategy,
-    },
-    networking::grpc::{GrpcNetworkingManager, GrpcServer},
+    networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
 };
 use tokio::{
     net::TcpListener,
@@ -52,10 +48,10 @@ use crate::{
         base::{compute_info, BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY},
         prepare_shutdown_signals,
         threshold::{
-            generic::GenericKms,
             service::public_decryptor::SecureNoiseFloodDecryptor,
             service::session::{SessionPreparer, SessionPreparerManager, DEFAULT_CONTEXT_ID_ARR},
-            service::user_decryptor::SecureNoiseFloodPartialDecryptor, threshold_kms::ThresholdKms,
+            service::user_decryptor::SecureNoiseFloodPartialDecryptor,
+            threshold_kms::ThresholdKms,
         },
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
@@ -77,7 +73,7 @@ use super::{
     backup_operator::RealBackupOperator, context_manager::RealContextManager,
     crs_generator::RealCrsGenerator, initiator::RealInitiator, key_generator::RealKeyGenerator,
     preprocessor::RealPreprocessor, public_decryptor::RealPublicDecryptor,
-    session::SessionPreparer, user_decryptor::RealUserDecryptor,
+    user_decryptor::RealUserDecryptor,
 };
 
 // === Insecure Feature-Specific Imports ===
@@ -200,11 +196,12 @@ pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
 >;
 
 #[allow(clippy::too_many_arguments)]
-pub async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
+pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     config: ThresholdPartyConf,
     public_storage: PubS,
     private_storage: PrivS,
-    backup_storage: Option<BackS>,
+    backup_storage: Option<Vault>,
+    security_module: Option<SecurityModuleProxy>,
     mpc_listener: TcpListener,
     sk: PrivateSigKey,
     tls_config: Option<(ServerConfig, ClientConfig)>,
@@ -220,7 +217,6 @@ pub async fn new_real_threshold_kms<PubS, PrivS, BackS, F>(
 where
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
-    BackS: Storage + Send + Sync + 'static,
     F: std::future::Future<Output = ()> + Send + 'static,
 {
     // load keys from storage
@@ -259,7 +255,10 @@ where
         tonic_health::server::health_reporter();
 
     let manager_clone = Arc::clone(&networking_manager);
-    let networking_server = networking_manager.write().await.new_server(TlsExtensionGetter::SslConnectInfo);
+    let networking_server = networking_manager
+        .write()
+        .await
+        .new_server(TlsExtensionGetter::SslConnectInfo);
     let router = Server::builder()
         .http2_adaptive_window(Some(true))
         .add_service(networking_server)

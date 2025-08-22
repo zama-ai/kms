@@ -163,7 +163,7 @@ where
 
 /// Generate the Key Switch Key from a Glwe key given in Lwe format,
 /// and an actual Lwe key
-#[instrument(name="Gen KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_key_switch_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -196,7 +196,7 @@ where
 
 /// Generate the Key Switch Key from a Glwe key given in Lwe format,
 /// and an actual Lwe key
-#[instrument(name="Gen compressed KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen compressed KSK",skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_compressed_key_switch_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,

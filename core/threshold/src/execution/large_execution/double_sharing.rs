@@ -246,7 +246,10 @@ pub(crate) mod tests {
         tests::helper::tests_and_benches::execute_protocol_large,
     };
 
-    async fn test_doublesharing<Z: ErrorCorrect + Derive + Invert, const EXTENSION_DEGREE: usize>(
+    async fn test_doublesharing<
+        Z: ErrorCorrect + Derive + Invert,
+        const EXTENSION_DEGREE: usize,
+    >(
         parties: usize,
         threshold: usize,
     ) {

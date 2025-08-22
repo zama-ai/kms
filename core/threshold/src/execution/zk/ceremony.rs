@@ -909,7 +909,7 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                                     // The rayon threadpool is used again (see comment above).
                                     let (send, recv) = tokio::sync::oneshot::channel();
                                     rayon::spawn_fifo(move || {
-                                        let res = verify_proof(&pp, &proof, round as u64, sid);
+                                        let res = verify_proof(&pp, &proof, round, sid);
                                         let _ = send.send((res, pp));
                                     });
                                     let (ver, pp_tmp) = recv.await?;

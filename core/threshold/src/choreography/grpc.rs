@@ -90,7 +90,10 @@ use std::sync::{Arc, Mutex};
 use tfhe::core_crypto::prelude::LweKeyswitchKey;
 use tfhe::integer::ServerKey;
 use tfhe::shortint::atomic_pattern::AtomicPatternServerKey;
-use tokio::{sync::RwLock, task::{JoinHandle, JoinSet}};
+use tokio::{
+    sync::RwLock,
+    task::{JoinHandle, JoinSet},
+};
 use tracing::{instrument, Instrument};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, ValueEnum, Serialize, Deserialize)]

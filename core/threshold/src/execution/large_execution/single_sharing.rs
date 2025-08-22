@@ -226,7 +226,10 @@ pub(crate) mod tests {
     #[cfg(feature = "extension_degree_8")]
     use std::num::Wrapping;
 
-    async fn test_singlesharing<Z: Derive + ErrorCorrect + Invert, const EXTENSION_DEGREE: usize>(
+    async fn test_singlesharing<
+        Z: Derive + ErrorCorrect + Invert,
+        const EXTENSION_DEGREE: usize,
+    >(
         parties: usize,
         threshold: usize,
     ) {

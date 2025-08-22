@@ -211,7 +211,7 @@ pub struct SecureOnlineDistributedKeyGen<Z: BaseRing, const EXTENSION_DEGREE: us
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTENSION_DEGREE>
     for SecureOnlineDistributedKeyGen<Z, EXTENSION_DEGREE>
 {
-    #[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+    #[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
     #[allow(private_bounds)]
     async fn keygen<
         S: BaseSessionHandles,
@@ -251,7 +251,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         ))
     }
 
-    #[instrument(name="TFHE.Threshold-CompressedKeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+    #[instrument(name="TFHE.Threshold-CompressedKeyGen", skip(session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
     #[allow(private_bounds)]
     async fn compressed_keygen<
         S: BaseSessionHandles,
@@ -685,7 +685,7 @@ where
 
     //Computing and opening BK can take a while, so we increase the timeout
     //(in theory we should be in async setting here anyway)
-    session.network().set_timeout_for_bk()?;
+    session.network().set_timeout_for_bk().await;
     //Compute the bootstrapping keys
     let bk = generate_compressed_bootstrap_key(
         &glwe_secret_key_share,
@@ -711,7 +711,7 @@ where
 
             //Computing and opening BK SNS can take a while, so we increase the timeout
             //(in theory we should be in async setting here anyway)
-            session.network().set_timeout_for_bk_sns()?;
+            session.network().set_timeout_for_bk_sns().await;
 
             tracing::info!("(Party {my_role}) Generating SnS GLWE...Done");
             let bk_sns = generate_compressed_bootstrap_key(
@@ -917,7 +917,7 @@ where
 
 /// NOTE: When we generate a standalone CompressedDecompressionKey via this fn, it needs to be decompressed
 /// using the decompression function WE provide [`decompressed_compressed_standalone_decompression_key_from_xof`], not the one from the TFHE-rs library.
-#[instrument(name="Gen compressed Decompression Key Z128", skip(private_glwe_compute_key, private_compression_key, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen compressed Decompression Key Z128", skip(private_glwe_compute_key, private_compression_key, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn distributed_compressed_decompression_keygen_z128<
     S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
@@ -976,7 +976,7 @@ pub fn decompress_compressed_standalone_decompression_key_from_xof(
     (decompressed_key, count)
 }
 
-#[instrument(name="Gen sns compression Key Z128", skip(glwe_secret_key_share_sns_as_lwe, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen sns compression Key Z128", skip(glwe_secret_key_share_sns_as_lwe, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn distributed_sns_compression_keygen_z128<
     S: BaseSessionHandles,
     P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
@@ -1157,7 +1157,8 @@ pub mod tests {
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
@@ -1196,7 +1197,8 @@ pub mod tests {
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
@@ -1235,7 +1237,8 @@ pub mod tests {
                 run_fheuint: false,
                 run_fheuint_with_compression: false,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
@@ -1274,7 +1277,8 @@ pub mod tests {
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
@@ -1313,7 +1317,8 @@ pub mod tests {
                 run_fheuint: false,
                 run_fheuint_with_compression: false,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
@@ -1351,7 +1356,8 @@ pub mod tests {
                 run_fheuint: true,
                 run_fheuint_with_compression: true,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "slow_tests")]
@@ -1398,7 +1404,8 @@ pub mod tests {
             temp_dir.path(),
             keyset_config,
             false,
-        ).await;
+        )
+        .await;
 
         run_switch_and_squash(
             temp_dir.path(),
@@ -1459,7 +1466,8 @@ pub mod tests {
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
@@ -1498,7 +1506,8 @@ pub mod tests {
                 run_fheuint: false,
                 run_fheuint_with_compression: false,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "extension_degree_8")]
@@ -1537,27 +1546,30 @@ pub mod tests {
                 run_fheuint: true,
                 run_fheuint_with_compression: true,
             },
-        );
+        )
+        .await
     }
 
     #[cfg(feature = "slow_tests")]
-    #[test]
-    fn decompression_keygen_f4() {
+    #[tokio::test]
+    async fn decompression_keygen_f4() {
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
         run_real_decompression_dkg_and_save::<4>(params, num_parties, threshold, temp_dir.path())
+            .await
     }
 
     #[cfg(feature = "slow_tests")]
-    #[test]
-    fn sns_compression_keygen_f4() {
+    #[tokio::test]
+    async fn sns_compression_keygen_f4() {
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
         let threshold = 1;
         let temp_dir = tempfile::tempdir().unwrap();
         run_real_sns_compression_dkg_and_save::<4>(params, num_parties, threshold, temp_dir.path())
+            .await
     }
 
     struct KeygenTestConfig {
@@ -1567,7 +1579,7 @@ pub mod tests {
         run_fheuint_with_compression: bool,
     }
 
-    fn run_keygen_test<const EXTENSION_DEGREE: usize>(
+    async fn run_keygen_test<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
@@ -1578,7 +1590,7 @@ pub mod tests {
     {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false);
+        run_dkg_and_save(params, num_parties, threshold, temp_dir.path(), false).await;
 
         if config.run_switch_and_squash {
             run_switch_and_squash(
@@ -1765,7 +1777,7 @@ pub mod tests {
             session
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(240))
-                .unwrap();
+                .await;
             let mut dkg_preproc =
                 generate_preproc_from_params(&params, keyset_config, &mut session).await;
 
@@ -1852,7 +1864,7 @@ pub mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    fn run_real_sns_compression_dkg_and_save<const EXTENSION_DEGREE: usize>(
+    async fn run_real_sns_compression_dkg_and_save<const EXTENSION_DEGREE: usize>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
@@ -1895,8 +1907,7 @@ pub mod tests {
 
         let (glwe_sns_key_poly_size, glwe_sns_key) = {
             let k = keyset.get_raw_glwe_client_sns_key().unwrap();
-            (k.polynomial_size(), k.
-into_container())
+            (k.polynomial_size(), k.into_container())
         };
 
         // and then secret share the secret keys
@@ -1916,7 +1927,7 @@ into_container())
             session
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(240))
-                .unwrap();
+                .await;
             let mut dkg_preproc =
                 generate_preproc_from_params(&params, keyset_config, &mut session).await;
 
@@ -1967,7 +1978,8 @@ into_container())
                 None,
                 &mut task,
                 Some(prefix_path.to_str().unwrap().to_string()),
-            );
+            )
+            .await;
 
         // reconstruct the shares
         let all_shares = results
@@ -2061,7 +2073,7 @@ into_container())
             session
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(240))
-                .unwrap();
+                .await;
             let mut dkg_preproc =
                 generate_preproc_from_params(&params, keyset_config, &mut session).await;
 

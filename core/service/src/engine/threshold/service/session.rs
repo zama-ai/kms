@@ -81,6 +81,34 @@ impl SessionPreparerManager {
     pub async fn get_role_assignment(&self) -> Arc<RwLock<RoleAssignment>> {
         self.role_assignment.clone()
     }
+
+    #[cfg(test)]
+    pub(crate) fn new_test_session() -> Self {
+        let role_assignment = RoleAssignment::from_iter((1..=4).map(|i| {
+            (
+                Role::indexed_from_one(i),
+                Identity("localhost".to_string(), 8080 + i as u16),
+            )
+        }));
+        let role_assignment = Arc::new(RwLock::new(role_assignment));
+
+        let networking_manager = Arc::new(RwLock::new(
+            GrpcNetworkingManager::new(
+                Role::indexed_from_one(1),
+                None,
+                None,
+                false,
+                role_assignment.clone(),
+            )
+            .unwrap(),
+        ));
+
+        SessionPreparerManager::empty(
+            Role::indexed_from_one(1).to_string(),
+            networking_manager,
+            role_assignment,
+        )
+    }
 }
 
 /// Getter for the session preparer.
@@ -201,6 +229,17 @@ impl SessionPreparer {
             .await
     }
 
+    pub async fn get_session_parameters(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<SessionParameters> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .get_session_parameters(session_id)
+            .await
+    }
+
     pub async fn make_base_session(
         &self,
         session_id: SessionId,
@@ -244,9 +283,18 @@ impl SessionPreparer {
         }
     }
 
-    pub async fn destroy_session(&self, session_id: SessionId) {
-        if let Some(inner) = self.inner.as_ref() {
-            inner.destroy_session(session_id).await
+    #[cfg(test)]
+    pub(crate) fn new_test_session(
+        base_kms: BaseKmsStruct,
+        prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
+        prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
+    ) -> Self {
+        Self {
+            inner: Some(InnerSessionPreparer::new_test_session(
+                base_kms,
+                prss_setup_z128,
+                prss_setup_z64,
+            )),
         }
     }
 }
@@ -283,16 +331,16 @@ impl InnerSessionPreparer {
         Ok(networking)
     }
 
-    pub fn get_session_parameters(
+    pub async fn get_session_parameters(
         &self,
         session_id: SessionId,
     ) -> anyhow::Result<SessionParameters> {
-        let own_identity = self.own_identity()?;
+        let role_assignment = self.role_assignment.read().await;
         let parameters = SessionParameters::new(
             self.threshold,
             session_id,
-            own_identity,
-            self.role_assignments.clone(),
+            self.my_role,
+            role_assignment.keys().cloned().collect(),
         )?;
         Ok(parameters)
     }
@@ -373,60 +421,37 @@ impl InnerSessionPreparer {
     }
 
     #[cfg(test)]
-    pub(crate) fn new_test_session(with_prss: bool) -> Self {
-        use threshold_fhe::networking::{grpc::GrpcNetworkingManager, Networking};
+    pub(crate) fn new_test_session(
+        base_kms: BaseKmsStruct,
+        prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
+        prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
+    ) -> Self {
+        use threshold_fhe::networking::grpc::GrpcNetworkingManager;
 
-        use crate::cryptography::internal_crypto_types::gen_sig_keys;
-
-        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
-
-        let role_assignments = RoleAssignment::from_iter((1..=4).map(|i| {
+        let role_assignment = RoleAssignment::from_iter((1..=4).map(|i| {
             (
                 Role::indexed_from_one(i),
                 Identity("localhost".to_string(), 8080 + i as u16),
             )
         }));
-        let own_identity = role_assignments
-            .get(&Role::indexed_from_one(1))
-            .cloned()
-            .unwrap();
-
+        let role_assignment = Arc::new(RwLock::new(role_assignment));
         let networking_manager = Arc::new(RwLock::new(
-            GrpcNetworkingManager::new(own_identity.to_owned(), None, None).unwrap(),
+            GrpcNetworkingManager::new(
+                Role::indexed_from_one(1),
+                None,
+                None,
+                false,
+                role_assignment.clone(),
+            )
+            .unwrap(),
         ));
 
-        let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
-            move |session_id, roles, network_mode| {
-                let nm = networking_manager.clone();
-                Box::pin(async move {
-                    let manager = nm.read().await;
-                    let impl_networking = manager.make_session(session_id, roles, network_mode)?;
-                    Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
-                })
-            },
-        )));
-
-        let (prss_setup_z128, prss_setup_z64) = if with_prss {
-            (
-                Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-                    vec![],
-                    vec![],
-                )))),
-                Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-                    vec![],
-                    vec![],
-                )))),
-            )
-        } else {
-            (Arc::new(RwLock::new(None)), Arc::new(RwLock::new(None)))
-        };
-
         Self {
-            base_kms: BaseKmsStruct::new(sk).unwrap(),
+            base_kms,
             threshold: 1,
-            my_id: 1,
-            role_assignments,
-            networking_strategy,
+            my_role: Role::indexed_from_one(1),
+            role_assignment,
+            networking_manager,
             prss_setup_z128,
             prss_setup_z64,
         }

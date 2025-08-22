@@ -1,5 +1,6 @@
 cfg_if::cfg_if! {
     if #[cfg(test)] {
+        use std::collections::HashSet;
         use itertools::Itertools;
         use tfhe_zk_pok::curve_api::bls12_446 as curve;
         use crate::{
@@ -89,7 +90,7 @@ impl<BCast: Broadcast + Default> Ceremony for RushingCeremony<BCast> {
         witness_dim: usize,
         _max_num_bits: Option<u32>,
     ) -> anyhow::Result<FinalizedInternalPublicParameter> {
-        let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
+        let mut all_roles_sorted = session.roles().iter().cloned().collect_vec();
         all_roles_sorted.sort();
         let my_role = session.my_role();
 
@@ -104,16 +105,20 @@ impl<BCast: Broadcast + Default> Ceremony for RushingCeremony<BCast> {
             let proof: PartialProof =
                 make_partial_proof_deterministic(&pp, &tau, round + 1, &r, sid);
             let vi = BroadcastValue::PartialProof::<Z>(proof);
-            if role == &my_role {
+            if *role == my_role {
                 let _ = self
                     .broadcast
-                    .broadcast_w_corrupt_set_update(session, vec![my_role], Some(vi))
+                    .broadcast_w_corrupt_set_update(session, HashSet::from([my_role]), Some(vi))
                     .await?;
             } else {
                 // the message sent by `my_role`, the adversary, should be ignored
                 let _ = self
                     .broadcast
-                    .broadcast_w_corrupt_set_update(session, vec![my_role, *role], Some(vi))
+                    .broadcast_w_corrupt_set_update(
+                        session,
+                        HashSet::from([my_role, *role]),
+                        Some(vi),
+                    )
                     .await?;
             }
         }
