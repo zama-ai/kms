@@ -50,11 +50,15 @@ impl BitGenEven for SecureBitGenEven {
         let s = mult_list(&a, &a, triples, session).await?;
         // Assumption that since we are just adding it's pretty computationally cheap
         // and can stay on tokio thread
-        let v = a
-            .iter()
-            .zip_eq(s) // May panic but would imply a bug in `mult_list`
-            .map(|(cur_a, cur_s)| (*cur_a) + cur_s)
-            .collect_vec();
+        let a_ref = a.clone();
+        let v = spawn_compute_bound(move || {
+            a_ref
+                .into_iter()
+                .zip_eq(s) // May panic but would imply a bug in `mult_list`
+                .map(|(cur_a, cur_s)| cur_a + cur_s)
+                .collect_vec()
+        })
+        .await?;
         let opened_v_vec = open_list(&v, session).await?;
 
         spawn_compute_bound(move || {
@@ -63,7 +67,7 @@ impl BitGenEven for SecureBitGenEven {
                 .zip_eq(a) // May panic but would imply a bug in `open_list`
                 .map(|(cur_v, cur_a)| {
                     let cur_r = Z::solve(cur_v)?;
-                    let cur_d = Z::ZERO - (Z::ONE + Z::TWO * cur_r);
+                    let cur_d = Z::ZERO - (Z::ONE + cur_r.mul_by_u128(2));
                     let cur_b = (cur_a - cur_r) * Z::invert(cur_d)?;
                     Ok(cur_b)
                 })
