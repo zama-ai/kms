@@ -1,6 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use tokio::sync::{mpsc::Receiver, Mutex};
+use tokio::sync::{mpsc::Receiver, Mutex, RwLock};
 use tracing::instrument;
 
 use crate::{
@@ -73,34 +73,38 @@ impl<Z: Ring + Clone, T: DKGPreprocessing<Z> + 'static> DkgBitProcessor<Z, T> {
                             })?,
                     );
                 }
-                let output_writer = self.output_writer.clone();
 
                 let current_amount = tuniform_production.amount;
-                let (num_tuniform, remaining_bit_batch) = spawn_compute_bound(move || {
+                let (t_uniforms, remaining_bit_batch) = spawn_compute_bound(move || {
                     let num_bits_available = bit_batch.len();
                     let num_tuniform = std::cmp::min(
                         current_amount,
                         num_integer::Integer::div_floor(&num_bits_available, &tuniform_req_bits),
                     );
-                    let mut bit_preproc = InMemoryBitPreprocessing {
-                        available_bits: bit_batch
-                            .drain(..num_tuniform * tuniform_req_bits)
-                            .collect(),
+                    let num_bits = num_tuniform * tuniform_req_bits;
+
+                    let bits = if num_bits == num_bits_available {
+                        std::mem::take(&mut bit_batch)
+                    } else {
+                        bit_batch.drain(..num_bits).collect()
                     };
-                    (output_writer
-                        .write()
-                        .map_err(|e| anyhow_error_and_log(format!("Locking Error: {e}")))?)
-                    .append_noises(
-                        RealSecretDistributions::t_uniform(
-                            num_tuniform,
-                            current_bound,
-                            &mut bit_preproc,
-                        )?,
-                        current_bound_info,
-                    );
-                    Ok::<_, anyhow::Error>((num_tuniform, bit_batch))
+
+                    let mut bit_preproc = InMemoryBitPreprocessing {
+                        available_bits: bits,
+                    };
+                    let t_uniforms = RealSecretDistributions::t_uniform(
+                        num_tuniform,
+                        current_bound,
+                        &mut bit_preproc,
+                    )?;
+                    Ok::<_, anyhow::Error>((t_uniforms, bit_batch))
                 })
                 .await??;
+                let num_tuniform = t_uniforms.len();
+                self.output_writer
+                    .write()
+                    .await
+                    .append_noises(t_uniforms, current_bound_info);
                 tuniform_production.amount -= num_tuniform;
                 bit_batch = remaining_bit_batch;
             }
@@ -125,11 +129,10 @@ impl<Z: Ring + Clone, T: DKGPreprocessing<Z> + 'static> DkgBitProcessor<Z, T> {
 
             let num_bits_available = bit_batch.len();
             let num_bits = std::cmp::min(self.num_bits_required, num_bits_available);
-            (*self
-                .output_writer
+            self.output_writer
                 .write()
-                .map_err(|e| anyhow_error_and_log(format!("Locking Error: {e}")))?)
-            .append_bits(bit_batch.drain(..num_bits).collect());
+                .await
+                .append_bits(bit_batch.drain(..num_bits).collect());
             self.num_bits_required -= num_bits;
         }
         Ok::<(), anyhow::Error>(())

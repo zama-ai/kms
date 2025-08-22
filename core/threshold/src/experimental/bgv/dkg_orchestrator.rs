@@ -1,11 +1,11 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use itertools::Itertools;
 use num_integer::div_ceil;
 use tokio::{
     sync::{
         mpsc::{Receiver, Sender},
-        Mutex,
+        Mutex, RwLock,
     },
     task::JoinSet,
 };
@@ -200,9 +200,7 @@ impl BGVPreprocessingOrchestrator {
         let dkg_preproc_return = Arc::into_inner(self.dkg_preproc).ok_or_else(|| {
             anyhow_error_and_log("Error getting hold of dkg preprocessing store inside the Arc")
         })?;
-        let dkg_preproc_return = dkg_preproc_return.into_inner().map_err(|_| {
-            anyhow_error_and_log("Error consuming dkg preprocessing inside the Lock")
-        })?;
+        let dkg_preproc_return = dkg_preproc_return.into_inner();
         Ok((res_sessions, dkg_preproc_return))
     }
 }
@@ -266,15 +264,14 @@ impl BGVDkgBitProcessor {
                     .collect(),
             };
 
-            (*self
-                .output_writer
+            self.output_writer
                 .write()
-                .map_err(|e| anyhow_error_and_log(format!("Locking Error: {e}")))?)
-            .append_ternary(RealSecretDistributions::newhope(
-                num_ternary,
-                1,
-                &mut bit_preproc,
-            )?);
+                .await
+                .append_ternary(RealSecretDistributions::newhope(
+                    num_ternary,
+                    1,
+                    &mut bit_preproc,
+                )?);
             self.num_ternary -= num_ternary;
         }
 
@@ -308,15 +305,14 @@ impl BGVDkgBitProcessor {
                 available_bits: bit_batch.drain(..num_noise * noise_required_bits).collect(),
             };
 
-            (*self
-                .output_writer
+            self.output_writer
                 .write()
-                .map_err(|e| anyhow_error_and_log(format!("Locking Error: {e}")))?)
-            .append_noise(RealSecretDistributions::newhope(
-                num_noise,
-                NEW_HOPE_BOUND,
-                &mut bit_preproc,
-            )?);
+                .await
+                .append_noise(RealSecretDistributions::newhope(
+                    num_noise,
+                    NEW_HOPE_BOUND,
+                    &mut bit_preproc,
+                )?);
             self.num_noise -= num_noise;
         }
         Ok(())
