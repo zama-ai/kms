@@ -1,6 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use tokio::sync::{mpsc::Receiver, Mutex};
+use tokio::sync::{mpsc::Receiver, Mutex, RwLock};
 
 use crate::{
     error::error_handler::anyhow_error_and_log,
@@ -41,11 +41,10 @@ impl<Z: Clone + Send + Sync, T: RandomPreprocessing<Z>> RandomsAggregator<Z, T> 
                 .await
                 .ok_or_else(|| anyhow_error_and_log("Error receiving Randomness"))?;
             let num_randoms = std::cmp::min(num_randomness_needed, random_batch.len());
-            (*self
-                .randomness_writer
+            self.randomness_writer
                 .write()
-                .map_err(|e| anyhow_error_and_log(format!("Locking Error: {e}")))?)
-            .append_randoms(random_batch[..num_randoms].to_vec());
+                .await
+                .append_randoms(random_batch[..num_randoms].to_vec());
             num_randomness_needed -= num_randoms;
             if num_randomness_needed == 0 {
                 return Ok(());

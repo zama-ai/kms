@@ -34,11 +34,11 @@ use crate::{
 };
 use itertools::Itertools;
 use num_integer::div_ceil;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use tokio::{
     sync::{
         mpsc::{channel, Receiver, Sender},
-        Mutex,
+        Mutex, RwLock,
     },
     task::JoinSet,
 };
@@ -439,9 +439,7 @@ where
         let dkg_preproc_return = Arc::into_inner(self.dkg_preproc).ok_or_else(|| {
             anyhow_error_and_log("Error getting hold of dkg preprocessing store inside the Arc")
         })?;
-        let dkg_preproc_return = dkg_preproc_return.into_inner().map_err(|_| {
-            anyhow_error_and_log("Error consuming dkg preprocessing inside the Lock")
-        })?;
+        let dkg_preproc_return = dkg_preproc_return.into_inner();
         Ok((res_sessions, dkg_preproc_return))
     }
 
