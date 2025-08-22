@@ -342,15 +342,18 @@ impl<
         Err(Status::unimplemented("backup_restore is not implemented"))
     }
 
-    #[tracing::instrument(skip(self, _request))]
+    #[tracing::instrument(skip(self, request))]
     async fn custodian_recovery_init(
         &self,
-        _request: Request<kms_grpc::kms::v1::Empty>,
+        request: Request<kms_grpc::kms::v1::Empty>,
     ) -> Result<Response<kms_grpc::kms::v1::RecoveryRequest>, Status> {
         METRICS.increment_request_counter(OP_CUSTODIAN_RECOVERY_INIT);
-        METRICS.increment_error_counter(OP_CUSTODIAN_RECOVERY_INIT, ERR_INVALID_REQUEST);
-        Err(Status::unimplemented(
-            "custodian_recovery_init is not implemented",
-        ))
+        self.backup_operator
+            .custodian_recovery_init(request)
+            .await
+            .inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS.increment_error_counter(OP_CUSTODIAN_RECOVERY_INIT, tag);
+            })
     }
 }

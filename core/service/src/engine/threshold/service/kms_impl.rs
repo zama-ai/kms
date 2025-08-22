@@ -569,10 +569,12 @@ where
         my_role: Role::indexed_from_one(config.my_id),
     };
 
-    let backup_operator = RealBackupOperator {
-        crypto_storage: crypto_storage.inner.clone(),
+    let backup_operator = RealBackupOperator::new(
+        Role::indexed_from_one(config.my_id),
+        base_kms.new_instance().await,
+        crypto_storage.inner.clone(),
         security_module,
-    };
+    );
     // Update backup vault if it exists
     // This ensures that all files in the private storage are also in the backup vault
     // Thus the vault gets automatically updated incase its location changes, or in case of a deletion

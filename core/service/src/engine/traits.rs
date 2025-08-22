@@ -6,6 +6,7 @@ use kms_grpc::kms::v1::Empty;
 use kms_grpc::kms::v1::NewCustodianContextRequest;
 use kms_grpc::kms::v1::NewKmsContextRequest;
 use kms_grpc::kms::v1::OperatorPublicKey;
+use kms_grpc::kms::v1::RecoveryRequest;
 use kms_grpc::kms::v1::TypedPlaintext;
 use rand::CryptoRng;
 use rand::RngCore;
@@ -92,6 +93,11 @@ pub trait BackupOperator {
         &self,
         request: Request<Empty>,
     ) -> Result<Response<OperatorPublicKey>, Status>;
+
+    async fn custodian_recovery_init(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<RecoveryRequest>, Status>;
 
     async fn custodian_backup_recovery(
         &self,

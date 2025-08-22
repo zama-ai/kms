@@ -965,10 +965,12 @@ impl<
             custodian_meta_store: Arc::clone(&custodian_meta_store),
             my_role: Role::indexed_from_one(1), // Centralized KMS is always party 1
         };
-        let backup_operator = RealBackupOperator {
-            crypto_storage: crypto_storage.inner.clone(),
+        let backup_operator = RealBackupOperator::new(
+            Role::indexed_from_one(1), // Centralized KMS is always party 1
+            base_kms.new_instance().await,
+            crypto_storage.inner.clone(),
             security_module,
-        };
+        );
         let (health_reporter, health_service) = tonic_health::server::health_reporter();
         // We will serve as soon as the server is started
         health_reporter

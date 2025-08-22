@@ -1,10 +1,22 @@
+use std::{collections::HashMap, sync::Arc};
+
 use crate::{
-    backup::custodian::InternalCustodianContext,
+    anyhow_error_and_log,
+    backup::{
+        custodian::InternalCustodianContext,
+        operator::{InnerRecoveryRequest, DSEP_BACKUP_CIPHER},
+    },
+    consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         attestation::{SecurityModule, SecurityModuleProxy},
-        internal_crypto_types::PrivateSigKey,
+        backup_pke::{self, BackupPrivateKey},
+        internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature},
+        signcryption::internal_verify_sig,
     },
-    engine::{context::ContextInfo, threshold::service::ThresholdFheKeys, traits::BackupOperator},
+    engine::{
+        base::BaseKmsStruct, context::ContextInfo, threshold::service::ThresholdFheKeys,
+        traits::BackupOperator,
+    },
     util::key_setup::FhePrivateKey,
     vault::{
         keychain::KeychainProxy,
@@ -15,22 +27,103 @@ use crate::{
         Vault,
     },
 };
-use kms_grpc::{kms::v1::BackupRecoveryRequest, rpc_types::BackupDataType};
+use itertools::Itertools;
+use kms_grpc::{
+    kms::v1::{BackupRecoveryRequest, RecoveryRequest},
+    rpc_types::{BackupDataType, PubDataType},
+    RequestId,
+};
 use kms_grpc::{
     kms::v1::{Empty, OperatorPublicKey},
     rpc_types::{PrivDataType, SignedPubDataHandleInternal},
-    utils::tonic_result::tonic_handle_potential_err,
 };
 use strum::IntoEnumIterator;
-use tokio::sync::MutexGuard;
+use tfhe::safe_serialization::safe_serialize;
+use threshold_fhe::execution::runtime::party::Role;
+use tokio::sync::{Mutex, MutexGuard};
 use tonic::{Code, Request, Response, Status};
 
 pub struct RealBackupOperator<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 > {
-    pub crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
-    pub security_module: Option<SecurityModuleProxy>,
+    my_role: Role,
+    base_kms: BaseKmsStruct,
+    crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
+    security_module: Option<SecurityModuleProxy>,
+    // Ephemeral decryption key only set and used during custodian based backup recovery
+    ephemeral_dec_key: Arc<Mutex<Option<BackupPrivateKey>>>,
+}
+
+impl<PubS, PrivS> RealBackupOperator<PubS, PrivS>
+where
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+{
+    pub fn new(
+        my_role: Role,
+        base_kms: BaseKmsStruct,
+        crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
+        security_module: Option<SecurityModuleProxy>,
+    ) -> Self {
+        Self {
+            my_role,
+            base_kms,
+            crypto_storage,
+            security_module,
+            ephemeral_dec_key: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Generate a recovery request to return to the custodians
+    /// based on the already stored [`InternalCustodianContext`]
+    async fn gen_outer_recovery_request(
+        &self,
+        backup_id: RequestId,
+        recovery_request: InnerRecoveryRequest,
+    ) -> anyhow::Result<(RecoveryRequest, BackupPrivateKey)> {
+        let mut rng = self.base_kms.new_rng().await;
+        // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
+        let (backup_pub_key, backup_priv_key) = backup_pke::keygen(&mut rng)?;
+        let verification_key: PublicSigKey = (*self.base_kms.sig_key).clone().into();
+        let mut cts = HashMap::new();
+        for (cur_cus_role, cur_cus_ct) in recovery_request.cts {
+            let signature = Signature {
+                sig: k256::ecdsa::Signature::from_slice(&cur_cus_ct.signature)?,
+            };
+            internal_verify_sig(
+                &DSEP_BACKUP_CIPHER,
+                &cur_cus_ct.ciphertext,
+                &signature,
+                &verification_key,
+            )?;
+            cts.insert(cur_cus_role.one_based() as u64, cur_cus_ct.into());
+        }
+        let mut serialized_priv_key = Vec::new();
+        safe_serialize(
+            &backup_priv_key,
+            &mut serialized_priv_key,
+            SAFE_SER_SIZE_LIMIT,
+        )?;
+        let mut serialized_pub_key = Vec::new();
+        safe_serialize(
+            &backup_pub_key,
+            &mut serialized_pub_key,
+            SAFE_SER_SIZE_LIMIT,
+        )?;
+        let recovery_request = RecoveryRequest {
+            enc_key: serialized_pub_key,
+            cts,
+            backup_id: Some(backup_id.into()),
+            operator_role: self.my_role.one_based() as u64,
+        };
+
+        tracing::info!(
+            "Generated outer recovery request for backup_id/context_id={}",
+            backup_id
+        );
+        Ok((recovery_request, backup_priv_key))
+    }
 }
 
 #[tonic::async_trait]
@@ -69,6 +162,66 @@ where
                 "Backup vault is not configured",
             )),
         }
+    }
+
+    async fn custodian_recovery_init(
+        &self,
+        _request: Request<Empty>, // todo could be opt to allow restore of old backups
+    ) -> Result<Response<RecoveryRequest>, Status> {
+        // Lock the ephemeral key for the entire duration of the method
+        let mut guarded_priv_key = self.ephemeral_dec_key.lock().await;
+        if guarded_priv_key.is_some() {
+            return Err(Status::new(
+                tonic::Code::FailedPrecondition,
+                "Ephemeral decryption key already exists. Cannot initialize recovery again before previous recovery is completed.",
+            ));
+        }
+        let backup_id = get_latest_backup_id(&self.crypto_storage.private_storage)
+            .await
+            .map_err(|e| {
+                Status::new(
+                    tonic::Code::Internal,
+                    format!("Failed to get latest backup id: {e}"),
+                )
+            })?;
+        // let custodian_contexts: InternalCustodianContext = {
+        //     let priv_storage = self.crypto_storage.get_private_storage();
+        //     let guarded_priv_storage = priv_storage.lock().await;
+        //     guarded_priv_storage
+        //         .read_data(&backup_id, &PrivDataType::CustodianInfo.to_string())
+        //         .await
+        //         .map_err(|e| {
+        //             Status::new(
+        //                 tonic::Code::Internal,
+        //                 format!("Failed to read custodian context: {e}"),
+        //             )
+        //         })?
+        // };
+        let inner_recovery_request: InnerRecoveryRequest = {
+            let pub_storage = self.crypto_storage.get_public_storage();
+            let guarded_pub_storage = pub_storage.lock().await;
+            guarded_pub_storage
+                .read_data(&backup_id, &PubDataType::RecoveryRequest.to_string())
+                .await
+                .map_err(|e| {
+                    Status::new(
+                        tonic::Code::Internal,
+                        format!("Failed to read inner recovery request: {e}"),
+                    )
+                })?
+        };
+        let (recovery_request, backup_priv_key) = self
+            .gen_outer_recovery_request(backup_id, inner_recovery_request)
+            .await
+            .map_err(|e| {
+                Status::new(
+                    tonic::Code::Internal,
+                    format!("Failed to generate recovery request: {e}"),
+                )
+            })?;
+        // We already ensured that no key is previously set, so ignore the result
+        let _ = guarded_priv_key.replace(backup_priv_key);
+        Ok(Response::new(recovery_request))
     }
 
     /// Recover the backup master decryption key previously secret shared with the custodians.
@@ -131,10 +284,14 @@ where
                 let private_storage = self.crypto_storage.get_private_storage().clone();
                 let mut private_storage = private_storage.lock().await;
                 let backup_vault: tokio::sync::MutexGuard<'_, Vault> = backup_vault.lock().await;
-                tonic_handle_potential_err(
-                    restore_data(&backup_vault, &mut private_storage).await,
-                    "Failed to restore".to_string(),
-                )?;
+                restore_data(&backup_vault, &mut private_storage)
+                    .await
+                    .map_err(|e| {
+                        Status::new(
+                            tonic::Code::Internal,
+                            format!("Failed to restore backup data: {e}"),
+                        )
+                    })?;
                 Ok(Response::new(Empty {}))
             }
             None => Err(Status::new(
@@ -142,6 +299,22 @@ where
                 "Backup vault is not configured",
             )),
         }
+    }
+}
+
+async fn get_latest_backup_id<PrivS>(priv_storage: &Arc<Mutex<PrivS>>) -> anyhow::Result<RequestId>
+where
+    PrivS: Storage + Sync + Send + 'static,
+{
+    let guarded_priv_storage = priv_storage.lock().await;
+    let all_custodian_ids = guarded_priv_storage
+        .all_data_ids(&PrivDataType::CustodianInfo.to_string())
+        .await?;
+    match all_custodian_ids.iter().sorted().last() {
+        Some(latest_context_id) => Ok(*latest_context_id),
+        None => Err(anyhow_error_and_log(
+            "No custodian setup available in the vault",
+        )),
     }
 }
 
@@ -163,6 +336,7 @@ async fn restore_data_type<
 where
     for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
 {
+    // todo this should be limited to the correct backup id otherwise things will fail
     let backup_data_type = BackupDataType::PrivData(data_type_enum).to_string();
     let req_ids = backup_vault.all_data_ids(&backup_data_type).await?;
     for request_id in req_ids.iter() {

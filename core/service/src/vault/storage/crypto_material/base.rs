@@ -6,9 +6,9 @@ use crate::{
     anyhow_error_and_warn_log,
     backup::{
         custodian::InternalCustodianContext,
-        operator::{BackupCommitments, InternalRecoveryRequest},
+        operator::{BackupCommitments, InnerRecoveryRequest},
     },
-    cryptography::{backup_pke::BackupPublicKey, internal_crypto_types::PrivateSigKey},
+    cryptography::internal_crypto_types::PrivateSigKey,
     engine::{context::ContextInfo, threshold::service::ThresholdFheKeys},
     grpc::metastore_status_service::CustodianMetaStore,
     util::meta_store::MetaStore,
@@ -596,11 +596,9 @@ where
     #[allow(clippy::too_many_arguments)]
     pub async fn write_backup_keys_with_meta_store(
         &self,
-        req_id: &RequestId,
-        pub_key: BackupPublicKey,
-        recovery_request: InternalRecoveryRequest,
-        custodian_context: InternalCustodianContext,
-        commitments: BackupCommitments,
+        recovery_request: &InnerRecoveryRequest,
+        custodian_context: &InternalCustodianContext,
+        commitments: &BackupCommitments,
         meta_store: Arc<RwLock<CustodianMetaStore>>,
     ) {
         // use guarded_meta_store as the synchronization point
@@ -611,11 +609,12 @@ where
         let mut private_storage_guard = self.private_storage.lock().await;
         let mut public_storage_guard = self.public_storage.lock().await;
 
+        let req_id = custodian_context.context_id;
         let priv_storage_future = async {
             let custodian_context_store_res = store_versioned_at_request_id(
                 &mut (*private_storage_guard),
-                req_id,
-                &custodian_context,
+                &req_id,
+                custodian_context,
                 &PrivDataType::CustodianInfo.to_string(),
             )
             .await;
@@ -639,8 +638,8 @@ where
         let pub_storage_future = async {
             let recovery_store_result = store_versioned_at_request_id(
                 &mut (*public_storage_guard),
-                req_id,
-                &recovery_request,
+                &req_id,
+                recovery_request,
                 &PubDataType::RecoveryRequest.to_string(),
             )
             .await;
@@ -661,8 +660,8 @@ where
             }
             let commit_store_result = store_versioned_at_request_id(
                 &mut (*public_storage_guard),
-                req_id,
-                &commitments,
+                &req_id,
+                commitments,
                 &PubDataType::Commitments.to_string(),
             )
             .await;
@@ -688,22 +687,25 @@ where
             // Update meta store
             // First we insert the request ID
             // Whether things fail or not we can't do much
-            match guarded_meta_store.insert(req_id) {
+            match guarded_meta_store.insert(&req_id) {
                 Ok(_) => {}
                 Err(e) => {
                     tracing::error!("Failed to insert request ID {req_id} into meta store: {e}",);
-                    self.purge_backup_material(req_id, guarded_meta_store).await;
+                    self.purge_backup_material(&req_id, guarded_meta_store)
+                        .await;
                     return;
                 }
             };
             // If everything is ok, we update the meta store with a success
             if priv_res && pub_res {
-                if let Err(e) = guarded_meta_store.update(req_id, Ok(custodian_context)) {
+                if let Err(e) = guarded_meta_store.update(&req_id, Ok(custodian_context.clone())) {
                     tracing::error!("Failed to update meta store for request {req_id}: {e}");
-                    self.purge_backup_material(req_id, guarded_meta_store).await;
+                    self.purge_backup_material(&req_id, guarded_meta_store)
+                        .await;
                 }
             } else {
-                self.purge_backup_material(req_id, guarded_meta_store).await;
+                self.purge_backup_material(&req_id, guarded_meta_store)
+                    .await;
                 tracing::error!(
                     "Failed to store backup keys for request {}: priv_res: {}, pub_res: {}",
                     req_id,
@@ -721,7 +723,7 @@ where
                         Some(keychain) => {
                             if let KeychainProxy::SecretSharing(sharing_chain) = keychain {
                                 // Store the public key in the secret sharing keychain
-                                sharing_chain.set_backup_enc_key(*req_id, pub_key);
+                                sharing_chain.set_backup_enc_key(req_id, custodian_context.backup_enc_key.clone());
                             }
                         },
                         None => {

@@ -1,14 +1,12 @@
-use crate::backup::custodian::{InternalCustodianContext, InternalCustodianSetupMessage};
-use crate::backup::operator::{BackupCommitments, InternalRecoveryRequest, Operator};
+use crate::backup::custodian::InternalCustodianContext;
+use crate::backup::operator::{BackupCommitments, InnerRecoveryRequest, Operator};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::backup_pke::{self, BackupCiphertext};
+use crate::cryptography::backup_pke::{self, BackupCiphertext, BackupPrivateKey};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
-use crate::engine::validation::{
-    parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
-};
+use crate::engine::validation::{parse_proto_request_id, RequestIdParsingErr};
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::delete_context_at_request_id;
 use crate::vault::Vault;
@@ -22,8 +20,7 @@ use kms_grpc::kms::v1::{CustodianContext, NewKmsContextRequest};
 use kms_grpc::rpc_types::{BackupDataType, PrivDataType, SignedPubDataHandleInternal};
 use kms_grpc::RequestId;
 use kms_grpc::{kms::v1::Empty, utils::tonic_result::tonic_handle_potential_err};
-use std::collections::BTreeMap;
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::ClientKey;
@@ -203,47 +200,16 @@ where
     PrivS: Storage + Sync + Send + 'static,
 {
     async fn inner_new_custodian_context(&self, context: CustodianContext) -> anyhow::Result<()> {
-        let context_id: RequestId = parse_optional_proto_request_id(
-            &context.context_id,
-            RequestIdParsingErr::CustodianContext,
-        )?;
         let backup_vault = match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
         };
-
-        // Generate new backup keys and recovery request
-        let mut node_map = HashMap::new();
-        for setup_message in context.custodian_nodes.iter() {
-            let internal_msg: InternalCustodianSetupMessage =
-                setup_message.to_owned().try_into()?;
-            node_map.insert(
-                Role::indexed_from_one(setup_message.custodian_role as usize),
-                internal_msg,
-            );
-        }
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric keys for the operator to use to encrypt the backup
         let (backup_enc_key, backup_priv_key) = backup_pke::keygen(&mut rng)?;
-        let custodian_context = InternalCustodianContext {
-            context_id,
-            threshold: context.threshold,
-            previous_context_id: Some(parse_optional_proto_request_id(
-                &context.previous_context_id,
-                RequestIdParsingErr::CustodianContext,
-            )?),
-            custodian_nodes: node_map,
-            backup_enc_key: backup_enc_key.clone(),
-        };
-        let (recovery_request, commitments) = self
-            .gen_recovery_request(
-                &mut rng,
-                &custodian_context,
-                self.my_role,
-                context_id,
-                backup_enc_key.clone(),
-                backup_priv_key,
-            )
+        let inner_context = InternalCustodianContext::new(context, backup_enc_key.clone())?;
+        let (inner_recovery_request, commitments) = self
+            .gen_inner_recovery_request(&mut rng, backup_priv_key, &inner_context, self.my_role)
             .await?;
 
         // Reencrypt everything
@@ -327,7 +293,7 @@ where
         };
         tracing::info!(
             "New context storage - context_id={}, lock_acquired_in={:?}, total_lock_held={:?}",
-            context_id,
+            inner_context.context_id,
             lock_acquired_time,
             total_lock_time
         );
@@ -335,34 +301,32 @@ where
         // Then store the results
         self.crypto_storage
             .write_backup_keys_with_meta_store(
-                &context_id,
-                backup_enc_key,
-                recovery_request,
-                custodian_context,
-                commitments,
+                &inner_recovery_request,
+                &inner_context,
+                &commitments,
                 Arc::clone(&self.custodian_meta_store),
             )
             .await;
         tracing::info!(
             "New custodian context created with context_id={}, threshold={} from {} custodians",
-            context_id,
-            context.threshold,
-            context.custodian_nodes.len()
+            inner_context.context_id,
+            inner_context.threshold,
+            inner_context.custodian_nodes.len()
         );
         Ok(())
     }
 
     /// Generate a recovery request to the backup vault.
-    async fn gen_recovery_request(
+    async fn gen_inner_recovery_request(
         &self,
         rng: &mut AesRng,
+        backup_priv_key: BackupPrivateKey,
         custodian_context: &InternalCustodianContext,
         my_role: Role,
-        backup_id: RequestId,
-        pub_enc_key: backup_pke::BackupPublicKey,
-        priv_key: backup_pke::BackupPrivateKey,
-    ) -> anyhow::Result<(InternalRecoveryRequest, BackupCommitments)> {
+    ) -> anyhow::Result<(InnerRecoveryRequest, BackupCommitments)> {
         let verification_key = (*self.base_kms.sig_key).clone().into();
+        // TODO dummy keys to be removed since we need to remove the requirement to include these in the operator during consturction since they should be ephemeral
+        let (dummy_enc_key, dummy_priv_key) = backup_pke::keygen(rng)?;
         let operator = Operator::new(
             my_role,
             custodian_context
@@ -372,32 +336,26 @@ where
                 .collect_vec(),
             (*self.base_kms.sig_key).clone(),
             verification_key,
-            priv_key.clone(),
-            pub_enc_key,
+            dummy_priv_key.clone(),
+            dummy_enc_key,
             custodian_context.threshold as usize,
         )?;
         let mut serialized_priv_key = Vec::new();
-        safe_serialize(&priv_key, &mut serialized_priv_key, SAFE_SER_SIZE_LIMIT)?;
-        let (ct_map, commitments) =
-            operator.secret_share_and_encrypt(rng, &serialized_priv_key, backup_id)?;
-        let mut ciphertexts = BTreeMap::new();
-        for custodian_role in custodian_context.custodian_nodes.keys() {
-            let ct = ct_map.get(custodian_role).unwrap_or_else(|| {
-                panic!("Missing operator backup output for role {custodian_role}")
-            });
-            ciphertexts.insert(*custodian_role, ct.to_owned());
-        }
-        let recovery_request = InternalRecoveryRequest::new(
-            operator.public_key().to_owned(),
-            &self.base_kms.sig_key,
-            ciphertexts,
-            backup_id,
-            my_role,
+        safe_serialize(
+            &backup_priv_key,
+            &mut serialized_priv_key,
+            SAFE_SER_SIZE_LIMIT,
         )?;
+        let (ct_map, commitments) = operator.secret_share_and_encrypt(
+            rng,
+            &serialized_priv_key,
+            custodian_context.context_id,
+        )?;
+        let recovery_request = InnerRecoveryRequest { cts: ct_map };
 
         tracing::info!(
-            "Generated recovery request for backup_id/context_id={}",
-            backup_id
+            "Generated inner recovery request for backup_id/context_id={}",
+            custodian_context.context_id
         );
         Ok((recovery_request, commitments))
     }

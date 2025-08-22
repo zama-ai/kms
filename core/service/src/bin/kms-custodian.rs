@@ -462,10 +462,10 @@ mod tests {
         }
         let recovery_request = InternalRecoveryRequest::new(
             operator.public_key().to_owned(),
-            &signing_key,
             ciphertexts,
             backup_id,
             operator_role,
+            Some(&verification_key),
         )
         .unwrap();
         safe_write_element_versioned(&Path::new(&operator_verf_path), &verification_key)
