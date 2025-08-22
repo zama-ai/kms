@@ -3,65 +3,379 @@ package kms_service.v1;
 
 import "kms.v1.proto";
 
+// This is the service endpoint for the KMS.
+//
+// The endpoints are mostly same for the centralized and threshold KMS
+// except some endpoints that are not applicable to the centralized KMS.
+// The exceptions are documented in the RPC documentation below.
+//
+// All endpoints may return the following errors, any exceptions are
+// also documented in the RPC documentation below.
+// 
+// `InvalidArgument` - Data in the request is incorrect or not set according to
+// the pre and post conditions. The caller should fix the arguments before
+// trying again.
+//
+// `NotFound` - If a resource does not exist, e.g. preprocessing is not there
+// or a key under some key ID does not exist.
+//
+// `Internal` - A bug in the KMS code, usually the protocol started to execute
+// but failed before the end.
+//
+// `Unavailable` - An async request is not done yet. The caller can retry at a
+// later point and may obtain the result.
+//
+// `ResourceExhausted` - The request is being rate limited, wait until the
+// existing tasks are done before retrying.
+//
+// `AlreadyExists` - This happens when making a request with an existing ID,
+// the caller should not retry in this case.
+//
+// `Aborted` - Other issues we do not specifically capture above, e.g., meta
+// store issues (e.g., failing to insert), session creation issues,
+// (de)serialization issues.
 service CoreServiceEndpoint {
-  // Perform the threshold KMS initialization.
-  // This call returns an error on the centralized KMS.
+  // Initializes the threshold KMS service.
+  //
+  // This call returns an error (Abort) on the centralized KMS as it's not applicable.
+  //
+  // This involves executing the PRSS protocol to generate secret shared correlated randomness.
   // This is a synchronous call and an successful response suggests the initialization completed.
+  // TODO(zama-ai/kms-internal/issues/2724) consider adding an option to regenerate the PRSS.
+  //
+  // # Parameters
+  // * `request` - Struct containing the request ID, which must be 32 bytes lower-case hex encoding without `0x` prefix.
+  //
+  // # Returns a successful response with an empty body.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * `request_id` in `request` must be present, valid, fresh and unique [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
+  // ## Post-condition:
+  // * The `request_id` in `request` has been consumed and the PRSS has been executed successfully.
   rpc Init(kms.v1.InitRequest) returns (kms.v1.Empty);
 
-  // Start generating preprocessing materials for key generation asynchronously.
-  // This call returns an error on the centralized KMS.
+  // Start computing the preprocessed material needed for a single key generation.
+  //
+  // This call returns an error (Abort) on the centralized KMS as it's not applicable.
+  //
+  // The method is async in the sense that it returns immediately, but the actual preprocessing is done in the background.
+  //
+  // # Parameters
+  // * `request` - Struct containing all the data of the request. See pre-conditions for valid request types.
+  //
+  // # Returns a successful response with an empty body, which suggests preprocessing has started.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * `request_id` in `request` must contain the request ID, which must be 32 bytes lower-case hex encoding without `0x` prefix.
+  // * `params` in `request` must be castable to a [`FheParameter`], currently this means 0 or 1.
+  // * `keyset_config` in `request` may be set or not. If not set, the default keyset configuration is used.
+  //   If set, it must follow the enum constraints of [`KeySetConfig`].
+  //   I.e. be either `Standard` (0) or `DecompressionOnly` (1).
+  //   Furthermore, if `Standard` is used then `standard_keyset_config` must also be set.
+  // ## Post-condition:
+  // * The `request_id` in `request` has been consumed and the preprocessing has started successfully in the background.
   rpc KeyGenPreproc(kms.v1.KeyGenPreprocRequest) returns (kms.v1.Empty);
 
-  // This call returns an error on the centralized KMS.
+  // Retrieves the result from a preprocessing request.
+  //
+  // This call returns an error (Abort) on the centralized KMS as it's not applicable.
+  //
+  // # Parameters
+  // * `request` - The request ID under which the preprocessing was started
+  //   which must be 32 bytes lower-case hex encoding without `0x` prefix.
+  //
+  // # Returns
+  // * `Response<KeyGenPreprocResult>` - This is an empty structure.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * `request` must be a valid [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
+  //   Furthermore, the request ID must be the same as the one used to start the preprocessing with method `key_gen_preproc`.
+  //   Finally the parameters used to start preprocessing must have been valid.
+  // ## Post-condition:
+  // * The `request_id` in `request` can be used to retrieve the result of the preprocessing again in the future
+  //   to be used by key generation.
   rpc GetKeyGenPreprocResult(kms.v1.RequestId) returns (kms.v1.KeyGenPreprocResult);
 
-  // Generate new keys asynchronously.
+  // Start the key generation.
+  //
+  // The method is async in the sense that it returns immediately, but the actual key generation is done in the background.
+  //
+  // # Parameters
+  // * `request` - Struct containing all the data of the request, see pre-conditions for valid request type.
+  //
+  // # Returns a successful response with an empty body, which suggests key generation has started.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * `request_id` in `request` must be present, valid, fresh and unique [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
+  // * `params` in `request` must be castable to a [`FheParameter`], currently this means 0 or 1.
+  // * `preproc_id` in `request` must be present, and a valid [`RequestId`] which has already been used to start a preprocessing request with method `key_gen_preproc` that has completed successfully
+  //   and has not already been consumed by another key generation request.
+  // * `domain` in `request` must be set.
+  // * `keyset_config` in `request` may be set or not. If not set, the default keyset configuration is used. If set, it must follow the enum constraints of [`KeySetConfig`].
+  //   I.e. be either `Standard` (0) or `DecompressionOnly` (1). Furthermore, if `Standard` is used then `standard_keyset_config` must also be set.
+  //   Furthermore, `keyset_config` must be set or not set in exactly the same was as it was in the argument for the preprocessing request started with `preproc_id`.
+  // * `keyset_added_info` in `request` _must_ be set if `keyset_config` is set to `DecompressionOnly`, otherwise it is ignored.
+  // ## Post-condition:
+  // * `request_id` in `request` has been consumed and the key generation has been started in the background using `request_id` as identifier.
+  // * `preproc_id` in `request` has been consumed and the preprocessing under this ID cannot be used anymore.
   rpc KeyGen(kms.v1.KeyGenRequest) returns (kms.v1.Empty);
 
-  // Return a URI where they can be accessed.
-  // The keys at the URI contains signature and authentication information.
-  // NOTE: Unprivileged and insecure call
+  // Retrieves the result from a key generation.
+  //
+  // # Parameters
+  // * `request` - The request ID under which the key generation was started.
+  //
+  // # Returns
+  // * `Response<KeyGenResult>`
+  //   - If the key generation completed successfully for `request`, then this ID will be relayed in `request_id`.
+  //   - Furthermore, the `key_results` in the response will contain the result information of each relevant public key; e.g. public encryption key, server key, and SnS key.
+  //   - The [`SignedPubDataHandle`] will be populated s.t. `key_handle` will contain the SHAKE-256 hash of the serialization of the given result.
+  //   - Similarely the `signature` will contain the regular ECDSA signature of the public decryption result, signed by the KMS' secret signing key.
+  //   - Finally the `external_signature` will contain the EIP-712 signature of the public decryption result using the `domain` provided in the request.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * `request` must be a valid [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
+  //   Furthermore, the request ID must be the same as the one used to start the key generation with method `key_gen`.
+  //   Finally the parameters used to start key generation must have been valid.
+  // ## Post-condition:
+  // * The `request_id` in `request` can be used to retrieve the result of the key generation again in the future. However there is no guarantee on how long the result will be stored.
   rpc GetKeyGenResult(kms.v1.RequestId) returns (kms.v1.KeyGenResult);
 
-  // Perform public decryption of a ciphertext and return the signed plaintext.
+  // Start public decryption.
+  //
+  // A public decryption protocol decrypts a ciphertext and returns the plaintext.
+  // The method is async in the sense that it returns immediately, but the actual decryption is done in the background.
+  //
+  // # Parameters
+  // * `request` - Struct containing all the data of the request, see pre-conditions for valid request types.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * `request_id` in `request` must be present, valid, fresh and unique [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
+  // * `ciphertexts` in `request` must be a non-empty vector of [`TypedCiphertext`]s, where each ciphertext is a valid ciphertext for the keyset present in the KMS (see below).
+  //   Observe that the KMS does _not_ check the validity of the ciphertexts!
+  // * `domain` in `request` _should_ be set. If not present, there there will be no external signature on the result of the public decryption.
+  // ## Post-condition:
+  // * `request_id` in `request` has been consumed and the public decryption has been started in the background using `request_id` as identifier.
   rpc PublicDecrypt(kms.v1.PublicDecryptionRequest) returns (kms.v1.Empty);
 
-  // Get the public decryption result.
-  // This query fails if the result is not available yet.
+  // Retrieves the result from a public decryption.
+  //
+  // # Parameters
+  // * `request` - The request ID under which the public decryption was started.
+  //
+  // # Returns
+  // * `Ok(Response<PublicDecryptionResponse>)`
+  //   - If the public decryption completed successfully then the `signature` will contain the regular ECDSA signature of the public decryption result, signed by the KMS' secret signing key.
+  //   - Finally the `payload` will be set and contain result of the public decryption.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * `request` must be a valid [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
+  //   Furthermore, the request ID must be the same as the one used to start the public decryption with method `public_decrypt`.
+  //   Finally the parameters used to start public decryption must have been valid, i.e. `public_decrypt` must not have returned an error.
+  // ## Post-condition:
+  // * The `request_id` in `request` can be used to retrieve the result of the public decryption again in the future. However there is no guarantee on how long the result will be stored.
   rpc GetPublicDecryptionResult(kms.v1.RequestId) returns (kms.v1.PublicDecryptionResponse);
 
-  // Perform user decryption of a ciphertext under a user-specified key and return a signcrypted
-  // share of the decrypted plaintext.
+  // Start the user decryption protocol.
+  //
+  // That is, it decrypts a ciphertext and encrypts the result under a user's public key.
+  // The method is async in the sense that it returns immediately, but the actual decryption is done in the background.
+  //
+  // # Parameters
+  // * `request` - Struct containing all the data of the request.
+  //
+  // # Returns a successful response with an empty body, which suggests decryption has started.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * `request_id` in `request` must be present, valid, fresh and unique [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
+  // * `typed_ciphertexts` in `request` must be a non-empty vector of [`TypedCiphertext`]s, where each ciphertext is a valid ciphertext for the keyset present in the KMS (see below).
+  //   Observe that the KMS does _not_ check the validity of the ciphertexts!
+  //   TODO(zama-ai/kms-internal/issues/2725): consider checking these before starting the user decryption protocol.
+  // * `key_id` in `request` must be present, valid [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
+  //   Furthermore, it must have been successfully generated by the KMS previous using the `key_gen` or `insecure_key_gen` methods.
+  //   The `key_id` must also match the one used to encrypt the the ciphertexts in `typed_ciphertexts`.
+  // * `client_address` in `request` must be the the EIP-55 encoded (blockchain wallet) address of the user requesting the decryption. I.e. including `0x` prefix.
+  // * `enc_key` in `request` must be the public key of the user requesting the decryption. This must be a bincode (v.1) encoded ML-KEM 512 key.
+  // * `domain` in `request` _must_ be set. Furthermore, within `domain`, the `verifying_contract` _must_ be set and be distinct from the `client_address`.
+  // ## Post-condition:
+  // * `request_id` in `request` has been consumed and the user decryption has been started in the background using `request_id` as identifier.
   rpc UserDecrypt(kms.v1.UserDecryptionRequest) returns (kms.v1.Empty);
 
-  // Get the user decryption result.
-  // This query fails if the result is not available yet.
+  // Retrieves the result from a user decryption.
+  //
+  // # Parameters
+  // * `request` - The request ID under which the user decryption was started.
+  //
+  // # Returns
+  // * `Response<UserDecryptionResponse>`
+  //   - If decryption completed successfully then `signature` will contain the ECDSA signature of the user decryption result, signed by the KMS' secret signing key.
+  //   - The `external_signature` will contain the EIP-712 signature of the public decryption result using the `domain` provided in the request.
+  //   - The `payload` will always be set and contain the given KMS' contribution to the user dercryption.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * `request` must be a valid [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
+  //   Furthermore, the request ID must be the same as the one used to start the user decryption with method `user_decrypt`.
+  //   Finally the parameters used to start user decryption must have been valid, i.e. `user_decrypt` must not have returned an error.
+  // ## Post-condition:
+  // * The `request_id` in `request` can be used to retrieve the result of the user decryption again in the future. However there is no guarantee on how long the result will be stored.
   rpc GetUserDecryptionResult(kms.v1.RequestId) returns (kms.v1.UserDecryptionResponse);
 
-  // Start the CRS generation protocol asynchronously.
+  // Start CRS generation.
+  //
+  // That is, it generates a common reference string (CRS) for the KMS.
+  // The method is async in the sense that it returns immediately, but the actual CRS generation is done in the background.
+  //
+  // # Parameters
+  // * `request` - Struct containing all the data of the request.
+  //
+  // # Returns a successful response with an empty body, which suggests CRS generation has started.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * `request_id` in `request` must be present, valid, fresh and unique [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
+  // * `params` in `request` must be castable to a [`FheParameter`], currently this means 0 or 1.
+  // * `max_number_bits` is the amount of bits that can be proven for ciphertext vector using the generated CRS. If this is not provided, then it defaults to the maximum supported by the fhevm.
+  // * `domain` in `request` _should_ be set, if not, then there will be no external signature on the result of the CRS generation.
+  // ## Post-condition:
+  // * `request_id` in `request` has been consumed and the CRS generation has been started in the background using `request_id` as identifier.
   rpc CrsGen(kms.v1.CrsGenRequest) returns (kms.v1.Empty);
 
-  // Get a reference to the CRS.
-  // This query fails if the result is not available yet.
+  // Retrieves the result from a CRS generation.
+  //
+  // # Parameters
+  // * `request` - The request ID under which the CRS generation was started.
+  //
+  // # Returns
+  // * `Response<CrsGenResult>`
+  //   - If the CRS generation completed successfully for `request`, then this ID will be relayed in `request_id`.
+  //   - Furthermore the `crs_results` [`SignedPubDataHandle`] will be set and `key_handle` will contain the SHAKE-256 hash of the serialization of the CRS result.
+  //   - Similarely the `signature` will contain the regular ECDSA signature of the CRS result, signed by the KMS' secret signing key,
+  //   - Finally the `external_signature` will contain the EIP-712 signature of the CRS result using the `domain` provided in the request.
+  //
+  // # Conditions
+  // ## Pre-condition:
+  // * `request` must be a valid [`RequestId`]. I.e. 32 byte lower-case hex encoding without `0x` prefix.
+  //   Furthermore, the request ID must be the same as the one used to start the CRS generation with method `crs_gen`.
+  //   Finally the parameters used to start CRS generation must have been valid, i.e. `crs_gen` must not have returned an error.
+  // ## Post-condition:
+  // * The `request_id` in `request` can be used to retrieve the result of the CRS generation again in the future. However there is no guarantee on how long the result will be stored.
   rpc GetCrsGenResult(kms.v1.RequestId) returns (kms.v1.CrsGenResult);
 
-  // Create a new KMS context, it may be created without an existing one.
+  // Contructs a new KMS context.
+  //
+  // That is, updates the internal state and configuration files to support a new KMS context.
+  //
+  // WARNING: currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
+  //
+  // # Parameters
+  // * `_request` - Struct containing all the data of the request.
+  //
+  // # Conditions
+  // ## Pre-condition:  -
+  // ## Post-condition: -
   rpc NewKmsContext(kms.v1.NewKmsContextRequest) returns (kms.v1.Empty);
 
-  // Destroy an existing KMS context.
+  // Destroyes a new KMS context.
+  //
+  // That is, switches from one context to another, or removes the old one.
+  //
+  // WARNING: currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
+  //
+  // # Parameters
+  // * `_request` - Struct containing all the data of the request.
+  //
+  // # Conditions
+  // ## Pre-condition:  -
+  // ## Post-condition: -
   rpc DestroyKmsContext(kms.v1.DestroyKmsContextRequest) returns (kms.v1.Empty);
 
-  // Create a new custodian context, it may be created without an existing one.
+  // Contructs a new custodian context.
+  //
+  // # Parameters
+  // That is, updates the internal state of custodians used for backup.
+  //
+  // WARNING: currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
+  //
+  // # Parameters
+  // * `_request` - Struct containing all the data of the request.
+  //
+  // # Conditions
+  // ## Pre-condition:  -
+  // ## Post-condition: -
   rpc NewCustodianContext(kms.v1.NewCustodianContextRequest) returns (kms.v1.Empty);
 
-  // Destroy an existing custodian context.
+  // Destroyes a custodian context.
+  //
+  // That is, updates the internal state and configuration files to start used a new custodian context and removes the old one.
+  //
+  // WARNING: currently this method _always_ returns an error (`Unimplemented`), as the feature is not yet implemented.
+  //
+  // # Parameters
+  // * `_request` - Struct containing all the data of the request.
+  //
+  // # Conditions
+  // ## Pre-condition:  -
+  // ## Post-condition: -
   rpc DestroyCustodianContext(kms.v1.DestroyCustodianContextRequest) returns (kms.v1.Empty);
 
-  // Get the public key that a custodian can use to encrypt a backup share
-  // before sending it to the KMS.
+  // Retrieves the encryption public key of this KMS.
+  //
+  // This can be used by a custorian to encrypt data for the KMS during recovery.
+  // WARNING: This method is not fully implemented yet.
+  //
+  // # Parameters
+  // * `_request` - Struct containing all the data of the request.
+  //
+  // # Returns
+  // * `Response<OperatorPublicKey>`
+  //
+  // # Conditions
+  // ## Pre-condition:  -
+  // ## Post-condition: -
   rpc GetOperatorPublicKey(kms.v1.Empty) returns (kms.v1.OperatorPublicKey);
 
-  // Restore the contents of the KMS private storage from custodian backup shares.
-  rpc CustodianBackupRestore(kms.v1.Empty) returns (kms.v1.Empty);
+  // Restore the contents of the KMS private storage from the backup vault.
+  //
+  // WARNING: This method is not fully implemented yet.
+  //
+  // # Parameters
+  // * `_request` - Struct containing all the data of the request.
+  //
+  // # Conditions
+  // ## Pre-condition:  -
+  // ## Post-condition: -
+  rpc BackupRestore(kms.v1.Empty) returns (kms.v1.Empty);
+
+  // Initialize custodian-based recovery by making a backup recovery request towards the custodians
+  //
+  // WARNING: This method is not fully implemented yet.
+  //
+  // # Parameters
+  // * `_request` - Struct containing all the data of the request.
+  //
+  // # Conditions
+  // ## Pre-condition:  -
+  // ## Post-condition: -
+  rpc CustodianRecoveryInit(kms.v1.Empty) returns (kms.v1.RecoveryRequest);
+  
+  // Recover the master decryption key secret shared with custodians as part of a custodian-based backup recovery
+  //
+  // WARNING: This method is not fully implemented yet.
+  //
+  // # Parameters
+  // * `_request` - Struct containing all the data of the request.
+  //
+  // # Conditions
+  // ## Pre-condition:  -
+  // ## Post-condition: -
+  rpc CustodianBackupRecovery(kms.v1.BackupRecoveryRequest) returns (kms.v1.Empty);
 }

@@ -14,9 +14,8 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_PUBLIC_DECRYPTION_FAILED, ERR_RATE_LIMIT_EXCEEDED, OP_PUBLIC_DECRYPT_INNER,
-        OP_PUBLIC_DECRYPT_REQUEST, TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND,
-        TAG_TFHE_TYPE,
+        ERR_PUBLIC_DECRYPTION_FAILED, OP_PUBLIC_DECRYPT_INNER, OP_PUBLIC_DECRYPT_REQUEST,
+        TAG_KEY_ID, TAG_PARTY_ID, TAG_PUBLIC_DECRYPTION_KIND, TAG_TFHE_TYPE,
     },
 };
 use tfhe::FheTypes;
@@ -52,7 +51,10 @@ use crate::{
         },
         threshold::traits::PublicDecryptor,
         traits::BaseKms,
-        validation::{validate_public_decrypt_req, validate_request_id, DSEP_PUBLIC_DECRYPTION},
+        validation::{
+            parse_proto_request_id, validate_public_decrypt_req, RequestIdParsingErr,
+            DSEP_PUBLIC_DECRYPTION,
+        },
     },
     tonic_handle_potential_err,
     util::{
@@ -261,30 +263,10 @@ impl<
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_PUBLIC_DECRYPT_REQUEST)
-            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-            .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
-                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            })
-            .map(|b| b.start())
-            .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-            .ok();
+            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+            .start();
 
-        let _request_counter = metrics::METRICS
-            .increment_request_counter(OP_PUBLIC_DECRYPT_REQUEST)
-            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
-
-        let permit = self
-            .rate_limiter
-            .start_pub_decrypt()
-            .await
-            .inspect_err(|_e| {
-                if let Err(e) = metrics::METRICS
-                    .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_RATE_LIMIT_EXCEEDED)
-                {
-                    tracing::warn!("Failed to increment error counter: {:?}", e);
-                }
-            })?;
+        let permit = self.rate_limiter.start_pub_decrypt().await?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -292,27 +274,42 @@ impl<
             "Received new decryption request"
         );
 
-        let (ciphertexts, key_id, req_id, eip712_domain) = tonic_handle_potential_err(
-            validate_public_decrypt_req(&inner),
-            format!("Failed to validate decrypt request {inner:?}"),
-        )
-        .map_err(|e| {
-            tracing::error!(
-                error = ?e,
-                request_id = ?inner.request_id,
-                "Failed to validate decrypt request"
-            );
-            let _ = metrics::METRICS
-                .increment_error_counter(OP_PUBLIC_DECRYPT_REQUEST, ERR_PUBLIC_DECRYPTION_FAILED);
-            e
-        })?;
+        let (ciphertexts, key_id, req_id, eip712_domain) = validate_public_decrypt_req(&inner)
+            .inspect_err(|e| {
+                tracing::error!(
+                    error = ?e,
+                    request_id = ?inner.request_id,
+                    "Failed to validate decrypt request"
+                );
+                let _ = metrics::METRICS.increment_error_counter(
+                    OP_PUBLIC_DECRYPT_REQUEST,
+                    ERR_PUBLIC_DECRYPTION_FAILED,
+                );
+            })?;
 
-        if let Some(b) = timer.as_mut() {
-            //We log but we don't want to return early because timer failed
-            let _ = b
-                .tags([(TAG_KEY_ID, key_id.as_str())])
-                .map_err(|e| tracing::warn!("Failed to add tag key_id or request_id: {}", e));
+        // Do some checks before we start modifying the database
+        {
+            let guarded_meta_store = self.pub_dec_meta_store.read().await;
+
+            if guarded_meta_store.exists(&req_id) {
+                return Err(Status::already_exists(format!(
+                    "Public decryption request with ID {} already exists",
+                    req_id
+                )));
+            }
+
+            if !tonic_handle_potential_err(
+                self.crypto_storage.threshold_fhe_keys_exists(&key_id).await,
+                "Could not check threshold fhe key existance".to_string(),
+            )? {
+                return Err(Status::not_found(format!(
+                    "Threshold FHE keys with key ID {} not found",
+                    key_id,
+                )));
+            }
         }
+
+        timer.tags([(TAG_KEY_ID, key_id.as_str())]);
         tracing::debug!(
             request_id = ?req_id,
             key_id = ?key_id,
@@ -337,6 +334,7 @@ impl<
             let total_lock_time = lock_start.elapsed();
             (lock_acquired_time, total_lock_time)
         };
+
         // Log after lock is released
         tracing::info!(
             "MetaStore INITIAL insert - req_id={}, key_id={}, party_id={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
@@ -362,23 +360,15 @@ impl<
         for (ctr, typed_ciphertext) in ciphertexts.into_iter().enumerate() {
             let inner_timer = metrics::METRICS
                 .time_operation(OP_PUBLIC_DECRYPT_INNER)
-                .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-                .and_then(|b| {
-                    b.tags([
-                        (TAG_PARTY_ID, self.session_preparer.my_id.to_string()),
-                        (TAG_KEY_ID, key_id.as_str()),
-                        (
-                            TAG_PUBLIC_DECRYPTION_KIND,
-                            dec_mode.as_str_name().to_string(),
-                        ),
-                    ])
-                    .map_err(|e| {
-                        tracing::warn!("Failed to a tag in party_id, key_id or request_id : {}", e)
-                    })
-                })
-                .map(|b| b.start())
-                .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-                .ok();
+                .tags([
+                    (TAG_PARTY_ID, self.session_preparer.my_id.to_string()),
+                    (TAG_KEY_ID, key_id.as_str()),
+                    (
+                        TAG_PUBLIC_DECRYPTION_KIND,
+                        dec_mode.as_str_name().to_string(),
+                    ),
+                ])
+                .start();
             let internal_sid = tonic_handle_potential_err(
                 req_id.derive_session_id_with_counter(ctr as u64),
                 "failed to derive session ID from counter".to_string(),
@@ -411,9 +401,7 @@ impl<
                 // Capture the inner_timer inside the decryption tasks, such that when the task
                 // exits, the timer is dropped and thus exported
                 let mut inner_timer = inner_timer;
-                inner_timer
-                    .as_mut()
-                    .map(|b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
+                inner_timer.tag(TAG_TFHE_TYPE, fhe_type_string);
 
                 let ciphertext = &typed_ciphertext.ciphertext;
                 let ct_format = typed_ciphertext.ciphertext_format();
@@ -519,6 +507,8 @@ impl<
                         anyhow::bail!("Unsupported fhe type {:?}", unsupported_fhe_type);
                     }
                 };
+                // We don't update the error counter here but rather in the signature task
+                // so we only update it once even if there are multiple decryption task that fail
                 match res_plaintext {
                     Ok(plaintext) => Ok((ctr, plaintext)),
                     Result::Err(e) => Err(anyhow_error_and_log(format!(
@@ -536,13 +526,12 @@ impl<
         let meta_store = Arc::clone(&self.pub_dec_meta_store);
         let sigkey = Arc::clone(&self.base_kms.sig_key);
         let party_id = self.session_preparer.my_id;
-        let dec_sig_future = |_permit| async move {
+        let dec_sig_future = move |_permit| async move {
             // Move the timer to the management task's context, so as to drop
             // it when decryptions are available
             let _timer = timer;
             // NOTE: _permit should be dropped at the end of this function
             let mut decs = HashMap::new();
-            let error_msg: Option<String> = None;
 
             // Collect all results first, without holding any locks
             while let Some(resp) = dec_tasks.pop() {
@@ -551,40 +540,22 @@ impl<
                         decs.insert(idx, plaintext);
                     }
                     Ok(Err(e)) => {
-                        let msg = format!("Failed decryption with err: {e:?}");
+                        let msg = format!("Failed decryption {req_id} with err: {e:?}");
                         tracing::error!(msg);
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(&req_id, Err(msg));
                         // exit mgmt task early in case of error
-                        return;
+                        return Err(());
                     }
                     Err(e) => {
-                        let msg = format!("Failed decryption with JoinError: {e:?}");
+                        let msg = format!("Failed decryption {req_id} with JoinError: {e:?}");
                         tracing::error!(msg);
                         let mut guarded_meta_store = meta_store.write().await;
                         let _ = guarded_meta_store.update(&req_id, Err(msg));
                         // exit mgmt task early in case of error
-                        return;
+                        return Err(());
                     }
                 }
-            }
-
-            // Handle error case with single lock acquisition
-            if let Some(msg) = error_msg {
-                let (lock_acquired_time, total_lock_time) = {
-                    let lock_start = std::time::Instant::now();
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let lock_acquired_time = lock_start.elapsed();
-                    let _ = guarded_meta_store.update(&req_id, Err(msg));
-                    let total_lock_time = lock_start.elapsed();
-                    (lock_acquired_time, total_lock_time)
-                };
-                // Log after lock is released
-                tracing::warn!(
-                    "MetaStore ERROR update - req_id={}, lock_acquired_in={:?}, total_lock_held={:?}",
-                    req_id, lock_acquired_time, total_lock_time
-                );
-                return;
             }
 
             // Prepare success data outside of lock
@@ -612,7 +583,9 @@ impl<
                 let lock_start = std::time::Instant::now();
                 let mut guarded_meta_store = meta_store.write().await;
                 let lock_acquired_time = lock_start.elapsed();
-                let _ = guarded_meta_store.update(&req_id, success_result);
+                guarded_meta_store
+                    .update(&req_id, success_result)
+                    .map_err(|_| ())?;
                 let total_lock_time = lock_start.elapsed();
                 (lock_acquired_time, total_lock_time)
             };
@@ -621,9 +594,20 @@ impl<
                 "MetaStore SUCCESS update - req_id={}, key_id={}, party_id={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
                 req_id, key_id, party_id, pts.len(), lock_acquired_time, total_lock_time
             );
+            Ok(())
         };
-        self.tracker
-            .spawn(dec_sig_future(permit).instrument(tracing::Span::current()));
+        // Increment the error counter if ever the task fails
+        self.tracker.spawn(async move {
+            let res = dec_sig_future(permit)
+                .instrument(tracing::Span::current())
+                .await;
+            if res.is_err() {
+                metrics::METRICS.increment_error_counter(
+                    OP_PUBLIC_DECRYPT_REQUEST,
+                    ERR_PUBLIC_DECRYPTION_FAILED,
+                );
+            }
+        });
 
         Ok(Response::new(Empty {}))
     }
@@ -632,8 +616,10 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<PublicDecryptionResponse>, Status> {
-        let request_id = request.into_inner().into();
-        validate_request_id(&request_id)?;
+        let request_id = parse_proto_request_id(
+            &request.into_inner(),
+            RequestIdParsingErr::PublicDecResponse,
+        )?;
         let status = {
             let guarded_meta_store = self.pub_dec_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
@@ -667,7 +653,7 @@ impl<
         Ok(Response::new(PublicDecryptionResponse {
             signature: sig.sig.to_vec(),
             payload: Some(sig_payload),
-            external_signature: Some(external_signature),
+            external_signature,
             extra_data,
         }))
     }
@@ -675,17 +661,16 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use aes_prng::AesRng;
     use kms_grpc::{kms::v1::TypedCiphertext, rpc_types::alloy_to_protobuf_domain};
+    use rand::SeedableRng;
+    use threshold_fhe::execution::{
+        runtime::session::ParameterHandles, tfhe_internals::utils::expanded_encrypt,
+    };
 
     use crate::{
-        consts::TEST_PARAM,
-        cryptography::{
-            decompression::test_tools::safe_serialize_versioned,
-            internal_crypto_types::gen_sig_keys,
-        },
-        dummy_domain,
-        engine::threshold::service::compute_all_info,
-        vault::storage::ram,
+        consts::TEST_PARAM, cryptography::internal_crypto_types::gen_sig_keys, dummy_domain,
+        engine::threshold::service::compute_all_info, vault::storage::ram,
     };
 
     use super::*;
@@ -700,7 +685,7 @@ mod tests {
         >;
 
         async fn decrypt<T>(
-            _noiseflood_session: &mut Self::Prep,
+            noiseflood_session: &mut Self::Prep,
             _server_key: &tfhe::integer::ServerKey,
             _ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
             _ct: LowLevelCiphertext,
@@ -712,7 +697,9 @@ mod tests {
             ResiduePoly<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>:
                 ErrorCorrect + Invert + Solve,
         {
-            let results = HashMap::new();
+            let session = noiseflood_session.get_mut_base_session();
+            let sid: u128 = session.session_id().into();
+            let results = HashMap::from_iter([(format!("{sid}"), T::cast_from(0u128))]);
             let elapsed_time = Duration::from_secs(0);
             Ok((results, elapsed_time))
         }
@@ -774,27 +761,35 @@ mod tests {
         }
     }
 
-    async fn setup_public_decryptor() -> (
+    async fn setup_public_decryptor(
+        with_prss: bool,
+        rng: &mut AesRng,
+    ) -> (
         RequestId,
         Vec<u8>,
         RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
-        let mut rng = rand::rngs::OsRng;
-        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
-        let session_preparer = SessionPreparer::new_test_session(false);
+        let session_preparer = SessionPreparer::new_test_session(with_prss);
         let public_decryptor =
             RealPublicDecryptor::init_test_dummy_decryptor(session_preparer).await;
 
-        let key_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(rng);
 
         // make a dummy private keyset
-        let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, &mut rng);
+        let (threshold_fhe_keys, fhe_key_set) = ThresholdFheKeys::init_dummy(param, rng);
 
-        let ct = tfhe::CompactCiphertextList::builder(&fhe_key_set.public_key)
-            .push(255u8)
-            .build();
-        let ct_buf = safe_serialize_versioned(&ct);
+        // Not a huge deal if we clone this server key since we only use small/test parameters
+        tfhe::set_server_key(fhe_key_set.server_key.clone());
+        let ct: tfhe::FheUint8 = expanded_encrypt(&fhe_key_set.public_key, 255u8, 8).unwrap();
+        let mut ct_buf = Vec::new();
+        tfhe::safe_serialization::safe_serialize(
+            &ct,
+            &mut ct_buf,
+            crate::consts::SAFE_SER_SIZE_LIMIT,
+        )
+        .unwrap();
 
         let info = compute_all_info(&sk, &fhe_key_set, &dummy_domain()).unwrap();
 
@@ -829,71 +824,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_aborted() {
-        // `Aborted` - If an internal error occured in starting the public decryption
-        // _or_ if an invalid argument was given.
-        // here we use the wrong key ID
-
-        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor().await;
-
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
-        let bad_key_id = RequestId::new_random(&mut rand::rngs::OsRng);
-        let request = Request::new(PublicDecryptionRequest {
-            request_id: Some(req_id.into()),
-            ciphertexts: vec![TypedCiphertext {
-                ciphertext: ct_buf.clone(),
-                fhe_type: FheTypes::Uint8 as i32,
-                external_handle: vec![],
-                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
-            }],
-            key_id: Some(bad_key_id.into()),
-            domain: Some(domain),
-            extra_data: vec![],
-        });
-        // NOTE: should probably be NotFound
-        assert_eq!(
-            public_decryptor
-                .public_decrypt(request)
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Aborted
-        );
-
-        // use an existing request ID should also abort
-        let request = Request::new(PublicDecryptionRequest {
-            request_id: Some(req_id.into()),
-            ciphertexts: vec![TypedCiphertext {
-                ciphertext: ct_buf.clone(),
-                fhe_type: FheTypes::Uint8 as i32,
-                external_handle: vec![],
-                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
-            }],
-            key_id: Some(key_id.into()),
-            domain: None,
-            extra_data: vec![],
-        });
-        assert_eq!(
-            public_decryptor
-                .public_decrypt(request)
-                .await
-                .unwrap_err()
-                .code(),
-            tonic::Code::Aborted
-        );
-    }
-
-    #[tokio::test]
     async fn test_resource_exhausted() {
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        let (key_id, ct_buf, mut public_decryptor) = setup_public_decryptor().await;
+        let mut rng = AesRng::seed_from_u64(12);
+        let (key_id, ct_buf, mut public_decryptor) = setup_public_decryptor(true, &mut rng).await;
 
         // Set bucket size to zero, so no operations are allowed
         public_decryptor.set_bucket_size(0);
 
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let req_id = RequestId::new_random(&mut rng);
         let request = Request::new(PublicDecryptionRequest {
             request_id: Some(req_id.into()),
             ciphertexts: vec![TypedCiphertext {
@@ -920,9 +860,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sunshine() {
-        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor().await;
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+    async fn already_exists() {
+        let mut rng = AesRng::seed_from_u64(12);
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request = PublicDecryptionRequest {
+            request_id: Some(req_id.into()),
+            ciphertexts: vec![TypedCiphertext {
+                ciphertext: ct_buf,
+                fhe_type: FheTypes::Uint8 as i32,
+                external_handle: vec![],
+                ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+            }],
+            key_id: Some(key_id.into()),
+            domain: Some(domain),
+            extra_data: vec![],
+        };
+        public_decryptor
+            .public_decrypt(Request::new(request.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            public_decryptor
+                .public_decrypt(Request::new(request))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::AlreadyExists
+        );
+    }
+
+    #[tokio::test]
+    async fn not_found() {
+        let mut rng = AesRng::seed_from_u64(1123);
+        let (_key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+        let bad_key_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = Request::new(PublicDecryptionRequest {
             request_id: Some(req_id.into()),
@@ -930,12 +904,203 @@ mod tests {
                 ciphertext: ct_buf,
                 fhe_type: FheTypes::Uint8 as i32,
                 external_handle: vec![],
-                ciphertext_format: CiphertextFormat::SmallCompressed as i32,
+                ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+            }],
+            key_id: Some(bad_key_id.into()),
+            domain: Some(domain),
+            extra_data: vec![],
+        });
+        assert_eq!(
+            public_decryptor
+                .public_decrypt(request)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::NotFound
+        );
+
+        // try to get result for a non-existing request ID
+        let another_req_id = RequestId::new_random(&mut rng);
+        assert_eq!(
+            public_decryptor
+                .get_result(Request::new(another_req_id.into()))
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::NotFound
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_argument() {
+        let mut rng = AesRng::seed_from_u64(13);
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
+        {
+            // Bad request ID
+            let bad_req_id = kms_grpc::kms::v1::RequestId {
+                request_id: "invalid_request_id".to_string(),
+            };
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(bad_req_id),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+                }],
+                key_id: Some(key_id.into()),
+                domain: Some(domain),
+                extra_data: vec![],
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // empty ciphertexts
+            let req_id = RequestId::new_random(&mut rng);
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![],
+                key_id: Some(key_id.into()),
+                domain: Some(domain),
+                extra_data: vec![],
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // bad key ID
+            let req_id = RequestId::new_random(&mut rng);
+            let bad_key_id = kms_grpc::kms::v1::RequestId {
+                request_id: "invalid_request_id".to_string(),
+            };
+            let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+                }],
+                key_id: Some(bad_key_id),
+                domain: Some(domain),
+                extra_data: vec![],
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // missing domain
+            let req_id = RequestId::new_random(&mut rng);
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf.clone(),
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+                }],
+                key_id: Some(key_id.into()),
+                domain: None,
+                extra_data: vec![],
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // wrong domain
+            let req_id = RequestId::new_random(&mut rng);
+            let mut domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            domain.verifying_contract = "invalid_contract".to_string();
+            let request = Request::new(PublicDecryptionRequest {
+                request_id: Some(req_id.into()),
+                ciphertexts: vec![TypedCiphertext {
+                    ciphertext: ct_buf,
+                    fhe_type: FheTypes::Uint8 as i32,
+                    external_handle: vec![],
+                    ciphertext_format: CiphertextFormat::SmallExpanded as i32,
+                }],
+                key_id: Some(key_id.into()),
+                domain: Some(domain),
+                extra_data: vec![],
+            });
+            assert_eq!(
+                public_decryptor
+                    .public_decrypt(request)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+        {
+            // bad request ID while getting response
+            assert_eq!(
+                public_decryptor
+                    .get_result(Request::new(kms_grpc::kms::v1::RequestId {
+                        request_id: "invalid_request_id".to_string(),
+                    },))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn sunshine() {
+        let mut rng = AesRng::seed_from_u64(13);
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
+        let req_id = RequestId::new_random(&mut rng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request = Request::new(PublicDecryptionRequest {
+            request_id: Some(req_id.into()),
+            ciphertexts: vec![TypedCiphertext {
+                ciphertext: ct_buf,
+                fhe_type: FheTypes::Uint8 as i32,
+                external_handle: vec![],
+                // NOTE: because the way [setup_public_decryptor] is implemented,
+                // the ciphertext format must be SmallExpanded for the dummy decryptor to work
+                ciphertext_format: CiphertextFormat::SmallExpanded as i32,
             }],
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
         });
         public_decryptor.public_decrypt(request).await.unwrap();
+        // there's no need to check the decryption result since it's a dummy protocol
+        // and always produces the same response
+        public_decryptor
+            .get_result(Request::new(req_id.into()))
+            .await
+            .unwrap();
     }
 }

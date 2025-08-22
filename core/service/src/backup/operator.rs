@@ -1,7 +1,5 @@
 use super::{
-    custodian::{
-        CustodianRecoveryOutput, InternalCustodianSetupMessage, DSEP_BACKUP_CUSTODIAN, HEADER,
-    },
+    custodian::{InternalCustodianSetupMessage, DSEP_BACKUP_CUSTODIAN, HEADER},
     error::BackupError,
     secretsharing,
     traits::{BackupDecryptor, BackupSigner},
@@ -10,7 +8,7 @@ use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
-        backup_pke::BackupPublicKey,
+        backup_pke::{BackupPrivateKey, BackupPublicKey},
         internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature},
         signcryption::internal_verify_sig,
     },
@@ -18,7 +16,7 @@ use crate::{
 };
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
-use kms_grpc::RequestId;
+use kms_grpc::{rpc_types::InternalCustodianRecoveryOutput, RequestId};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -42,18 +40,18 @@ pub(crate) const DSEP_BACKUP_CIPHER: DomainSep = *b"BKUPCIPH";
 pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRREQ";
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum RecoveryRequestVersioned {
-    V0(RecoveryRequest),
+pub enum InternalRecoveryRequestVersioned {
+    V0(InternalRecoveryRequest),
 }
 
-impl Named for RecoveryRequest {
+impl Named for InternalRecoveryRequest {
     const NAME: &'static str = "backup::RecoveryRequest";
 }
 
 /// The data sent to the custodians by the operator during the recovery procedure.
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
-#[versionize(RecoveryRequestVersioned)]
-pub struct RecoveryRequest {
+#[versionize(InternalRecoveryRequestVersioned)]
+pub struct InternalRecoveryRequest {
     payload: InnerRecoveryRequest,
     signature: Vec<u8>,
 }
@@ -67,11 +65,10 @@ enum InnerRecoveryRequestVersioned {
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(InnerRecoveryRequestVersioned)]
 struct InnerRecoveryRequest {
-    /// The ephemeral key used to signcrypt the recovered data during transit to the operator.
+    /// The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
     enc_key: BackupPublicKey,
-    /// The public key of the operator that was originally used to sign the backup.
     /// The ciphertexts that are the backup. Indexed by the custodian role.
-    cts: BTreeMap<Role, OperatorBackupOutput>,
+    cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     /// The request ID under which the backup was created.
     backup_id: RequestId,
     /// The role of the operator
@@ -82,11 +79,11 @@ impl Named for InnerRecoveryRequest {
     const NAME: &'static str = "backup::InnerRecoveryRequest";
 }
 
-impl RecoveryRequest {
+impl InternalRecoveryRequest {
     pub fn new(
         enc_key: BackupPublicKey,
         sig_key: &PrivateSigKey,
-        cts: BTreeMap<Role, OperatorBackupOutput>,
+        cts: BTreeMap<Role, InnerOperatorBackupOutput>,
         backup_id: RequestId,
         operator_role: Role,
     ) -> anyhow::Result<Self> {
@@ -156,7 +153,7 @@ impl RecoveryRequest {
         &self.payload.enc_key
     }
 
-    pub fn ciphertexts(&self) -> HashMap<Role, &OperatorBackupOutput> {
+    pub fn ciphertexts(&self) -> HashMap<Role, &InnerOperatorBackupOutput> {
         self.payload
             .cts
             .iter()
@@ -173,7 +170,7 @@ impl RecoveryRequest {
     }
 }
 
-impl Display for RecoveryRequest {
+impl Display for InternalRecoveryRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -184,18 +181,18 @@ impl Display for RecoveryRequest {
 }
 
 #[derive(Clone)]
-pub struct Operator<D: BackupDecryptor> {
+pub struct Operator {
     my_role: Role,
     custodian_keys: Vec<(BackupPublicKey, PublicSigKey)>,
     signer: PrivateSigKey,
     // the public component of [signer] above
     verification_key: PublicSigKey,
-    decryptor: D,
+    decryptor: BackupPrivateKey,
     public_key: BackupPublicKey,
     threshold: usize,
 }
 
-impl<D: BackupDecryptor> std::fmt::Debug for Operator<D> {
+impl std::fmt::Debug for Operator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Operator")
             .field("my_id", &self.my_role)
@@ -210,23 +207,23 @@ impl<D: BackupDecryptor> std::fmt::Debug for Operator<D> {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum OperatorBackupOutputVersioned {
-    V0(OperatorBackupOutput),
+pub enum InnerOperatorBackupOutputVersioned {
+    V0(InnerOperatorBackupOutput),
 }
 
 /// The output from the operator after it has completed a backup.
 /// This data needs to be persisted on some public storage so that
 /// new operators can download and recover.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(OperatorBackupOutputVersioned)]
-pub struct OperatorBackupOutput {
+#[versionize(InnerOperatorBackupOutputVersioned)]
+pub struct InnerOperatorBackupOutput {
     /// Ciphertext under the custodian's public key, using nested encryption.
     pub ciphertext: Vec<u8>,
     /// Signature by the operator.
     pub signature: Vec<u8>,
 }
 
-impl Named for OperatorBackupOutput {
+impl Named for InnerOperatorBackupOutput {
     const NAME: &'static str = "backup::OperatorBackupOutput";
 }
 
@@ -401,13 +398,13 @@ impl Named for BackupMaterial {
     const NAME: &'static str = "backup::BackupShares";
 }
 
-impl<D: BackupDecryptor> Operator<D> {
+impl Operator {
     pub fn new(
         my_role: Role,
         custodian_messages: Vec<InternalCustodianSetupMessage>,
         signer: PrivateSigKey,
         operator_verf_key: PublicSigKey,
-        decryptor: D,
+        decryptor: BackupPrivateKey,
         operator_enc_key: BackupPublicKey,
         threshold: usize,
     ) -> Result<Self, BackupError> {
@@ -488,7 +485,7 @@ impl<D: BackupDecryptor> Operator<D> {
         rng: &mut R,
         secret: &[u8],
         backup_id: RequestId,
-    ) -> Result<(BTreeMap<Role, OperatorBackupOutput>, BackupCommitments), BackupError> {
+    ) -> Result<(BTreeMap<Role, InnerOperatorBackupOutput>, BackupCommitments), BackupError> {
         let n = self.custodian_keys.len();
         let t = self.threshold;
 
@@ -576,7 +573,7 @@ impl<D: BackupDecryptor> Operator<D> {
             // 5. The ciphertext is stored by `Pij`, or stored on a non-malleable storage, e.g. a blockchain or a secure bank vault.
             ct_shares.insert(
                 role_j,
-                OperatorBackupOutput {
+                InnerOperatorBackupOutput {
                     ciphertext,
                     signature,
                 },
@@ -599,7 +596,7 @@ impl<D: BackupDecryptor> Operator<D> {
     /// so the are a separate input.
     pub fn verify_and_recover(
         &self,
-        custodian_recovery_output: &BTreeMap<Role, CustodianRecoveryOutput>,
+        custodian_recovery_output: &BTreeMap<Role, InternalCustodianRecoveryOutput>,
         commitments: &BackupCommitments,
         backup_id: RequestId,
     ) -> Result<Vec<u8>, BackupError> {

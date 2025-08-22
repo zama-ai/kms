@@ -1,7 +1,11 @@
 use anyhow::anyhow;
 use kms_grpc::kms::v1::{KeySetAddedInfo, KeySetType};
+#[cfg(feature = "non-wasm")]
+use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
 use threshold_fhe::execution::keyset_config as ddec_keyset_config;
+
+use crate::engine::validation::{parse_proto_request_id, RequestIdParsingErr};
 
 pub(crate) struct WrappedKeySetConfig(kms_grpc::kms::v1::KeySetConfig);
 
@@ -175,7 +179,8 @@ impl InternalKeySetConfig {
             }
         }
         Ok(Self {
-            keyset_config: preproc_proto_to_keyset_config(&keyset_config)?,
+            keyset_config: preproc_proto_to_keyset_config(&keyset_config)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?,
             keyset_added_info,
         })
     }
@@ -197,7 +202,18 @@ impl InternalKeySetConfig {
                     added_info.from_keyset_id_decompression_only.to_owned(),
                     added_info.to_keyset_id_decompression_only.to_owned(),
                 ) {
-                    (Some(from), Some(to)) => (from.into(), to.into()),
+                    (Some(from), Some(to)) => (
+                        parse_proto_request_id(
+                            &from,
+                            RequestIdParsingErr::Other("invalid from ID".to_string()),
+                        )
+                        .map_err(|e| anyhow::anyhow!("Failed to parse from ID: {}", e))?,
+                        parse_proto_request_id(
+                            &to,
+                            RequestIdParsingErr::Other("invalid to ID".to_string()),
+                        )
+                        .map_err(|e| anyhow::anyhow!("Failed to parse to ID: {}", e))?,
+                    ),
                     _ => anyhow::bail!("Missing from and to keyset information"),
                 }
             }
@@ -212,7 +228,18 @@ impl InternalKeySetConfig {
         Ok(match &self.keyset_added_info {
             Some(added_info) => {
                 match added_info.base_keyset_id_for_sns_compression_key.to_owned() {
-                    Some(inner) => inner.into(),
+                    Some(inner) => parse_proto_request_id(
+                        &inner,
+                        RequestIdParsingErr::Other(
+                            "invalid base key ID for sns compression key".to_string(),
+                        ),
+                    )
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "Failed to parse base key ID for sns compression key: {}",
+                            e
+                        )
+                    })?,
                     _ => anyhow::bail!("missing key ID for overwritting"),
                 }
             }
@@ -226,21 +253,35 @@ impl InternalKeySetConfig {
 
     /// Retrieves the compression keyset ID from the added info.
     /// Will always return Some request ID if [`KeySetCofig::Standard`] is used with the [`KeySetCompressionConfig::UseExisting`] setting.
-    pub fn get_compression_id(&self) -> Option<RequestId> {
-        self.keyset_added_info
+    pub fn get_compression_id(&self) -> anyhow::Result<Option<RequestId>> {
+        if let Some(inner) = self
+            .keyset_added_info
             .as_ref()
             .and_then(|info| info.compression_keyset_id.clone())
-            .map(RequestId::from)
+        {
+            let key_id = parse_proto_request_id(
+                &inner,
+                RequestIdParsingErr::Other("invalid compression keyset ID".to_string()),
+            )?;
+            Ok(Some(key_id))
+        } else {
+            Ok(None)
+        }
     }
 }
 
 #[cfg(feature = "non-wasm")]
 pub(crate) fn preproc_proto_to_keyset_config(
     keyset_config: &Option<kms_grpc::kms::v1::KeySetConfig>,
-) -> anyhow::Result<ddec_keyset_config::KeySetConfig> {
+) -> Result<ddec_keyset_config::KeySetConfig, BoxedStatus> {
     match keyset_config {
         None => Ok(ddec_keyset_config::KeySetConfig::default()),
-        Some(inner) => Ok(WrappedKeySetConfig(*inner).try_into()?),
+        Some(inner) => Ok(WrappedKeySetConfig(*inner).try_into().map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("Failed to parse KeySetConfig: {}", e),
+            )
+        })?),
     }
 }
 

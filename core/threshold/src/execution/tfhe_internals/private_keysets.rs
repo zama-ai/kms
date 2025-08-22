@@ -1,10 +1,9 @@
 use crate::algebra::base_ring::{Z128, Z64};
 use crate::execution::sharing::share::Share;
-use crate::execution::tfhe_internals::compression_decompression_key::{
-    CompressionPrivateKeyShares, SnsCompressionPrivateKeyShares,
-};
+use crate::execution::tfhe_internals::compression_decompression_key::CompressionPrivateKeyShares;
 #[cfg(feature = "testing")]
 use crate::execution::tfhe_internals::parameters::DKGParams;
+use crate::execution::tfhe_internals::sns_compression_key::SnsCompressionPrivateKeyShares;
 use crate::{
     algebra::{galois_rings::common::ResiduePoly, structure_traits::Ring},
     execution::tfhe_internals::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare},

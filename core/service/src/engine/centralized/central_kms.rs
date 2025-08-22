@@ -501,20 +501,13 @@ pub fn central_public_decrypt<
     // run the decryption of each ct in the batch in parallel
     cts.par_iter()
         .map(|ct| {
-            let inner_timer = metrics::METRICS
+            let mut inner_timer = metrics::METRICS
                 .time_operation(OP_PUBLIC_DECRYPT_INNER)
-                .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-                .and_then(|b| {
-                    b.tags(metric_tags.clone()).map_err(|e| {
-                        tracing::warn!("Failed to a tag in party_id, key_id or request_id : {}", e)
-                    })
-                })
-                .map(|b| b.start())
-                .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-                .ok();
+                .tags(metric_tags.clone())
+                .start();
             let fhe_type = ct.fhe_type()?;
             let fhe_type_string = ct.fhe_type_string();
-            inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
+            inner_timer.tag(TAG_TFHE_TYPE, fhe_type_string);
             RealCentralizedKms::<PubS, PrivS>::public_decrypt(
                 keys,
                 &ct.ciphertext,
@@ -553,21 +546,14 @@ pub async fn async_user_decrypt<
 
     let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {
-        let inner_timer = metrics::METRICS
+        let mut inner_timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_INNER)
-            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-            .and_then(|b| {
-                b.tags(metric_tags.clone()).map_err(|e| {
-                    tracing::warn!("Failed to a tag in party_id, key_id or request_id : {}", e)
-                })
-            })
-            .map(|b| b.start())
-            .map_err(|e| tracing::warn!("Failed to start timer: {:?}", e))
-            .ok();
+            .tags(metric_tags.clone())
+            .start();
         let high_level_ct = &typed_ciphertext.ciphertext;
         let fhe_type = typed_ciphertext.fhe_type()?;
         let fhe_type_string = typed_ciphertext.fhe_type_string();
-        inner_timer.map(|mut b| b.tag(TAG_TFHE_TYPE, fhe_type_string));
+        inner_timer.tag(TAG_TFHE_TYPE, fhe_type_string);
         let ct_format = typed_ciphertext.ciphertext_format();
         let external_handle = typed_ciphertext.external_handle.clone();
         let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS>::user_decrypt(

@@ -1,9 +1,6 @@
 use crate::{
     anyhow_error_and_log,
-    backup::{
-        custodian::{CustodianRecoveryOutput, InternalCustodianContext},
-        operator::BackupCommitments,
-    },
+    backup::{custodian::InternalCustodianContext, operator::BackupCommitments},
     conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain as KeychainConf, SecretSharingKeychain},
     cryptography::{attestation::SecurityModuleProxy, backup_pke::BackupCiphertext},
     vault::{
@@ -16,7 +13,7 @@ use aes_prng::AesRng;
 use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
 use itertools::Itertools;
-use kms_grpc::rpc_types::PrivDataType;
+use kms_grpc::rpc_types::{InternalCustodianRecoveryOutput, PrivDataType};
 use rand::SeedableRng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{collections::BTreeMap, convert::Into};
@@ -39,7 +36,7 @@ pub enum AppKeyBlobVersioned {
 pub struct AppKeyBlob {
     pub root_key_id: String,
     pub data_key_blob: Vec<u8>,
-    pub ciphertext: Vec<u8>, // Serialized [`BackupCiphertext`] since AWS requires serialized data
+    pub ciphertext: Vec<u8>,
     pub iv: Vec<u8>,
     pub auth_tag: Vec<u8>,
 }
@@ -75,7 +72,10 @@ pub enum KeychainProxy {
 #[derive(EnumTryAs, Clone)]
 pub enum EnvelopeLoad {
     AppKeyBlob(AppKeyBlob),
-    OperatorRecoveryInput(BTreeMap<Role, CustodianRecoveryOutput>, BackupCommitments),
+    OperatorRecoveryInput(
+        BTreeMap<Role, InternalCustodianRecoveryOutput>,
+        BackupCommitments,
+    ),
 }
 
 #[derive(EnumTryAs)]
@@ -125,7 +125,7 @@ pub async fn make_keychain_proxy(
                 .all_data_ids(&PrivDataType::CustodianInfo.to_string())
                 .await?;
             // Get the latest context ID which should be the most recent one
-            let latest_context_id = match all_custodian_ids.iter().sorted().last() {
+            let latest_custodian_context_id = match all_custodian_ids.iter().sorted().last() {
                 Some(latest_context_id) => latest_context_id,
                 None => {
                     return Err(anyhow_error_and_log(
@@ -135,12 +135,13 @@ pub async fn make_keychain_proxy(
             };
             let custodian_context: InternalCustodianContext = read_versioned_at_request_id(
                 private_vault,
-                latest_context_id,
+                latest_custodian_context_id,
                 &PrivDataType::CustodianInfo.to_string(),
             )
             .await?;
             KeychainProxy::from(secretsharing::SecretShareKeychain::new(
                 rng,
+                *latest_custodian_context_id,
                 custodian_context.backup_enc_key.clone(),
             ))
         }

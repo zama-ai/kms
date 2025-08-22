@@ -6,11 +6,15 @@ use aes_prng::AesRng;
 use kms_grpc::{
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
     rpc_types::{optional_protobuf_to_alloy_domain, SignedPubDataHandleInternal},
+    utils::tonic_result::tonic_handle_potential_err,
     RequestId,
 };
 use observability::{
     metrics,
-    metrics_names::{ERR_RATE_LIMIT_EXCEEDED, OP_CRS_GEN, OP_INSECURE_CRS_GEN, TAG_PARTY_ID},
+    metrics_names::{
+        ERR_CANCELLED, ERR_CRS_GEN_FAILED, ERR_INVALID_REQUEST, OP_CRS_GEN_REQUEST,
+        OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
+    },
 };
 use threshold_fhe::{
     algebra::base_ring::Z64,
@@ -28,12 +32,13 @@ use tracing::Instrument;
 
 // === Internal Crate ===
 use crate::{
-    anyhow_error_and_log,
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
         base::{compute_info, retrieve_parameters, BaseKmsStruct, DSEP_PUBDATA_CRS},
         threshold::traits::CrsGenerator,
-        validation::validate_request_id,
+        validation::{
+            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+        },
     },
     util::{
         meta_store::{handle_res_mapping, MetaStore},
@@ -88,13 +93,7 @@ impl<
         request: Request<CrsGenRequest>,
         insecure: bool,
     ) -> Result<Response<Empty>, Status> {
-        let permit = self.rate_limiter.start_crsgen().await.inspect_err(|_e| {
-            if let Err(e) =
-                metrics::METRICS.increment_error_counter(OP_CRS_GEN, ERR_RATE_LIMIT_EXCEEDED)
-            {
-                tracing::warn!("Failed to increment error counter: {:?}", e);
-            }
-        })?;
+        let permit = self.rate_limiter.start_crsgen().await?;
 
         let inner = request.into_inner();
         tracing::info!(
@@ -115,20 +114,35 @@ impl<
                 )
             })?;
 
-        let req_id = inner
-            .request_id
-            .ok_or_else(|| {
-                tonic::Status::new(
-                    tonic::Code::InvalidArgument,
-                    "missing request ID in CRS generation",
-                )
-            })?
-            .into();
-        validate_request_id(&req_id)?;
+        let req_id =
+            parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::CrsGenRequest)?;
 
         let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
 
+        // Validate the request ID before proceeding
+        {
+            let guarded_meta_store = self.crs_meta_store.read().await;
+
+            if guarded_meta_store.exists(&req_id) {
+                return Err(Status::already_exists(format!(
+                    "CRS gen request with ID {} already exists",
+                    req_id
+                )));
+            }
+
+            if tonic_handle_potential_err(
+                self.crypto_storage.crs_exists(&req_id).await,
+                "Could not check crs existance in storage".to_string(),
+            )? {
+                return Err(Status::already_exists(format!(
+                    "CRS with key ID {} already exists",
+                    req_id,
+                )));
+            }
+        }
+
         // NOTE: everything inside this function will cause an Aborted error code
+        // so before calling it we should do as much validation as possible without modifying state
         self.inner_crs_gen(
             req_id,
             witness_dim,
@@ -156,34 +170,24 @@ impl<
     ) -> anyhow::Result<()> {
         //Retrieve the correct tag
         let op_tag = if insecure {
-            OP_INSECURE_CRS_GEN
+            OP_INSECURE_CRS_GEN_REQUEST
         } else {
-            OP_CRS_GEN
+            OP_CRS_GEN_REQUEST
         };
-
-        let _request_counter = metrics::METRICS
-            .increment_request_counter(op_tag)
-            .map_err(|e| tracing::warn!("Failed to increment request counter: {}", e));
 
         // Prepare the timer before giving it to the tokio task
         // that runs the computation
         let timer = metrics::METRICS
             .time_operation(op_tag)
-            .map_err(|e| tracing::warn!("Failed to create metric: {}", e))
-            .and_then(|b| {
-                b.tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
-                    .map_err(|e| tracing::warn!("Failed to add party tag id: {}", e))
-            });
+            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string());
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
-            guarded_meta_store.insert(&req_id).map_err(|e| {
-                anyhow_error_and_log(format!(
-                    "failed to insert to meta store in inner_crs_gen with error: {e}"
-                ))
-            })?;
+            guarded_meta_store.insert(&req_id)?;
         }
 
-        let session_id = req_id.derive_session_id()?;
+        let session_id = req_id.derive_session_id().inspect_err(|_| {
+            metrics::METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
+        })?;
         // CRS ceremony requires a sync network
         let session = self
             .session_preparer
@@ -212,9 +216,13 @@ impl<
         self.tracker
             .spawn(async move {
                 //Start the metric timer, it will end on drop
-                let _timer = timer.map(|b| b.start());
+                let _timer = timer.start();
                 tokio::select! {
-                    () = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, permit, insecure) => {
+                   res  = Self::crs_gen_background(&req_id, witness_dim, max_num_bits, session, rng, meta_store, crypto_storage, sk, dkg_params.to_owned(), eip712_domain_copy, permit, insecure) => {
+                        // Increment the error counter if ever the task fails
+                        if res.is_err() {
+                            metrics::METRICS.increment_error_counter(op_tag, ERR_CRS_GEN_FAILED);
+                        }
                         // Remove cancellation token since generation is now done.
                         ongoing.lock().await.remove(&req_id);
                         tracing::info!("CRS generation of request {} exiting normally.", req_id);
@@ -224,6 +232,7 @@ impl<
                         // Delete any persistant data. Since we only cancel during shutdown we can ignore cleaning up the meta store since it is only in RAM
                         let guarded_meta_store= meta_store_cancelled.write().await;
                         crypto_storage_cancelled.purge_crs_material(&req_id, guarded_meta_store).await;
+                        metrics::METRICS.increment_error_counter(op_tag, ERR_CANCELLED);
                         tracing::info!("Trying to clean up any already written material.")
                     },
                 }
@@ -235,8 +244,8 @@ impl<
         &self,
         request: Request<v1::RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
-        let request_id = request.into_inner().into();
-        validate_request_id(&request_id)?;
+        let request_id =
+            parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::CrsGenResponse)?;
         let status = {
             let guarded_meta_store = self.crs_meta_store.read().await;
             guarded_meta_store.retrieve(&request_id)
@@ -262,7 +271,7 @@ impl<
         eip712_domain: alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
         insecure: bool,
-    ) {
+    ) -> Result<(), ()> {
         tracing::info!(
             "Starting crs gen background process for req_id={req_id:?} with witness_dim={witness_dim} and max_num_bits={max_num_bits:?}"
         );
@@ -299,7 +308,7 @@ impl<
                         Err(e) => {
                             let mut guarded_meta_store = meta_store.write().await;
                             let _ = guarded_meta_store.update(req_id, Err(e.to_string()));
-                            return;
+                            return Err(());
                         }
                     };
                     transfer_crs(&base_session, Some(crs), input_party_id).await
@@ -327,11 +336,13 @@ impl<
                 let mut guarded_meta_store = meta_store.write().await;
                 // We cannot do much if updating the storage fails at this point...
                 let _ = guarded_meta_store.update(req_id, Err(e.to_string()));
-                return;
+                return Err(());
             }
         };
 
         tracing::info!("CRS generation completed for req_id={req_id:?}, storing the CRS.");
+        //Note: We can't easily check here whether we succeeded writing to the meta store
+        //thus we can't increment the error counter if it fails
         crypto_storage
             .write_crs_with_meta_store(req_id, pp_id, meta_data, meta_store)
             .await;
@@ -342,6 +353,7 @@ impl<
             "CRS stored. CRS ceremony time was {:?} ms",
             (elapsed_time).as_millis()
         );
+        Ok(())
     }
 }
 
@@ -566,9 +578,9 @@ mod tests {
             )
             .await;
 
-        // `InvalidArgument` - If the request ID is not present, valid or does not match the expected format.
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         {
+            // missing request ID
             let req = CrsGenRequest {
                 params: FheParameter::Default as i32,
                 max_num_bits: None,
@@ -595,11 +607,11 @@ mod tests {
         }
 
         {
-            // `InvalidArgument` - If the parameters in the request are not valid.
+            // use the wrong fhe parameter
             let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let req = CrsGenRequest {
-                params: 2,
+                params: 200, // wrong parameter
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: Some(domain),
@@ -609,6 +621,42 @@ mod tests {
             let res = crs_gen.crs_gen(request).await;
 
             assert_eq!(res.unwrap_err().code(), tonic::Code::InvalidArgument);
+        }
+
+        {
+            // missing domain
+            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req = CrsGenRequest {
+                params: FheParameter::Default as i32,
+                max_num_bits: None,
+                request_id: Some(req_id.into()),
+                domain: None,
+            };
+
+            let request = Request::new(req);
+            assert_eq!(
+                crs_gen.crs_gen(request).await.unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
+        }
+
+        {
+            // wrong domain
+            let mut domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+            domain.verifying_contract = "wrong_contract".to_string();
+            let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+            let req = CrsGenRequest {
+                params: FheParameter::Default as i32,
+                max_num_bits: None,
+                request_id: Some(req_id.into()),
+                domain: Some(domain),
+            };
+
+            let request = Request::new(req);
+            assert_eq!(
+                crs_gen.crs_gen(request).await.unwrap_err().code(),
+                tonic::Code::InvalidArgument
+            );
         }
     }
 
@@ -622,7 +670,6 @@ mod tests {
             )
             .await;
 
-        // `NotFound` - If the CRS generation does not exist for `request`.
         let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
         assert_eq!(
             crs_gen
@@ -659,45 +706,6 @@ mod tests {
         let res = crs_gen.crs_gen(request).await;
 
         assert_eq!(res.unwrap_err().code(), tonic::Code::ResourceExhausted);
-    }
-
-    #[tokio::test]
-    async fn aborted() {
-        // We use non existing PRSS to simulate an abort failure
-        let session_preparer = SessionPreparer::new_test_session(false);
-
-        let crs_gen =
-            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
-                session_preparer,
-            )
-            .await;
-        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let req = CrsGenRequest {
-            params: FheParameter::Default as i32,
-            max_num_bits: None,
-            request_id: Some(req_id.into()),
-            domain: Some(domain.clone()),
-        };
-
-        let request = Request::new(req);
-        let _ = crs_gen.crs_gen(request).await.unwrap();
-
-        // Send a the request again, it should return an error
-        // because the session has already been used.
-        let req = CrsGenRequest {
-            params: 0,
-            max_num_bits: None,
-            request_id: Some(req_id.into()),
-            domain: Some(domain),
-        };
-
-        let request = Request::new(req);
-
-        assert_eq!(
-            crs_gen.crs_gen(request).await.unwrap_err().code(),
-            tonic::Code::Aborted
-        );
     }
 
     #[tokio::test]
@@ -764,6 +772,34 @@ mod tests {
                 .unwrap_err()
                 .code(),
             tonic::Code::Unavailable
+        );
+    }
+
+    #[tokio::test]
+    async fn already_exists() {
+        let session_preparer = SessionPreparer::new_test_session(true);
+
+        let crs_gen =
+            RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
+                session_preparer,
+            )
+            .await;
+
+        let req_id = RequestId::new_random(&mut rand::rngs::OsRng);
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let req = CrsGenRequest {
+            params: FheParameter::Default as i32,
+            max_num_bits: None,
+            request_id: Some(req_id.into()),
+            domain: Some(domain),
+        };
+
+        crs_gen.crs_gen(Request::new(req.clone())).await.unwrap();
+
+        // we send the same request again, it should return an error
+        assert_eq!(
+            crs_gen.crs_gen(Request::new(req)).await.unwrap_err().code(),
+            tonic::Code::AlreadyExists
         );
     }
 

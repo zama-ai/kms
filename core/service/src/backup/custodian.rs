@@ -1,4 +1,13 @@
+use crate::{
+    consts::SAFE_SER_SIZE_LIMIT,
+    cryptography::{
+        backup_pke::BackupPublicKey,
+        internal_crypto_types::{PublicSigKey, Signature},
+        signcryption::internal_verify_sig,
+    },
+};
 use kms_grpc::kms::v1::CustodianSetupMessage;
+use kms_grpc::rpc_types::InternalCustodianRecoveryOutput;
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -10,41 +19,14 @@ use tfhe::{named::Named, safe_serialization::safe_deserialize, Versionize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{execution::runtime::party::Role, hashing::DomainSep};
 
-use crate::{
-    consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::{
-        backup_pke::BackupPublicKey,
-        internal_crypto_types::{PublicSigKey, Signature},
-        signcryption::internal_verify_sig,
-    },
-};
-
 use super::{
     error::BackupError,
-    operator::{BackupMaterial, OperatorBackupOutput, DSEP_BACKUP_CIPHER},
+    operator::{BackupMaterial, InnerOperatorBackupOutput, DSEP_BACKUP_CIPHER},
     traits::{BackupDecryptor, BackupSigner},
 };
 
 pub(crate) const HEADER: &str = "ZAMA TKMS SETUP TEST OPERATORS-CUSTODIAN";
 pub(crate) const DSEP_BACKUP_CUSTODIAN: DomainSep = *b"BKUPCUST";
-
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum CustodianRecoveryOutputVersioned {
-    V0(CustodianRecoveryOutput),
-}
-
-/// This is the message that custodian sends to the operators
-/// near the end of the recovery step.
-#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
-#[versionize(CustodianRecoveryOutputVersioned)]
-pub struct CustodianRecoveryOutput {
-    pub signature: Vec<u8>,  // sigt_i_j
-    pub ciphertext: Vec<u8>, // st_i_j
-}
-
-impl Named for CustodianRecoveryOutput {
-    const NAME: &'static str = "backup::CustodianRecoveryOutput";
-}
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum CustodianSetupMessagePayloadVersioned {
@@ -182,12 +164,12 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
     pub fn verify_reencrypt<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
-        backup: &OperatorBackupOutput,
+        backup: &InnerOperatorBackupOutput,
         operator_verification_key: &PublicSigKey,
         operator_pk: &BackupPublicKey,
         backup_id: RequestId,
         operator_role: Role,
-    ) -> Result<CustodianRecoveryOutput, BackupError> {
+    ) -> Result<InternalCustodianRecoveryOutput, BackupError> {
         tracing::debug!(
             "Verifying and re-encrypting backup for operator: {}",
             operator_role
@@ -235,9 +217,11 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
         let st_i_j = operator_pk.encrypt(rng, &s_i_j)?;
         let sigt_i_j = self.signer.sign(&DSEP_BACKUP_CUSTODIAN, &st_i_j)?;
         tracing::debug!("Signed re-encrypted share for operator: {}", operator_role);
-        Ok(CustodianRecoveryOutput {
+        Ok(InternalCustodianRecoveryOutput {
             signature: sigt_i_j,
             ciphertext: st_i_j,
+            custodian_role: self.role,
+            operator_role,
         })
     }
 

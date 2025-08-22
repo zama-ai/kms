@@ -1,5 +1,6 @@
 use crate::kms::v1::{
-    Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
+    BackupRecoveryRequest, CustodianRecoveryOutput, Eip712DomainMsg, TypedCiphertext,
+    TypedPlaintext, TypedSigncryptedCiphertext,
 };
 use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
 use alloy_primitives::{Address, B256, U256};
@@ -13,6 +14,7 @@ use tfhe::named::Named;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::VersionsDispatch;
+use threshold_fhe::execution::runtime::party::Role;
 
 pub use crate::identifiers::{KeyId, RequestId, ID_LENGTH};
 
@@ -965,6 +967,87 @@ impl From<(String, FheTypes)> for TypedPlaintext {
             bytes: value.0.into(),
             fhe_type: value.1 as i32,
         }
+    }
+}
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum CustodianRecoveryOutputVersioned {
+    V0(InternalCustodianRecoveryOutput),
+}
+
+/// This is the message that a custodian sends to an operator after starting recovery.
+/// TODO this should be changed to use proper signcryption to ensure that the operator role is signed as well
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(CustodianRecoveryOutputVersioned)]
+pub struct InternalCustodianRecoveryOutput {
+    pub signature: Vec<u8>,  // sigt_i_j
+    pub ciphertext: Vec<u8>, // st_i_j
+    pub custodian_role: Role,
+    pub operator_role: Role,
+}
+
+impl Named for InternalCustodianRecoveryOutput {
+    const NAME: &'static str = "backup::CustodianRecoveryOutput";
+}
+
+impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
+    type Error = anyhow::Error;
+
+    fn try_from(value: CustodianRecoveryOutput) -> Result<Self, Self::Error> {
+        if value.custodian_role == 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid custodian role in CustodianRecoveryOutput"
+            ));
+        }
+        if value.operator_role == 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid operator role in CustodianRecoveryOutput"
+            ));
+        }
+        Ok(InternalCustodianRecoveryOutput {
+            signature: value.signature.to_vec(),
+            ciphertext: value.ciphertext,
+            custodian_role: Role::indexed_from_one(value.custodian_role as usize),
+            operator_role: Role::indexed_from_one(value.operator_role as usize),
+        })
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum InternalBackupRecoveryRequestVersioned {
+    V0(InternalBackupRecoveryRequest),
+}
+
+/// This is the internal representation of the custodian context.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
+#[versionize(InternalBackupRecoveryRequestVersioned)]
+pub struct InternalBackupRecoveryRequest {
+    pub custodian_context_id: RequestId,
+    pub threshold: u32,
+    pub custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
+}
+
+impl Named for InternalBackupRecoveryRequest {
+    const NAME: &'static str = "backup::BackupRestoreRequest";
+}
+
+impl TryFrom<BackupRecoveryRequest> for InternalBackupRecoveryRequest {
+    type Error = anyhow::Error;
+
+    fn try_from(value: BackupRecoveryRequest) -> Result<Self, Self::Error> {
+        Ok(InternalBackupRecoveryRequest {
+            custodian_context_id: value
+                .custodian_context_id
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Missing custodian context ID in BackupRestoreRequest")
+                })?
+                .try_into()?,
+            threshold: value.threshold,
+            custodian_recovery_outputs: value
+                .custodian_recovery_outputs
+                .into_iter()
+                .map(InternalCustodianRecoveryOutput::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
     }
 }
 

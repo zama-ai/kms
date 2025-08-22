@@ -10,13 +10,14 @@ use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, CrsGenResult, FheParameter, KeyGenPreprocResult, KeyGenResult,
-    PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext, TypedPlaintext,
+    BackupRecoveryRequest, CiphertextFormat, CrsGenResult, CustodianRecoveryOutput, FheParameter,
+    KeyGenPreprocResult, KeyGenResult, PublicDecryptionRequest, PublicDecryptionResponse,
+    TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{protobuf_to_alloy_domain, PubDataType};
+use kms_grpc::rpc_types::{protobuf_to_alloy_domain, InternalCustodianRecoveryOutput, PubDataType};
 use kms_grpc::{KeyId, RequestId};
-use kms_lib::client::{Client, ParsedUserDecryptionRequest};
+use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
 use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
 use kms_lib::util::file_handling::{read_element, write_element};
@@ -502,6 +503,16 @@ pub struct ResultParameters {
     pub request_id: RequestId,
 }
 
+#[derive(Debug, Parser, Clone)]
+pub struct RestoreParameters {
+    #[clap(long, short = 'i')]
+    pub custodian_context_id: RequestId,
+    #[clap(long, short = 't')]
+    pub threshold: u32,
+    #[clap(long, short = 'r')]
+    pub custodian_recovery_outputs: Vec<PathBuf>, // TODO should this just be a root directory with everything in?
+}
+
 #[derive(Debug, Subcommand, Clone)]
 pub enum CCCommand {
     PreprocKeyGen(NoParameters),
@@ -521,7 +532,7 @@ pub enum CCCommand {
     InsecureCrsGen(CrsParameters),
     InsecureCrsGenResult(ResultParameters),
     GetOperatorPublicKey(NoParameters),
-    CustodianBackupRestore(NoParameters),
+    CustodianBackupRestore(RestoreParameters),
     DoNothing(NoParameters),
 }
 
@@ -943,7 +954,7 @@ fn check_external_decryption_signature(
     for response in responses {
         let payload = response.payload.as_ref().unwrap();
         check_ext_pt_signature(
-            response.external_signature(),
+            &response.external_signature,
             &payload.plaintexts,
             external_handles.to_owned(),
             domain.clone(),
@@ -1294,13 +1305,36 @@ async fn do_get_operator_pub_keys(
 
 async fn do_custodian_backup_restore(
     core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    custodian_context_id: RequestId,
+    threshold: u32,
+    custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints.iter_mut() {
         let mut cur_client = ce.clone();
+        // We assume the core client endpoints are ordered by the server identity
+        let mut cur_recoveries = Vec::new();
+        for (idx, cur_recover) in custodian_recovery_outputs.iter().enumerate() {
+            // Find the recoveries designated for the correct server
+            // Observe that in real world deployments this would mean everyone since
+            // if each KMS nodes has knowledge of _all_ the recoveries for all parites, then
+            // they can trivially recover the secret key!
+            if cur_recover.operator_role == Role::indexed_from_zero(idx) {
+                cur_recoveries.push(CustodianRecoveryOutput {
+                    signature: cur_recover.signature.clone(),
+                    ciphertext: cur_recover.ciphertext.clone(),
+                    custodian_role: cur_recover.custodian_role.one_based() as u64,
+                    operator_role: cur_recover.operator_role.one_based() as u64,
+                });
+            }
+        }
         req_tasks.spawn(async move {
             cur_client
-                .custodian_backup_restore(tonic::Request::new(kms_grpc::kms::v1::Empty {}))
+                .custodian_backup_recovery(tonic::Request::new(BackupRecoveryRequest {
+                    custodian_context_id: Some(custodian_context_id.into()),
+                    threshold,
+                    custodian_recovery_outputs: cur_recoveries,
+                }))
                 .await
         });
     }
@@ -1927,8 +1961,24 @@ pub async fn execute_cmd(
             let pks = do_get_operator_pub_keys(&mut core_endpoints_req).await?;
             pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
         }
-        CCCommand::CustodianBackupRestore(NoParameters {}) => {
-            do_custodian_backup_restore(&mut core_endpoints_req).await?;
+        CCCommand::CustodianBackupRestore(RestoreParameters {
+            custodian_context_id,
+            threshold,
+            custodian_recovery_outputs,
+        }) => {
+            let mut custodian_outputs = Vec::new();
+            for recovery_path in custodian_recovery_outputs {
+                let read_recovery: InternalCustodianRecoveryOutput =
+                    read_element(&recovery_path).await?;
+                custodian_outputs.push(read_recovery);
+            }
+            do_custodian_backup_restore(
+                &mut core_endpoints_req,
+                *custodian_context_id,
+                *threshold,
+                custodian_outputs,
+            )
+            .await?;
             vec![(None, "custodian backup restore complete".to_string())]
         }
     };

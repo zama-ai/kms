@@ -655,7 +655,15 @@ mod tests {
                 threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set(param, rng);
 
             let server_key = keyset.public_keys.server_key.clone();
-            let integer_server_key = keyset.public_keys.server_key.into_raw_parts().0;
+            let (
+                integer_server_key,
+                _ksk,
+                _compression_key,
+                decompression_key,
+                sns_key,
+                _sns_compression_key,
+                _tag,
+            ) = keyset.public_keys.server_key.into_raw_parts();
 
             let pub_key_set = FhePubKeySet {
                 public_key: keyset.public_keys.public_key,
@@ -667,8 +675,8 @@ mod tests {
             let priv_key_set = Self {
                 private_keys: priv_key_set,
                 integer_server_key,
-                sns_key: None,
-                decompression_key: None,
+                sns_key,
+                decompression_key,
                 pk_meta_data: HashMap::new(),
             };
 

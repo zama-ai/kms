@@ -1,17 +1,19 @@
 use crate::backup::custodian::{InternalCustodianContext, InternalCustodianSetupMessage};
-use crate::backup::operator::{BackupCommitments, Operator, RecoveryRequest};
+use crate::backup::operator::{BackupCommitments, InternalRecoveryRequest, Operator};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::backup_pke::{self, BackupCiphertext};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
+use crate::engine::validation::{
+    parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+};
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::delete_context_at_request_id;
 use crate::vault::Vault;
 use crate::{
-    engine::{base::BaseKmsStruct, validation::validate_request_id},
-    grpc::metastore_status_service::CustodianMetaStore,
+    engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
     vault::storage::Storage,
 };
 use aes_prng::AesRng;
@@ -106,8 +108,8 @@ where
             .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
         let storage_ref = self.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
-
-        let kms_context_id = context_id.into();
+        let kms_context_id: RequestId =
+            parse_proto_request_id(&context_id, RequestIdParsingErr::CustodianContext)?;
         delete_context_at_request_id(&mut *guarded_priv_storage, &kms_context_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
@@ -170,7 +172,7 @@ where
         .await?;
     for data_id in data_ids.iter() {
         let data: T = priv_storage
-            .read_data(&data_id, &data_type_enum.to_string())
+            .read_data(data_id, &data_type_enum.to_string())
             .await?;
         let mut serialized_data = Vec::new();
         safe_serialize(&data, &mut serialized_data, SAFE_SER_SIZE_LIMIT)?;
@@ -182,12 +184,12 @@ where
         // Delete the old backup data
         // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
         backup_vault
-            .delete_data(&data_id, &data_type_enum.to_string())
+            .delete_data(data_id, &data_type_enum.to_string())
             .await?;
         backup_vault
             .store_data(
                 &enc_ct,
-                &data_id,
+                data_id,
                 &BackupDataType::PrivData(data_type_enum).to_string(),
             )
             .await?;
@@ -201,15 +203,10 @@ where
     PrivS: Storage + Sync + Send + 'static,
 {
     async fn inner_new_custodian_context(&self, context: CustodianContext) -> anyhow::Result<()> {
-        let context_id: RequestId = match context.context_id {
-            Some(id) => id.into(),
-            None => {
-                return Err(anyhow::anyhow!(
-                    "Context ID is required in NewCustodianContextRequest"
-                ))
-            }
-        };
-        validate_request_id(&context_id)?;
+        let context_id: RequestId = parse_optional_proto_request_id(
+            &context.context_id,
+            RequestIdParsingErr::CustodianContext,
+        )?;
         let backup_vault = match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
@@ -231,7 +228,10 @@ where
         let custodian_context = InternalCustodianContext {
             context_id,
             threshold: context.threshold,
-            previous_context_id: context.previous_context_id.map(Into::into),
+            previous_context_id: Some(parse_optional_proto_request_id(
+                &context.previous_context_id,
+                RequestIdParsingErr::CustodianContext,
+            )?),
             custodian_nodes: node_map,
             backup_enc_key: backup_enc_key.clone(),
         };
@@ -361,7 +361,7 @@ where
         backup_id: RequestId,
         pub_enc_key: backup_pke::BackupPublicKey,
         priv_key: backup_pke::BackupPrivateKey,
-    ) -> anyhow::Result<(RecoveryRequest, BackupCommitments)> {
+    ) -> anyhow::Result<(InternalRecoveryRequest, BackupCommitments)> {
         let verification_key = (*self.base_kms.sig_key).clone().into();
         let operator = Operator::new(
             my_role,
@@ -387,7 +387,7 @@ where
             });
             ciphertexts.insert(*custodian_role, ct.to_owned());
         }
-        let recovery_request = RecoveryRequest::new(
+        let recovery_request = InternalRecoveryRequest::new(
             operator.public_key().to_owned(),
             &self.base_kms.sig_key,
             ciphertexts,

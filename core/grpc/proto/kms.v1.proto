@@ -253,7 +253,7 @@ message PublicDecryptionResponse {
 
   // the signature on external_decryption_result for the external recipient
   // (e.g. using EIP712 for fhevm)
-  optional bytes external_signature = 2;
+  bytes external_signature = 2;
 
   // The payload that is signed
   PublicDecryptionResponsePayload payload = 3;
@@ -484,4 +484,39 @@ message OperatorPublicKey {
   // The attestation document that proves the public key is generated within an
   // enclave initialized from a trusted software build
   bytes attestation_document = 2;
+}
+
+// The data constructed by a single custodian to help a single operator recover their private master decryption key
+message CustodianRecoveryOutput {
+  bytes signature = 1;
+  bytes ciphertext = 2;
+  // The 1-indexed role of the custodian
+  uint64 custodian_role = 3;
+  uint64 operator_role = 4;
+}
+
+// The recovery request which contains the needed recovery data from all the custodians, 
+// which is sent to the KMS to recover the private backup master decryption key
+message BackupRecoveryRequest { // TODO rename to CustodiansRecoveryRequest
+  RequestId custodian_context_id = 1;
+  uint32 threshold = 2;
+  repeated CustodianRecoveryOutput custodian_recovery_outputs = 3;
+}
+
+// The data constructed by a given operator towards a given custodian after it has constructed a recovery request
+message OperatorBackupOutput {
+  bytes ciphertext = 1;
+  bytes signature = 2;
+}
+
+// The request constructed by a KMS to initiate custodian based backup recovery 
+message RecoveryRequest {
+  // The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
+  bytes enc_key = 1;
+  /// The ciphertexts that are the backup. Indexed by the custodian role.
+  map<uint64, OperatorBackupOutput> cts = 2;
+  /// The request ID under which the backup was created.
+  RequestId backup_id = 3;
+  /// The role of the operator
+  uint64 operator_role = 4;
 }

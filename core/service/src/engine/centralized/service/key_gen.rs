@@ -4,7 +4,7 @@ use kms_grpc::kms::v1::{Empty, KeyGenRequest, KeyGenResult};
 use kms_grpc::rpc_types::{optional_protobuf_to_alloy_domain, PubDataType};
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
-use observability::metrics_names::{ERR_KEY_EXISTS, ERR_RATE_LIMIT_EXCEEDED, OP_KEYGEN};
+use observability::metrics_names::{ERR_KEYGEN_FAILED, ERR_KEY_EXISTS, OP_KEYGEN};
 use std::collections::HashMap;
 use std::sync::Arc;
 use threshold_fhe::execution::keyset_config::KeySetConfig;
@@ -23,9 +23,10 @@ use crate::engine::centralized::central_kms::{
 };
 use crate::engine::keyset_configuration::InternalKeySetConfig;
 use crate::engine::traits::{BackupOperator, ContextManager};
-use crate::engine::validation::validate_request_id;
+use crate::engine::validation::{
+    parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+};
 use crate::tonic_handle_potential_err;
-use crate::tonic_some_or_err;
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::Storage;
@@ -40,34 +41,16 @@ pub async fn key_gen_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<KeyGenRequest>,
 ) -> Result<Response<Empty>, Status> {
-    let _timer = METRICS
-        .time_operation(OP_KEYGEN)
-        .map_err(|e| Status::internal(format!("Failed to start metrics: {e}")))?
-        .start();
-    METRICS
-        .increment_request_counter(OP_KEYGEN)
-        .map_err(|e| Status::internal(format!("Failed to increment counter: {e}")))?;
+    let _timer = METRICS.time_operation(OP_KEYGEN).start();
 
-    let permit = service
-        .rate_limiter
-        .start_keygen()
-        .await
-        .inspect_err(|_e| {
-            if let Err(e) = METRICS.increment_error_counter(OP_KEYGEN, ERR_RATE_LIMIT_EXCEEDED) {
-                tracing::warn!("Failed to increment error counter: {:?}", e);
-            }
-        })?;
+    let permit = service.rate_limiter.start_keygen().await?;
     let inner = request.into_inner();
     tracing::info!(
         "centralized key-gen with request id: {:?}",
         inner.request_id
     );
-    let req_id: RequestId = tonic_some_or_err(
-        inner.request_id,
-        "No request ID present in request".to_string(),
-    )?
-    .into();
-    validate_request_id(&req_id)?;
+    let req_id =
+        parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::KeyGenRequest)?;
     let params = retrieve_parameters(inner.params)?;
     let internal_keyset_config = tonic_handle_potential_err(
         InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info),
@@ -103,6 +86,7 @@ pub async fn key_gen_impl<
             )
             .await
             {
+                METRICS.increment_error_counter(OP_KEYGEN, ERR_KEYGEN_FAILED);
                 tracing::error!("Key generation of request {} failed: {}", req_id, e);
             } else {
                 tracing::info!(
@@ -128,9 +112,9 @@ pub async fn get_key_gen_result_impl<
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<KeyGenResult>, Status> {
-    let request_id = request.into_inner().into();
+    let request_id =
+        parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::KeyGenResponse)?;
     tracing::debug!("Received get key gen result request with id {}", request_id);
-    validate_request_id(&request_id)?;
 
     let status = {
         let guarded_meta_store = service.key_meta_map.read().await;
@@ -158,7 +142,7 @@ pub(crate) async fn key_gen_background<
     internal_keyset_config: InternalKeySetConfig,
     eip712_domain: Eip712Domain,
     permit: OwnedSemaphorePermit,
-) -> Result<(), anyhow::Error> {
+) -> anyhow::Result<()> {
     let _permit = permit;
     let start = tokio::time::Instant::now();
     {
@@ -169,12 +153,7 @@ pub(crate) async fn key_gen_background<
             .is_ok()
         {
             let mut guarded_meta_store = meta_store.write().await;
-            METRICS
-                .increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS)
-                .map_err(|e| {
-                    tracing::warn!("Failed to increment error counter: {:?}", e);
-                    anyhow::anyhow!("Failed to increment error counter: {:?}", e)
-                })?;
+            METRICS.increment_error_counter(OP_KEYGEN, ERR_KEY_EXISTS);
             let _ = guarded_meta_store.update(
                 req_id,
                 Err(format!(
@@ -191,7 +170,7 @@ pub(crate) async fn key_gen_background<
                 crypto_storage.clone(),
                 params,
                 standard_key_set_config.to_owned(),
-                internal_keyset_config.get_compression_id(),
+                internal_keyset_config.get_compression_id()?,
                 None,
                 eip712_domain,
             )
