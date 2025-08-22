@@ -275,7 +275,13 @@ impl<
             .unwrap_or(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into());
         let session_preparer = Arc::new(
             self.session_preparer_getter
-                .get(&context_id.into())
+                .get(
+                    &context_id
+                        .try_into()
+                        .map_err(|e: kms_grpc::IdentifierError| {
+                            tonic::Status::new(tonic::Code::Internal, e.to_string())
+                        })?,
+                )
                 .await
                 .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?,
         );
@@ -294,12 +300,6 @@ impl<
 
         let permit = self.rate_limiter.start_pub_decrypt().await?;
 
-        let inner = request.into_inner();
-        tracing::info!(
-            request_id = ?inner.request_id,
-            "Received new decryption request"
-        );
-
         let (ciphertexts, key_id, req_id, eip712_domain) = validate_public_decrypt_req(&inner)
             .inspect_err(|e| {
                 tracing::error!(
@@ -315,8 +315,7 @@ impl<
 
             if guarded_meta_store.exists(&req_id) {
                 return Err(Status::already_exists(format!(
-                    "Public decryption request with ID {} already exists",
-                    req_id
+                    "Public decryption request with ID {req_id} already exists"
                 )));
             }
 
@@ -325,8 +324,7 @@ impl<
                 "Could not check threshold fhe key existance".to_string(),
             )? {
                 return Err(Status::not_found(format!(
-                    "Threshold FHE keys with key ID {} not found",
-                    key_id,
+                    "Threshold FHE keys with key ID {key_id} not found"
                 )));
             }
         }
@@ -694,13 +692,20 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{kms::v1::TypedCiphertext, rpc_types::alloy_to_protobuf_domain};
     use rand::SeedableRng;
-    use threshold_fhe::execution::{
-        runtime::session::ParameterHandles, tfhe_internals::utils::expanded_encrypt,
+    use threshold_fhe::{
+        algebra::galois_rings::degree_4::ResiduePolyF4Z64,
+        execution::{
+            runtime::session::ParameterHandles, small_execution::prss::PRSSSetup,
+            tfhe_internals::utils::expanded_encrypt,
+        },
     };
 
     use crate::{
-        consts::TEST_PARAM, cryptography::internal_crypto_types::gen_sig_keys, dummy_domain,
-        engine::threshold::service::{compute_all_info, session::SessionPreparerManager}, vault::storage::ram,
+        consts::TEST_PARAM,
+        cryptography::internal_crypto_types::gen_sig_keys,
+        dummy_domain,
+        engine::threshold::service::{compute_all_info, session::SessionPreparerManager},
+        vault::storage::ram,
     };
 
     use super::*;
@@ -796,22 +801,22 @@ mod tests {
     }
 
     async fn setup_public_decryptor(
-        with_prss: bool,
+        prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
+        prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
         rng: &mut AesRng,
     ) -> (
         RequestId,
         Vec<u8>,
         RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
-        let mut rng = rand::rngs::OsRng;
-        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let (_pk, sk) = gen_sig_keys(rng);
         let base_kms = BaseKmsStruct::new(sk.clone()).unwrap();
         let param = TEST_PARAM;
         let session_preparer_manager = SessionPreparerManager::new_test_session();
         let session_preparer = SessionPreparer::new_test_session(
             base_kms.new_instance().await,
-            Arc::new(RwLock::new(None)),
-            Arc::new(RwLock::new(None)),
+            prss_setup_z128,
+            prss_setup_z64,
         );
         session_preparer_manager
             .insert(
@@ -877,7 +882,17 @@ mod tests {
     async fn test_resource_exhausted() {
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
         let mut rng = AesRng::seed_from_u64(12);
-        let (key_id, ct_buf, mut public_decryptor) = setup_public_decryptor(true, &mut rng).await;
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+
+        let (key_id, ct_buf, mut public_decryptor) =
+            setup_public_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
 
         // Set bucket size to zero, so no operations are allowed
         public_decryptor.set_bucket_size(0);
@@ -913,7 +928,17 @@ mod tests {
     #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(12);
-        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+
+        let (key_id, ct_buf, public_decryptor) =
+            setup_public_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = PublicDecryptionRequest {
@@ -927,6 +952,7 @@ mod tests {
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
         public_decryptor
             .public_decrypt(Request::new(request.clone()))
@@ -945,7 +971,17 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         let mut rng = AesRng::seed_from_u64(1123);
-        let (_key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+
+        let (_key_id, ct_buf, public_decryptor) =
+            setup_public_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
         let bad_key_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
@@ -960,6 +996,7 @@ mod tests {
             key_id: Some(bad_key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         });
         assert_eq!(
             public_decryptor
@@ -985,7 +1022,17 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(13);
-        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+
+        let (key_id, ct_buf, public_decryptor) =
+            setup_public_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
         {
             // Bad request ID
             let bad_req_id = kms_grpc::kms::v1::RequestId {
@@ -1003,6 +1050,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain),
                 extra_data: vec![],
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1023,6 +1071,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain),
                 extra_data: vec![],
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1051,6 +1100,7 @@ mod tests {
                 key_id: Some(bad_key_id),
                 domain: Some(domain),
                 extra_data: vec![],
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1075,6 +1125,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: None,
                 extra_data: vec![],
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1101,6 +1152,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain),
                 extra_data: vec![],
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1129,7 +1181,17 @@ mod tests {
     #[tokio::test]
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(13);
-        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(true, &mut rng).await;
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+
+        let (key_id, ct_buf, public_decryptor) =
+            setup_public_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = Request::new(PublicDecryptionRequest {

@@ -435,7 +435,13 @@ impl<
             .unwrap_or(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into());
         let session_preparer = Arc::new(
             self.session_preparer_getter
-                .get(&context_id.into())
+                .get(
+                    &context_id
+                        .try_into()
+                        .map_err(|e: kms_grpc::IdentifierError| {
+                            tonic::Status::new(tonic::Code::Internal, e.to_string())
+                        })?,
+                )
                 .await
                 .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?,
         );
@@ -477,8 +483,7 @@ impl<
 
             if guarded_meta_store.exists(&req_id) {
                 return Err(Status::already_exists(format!(
-                    "User decryption request with ID {} already exists",
-                    req_id
+                    "User decryption request with ID {req_id} already exists"
                 )));
             }
 
@@ -487,8 +492,7 @@ impl<
                 "Could not check threshold fhe key existance".to_string(),
             )? {
                 return Err(Status::not_found(format!(
-                    "Threshold FHE keys with key ID {} not found",
-                    key_id,
+                    "Threshold FHE keys with key ID {key_id} not found"
                 )));
             }
         }
@@ -627,8 +631,12 @@ mod tests {
     use kms_grpc::{kms::v1::CiphertextFormat, rpc_types::alloy_to_protobuf_domain};
     use rand::SeedableRng;
     use tfhe::FheTypes;
-    use threshold_fhe::execution::{
-        runtime::session::ParameterHandles, tfhe_internals::utils::expanded_encrypt,
+    use threshold_fhe::{
+        algebra::galois_rings::degree_4::ResiduePolyF4Z64,
+        execution::{
+            runtime::session::ParameterHandles, small_execution::prss::PRSSSetup,
+            tfhe_internals::utils::expanded_encrypt,
+        },
     };
 
     use crate::{
@@ -698,7 +706,8 @@ mod tests {
     }
 
     async fn setup_user_decryptor(
-        with_prss: bool,
+        prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
+        prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
         rng: &mut AesRng,
     ) -> (
         RequestId,
@@ -711,8 +720,8 @@ mod tests {
         let session_preparer_manager = SessionPreparerManager::new_test_session();
         let session_preparer = SessionPreparer::new_test_session(
             base_kms.new_instance().await,
-            Arc::new(RwLock::new(None)),
-            Arc::new(RwLock::new(None)),
+            prss_setup_z128,
+            prss_setup_z64,
         );
         session_preparer_manager
             .insert(
@@ -778,7 +787,16 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(1123);
-        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true, &mut rng).await;
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let (key_id, ct_buf, user_decryptor) =
+            setup_user_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
 
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
@@ -800,6 +818,7 @@ mod tests {
                 request_id: Some(bad_req_id),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -821,6 +840,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -847,6 +867,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -873,6 +894,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: "bad client address".to_string(),
                 extra_data: vec![],
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -915,6 +937,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -930,7 +953,16 @@ mod tests {
     #[tokio::test]
     async fn resource_exhausted() {
         let mut rng = AesRng::seed_from_u64(123);
-        let (key_id, ct_buf, mut user_decryptor) = setup_user_decryptor(true, &mut rng).await;
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let (key_id, ct_buf, mut user_decryptor) =
+            setup_user_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
@@ -969,7 +1001,16 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         let mut rng = AesRng::seed_from_u64(123);
-        let (_key_id, ct_buf, user_decryptor) = setup_user_decryptor(true, &mut rng).await;
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let (_key_id, ct_buf, user_decryptor) =
+            setup_user_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 
@@ -988,6 +1029,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         });
         assert_eq!(
             user_decryptor
@@ -1012,7 +1054,16 @@ mod tests {
     #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(123);
-        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true, &mut rng).await;
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let (key_id, ct_buf, user_decryptor) =
+            setup_user_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 
@@ -1030,6 +1081,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
         user_decryptor
             .user_decrypt(Request::new(request.clone()))
@@ -1050,7 +1102,16 @@ mod tests {
     #[tokio::test]
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(123);
-        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true, &mut rng).await;
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let (key_id, ct_buf, user_decryptor) =
+            setup_user_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 

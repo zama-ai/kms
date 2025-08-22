@@ -279,7 +279,7 @@ pub(crate) fn preproc_proto_to_keyset_config(
         Some(inner) => Ok(WrappedKeySetConfig(*inner).try_into().map_err(|e| {
             tonic::Status::new(
                 tonic::Code::InvalidArgument,
-                format!("Failed to parse KeySetConfig: {}", e),
+                format!("Failed to parse KeySetConfig: {e}"),
             )
         })?),
     }

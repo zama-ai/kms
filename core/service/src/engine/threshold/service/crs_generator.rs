@@ -125,8 +125,7 @@ impl<
 
             if guarded_meta_store.exists(&req_id) {
                 return Err(Status::already_exists(format!(
-                    "CRS gen request with ID {} already exists",
-                    req_id
+                    "CRS gen request with ID {req_id} already exists"
                 )));
             }
 
@@ -135,8 +134,7 @@ impl<
                 "Could not check crs existance in storage".to_string(),
             )? {
                 return Err(Status::already_exists(format!(
-                    "CRS with key ID {} already exists",
-                    req_id,
+                    "CRS with key ID {req_id} already exists"
                 )));
             }
         }
@@ -150,7 +148,17 @@ impl<
             dkg_params,
             &eip712_domain,
             permit,
-            inner.context_id.map(|id| id.into()),
+            inner
+                .context_id
+                .as_ref()
+                .map(|id| id.try_into())
+                .transpose()
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::InvalidArgument,
+                        format!("invalid context id: {e}"),
+                    )
+                })?,
             insecure,
         )
         .await
@@ -666,7 +674,7 @@ mod tests {
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: Some(domain),
-                context_id: None,
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             };
 
             let request = Request::new(req);
@@ -683,6 +691,7 @@ mod tests {
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: None,
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             };
 
             let request = Request::new(req);
@@ -702,6 +711,7 @@ mod tests {
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: Some(domain),
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             };
 
             let request = Request::new(req);
@@ -920,11 +930,33 @@ mod tests {
 
     #[tokio::test]
     async fn already_exists() {
-        let session_preparer = SessionPreparer::new_test_session(true);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            prss_setup_z128,
+            prss_setup_z64,
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
 
         let crs_gen =
             RealCrsGenerator::<ram::RamStorage, ram::RamStorage, InsecureCeremony>::init_test_insecure_ceremony(
-                session_preparer,
+                base_kms,
+                session_preparer_manager.make_getter(),
             )
             .await;
 
@@ -935,6 +967,7 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
 
         crs_gen.crs_gen(Request::new(req.clone())).await.unwrap();
