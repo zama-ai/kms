@@ -411,7 +411,7 @@ pub async fn setup_centralized_no_client<
     let (tx, rx) = tokio::sync::oneshot::channel();
     let sk = get_core_signing_key(&priv_storage).await.unwrap();
     let (kms, health_service) =
-        RealCentralizedKms::new(pub_storage, priv_storage, None, sk, rate_limiter_conf)
+        RealCentralizedKms::new(pub_storage, priv_storage, None, None, sk, rate_limiter_conf)
             .await
             .expect("Could not create KMS");
     let arc_kms = Arc::new(kms);

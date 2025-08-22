@@ -126,7 +126,7 @@ where
     /// then [`custodian_recovery`] _must_ be called first in order to ensure that the master key is restored,
     /// which is needed to allow decryption of the backup data.
     async fn backup_restore(&self, _request: Request<Empty>) -> Result<Response<Empty>, Status> {
-        match self.crypto_storage.inner.backup_vault {
+        match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let private_storage = self.crypto_storage.get_private_storage().clone();
                 let mut private_storage = private_storage.lock().await;

@@ -30,6 +30,3 @@ pub(crate) mod validation {
     pub(crate) use super::validation_non_wasm::*;
     pub(crate) use super::validation_wasm::*;
 }
-
-#[cfg(any(test, feature = "testing"))]
-pub mod kms_mock;
