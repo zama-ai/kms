@@ -51,4 +51,6 @@ service CoreServiceEndpoint {
   rpc GetOperatorPublicKey(kms.v1.Empty) returns (kms.v1.OperatorPublicKey);
 
   rpc CustodianBackupRestore(kms.v1.Empty) returns (kms.v1.Empty);
+
+  rpc GetKeyMaterialAvailability(kms.v1.Empty) returns (kms.v1.KeyMaterialAvailabilityResponse);
 }

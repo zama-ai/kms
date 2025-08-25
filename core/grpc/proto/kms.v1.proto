@@ -485,3 +485,21 @@ message OperatorPublicKey {
   // enclave initialized from a trusted software build
   bytes attestation_document = 2;
 }
+
+// Response containing available key material information
+message KeyMaterialAvailabilityResponse {
+  // Key IDs for generated FHE keys
+  repeated string fhe_key_ids = 1;
+  
+  // Key IDs for generated CRS
+  repeated string crs_key_ids = 2;
+  
+  // Key IDs for preprocessing material (threshold only)
+  repeated string preprocessing_ids = 3;
+  
+  // Total count of available keys
+  int32 total_key_count = 4;
+  
+  // Storage backend information
+  string storage_info = 5;
+}
