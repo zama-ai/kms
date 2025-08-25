@@ -17,7 +17,7 @@ use std::{str::FromStr, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::{
-    engine::base::{KeyGenCallValues, PubDecCallValues, UserDecryptCallValues},
+    engine::base::{CrsGenCallValues, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues},
     util::meta_store::MetaStore,
 };
 use kms_grpc::{
@@ -28,7 +28,6 @@ use kms_grpc::{
         ListRequestsResponse, MetaStoreInfo, MetaStoreType, RequestProcessingStatus,
         RequestStatusInfo,
     },
-    rpc_types::SignedPubDataHandleInternal,
 };
 
 use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
@@ -37,7 +36,7 @@ use threshold_fhe::execution::online::preprocessing::DKGPreprocessing;
 // Type aliases for the different MetaStore types used in the system
 
 /// MetaStore for Key Generation data, mapping request IDs to public data handles
-pub type KeyGenMetaStore = MetaStore<KeyGenCallValues>;
+pub type KeyGenMetaStore = MetaStore<KeyGenMetadata>;
 
 /// MetaStore for Public Decryption data, storing (ciphertext, plaintext, signature) tuples
 pub type PubDecMetaStore = MetaStore<PubDecCallValues>;
@@ -46,7 +45,7 @@ pub type PubDecMetaStore = MetaStore<PubDecCallValues>;
 pub type UserDecryptMetaStore = MetaStore<UserDecryptCallValues>;
 
 /// MetaStore for CRS (Common Reference String) data
-pub type CrsMetaStore = MetaStore<SignedPubDataHandleInternal>;
+pub type CrsMetaStore = MetaStore<CrsGenCallValues>;
 
 /// MetaStore for DKG (Distributed Key Generation) preprocessing buckets
 pub type BucketMetaStore = Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>;

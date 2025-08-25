@@ -355,7 +355,7 @@ async fn wait_for_keygen_result(
             let kg_res = kg_res.unwrap().into_inner();
             let storage = FileStorage::new(None, StorageType::PUB, Some(role)).unwrap();
             let decompression_key: Option<DecompressionKey> = internal_client
-                .retrieve_key(&kg_res, PubDataType::DecompressionKey, &storage)
+                .retrieve_key_no_verification(&kg_res, PubDataType::DecompressionKey, &storage)
                 .await
                 .unwrap();
             assert!(decompression_key.is_some());
@@ -375,41 +375,45 @@ async fn wait_for_keygen_result(
             }
         }
     } else {
+        use crate::engine::base::INSECURE_PREPROCESSING_ID;
+
         let mut serialized_ref_pk = Vec::new();
         let mut serialized_ref_server_key = Vec::new();
         let mut all_threshold_fhe_keys = HashMap::new();
         let mut final_public_key = None;
         let mut final_server_key = None;
+
+        let preproc_id = match req_preproc {
+            Some(ref id) => id,
+            None => &INSECURE_PREPROCESSING_ID,
+        };
+
         for (idx, kg_res) in finished.into_iter() {
             let role = Role::indexed_from_one(idx as usize);
             let kg_res = kg_res.unwrap().into_inner();
             let storage = FileStorage::new(None, StorageType::PUB, Some(role)).unwrap();
-            let pk = internal_client
-                .retrieve_public_key(&kg_res, &storage)
-                .await
-                .unwrap();
-            assert!(pk.is_some());
-            if role.one_based() == 1 {
-                serialized_ref_pk = bc2wrap::serialize(pk.as_ref().unwrap()).unwrap();
-            } else {
-                assert_eq!(
-                    serialized_ref_pk,
-                    bc2wrap::serialize(pk.as_ref().unwrap()).unwrap()
+
+            let (server_key, public_key) = internal_client
+                .retrieve_server_key_and_public_key(
+                    preproc_id,
+                    &req_get_keygen,
+                    &kg_res,
+                    &domain,
+                    &storage,
                 )
-            }
-            let server_key: Option<tfhe::ServerKey> = internal_client
-                .retrieve_server_key(&kg_res, &storage)
                 .await
+                .unwrap()
                 .unwrap();
-            assert!(server_key.is_some());
+
             if role.one_based() == 1 {
-                serialized_ref_server_key =
-                    bc2wrap::serialize(server_key.as_ref().unwrap()).unwrap();
+                serialized_ref_pk = bc2wrap::serialize(&public_key).unwrap();
+                serialized_ref_server_key = bc2wrap::serialize(&server_key).unwrap();
             } else {
+                assert_eq!(serialized_ref_pk, bc2wrap::serialize(&public_key).unwrap());
                 assert_eq!(
                     serialized_ref_server_key,
-                    bc2wrap::serialize(server_key.as_ref().unwrap()).unwrap()
-                )
+                    bc2wrap::serialize(&server_key).unwrap()
+                );
             }
 
             let key_id =
@@ -423,12 +427,10 @@ async fn wait_for_keygen_result(
             threshold_fhe_keys.sns_key = None;
             all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
             if final_public_key.is_none() {
-                final_public_key = match pk.unwrap() {
-                    kms_grpc::rpc_types::WrappedPublicKeyOwned::Compact(inner) => Some(inner),
-                };
+                final_public_key = Some(public_key);
             }
             if final_server_key.is_none() {
-                final_server_key = server_key;
+                final_server_key = Some(server_key);
             }
         }
 

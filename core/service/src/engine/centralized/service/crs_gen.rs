@@ -4,18 +4,17 @@ use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
-use kms_grpc::rpc_types::{optional_protobuf_to_alloy_domain, SignedPubDataHandleInternal};
+use kms_grpc::rpc_types::optional_protobuf_to_alloy_domain;
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{ERR_CRS_GEN_FAILED, OP_CRS_GEN_REQUEST};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::session_id::SessionId;
 use tokio::sync::{OwnedSemaphorePermit, RwLock};
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::engine::base::retrieve_parameters;
+use crate::engine::base::{retrieve_parameters, CrsGenCallValues};
 use crate::engine::centralized::central_kms::{async_generate_crs, RealCentralizedKms};
 use crate::engine::validation::{
     parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
@@ -106,10 +105,35 @@ pub async fn get_crs_gen_result_impl<
     };
     let crs_info = handle_res_mapping(status, &request_id, "CRS").await?;
 
-    Ok(Response::new(CrsGenResult {
-        request_id: Some(request_id.into()),
-        crs_results: Some(crs_info.into()),
-    }))
+    match crs_info {
+        CrsGenCallValues::LegacyV0(_) => {
+            // This is a legacy result, we cannot return the crs_digest or external_signature
+            // as they're signed using a different SolStruct and hashed using a different domain separator
+            tracing::warn!(
+                "Received a legacy CRS generation result,
+                not returning crs_digest or external_signature"
+            );
+            Ok(Response::new(CrsGenResult {
+                request_id: Some(request_id.into()),
+                crs_digest: vec![],
+                external_signature: vec![],
+            }))
+        }
+        CrsGenCallValues::Current(crs_info) => {
+            if request_id != crs_info.crs_id {
+                return Err(Status::internal(format!(
+                    "Request ID mismatch: expected {}, got {}",
+                    request_id, crs_info.crs_id
+                )));
+            }
+
+            Ok(Response::new(CrsGenResult {
+                request_id: Some(request_id.into()),
+                crs_digest: crs_info.crs_digest,
+                external_signature: crs_info.external_signature,
+            }))
+        }
+    }
 }
 
 /// Background task for CRS generation
@@ -120,7 +144,7 @@ pub(crate) async fn crs_gen_background<
 >(
     req_id: &RequestId,
     rng: AesRng,
-    meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
+    meta_store: Arc<RwLock<MetaStore<CrsGenCallValues>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     sk: Arc<PrivateSigKey>,
     params: DKGParams,
@@ -131,9 +155,8 @@ pub(crate) async fn crs_gen_background<
     let _permit = permit;
     let start = tokio::time::Instant::now();
 
-    let sid = SessionId::from(0);
     let (pp, crs_info) =
-        match async_generate_crs(&sk, params, max_number_bits, eip712_domain, sid, rng).await {
+        match async_generate_crs(&sk, params, max_number_bits, eip712_domain, req_id, rng).await {
             Ok((pp, crs_info)) => (pp, crs_info),
             Err(e) => {
                 tracing::error!("Error in inner CRS generation: {}", e);

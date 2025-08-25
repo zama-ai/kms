@@ -132,6 +132,14 @@ fn inf_norm_bound_to_euclidean_squared(B_inf: u64, dim: usize) -> u128 {
         .unwrap_or_else(|| panic!("Invalid parameters for zk_pok, B_inf: {B_inf}, d+k: {dim}"))
 }
 
+// Extract the maximum number of bits that can be encrypted from a CRS
+pub fn max_num_bits_from_crs(crs: &CompactPkeCrs) -> usize {
+    // NOTE: plaintext modulus t is carry_modulus * message_modulus * 2 due to padding
+    let t = crs.plaintext_modulus();
+    let max_num_messages = crs.max_num_messages().0;
+    (t.ilog2() - 1) as usize * max_num_messages
+}
+
 pub fn max_num_messages(
     compact_encryption_parameters: &CompactPublicKeyEncryptionParameters,
     max_bit_size: usize,
