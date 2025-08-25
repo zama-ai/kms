@@ -97,9 +97,12 @@ impl<BCast: Broadcast + Default> Ceremony for RushingCeremony<BCast> {
         let sid = session.session_id();
         for (round, role) in all_roles_sorted.iter().enumerate() {
             let round = round as u64;
-            let tau = curve::Zp::rand(&mut session.rng());
-            let r = curve::Zp::rand(&mut session.rng());
-            let proof: PartialProof = make_partial_proof_deterministic(&pp, tau, round + 1, r, sid);
+            let mut tau = curve::ZeroizeZp::ZERO;
+            tau.rand_in_place(&mut session.rng());
+            let mut r = curve::ZeroizeZp::ZERO;
+            r.rand_in_place(&mut session.rng());
+            let proof: PartialProof =
+                make_partial_proof_deterministic(&pp, &tau, round + 1, &r, sid);
             let vi = BroadcastValue::PartialProof::<Z>(proof);
             if role == &my_role {
                 let _ = self
