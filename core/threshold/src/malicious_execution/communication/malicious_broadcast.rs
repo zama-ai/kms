@@ -16,7 +16,7 @@ use crate::{
         },
         runtime::{party::Role, session::BaseSessionHandles},
     },
-    networking::value::{BcastHash, BroadcastValue, NetworkValue},
+    networking::value::{BroadcastValue, NetworkValue},
     ProtocolDescription,
 };
 
@@ -127,26 +127,16 @@ impl Broadcast for MaliciousBroadcastSender {
         let msg = round1_data;
         send_to_all(session, &my_role, NetworkValue::EchoBatch(msg.clone())).await?;
         // adding own echo to the map
-        let mut echos_count: HashMap<(Role, BroadcastValue<Z>), u32> =
+        let echos_count: HashMap<(Role, BroadcastValue<Z>), u32> =
             msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
         // retrieve echos from all parties
-        let mut registered_votes = receive_echos_from_all_batched(
+        let (mut registered_votes, mut map_hash_to_value) = receive_echos_from_all_batched(
             session,
             &my_role,
             &mut non_answering_parties,
-            &mut echos_count,
+            echos_count,
         )
         .await?;
-
-        let mut map_hash_to_value: HashMap<(Role, BcastHash), BroadcastValue<Z>> = echos_count
-            .into_iter()
-            .map(|((role, value), _)| {
-                let hash = value.to_bcast_hash().map_err(|e| {
-                    anyhow::anyhow!("Failed to compute broadcast hash for role {}: {}", role, e)
-                })?;
-                Ok(((role, hash), value))
-            })
-            .collect::<anyhow::Result<HashMap<_, _>>>()?;
 
         // Communication round 3
         // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
@@ -291,16 +281,12 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
         }
         let msg = msg_to_others;
         // adding own echo to the map
-        let mut echos: HashMap<(Role, BroadcastValue<Z>), u32> =
+        let echos: HashMap<(Role, BroadcastValue<Z>), u32> =
             msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
         // retrieve echos from all parties
-        let _ = receive_echos_from_all_batched(
-            session,
-            &my_role,
-            &mut non_answering_parties,
-            &mut echos,
-        )
-        .await?;
+        let _ =
+            receive_echos_from_all_batched(session, &my_role, &mut non_answering_parties, echos)
+                .await?;
 
         //Stop voting now
         Ok(round1_data)
