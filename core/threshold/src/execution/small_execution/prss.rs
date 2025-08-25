@@ -549,13 +549,13 @@ where
         let mask_ctr = self.counters.mask_ctr;
 
         let res = spawn_compute_bound(move || {
-        (0..amount).map(|_| {
+        (mask_ctr..mask_ctr + (amount as u128)).map(|ctr| {
         let mut res = Z::ZERO;
         for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
                 if let Some(aes_prf) = prfs.get(i) {
-                    let phi0 = phi(&aes_prf.phi_aes, mask_ctr, bd1)?;
-                    let phi1 = phi(&aes_prf.phi_aes, mask_ctr + 1, bd1)?;
+                    let phi0 = phi(&aes_prf.phi_aes, ctr , bd1)?;
+                    let phi1 = phi(&aes_prf.phi_aes, ctr + 1, bd1)?;
                     let phi = phi0 + phi1;
 
                     // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
@@ -575,7 +575,7 @@ where
             Ok(res)}).try_collect()
     }).instrument(tracing::Span::current()).await??;
 
-        // increase counter by two, since we have two phi calls above
+        // increase counter by two for each elemet generated, since we have two phi calls above
         self.counters.mask_ctr += 2 * (amount as u128);
 
         Ok(res)
@@ -593,12 +593,12 @@ where
         let prss_ctr = self.counters.prss_ctr;
 
         let res = spawn_compute_bound(move ||{
-            (0..amount).map(|_| {
+            (prss_ctr..prss_ctr + (amount as u128)).map(|ctr| {
         let mut res = Z::ZERO;
         for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
                 if let Some(aes_prf) = prfs.get(i) {
-                    let psi = psi(&aes_prf.psi_aes, prss_ctr)?;
+                    let psi = psi(&aes_prf.psi_aes, ctr)?;
 
                     // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the precomputed f_a_points (indexed from zero)
                     let f_a = set.f_a_points[&party_role];
@@ -640,13 +640,13 @@ where
         let przs_ctr = self.counters.przs_ctr;
 
         let res = spawn_compute_bound(move ||{
-            (0..amount).map(|_| {
+            (przs_ctr..przs_ctr + (amount as u128)).map(|ctr| {
         let mut res = Z::ZERO;
         for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
                 if let Some(aes_prf) = prfs.get(i) {
                     for j in 1..=threshold {
-                        let chi = chi(&aes_prf.chi_aes, przs_ctr, j)?;
+                        let chi = chi(&aes_prf.chi_aes, ctr, j)?;
                         // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
                         let f_a = set.f_a_points[&party_role];
                         // power of alpha_i^j
