@@ -15,7 +15,7 @@ use crate::{
 };
 use crypto_bigint::{NonZero, U1536};
 use itertools::Itertools;
-use std::ops::Mul;
+use std::{ops::Mul, sync::Arc};
 use tracing::instrument;
 
 #[derive(Clone)]
@@ -96,13 +96,21 @@ where
     let e_pk_prime_times_p = e_pk_prime.iter().map(|x| x * p).collect_vec();
 
     //Compute sk odot sk in the polynomial ring via NTT
-    let sk_share_ntt = sk_ntt
-        .into_iter()
-        .map(|val| Share::new(own_role, val))
-        .collect_vec();
+    let sk_share_ntt = Arc::new(
+        sk_ntt
+            .into_iter()
+            .map(|val| Share::new(own_role, val))
+            .collect_vec(),
+    );
 
     let triples = preprocessing.next_triple_vec(N::VALUE)?;
-    let sk_odot_sk_ntt_share = mult_list(&sk_share_ntt, &sk_share_ntt, triples, session).await?;
+    let sk_odot_sk_ntt_share = mult_list(
+        Arc::clone(&sk_share_ntt),
+        Arc::clone(&sk_share_ntt),
+        triples,
+        session,
+    )
+    .await?;
     let mut sk_odot_sk = sk_odot_sk_ntt_share
         .iter()
         .map(|share| share.value())

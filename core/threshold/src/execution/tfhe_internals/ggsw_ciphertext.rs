@@ -10,7 +10,7 @@
 //! an MPC multiplication inside the GGSW encryption
 //! by asking the result of the mults to be input as part of the plaintext.
 //! See [`ggsw_encode_message`]
-use std::ops::Neg;
+use std::{ops::Neg, sync::Arc};
 
 use crate::{
     algebra::{
@@ -156,14 +156,18 @@ where
     let num_messages = messages.len();
     let size_mult = num_messages * key_bits.data.len();
     let triples = preproc.next_triple_vec(size_mult)?;
-    let vectorized_message = messages
-        .iter()
-        .flat_map(|message| (0..key_bits.data.len()).map(|_| *message))
-        .collect_vec();
-    let vectorized_key_bits = (0..num_messages)
-        .flat_map(|_| key_bits.data.clone())
-        .collect_vec();
-    let prods = mult_list(&vectorized_key_bits, &vectorized_message, triples, session).await?;
+    let vectorized_message = Arc::new(
+        messages
+            .iter()
+            .flat_map(|message| (0..key_bits.data.len()).map(|_| *message))
+            .collect_vec(),
+    );
+    let vectorized_key_bits = Arc::new(
+        (0..num_messages)
+            .flat_map(|_| key_bits.data.clone())
+            .collect_vec(),
+    );
+    let prods = mult_list(vectorized_key_bits, vectorized_message, triples, session).await?;
 
     let glwe_dimension = key_bits.glwe_dimension().0;
     let polynomial_size = key_bits.polynomial_size().0;

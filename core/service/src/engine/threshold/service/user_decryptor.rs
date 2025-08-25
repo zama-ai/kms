@@ -446,7 +446,7 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let inner = request.into_inner();
+        let inner = Arc::new(request.into_inner());
         tracing::info!(
             request_id = ?inner.request_id,
             "Received a new user decryption request",
@@ -482,10 +482,15 @@ impl<
 
         let permit = self.rate_limiter.start_user_decrypt().await?;
 
+        tracing::info!(
+            "Party {:?} received a new user decryption request with request_id {:?}",
+            self.session_preparer.own_identity(),
+            inner.request_id
+        );
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) = {
-            let inner_compute = inner.clone();
+            let inner = inner.clone();
             tonic_handle_potential_err(
-                spawn_compute_bound(move || validate_user_decrypt_req(&inner_compute)).await,
+                spawn_compute_bound(move || validate_user_decrypt_req(inner.as_ref())).await,
                 "Error delegating validate_user_decrypt_req to rayon".to_string(),
             )?
         }
@@ -494,7 +499,7 @@ impl<
                 error = ?e,
                 request_id = ?inner.request_id,
                 "Failed to validate decrypt request {}",
-                format_user_request(&inner)
+                format_user_request(inner.as_ref())
             );
         })?;
 
