@@ -1,4 +1,6 @@
 use crate::anyhow_error_and_log;
+#[cfg(feature = "non-wasm")]
+use crate::backup::custodian::InternalCustodianContext;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 use crate::cryptography::decompression;
@@ -13,6 +15,8 @@ use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValue
 use crate::engine::traits::{BaseKms, Kms};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::engine::Shutdown;
+#[cfg(feature = "non-wasm")]
+use crate::grpc::metastore_status_service::CustodianMetaStore;
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::FhePublicKey;
 use crate::util::meta_store::MetaStore;
@@ -475,6 +479,7 @@ pub struct RealCentralizedKms<
     pub(crate) user_decrypt_meta_map: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     // Map storing ongoing CRS generation requests.
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<CrsGenCallValues>>>,
+    pub(crate) custodian_meta_map: Arc<RwLock<CustodianMetaStore>>,
     // Rate limiting
     pub(crate) rate_limiter: RateLimiter,
     // Health reporter for the the grpc server
@@ -931,6 +936,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let crs_info: HashMap<RequestId, CrsGenCallValues> =
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
+        let custodian_info: HashMap<RequestId, InternalCustodianContext> =
+            read_all_data_versioned(&private_storage, &PrivDataType::CustodianInfo.to_string())
+                .await?;
+
         let crypto_storage = CentralizedCryptoMaterialStorage::new(
             public_storage,
             private_storage,
@@ -958,6 +967,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     MIN_DEC_CACHE,
                 ))),
                 crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info))),
+                custodian_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(custodian_info))),
                 rate_limiter: RateLimiter::new(rate_limiter_conf.unwrap_or_default()),
                 health_reporter: Arc::new(RwLock::new(health_reporter)),
                 tracker: Arc::new(TaskTracker::new()),
@@ -990,6 +1000,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     /// Get a reference to the CRS generation MetaStore
     pub fn get_crs_meta_store(&self) -> &Arc<RwLock<MetaStore<CrsGenCallValues>>> {
         &self.crs_meta_map
+    }
+
+    pub fn get_custodian_meta_store(&self) -> &Arc<RwLock<CustodianMetaStore>> {
+        &self.custodian_meta_map
     }
 }
 

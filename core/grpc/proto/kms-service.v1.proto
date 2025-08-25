@@ -343,7 +343,7 @@ service CoreServiceEndpoint {
   // ## Post-condition: -
   rpc GetOperatorPublicKey(kms.v1.Empty) returns (kms.v1.OperatorPublicKey);
 
-  // Restore keys from a backup.
+  // Restore the contents of the KMS private storage from the backup vault.
   //
   // WARNING: This method is not fully implemented yet.
   //
@@ -353,5 +353,29 @@ service CoreServiceEndpoint {
   // # Conditions
   // ## Pre-condition:  -
   // ## Post-condition: -
-  rpc CustodianBackupRestore(kms.v1.Empty) returns (kms.v1.Empty);
+  rpc BackupRestore(kms.v1.Empty) returns (kms.v1.Empty);
+
+  // Initialize custodian-based recovery by making a backup recovery request towards the custodians
+  //
+  // WARNING: This method is not fully implemented yet.
+  //
+  // # Parameters
+  // * `_request` - Struct containing all the data of the request.
+  //
+  // # Conditions
+  // ## Pre-condition:  -
+  // ## Post-condition: -
+  rpc CustodianRecoveryInit(kms.v1.Empty) returns (kms.v1.RecoveryRequest);
+  
+  // Recover the master decryption key secret shared with custodians as part of a custodian-based backup recovery
+  //
+  // WARNING: This method is not fully implemented yet.
+  //
+  // # Parameters
+  // * `_request` - Struct containing all the data of the request.
+  //
+  // # Conditions
+  // ## Pre-condition:  -
+  // ## Post-condition: -
+  rpc CustodianBackupRecovery(kms.v1.BackupRecoveryRequest) returns (kms.v1.Empty);
 }

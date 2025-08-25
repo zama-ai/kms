@@ -2,12 +2,15 @@ use aes_prng::AesRng;
 use clap::Parser;
 use kms_lib::{
     backup::{
-        custodian::{Custodian, CustodianSetupMessage},
-        operator::{OperatorBackupOutput, RecoveryRequest},
+        custodian::{Custodian, InternalCustodianSetupMessage},
+        operator::{InnerOperatorBackupOutput, InternalRecoveryRequest},
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
     consts::RND_SIZE,
-    cryptography::{backup_pke::BackupPrivateKey, internal_crypto_types::PrivateSigKey},
+    cryptography::{
+        backup_pke::BackupPrivateKey,
+        internal_crypto_types::{PrivateSigKey, PublicSigKey},
+    },
     util::file_handling::{safe_read_element_versioned, safe_write_element_versioned},
 };
 use observability::{conf::TelemetryConfig, telemetry::init_tracing};
@@ -30,6 +33,9 @@ pub struct GenerateParams {
     /// The custodian role (1-based index) who is generating the keys.
     #[clap(long, short = 'c', required = true)]
     pub custodian_role: usize,
+    /// The human readable name of the custodian.
+    #[clap(long, short = 'n', required = true)]
+    pub custodian_name: String,
     /// The relative path for storing the generated *public* keys.
     #[clap(long, short = 'p', required = true)]
     pub path: PathBuf,
@@ -58,6 +64,9 @@ pub struct DecryptParams {
     /// The custodian role (1-based index) who is doing the decryption.
     #[clap(long, short = 'c', required = true)]
     pub custodian_role: usize,
+    /// Public verification key of the operator who requested the recovery
+    #[clap(long, short = 'v', required = true)]
+    pub operator_verf_key: PathBuf,
     /// The relative path to the [`RecoveryRequest`] file containing the request of an operator for recovery
     #[clap(long, short = 'b', required = true)]
     pub recovery_request_path: PathBuf,
@@ -75,7 +84,7 @@ pub enum CustodianCommand {
 /// KMS Backup CLI Tool
 ///
 /// This CLI tool allows to make custodian keys using a BIP39 seed phrase and help operators
-/// in recovery of backups (through reencryption) by using a seed pharase.
+/// in recovery of backups (through reencryption) by using a seed phrase.
 ///
 /// # Commands
 ///
@@ -105,7 +114,9 @@ async fn main() -> Result<(), anyhow::Error> {
             let mnemonic = seed_phrase_from_rng(&mut rng).expect("Failed to generate seed phrase");
             let custodian: Custodian<PrivateSigKey, BackupPrivateKey> =
                 custodian_from_seed_phrase(&mnemonic, role).unwrap();
-            let setup_msg = custodian.generate_setup_message(&mut rng).unwrap();
+            let setup_msg = custodian
+                .generate_setup_message(&mut rng, params.custodian_name)
+                .unwrap();
             safe_write_element_versioned(&params.path, &setup_msg).await?;
             tracing::info!("Custodian keys generated successfully! Mnemonic will now be printed:");
             println!("{SEED_PHRASE_DESC}{mnemonic}",);
@@ -114,16 +125,16 @@ async fn main() -> Result<(), anyhow::Error> {
             // Logic for recovering keys
             tracing::info!("Validating custodian keys. Any validation errors will be printed below as warnings.");
             let mut validation_ok = true;
-            let setup_msg: CustodianSetupMessage =
+            let setup_msg: InternalCustodianSetupMessage =
                 safe_read_element_versioned(&params.path).await?;
             let recovered_keys =
-                custodian_from_seed_phrase(&params.seed_phrase, setup_msg.msg.custodian_role)
+                custodian_from_seed_phrase(&params.seed_phrase, setup_msg.custodian_role)
                     .expect("Failed to recover keys");
-            if &setup_msg.verification_key != recovered_keys.verification_key() {
+            if &setup_msg.public_verf_key != recovered_keys.verification_key() {
                 tracing::warn!("Verification failed: Public verification key does not match the generated key!");
                 validation_ok = false;
             }
-            if &setup_msg.msg.public_key != recovered_keys.public_key() {
+            if &setup_msg.public_enc_key != recovered_keys.public_key() {
                 tracing::warn!(
                     "Verification failed: Public encryption key does not match the generated key!"
                 );
@@ -132,12 +143,12 @@ async fn main() -> Result<(), anyhow::Error> {
             if validation_ok {
                 tracing::info!(
                     "Custodian keys verified successfully for custodian {}!",
-                    setup_msg.msg.custodian_role
+                    setup_msg.custodian_role
                 );
             } else {
                 tracing::warn!(
                     "Custodian keys verification failed for custodian {}. Please check the logs for details.",
-                    setup_msg.msg.custodian_role
+                    setup_msg.custodian_role
                 );
             }
         }
@@ -146,9 +157,14 @@ async fn main() -> Result<(), anyhow::Error> {
                 "Decrypting ciphertexts for custodian role: {}",
                 params.custodian_role
             );
-            let recovery_request: RecoveryRequest =
+            let verf_key: PublicSigKey =
+                safe_read_element_versioned(&params.operator_verf_key).await?;
+            let recovery_request: InternalRecoveryRequest =
                 safe_read_element_versioned(&params.recovery_request_path).await?;
-            if !recovery_request.is_valid() {
+            if !recovery_request
+                .is_valid(&verf_key)
+                .expect("Failed to validate recovery request")
+            {
                 return Err(anyhow::anyhow!("Invalid RecoveryRequest data"));
             }
             // Logic for decrypting payloads
@@ -159,7 +175,7 @@ async fn main() -> Result<(), anyhow::Error> {
             .expect("Failed to reconstruct custodians");
             tracing::info!("Custodian initialized successfully");
             let mut rng = get_rng(params.randomness.as_ref());
-            let custodian_backup: &OperatorBackupOutput = recovery_request
+            let custodian_backup: &InnerOperatorBackupOutput = recovery_request
                 .ciphertexts()
                 .get(&Role::indexed_from_one(params.custodian_role))
                 .unwrap_or_else(|| {
@@ -171,7 +187,7 @@ async fn main() -> Result<(), anyhow::Error> {
             let res = custodian.verify_reencrypt(
                 &mut rng,
                 custodian_backup,
-                recovery_request.verification_key(),
+                &verf_key,
                 recovery_request.encryption_key(),
                 recovery_request.backup_id(),
                 recovery_request.operator_role(),
@@ -209,18 +225,17 @@ fn get_rng(randomness: Option<&String>) -> AesRng {
 #[cfg(test)]
 mod tests {
     use crate::{get_rng, SEED_PHRASE_DESC};
-    use aes_prng::AesRng;
     use assert_cmd::Command;
-    use kms_grpc::RequestId;
+    use kms_grpc::{rpc_types::InternalCustodianRecoveryOutput, RequestId};
     use kms_lib::{
         backup::{
-            custodian::{CustodianRecoveryOutput, CustodianSetupMessage},
-            operator::{Operator, RecoveryRequest},
+            custodian::InternalCustodianSetupMessage,
+            operator::{BackupCommitments, InternalRecoveryRequest, Operator},
             seed_phrase::custodian_from_seed_phrase,
         },
         cryptography::{
-            backup_pke::{self, BackupPrivateKey},
-            internal_crypto_types::{gen_sig_keys, PrivateSigKey},
+            backup_pke::{self},
+            internal_crypto_types::gen_sig_keys,
         },
         engine::base::derive_request_id,
         util::file_handling::{safe_read_element_versioned, safe_write_element_versioned},
@@ -331,12 +346,17 @@ mod tests {
                 let recovery_path = temp_dir.path().join(format!(
                     "operator-{operator_index}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin"
                 ));
+                let operator_verf_path = temp_dir.path().join(format!(
+                    "operator-{operator_index}{MAIN_SEPARATOR}{backup_id}-verf_key.bin"
+                ));
                 let decrypt_command = vec![
                     "decrypt".to_string(),
                     "--seed-phrase".to_string(),
                     seed_phrases[custodian_index - 1].to_string(),
                     "--custodian-role".to_string(),
                     custodian_index.to_string(),
+                    "--operator-verf-key".to_string(),
+                    operator_verf_path.to_str().unwrap().to_string(),
                     "-b".to_string(),
                     request_path.to_str().unwrap().to_string(),
                     "-o".to_string(),
@@ -347,7 +367,7 @@ mod tests {
         }
 
         // Validate the decryption
-        for (operator, commitment) in operators.iter().zip(commitments) {
+        for (operator, commitment) in operators.iter().zip(&commitments) {
             let cur_res = decrypt_recovery(
                 temp_dir.path(),
                 amount_custodians,
@@ -369,7 +389,7 @@ mod tests {
     fn generate_custodian_keys_to_file(
         root_path: &Path,
         custodian_index: usize,
-    ) -> (String, CustodianSetupMessage) {
+    ) -> (String, InternalCustodianSetupMessage) {
         let final_dir = root_path.join(format!(
             "custodian-{custodian_index}{MAIN_SEPARATOR}setup_msg.bin"
         ));
@@ -379,6 +399,8 @@ mod tests {
             "123456".to_string(),
             "--custodian-role".to_string(),
             custodian_index.to_string(),
+            "--custodian-name".to_string(),
+            format!("skynet-{custodian_index}"),
             "--path".to_string(),
             final_dir.to_str().unwrap().to_string(),
         ];
@@ -387,7 +409,9 @@ mod tests {
         let role = Role::indexed_from_one(custodian_index);
         let custodian = custodian_from_seed_phrase(seed_phrase, role).unwrap();
         let mut rng = get_rng(Some(&format!("custodian{custodian_index}").to_string()));
-        let setup_msg = custodian.generate_setup_message(&mut rng).unwrap();
+        let setup_msg = custodian
+            .generate_setup_message(&mut rng, "Homer Simpson".to_string())
+            .unwrap();
         (seed_phrase.to_string(), setup_msg)
     }
 
@@ -404,40 +428,51 @@ mod tests {
         root_path: &Path,
         threshold: usize,
         operator_role: Role,
-        setup_msgs: Vec<CustodianSetupMessage>,
+        setup_msgs: Vec<InternalCustodianSetupMessage>,
         backup_id: RequestId,
         msg: &[u8],
-    ) -> (
-        BTreeMap<Role, Vec<u8>>,
-        Operator<PrivateSigKey, BackupPrivateKey>,
-    ) {
+    ) -> (BackupCommitments, Operator) {
         let request_path = root_path.join(format!(
             "operator-{operator_role}{MAIN_SEPARATOR}{backup_id}-request.bin"
         ));
+        let operator_verf_path = root_path.join(format!(
+            "operator-{operator_role}{MAIN_SEPARATOR}{backup_id}-verf_key.bin"
+        ));
         let amount_custodians = setup_msgs.len();
         let mut rng = get_rng(Some(&format!("operator{operator_role}").to_string()));
-        let operator = operator_key_gen(&mut rng, setup_msgs.clone(), operator_role, threshold)
-            .await
-            .unwrap();
-        let ct_map = operator
+        // Note that in the actual deployment, the operator keys are generated before the encryption keys
+        let (verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
+        let operator = Operator::new(
+            operator_role,
+            setup_msgs,
+            signing_key.clone(),
+            verification_key.clone(),
+            private_key,
+            public_key,
+            threshold,
+        )
+        .unwrap();
+        let (ct_map, commitments) = operator
             .secret_share_and_encrypt(&mut rng, msg, backup_id)
             .unwrap();
-        let mut commitments = BTreeMap::new();
         let mut ciphertexts = BTreeMap::new();
         for custodian_index in 1..=amount_custodians {
             let custodian_role = Role::indexed_from_one(custodian_index);
             let ct = ct_map.get(&custodian_role).unwrap();
-            commitments.insert(custodian_role, ct.commitment.clone());
             ciphertexts.insert(custodian_role, ct.to_owned());
         }
-        let recovery_request = RecoveryRequest::new(
+        let recovery_request = InternalRecoveryRequest::new(
             operator.public_key().to_owned(),
-            operator.verification_key().to_owned(),
+            &signing_key,
             ciphertexts,
             backup_id,
             operator_role,
         )
         .unwrap();
+        safe_write_element_versioned(&Path::new(&operator_verf_path), &verification_key)
+            .await
+            .unwrap();
         safe_write_element_versioned(&Path::new(&request_path), &recovery_request)
             .await
             .unwrap();
@@ -447,8 +482,8 @@ mod tests {
     async fn decrypt_recovery(
         root_path: &Path,
         amount_custodians: usize,
-        operator: &Operator<PrivateSigKey, BackupPrivateKey>,
-        commitment: BTreeMap<Role, Vec<u8>>,
+        operator: &Operator,
+        commitment: &BackupCommitments,
         backup_id: RequestId,
     ) -> Vec<u8> {
         let mut outputs = BTreeMap::new();
@@ -457,34 +492,14 @@ mod tests {
                 "operator-{}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin",
                 operator.role()
             ));
-            let payload: CustodianRecoveryOutput =
+            let payload: InternalCustodianRecoveryOutput =
                 safe_read_element_versioned(&Path::new(&recovery_path))
                     .await
                     .unwrap();
             outputs.insert(Role::indexed_from_one(custodian_index), payload);
         }
         operator
-            .verify_and_recover(&outputs, &commitment, backup_id)
+            .verify_and_recover(&outputs, commitment, backup_id)
             .unwrap()
-    }
-
-    async fn operator_key_gen(
-        rng: &mut AesRng,
-        setup_msgs: Vec<CustodianSetupMessage>,
-        role: Role,
-        threshold: usize,
-    ) -> anyhow::Result<Operator<PrivateSigKey, BackupPrivateKey>> {
-        // Note that in the actual deployment, the operator keys are generated before the encryption keys
-        let (verification_key, signing_key) = gen_sig_keys(rng);
-        let (public_key, private_key) = backup_pke::keygen(rng).unwrap();
-        Ok(Operator::new(
-            role,
-            setup_msgs,
-            signing_key,
-            verification_key,
-            private_key,
-            public_key,
-            threshold,
-        )?)
     }
 }

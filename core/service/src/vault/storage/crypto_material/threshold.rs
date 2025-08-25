@@ -7,7 +7,9 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 use kms_grpc::{
-    rpc_types::{PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
+    rpc_types::{
+        BackupDataType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned,
+    },
     RequestId,
 };
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
@@ -20,7 +22,10 @@ use crate::{
     },
     util::meta_store::MetaStore,
     vault::{
-        storage::{store_pk_at_request_id, store_versioned_at_request_id, Storage},
+        storage::{
+            crypto_material::log_storage_success, store_pk_at_request_id,
+            store_versioned_at_request_id, Storage, StorageReader,
+        },
         Vault,
     },
 };
@@ -34,6 +39,7 @@ pub struct ThresholdCryptoMaterialStorage<
     PrivS: Storage + Send + Sync + 'static,
 > {
     pub(crate) inner: CryptoMaterialStorage<PubS, PrivS>,
+    /// Note that `fhe_keys` should be locked after any locking of elements in `inner`.
     fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
 }
 
@@ -105,83 +111,113 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         // other function calls too much
         let mut guarded_meta_storage = meta_store.write().await;
 
-        let f1 = async {
+        let (r1, r2, r3) = {
+            // Lock the storage components in the correct order to avoid deadlocks.
+            let mut pub_storage = self.inner.public_storage.lock().await;
             let mut priv_storage = self.inner.private_storage.lock().await;
-            // can't map() because async closures aren't stable in Rust
             let back_vault = match self.inner.backup_vault {
                 Some(ref x) => Some(x.lock().await),
                 None => None,
             };
 
-            let store_result = store_versioned_at_request_id(
-                &mut (*priv_storage),
-                key_id,
-                &threshold_fhe_keys,
-                &PrivDataType::FheKeyInfo.to_string(),
-            )
-            .await;
-
-            if let Err(e) = &store_result {
-                tracing::error!(
-                    "Failed to store threshold FHE keys to private storage for request {}: {}",
+            let f1 = async {
+                let store_result = store_versioned_at_request_id(
+                    &mut (*priv_storage),
                     key_id,
-                    e
-                );
-            }
-            let store_is_ok = store_result.is_ok();
+                    &threshold_fhe_keys,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await;
 
-            let backup_is_ok = match back_vault {
-                Some(mut x) => {
-                    let backup_result = store_versioned_at_request_id(
-                        &mut (*x),
+                if let Err(e) = &store_result {
+                    tracing::error!(
+                        "Failed to store threshold FHE keys to private storage for request {}: {}",
                         key_id,
-                        &threshold_fhe_keys,
+                        e
+                    );
+                } else {
+                    log_storage_success(
+                        key_id,
+                        priv_storage.info(),
                         &PrivDataType::FheKeyInfo.to_string(),
-                    )
-                    .await;
-
-                    if let Err(e) = &backup_result {
-                        tracing::error!("Failed to store threshold FHE keys to backup storage for request {}: {}", key_id, e);
-                    }
-                    backup_result.is_ok()
+                        false,
+                        true,
+                    );
                 }
-                None => true,
+                store_result.is_ok()
             };
+            let f2 = async {
+                let pk_result = store_pk_at_request_id(
+                    &mut (*pub_storage),
+                    key_id,
+                    WrappedPublicKey::Compact(&fhe_key_set.public_key),
+                )
+                .await;
+                if let Err(e) = &pk_result {
+                    tracing::error!("Failed to store public key for request {}: {}", key_id, e);
+                } else {
+                    log_storage_success(
+                        key_id,
+                        pub_storage.info(),
+                        &PubDataType::PublicKey.to_string(),
+                        true,
+                        true,
+                    );
+                }
+                let server_result = store_versioned_at_request_id(
+                    &mut (*pub_storage),
+                    key_id,
+                    &fhe_key_set.server_key,
+                    &PubDataType::ServerKey.to_string(),
+                )
+                .await;
 
-            store_is_ok && backup_is_ok
+                if let Err(e) = &server_result {
+                    tracing::error!("Failed to store server key for request {}: {}", key_id, e);
+                } else {
+                    log_storage_success(
+                        key_id,
+                        pub_storage.info(),
+                        &PubDataType::ServerKey.to_string(),
+                        true,
+                        true,
+                    );
+                }
+                pk_result.is_ok() && server_result.is_ok()
+            };
+            let threshold_key_clone = threshold_fhe_keys.clone();
+            let f3 = async move {
+                match back_vault {
+                    Some(mut guarded_backup_vault) => {
+                        let backup_result = store_versioned_at_request_id(
+                            &mut (*guarded_backup_vault),
+                            key_id,
+                            &threshold_key_clone,
+                            &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
+                        )
+                        .await;
+
+                        if let Err(e) = &backup_result {
+                            tracing::error!("Failed to store encrypted threshold FHE keys to backup storage for request {key_id}: {e}");
+                        } else {
+                            log_storage_success(
+                                key_id,
+                                guarded_backup_vault.info(),
+                                &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
+                                false,
+                                true,
+                            );
+                        }
+                        backup_result.is_ok()
+                    }
+                    None => {
+                        tracing::warn!("No backup vault configured. Skipping backup of key material for request {key_id}");
+                        true
+                    }
+                }
+            };
+            tokio::join!(f1, f2, f3)
         };
-        let f2 = async {
-            let mut pub_storage = self.inner.public_storage.lock().await;
-            let result = store_pk_at_request_id(
-                &mut (*pub_storage),
-                key_id,
-                WrappedPublicKey::Compact(&fhe_key_set.public_key),
-            )
-            .await;
-
-            if let Err(e) = &result {
-                tracing::error!("Failed to store public key for request {}: {}", key_id, e);
-            }
-            result.is_ok()
-        };
-        let f3 = async {
-            let mut pub_storage = self.inner.public_storage.lock().await;
-            let result = store_versioned_at_request_id(
-                &mut (*pub_storage),
-                key_id,
-                &fhe_key_set.server_key,
-                &PubDataType::ServerKey.to_string(),
-            )
-            .await;
-
-            if let Err(e) = &result {
-                tracing::error!("Failed to store server key for request {}: {}", key_id, e);
-            }
-            result.is_ok()
-        };
-
-        let (r1, r2, r3) = tokio::join!(f1, f2, f3);
-
         // Try to store the new data
         tracing::info!("Storing DKG objects for key ID {}", key_id);
 
@@ -193,7 +229,6 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 key_id
             );
         }
-
         if r1 && r2 && r3 && meta_update_result.is_ok() {
             // updating the cache is not critical to system functionality,
             // so we do not consider it as an error
@@ -277,6 +312,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         .await
     }
 
+    /// Tries to delete all the types of key material related to a specific [RequestId].
+    /// WARNING: This also deletes the BACKUP of the keys. Hence the method should should only be used as cleanup after a failed DKG.
     pub async fn purge_key_material(
         &self,
         req_id: &RequestId,
@@ -287,6 +324,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             .await
     }
 
+    /// Tries to delete all the types of CRS material related to a specific [RequestId].
+    /// WARNING: This also deletes the BACKUP of the CRS data. Hence the method should should only be used as cleanup after a failed CRS generation.
     pub async fn purge_crs_material(
         &self,
         req_id: &RequestId,
