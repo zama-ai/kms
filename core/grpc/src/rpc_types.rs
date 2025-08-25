@@ -1022,7 +1022,6 @@ pub enum InternalBackupRecoveryRequestVersioned {
 #[versionize(InternalBackupRecoveryRequestVersioned)]
 pub struct InternalBackupRecoveryRequest {
     pub custodian_context_id: RequestId,
-    pub threshold: u32,
     pub custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
 }
 
@@ -1041,7 +1040,6 @@ impl TryFrom<BackupRecoveryRequest> for InternalBackupRecoveryRequest {
                     anyhow::anyhow!("Missing custodian context ID in BackupRestoreRequest")
                 })?
                 .try_into()?,
-            threshold: value.threshold,
             custodian_recovery_outputs: value
                 .custodian_recovery_outputs
                 .into_iter()

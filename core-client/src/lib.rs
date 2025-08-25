@@ -507,8 +507,6 @@ pub struct ResultParameters {
 pub struct RestoreParameters {
     #[clap(long, short = 'i')]
     pub custodian_context_id: RequestId,
-    #[clap(long, short = 't')]
-    pub threshold: u32,
     #[clap(long, short = 'r')]
     pub custodian_recovery_outputs: Vec<PathBuf>, // TODO should this just be a root directory with everything in?
 }
@@ -1306,7 +1304,6 @@ async fn do_get_operator_pub_keys(
 async fn do_custodian_backup_restore(
     core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
     custodian_context_id: RequestId,
-    threshold: u32,
     custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
@@ -1332,7 +1329,6 @@ async fn do_custodian_backup_restore(
             cur_client
                 .custodian_backup_recovery(tonic::Request::new(BackupRecoveryRequest {
                     custodian_context_id: Some(custodian_context_id.into()),
-                    threshold,
                     custodian_recovery_outputs: cur_recoveries,
                 }))
                 .await
@@ -1963,7 +1959,6 @@ pub async fn execute_cmd(
         }
         CCCommand::CustodianBackupRestore(RestoreParameters {
             custodian_context_id,
-            threshold,
             custodian_recovery_outputs,
         }) => {
             let mut custodian_outputs = Vec::new();
@@ -1975,7 +1970,6 @@ pub async fn execute_cmd(
             do_custodian_backup_restore(
                 &mut core_endpoints_req,
                 *custodian_context_id,
-                *threshold,
                 custodian_outputs,
             )
             .await?;

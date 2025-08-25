@@ -14,8 +14,11 @@ use crate::{
         signcryption::internal_verify_sig,
     },
     engine::{
-        base::BaseKmsStruct, context::ContextInfo, threshold::service::ThresholdFheKeys,
+        base::BaseKmsStruct,
+        context::ContextInfo,
+        threshold::service::ThresholdFheKeys,
         traits::BackupOperator,
+        validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
     util::key_setup::FhePrivateKey,
     vault::{
@@ -184,19 +187,6 @@ where
                     format!("Failed to get latest backup id: {e}"),
                 )
             })?;
-        // let custodian_contexts: InternalCustodianContext = {
-        //     let priv_storage = self.crypto_storage.get_private_storage();
-        //     let guarded_priv_storage = priv_storage.lock().await;
-        //     guarded_priv_storage
-        //         .read_data(&backup_id, &PrivDataType::CustodianInfo.to_string())
-        //         .await
-        //         .map_err(|e| {
-        //             Status::new(
-        //                 tonic::Code::Internal,
-        //                 format!("Failed to read custodian context: {e}"),
-        //             )
-        //         })?
-        // };
         let inner_recovery_request: InnerRecoveryRequest = {
             let pub_storage = self.crypto_storage.get_public_storage();
             let guarded_pub_storage = pub_storage.lock().await;
@@ -246,9 +236,30 @@ where
                 }
             }
         };
-        //todo validate request constraints and remove unwraps
         let inner = request.into_inner();
-        let context_id = inner.custodian_context_id.unwrap().try_into().unwrap();
+        let context_id: RequestId = parse_optional_proto_request_id(
+            &inner.custodian_context_id,
+            RequestIdParsingErr::BackupRecovery,
+        )?;
+        let mut parsed_custodian_rec = Vec::new();
+        for cur_recovery_output in inner.custodian_recovery_outputs {
+            if cur_recovery_output.operator_role != self.my_role.one_based() as u64 {
+                return Err(Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!(
+                        "Received recovery output for operator role {}, but current server's role is {}",
+                        cur_recovery_output.operator_role,
+                        self.my_role.one_based()
+                    ),
+                ));
+            }
+            parsed_custodian_rec.push(cur_recovery_output.try_into().map_err(|e| {
+                Status::new(
+                    tonic::Code::Internal,
+                    format!("Failed parse custodian recovery outputs: {e}"),
+                )
+            })?);
+        }
         let commitments: BackupCommitments = {
             let guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
             guarded_pub_storage
@@ -284,12 +295,25 @@ where
                             custodian_data.custodian_nodes.values().cloned().collect_vec(),
                             self.base_kms.sig_key.as_ref().clone(),
                             custodian_data.threshold as usize,
-                        ).unwrap();
-                        let parsed_custodian_rec = inner.custodian_recovery_outputs.iter().map(|ct| ct.clone().try_into().unwrap()).collect_vec();
-                        let serialized_dec_key = operator.verify_and_recover(&parsed_custodian_rec, &commitments, context_id, &ephemeral_dec_key).unwrap();
-                        let backup_dec_key: BackupPrivateKey = safe_deserialize(std::io::Cursor::new(&serialized_dec_key), SAFE_SER_SIZE_LIMIT).unwrap();
+                        ).map_err(|e| {
+                            Status::new(
+                                tonic::Code::Internal,
+                                format!("Failed to create operator for secret sharing based decryption: {e}"),
+                            )
+                        })?;
+                        let serialized_dec_key = operator.verify_and_recover(&parsed_custodian_rec, &commitments, context_id, &ephemeral_dec_key).map_err(|e| {
+                            Status::new(
+                                tonic::Code::Unauthenticated,
+                                format!("Failed to verify the backup decryption request: {e}"),
+                            )
+                        })?;
+                        let backup_dec_key: BackupPrivateKey = safe_deserialize(std::io::Cursor::new(&serialized_dec_key), SAFE_SER_SIZE_LIMIT).map_err(|e| {
+                            Status::new(
+                                tonic::Code::Internal,
+                                format!("Failed to deserialize backup decryption key: {e}"),
+                            )
+                        })?;
                         keychain.set_dec_key(Some(backup_dec_key));
-                        // todo unset key after recovery , fix unwraps
                         Ok(Response::new(Empty {}))
                     }
                     _ => Err(Status::new(
@@ -329,6 +353,10 @@ where
                             format!("Failed to restore backup data: {e}"),
                         )
                     })?;
+
+                let mut guarded_ephemeral_dec_key = self.ephemeral_dec_key.lock().await;
+                // Remove any decryption key (if it is there) now that restoration is done.
+                *guarded_ephemeral_dec_key = None;
                 Ok(Response::new(Empty {}))
             }
             None => Err(Status::new(

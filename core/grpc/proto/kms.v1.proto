@@ -499,8 +499,7 @@ message CustodianRecoveryOutput {
 // which is sent to the KMS to recover the private backup master decryption key
 message BackupRecoveryRequest { // TODO rename to CustodiansRecoveryRequest
   RequestId custodian_context_id = 1;
-  uint32 threshold = 2;
-  repeated CustodianRecoveryOutput custodian_recovery_outputs = 3;
+  repeated CustodianRecoveryOutput custodian_recovery_outputs = 2;
 }
 
 // The data constructed by a given operator towards a given custodian after it has constructed a recovery request
