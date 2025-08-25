@@ -1,5 +1,6 @@
 use itertools::Itertools;
 use std::marker::PhantomData;
+use std::sync::Arc;
 use tracing::instrument;
 
 use crate::algebra::galois_rings::common::ResiduePoly;
@@ -134,7 +135,8 @@ where
         debug_assert_eq!(lhs.len() % Z::CHAR_LOG2, 0);
         debug_assert_eq!(rhs.len() % Z::CHAR_LOG2, 0);
 
-        let flattened = Bits::xor_list_secret_secret(&lhs, &rhs, preproc, session).await?;
+        let flattened =
+            Bits::xor_list_secret_secret(Arc::new(lhs), Arc::new(rhs), preproc, session).await?;
         Ok(BatchedBits::format_to_batch(flattened, batch_size))
     }
 
@@ -155,7 +157,8 @@ where
 
         let lhs = lhs.iter().flatten().cloned().collect::<SecretVec<Z>>();
         let rhs = rhs.iter().flatten().cloned().collect::<SecretVec<Z>>();
-        let flattened = Bits::and_list_secret_secret(&lhs, &rhs, preproc, session).await?;
+        let flattened =
+            Bits::and_list_secret_secret(Arc::new(lhs), Arc::new(rhs), preproc, session).await?;
         Ok(BatchedBits::format_to_batch(flattened, batch_size))
     }
 
@@ -207,7 +210,9 @@ where
         // AND(a, b) = a * b
         // so in the first step we just compute a * b for both XOR and AND
         // afterwards we do just linear combinations to compute XOR.
-        let ands = Bits::and_list_secret_secret(&lhs_all, &rhs_all, preproc, session).await?;
+        let ands =
+            Bits::and_list_secret_secret(Arc::new(lhs_all), Arc::new(rhs_all), preproc, session)
+                .await?;
         let xor_ = Bits::xor_with_prods(&lhs, &rhs, &ands[0..lhs.len()].to_vec());
 
         let res1 = Self::format_to_batch(xor_, lhs1.len());
@@ -303,14 +308,24 @@ where
         }
 
         // Perform the MUX described above, on all messages in one round
+        let sign_bits = Arc::new(sign_bits);
+        let recomposed_decryptions = Arc::new(recomposed_decryptions);
         let triples = preproc.next_triple_vec(sign_bits.len())?;
-        let prods = mult_list(&sign_bits, &recomposed_decryptions, triples, session).await?;
+        let prods = mult_list(
+            sign_bits,
+            Arc::clone(&recomposed_decryptions),
+            triples,
+            session,
+        )
+        .await?;
 
         // Compute plaintext_sum - sign_bit * plaintext_sum, final step of the MUX
+        let recomposed_decryptions = Arc::into_inner(recomposed_decryptions)
+            .ok_or_else(|| anyhow_error_and_log("Failed to unarc recomposed_decryption"))?;
         let res: Vec<Share<Z>> = prods
-            .iter()
-            .enumerate()
-            .map(|(i, prod)| &recomposed_decryptions[i] - prod)
+            .into_iter()
+            .zip_eq(recomposed_decryptions.into_iter())
+            .map(|(prod, recomposed_decryption)| recomposed_decryption - prod)
             .collect();
 
         Ok(res)
@@ -347,13 +362,15 @@ where
         Ses: BaseSessionHandles,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
-        lhs: &SecretVec<Z>,
-        rhs: &SecretVec<Z>,
+        lhs: Arc<SecretVec<Z>>,
+        rhs: Arc<SecretVec<Z>>,
         preproc: &mut P,
         session: &mut Ses,
     ) -> anyhow::Result<SecretVec<Z>> {
-        let ands = Self::and_list_secret_secret(lhs, rhs, preproc, session).await?;
-        Ok(Self::xor_with_prods(lhs, rhs, &ands))
+        let ands =
+            Self::and_list_secret_secret(Arc::clone(&lhs), Arc::clone(&rhs), preproc, session)
+                .await?;
+        Ok(Self::xor_with_prods(lhs.as_ref(), rhs.as_ref(), &ands))
     }
 
     /// Computes AND(\<a\>,\<b\>) for a and b vecs
@@ -361,8 +378,8 @@ where
         Ses: BaseSessionHandles,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
-        lhs: &SecretVec<Z>,
-        rhs: &SecretVec<Z>,
+        lhs: Arc<SecretVec<Z>>,
+        rhs: Arc<SecretVec<Z>>,
         preproc: &mut P,
         session: &mut Ses,
     ) -> anyhow::Result<SecretVec<Z>> {
@@ -492,6 +509,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::num::Wrapping;
+    use std::sync::Arc;
 
     use crate::algebra::structure_traits::Ring;
     use crate::execution::sharing::shamir::ShamirSharings;
@@ -551,8 +569,8 @@ mod tests {
                 .collect_vec();
             let mut preprocessing = DummyPreprocessing::<ResiduePolyF4Z64>::new(42, &session);
             let bits = Bits::<ResiduePolyF4Z64>::xor_list_secret_secret(
-                &lhs,
-                &rhs,
+                Arc::new(lhs),
+                Arc::new(rhs),
                 &mut preprocessing,
                 &mut session,
             )

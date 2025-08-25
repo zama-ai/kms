@@ -65,6 +65,17 @@ impl<Z: Ring> Add<&Share<Z>> for &Share<Z> {
     }
 }
 
+impl<Z: Ring> Add<&Share<Z>> for Share<Z> {
+    type Output = Share<Z>;
+    fn add(self, rhs: &Share<Z>) -> Self::Output {
+        debug_assert_eq!(self.owner, rhs.owner);
+        Share::<Z> {
+            value: self.value + rhs.value,
+            owner: self.owner,
+        }
+    }
+}
+
 impl<Z: Ring> Add<Z> for Share<Z> {
     type Output = Share<Z>;
     fn add(self, rhs: Z) -> Self::Output {
