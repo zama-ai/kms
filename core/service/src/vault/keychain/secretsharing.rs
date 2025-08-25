@@ -57,6 +57,14 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
     pub fn set_dec_key(&mut self, dec_key: Option<BackupPrivateKey>) {
         self.dec_key = dec_key;
     }
+
+    pub fn get_current_backup_id(&self) -> RequestId {
+        self.custodian_context_id
+    }
+
+    pub fn set_current_backup_id(&mut self, backup_id: RequestId) {
+        self.custodian_context_id = backup_id;
+    }
 }
 
 impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {

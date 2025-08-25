@@ -7,6 +7,7 @@ use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
 use crate::engine::validation::{parse_proto_request_id, RequestIdParsingErr};
+use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::delete_context_at_request_id;
 use crate::vault::Vault;
@@ -204,6 +205,7 @@ where
             Some(ref backup_vault) => backup_vault,
             None => return Err(anyhow::anyhow!("Backup vault is not configured")),
         };
+
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric keys for the operator to use to encrypt the backup
         let (backup_enc_key, backup_priv_key) = backup_pke::keygen(&mut rng)?;
@@ -219,6 +221,14 @@ where
             let lock_acquired_time = lock_start.elapsed();
             let guarded_priv_storage = self.crypto_storage.private_storage.lock().await;
             let mut guarded_backup_vault = backup_vault.lock().await;
+            // First update the backup vault's context ID
+            if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
+                guarded_backup_vault.keychain.as_mut()
+            {
+                secret_share_keychain.set_current_backup_id(inner_context.context_id);
+            } else {
+                return Err(anyhow::anyhow!("A secret sharing keychain is not configured! It is not possible to use custodian contexts"));
+            }
             for cur_type in PrivDataType::iter() {
                 // We need to match on each type to manually specify the data type and to ensure that we do not forget anything in case the enum is extended
                 match cur_type {
