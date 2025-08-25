@@ -665,7 +665,7 @@ where
         Ok(res)}).try_collect()
 }).instrument(tracing::Span::current()).await??;
 
-        self.counters.przs_ctr += 1;
+        self.counters.przs_ctr += amount as u128;
 
         Ok(res)
     }
