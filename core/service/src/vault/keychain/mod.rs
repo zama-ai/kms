@@ -1,6 +1,6 @@
 use crate::{
     anyhow_error_and_log,
-    backup::{custodian::InternalCustodianContext, operator::BackupCommitments},
+    backup::custodian::InternalCustodianContext,
     conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain as KeychainConf, SecretSharingKeychain},
     cryptography::{attestation::SecurityModuleProxy, backup_pke::BackupCiphertext},
     vault::{
@@ -13,14 +13,13 @@ use aes_prng::AesRng;
 use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
 use itertools::Itertools;
-use kms_grpc::rpc_types::{InternalCustodianRecoveryOutput, PrivDataType};
+use kms_grpc::rpc_types::PrivDataType;
 use rand::SeedableRng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{collections::BTreeMap, convert::Into};
+use std::convert::Into;
 use strum_macros::EnumTryAs;
 use tfhe::{named::Named, Unversionize};
 use tfhe_versionable::{Versionize, VersionsDispatch};
-use threshold_fhe::execution::runtime::party::Role;
 
 pub mod awskms;
 pub mod secretsharing;
@@ -72,10 +71,7 @@ pub enum KeychainProxy {
 #[derive(EnumTryAs, Clone)]
 pub enum EnvelopeLoad {
     AppKeyBlob(AppKeyBlob),
-    OperatorRecoveryInput(
-        BTreeMap<Role, InternalCustodianRecoveryOutput>,
-        BackupCommitments,
-    ),
+    OperatorRecoveryInput(BackupCiphertext),
 }
 
 #[derive(EnumTryAs)]

@@ -15,8 +15,9 @@ use crate::{
     engine::base::safe_serialize_hash_element_versioned,
 };
 use itertools::Itertools;
-use k256::ecdsa::SigningKey;
-use kms_grpc::{rpc_types::InternalCustodianRecoveryOutput, RequestId};
+use kms_grpc::{
+    kms::v1::OperatorBackupOutput, rpc_types::InternalCustodianRecoveryOutput, RequestId,
+};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -45,34 +46,37 @@ pub enum InternalRecoveryRequestVersioned {
 }
 
 impl Named for InternalRecoveryRequest {
-    const NAME: &'static str = "backup::RecoveryRequest";
+    const NAME: &'static str = "backup::InternalRecoveryRequest";
 }
 
-/// The data sent to the custodians by the operator during the recovery procedure.
+/// The backup data returned to the custodians during recovery.
+/// WARNING: It is crucial that this is transported safely as it does not
+/// contain any authentication feature on the ephemeral encryption key [`enc_key`]
+/// since the we must assume the operator has no access to the private storage when
+/// creating this object.
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(InternalRecoveryRequestVersioned)]
 pub struct InternalRecoveryRequest {
-    payload: InnerRecoveryRequest,
-    signature: Vec<u8>,
+    enc_key: BackupPublicKey,
+    cts: BTreeMap<Role, InnerOperatorBackupOutput>,
+    backup_id: RequestId,
+    operator_role: Role,
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-enum InnerRecoveryRequestVersioned {
+pub enum InnerRecoveryRequestVersioned {
     V0(InnerRecoveryRequest),
 }
 
-/// The data sent to the custodians by the operator during the recovery procedure.
+/// The backup data constructed whenever a new custodian context is created.
+/// It is meant to be stored in the public storage as it is self-trusted via the signatures
+/// It is different from what is returned to custodians during recovery since it is then augmented with
+/// an ephemeral encryption key during that point in time.
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(InnerRecoveryRequestVersioned)]
-struct InnerRecoveryRequest {
-    /// The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
-    enc_key: BackupPublicKey,
+pub struct InnerRecoveryRequest {
     /// The ciphertexts that are the backup. Indexed by the custodian role.
-    cts: BTreeMap<Role, InnerOperatorBackupOutput>,
-    /// The request ID under which the backup was created.
-    backup_id: RequestId,
-    /// The role of the operator
-    operator_role: Role,
+    pub cts: BTreeMap<Role, InnerOperatorBackupOutput>,
 }
 
 impl Named for InnerRecoveryRequest {
@@ -82,91 +86,67 @@ impl Named for InnerRecoveryRequest {
 impl InternalRecoveryRequest {
     pub fn new(
         enc_key: BackupPublicKey,
-        sig_key: &PrivateSigKey,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
         backup_id: RequestId,
         operator_role: Role,
+        verf_key: Option<&PublicSigKey>,
     ) -> anyhow::Result<Self> {
-        let inner_req = InnerRecoveryRequest {
+        let res = InternalRecoveryRequest {
             enc_key,
             cts,
             backup_id,
             operator_role,
         };
-        let mut serialized_inner_req = Vec::new();
-        safe_serialize(&inner_req, &mut serialized_inner_req, SAFE_SER_SIZE_LIMIT).map_err(
-            |e| anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}")),
-        )?;
-        let signature = &crate::cryptography::signcryption::internal_sign(
-            &DSEP_BACKUP_RECOVERY,
-            &serialized_inner_req,
-            sig_key,
-        )?;
-        let signature_buf = signature.sig.to_vec();
-        let res = Self {
-            payload: inner_req,
-            signature: signature_buf,
-        };
-        let verf_key = PublicSigKey::new(*SigningKey::verifying_key(sig_key.sk()));
-        if !res.is_valid(&verf_key)? {
-            return Err(anyhow_error_and_log("Invalid RecoveryRequest data"));
+        if let Some(verf_key) = verf_key {
+            if !res.is_valid(verf_key)? {
+                return Err(anyhow_error_and_log("Invalid RecoveryRequest data"));
+            }
         }
         Ok(res)
     }
 
     /// Validate that the data in the request is sensible.
     pub fn is_valid(&self, verf_key: &PublicSigKey) -> anyhow::Result<bool> {
-        if !self.payload.backup_id.is_valid() {
-            tracing::warn!("RecoveryRequest has an invalid backup ID");
+        if !self.backup_id.is_valid() {
+            tracing::warn!("InternalRecoveryRequest has an invalid backup ID");
             return Ok(false);
         }
-        if self.payload.operator_role.one_based() == 0 {
-            tracing::warn!("RecoveryRequest has an invalid operator role");
+        if self.operator_role.one_based() == 0 {
+            tracing::warn!("InternalRecoveryRequest has an invalid operator role");
             return Ok(false);
         }
-        let mut serialized_inner_req: Vec<u8> = Vec::new();
-        safe_serialize(
-            &self.payload,
-            &mut serialized_inner_req,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .map_err(|e| {
-            anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
-        })?;
-        if internal_verify_sig(
-            &DSEP_BACKUP_RECOVERY,
-            &serialized_inner_req,
-            &Signature {
-                sig: k256::ecdsa::Signature::from_slice(&self.signature)?,
-            },
-            verf_key,
-        )
-        .is_err()
-        {
-            tracing::warn!("RecoveryRequest signature verification failed");
-            return Ok(false);
+        for cur in self.cts.values() {
+            if internal_verify_sig(
+                &DSEP_BACKUP_RECOVERY,
+                &cur.ciphertext,
+                &Signature {
+                    sig: k256::ecdsa::Signature::from_slice(&cur.signature)?,
+                },
+                verf_key,
+            )
+            .is_err()
+            {
+                tracing::warn!("InternalRecoveryRequest signature verification failed");
+                return Ok(false);
+            }
         }
         Ok(true)
     }
 
     pub fn encryption_key(&self) -> &BackupPublicKey {
-        &self.payload.enc_key
+        &self.enc_key
     }
 
     pub fn ciphertexts(&self) -> HashMap<Role, &InnerOperatorBackupOutput> {
-        self.payload
-            .cts
-            .iter()
-            .map(|(role, ct)| (*role, ct))
-            .collect()
+        self.cts.iter().map(|(role, ct)| (*role, ct)).collect()
     }
 
     pub fn backup_id(&self) -> RequestId {
-        self.payload.backup_id
+        self.backup_id
     }
 
     pub fn operator_role(&self) -> Role {
-        self.payload.operator_role
+        self.operator_role
     }
 }
 
@@ -174,8 +154,8 @@ impl Display for InternalRecoveryRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "RecoveryRequest with:\n backup id: {}\n operator role: {}",
-            self.payload.backup_id, self.payload.operator_role,
+            "InternalRecoveryRequest with:\n backup id: {}\n operator role: {}",
+            self.backup_id, self.operator_role,
         )
     }
 }
@@ -187,8 +167,6 @@ pub struct Operator {
     signer: PrivateSigKey,
     // the public component of [signer] above
     verification_key: PublicSigKey,
-    decryptor: BackupPrivateKey,
-    public_key: BackupPublicKey,
     threshold: usize,
 }
 
@@ -199,8 +177,6 @@ impl std::fmt::Debug for Operator {
             .field("custodian_keys", &self.custodian_keys)
             .field("signer", &"ommitted")
             .field("verification_key", &self.verification_key)
-            .field("decryptor", &"ommitted")
-            .field("public_key", &self.public_key)
             .field("threshold", &self.threshold)
             .finish()
     }
@@ -224,7 +200,24 @@ pub struct InnerOperatorBackupOutput {
 }
 
 impl Named for InnerOperatorBackupOutput {
-    const NAME: &'static str = "backup::OperatorBackupOutput";
+    const NAME: &'static str = "backup::InnerOperatorBackupOutput";
+}
+
+impl From<OperatorBackupOutput> for InnerOperatorBackupOutput {
+    fn from(value: OperatorBackupOutput) -> Self {
+        Self {
+            ciphertext: value.ciphertext,
+            signature: value.signature,
+        }
+    }
+}
+impl From<InnerOperatorBackupOutput> for OperatorBackupOutput {
+    fn from(value: InnerOperatorBackupOutput) -> Self {
+        Self {
+            ciphertext: value.ciphertext,
+            signature: value.signature,
+        }
+    }
 }
 
 fn verify_n_t(n: usize, t: usize) -> Result<(), BackupError> {
@@ -403,9 +396,6 @@ impl Operator {
         my_role: Role,
         custodian_messages: Vec<InternalCustodianSetupMessage>,
         signer: PrivateSigKey,
-        operator_verf_key: PublicSigKey,
-        decryptor: BackupPrivateKey,
-        operator_enc_key: BackupPublicKey,
         threshold: usize,
     ) -> Result<Self, BackupError> {
         verify_n_t(custodian_messages.len(), threshold)?;
@@ -448,28 +438,18 @@ impl Operator {
 
             custodian_keys.push((public_enc_key, public_verf_key));
         }
-
+        let verf_key = signer.clone().into();
         Ok(Self {
             my_role,
             custodian_keys,
             signer,
-            verification_key: operator_verf_key,
-            decryptor,
-            public_key: operator_enc_key,
+            verification_key: verf_key,
             threshold,
         })
     }
 
     pub fn verification_key(&self) -> &PublicSigKey {
         &self.verification_key
-    }
-
-    pub fn public_key(&self) -> &BackupPublicKey {
-        &self.public_key
-    }
-
-    pub fn public_key_bytes(&self) -> Vec<u8> {
-        self.public_key.encapsulation_key.clone()
     }
 
     pub fn role(&self) -> Role {
@@ -596,19 +576,21 @@ impl Operator {
     /// so the are a separate input.
     pub fn verify_and_recover(
         &self,
-        custodian_recovery_output: &BTreeMap<Role, InternalCustodianRecoveryOutput>,
+        custodian_recovery_output: &[InternalCustodianRecoveryOutput],
         commitments: &BackupCommitments,
         backup_id: RequestId,
+        dec_key: &BackupPrivateKey, // Note that this is the ephemeral decryption key, NOT the actual backup decryption key
     ) -> Result<Vec<u8>, BackupError> {
         // the output is ordered by custodian ID, from 0 to n-1
         // first check the signature and decrypt
         // decrypted_buf[j][i] where j = jth custodian, i = ith block
         let decrypted_buf = custodian_recovery_output
             .iter()
-            .map(|(custodian_role, ct)| {
-                let key = custodian_role.get_from(&self.custodian_keys).ok_or(
+            .map(|ct| {
+                let key = ct.custodian_role.get_from(&self.custodian_keys).ok_or(
                     BackupError::OperatorError(format!(
-                        "missing custodian key for {custodian_role}"
+                        "missing custodian key for {}",
+                        ct.custodian_role
                     )),
                 )?;
                 // sigt_ij
@@ -616,18 +598,18 @@ impl Operator {
                     sig: k256::ecdsa::Signature::from_slice(&ct.signature)?,
                 };
                 let commitment = commitments
-                    .get(custodian_role)
+                    .get(&ct.custodian_role)
                     .map_err(|_| BackupError::OperatorError("missing commitment".to_string()))?;
                 internal_verify_sig(&DSEP_BACKUP_CUSTODIAN, &ct.ciphertext, &signature, &key.1)
                     .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
                 // st_ij
                 checked_decryption_deserialize(
-                    &self.decryptor,
+                    dec_key,
                     &ct.ciphertext,
                     commitment,
                     backup_id,
                     &key.1,
-                    *custodian_role,
+                    ct.custodian_role,
                     &self.verification_key,
                     self.my_role,
                 )
