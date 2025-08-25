@@ -281,10 +281,6 @@ impl<
                     request_id = ?inner.request_id,
                     "Failed to validate decrypt request"
                 );
-                let _ = metrics::METRICS.increment_error_counter(
-                    OP_PUBLIC_DECRYPT_REQUEST,
-                    ERR_PUBLIC_DECRYPTION_FAILED,
-                );
             })?;
 
         // Do some checks before we start modifying the database

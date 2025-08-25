@@ -442,8 +442,6 @@ impl<
                     "Failed to validate decrypt request {}",
                     format_user_request(&inner)
                 );
-                let _ = metrics::METRICS
-                    .increment_error_counter(OP_USER_DECRYPT_REQUEST, ERR_USER_DECRYPTION_FAILED);
             })?;
 
         timer.tags([(TAG_KEY_ID, key_id.as_str())]);
