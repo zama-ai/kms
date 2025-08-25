@@ -78,7 +78,7 @@ impl<Z: Default, S: LocalSingleShare + Default> Default for RealSingleSharing<Z,
 impl<Z: Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
     for RealSingleSharing<Z, S>
 {
-    #[instrument(name="SingleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),own_identity=?session.own_identity(), batch_size = ?l))]
+    #[instrument(name="SingleSharing.Init",skip(self,session),fields(sid = ?session.session_id(),my_role=?session.my_role(), batch_size = ?l))]
     async fn init<L: LargeSessionHandles>(
         &mut self,
         session: &mut L,
@@ -226,7 +226,10 @@ pub(crate) mod tests {
     #[cfg(feature = "extension_degree_8")]
     use std::num::Wrapping;
 
-    fn test_singlesharing<Z: Derive + ErrorCorrect + Invert, const EXTENSION_DEGREE: usize>(
+    async fn test_singlesharing<
+        Z: Derive + ErrorCorrect + Invert,
+        const EXTENSION_DEGREE: usize,
+    >(
         parties: usize,
         threshold: usize,
     ) {
@@ -266,7 +269,8 @@ pub(crate) mod tests {
             NetworkMode::Sync,
             None,
             &mut task,
-        );
+        )
+        .await;
 
         //Check we can reconstruct
         let lsl_batch_size = 10_usize;
@@ -287,26 +291,28 @@ pub(crate) mod tests {
     #[rstest]
     #[case(4, 1)]
     #[case(7, 2)]
-    fn test_singlesharing_z128(#[case] num_parties: usize, #[case] threshold: usize) {
+    async fn test_singlesharing_z128(#[case] num_parties: usize, #[case] threshold: usize) {
         test_singlesharing::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }>(
             num_parties,
             threshold,
-        );
+        )
+        .await;
     }
 
     #[rstest]
     #[case(4, 1)]
     #[case(7, 2)]
-    fn test_singlesharing_z64(#[case] num_parties: usize, #[case] threshold: usize) {
+    async fn test_singlesharing_z64(#[case] num_parties: usize, #[case] threshold: usize) {
         test_singlesharing::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }>(
             num_parties,
             threshold,
-        );
+        )
+        .await;
     }
     //P2 dropout, but gives random value for reconstruction.
     // expect to see it as corrupt but able to reconstruct
-    #[test]
-    fn test_singlesharing_dropout() {
+    #[tokio::test]
+    async fn test_singlesharing_dropout() {
         let parties = 4;
         let threshold = 1;
 
@@ -339,7 +345,8 @@ pub(crate) mod tests {
             _,
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
+        >(parties, threshold, None, NetworkMode::Sync, None, &mut task)
+        .await;
 
         //Check we can reconstruct
         let lsl_batch_size = 10_usize;

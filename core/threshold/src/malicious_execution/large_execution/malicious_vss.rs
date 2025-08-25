@@ -1,6 +1,7 @@
 use aes_prng::AesRng;
 use itertools::Itertools;
 use rand::SeedableRng;
+use std::collections::HashSet;
 use tonic::async_trait;
 
 use crate::{
@@ -17,7 +18,6 @@ use crate::{
         },
         runtime::{party::Role, session::BaseSessionHandles},
     },
-    tests::helper::tests_and_benches::roles_from_idxs,
     ProtocolDescription,
 };
 
@@ -142,7 +142,7 @@ impl<BCast: Broadcast> Vss for DroppingVssAfterR2<BCast> {
 #[derive(Default, Clone)]
 pub struct MaliciousVssR1<BCast: Broadcast> {
     broadcast: BCast,
-    roles_to_lie_to: Vec<Role>,
+    roles_to_lie_to: HashSet<Role>,
 }
 
 impl<BCast: Broadcast> ProtocolDescription for MaliciousVssR1<BCast> {
@@ -157,10 +157,10 @@ impl<BCast: Broadcast> ProtocolDescription for MaliciousVssR1<BCast> {
 }
 
 impl<BCast: Broadcast> MaliciousVssR1<BCast> {
-    pub fn new(broadcast_strategy: &BCast, roles_from_zero: &[usize]) -> Self {
+    pub fn new(broadcast_strategy: &BCast, roles_to_lie_to: &HashSet<Role>) -> Self {
         Self {
             broadcast: broadcast_strategy.clone(),
-            roles_to_lie_to: roles_from_idxs(roles_from_zero),
+            roles_to_lie_to: roles_to_lie_to.clone(),
         }
     }
 }
@@ -192,7 +192,7 @@ impl<BCast: Broadcast> Vss for MaliciousVssR1<BCast> {
 async fn malicious_round_1<Z: RingWithExceptionalSequence, S: BaseSessionHandles>(
     session: &mut S,
     secrets: &[Z],
-    roles_to_lie_to: &[Role],
+    roles_to_lie_to: &HashSet<Role>,
 ) -> anyhow::Result<Round1VSSOutput<Z>> {
     let num_secrets = secrets.len();
     let mut rng = AesRng::seed_from_u64(0);
@@ -203,8 +203,8 @@ async fn malicious_round_1<Z: RingWithExceptionalSequence, S: BaseSessionHandles
         })
         .collect_vec();
     let map_double_shares: MapRoleDoublePoly<Z> = session
-        .role_assignments()
-        .keys()
+        .roles()
+        .iter()
         .map(|r| {
             let embedded_role = Z::embed_role_to_exceptional_sequence(r).unwrap();
             let correct_bpolys = (0..num_secrets)
@@ -333,8 +333,8 @@ impl<BCast: Broadcast> WrongDegreeSharingVss<BCast> {
         //Evaluate the bivariate poly in its first and second variables
         //to create a mapping role -> Vec<(F(X,alpha_role), F(alpha_role,Y))>
         let map_double_shares: MapRoleDoublePoly<Z> = session
-            .role_assignments()
-            .keys()
+            .roles()
+            .iter()
             .map(|r| {
                 let embedded_role = Z::embed_role_to_exceptional_sequence(r)?;
                 let mut vec_map = Vec::with_capacity(bivariate_poly.len());

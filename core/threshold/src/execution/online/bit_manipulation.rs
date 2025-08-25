@@ -216,7 +216,7 @@ where
         Ok((res1, res2))
     }
 
-    #[instrument(name="BitAdd (secret,clear)",skip(session,lhs,rhs,prep),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?lhs.len()))]
+    #[instrument(name="BitAdd (secret,clear)",skip(session,lhs,rhs,prep),fields(sid=?session.session_id(),my_role=?session.my_role(),batch_size=?lhs.len()))]
     async fn binary_adder_secret_clear<
         Ses: BaseSessionHandles,
         P: TriplePreprocessing<Z> + ?Sized,
@@ -342,7 +342,7 @@ where
     }
 
     /// Computes XOR(\<a\>,\<b\>) for a and b vecs
-    #[instrument(name="XOR", skip(lhs,rhs,preproc,session),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?lhs.len()))]
+    #[instrument(name="XOR", skip(lhs,rhs,preproc,session),fields(sid=?session.session_id(),my_role=?session.my_role(),batch_size=?lhs.len()))]
     pub async fn xor_list_secret_secret<
         Ses: BaseSessionHandles,
         P: TriplePreprocessing<Z> + ?Sized,
@@ -406,7 +406,7 @@ where
 
 /// Bit decomposition of the input, assuming the secret lies in the base ring and not the extension.
 /// Algorithm BitDec(<a>), Fig. 84 in the NIST Doc
-#[instrument(name="BitDec",skip(session,prep,inputs),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?inputs.len()))]
+#[instrument(name="BitDec",skip(session,prep,inputs),fields(sid=?session.session_id(),my_role=?session.my_role(),batch_size=?inputs.len()))]
 pub async fn bit_dec_batch<Z, const EXTENSION_DEGREE: usize, P, Ses: BaseSessionHandles>(
     session: &mut Ses,
     prep: &mut P,
@@ -529,8 +529,8 @@ mod tests {
         shares[&session.my_role()]
     }
 
-    #[test]
-    fn sunshine_xor() {
+    #[tokio::test]
+    async fn sunshine_xor() {
         let parties = 4;
         let threshold = 1;
         let plain_lhs: [u64; 5] = [0_u64, 1, 1, 0, 0];
@@ -578,7 +578,8 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        );
+        )
+        .await;
 
         for cur_res in results {
             for (i, cur_ref) in plain_ref.iter().enumerate() {
@@ -587,8 +588,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn sunshine_bitsum() {
+    #[tokio::test]
+    async fn sunshine_bitsum() {
         let parties = 4;
         let threshold = 1;
 
@@ -622,7 +623,8 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        );
+        )
+        .await;
 
         for cur_res in results {
             assert_eq!(ResiduePolyF4Z64::from_scalar(Wrapping(ref_val)), cur_res);
@@ -632,7 +634,7 @@ mod tests {
     #[rstest]
     #[case(12491094489948035603, 5955649583761516015)]
     #[case(1, 9223372036854775808)]
-    fn bit_adder(#[case] a: u64, #[case] b: u64) {
+    async fn bit_adder(#[case] a: u64, #[case] b: u64) {
         let parties = 4;
         let threshold = 1;
 
@@ -682,7 +684,8 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        );
+        )
+        .await;
 
         for cur_res in results {
             assert_eq!(ResiduePolyF4Z64::from_scalar(ref_val), cur_res);
@@ -692,7 +695,7 @@ mod tests {
     #[rstest]
     #[case(1, 1, 1, 0)]
     #[case(321, 3213, 928541, 321952)]
-    fn sunshine_compress(#[case] a: u64, #[case] b: u64, #[case] c: u64, #[case] d: u64) {
+    async fn sunshine_compress(#[case] a: u64, #[case] b: u64, #[case] c: u64, #[case] d: u64) {
         let parties = 4;
         let threshold = 1;
 
@@ -798,7 +801,8 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        )[0];
+        )
+        .await[0];
         let (xor1, xor2, and1, and2) = results;
         assert_eq!(xor1, xor2);
 
@@ -827,7 +831,7 @@ mod tests {
     #[case(2)]
     #[case(3)]
     #[case(4)]
-    fn sunshine_batched_bitdec(#[case] a: u64) {
+    async fn sunshine_batched_bitdec(#[case] a: u64) {
         let parties = 4;
         let threshold = 1;
 
@@ -872,7 +876,8 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        )[0];
+        )
+        .await[0];
         assert_eq!(results.len(), ref_val.len());
         for i in 0..results.len() {
             assert_eq!(

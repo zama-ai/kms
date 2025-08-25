@@ -307,7 +307,7 @@ where
 }
 
 /// Generates the lwe private key share and associated public key
-#[instrument(name="Gen Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_lwe_private_public_key_pair<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -337,7 +337,7 @@ where
 }
 
 /// Generates the lwe private key share and associated public key
-#[instrument(name="Gen compressed Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen compressed Lwe keys",skip( mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_lwe_private_compressed_public_key_pair<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -421,8 +421,8 @@ mod tests {
 
     use super::{allocate_and_generate_new_lwe_compact_public_key, LweSecretKeyShare};
 
-    #[test]
-    fn test_pk_generation() {
+    #[tokio::test]
+    async fn test_pk_generation() {
         let lwe_dimension = 1024_usize;
         let message_log_modulus = 3_usize;
         let ctxt_log_modulus = 64_usize;
@@ -497,7 +497,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         let mut lwe_key_shares = HashMap::new();
         let opened_pk_ref = results[0].2.clone();

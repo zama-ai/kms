@@ -6,7 +6,7 @@ use pprof::criterion::Output;
 use pprof::criterion::PProfProfiler;
 use rand::RngCore;
 use rand::SeedableRng;
-use threshold_fhe::execution::runtime::test_runtime::generate_fixed_identities;
+use threshold_fhe::execution::runtime::test_runtime::generate_fixed_roles;
 use threshold_fhe::experimental::algebra::levels::*;
 use threshold_fhe::experimental::algebra::ntt::N65536;
 use threshold_fhe::experimental::algebra::ntt::{Const, NTTConstants};
@@ -101,10 +101,10 @@ fn bench_bgv_ddec(c: &mut Criterion) {
             .iter()
             .map(|k| k.as_ntt_repr(N65536::VALUE, N65536::THETA))
             .collect();
-        let identities = generate_fixed_identities(config.n);
+        let roles = generate_fixed_roles(config.n);
 
         //Using Async for online threshold decrypt
-        let runtime = BGVTestRuntime::new(identities, config.t, NetworkMode::Async, None);
+        let runtime = BGVTestRuntime::new(roles, config.t, NetworkMode::Async, None);
         group.bench_with_input(
             BenchmarkId::from_parameter(config),
             &(config, ct.clone(), ntt_keyshares, runtime),

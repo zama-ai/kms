@@ -42,7 +42,10 @@ use crate::{
     engine::{
         base::retrieve_parameters,
         keyset_configuration::preproc_proto_to_keyset_config,
-        threshold::traits::KeyGenPreprocessor,
+        threshold::{
+            service::session::{SessionPreparerGetter, DEFAULT_CONTEXT_ID_ARR},
+            traits::KeyGenPreprocessor,
+        },
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -55,7 +58,7 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::{session::SessionPreparer, BucketMetaStore};
+use super::BucketMetaStore;
 
 pub struct RealPreprocessor<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>>
 {
@@ -65,7 +68,7 @@ pub struct RealPreprocessor<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<R
     pub preproc_factory:
         Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
     pub num_sessions_preproc: u16,
-    pub session_preparer: SessionPreparer,
+    pub session_preparer_getter: SessionPreparerGetter,
     pub tracker: Arc<TaskTracker>,
     pub ongoing: Arc<Mutex<HashMap<RequestId, CancellationToken>>>,
     pub rate_limiter: RateLimiter,
@@ -78,19 +81,25 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         dkg_params: DKGParams,
         keyset_config: ddec_keyset_config::KeySetConfig,
         request_id: RequestId,
+        context_id: Option<RequestId>,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
+        let session_preparer = self
+            .session_preparer_getter
+            .get(&context_id.unwrap_or(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR)))
+            .await?;
+
         // Prepare the timer before giving it to the tokio task
         // that runs the computation
         let timer = metrics::METRICS
             .time_operation(OP_KEYGEN_PREPROC_REQUEST)
-            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string());
+            .tag(TAG_PARTY_ID, session_preparer.my_role()?.to_string());
         {
             let mut guarded_meta_store = self.preproc_buckets.write().await;
             guarded_meta_store.insert(&request_id)?;
         }
         // Derive a sequence of sessionId from request_id
-        let own_identity = self.session_preparer.own_identity()?;
+        let own_identity = session_preparer.own_identity().await?;
 
         let sids = (0..self.num_sessions_preproc)
             .map(|ctr| request_id.derive_session_id_with_counter(ctr as u64))
@@ -99,8 +108,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let base_sessions = {
             let mut res = Vec::with_capacity(sids.len());
             for sid in sids {
-                let base_session = self
-                    .session_preparer
+                let base_session = session_preparer
                     .make_base_session(sid, NetworkMode::Sync)
                     .await?;
                 res.push(base_session)
@@ -267,12 +275,11 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         if !entry_exists {
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
             // We don't increment the error counter here but rather in launch_dkg_preproc
-            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
+            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, inner.context_id.map(|x| x.try_into()).transpose().map_err(|e: kms_grpc::IdentifierError| tonic::Status::new(tonic::Code::Internal, e.to_string()))?, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
             Ok(Response::new(Empty {}))
         } else {
             Err(tonic::Status::already_exists(format!(
-                "Preprocessing for request ID {} already exists",
-                request_id
+                "Preprocessing for request ID {request_id} already exists"
             )))
         }
     }
@@ -309,19 +316,28 @@ mod tests {
     };
 
     use super::*;
+    use crate::{
+        cryptography::internal_crypto_types::gen_sig_keys,
+        engine::{
+            base::BaseKmsStruct,
+            threshold::service::session::{SessionPreparer, SessionPreparerManager},
+        },
+    };
 
     impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
-        fn init_test(session_preparer: SessionPreparer) -> Self {
+        fn init_test(
+            prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
+            session_preparer_getter: SessionPreparerGetter,
+        ) -> Self {
             let tracker = Arc::new(TaskTracker::new());
             let rate_limiter = RateLimiter::default();
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
-            let prss_setup = session_preparer.prss_setup_z128.clone();
             Self {
-                prss_setup,
+                prss_setup: prss_setup_z128,
                 preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
                 preproc_factory: Arc::new(Mutex::new(create_memory_factory())),
                 num_sessions_preproc: 2,
-                session_preparer,
+                session_preparer_getter,
                 tracker,
                 ongoing,
                 rate_limiter,
@@ -341,8 +357,29 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         // `InvalidArgument` - If the request ID is not valid or does not match the expected format.
-        let session_preparer = SessionPreparer::new_test_session(true);
-        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer =
+            SessionPreparer::new_test_session(base_kms, prss_setup_z128.clone(), prss_setup_z64);
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(
+            prss_setup_z128,
+            session_preparer_manager.make_getter(),
+        );
 
         {
             let request = KeyGenPreprocRequest {
@@ -351,6 +388,7 @@ mod tests {
                 }),
                 params: FheParameter::Test as i32,
                 keyset_config: None,
+                context_id: None,
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -375,6 +413,7 @@ mod tests {
                 request_id: None,
                 params: FheParameter::Test as i32,
                 keyset_config: None,
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -392,6 +431,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 params: 10,
                 keyset_config: None,
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -406,8 +446,29 @@ mod tests {
     #[tokio::test]
     async fn resource_exhausted() {
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
-        let session_preparer = SessionPreparer::new_test_session(true);
-        let mut prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer =
+            SessionPreparer::new_test_session(base_kms, prss_setup_z128.clone(), prss_setup_z64);
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+        let mut prep = RealPreprocessor::<DummyProducerFactory>::init_test(
+            prss_setup_z128,
+            session_preparer_manager.make_getter(),
+        );
         prep.set_bucket_size(0);
 
         let mut rng = AesRng::seed_from_u64(22);
@@ -416,6 +477,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
         assert_eq!(
             prep.key_gen_preproc(tonic::Request::new(request))
@@ -428,8 +490,29 @@ mod tests {
 
     #[tokio::test]
     async fn internal() {
-        let session_preparer = SessionPreparer::new_test_session(true);
-        let prep = RealPreprocessor::<FailingProducerFactory>::init_test(session_preparer);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer =
+            SessionPreparer::new_test_session(base_kms, prss_setup_z128.clone(), prss_setup_z64);
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+        let prep = RealPreprocessor::<FailingProducerFactory>::init_test(
+            prss_setup_z128,
+            session_preparer_manager.make_getter(),
+        );
 
         let mut rng = AesRng::seed_from_u64(22);
         let req_id = RequestId::new_random(&mut rng);
@@ -437,6 +520,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
 
         // even though we use a failing preprocessor, the request should be ok
@@ -457,8 +541,29 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         // `NotFound` - If the preprocessing does not exist for `request`.
-        let session_preparer = SessionPreparer::new_test_session(true);
-        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer =
+            SessionPreparer::new_test_session(base_kms, prss_setup_z128.clone(), prss_setup_z64);
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(
+            prss_setup_z128,
+            session_preparer_manager.make_getter(),
+        );
 
         let mut rng = AesRng::seed_from_u64(22);
         let req_id = RequestId::new_random(&mut rng);
@@ -475,8 +580,30 @@ mod tests {
 
     #[tokio::test]
     async fn already_exists() {
-        let session_preparer = SessionPreparer::new_test_session(true);
-        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer =
+            SessionPreparer::new_test_session(base_kms, prss_setup_z128.clone(), prss_setup_z64);
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(
+            prss_setup_z128,
+            session_preparer_manager.make_getter(),
+        );
 
         let mut rng = AesRng::seed_from_u64(22);
         let req_id = RequestId::new_random(&mut rng);
@@ -484,6 +611,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
         prep.key_gen_preproc(tonic::Request::new(request.clone()))
             .await
@@ -502,8 +630,24 @@ mod tests {
     #[tokio::test]
     async fn aborted() {
         // Starting a preprocessing request that will be aborted if there's no PRSS
-        let session_preparer = SessionPreparer::new_test_session(false);
-        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms,
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(None)),
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(
+            Arc::new(RwLock::new(None)),
+            session_preparer_manager.make_getter(),
+        );
 
         let mut rng = AesRng::seed_from_u64(22);
         let req_id = RequestId::new_random(&mut rng);
@@ -511,6 +655,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
         assert_eq!(
             prep.key_gen_preproc(tonic::Request::new(request))
@@ -523,8 +668,29 @@ mod tests {
 
     #[tokio::test]
     async fn sunshine() {
-        let session_preparer = SessionPreparer::new_test_session(true);
-        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(session_preparer);
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer =
+            SessionPreparer::new_test_session(base_kms, prss_setup_z128.clone(), prss_setup_z64);
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
+        let prep = RealPreprocessor::<DummyProducerFactory>::init_test(
+            prss_setup_z128,
+            session_preparer_manager.make_getter(),
+        );
 
         let mut rng = AesRng::seed_from_u64(22);
         let req_id = RequestId::new_random(&mut rng);
@@ -532,6 +698,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
         prep.key_gen_preproc(tonic::Request::new(request))
             .await

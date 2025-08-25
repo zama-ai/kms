@@ -1,34 +1,36 @@
 kmsPeers:
   # Number of replicas managed by each statefulset
-  count: 4
+  count: 1
 
 kmsCoreClient:
   enabled: true
-  nameOverride: kms-core-client-threshold-staging
+  nameOverride: kms-core-client
   num_majority: 2
   num_reconstruct: 3
   decryption_mode: "NoiseFloodSmall"
   fhe_parameter: "Test"
   image:
     name: ghcr.io/zama-ai/kms-core-client
-    tag: nightly-67f2fb7
+    tag: latest-dev
+    pullPolicy: IfNotPresent
   envFrom:
     configmap:
-      name: kms-core-client-threshold-staging-config
+      name: kms-core-client-config
 
 kmsCore:
-  nameOverride: kms-threshold-staging
+  nameOverride: kms-core
   addressOverride:
   image:
     name: ghcr.io/zama-ai/kms-service
-    tag: nightly-67f2fb7
+    tag: latest-dev
+    pullPolicy: IfNotPresent
   publicVault:
     s3:
       enabled: true
       bucket: kms-public
       path: ""
   thresholdMode:
-    enabled: true
+    enabled: false
     initializationScript:
       enabled: true
     peersList:
@@ -92,4 +94,8 @@ kyverno:
   enabled: false
 
 kmsGenKeys:
-  enabled: true
+  enabled: false
+
+kubeUtils:
+  image:
+    pullPolicy: IfNotPresent

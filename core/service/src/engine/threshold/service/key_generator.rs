@@ -59,7 +59,11 @@ use crate::{
         },
         keyset_configuration::InternalKeySetConfig,
         threshold::{
-            service::{kms_impl::compute_all_info, ThresholdFheKeys},
+            service::{
+                kms_impl::compute_all_info,
+                session::{SessionPreparerGetter, DEFAULT_CONTEXT_ID_ARR},
+                ThresholdFheKeys,
+            },
             traits::KeyGenerator,
         },
         validation::{
@@ -78,7 +82,7 @@ use crate::{
 };
 
 // === Current Module Imports ===
-use super::{session::SessionPreparer, BucketMetaStore};
+use super::BucketMetaStore;
 
 // === Insecure Feature-Specific Imports ===
 #[cfg(feature = "insecure")]
@@ -104,7 +108,7 @@ pub struct RealKeyGenerator<
     // TODO eventually add mode to allow for nlarge as well.
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     pub dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
-    pub session_preparer: SessionPreparer,
+    pub session_preparer_getter: SessionPreparerGetter,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
     // Map of ongoing key generation tasks
@@ -136,7 +140,7 @@ impl<
                 crypto_storage: value.crypto_storage.clone(),
                 preproc_buckets: Arc::clone(&value.preproc_buckets),
                 dkg_pubinfo_meta_store: Arc::clone(&value.dkg_pubinfo_meta_store),
-                session_preparer: value.session_preparer.new_instance().await,
+                session_preparer_getter: value.session_preparer_getter.clone(),
                 tracker: Arc::clone(&value.tracker),
                 ongoing: Arc::clone(&value.ongoing),
                 rate_limiter: value.rate_limiter.clone(),
@@ -208,8 +212,14 @@ impl<
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
         eip712_domain: &alloy_sol_types::Eip712Domain,
+        context_id: Option<RequestId>,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
+        let session_preparer = self
+            .session_preparer_getter
+            .get(&context_id.unwrap_or(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR)))
+            .await?;
+
         //Retrieve the right metric tag
         let op_tag = match (
             &preproc_handle_w_mode,
@@ -248,7 +258,7 @@ impl<
         // that runs the computation
         let timer = metrics::METRICS
             .time_operation(op_tag)
-            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string());
+            .tag(TAG_PARTY_ID, session_preparer.my_role()?.to_string());
         // Update status
         {
             let mut guarded_meta_store = self.dkg_pubinfo_meta_store.write().await;
@@ -258,7 +268,7 @@ impl<
         // Create the base session necessary to run the DKG
         let base_session = {
             let session_id = req_id.derive_session_id()?;
-            self.session_preparer
+            session_preparer
                 .make_base_session(session_id, NetworkMode::Async)
                 .await?
         };
@@ -390,7 +400,7 @@ impl<
                 |e| {
                     tonic::Status::new(
                         tonic::Code::InvalidArgument,
-                        format!("Failed to parse KeySetConfig: {}", e),
+                        format!("Failed to parse KeySetConfig: {e}"),
                     )
                 },
             )?;
@@ -401,7 +411,7 @@ impl<
             if guarded_meta_store.exists(&request_id) {
                 return Err(tonic::Status::new(
                     tonic::Code::AlreadyExists,
-                    format!("Request ID {} already exists for keygen", request_id),
+                    format!("Request ID {request_id} already exists for keygen"),
                 ));
             }
         }
@@ -436,6 +446,17 @@ impl<
                 preproc_handle,
                 request_id,
                 &eip712_domain,
+                inner
+                    .context_id
+                    .as_ref()
+                    .map(|id| id.try_into())
+                    .transpose()
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::InvalidArgument,
+                            format!("invalid context id: {e}"),
+                        )
+                    })?,
                 permit,
             )
             .await,
@@ -1313,7 +1334,11 @@ mod tests {
         },
     };
 
-    use crate::{dummy_domain, vault::storage::ram};
+    use crate::{
+        dummy_domain,
+        engine::threshold::service::session::{SessionPreparer, SessionPreparerManager},
+        vault::storage::ram,
+    };
 
     use super::*;
 
@@ -1324,9 +1349,10 @@ mod tests {
         > RealKeyGenerator<PubS, PrivS, KG>
     {
         async fn init_test(
+            base_kms: BaseKmsStruct,
             pub_storage: PubS,
             priv_storage: PrivS,
-            session_preparer: SessionPreparer,
+            session_preparer_getter: SessionPreparerGetter,
         ) -> Self {
             let crypto_storage = ThresholdCryptoMaterialStorage::new(
                 pub_storage,
@@ -1340,11 +1366,11 @@ mod tests {
             let rate_limiter = RateLimiter::default();
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
             Self {
-                base_kms: session_preparer.base_kms.new_instance().await,
+                base_kms,
                 crypto_storage,
                 preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
                 dkg_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-                session_preparer: session_preparer.new_instance().await,
+                session_preparer_getter,
                 tracker,
                 ongoing,
                 rate_limiter,
@@ -1364,10 +1390,13 @@ mod tests {
     impl<KG: OnlineDistributedKeyGen<Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }> + 'static>
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>
     {
-        pub async fn init_ram_keygen(session_preparer: SessionPreparer) -> Self {
+        pub async fn init_ram_keygen(
+            base_kms: BaseKmsStruct,
+            session_preparer_getter: SessionPreparerGetter,
+        ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(pub_storage, priv_storage, session_preparer).await
+            Self::init_test(base_kms, pub_storage, priv_storage, session_preparer_getter).await
         }
     }
 
@@ -1377,9 +1406,24 @@ mod tests {
         [RequestId; 4],
         RealKeyGenerator<ram::RamStorage, ram::RamStorage, KG>,
     ) {
-        let session_preparer = SessionPreparer::new_test_session(false);
+        use crate::cryptography::internal_crypto_types::gen_sig_keys;
+        let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
+        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(None)),
+        );
+        session_preparer_manager
+            .insert(
+                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                session_preparer,
+            )
+            .await;
         let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
-            session_preparer.new_instance().await,
+            base_kms,
+            session_preparer_manager.make_getter(),
         )
         .await;
 
@@ -1392,6 +1436,10 @@ mod tests {
         // We need to setup the preprocessor metastore so that keygen will pass
         for prep_id in &prep_ids {
             let session_id = prep_id.derive_session_id().unwrap();
+            let session_preparer = session_preparer_manager
+                .get(&RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR))
+                .await
+                .unwrap();
             let dummy_prep = Box::new(DummyPreprocessing::<ResiduePolyF4Z128>::new(
                 42,
                 &session_preparer
@@ -1429,6 +1477,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
 
             assert_eq!(
@@ -1456,6 +1505,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
 
             assert_eq!(
@@ -1479,6 +1529,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: Some(keyset_config),
                 keyset_added_info: None,
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
 
             assert_eq!(
@@ -1509,6 +1560,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         });
 
         assert_eq!(
@@ -1536,6 +1588,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
+                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
             });
 
             assert_eq!(
@@ -1574,6 +1627,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         });
 
         // keygen should pass because the failure occurs in background process
@@ -1608,6 +1662,7 @@ mod tests {
             domain: Some(domain.clone()),
             keyset_config: None,
             keyset_added_info: None,
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
 
         kg.key_gen(tonic::Request::new(request0)).await.unwrap();
@@ -1621,6 +1676,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         };
         assert_eq!(
             kg.key_gen(tonic::Request::new(request1))
@@ -1654,6 +1710,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
+            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
         });
 
         kg.key_gen(tonic_req).await.unwrap();

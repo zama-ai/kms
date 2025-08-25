@@ -1,4 +1,4 @@
-use super::party::{Identity, Role};
+use super::party::Role;
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeSet, HashSet},
     sync::Arc,
 };
 
@@ -27,76 +27,47 @@ pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
 pub struct SessionParameters {
     threshold: u8,
     session_id: SessionId,
-    own_identity: Identity,
     my_role: Role,
-    role_assignments: HashMap<Role, Identity>,
+    roles: HashSet<Role>,
     all_sorted_roles: Vec<Role>,
 }
 
 pub trait ParameterHandles: Sync + Send {
     fn threshold(&self) -> u8;
     fn session_id(&self) -> SessionId;
-    fn own_identity(&self) -> Identity;
     fn my_role(&self) -> Role;
-    fn identity_from(&self, role: &Role) -> anyhow::Result<Identity>;
     fn num_parties(&self) -> usize;
-    fn role_from(&self, identity: &Identity) -> anyhow::Result<Role>;
-    fn role_assignments(&self) -> &HashMap<Role, Identity>;
-    fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>);
+    fn roles(&self) -> &HashSet<Role>;
+    fn roles_mut(&mut self) -> &mut HashSet<Role>;
     fn to_parameters(&self) -> SessionParameters;
     fn get_all_sorted_roles(&self) -> &Vec<Role>;
-}
-
-fn role_from_role_assignments(
-    role_assignments: &HashMap<Role, Identity>,
-    identity: &Identity,
-) -> anyhow::Result<Role> {
-    let role: Vec<&Role> = role_assignments
-        .iter()
-        .filter_map(|(role, cur_identity)| {
-            if cur_identity == identity {
-                Some(role)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    match role.len() {
-        1 => Ok(*role[0]),
-        _ => Err(anyhow_error_and_log(format!(
-            "Unknown or ambiguous role for identity {identity:?}, retrieved {role_assignments:?}"
-        ))),
-    }
-}
-
-fn all_roles_from_role_assignments(role_assignments: &HashMap<Role, Identity>) -> Vec<Role> {
-    let mut all_roles: Vec<Role> = role_assignments.keys().cloned().collect();
-    all_roles.sort();
-    all_roles
 }
 
 impl SessionParameters {
     pub fn new(
         threshold: u8,
         session_id: SessionId,
-        own_identity: Identity,
-        role_assignments: HashMap<Role, Identity>,
+        my_role: Role,
+        roles: HashSet<Role>,
     ) -> anyhow::Result<Self> {
-        if role_assignments.len() <= threshold as usize {
+        if roles.len() <= threshold as usize {
             return Err(anyhow_error_and_log(format!(
                 "Threshold {threshold} cannot be less than the amount of parties, {:?}",
-                role_assignments.len()
+                roles.len()
             )));
         }
-        let my_role = role_from_role_assignments(&role_assignments, &own_identity)?;
-        let all_sorted_roles = all_roles_from_role_assignments(&role_assignments);
+        if !roles.contains(&my_role) {
+            return Err(anyhow_error_and_log(format!(
+                "My role {my_role} is not in the set of roles: {roles:?}"
+            )));
+        }
+        let mut all_sorted_roles = roles.iter().cloned().collect::<Vec<_>>();
+        all_sorted_roles.sort();
         let res = Self {
             threshold,
             session_id,
-            own_identity: own_identity.clone(),
             my_role,
-            role_assignments,
+            roles,
             all_sorted_roles,
         };
 
@@ -109,23 +80,8 @@ impl ParameterHandles for SessionParameters {
         self.my_role
     }
 
-    fn identity_from(&self, role: &Role) -> anyhow::Result<Identity> {
-        match self.role_assignments.get(role) {
-            Some(identity) => Ok(identity.clone()),
-            None => Err(anyhow_error_and_log(format!(
-                "Role {} does not exist",
-                role.one_based()
-            ))),
-        }
-    }
-
     fn num_parties(&self) -> usize {
-        self.role_assignments.len()
-    }
-
-    /// Return Role for given Identity in this session
-    fn role_from(&self, identity: &Identity) -> anyhow::Result<Role> {
-        role_from_role_assignments(&self.role_assignments, identity)
+        self.roles.len()
     }
 
     fn threshold(&self) -> u8 {
@@ -136,17 +92,12 @@ impl ParameterHandles for SessionParameters {
         self.session_id
     }
 
-    fn own_identity(&self) -> Identity {
-        self.own_identity.clone()
+    fn roles(&self) -> &HashSet<Role> {
+        &self.roles
     }
 
-    fn role_assignments(&self) -> &HashMap<Role, Identity> {
-        &self.role_assignments
-    }
-
-    fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
-        self.role_assignments = role_assignments;
-        self.all_sorted_roles = all_roles_from_role_assignments(&self.role_assignments);
+    fn roles_mut(&mut self) -> &mut HashSet<Role> {
+        &mut self.roles
     }
 
     fn to_parameters(&self) -> SessionParameters {
@@ -197,16 +148,8 @@ impl ParameterHandles for BaseSession {
         self.parameters.my_role()
     }
 
-    fn identity_from(&self, role: &Role) -> anyhow::Result<Identity> {
-        self.parameters.identity_from(role)
-    }
-
     fn num_parties(&self) -> usize {
         self.parameters.num_parties()
-    }
-
-    fn role_from(&self, identity: &Identity) -> anyhow::Result<Role> {
-        self.parameters.role_from(identity)
     }
 
     fn threshold(&self) -> u8 {
@@ -217,16 +160,12 @@ impl ParameterHandles for BaseSession {
         self.parameters.session_id()
     }
 
-    fn own_identity(&self) -> Identity {
-        self.parameters.own_identity()
+    fn roles(&self) -> &HashSet<Role> {
+        self.parameters.roles()
     }
 
-    fn role_assignments(&self) -> &HashMap<Role, Identity> {
-        self.parameters.role_assignments()
-    }
-
-    fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
-        self.parameters.set_role_assignments(role_assignments);
+    fn roles_mut(&mut self) -> &mut HashSet<Role> {
+        self.parameters.roles_mut()
     }
 
     fn to_parameters(&self) -> SessionParameters {
@@ -318,16 +257,8 @@ impl<Z: Ring> ParameterHandles for SmallSession<Z> {
         self.base_session.my_role()
     }
 
-    fn identity_from(&self, role: &Role) -> anyhow::Result<Identity> {
-        self.base_session.identity_from(role)
-    }
-
     fn num_parties(&self) -> usize {
         self.base_session.num_parties()
-    }
-
-    fn role_from(&self, identity: &Identity) -> anyhow::Result<Role> {
-        self.base_session.role_from(identity)
     }
 
     fn threshold(&self) -> u8 {
@@ -338,15 +269,12 @@ impl<Z: Ring> ParameterHandles for SmallSession<Z> {
         self.base_session.session_id()
     }
 
-    fn own_identity(&self) -> Identity {
-        self.base_session.own_identity()
+    fn roles(&self) -> &HashSet<Role> {
+        self.base_session.roles()
     }
 
-    fn role_assignments(&self) -> &HashMap<Role, Identity> {
-        self.base_session.role_assignments()
-    }
-    fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
-        self.base_session.set_role_assignments(role_assignments);
+    fn roles_mut(&mut self) -> &mut HashSet<Role> {
+        self.base_session.roles_mut()
     }
 
     fn to_parameters(&self) -> SessionParameters {
@@ -433,17 +361,8 @@ impl ParameterHandles for LargeSession {
         self.base_session.my_role()
     }
 
-    fn identity_from(&self, role: &Role) -> anyhow::Result<Identity> {
-        self.base_session.identity_from(role)
-    }
-
     fn num_parties(&self) -> usize {
         self.base_session.num_parties()
-    }
-
-    /// Return Role for given Identity in this session
-    fn role_from(&self, identity: &Identity) -> anyhow::Result<Role> {
-        self.base_session.role_from(identity)
     }
 
     fn threshold(&self) -> u8 {
@@ -454,15 +373,12 @@ impl ParameterHandles for LargeSession {
         self.base_session.session_id()
     }
 
-    fn own_identity(&self) -> Identity {
-        self.base_session.own_identity()
+    fn roles(&self) -> &HashSet<Role> {
+        self.base_session.roles()
     }
 
-    fn role_assignments(&self) -> &HashMap<Role, Identity> {
-        self.base_session.role_assignments()
-    }
-    fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
-        self.base_session.set_role_assignments(role_assignments);
+    fn roles_mut(&mut self) -> &mut HashSet<Role> {
+        self.base_session.roles_mut()
     }
 
     fn to_parameters(&self) -> SessionParameters {
@@ -491,7 +407,7 @@ impl BaseSessionHandles for LargeSession {
     fn add_corrupt(&mut self, role: Role) -> bool {
         let res = self.base_session.add_corrupt(role);
         //Make sure we now have this role in dispute with everyone
-        for role_b in self.base_session.get_all_sorted_roles() {
+        for role_b in self.base_session.roles() {
             self.disputed_roles.add(&role, role_b);
         }
         res
@@ -598,8 +514,8 @@ mod tests {
         assert!(SessionParameters::new(
             parties as u8,
             params.session_id(),
-            params.own_identity(),
-            params.role_assignments().clone(),
+            params.my_role(),
+            params.roles().clone(),
         )
         .is_err());
     }
@@ -609,12 +525,12 @@ mod tests {
         let parties = 3;
         let mut params = get_dummy_parameters_for_parties(parties, 1, Role::indexed_from_one(1));
         // remove my role
-        params.role_assignments.remove(&Role::indexed_from_one(1));
+        params.roles.remove(&Role::indexed_from_one(1));
         assert!(SessionParameters::new(
             params.threshold(),
             params.session_id(),
-            params.own_identity(),
-            params.role_assignments().clone(),
+            params.my_role(),
+            params.roles().clone(),
         )
         .is_err());
     }
