@@ -122,4 +122,9 @@ pub trait BackupOperator {
     ) -> Result<Response<Empty>, Status>;
 
     async fn backup_restore(&self, request: Request<Empty>) -> Result<Response<Empty>, Status>;
+
+    async fn get_key_material_availability(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status>;
 }

@@ -366,7 +366,7 @@ service CoreServiceEndpoint {
   // ## Pre-condition:  -
   // ## Post-condition: -
   rpc CustodianRecoveryInit(kms.v1.Empty) returns (kms.v1.RecoveryRequest);
-  
+
   // Recover the master decryption key secret shared with custodians as part of a custodian-based backup recovery
   //
   // WARNING: This method is not fully implemented yet.
@@ -378,4 +378,26 @@ service CoreServiceEndpoint {
   // ## Pre-condition:  -
   // ## Post-condition: -
   rpc CustodianBackupRecovery(kms.v1.BackupRecoveryRequest) returns (kms.v1.Empty);
+
+  // Get available key material information.
+  //
+  // Returns all key IDs that this KMS core has access to, organized by type.
+  // This endpoint uses the existing storage abstraction to query all available
+  // key material without loading the actual cryptographic data.
+  //
+  // # Parameters
+  // * `request` - Empty request
+  //
+  // # Returns
+  // * `Response<KeyMaterialAvailabilityResponse>` containing:
+  //   - List of FHE key IDs
+  //   - List of CRS key IDs
+  //   - List of preprocessing IDs (threshold only)
+  //   - Total count of available keys
+  //   - Storage backend information
+  //
+  // # Conditions
+  // ## Pre-condition: KMS service must be initialized
+  // ## Post-condition: No state changes, read-only operation
+  rpc GetKeyMaterialAvailability(kms.v1.Empty) returns (kms.v1.KeyMaterialAvailabilityResponse);
 }

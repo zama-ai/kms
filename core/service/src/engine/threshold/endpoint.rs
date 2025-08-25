@@ -5,7 +5,12 @@ use crate::engine::threshold::traits::{
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
-use kms_grpc::kms::v1::*;
+use kms_grpc::kms::v1::{
+    CrsGenRequest, CrsGenResult, DestroyKmsContextRequest, Empty, InitRequest,
+    KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
+    KeyMaterialAvailabilityResponse, NewKmsContextRequest, PublicDecryptionRequest,
+    PublicDecryptionResponse, RequestId, UserDecryptionRequest, UserDecryptionResponse,
+};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use observability::{
     metrics::METRICS,
@@ -350,7 +355,15 @@ impl_endpoint! {
                 let _ = METRICS
                     .increment_error_counter(OP_BACKUP_RESTORE, tag);
             })
+        }
 
+        #[tracing::instrument(skip(self, request))]
+        async fn get_key_material_availability(
+            &self,
+            request: Request<Empty>,
+        ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status> {
+            // Delegate to backup_operator which has access to crypto_storage
+            self.backup_operator.get_key_material_availability(request).await
         }
 
         #[tracing::instrument(skip(self, _request))]
