@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Ring},
     error::error_handler::anyhow_error_and_log,
@@ -43,7 +45,7 @@ pub async fn mult<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     triple: Triple<Z>,
     session: &Ses,
 ) -> anyhow::Result<Share<Z>> {
-    let res = mult_list(&[x], &[y], vec![triple], session).await?;
+    let res = mult_list(Arc::new(vec![x]), Arc::new(vec![y]), vec![triple], session).await?;
     match res.first() {
         Some(res) => Ok(*res),
         None => Err(anyhow_error_and_log(
@@ -60,8 +62,8 @@ pub async fn mult<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
 #[instrument(name="MPC.Mult", skip(session,x_vec,y_vec,triples), fields(sid = ?session.session_id(),my_role=?session.my_role(),batch_size=?x_vec.len()))]
 pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
-    x_vec: &[Share<Z>],
-    y_vec: &[Share<Z>],
+    x_vec: Arc<Vec<Share<Z>>>,
+    y_vec: Arc<Vec<Share<Z>>>,
     triples: Vec<Triple<Z>>,
     session: &Ses,
 ) -> anyhow::Result<Vec<Share<Z>>> {
@@ -74,19 +76,18 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
             triples.len()
         )));
     }
-    let x_vec_cloned = x_vec.to_owned();
-    let y_vec_cloned = y_vec.to_owned();
+    let x_vec_cloned = x_vec.clone();
+    let y_vec_cloned = y_vec.clone();
     let (triples_a, (triples_b, triples_c)): (Vec<_>, (Vec<_>, Vec<_>)) = triples
         .into_iter()
         .map(|triple| (triple.a, (triple.b, triple.c)))
         .unzip();
 
-    let triples_a_cloned = triples_a.clone();
-    let to_open: Vec<Share<Z>> = spawn_compute_bound(move || {
-        x_vec_cloned.into_iter().zip_eq(
+    let (y_vec, triples_a,to_open) = spawn_compute_bound(move || {
+        let res = x_vec_cloned.iter().zip_eq(
             y_vec_cloned
-                .into_iter()
-                .zip(triples_a_cloned.into_iter().zip_eq(triples_b.into_iter())),
+                .iter()
+                .zip(triples_a.iter().zip_eq(triples_b.into_iter())),
         ).fold(Vec::with_capacity(2*amount), |mut acc, (cur_x, (cur_y, (cur_a, cur_b)))| {
             if cur_x.owner() != cur_y.owner()
                 || cur_a.owner() != cur_x.owner()
@@ -94,12 +95,13 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
             {
                 tracing::warn!("Trying to multiply with shares of different owners. This will always result in an incorrect share");
             }
-            let share_epsilon = cur_a + cur_x;
+            let share_epsilon =  cur_x + cur_a;
             let share_rho = cur_b + cur_y;
             acc.push(share_epsilon);
             acc.push(share_rho);
             acc
-    })
+    });
+    (y_vec_cloned,triples_a,res)
     }).await?;
 
     //NOTE: That's a lot of memory manipulation, could execute the "linear equation loop" with epsilonrho directly
@@ -114,12 +116,10 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
         )));
     }
     // Compute the linear equation of shares to get the result
-    let y_vec_cloned = y_vec.to_owned();
-
     spawn_compute_bound(move || {
         let epsilon_rho_vec = epsilonrho.chunks(2);
-        y_vec_cloned
-            .into_iter()
+        y_vec
+            .iter()
             .zip_eq(epsilon_rho_vec.zip_eq(triples_a.into_iter().zip_eq(triples_c.into_iter())))
             .map(|(curr_y, (curr_epsilonrho, (curr_a, curr_c)))| {
                 //curr_epsilonrho is a pair of shares, so we need to extract them
@@ -198,6 +198,7 @@ mod tests {
     };
     use paste::paste;
     use std::num::Wrapping;
+    use std::sync::Arc;
 
     macro_rules! test_triples {
         ($z:ty, $u:ty) => {
@@ -254,9 +255,12 @@ mod tests {
                             b_vec.push(preprocessing.next_random().unwrap());
                             trip_vec.push(preprocessing.next_triple().unwrap());
                         }
-                        let c_vec = mult_list(&a_vec, &b_vec, trip_vec, &session).await.unwrap();
-                        let a_plain = open_list(&a_vec, &session).await.unwrap();
-                        let b_plain = open_list(&b_vec, &session).await.unwrap();
+                        let a_vec = Arc::new(a_vec);
+                        let b_vec = Arc::new(b_vec);
+                        let c_vec = mult_list(Arc::clone(&a_vec), Arc::clone(&b_vec), trip_vec, &session).await.unwrap();
+
+                        let a_plain = open_list(a_vec.as_ref(), &session).await.unwrap();
+                        let b_plain = open_list(b_vec.as_ref(), &session).await.unwrap();
                         let c_plain = open_list(&c_vec, &session).await.unwrap();
                         (a_plain, b_plain, c_plain)
                     }

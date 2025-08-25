@@ -150,10 +150,8 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
         .przs_next_vec(my_role, threshold, amount)
         .await?;
 
-    let all_prss_cloned = all_prss.clone();
-    let vec_z_double_cloned = vec_z_double.clone();
-    let vec_d_double = spawn_compute_bound( move ||{
-    let mut all_prss = all_prss_cloned.into_iter();
+    let (vec_x_single, vec_y_single, vec_v_single, vec_d_double) = spawn_compute_bound( move ||{
+    let mut all_prss = all_prss.into_iter();
     let vec_x_single: Vec<_> = all_prss.by_ref().take(amount).collect();
     let vec_y_single: Vec<_> = all_prss.by_ref().take(amount).collect();
     let vec_v_single: Vec<_> = all_prss.by_ref().take(amount).collect();
@@ -172,13 +170,15 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
         ));
     }
 
-    Ok(vec_x_single
-        .into_iter()
-        .zip_eq(vec_y_single.into_iter())
-        .zip_eq(vec_v_single.into_iter())
-        .zip_eq(vec_z_double_cloned.into_iter())
-        .map(|(((x, y), v), z)| x * y + (z + v))
-        .collect_vec())
+    let res = vec_x_single
+        .iter()
+        .zip_eq(vec_y_single.iter())
+        .zip_eq(vec_v_single.iter())
+        .zip_eq(vec_z_double.into_iter())
+        .map(|(((x, y), v), z)| *x * *y + (z + *v))
+        .collect_vec();
+
+    Ok((vec_x_single, vec_y_single, vec_v_single, res))
     }).await??;
 
     let broadcast_res = broadcast
@@ -188,10 +188,6 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
     //Try reconstructing 2t sharings of d, a None means reconstruction failed.
     let recons_vec_d = reconstruct_d_values(session, amount, broadcast_res.clone()).await?;
 
-    let mut all_prss = all_prss.into_iter();
-    let vec_x_single: Vec<_> = all_prss.by_ref().take(amount).collect();
-    let vec_y_single: Vec<_> = all_prss.by_ref().take(amount).collect();
-    let vec_v_single: Vec<_> = all_prss.by_ref().take(amount).collect();
     let mut triples = Vec::with_capacity(amount);
     let mut bad_triples_idx = Vec::new();
     for (i, (x, (y, z))) in vec_x_single
@@ -262,8 +258,11 @@ where
                     session.add_corrupt(cur_role);
                     continue;
                 }
-                for (i, cur_collect_share) in collected_shares.iter_mut().enumerate() {
-                    cur_collect_share.push(Share::new(cur_role, cur_values[i]));
+                // No need for zip_eq as we just checked the length
+                for (cur_collect_share, cur_value) in
+                    collected_shares.iter_mut().zip(cur_values.into_iter())
+                {
+                    cur_collect_share.push(Share::new(cur_role, cur_value));
                 }
             }
             _ => {

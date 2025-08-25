@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use super::{
     preprocessing::BasePreprocessing,
     triple::{mult_list, open_list},
 };
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Solve},
+    error::error_handler::anyhow_error_and_log,
     execution::{runtime::session::BaseSessionHandles, sharing::share::Share},
     thread_handles::spawn_compute_bound,
 };
@@ -45,26 +48,28 @@ impl BitGenEven for SecureBitGenEven {
         preproc: &mut P,
         session: &mut Ses,
     ) -> anyhow::Result<Vec<Share<Z>>> {
-        let a = preproc.next_random_vec(amount)?;
+        let a = Arc::new(preproc.next_random_vec(amount)?);
+
         let triples = preproc.next_triple_vec(amount)?;
-        let s = mult_list(&a, &a, triples, session).await?;
+        let s = mult_list(Arc::clone(&a), Arc::clone(&a), triples, session).await?;
         // Assumption that since we are just adding it's pretty computationally cheap
         // and can stay on tokio thread
-        let a_ref = a.clone();
-        let v = spawn_compute_bound(move || {
-            a_ref
-                .into_iter()
+        let (a, v) = spawn_compute_bound(move || {
+            let res = a
+                .iter()
                 .zip_eq(s) // May panic but would imply a bug in `mult_list`
-                .map(|(cur_a, cur_s)| cur_a + cur_s)
-                .collect_vec()
+                .map(|(cur_a, cur_s)| cur_s + cur_a)
+                .collect_vec();
+            (a, res)
         })
         .await?;
         let opened_v_vec = open_list(&v, session).await?;
 
+        let a = Arc::into_inner(a).ok_or_else(|| anyhow_error_and_log("Failed to unarc a"))?;
         spawn_compute_bound(move || {
             opened_v_vec
                 .iter()
-                .zip_eq(a) // May panic but would imply a bug in `open_list`
+                .zip_eq(a.into_iter()) // May panic but would imply a bug in `open_list`
                 .map(|(cur_v, cur_a)| {
                     let cur_r = Z::solve(cur_v)?;
                     let cur_d = Z::ZERO - (Z::ONE + cur_r.mul_by_u128(2));

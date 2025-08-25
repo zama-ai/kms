@@ -1,9 +1,11 @@
 use itertools::Itertools;
+use std::sync::Arc;
 use tonic::async_trait;
 use tracing::instrument;
 
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, ZConsts},
+    error::error_handler::anyhow_error_and_log,
     execution::{
         constants::STATSEC,
         online::{
@@ -64,11 +66,21 @@ impl BitGenOdd for RealBitGenOdd {
         //Open enough non-zero squares, and corresponding secret square roots
         while s_vec.len() != amount {
             let current_amount = amount - s_vec.len();
-            let tmp_a_vec = preproc.next_random_vec(current_amount)?;
+            let tmp_a_vec = Arc::new(preproc.next_random_vec(current_amount)?);
             let trips = preproc.next_triple_vec(current_amount)?;
 
-            let tmp_s_vec = mult_list(&tmp_a_vec, &tmp_a_vec, trips, session).await?;
+            let tmp_s_vec = mult_list(
+                Arc::clone(&tmp_a_vec),
+                Arc::clone(&tmp_a_vec),
+                trips,
+                session,
+            )
+            .await?;
+
             let tmp_s_vec = open_list(&tmp_s_vec, session).await?;
+
+            let tmp_a_vec = Arc::into_inner(tmp_a_vec)
+                .ok_or_else(|| anyhow_error_and_log("Failed to unarc tmp_a_vec"))?;
             tmp_s_vec
                 .into_iter()
                 .zip_eq(tmp_a_vec.into_iter()) // May panic, but would imply a bug in `mult_list`
