@@ -355,7 +355,7 @@ mod tests {
                     seed_phrases[custodian_index - 1].to_string(),
                     "--custodian-role".to_string(),
                     custodian_index.to_string(),
-                    "--operator_verf_key".to_string(),
+                    "--operator-verf-key".to_string(),
                     operator_verf_path.to_str().unwrap().to_string(),
                     "-b".to_string(),
                     request_path.to_str().unwrap().to_string(),
@@ -399,6 +399,8 @@ mod tests {
             "123456".to_string(),
             "--custodian-role".to_string(),
             custodian_index.to_string(),
+            "--custodian-name".to_string(),
+            format!("skynet-{custodian_index}"),
             "--path".to_string(),
             final_dir.to_str().unwrap().to_string(),
         ];
