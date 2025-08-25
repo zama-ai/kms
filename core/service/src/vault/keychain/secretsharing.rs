@@ -1,9 +1,8 @@
 use super::{EnvelopeLoad, EnvelopeStore, Keychain};
 use crate::{
     anyhow_error_and_log,
-    backup::operator::Operator,
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::backup_pke::{BackupCiphertext, BackupPublicKey},
+    cryptography::backup_pke::{self, BackupCiphertext, BackupPrivateKey, BackupPublicKey},
 };
 use kms_grpc::{rpc_types::PrivDataType, RequestId};
 use rand::{CryptoRng, Rng};
@@ -26,7 +25,7 @@ pub struct SecretShareKeychain<R: Rng + CryptoRng> {
     rng: R,
     custodian_context_id: RequestId,
     backup_enc_key: BackupPublicKey,
-    operator: Option<Operator>,
+    dec_key: Option<BackupPrivateKey>,
 }
 
 /// Create a new [`SecretShareKeychain`] used for backups in order to securely store and retrieve sensitive information.
@@ -36,7 +35,7 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
             rng,
             backup_enc_key,
             custodian_context_id,
-            operator: None,
+            dec_key: None,
         }
     }
 
@@ -55,8 +54,8 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
 
     /// After recovery of the private decryption key has been carried out with the help of the custodians
     /// it is possible to set the backup operator in order to allow decryption
-    pub fn set_decryptor(&mut self, operator: Operator) {
-        self.operator = Some(operator);
+    pub fn set_dec_key(&mut self, dec_key: Option<BackupPrivateKey>) {
+        self.dec_key = dec_key;
     }
 }
 
@@ -84,16 +83,39 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
         &self,
         envelope: &mut EnvelopeLoad,
     ) -> anyhow::Result<T> {
-        let EnvelopeLoad::OperatorRecoveryInput(rs, cs) = envelope else {
-            anyhow::bail!("Expected multi-share encrypted data")
+        let EnvelopeLoad::OperatorRecoveryInput(backup_ct) = envelope else {
+            anyhow::bail!("Expected backup ct encrypted data")
         };
-        let payload_bytes = self
-            .operator
+        let unwrapped_dec_key = self
+            .dec_key
             .as_ref()
-            .ok_or_else(|| anyhow_error_and_log("Operator not set"))?
-            .verify_and_recover(rs, cs, self.custodian_context_id)?;
-        let mut buf = std::io::Cursor::new(&payload_bytes);
-        safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT)
-            .map_err(|e| anyhow_error_and_log(format!("Cannot decrypt backup: {e}")))
+            .ok_or_else(|| anyhow_error_and_log("Operator not set"))?;
+        match backup_ct.priv_data_type {
+            PrivDataType::SigningKey => read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key),
+            PrivDataType::FheKeyInfo => read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key),
+            PrivDataType::CrsInfo => read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key),
+            PrivDataType::FhePrivateKey => {
+                read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key)
+            }
+            PrivDataType::PrssSetup => {
+                anyhow::bail!("PRSS backup is not supported")
+            }
+            PrivDataType::CustodianInfo => {
+                read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key)
+            }
+            PrivDataType::ContextInfo => read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key),
+        }
     }
+}
+
+fn read_backup_data<
+    T: serde::de::DeserializeOwned + tfhe::Unversionize + tfhe::named::Named + Send,
+>(
+    ct: &[u8],
+    priv_dec_key: &backup_pke::BackupPrivateKey,
+) -> anyhow::Result<T> {
+    let plain_text = priv_dec_key.decrypt(ct)?;
+    let mut buf = std::io::Cursor::new(plain_text);
+    safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT)
+        .map_err(|e| anyhow_error_and_log(format!("Cannot decrypt backup: {e}")))
 }

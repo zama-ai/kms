@@ -7,7 +7,6 @@ use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerato
 use crate::engine::traits::{BackupOperator, ContextManager};
 use kms_grpc::kms::v1::*;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
-use observability::metrics_names::ERR_INVALID_REQUEST;
 use observability::{
     metrics::METRICS,
     metrics_names::{
@@ -340,26 +339,30 @@ impl_endpoint! {
             })
         }
 
-        #[tracing::instrument(skip(self, _request))]
+        #[tracing::instrument(skip(self, request))]
         async fn backup_restore(
             &self,
-            _request: Request<kms_grpc::kms::v1::Empty>,
+            request: Request<kms_grpc::kms::v1::Empty>,
         ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
             METRICS.increment_request_counter(OP_BACKUP_RESTORE);
-            METRICS.increment_error_counter(OP_BACKUP_RESTORE, ERR_INVALID_REQUEST);
-            Err(Status::unimplemented("backup_restore is not implemented"))
+            self.backup_operator.backup_restore(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_BACKUP_RESTORE, tag);
+            })
         }
 
-        #[tracing::instrument(skip(self, _request))]
+        #[tracing::instrument(skip(self, request))]
         async fn custodian_recovery_init(
             &self,
-            _request: Request<kms_grpc::kms::v1::Empty>,
+            request: Request<kms_grpc::kms::v1::Empty>,
         ) -> Result<Response<kms_grpc::kms::v1::RecoveryRequest>, Status> {
             METRICS.increment_request_counter(OP_CUSTODIAN_RECOVERY_INIT);
-            METRICS.increment_error_counter(OP_CUSTODIAN_RECOVERY_INIT, ERR_INVALID_REQUEST);
-            Err(Status::unimplemented(
-                "custodian_recovery_init is not implemented",
-            ))
+            self.backup_operator.custodian_recovery_init(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_CUSTODIAN_RECOVERY_INIT, tag);
+            })
         }
     }
 }

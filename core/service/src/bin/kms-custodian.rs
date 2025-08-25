@@ -234,7 +234,7 @@ mod tests {
             seed_phrase::custodian_from_seed_phrase,
         },
         cryptography::{
-            backup_pke::{self},
+            backup_pke::{self, BackupPrivateKey},
             internal_crypto_types::gen_sig_keys,
         },
         engine::base::derive_request_id,
@@ -323,8 +323,9 @@ mod tests {
         // Generate operator keys along with the message to be backed up
         let mut commitments = Vec::new();
         let mut operators = Vec::new();
+        let mut dec_keys = Vec::new();
         for operator_index in 1..=amount_operators {
-            let (cur_commitments, operator) = make_backup(
+            let (cur_commitments, operator, dec_key) = make_backup(
                 temp_dir.path(),
                 threshold,
                 Role::indexed_from_one(operator_index),
@@ -335,6 +336,7 @@ mod tests {
             .await;
             commitments.push(cur_commitments);
             operators.push(operator);
+            dec_keys.push(dec_key);
         }
 
         // Decrypt
@@ -367,13 +369,14 @@ mod tests {
         }
 
         // Validate the decryption
-        for (operator, commitment) in operators.iter().zip(&commitments) {
+        for ((operator, commitment), dec_key) in operators.iter().zip(&commitments).zip(&dec_keys) {
             let cur_res = decrypt_recovery(
                 temp_dir.path(),
                 amount_custodians,
                 operator,
                 commitment,
                 backup_id,
+                dec_key,
             )
             .await;
             let expected_res = format!("super secret data{}", operator.role().one_based());
@@ -429,7 +432,7 @@ mod tests {
         setup_msgs: Vec<InternalCustodianSetupMessage>,
         backup_id: RequestId,
         msg: &[u8],
-    ) -> (BackupCommitments, Operator) {
+    ) -> (BackupCommitments, Operator, BackupPrivateKey) {
         let request_path = root_path.join(format!(
             "operator-{operator_role}{MAIN_SEPARATOR}{backup_id}-request.bin"
         ));
@@ -441,16 +444,8 @@ mod tests {
         // Note that in the actual deployment, the operator keys are generated before the encryption keys
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
         let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
-        let operator = Operator::new(
-            operator_role,
-            setup_msgs,
-            signing_key.clone(),
-            verification_key.clone(),
-            private_key,
-            public_key,
-            threshold,
-        )
-        .unwrap();
+        let operator =
+            Operator::new(operator_role, setup_msgs, signing_key.clone(), threshold).unwrap();
         let (ct_map, commitments) = operator
             .secret_share_and_encrypt(&mut rng, msg, backup_id)
             .unwrap();
@@ -461,7 +456,7 @@ mod tests {
             ciphertexts.insert(custodian_role, ct.to_owned());
         }
         let recovery_request = InternalRecoveryRequest::new(
-            operator.public_key().to_owned(),
+            public_key,
             ciphertexts,
             backup_id,
             operator_role,
@@ -474,7 +469,7 @@ mod tests {
         safe_write_element_versioned(&Path::new(&request_path), &recovery_request)
             .await
             .unwrap();
-        (commitments, operator)
+        (commitments, operator, private_key)
     }
 
     async fn decrypt_recovery(
@@ -483,8 +478,9 @@ mod tests {
         operator: &Operator,
         commitment: &BackupCommitments,
         backup_id: RequestId,
+        dec_key: &BackupPrivateKey,
     ) -> Vec<u8> {
-        let mut outputs = BTreeMap::new();
+        let mut outputs = Vec::new();
         for custodian_index in 1..=amount_custodians {
             let recovery_path = root_path.join(format!(
                 "operator-{}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin",
@@ -494,10 +490,10 @@ mod tests {
                 safe_read_element_versioned(&Path::new(&recovery_path))
                     .await
                     .unwrap();
-            outputs.insert(Role::indexed_from_one(custodian_index), payload);
+            outputs.push(payload);
         }
         operator
-            .verify_and_recover(&outputs, commitment, backup_id)
+            .verify_and_recover(&outputs, commitment, backup_id, dec_key)
             .unwrap()
     }
 }

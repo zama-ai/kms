@@ -4,7 +4,7 @@ use crate::{
     anyhow_error_and_log,
     backup::{
         custodian::InternalCustodianContext,
-        operator::{InnerRecoveryRequest, DSEP_BACKUP_CIPHER},
+        operator::{BackupCommitments, InnerRecoveryRequest, Operator, DSEP_BACKUP_CIPHER},
     },
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
@@ -38,7 +38,7 @@ use kms_grpc::{
     rpc_types::{PrivDataType, SignedPubDataHandleInternal},
 };
 use strum::IntoEnumIterator;
-use tfhe::safe_serialization::safe_serialize;
+use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::{Mutex, MutexGuard};
 use tonic::{Code, Request, Response, Status};
@@ -232,28 +232,65 @@ where
     /// in order to minimize the possibility of leakage.
     async fn custodian_backup_recovery(
         &self,
-        _request: Request<BackupRecoveryRequest>,
+        request: Request<BackupRecoveryRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let ephemeral_dec_key = {
+            let guarded_dec_key = self.ephemeral_dec_key.lock().await;
+            match guarded_dec_key.clone() {
+                Some(key) => key,
+                None => {
+                    return Err(Status::new(
+                        tonic::Code::FailedPrecondition,
+                        "Ephemeral decryption key has not been generated",
+                    ));
+                }
+            }
+        };
+        //todo validate request constraints and remove unwraps
+        let inner = request.into_inner();
+        let context_id = inner.custodian_context_id.unwrap().try_into().unwrap();
+        let commitments: BackupCommitments = {
+            let guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
+            guarded_pub_storage
+                .read_data(&context_id, &PubDataType::Commitments.to_string())
+                .await
+                .map_err(|e| {
+                    Status::new(
+                        tonic::Code::Internal,
+                        format!("Failed to read backup commitments: {e}"),
+                    )
+                })?
+        };
+        let custodian_data: InternalCustodianContext = {
+            let guarded_priv_storage = self.crypto_storage.private_storage.lock().await;
+            guarded_priv_storage
+                .read_data(&context_id, &PrivDataType::CustodianInfo.to_string())
+                .await
+                .map_err(|e| {
+                    Status::new(
+                        tonic::Code::Internal,
+                        format!("Failed to read custodian info: {e}"),
+                    )
+                })?
+        };
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
-                let backup_vault: tokio::sync::MutexGuard<'_, Vault> = backup_vault.lock().await;
+                let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
+                    backup_vault.lock().await;
                 match backup_vault.keychain {
-                    Some(KeychainProxy::SecretSharing(ref _keychain)) => {
-                        // TODO need to call verify_and_recover and store the key temporarely
-                        // let private_storage = self.crypto_storage.get_private_storage().clone();
-                        // let mut private_storage = private_storage.lock().await;
-                        // let custodian_recovery_output =
-                        //     request.into_inner().custodian_recovery_output;
-                        // tonic_handle_potential_err(
-                        //     keychain
-                        //         .custodian_backup_recovery(
-                        //             &mut private_storage,
-                        //             custodian_recovery_output,
-                        //         )
-                        //         .await,
-                        //     "Failed to restore".to_string(),
-                        // )?;
-                        todo!()
+                    Some(KeychainProxy::SecretSharing(ref mut keychain)) => {
+                        let operator = Operator::new(
+                            self.my_role,
+                            custodian_data.custodian_nodes.values().cloned().collect_vec(),
+                            self.base_kms.sig_key.as_ref().clone(),
+                            custodian_data.threshold as usize,
+                        ).unwrap();
+                        let parsed_custodian_rec = inner.custodian_recovery_outputs.iter().map(|ct| ct.clone().try_into().unwrap()).collect_vec();
+                        let serialized_dec_key = operator.verify_and_recover(&parsed_custodian_rec, &commitments, context_id, &ephemeral_dec_key).unwrap();
+                        let backup_dec_key: BackupPrivateKey = safe_deserialize(std::io::Cursor::new(&serialized_dec_key), SAFE_SER_SIZE_LIMIT).unwrap();
+                        keychain.set_dec_key(Some(backup_dec_key));
+                        // todo unset key after recovery , fix unwraps
+                        Ok(Response::new(Empty {}))
                     }
                     _ => Err(Status::new(
                         tonic::Code::Unavailable,

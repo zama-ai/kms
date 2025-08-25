@@ -324,9 +324,6 @@ where
         custodian_context: &InternalCustodianContext,
         my_role: Role,
     ) -> anyhow::Result<(InnerRecoveryRequest, BackupCommitments)> {
-        let verification_key = (*self.base_kms.sig_key).clone().into();
-        // TODO dummy keys to be removed since we need to remove the requirement to include these in the operator during consturction since they should be ephemeral
-        let (dummy_enc_key, dummy_priv_key) = backup_pke::keygen(rng)?;
         let operator = Operator::new(
             my_role,
             custodian_context
@@ -335,9 +332,6 @@ where
                 .cloned()
                 .collect_vec(),
             (*self.base_kms.sig_key).clone(),
-            verification_key,
-            dummy_priv_key.clone(),
-            dummy_enc_key,
             custodian_context.threshold as usize,
         )?;
         let mut serialized_priv_key = Vec::new();

@@ -167,8 +167,6 @@ pub struct Operator {
     signer: PrivateSigKey,
     // the public component of [signer] above
     verification_key: PublicSigKey,
-    decryptor: BackupPrivateKey,
-    public_key: BackupPublicKey,
     threshold: usize,
 }
 
@@ -179,8 +177,6 @@ impl std::fmt::Debug for Operator {
             .field("custodian_keys", &self.custodian_keys)
             .field("signer", &"ommitted")
             .field("verification_key", &self.verification_key)
-            .field("decryptor", &"ommitted")
-            .field("public_key", &self.public_key)
             .field("threshold", &self.threshold)
             .finish()
     }
@@ -400,9 +396,6 @@ impl Operator {
         my_role: Role,
         custodian_messages: Vec<InternalCustodianSetupMessage>,
         signer: PrivateSigKey,
-        operator_verf_key: PublicSigKey,
-        decryptor: BackupPrivateKey,
-        operator_enc_key: BackupPublicKey,
         threshold: usize,
     ) -> Result<Self, BackupError> {
         verify_n_t(custodian_messages.len(), threshold)?;
@@ -445,28 +438,18 @@ impl Operator {
 
             custodian_keys.push((public_enc_key, public_verf_key));
         }
-
+        let verf_key = signer.clone().into();
         Ok(Self {
             my_role,
             custodian_keys,
             signer,
-            verification_key: operator_verf_key,
-            decryptor,
-            public_key: operator_enc_key,
+            verification_key: verf_key,
             threshold,
         })
     }
 
     pub fn verification_key(&self) -> &PublicSigKey {
         &self.verification_key
-    }
-
-    pub fn public_key(&self) -> &BackupPublicKey {
-        &self.public_key
-    }
-
-    pub fn public_key_bytes(&self) -> Vec<u8> {
-        self.public_key.encapsulation_key.clone()
     }
 
     pub fn role(&self) -> Role {
@@ -593,19 +576,21 @@ impl Operator {
     /// so the are a separate input.
     pub fn verify_and_recover(
         &self,
-        custodian_recovery_output: &BTreeMap<Role, InternalCustodianRecoveryOutput>,
+        custodian_recovery_output: &[InternalCustodianRecoveryOutput],
         commitments: &BackupCommitments,
         backup_id: RequestId,
+        dec_key: &BackupPrivateKey, // Note that this is the ephemeral decryption key, NOT the actual backup decryption key
     ) -> Result<Vec<u8>, BackupError> {
         // the output is ordered by custodian ID, from 0 to n-1
         // first check the signature and decrypt
         // decrypted_buf[j][i] where j = jth custodian, i = ith block
         let decrypted_buf = custodian_recovery_output
             .iter()
-            .map(|(custodian_role, ct)| {
-                let key = custodian_role.get_from(&self.custodian_keys).ok_or(
+            .map(|ct| {
+                let key = ct.custodian_role.get_from(&self.custodian_keys).ok_or(
                     BackupError::OperatorError(format!(
-                        "missing custodian key for {custodian_role}"
+                        "missing custodian key for {}",
+                        ct.custodian_role
                     )),
                 )?;
                 // sigt_ij
@@ -613,18 +598,18 @@ impl Operator {
                     sig: k256::ecdsa::Signature::from_slice(&ct.signature)?,
                 };
                 let commitment = commitments
-                    .get(custodian_role)
+                    .get(&ct.custodian_role)
                     .map_err(|_| BackupError::OperatorError("missing commitment".to_string()))?;
                 internal_verify_sig(&DSEP_BACKUP_CUSTODIAN, &ct.ciphertext, &signature, &key.1)
                     .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
                 // st_ij
                 checked_decryption_deserialize(
-                    &self.decryptor,
+                    dec_key,
                     &ct.ciphertext,
                     commitment,
                     backup_id,
                     &key.1,
-                    *custodian_role,
+                    ct.custodian_role,
                     &self.verification_key,
                     self.my_role,
                 )
