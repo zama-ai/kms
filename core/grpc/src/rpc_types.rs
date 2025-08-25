@@ -1,17 +1,20 @@
 use crate::kms::v1::{
-    Eip712DomainMsg, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
+    BackupRecoveryRequest, CustodianRecoveryOutput, Eip712DomainMsg, TypedCiphertext,
+    TypedPlaintext, TypedSigncryptedCiphertext,
 };
 use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::fmt::{self};
+use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{FheTypes, Versionize};
 use tfhe_versionable::VersionsDispatch;
+use threshold_fhe::execution::runtime::party::Role;
 
 pub use crate::identifiers::{KeyId, RequestId, ID_LENGTH};
 
@@ -248,9 +251,9 @@ pub enum PubDataType {
     VerfKey,     // Type for the servers public verification keys
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
-    CACert,                // Certificate that signs TLS certificates used by MPC nodes
-    CustodianSetupMessage, // Backup custodian public keys (self-signed)
-    PublicEncKey,          // Classical non-FHE Public encryption key, e.g. used for backup
+    CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO validation needs to be added, see https://github.com/zama-ai/kms-internal/issues/2723
+    RecoveryRequest, // Recovery request for backup vault
+    Commitments, // Commitments for the backup vault
 }
 
 impl fmt::Display for PubDataType {
@@ -264,10 +267,15 @@ impl fmt::Display for PubDataType {
             PubDataType::VerfAddress => write!(f, "VerfAddress"),
             PubDataType::DecompressionKey => write!(f, "DecompressionKey"),
             PubDataType::CACert => write!(f, "CACert"),
-            PubDataType::CustodianSetupMessage => write!(f, "CustodianSetupMessage"),
-            PubDataType::PublicEncKey => write!(f, "PublicEncKey"),
+            PubDataType::RecoveryRequest => write!(f, "RecoveryRequest"),
+            PubDataType::Commitments => write!(f, "Commitments"),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum PrivDataTypeVersioned {
+    V0(PrivDataType),
 }
 
 /// PrivDataType
@@ -277,13 +285,19 @@ impl fmt::Display for PubDataType {
 /// signatures. Data of this type is supposed to only be readable, writable and modifiable by a
 /// single entity and stored on a medium that is not readable, writable or modifiable by any other
 /// entity (without detection).
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
+///
+/// Data stored with this type either need to be kept secret and/or need to be kept authentic.
+/// Thus some data may indeed be safe to release publicly, but a malicious replacement could completely
+/// compromise the entire system.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Versionize)]
+#[versionize(PrivDataTypeVersioned)]
 pub enum PrivDataType {
     SigningKey,
     FheKeyInfo,
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
+    CustodianInfo, // Custodian information for the custodian context
     ContextInfo,
 }
 
@@ -295,7 +309,42 @@ impl fmt::Display for PrivDataType {
             PrivDataType::CrsInfo => write!(f, "CrsInfo"),
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
+            PrivDataType::CustodianInfo => write!(f, "CustodianInfo"),
             PrivDataType::ContextInfo => write!(f, "Context"),
+        }
+    }
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for PrivDataType {
+    fn default() -> Self {
+        PrivDataType::FheKeyInfo // Default is private FHE key material
+    }
+}
+
+impl TryFrom<&str> for PrivDataType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        for priv_data_type in PrivDataType::iter() {
+            if value.to_ascii_lowercase().trim()
+                == priv_data_type.to_string().to_ascii_lowercase().trim()
+            {
+                return Ok(priv_data_type);
+            }
+        }
+        Err(anyhow::anyhow!("Unknown PrivDataType: {}", value))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
+pub enum BackupDataType {
+    PrivData(PrivDataType), // Backup of a piece of private data
+}
+impl fmt::Display for BackupDataType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BackupDataType::PrivData(data_type) => write!(f, "PrivData({data_type})"),
         }
     }
 }
@@ -918,6 +967,87 @@ impl From<(String, FheTypes)> for TypedPlaintext {
             bytes: value.0.into(),
             fhe_type: value.1 as i32,
         }
+    }
+}
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum CustodianRecoveryOutputVersioned {
+    V0(InternalCustodianRecoveryOutput),
+}
+
+/// This is the message that a custodian sends to an operator after starting recovery.
+/// TODO this should be changed to use proper signcryption to ensure that the operator role is signed as well
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(CustodianRecoveryOutputVersioned)]
+pub struct InternalCustodianRecoveryOutput {
+    pub signature: Vec<u8>,  // sigt_i_j
+    pub ciphertext: Vec<u8>, // st_i_j
+    pub custodian_role: Role,
+    pub operator_role: Role,
+}
+
+impl Named for InternalCustodianRecoveryOutput {
+    const NAME: &'static str = "backup::CustodianRecoveryOutput";
+}
+
+impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
+    type Error = anyhow::Error;
+
+    fn try_from(value: CustodianRecoveryOutput) -> Result<Self, Self::Error> {
+        if value.custodian_role == 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid custodian role in CustodianRecoveryOutput"
+            ));
+        }
+        if value.operator_role == 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid operator role in CustodianRecoveryOutput"
+            ));
+        }
+        Ok(InternalCustodianRecoveryOutput {
+            signature: value.signature.to_vec(),
+            ciphertext: value.ciphertext,
+            custodian_role: Role::indexed_from_one(value.custodian_role as usize),
+            operator_role: Role::indexed_from_one(value.operator_role as usize),
+        })
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum InternalBackupRecoveryRequestVersioned {
+    V0(InternalBackupRecoveryRequest),
+}
+
+/// This is the internal representation of the custodian context.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
+#[versionize(InternalBackupRecoveryRequestVersioned)]
+pub struct InternalBackupRecoveryRequest {
+    pub custodian_context_id: RequestId,
+    pub threshold: u32,
+    pub custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
+}
+
+impl Named for InternalBackupRecoveryRequest {
+    const NAME: &'static str = "backup::BackupRestoreRequest";
+}
+
+impl TryFrom<BackupRecoveryRequest> for InternalBackupRecoveryRequest {
+    type Error = anyhow::Error;
+
+    fn try_from(value: BackupRecoveryRequest) -> Result<Self, Self::Error> {
+        Ok(InternalBackupRecoveryRequest {
+            custodian_context_id: value
+                .custodian_context_id
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Missing custodian context ID in BackupRestoreRequest")
+                })?
+                .try_into()?,
+            threshold: value.threshold,
+            custodian_recovery_outputs: value
+                .custodian_recovery_outputs
+                .into_iter()
+                .map(InternalCustodianRecoveryOutput::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
     }
 }
 

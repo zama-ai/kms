@@ -420,22 +420,22 @@ message KmsContext {
   int32 threshold = 5;
 }
 
-// The information held by the custodian nodes in a custodian context.
-message CustodianNode {
-  // The human-readable name of the custodian node.
-  string name = 1;
-  // The public encryption key of the custodian node,
-  // that the KMS parties use to back their shares to the custodian.
-  bytes public_encryption_key = 2;
+message CustodianSetupMessage {
+  // The 1-indexed role of the custodian
+  uint64 custodian_role = 1;
+  // Human readable name and unique identifier of the given custodian
+  string name = 2;
+  // Binary blob containing keys and other information in a versioned, universal binary format
+  bytes payload = 3;
 }
 
 // The context of the custodian nodes.
 message CustodianContext {
-  // The list of custodian nodes in the context that are
+  // The list of setup messages of the custodian nodes in the context that are
   // responsible for backing up and recovering key materials.
   // The number of custodian nodes does not need to match the number of KMS nodes,
   // they are operated independently.
-  repeated CustodianNode custodian_nodes = 1;
+  repeated CustodianSetupMessage custodian_nodes = 1;
 
   // A monotonically increasing counter stored on the Gateway
   // that is increased by 1 every time a new context of a specific type is generated.
@@ -449,7 +449,7 @@ message CustodianContext {
   // It does not need to match the KMS context threshold
   // and we only need to ensure a majority of custodian nodes are honest
   // since the backup and recovery steps are synchronous.
-  int32 threshold = 4;
+  uint32 threshold = 4;
 }
 
 // Request to create a new KMS context.
@@ -484,4 +484,39 @@ message OperatorPublicKey {
   // The attestation document that proves the public key is generated within an
   // enclave initialized from a trusted software build
   bytes attestation_document = 2;
+}
+
+// The data constructed by a single custodian to help a single operator recover their private master decryption key
+message CustodianRecoveryOutput {
+  bytes signature = 1;
+  bytes ciphertext = 2;
+  // The 1-indexed role of the custodian
+  uint64 custodian_role = 3;
+  uint64 operator_role = 4;
+}
+
+// The recovery request which contains the needed recovery data from all the custodians, 
+// which is sent to the KMS to recover the private backup master decryption key
+message BackupRecoveryRequest { // TODO rename to CustodiansRecoveryRequest
+  RequestId custodian_context_id = 1;
+  uint32 threshold = 2;
+  repeated CustodianRecoveryOutput custodian_recovery_outputs = 3;
+}
+
+// The data constructed by a given operator towards a given custodian after it has constructed a recovery request
+message OperatorBackupOutput {
+  bytes ciphertext = 1;
+  bytes signature = 2;
+}
+
+// The request constructed by a KMS to initiate custodian based backup recovery 
+message RecoveryRequest {
+  // The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
+  bytes enc_key = 1;
+  /// The ciphertexts that are the backup. Indexed by the custodian role.
+  map<uint64, OperatorBackupOutput> cts = 2;
+  /// The request ID under which the backup was created.
+  RequestId backup_id = 3;
+  /// The role of the operator
+  uint64 operator_role = 4;
 }

@@ -10,8 +10,8 @@ use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint
 use observability::{
     metrics::METRICS,
     metrics_names::{
-        map_tonic_code_to_metric_tag, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
-        OP_CUSTODIAN_CONTEXT_RESTORE, OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_KMS_CONTEXT,
+        map_tonic_code_to_metric_tag, OP_BACKUP_RESTORE, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
+        OP_CUSTODIAN_BACKUP_RECOVERY, OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_KMS_CONTEXT,
         OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
         OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_KMS_CONTEXT,
         OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
@@ -327,17 +327,40 @@ impl_endpoint! {
         }
 
         #[tracing::instrument(skip(self, request))]
-        async fn custodian_backup_restore(
+        async fn custodian_backup_recovery(
+            &self,
+            request: Request<kms_grpc::kms::v1::BackupRecoveryRequest>,
+        ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
+            METRICS.increment_request_counter(OP_CUSTODIAN_BACKUP_RECOVERY);
+            self.backup_operator.custodian_backup_recovery(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_CUSTODIAN_BACKUP_RECOVERY, tag);
+            })
+        }
+
+        #[tracing::instrument(skip(self, request))]
+        async fn backup_restore(
             &self,
             request: Request<kms_grpc::kms::v1::Empty>,
         ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
-            METRICS.increment_request_counter(OP_CUSTODIAN_CONTEXT_RESTORE);
-            self.backup_operator.custodian_backup_restore(request).await.inspect_err(|err| {
+            METRICS.increment_request_counter(OP_BACKUP_RESTORE);
+            self.backup_operator.backup_restore(request).await.inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
                 let _ = METRICS
-                    .increment_error_counter(OP_CUSTODIAN_CONTEXT_RESTORE, tag);
+                    .increment_error_counter(OP_BACKUP_RESTORE, tag);
             })
 
+        }
+
+        #[tracing::instrument(skip(self, _request))]
+        async fn custodian_recovery_init(
+            &self,
+            _request: Request<kms_grpc::kms::v1::Empty>,
+        ) -> Result<Response<kms_grpc::kms::v1::RecoveryRequest>, Status> {
+            Err(Status::unimplemented(
+                "custodian_recovery_init is not implemented",
+            ))
         }
     }
 }

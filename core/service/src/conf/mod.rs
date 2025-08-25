@@ -1,6 +1,5 @@
-use crate::util::rate_limiter::RateLimiterConfig;
-
 use self::threshold::ThresholdPartyConf;
+use crate::util::rate_limiter::RateLimiterConfig;
 use clap::ValueEnum;
 use observability::{
     conf::{Settings, TelemetryConfig},
@@ -157,11 +156,7 @@ pub struct AwsKmsKeychain {
 
 #[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
-pub struct SecretSharingKeychain {
-    pub custodian_keys: Vec<threshold::TlsKey>,
-    #[validate(range(min = 1))]
-    pub threshold: usize,
-}
+pub struct SecretSharingKeychain {}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, EnumIs, ValueEnum)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]

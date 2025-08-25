@@ -46,6 +46,18 @@ pub struct KeyId([u8; ID_LENGTH]);
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
 pub struct RequestId([u8; ID_LENGTH]);
 
+/// Compared the request ID as if it is an integer
+impl PartialOrd for RequestId {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RequestId {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0)
+    }
+}
 impl Versionize for RequestId {
     type Versioned<'vers> = &'vers RequestId;
 
@@ -649,5 +661,28 @@ mod tests {
 
         // Convert to RequestId (should fail)
         RequestId::try_from(proto_id).unwrap_err();
+    }
+
+    #[test]
+    fn request_id_ordering() {
+        let base = v1::RequestId {
+            request_id: "0102030405060708091011121314151617181920".to_string(),
+        };
+        let base_larger_1 = v1::RequestId {
+            request_id: "0102030405060708091011121314151617181921".to_string(),
+        };
+        let base_larger_2 = v1::RequestId {
+            request_id: "1102030405060708091011121314151617181920".to_string(),
+        };
+        let base_smaller_1 = v1::RequestId {
+            request_id: "0002030405060708091011121314151617181920".to_string(),
+        };
+        let base_smaller_2 = v1::RequestId {
+            request_id: "0102030405060708091011121314151617181919".to_string(),
+        };
+        assert!(base < base_larger_1);
+        assert!(base < base_larger_2);
+        assert!(base > base_smaller_1);
+        assert!(base > base_smaller_2);
     }
 }

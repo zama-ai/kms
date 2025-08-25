@@ -30,6 +30,8 @@ use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::InitRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 #[cfg(feature = "insecure")]
+use kms_grpc::rpc_types::BackupDataType;
+#[cfg(feature = "insecure")]
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::RequestId;
 use serial_test::serial;
@@ -418,9 +420,7 @@ async fn default_insecure_dkg_backup() {
         resp_tasks.spawn(async move {
             let req = Empty {};
             // send query
-            cur_client
-                .custodian_backup_restore(tonic::Request::new(req))
-                .await
+            cur_client.backup_restore(tonic::Request::new(req)).await
         });
     }
     while let Some(res) = resp_tasks.join_next().await {
@@ -535,13 +535,18 @@ async fn default_insecure_autobackup_after_deletion() {
             None,
         )
         .unwrap();
+        // Validate that the backup is constructed again
         assert!(backup_storage
-            .data_exists(&key_id, &PrivDataType::FheKeyInfo.to_string())
+            .data_exists(
+                &key_id,
+                &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string()
+            )
             .await
             .unwrap());
     }
 }
 
+#[tracing_test::traced_test]
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
@@ -583,6 +588,11 @@ async fn default_insecure_crs_backup() {
         )
         .unwrap();
         delete_all_at_request_id(&mut priv_storage, &req_id).await;
+        // Check that is has been removed
+        assert!(!priv_storage
+            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
+            .await
+            .unwrap());
     }
     // Now try to restore
     let mut resp_tasks = JoinSet::new();
@@ -591,9 +601,7 @@ async fn default_insecure_crs_backup() {
         resp_tasks.spawn(async move {
             let req = Empty {};
             // send query
-            cur_client
-                .custodian_backup_restore(tonic::Request::new(req))
-                .await
+            cur_client.backup_restore(tonic::Request::new(req)).await
         });
     }
     while let Some(res) = resp_tasks.join_next().await {
@@ -611,7 +619,7 @@ async fn default_insecure_crs_backup() {
             }
         }
     }
-    // Check the file is restored
+    println!("req id is {req_id}");
     for i in 1..=amount_parties {
         let backup_storage: FileStorage = FileStorage::new(
             test_path,
@@ -619,7 +627,23 @@ async fn default_insecure_crs_backup() {
             Some(Role::indexed_from_one(i)),
         )
         .unwrap();
+        // Check the back up is still there
         assert!(backup_storage
+            .data_exists(
+                &req_id,
+                &BackupDataType::PrivData(PrivDataType::CrsInfo).to_string()
+            )
+            .await
+            .unwrap());
+        // Check that the file has been restored
+        let priv_storage: FileStorage = FileStorage::new(
+            test_path,
+            StorageType::PRIV,
+            Some(Role::indexed_from_one(i)),
+        )
+        .unwrap();
+        // Check the back up is still there
+        assert!(priv_storage
             .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
             .await
             .unwrap());

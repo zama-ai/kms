@@ -21,8 +21,8 @@ use kms_grpc::{
 };
 use kms_lib::{
     backup::{
-        custodian::{Custodian, CustodianSetupMessage},
-        operator::{Operator, OperatorBackupOutput},
+        custodian::{Custodian, InternalCustodianSetupMessage},
+        operator::{InnerOperatorBackupOutput, Operator},
     },
     cryptography::{
         backup_pke,
@@ -243,10 +243,11 @@ fn test_custodian_setup_message(
     test: &CustodianSetupMessageTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let original_custodian_setup_message: CustodianSetupMessage =
+    let original_custodian_setup_message: InternalCustodianSetupMessage =
         load_and_unversionize(dir, test, format)?;
 
     let mut rng = AesRng::seed_from_u64(test.seed);
+    let name = "Testname".to_string();
     let (verification_key, signing_key) = gen_sig_keys(&mut rng);
     let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
     let custodian = Custodian::new(
@@ -257,12 +258,11 @@ fn test_custodian_setup_message(
         public_key,
     )
     .unwrap();
-    let mut new_custodian_setup_message = custodian.generate_setup_message(&mut rng).unwrap();
+    let mut new_custodian_setup_message = custodian.generate_setup_message(&mut rng, name).unwrap();
 
     // the timestamp will never match, so we modify it manually
     // the timestamp also affects the signature, so modify it as well
-    new_custodian_setup_message.msg.timestamp = original_custodian_setup_message.msg.timestamp;
-    new_custodian_setup_message.signature = original_custodian_setup_message.signature.clone();
+    new_custodian_setup_message.timestamp = original_custodian_setup_message.timestamp;
 
     if original_custodian_setup_message != new_custodian_setup_message {
         Err(test.failure(
@@ -282,7 +282,7 @@ fn test_operator_backup_output(
     test: &OperatorBackupOutputTest,
     format: DataFormat,
 ) -> Result<TestSuccess, TestFailure> {
-    let original_operator_backup_output: OperatorBackupOutput =
+    let original_operator_backup_output: InnerOperatorBackupOutput =
         load_and_unversionize(dir, test, format)?;
 
     let mut rng = AesRng::seed_from_u64(test.seed);
@@ -303,7 +303,11 @@ fn test_operator_backup_output(
         .collect();
     let custodian_messages: Vec<_> = custodians
         .iter()
-        .map(|c| c.generate_setup_message(&mut rng).unwrap())
+        .enumerate()
+        .map(|(i, c)| {
+            c.generate_setup_message(&mut rng, format!("Custodian-{i}"))
+                .unwrap()
+        })
         .collect();
 
     let operator = {
@@ -321,13 +325,14 @@ fn test_operator_backup_output(
         .unwrap()
     };
 
-    let new_operator_backup_output = &operator
+    let (cts, _commitments) = &operator
         .secret_share_and_encrypt(
             &mut rng,
             &test.plaintext,
             RequestId::from_bytes(test.backup_id),
         )
-        .unwrap()[&operator.role()];
+        .unwrap();
+    let new_operator_backup_output = &cts[&operator.role()];
     if original_operator_backup_output != *new_operator_backup_output {
         Err(test.failure(
             format!(
