@@ -6,6 +6,7 @@ use crate::execution::runtime::session::BaseSessionHandles;
 use crate::networking::value::BcastHash;
 use crate::networking::value::BroadcastValue;
 use crate::networking::value::NetworkValue;
+use crate::thread_handles::spawn_compute_bound;
 use crate::ProtocolDescription;
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -229,8 +230,11 @@ pub(crate) async fn receive_echos_from_all_batched<Z: Ring, B: BaseSessionHandle
     session: &B,
     receiver: &Role,
     non_answering_parties: &mut HashSet<Role>,
-    echoed_data: &mut HashMap<(Role, BroadcastValue<Z>), u32>,
-) -> anyhow::Result<HashMap<(Role, BcastHash), u32>> {
+    echoed_data: HashMap<(Role, BroadcastValue<Z>), u32>,
+) -> anyhow::Result<(
+    HashMap<(Role, BcastHash), u32>,
+    HashMap<(Role, BcastHash), BroadcastValue<Z>>,
+)> {
     //Receiving from every parties as everyone can send an echo
     let mut jobs = JoinSet::<Result<SendEchoJobType<Z>, Elapsed>>::new();
     generic_receive_from_all(
@@ -248,7 +252,7 @@ pub(crate) async fn receive_echos_from_all_batched<Z: Ring, B: BaseSessionHandle
     )?;
 
     //Process all the messages we just received, looking for values we can vote for
-    let registered_votes = process_echos(
+    process_echos(
         receiver,
         &mut jobs,
         echoed_data,
@@ -256,8 +260,7 @@ pub(crate) async fn receive_echos_from_all_batched<Z: Ring, B: BaseSessionHandle
         session.threshold() as usize,
         non_answering_parties,
     )
-    .await?;
-    Ok(registered_votes)
+    .await
 }
 
 /// Receives the votes from all parties, for all the parallel bcast
@@ -341,31 +344,40 @@ where
 async fn process_echos<Z: Ring>(
     receiver: &Role,
     echo_recv_tasks: &mut JoinSet<Result<SendEchoJobType<Z>, Elapsed>>,
-    echoed_data: &mut HashMap<(Role, BroadcastValue<Z>), u32>,
+    mut echoed_data: HashMap<(Role, BroadcastValue<Z>), u32>,
     num_parties: usize,
     threshold: usize,
     non_answering_parties: &mut HashSet<Role>,
-) -> anyhow::Result<HashMap<(Role, BcastHash), u32>> {
+) -> anyhow::Result<(
+    HashMap<(Role, BcastHash), u32>,
+    HashMap<(Role, BcastHash), BroadcastValue<Z>>,
+)> {
     internal_process_echos_or_votes(
         receiver,
         echo_recv_tasks,
-        echoed_data,
+        &mut echoed_data,
         num_parties,
         non_answering_parties,
     )
     .await?;
 
-    let mut registered_votes = HashMap::new();
-    //Any entry with at least N-t times is good for a vote
-    for ((role, m), num_entries) in echoed_data.iter() {
-        if num_entries >= &((num_parties - threshold) as u32) {
+    let (registered_vote, map_hash_to_value) = spawn_compute_bound(move || {
+        let mut registered_votes = HashMap::new();
+        let mut map_hash_to_value = HashMap::new();
+        //Any entry with at least N-t times is good for a vote
+        for ((role, m), num_entries) in echoed_data.into_iter() {
             let hash = m.to_bcast_hash().map_err(|e| {
                 anyhow::anyhow!("Failed to compute broadcast hash for role {}: {}", role, e)
             })?;
-            registered_votes.insert((*role, hash), 1);
+            map_hash_to_value.insert((role, hash), m);
+            if num_entries >= ((num_parties - threshold) as u32) {
+                registered_votes.insert((role, hash), 1);
+            }
         }
-    }
-    Ok(registered_votes)
+        Ok::<_, anyhow::Error>((registered_votes, map_hash_to_value))
+    })
+    .await??;
+    Ok((registered_vote, map_hash_to_value))
 }
 
 /// Sender casts a vote only for messages m in registered_votes for which numbers of votes >= threshold
@@ -540,29 +552,20 @@ impl Broadcast for SyncReliableBroadcast {
         // Parties receive Echo from others and process them,
         // if there are enough Echo messages then they will cast a vote in subsequent rounds
         // adding own echo to the map
-        let mut echos_count: HashMap<(Role, BroadcastValue<Z>), u32> = round1_contributions
+        let echos_count: HashMap<(Role, BroadcastValue<Z>), u32> = round1_contributions
             .iter()
             .map(|(k, v)| ((*k, v.clone()), 1))
             .collect();
         // receive echos from all parties,
         // updates the echos_count and outputs the values I should vote for
-        let mut registered_votes = receive_echos_from_all_batched(
+        let (mut registered_votes, mut map_hash_to_value) = receive_echos_from_all_batched(
             session,
             &my_role,
             &mut non_answering_parties,
-            &mut echos_count,
+            echos_count,
         )
         .await?;
 
-        let mut map_hash_to_value: HashMap<(Role, BcastHash), BroadcastValue<Z>> = echos_count
-            .into_iter()
-            .map(|((role, value), _)| {
-                let hash = value.to_bcast_hash().map_err(|e| {
-                    anyhow::anyhow!("Failed to compute broadcast hash for role {}: {}", role, e)
-                })?;
-                Ok(((role, hash), value))
-            })
-            .collect::<anyhow::Result<HashMap<_, _>>>()?;
         // Communication round 3 onward
         // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
         // Here propagate error if my own casted hashmap does not contain the expected party's id
@@ -594,10 +597,10 @@ impl Broadcast for SyncReliableBroadcast {
             &mut non_answering_parties,
         )
         .await?;
-        for ((role, value), hits) in registered_votes.into_iter() {
+        for ((role, hash), hits) in registered_votes.into_iter() {
             if hits >= min_honest_nodes {
                 //Retrieve the actual data from the hash
-                let value = map_hash_to_value.remove(&(role, value)).ok_or_else(|| {
+                let value = map_hash_to_value.remove(&(role, hash)).ok_or_else(|| {
                     anyhow_error_and_log(format!(
                         "Can't retrieve the value from the hash in broadcast. Role {role}.",
                     ))

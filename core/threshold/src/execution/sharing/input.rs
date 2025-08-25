@@ -20,6 +20,7 @@ where
     Z: Ring,
     ShamirSharings<Z>: InputOp<Z>,
 {
+    let deserialization_runtime = session.get_deserialization_runtime();
     session.network().increase_round_counter()?;
     if role.one_based() == input_party_id {
         let threshold = session.threshold();
@@ -75,7 +76,7 @@ where
         ))
         .await??;
 
-        let data = match NetworkValue::from_network(data)? {
+        let data = match NetworkValue::from_network(data, deserialization_runtime).await? {
             NetworkValue::VecRingValue(rv) => rv,
             _ => Err(anyhow_error_and_log(
                 "I have received sth different from a ring value!".to_string(),

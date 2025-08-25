@@ -1,7 +1,7 @@
 use aes_prng::AesRng;
 use rand::SeedableRng;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 use tonic::async_trait;
 
 use crate::{
@@ -37,7 +37,7 @@ impl ProtocolDescription for MaliciousPrssDrop {
 }
 
 #[async_trait]
-impl<Z: Zero> PRSSInit<Z> for MaliciousPrssDrop {
+impl<Z: Zero + Clone> PRSSInit<Z> for MaliciousPrssDrop {
     type OutputType = MaliciousPrssDrop;
     async fn init<S: BaseSessionHandles>(
         &self,
@@ -47,7 +47,7 @@ impl<Z: Zero> PRSSInit<Z> for MaliciousPrssDrop {
     }
 }
 
-impl<Z: Zero> DerivePRSSState<Z> for MaliciousPrssDrop {
+impl<Z: Zero + Clone> DerivePRSSState<Z> for MaliciousPrssDrop {
     type OutputType = MaliciousPrssDrop;
     fn new_prss_session_state(&self, _sid: SessionId) -> Self::OutputType {
         MaliciousPrssDrop {}
@@ -55,20 +55,30 @@ impl<Z: Zero> DerivePRSSState<Z> for MaliciousPrssDrop {
 }
 
 #[async_trait]
-impl<Z: Zero> PRSSPrimitives<Z> for MaliciousPrssDrop {
+impl<Z: Zero + Clone> PRSSPrimitives<Z> for MaliciousPrssDrop {
     /// Always return [`Z::ZERO`]
-    fn prss_next(&mut self, _party_id: Role) -> anyhow::Result<Z> {
-        Ok(Z::ZERO)
+    async fn prss_next_vec(&mut self, _party_id: Role, amount: usize) -> anyhow::Result<Vec<Z>> {
+        Ok(vec![Z::ZERO; amount])
     }
 
     /// Always return [`Z::ZERO`]
-    fn przs_next(&mut self, _party_id: Role, _threshold: u8) -> anyhow::Result<Z> {
-        Ok(Z::ZERO)
+    async fn przs_next_vec(
+        &mut self,
+        _party_id: Role,
+        _threshold: u8,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
+        Ok(vec![Z::ZERO; amount])
     }
 
     /// Always return [`Z::ZERO`]
-    fn mask_next(&mut self, _party_id: Role, _bd: u128) -> anyhow::Result<Z> {
-        Ok(Z::ZERO)
+    async fn mask_next_vec(
+        &mut self,
+        _party_id: Role,
+        _bd: u128,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
+        Ok(vec![Z::ZERO; amount])
     }
 
     /// Does nothing and returns an empty map
@@ -225,18 +235,28 @@ impl<
     > PRSSPrimitives<Z> for MaliciousPrssHonestInitRobustThenRandom<A, V, Bcast, Z>
 {
     /// Always return some random value
-    fn prss_next(&mut self, _party_id: Role) -> anyhow::Result<Z> {
-        Ok(Z::sample(&mut self.rng))
+    async fn prss_next_vec(&mut self, _party_id: Role, amount: usize) -> anyhow::Result<Vec<Z>> {
+        Ok((0..amount).map(|_| Z::sample(&mut self.rng)).collect())
     }
 
     /// Always return some random value
-    fn przs_next(&mut self, _party_id: Role, _threshold: u8) -> anyhow::Result<Z> {
-        Ok(Z::sample(&mut self.rng))
+    async fn przs_next_vec(
+        &mut self,
+        _party_id: Role,
+        _threshold: u8,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
+        Ok((0..amount).map(|_| Z::sample(&mut self.rng)).collect())
     }
 
     /// Always return some random value
-    fn mask_next(&mut self, _party_id: Role, _bd: u128) -> anyhow::Result<Z> {
-        Ok(Z::sample(&mut self.rng))
+    async fn mask_next_vec(
+        &mut self,
+        _party_id: Role,
+        _bd: u128,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
+        Ok((0..amount).map(|_| Z::sample(&mut self.rng)).collect())
     }
 
     /// Performs prss check honestly from the correctly derived prss state
@@ -393,8 +413,8 @@ impl<Z: Zero + RingWithExceptionalSequence + Invert + PRSSConversions> PRSSInit<
         _session: &mut S,
     ) -> anyhow::Result<Self::OutputType> {
         Ok(PRSSSetup {
-            sets: vec![],
-            alpha_powers: vec![],
+            sets: Arc::new(vec![]),
+            alpha_powers: Arc::new(vec![]),
         })
     }
 }
