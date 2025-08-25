@@ -206,11 +206,7 @@ pub(crate) fn compute_info_crs(
     let max_num_bits = max_num_bits_from_crs(pp);
     let crs_digest = safe_serialize_hash_element_versioned(domain_separator, pp)?;
 
-    let sol_type = CrsgenVerification {
-        crsId: alloy_primitives::U256::from_be_slice(crs_id.as_bytes()),
-        maxBitLength: alloy_primitives::U256::from_be_slice(&max_num_bits.to_be_bytes()),
-        crsDigest: crs_digest.to_vec().into(),
-    };
+    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone());
     let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
 
     Ok(CrsGenCallValues::new(
@@ -233,12 +229,12 @@ pub(crate) fn compute_info_standard_keygen(
     let public_key_digest =
         safe_serialize_hash_element_versioned(domain_separator, &keyset.public_key)?;
 
-    let sol_type = KeygenVerification {
-        prepKeygenId: alloy_primitives::U256::from_be_slice(prep_id.as_bytes()),
-        keyId: alloy_primitives::U256::from_be_slice(key_id.as_bytes()),
-        serverKeyDigest: server_key_digest.to_vec().into(),
-        publicKeyDigest: public_key_digest.to_vec().into(),
-    };
+    let sol_type = KeygenVerification::new(
+        prep_id,
+        key_id,
+        server_key_digest.clone(),
+        public_key_digest.clone(),
+    );
     let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
 
     Ok(KeyGenMetadata::new(
@@ -274,17 +270,6 @@ pub(crate) fn compute_info_decompression_keygen(
         external_signature,
     ))
 }
-
-// pub(crate) fn compute_info_preprocessing<S: Serialize + Versionize + Named>(
-//     sk: &PrivateSigKey,
-//     prep_id: &RequestId,
-//     domain: &alloy_sol_types::Eip712Domain,
-// ) -> anyhow::Result<Vec<u8>> {
-//     let sol_type = PrepKeygenVerification {
-//         prepKeygenId: alloy_primitives::U256::from_be_slice(prep_id.as_bytes()),
-//     };
-//     compute_external_pubdata_signature(sk, &sol_type, domain)
-// }
 
 /// Computes a unique handle for an element using its hash digest.
 ///
@@ -571,7 +556,7 @@ pub(crate) fn compute_external_pt_signature(
     signature
 }
 
-pub fn sign_sol_struct<D: SolStruct>(
+pub fn hash_sol_struct<D: SolStruct>(
     data: &D,
     eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<B256> {
@@ -586,7 +571,7 @@ pub fn compute_external_pubdata_signature<D: SolStruct>(
     data: &D,
     eip712_domain: &Eip712Domain,
 ) -> anyhow::Result<Vec<u8>> {
-    let message_hash = sign_sol_struct(data, eip712_domain)?;
+    let message_hash = hash_sol_struct(data, eip712_domain)?;
 
     let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
     let signer_address = signer.address();

@@ -96,13 +96,7 @@ impl Client {
 
             // check the signature
             match self.find_verifying_address(
-                &CrsgenVerification {
-                    crsId: alloy_primitives::U256::from_be_slice(request_id.as_bytes()),
-                    maxBitLength: alloy_primitives::U256::from_be_slice(
-                        &max_num_bits.to_be_bytes(),
-                    ),
-                    crsDigest: actual_digest.to_vec().into(),
-                },
+                &CrsgenVerification::new(request_id, max_num_bits, actual_digest.clone()),
                 domain,
                 &result.external_signature,
             ) {
@@ -192,14 +186,7 @@ impl Client {
         let max_num_bits = max_num_bits_from_crs(&pp);
         if self
             .verify_external_signature(
-                &CrsgenVerification {
-                    // TODO endianess
-                    crsId: alloy_primitives::U256::from_be_slice(request_id.as_bytes()),
-                    maxBitLength: alloy_primitives::U256::from_be_slice(
-                        &max_num_bits.to_be_bytes(),
-                    ),
-                    crsDigest: actual_digest.to_vec().into(),
-                },
+                &CrsgenVerification::new(&request_id, max_num_bits, actual_digest.clone()),
                 domain,
                 &crs_gen_result.external_signature,
             )

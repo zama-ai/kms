@@ -77,6 +77,16 @@ alloy_sol_types::sol! {
     }
 }
 
+impl CrsgenVerification {
+    pub fn new(crs_id: &RequestId, max_bit_length: usize, crs_digest: Vec<u8>) -> Self {
+        Self {
+            crsId: U256::from_be_slice(crs_id.as_bytes()),
+            maxBitLength: U256::from_be_slice(&max_bit_length.to_be_bytes()),
+            crsDigest: crs_digest.into(),
+        }
+    }
+}
+
 alloy_sol_types::sol! {
     struct PrepKeygenVerification {
         /// @notice The ID of the preprocessing keygen step.
@@ -94,6 +104,22 @@ alloy_sol_types::sol! {
         bytes serverKeyDigest;
         /// @notice The digest of the generated public key.
         bytes publicKeyDigest;
+    }
+}
+
+impl KeygenVerification {
+    pub fn new(
+        preproc_id: &RequestId,
+        key_id: &RequestId,
+        server_key_digest: Vec<u8>,
+        public_key_digest: Vec<u8>,
+    ) -> Self {
+        Self {
+            prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
+            keyId: U256::from_be_slice(key_id.as_bytes()),
+            serverKeyDigest: server_key_digest.into(),
+            publicKeyDigest: public_key_digest.into(),
+        }
     }
 }
 

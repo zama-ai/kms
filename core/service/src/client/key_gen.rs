@@ -143,6 +143,40 @@ impl Client {
         let public_key_digest =
             safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key)?;
 
+        let expected_server_key_digest = key_gen_result
+            .key_digests
+            .get(&PubDataType::ServerKey.to_string())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Server key digest not found in key generation result for key ID {}",
+                    key_id
+                )
+            })?;
+        let expected_public_key_digest = key_gen_result
+            .key_digests
+            .get(&PubDataType::PublicKey.to_string())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Public key digest not found in key generation result for key ID {}",
+                    key_id
+                )
+            })?;
+
+        if server_key_digest != *expected_server_key_digest {
+            return Err(anyhow::anyhow!(
+                "Computed server key digest {} of retrieved server key does not match expected key handle {}",
+                hex::encode(&server_key_digest),
+                hex::encode(expected_server_key_digest),
+            ));
+        }
+        if public_key_digest != *expected_public_key_digest {
+            return Err(anyhow::anyhow!(
+                "Computed public key digest {} of retrieved public key does not match expected key handle {}",
+                hex::encode(&public_key_digest),
+                hex::encode(expected_public_key_digest),
+            ));
+        }
+
         let actual_preproc_id: RequestId = some_or_err(
             key_gen_result.preprocessing_id.clone(),
             "Key generation result does not contain a preprocessing ID".to_string(),
@@ -165,12 +199,8 @@ impl Client {
             ));
         }
 
-        let sol_type = KeygenVerification {
-            prepKeygenId: alloy_primitives::U256::from_be_slice(preproc_id.as_bytes()),
-            keyId: alloy_primitives::U256::from_be_slice(key_id.as_bytes()),
-            serverKeyDigest: server_key_digest.to_vec().into(),
-            publicKeyDigest: public_key_digest.to_vec().into(),
-        };
+        let sol_type =
+            KeygenVerification::new(preproc_id, key_id, server_key_digest, public_key_digest);
 
         self.verify_external_signature(&sol_type, domain, &key_gen_result.external_signature)?;
 

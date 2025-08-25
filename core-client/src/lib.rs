@@ -21,7 +21,7 @@ use kms_grpc::{KeyId, RequestId};
 use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
 use kms_lib::engine::base::{
-    compute_pt_message_hash, safe_serialize_hash_element_versioned, sign_sol_struct,
+    compute_pt_message_hash, hash_sol_struct, safe_serialize_hash_element_versioned,
     DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
 };
 use kms_lib::util::file_handling::{read_element, write_element};
@@ -883,7 +883,7 @@ fn recover_address_from_ext_signature<S: SolStruct>(
     tracing::debug!("ext. signature: {:?}", sig);
     tracing::debug!("EIP-712 domain: {:?}", domain);
 
-    let hash = sign_sol_struct(data, domain)?;
+    let hash = hash_sol_struct(data, domain)?;
 
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("reconstructed address: {}", addr);
@@ -896,7 +896,7 @@ fn check_standard_keyset_ext_signature(
     public_key: &CompactPublicKey,
     server_key: &ServerKey,
     prep_id: &RequestId,
-    key_id: &KeyId,
+    key_id: &RequestId,
     external_sig: &[u8],
     domain: &Eip712Domain,
     kms_addrs: &[alloy_primitives::Address],
@@ -904,12 +904,7 @@ fn check_standard_keyset_ext_signature(
     let server_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, server_key)?;
     let public_key_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, public_key)?;
 
-    let sol_type = KeygenVerification {
-        prepKeygenId: alloy_primitives::U256::from_be_slice(prep_id.as_bytes()),
-        keyId: alloy_primitives::U256::from_be_slice(key_id.as_bytes()),
-        serverKeyDigest: server_key_digest.to_vec().into(),
-        publicKeyDigest: public_key_digest.to_vec().into(),
-    };
+    let sol_type = KeygenVerification::new(prep_id, key_id, server_key_digest, public_key_digest);
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses
@@ -933,11 +928,7 @@ fn check_crsgen_ext_signature(
     let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, crs)?;
 
     let max_num_bits = max_num_bits_from_crs(crs);
-    let sol_type = CrsgenVerification {
-        crsId: alloy_primitives::U256::from_be_slice(crs_id.as_bytes()),
-        maxBitLength: alloy_primitives::U256::from_be_slice(&max_num_bits.to_be_bytes()),
-        crsDigest: crs_digest.to_vec().into(),
-    };
+    let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest);
     let addr = recover_address_from_ext_signature(&sol_type, domain, external_sig)?;
 
     // check that the address is in the list of known KMS addresses
@@ -2590,7 +2581,7 @@ async fn fetch_and_check_keygen(
             &public_key,
             &server_key,
             &prep_id.try_into()?,
-            &request_id.into(),
+            &request_id,
             &external_signature,
             &domain,
             kms_addrs,
@@ -2759,11 +2750,7 @@ mod tests {
 
         let max_num_bits = max_num_bits_from_crs(&crs);
         let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
-        let crs_sol_struct = CrsgenVerification {
-            crsId: alloy_primitives::U256::from_be_slice(crs_id.as_bytes()),
-            maxBitLength: alloy_primitives::U256::from_be_slice(&max_num_bits.to_be_bytes()),
-            crsDigest: crs_digest.to_vec().into(),
-        };
+        let crs_sol_struct = CrsgenVerification::new(crs_id, max_num_bits, crs_digest);
 
         // sign with EIP712
         let external_sig =

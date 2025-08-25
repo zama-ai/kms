@@ -1,6 +1,6 @@
 use crate::anyhow_error_and_log;
 use crate::client::client_wasm::Client;
-use crate::engine::base::sign_sol_struct;
+use crate::engine::base::hash_sol_struct;
 use crate::vault::storage::{
     crypto_material::{
         get_client_signing_key, get_client_verification_key, get_core_verification_key,
@@ -110,7 +110,7 @@ impl Client {
             external_sig,
             external_sig[64] & 0x01 == 0,
         );
-        let hash = if let Ok(h) = sign_sol_struct(data, domain) {
+        let hash = if let Ok(h) = hash_sol_struct(data, domain) {
             h
         } else {
             tracing::error!("Could not hash SolStruct");
