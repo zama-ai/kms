@@ -459,13 +459,14 @@ impl<
             inner.request_id
         );
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) = {
-            let inner_compute = inner.clone();
+            // Not optimal as we always compute this string (which was true before), but at least we don't clone inner anymore
+            let err_str = format!(
+                "Failed to validate user decryption request: {}",
+                format_user_request(&inner)
+            );
             tonic_handle_potential_err(
-                spawn_compute_bound(move || validate_user_decrypt_req(&inner_compute)).await,
-                format!(
-                    "Failed to validate user decryption request: {}",
-                    format_user_request(&inner)
-                ),
+                spawn_compute_bound(move || validate_user_decrypt_req(&inner)).await,
+                err_str,
             )??
         };
 
