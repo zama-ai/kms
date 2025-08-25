@@ -4,7 +4,7 @@ use crate::tonic_some_or_err;
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
     self, BackupRecoveryRequest, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
-    OperatorPublicKey, KeyMaterialAvailabilityResponse,
+    KeyMaterialAvailabilityResponse, OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use tonic::{Request, Response, Status};

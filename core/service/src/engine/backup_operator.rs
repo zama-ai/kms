@@ -20,7 +20,7 @@ use crate::{
 };
 use kms_grpc::{kms::v1::BackupRecoveryRequest, rpc_types::BackupDataType};
 use kms_grpc::{
-    kms::v1::{Empty, OperatorPublicKey},
+    kms::v1::{Empty, KeyMaterialAvailabilityResponse, OperatorPublicKey},
     rpc_types::{PrivDataType, SignedPubDataHandleInternal},
     utils::tonic_result::tonic_handle_potential_err,
 };
@@ -145,6 +145,59 @@ where
                 "Backup vault is not configured",
             )),
         }
+    }
+
+    async fn get_key_material_availability(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status> {
+        let priv_storage = self.crypto_storage.get_private_storage();
+        let priv_guard = priv_storage.lock().await;
+
+        // Query FHE key IDs
+        let fhe_key_ids_set = priv_guard
+            .all_data_ids(&PrivDataType::FheKeyInfo.to_string())
+            .await
+            .map_err(|e| Status::internal(format!("Failed to query FHE keys: {}", e)))?;
+
+        // Query CRS IDs
+        let crs_key_ids_set = priv_guard
+            .all_data_ids(&PrivDataType::CrsInfo.to_string())
+            .await
+            .map_err(|e| Status::internal(format!("Failed to query CRS keys: {}", e)))?;
+
+        // Convert HashSet<RequestId> to Vec<String>
+        let fhe_key_ids: Vec<String> = fhe_key_ids_set
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect();
+        let crs_key_ids: Vec<String> = crs_key_ids_set
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect();
+
+        // Threshold KMS doesn't have preprocessing keys in the same way as centralized
+        // They're handled via metastores for preprocessing material
+        let preprocessing_ids = Vec::new();
+
+        let total_count = fhe_key_ids.len() + crs_key_ids.len() + preprocessing_ids.len();
+
+        // Get storage backend info
+        let storage_info = format!(
+            "Threshold KMS - {} storage backend",
+            std::any::type_name::<PrivS>()
+                .split("::")
+                .last()
+                .unwrap_or("Unknown")
+        );
+
+        Ok(Response::new(KeyMaterialAvailabilityResponse {
+            fhe_key_ids,
+            crs_key_ids,
+            preprocessing_ids,
+            total_key_count: total_count as i32,
+            storage_info,
+        }))
     }
 }
 
