@@ -8,7 +8,7 @@
 
 **Cause**: The server doesn't have enough memory.
 
-**Possible solutions**: Use a more powerful server. Currently, we use `hpc7a` machines for some our benchmarks, with 192 cores and 768 GB RAM. A machine like an `c7i.metal-24xl` with 96 cores and 192 GB RAM is also fine for most cases.
+**Possible solutions**: Use a more powerful server. Currently, we use `hpc7a` machines for some of our benchmarks, with 192 cores and 768 GB RAM. A machine like an `c7i.metal-24xl` with 96 cores and 192 GB RAM is also fine for most cases.
 
 ---
 
@@ -58,7 +58,7 @@ WARN kms_lib::threshold::threshold_kms: failed to read PRSS from file with error
 INFO kms_lib::threshold::threshold_kms: Initializing threshold KMS server without PRSS Setup, remember to call the init GRPC endpoint
 ```
 
-**Cause**: The PRSS Setup file should be stored under `keys/PRIV-pX/PrssSetup/000..0001` in `PRIV-pX`  (where `pX` refers to the parties `p1`, `p2`, etc.). It is not located there there or is corrupted.
+**Cause**: The PRSS Setup file should be stored under `keys/PRIV-pX/PrssSetup/000..0001` in `PRIV-pX`  (where `pX` refers to the parties `p1`, `p2`, etc.). It is not located there or is corrupted.
 
 **Possible solutions**: Check the PRSS Setup file location and make sure it is correct, possibly re-run PRSS-init.
 
