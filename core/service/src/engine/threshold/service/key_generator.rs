@@ -428,10 +428,14 @@ impl<
                 let mut map = self.preproc_buckets.write().await;
                 map.delete(&preproc_id)
             };
-            PreprocHandleWithMode::Secure((
-                preproc_id,
-                handle_res_mapping(preproc, &preproc_id, "Preprocessing").await?,
-            ))
+            let prep_bucket = handle_res_mapping(preproc, &preproc_id, "Preprocessing").await?;
+            if prep_bucket.preprocessing_id != preproc_id {
+                return Err(tonic::Status::internal(format!(
+                    "Preprocessing ID mismatch: expected {}, got {} in bucket",
+                    preproc_id, prep_bucket.preprocessing_id
+                )));
+            }
+            PreprocHandleWithMode::Secure((preproc_id, prep_bucket.preprocessing_store))
         };
 
         tonic_handle_potential_err(
@@ -1468,17 +1472,23 @@ mod tests {
         // We need to setup the preprocessor metastore so that keygen will pass
         for prep_id in &prep_ids {
             let session_id = prep_id.derive_session_id().unwrap();
-            let dummy_prep = Box::new(DummyPreprocessing::<ResiduePolyF4Z128>::new(
-                42,
-                &session_preparer
-                    .make_base_session(session_id, NetworkMode::Sync)
-                    .await
-                    .unwrap(),
-            ));
+            let dummy_prep = BucketMetaStore {
+                preprocessing_id: *prep_id,
+                external_signature: vec![],
+                preprocessing_store: Arc::new(Mutex::new(Box::new(DummyPreprocessing::<
+                    ResiduePolyF4Z128,
+                >::new(
+                    42,
+                    &session_preparer
+                        .make_base_session(session_id, NetworkMode::Sync)
+                        .await
+                        .unwrap(),
+                )))),
+            };
             let mut guarded_prep_bucket = kg.preproc_buckets.write().await;
             (*guarded_prep_bucket).insert(prep_id).unwrap();
             (*guarded_prep_bucket)
-                .update(prep_id, Ok(Arc::new(Mutex::new(dummy_prep))))
+                .update(prep_id, Ok(dummy_prep))
                 .unwrap();
         }
         (prep_ids, kg)

@@ -166,7 +166,13 @@ impl std::fmt::Debug for ThresholdFheKeys {
     }
 }
 
-pub type BucketMetaStore = Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>;
+#[derive(Clone)]
+pub struct BucketMetaStore {
+    pub(crate) preprocessing_id: RequestId,
+    pub(crate) external_signature: Vec<u8>,
+    // TODO check if we need Arc/Mutex here
+    pub(crate) preprocessing_store: Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>,
+}
 
 #[cfg(not(feature = "insecure"))]
 pub type RealThresholdKms<PubS, PrivS> = ThresholdKms<
@@ -533,6 +539,7 @@ where
     let insecure_keygenerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
 
     let keygen_preprocessor = RealPreprocessor {
+        sig_key: Arc::clone(&base_kms.sig_key),
         prss_setup: prss_setup_z128,
         preproc_buckets,
         preproc_factory,

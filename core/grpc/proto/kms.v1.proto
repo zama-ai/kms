@@ -83,6 +83,8 @@ message KeyGenPreprocRequest {
   FheParameter params = 2;
   // The keyset configuration that controls what kind of key to generate.
   KeySetConfig keyset_config = 3;
+  // The EIP712 domain used for signing the response.
+  Eip712DomainMsg domain = 4;
 }
 
 enum KeySetCompressionConfig {
@@ -95,7 +97,11 @@ enum KeySetCompressionConfig {
 // It is intentionally left empty,
 // we may extend it later with a signature on the preproc request ID
 // potentially.
-message KeyGenPreprocResult {}
+message KeyGenPreprocResult {
+  // Preprocessing ID used for keygen
+  RequestId preprocessing_id = 1;
+  bytes external_signature = 2;
+}
 
 // Request for generating new keys under a certain handle and return a URI where
 // they can be accessed.
@@ -128,7 +134,7 @@ message KeyGenResult {
   // The 32 Byte / 256 Bit ID of the key generation request, without `0x` prefix.
   RequestId request_id = 1;
 
-  // preprocessing ID used for keygen
+  // Preprocessing ID used for keygen
   RequestId preprocessing_id = 2;
 
   // mapping of key type string to digest

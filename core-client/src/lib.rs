@@ -1276,7 +1276,8 @@ async fn do_preproc(
     let req_id = RequestId::new_random(rng);
 
     let max_iter = cmd_conf.max_iter;
-    let pp_req = internal_client.preproc_request(&req_id, Some(param), None)?; //TODO keyset config
+    let domain = dummy_domain();
+    let pp_req = internal_client.preproc_request(&req_id, Some(param), None, &domain)?; //TODO keyset config
 
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
@@ -1297,7 +1298,10 @@ async fn do_preproc(
     }
     assert_eq!(req_response_vec.len(), num_parties); // check that the request has reached all parties
 
-    let _ = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    let responses = get_preproc_keygen_responses(core_endpoints, req_id, max_iter).await?;
+    for response in responses {
+        internal_client.process_preproc_response(&req_id, &domain, &response)?;
+    }
 
     Ok(req_id)
 }

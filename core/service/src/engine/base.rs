@@ -21,6 +21,7 @@ use kms_grpc::kms::v1::{
 };
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::CrsGenSignedPubDataHandleInternalWrapper;
+use kms_grpc::rpc_types::PrepKeygenVerification;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
 use kms_grpc::rpc_types::{
@@ -214,6 +215,16 @@ pub(crate) fn compute_info_crs(
         crs_digest,
         external_signature,
     ))
+}
+
+pub(crate) fn compute_external_signature_preprocessing(
+    sk: &PrivateSigKey,
+    prep_id: &RequestId,
+    domain: &alloy_sol_types::Eip712Domain,
+) -> anyhow::Result<Vec<u8>> {
+    let sol_type = PrepKeygenVerification::new(prep_id);
+    let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
+    Ok(external_signature)
 }
 
 pub(crate) fn compute_info_standard_keygen(

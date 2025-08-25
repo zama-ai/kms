@@ -14,10 +14,13 @@
 //! 3. `GetMetaStoreInfo` - Get meta-store capacity and current counts
 
 use std::{str::FromStr, sync::Arc};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 use crate::{
-    engine::base::{CrsGenCallValues, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues},
+    engine::{
+        base::{CrsGenCallValues, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues},
+        threshold::service::BucketMetaStore,
+    },
     util::meta_store::MetaStore,
 };
 use kms_grpc::{
@@ -29,9 +32,6 @@ use kms_grpc::{
         RequestStatusInfo,
     },
 };
-
-use threshold_fhe::algebra::galois_rings::degree_4::ResiduePolyF4Z128;
-use threshold_fhe::execution::online::preprocessing::DKGPreprocessing;
 
 // Type aliases for the different MetaStore types used in the system
 
@@ -46,9 +46,6 @@ pub type UserDecryptMetaStore = MetaStore<UserDecryptCallValues>;
 
 /// MetaStore for CRS (Common Reference String) data
 pub type CrsMetaStore = MetaStore<CrsGenCallValues>;
-
-/// MetaStore for DKG (Distributed Key Generation) preprocessing buckets
-pub type BucketMetaStore = Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>;
 
 /// MetaStore for preprocessing data, wrapping the bucket store in an Arc<Mutex<>>
 pub type PreprocMetaStore = MetaStore<BucketMetaStore>;

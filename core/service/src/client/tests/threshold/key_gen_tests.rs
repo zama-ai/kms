@@ -872,8 +872,10 @@ async fn run_preproc(
         }
     };
 
+    let domain = dummy_domain();
+
     let preproc_request = internal_client
-        .preproc_request(preproc_req_id, Some(parameter), keyset_config)
+        .preproc_request(preproc_req_id, Some(parameter), keyset_config, &domain)
         .unwrap();
 
     // Execute preprocessing
@@ -894,7 +896,12 @@ async fn run_preproc(
     assert_eq!(preproc_res.len(), amount_parties);
 
     // the responses should be empty
-    let _responses = poll_key_gen_preproc_result(preproc_request, kms_clients, MAX_TRIES).await;
+    let responses = poll_key_gen_preproc_result(preproc_request, kms_clients, MAX_TRIES).await;
+    for response in responses {
+        internal_client
+            .process_preproc_response(preproc_req_id, &domain, &response)
+            .unwrap();
+    }
 }
 
 //Check status of preproc request

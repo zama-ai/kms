@@ -7,9 +7,11 @@ use crate::vault::storage::StorageReader;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::kms::v1::{
-    FheParameter, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult, KeySetAddedInfo, KeySetConfig,
+    FheParameter, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
+    KeySetAddedInfo, KeySetConfig,
 };
 use kms_grpc::rpc_types::KeygenVerification;
+use kms_grpc::rpc_types::PrepKeygenVerification;
 use kms_grpc::rpc_types::{
     alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
 };
@@ -54,36 +56,12 @@ impl Client {
         })
     }
 
-    // NOTE: we're not checking it against the request
-    // since this part of the client is only used for testing
-    // see https://github.com/zama-ai/kms-core/issues/911
-    pub async fn process_get_key_gen_resp<R: StorageReader>(
-        &self,
-        resp: &KeyGenResult,
-        storage: &R,
-    ) -> anyhow::Result<(WrappedPublicKeyOwned, ServerKey)> {
-        let pk = some_or_err(
-            self.retrieve_public_key_no_verification(resp, storage)
-                .await?,
-            "Could not validate public key".to_string(),
-        )?;
-        let server_key: ServerKey = match self
-            .retrieve_server_key_no_verification(resp, storage)
-            .await?
-        {
-            Some(server_key) => server_key,
-            None => {
-                return Err(anyhow_error_and_log("Could not validate server key"));
-            }
-        };
-        Ok((pk, server_key))
-    }
-
     pub fn preproc_request(
         &self,
         request_id: &RequestId,
         param: Option<FheParameter>,
         keyset_config: Option<KeySetConfig>,
+        domain: &Eip712Domain,
     ) -> anyhow::Result<KeyGenPreprocRequest> {
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
@@ -91,17 +69,40 @@ impl Client {
             )));
         }
 
+        let domain = alloy_to_protobuf_domain(domain)?;
+
         Ok(KeyGenPreprocRequest {
             params: param.unwrap_or_default().into(),
             keyset_config,
             request_id: Some((*request_id).into()),
+            domain: Some(domain),
         })
     }
 
-    /// Retrieve and validate a server key based on the result from storage.
-    /// The method will return the key if retrieval and validation is successful,
-    /// but will return None in case the signature is invalid or does not match the actual key
-    /// handle.
+    pub fn process_preproc_response(
+        &self,
+        preproc_id: &RequestId,
+        domain: &Eip712Domain,
+        resp: &KeyGenPreprocResult,
+    ) -> anyhow::Result<()> {
+        let sol_type = PrepKeygenVerification::new(preproc_id);
+        let req_id_from_resp = parse_optional_proto_request_id(
+            &resp.preprocessing_id,
+            RequestIdParsingErr::Other("cannot parse preprocessing ID".to_string()),
+        )?;
+        if *preproc_id != req_id_from_resp {
+            return Err(anyhow_error_and_log(format!(
+                "Preprocessing ID in preprocessing result {} does not match the provided preprocessing ID {}",
+                req_id_from_resp, preproc_id
+            )));
+        }
+
+        self.verify_external_signature(&sol_type, domain, &resp.external_signature)
+    }
+
+    /// Retrieve a server key based on the result from storage.
+    /// The method will return the key if retrieval is successful,
+    /// but will return None in case some sanity check fails.
     async fn retrieve_server_key_no_verification<R: StorageReader>(
         &self,
         key_gen_result: &KeyGenResult,

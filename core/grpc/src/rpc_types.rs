@@ -94,6 +94,14 @@ alloy_sol_types::sol! {
     }
 }
 
+impl PrepKeygenVerification {
+    pub fn new(preproc_id: &RequestId) -> Self {
+        Self {
+            prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
+        }
+    }
+}
+
 alloy_sol_types::sol! {
     struct KeygenVerification {
         /// @notice The ID of the preprocessed step.
