@@ -167,7 +167,7 @@ where
         }
     }
 
-    /// Restores the most recent custodian based backup. 
+    /// Restores the most recent custodian based backup.
     async fn custodian_recovery_init(
         &self,
         _request: Request<Empty>,
