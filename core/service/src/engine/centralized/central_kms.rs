@@ -10,7 +10,7 @@ use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signcryption::{signcrypt, SigncryptionPayload};
-#[cfg(feature = "insecure")]
+#[cfg(feature = "non-wasm")]
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenCallValues, PubDecCallValues, UserDecryptCallValues};
@@ -476,7 +476,7 @@ pub struct CentralizedKms<
     pub(crate) tracker: Arc<TaskTracker>,
     pub(crate) thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
-#[cfg(feature = "insecure")]
+#[cfg(feature = "non-wasm")]
 pub type RealCentralizedKms<PubS, PrivS> =
     CentralizedKms<PubS, PrivS, RealContextManager<PubS, PrivS>, RealBackupOperator<PubS, PrivS>>;
 

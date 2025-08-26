@@ -167,9 +167,10 @@ where
         }
     }
 
+    /// Restores the most recent custodian based backup. 
     async fn custodian_recovery_init(
         &self,
-        _request: Request<Empty>, // todo could be opt to allow restore of old backups
+        _request: Request<Empty>,
     ) -> Result<Response<RecoveryRequest>, Status> {
         // Lock the ephemeral key for the entire duration of the method
         let mut guarded_priv_key = self.ephemeral_dec_key.lock().await;
@@ -401,7 +402,6 @@ async fn restore_data_type<
 where
     for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
 {
-    // todo this should be limited to the correct backup id otherwise things will fail
     let backup_data_type = BackupDataType::PrivData(data_type_enum).to_string();
     let req_ids = backup_vault.all_data_ids(&backup_data_type).await?;
     for request_id in req_ids.iter() {
