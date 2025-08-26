@@ -466,7 +466,6 @@ pub struct CentralizedKms<
     // Map storing ongoing CRS generation requests.
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     pub(crate) custodian_meta_map: Arc<RwLock<CustodianMetaStore>>,
-
     pub(crate) context_manager: CM,
     pub(crate) backup_operator: BO,
     // Rate limiting
