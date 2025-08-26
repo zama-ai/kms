@@ -120,23 +120,6 @@ async fn internal_send_to_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
     Ok(())
 }
 
-/// Send specific values to specific parties.
-/// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
-pub async fn send_distinct_to_parties<Z: Ring, B: BaseSessionHandles>(
-    session: &B,
-    sender: &Role,
-    values_to_send: HashMap<&Role, NetworkValue<Z>>,
-) -> anyhow::Result<()> {
-    for other_role in session.roles() {
-        let networking = Arc::clone(session.network());
-        let msg = values_to_send[other_role].clone();
-        if *sender != *other_role {
-            networking.send(msg.to_network(), other_role).await?;
-        }
-    }
-    Ok(())
-}
-
 /// Receive specific values to specific parties.
 /// The list of parties to receive from is given in `senders`.
 /// Returns [`NetworkValue::Bot`] in case of failure to receive but without adding parties to the corruption or dispute sets.

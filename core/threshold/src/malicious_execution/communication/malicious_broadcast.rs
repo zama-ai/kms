@@ -36,7 +36,7 @@ impl ProtocolDescription for MaliciousBroadcastDrop {
 impl Broadcast for MaliciousBroadcastDrop {
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
-        _session: &B,
+        _session: &mut B,
         _senders: &HashSet<Role>,
         _my_message: Option<BroadcastValue<Z>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
@@ -61,7 +61,7 @@ impl ProtocolDescription for MaliciousBroadcastSender {
 impl Broadcast for MaliciousBroadcastSender {
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
-        session: &B,
+        session: &mut B,
         senders: &HashSet<Role>,
         my_message: Option<BroadcastValue<Z>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
@@ -204,7 +204,7 @@ impl ProtocolDescription for MaliciousBroadcastSenderEcho {
 impl Broadcast for MaliciousBroadcastSenderEcho {
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
-        session: &B,
+        session: &mut B,
         senders: &HashSet<Role>,
         my_message: Option<BroadcastValue<Z>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {

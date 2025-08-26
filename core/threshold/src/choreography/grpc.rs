@@ -1557,7 +1557,7 @@ where
             let ctxt = ctxts[0].clone();
 
             //Create one session for bcast
-            let bcast_session = self
+            let mut bcast_session = self
                 .create_base_session(
                     session_id,
                     threshold,
@@ -1608,7 +1608,7 @@ where
                     //Do bcast after the Sns to sync parties
                     let _ = SyncReliableBroadcast::default()
                         .broadcast_from_all(
-                            &bcast_session,
+                            &mut bcast_session,
                             BroadcastValue::from(Z128::from_u128(42)),
                         )
                         .await;
@@ -1736,7 +1736,7 @@ where
                     //Do bcast to sync parties
                     let _ = SyncReliableBroadcast::default()
                         .broadcast_from_all(
-                            &bcast_session,
+                            &mut bcast_session,
                             BroadcastValue::from(Z128::from_u128(42)),
                         )
                         .await;
