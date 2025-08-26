@@ -14,10 +14,10 @@ data:
   aws.toml: |
     [aws]
     region = "${AWS_REGION}"
-    role_arn = "${AWS_ROLE_ARN}"
     {{ if .Values.minio.enabled }}
     s3_endpoint = "http://minio:9000"
     {{ else }}
+    role_arn = "${AWS_ROLE_ARN}"
       {{ if .Values.kmsCore.nitroEnclave.enabled }}
         {{ if .Values.kmsCore.nitroEnclave.ports.imds }}
     imds_endpoint = "http://localhost:{{ .Values.kmsCore.nitroEnclave.ports.imds }}"
@@ -38,7 +38,7 @@ data:
       {{ end }}
     {{ else }}
     [public_vault.storage.file]
-    path = "./keys"
+    path = "/keys"
     {{ end }}
 
 
@@ -51,7 +51,7 @@ data:
 
     {{ else }}
     [private_vault.storage.file]
-    path = "./keys"
+    path = "/keys"
     {{ end }}
     {{ if .Values.kmsCore.nitroEnclave.enabled }}
     [private_vault.keychain.aws_kms]
