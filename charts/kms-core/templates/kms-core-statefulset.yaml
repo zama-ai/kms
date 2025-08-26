@@ -287,7 +287,7 @@ spec:
                 {{- end }}
               {{- else }}
               --public-storage file \
-              --public-file-path "./keys" \
+              --public-file-path "/keys" \
               {{- end }}
               {{- if .Values.kmsCore.privateVault.s3.enabled -}}
               --private-storage s3 \
@@ -297,7 +297,7 @@ spec:
                 {{- end }}
               {{- else }}
               --private-storage file \
-              --private-file-path "./keys" \
+              --private-file-path "/keys" \
               {{- end }}
               {{- if .Values.kmsCore.privateVault.awskms.enabled }}
               --root-key-id "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID:={{ .Values.kmsCore.privateVault.awskms.rootKeyId }}}" \
