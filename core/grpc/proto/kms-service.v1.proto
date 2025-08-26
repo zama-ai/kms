@@ -377,5 +377,5 @@ service CoreServiceEndpoint {
   // # Conditions
   // ## Pre-condition:  -
   // ## Post-condition: -
-  rpc CustodianBackupRecovery(kms.v1.BackupRecoveryRequest) returns (kms.v1.Empty);
+  rpc CustodianBackupRecovery(kms.v1.CustodianRecoveryRequest) returns (kms.v1.Empty);
 }

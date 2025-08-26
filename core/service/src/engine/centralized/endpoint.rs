@@ -3,7 +3,7 @@ use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::tonic_some_or_err;
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
-    self, BackupRecoveryRequest, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
+    self, CustodianRecoveryRequest, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
     OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
@@ -320,7 +320,7 @@ impl<
     #[tracing::instrument(skip(self, request))]
     async fn custodian_backup_recovery(
         &self,
-        request: Request<BackupRecoveryRequest>,
+        request: Request<CustodianRecoveryRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_CUSTODIAN_BACKUP_RECOVERY);
         self.backup_operator

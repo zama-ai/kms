@@ -32,7 +32,7 @@ use crate::{
 };
 use itertools::Itertools;
 use kms_grpc::{
-    kms::v1::{BackupRecoveryRequest, RecoveryRequest},
+    kms::v1::{CustodianRecoveryRequest, RecoveryRequest},
     rpc_types::{BackupDataType, PubDataType},
     RequestId,
 };
@@ -222,7 +222,7 @@ where
     /// in order to minimize the possibility of leakage.
     async fn custodian_backup_recovery(
         &self,
-        request: Request<BackupRecoveryRequest>,
+        request: Request<CustodianRecoveryRequest>,
     ) -> Result<Response<Empty>, Status> {
         let ephemeral_dec_key = {
             let guarded_dec_key = self.ephemeral_dec_key.lock().await;

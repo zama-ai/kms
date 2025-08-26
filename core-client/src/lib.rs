@@ -10,9 +10,9 @@ use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
 use kms_grpc::kms::v1::{
-    BackupRecoveryRequest, CiphertextFormat, CrsGenResult, CustodianRecoveryOutput, FheParameter,
-    KeyGenPreprocResult, KeyGenResult, PublicDecryptionRequest, PublicDecryptionResponse,
-    TypedCiphertext, TypedPlaintext,
+    CiphertextFormat, CrsGenResult, CustodianRecoveryOutput, CustodianRecoveryRequest,
+    FheParameter, KeyGenPreprocResult, KeyGenResult, PublicDecryptionRequest,
+    PublicDecryptionResponse, TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, InternalCustodianRecoveryOutput, PubDataType};
@@ -1327,7 +1327,7 @@ async fn do_custodian_backup_restore(
         }
         req_tasks.spawn(async move {
             cur_client
-                .custodian_backup_recovery(tonic::Request::new(BackupRecoveryRequest {
+                .custodian_backup_recovery(tonic::Request::new(CustodianRecoveryRequest {
                     custodian_context_id: Some(custodian_context_id.into()),
                     custodian_recovery_outputs: cur_recoveries,
                 }))

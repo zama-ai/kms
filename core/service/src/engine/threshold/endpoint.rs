@@ -329,7 +329,7 @@ impl_endpoint! {
         #[tracing::instrument(skip(self, request))]
         async fn custodian_backup_recovery(
             &self,
-            request: Request<kms_grpc::kms::v1::BackupRecoveryRequest>,
+            request: Request<kms_grpc::kms::v1::CustodianRecoveryRequest>,
         ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
             METRICS.increment_request_counter(OP_CUSTODIAN_BACKUP_RECOVERY);
             self.backup_operator.custodian_backup_recovery(request).await.inspect_err(|err| {

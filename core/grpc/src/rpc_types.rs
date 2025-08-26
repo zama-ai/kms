@@ -1,5 +1,5 @@
 use crate::kms::v1::{
-    BackupRecoveryRequest, CustodianRecoveryOutput, Eip712DomainMsg, TypedCiphertext,
+    CustodianRecoveryOutput, CustodianRecoveryRequest, Eip712DomainMsg, TypedCiphertext,
     TypedPlaintext, TypedSigncryptedCiphertext,
 };
 use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
@@ -1013,27 +1013,27 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum InternalBackupRecoveryRequestVersioned {
-    V0(InternalBackupRecoveryRequest),
+pub enum InternalCustodianRecoveryRequestVersioned {
+    V0(InternalCustodianRecoveryRequest),
 }
 
 /// This is the internal representation of the custodian context.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
-#[versionize(InternalBackupRecoveryRequestVersioned)]
-pub struct InternalBackupRecoveryRequest {
+#[versionize(InternalCustodianRecoveryRequestVersioned)]
+pub struct InternalCustodianRecoveryRequest {
     pub custodian_context_id: RequestId,
     pub custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
 }
 
-impl Named for InternalBackupRecoveryRequest {
+impl Named for InternalCustodianRecoveryRequest {
     const NAME: &'static str = "backup::BackupRestoreRequest";
 }
 
-impl TryFrom<BackupRecoveryRequest> for InternalBackupRecoveryRequest {
+impl TryFrom<CustodianRecoveryRequest> for InternalCustodianRecoveryRequest {
     type Error = anyhow::Error;
 
-    fn try_from(value: BackupRecoveryRequest) -> Result<Self, Self::Error> {
-        Ok(InternalBackupRecoveryRequest {
+    fn try_from(value: CustodianRecoveryRequest) -> Result<Self, Self::Error> {
+        Ok(InternalCustodianRecoveryRequest {
             custodian_context_id: value
                 .custodian_context_id
                 .ok_or_else(|| {

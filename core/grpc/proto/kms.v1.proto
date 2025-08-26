@@ -497,7 +497,7 @@ message CustodianRecoveryOutput {
 
 // The recovery request which contains the needed recovery data from all the custodians, 
 // which is sent to the KMS to recover the private backup master decryption key
-message BackupRecoveryRequest { // TODO rename to CustodiansRecoveryRequest
+message CustodianRecoveryRequest {
   RequestId custodian_context_id = 1;
   repeated CustodianRecoveryOutput custodian_recovery_outputs = 2;
 }
