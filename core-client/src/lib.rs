@@ -15,10 +15,8 @@ use kms_grpc::kms::v1::{
     TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::{
-    protobuf_to_alloy_domain, CrsgenVerification, InternalCustodianRecoveryOutput,
-    KeygenVerification, PubDataType,
-};
+use kms_grpc::rpc_types::{protobuf_to_alloy_domain, InternalCustodianRecoveryOutput, PubDataType};
+use kms_grpc::solidity_types::{CrsgenVerification, KeygenVerification};
 use kms_grpc::{KeyId, RequestId};
 use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
