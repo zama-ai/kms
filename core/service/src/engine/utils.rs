@@ -38,10 +38,7 @@ where
         .map(|id| id.to_string())
         .collect();
 
-    let crs_ids: Vec<String> = crs_ids_set
-        .into_iter()
-        .map(|id| id.to_string())
-        .collect();
+    let crs_ids: Vec<String> = crs_ids_set.into_iter().map(|id| id.to_string()).collect();
 
     // Get storage info - combine type info with backend info
     let storage_info = format!("{} - {}", storage_type_info, priv_storage.info());
