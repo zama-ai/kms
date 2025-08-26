@@ -203,18 +203,14 @@ pub(crate) fn compute_info_crs(
     crs_id: &RequestId,
     pp: &CompactPkeCrs,
     domain: &alloy_sol_types::Eip712Domain,
-) -> anyhow::Result<CrsGenCallValues> {
+) -> anyhow::Result<CrsGenMetadata> {
     let max_num_bits = max_num_bits_from_crs(pp);
     let crs_digest = safe_serialize_hash_element_versioned(domain_separator, pp)?;
 
     let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone());
     let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
 
-    Ok(CrsGenCallValues::new(
-        *crs_id,
-        crs_digest,
-        external_signature,
-    ))
+    Ok(CrsGenMetadata::new(*crs_id, crs_digest, external_signature))
 }
 
 pub(crate) fn compute_external_signature_preprocessing(
@@ -877,31 +873,31 @@ pub struct CrsGenMetadataInner {
 
 #[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum CrsGenCallValuesVersioned {
+pub enum CrsGenMetadataVersioned {
     V0(CrsGenSignedPubDataHandleInternalWrapper),
-    V1(CrsGenCallValues),
+    V1(CrsGenMetadata),
 }
 
 #[cfg(feature = "non-wasm")]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(CrsGenCallValuesVersioned)]
-pub enum CrsGenCallValues {
+#[versionize(CrsGenMetadataVersioned)]
+pub enum CrsGenMetadata {
     Current(CrsGenMetadataInner),
     LegacyV0(SignedPubDataHandleInternal),
 }
 
 #[cfg(feature = "non-wasm")]
-impl Upgrade<CrsGenCallValues> for CrsGenSignedPubDataHandleInternalWrapper {
+impl Upgrade<CrsGenMetadata> for CrsGenSignedPubDataHandleInternalWrapper {
     type Error = std::convert::Infallible;
-    fn upgrade(self) -> Result<CrsGenCallValues, Self::Error> {
-        Ok(CrsGenCallValues::LegacyV0(self.0))
+    fn upgrade(self) -> Result<CrsGenMetadata, Self::Error> {
+        Ok(CrsGenMetadata::LegacyV0(self.0))
     }
 }
 
 #[cfg(feature = "non-wasm")]
-impl CrsGenCallValues {
+impl CrsGenMetadata {
     pub fn new(crs_id: RequestId, crs_digest: Vec<u8>, external_signature: Vec<u8>) -> Self {
-        CrsGenCallValues::Current(CrsGenMetadataInner {
+        CrsGenMetadata::Current(CrsGenMetadataInner {
             crs_id,
             crs_digest,
             external_signature,
@@ -910,9 +906,9 @@ impl CrsGenCallValues {
 }
 
 #[cfg(feature = "non-wasm")]
-impl Named for CrsGenCallValues {
+impl Named for CrsGenMetadata {
     /// Returns the type name for versioning and serialization
-    const NAME: &'static str = "CrsGenCallValues";
+    const NAME: &'static str = "CrsGenMetadata";
 }
 
 // Values that need to be stored temporarily as part of an async decryption call.

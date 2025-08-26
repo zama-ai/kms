@@ -9,7 +9,7 @@ use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signcryption::{signcrypt, SigncryptionPayload};
 #[cfg(feature = "non-wasm")]
-use crate::engine::base::CrsGenCallValues;
+use crate::engine::base::CrsGenMetadata;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
 use crate::engine::traits::{BaseKms, Kms};
@@ -284,7 +284,7 @@ pub(crate) async fn async_generate_crs(
     eip712_domain: alloy_sol_types::Eip712Domain,
     req_id: &RequestId,
     rng: AesRng,
-) -> anyhow::Result<(CompactPkeCrs, CrsGenCallValues)> {
+) -> anyhow::Result<(CompactPkeCrs, CrsGenMetadata)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     let req_id_copy = req_id.to_owned();
@@ -416,7 +416,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     eip712_domain: &alloy_sol_types::Eip712Domain,
     req_id: &RequestId,
     mut rng: R,
-) -> anyhow::Result<(CompactPkeCrs, CrsGenCallValues)> {
+) -> anyhow::Result<(CompactPkeCrs, CrsGenMetadata)> {
     let sid = req_id.derive_session_id()?;
     let internal_pp = public_parameters_by_trusted_setup(
         &params
@@ -478,7 +478,7 @@ pub struct RealCentralizedKms<
     // Map storing ongoing user decryption requests.
     pub(crate) user_decrypt_meta_map: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     // Map storing ongoing CRS generation requests.
-    pub(crate) crs_meta_map: Arc<RwLock<MetaStore<CrsGenCallValues>>>,
+    pub(crate) crs_meta_map: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     pub(crate) custodian_meta_map: Arc<RwLock<CustodianMetaStore>>,
     // Rate limiting
     pub(crate) rate_limiter: RateLimiter,
@@ -933,7 +933,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             .iter()
             .map(|(id, info)| (id.to_owned(), info.public_key_info.to_owned()))
             .collect();
-        let crs_info: HashMap<RequestId, CrsGenCallValues> =
+        let crs_info: HashMap<RequestId, CrsGenMetadata> =
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
         let custodian_info: HashMap<RequestId, InternalCustodianContext> =
@@ -998,7 +998,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     }
 
     /// Get a reference to the CRS generation MetaStore
-    pub fn get_crs_meta_store(&self) -> &Arc<RwLock<MetaStore<CrsGenCallValues>>> {
+    pub fn get_crs_meta_store(&self) -> &Arc<RwLock<MetaStore<CrsGenMetadata>>> {
         &self.crs_meta_map
     }
 

@@ -14,7 +14,7 @@ use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
-    engine::base::{CrsGenCallValues, KeyGenMetadata, KmsFheKeyHandles},
+    engine::base::{CrsGenMetadata, KeyGenMetadata, KmsFheKeyHandles},
     util::meta_store::MetaStore,
     vault::{
         storage::{store_pk_at_request_id, store_versioned_at_request_id, Storage},
@@ -65,8 +65,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         req_id: &RequestId,
         pp: CompactPkeCrs,
-        crs_info: CrsGenCallValues,
-        meta_store: Arc<RwLock<MetaStore<CrsGenCallValues>>>,
+        crs_info: CrsGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     ) {
         self.inner
             .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)

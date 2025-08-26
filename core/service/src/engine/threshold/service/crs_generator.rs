@@ -35,8 +35,7 @@ use crate::{
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
         base::{
-            compute_info_crs, retrieve_parameters, BaseKmsStruct, CrsGenCallValues,
-            DSEP_PUBDATA_CRS,
+            compute_info_crs, retrieve_parameters, BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS,
         },
         threshold::traits::CrsGenerator,
         validation::{
@@ -75,7 +74,7 @@ pub struct RealCrsGenerator<
 > {
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
-    pub crs_meta_store: Arc<RwLock<MetaStore<CrsGenCallValues>>>,
+    pub crs_meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     pub session_preparer: SessionPreparer,
     // Task tacker to ensure that we keep track of all ongoing operations and can cancel them if needed (e.g. during shutdown).
     pub tracker: Arc<TaskTracker>,
@@ -256,7 +255,7 @@ impl<
         let crs_data = handle_res_mapping(status, &request_id, "CRS generation").await?;
 
         match crs_data {
-            CrsGenCallValues::Current(crs_data) => {
+            CrsGenMetadata::Current(crs_data) => {
                 if crs_data.crs_id != request_id {
                     return Err(Status::new(
                         tonic::Code::Internal,
@@ -272,7 +271,7 @@ impl<
                     external_signature: crs_data.external_signature,
                 }))
             }
-            CrsGenCallValues::LegacyV0(_) => {
+            CrsGenMetadata::LegacyV0(_) => {
                 // This is a legacy result, we cannot return the crs_digest or external_signature
                 // as they're signed using a different SolStruct and hashed using a different domain separator
                 tracing::warn!(
@@ -295,7 +294,7 @@ impl<
         max_num_bits: Option<u32>,
         mut base_session: BaseSession,
         rng: AesRng,
-        meta_store: Arc<RwLock<MetaStore<CrsGenCallValues>>>,
+        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
         crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
         sk: Arc<PrivateSigKey>,
         params: DKGParams,

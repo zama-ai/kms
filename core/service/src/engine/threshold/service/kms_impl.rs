@@ -56,7 +56,7 @@ use crate::{
     cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
     engine::{
         backup_operator::RealBackupOperator,
-        base::{BaseKmsStruct, CrsGenCallValues, KeyGenMetadata},
+        base::{BaseKmsStruct, CrsGenMetadata, KeyGenMetadata},
         context_manager::RealContextManager,
         prepare_shutdown_signals,
         threshold::{
@@ -172,7 +172,6 @@ impl std::fmt::Debug for ThresholdFheKeys {
 pub struct BucketMetaStore {
     pub(crate) preprocessing_id: RequestId,
     pub(crate) external_signature: Vec<u8>,
-    // TODO check if we need Arc/Mutex here
     pub(crate) preprocessing_store: Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>,
 }
 
@@ -253,7 +252,7 @@ where
     }
 
     // load crs_info (roughly hashes of CRS) from storage
-    let crs_info: HashMap<RequestId, CrsGenCallValues> =
+    let crs_info: HashMap<RequestId, CrsGenMetadata> =
         read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
     // set up the MPC service

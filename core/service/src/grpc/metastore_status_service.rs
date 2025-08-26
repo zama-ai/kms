@@ -19,7 +19,7 @@ use tokio::sync::RwLock;
 use crate::{
     backup::custodian::InternalCustodianContext,
     engine::{
-        base::{CrsGenCallValues, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues},
+        base::{CrsGenMetadata, KeyGenMetadata, PubDecCallValues, UserDecryptCallValues},
         threshold::service::BucketMetaStore,
     },
     util::meta_store::MetaStore,
@@ -46,7 +46,7 @@ pub type PubDecMetaStore = MetaStore<PubDecCallValues>;
 pub type UserDecryptMetaStore = MetaStore<UserDecryptCallValues>;
 
 /// MetaStore for CRS (Common Reference String) data
-pub type CrsMetaStore = MetaStore<CrsGenCallValues>;
+pub type CrsMetaStore = MetaStore<CrsGenMetadata>;
 
 /// MetaStore for preprocessing data, wrapping the bucket store in an Arc<Mutex<>>
 pub type PreprocMetaStore = MetaStore<BucketMetaStore>;

@@ -1114,7 +1114,7 @@ where
         // Compute signed metadata for CRS verification
         // PANICS: If signature generation fails - would compromise security model
 
-        use crate::engine::base::{compute_info_crs, CrsGenCallValues};
+        use crate::engine::base::{compute_info_crs, CrsGenMetadata};
         let crs_info = compute_info_crs(cur_sk, &DSEP_PUBDATA_CRS, crs_id, &pp, &domain)
             .unwrap_or_else(|e| {
                 panic!("Failed to compute CRS info for party: {e}");
@@ -1122,7 +1122,7 @@ where
 
         // Store private CRS info with signature - essential for verification chain
         // PANICS: If storage fails - system would be in inconsistent state
-        store_versioned_at_request_id::<PrivS, CrsGenCallValues>(
+        store_versioned_at_request_id::<PrivS, CrsGenMetadata>(
             cur_priv,
             crs_id,
             &crs_info,

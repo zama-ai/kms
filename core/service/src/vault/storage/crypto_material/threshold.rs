@@ -17,7 +17,7 @@ use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
     engine::{
-        base::{CrsGenCallValues, KeyGenMetadata},
+        base::{CrsGenMetadata, KeyGenMetadata},
         threshold::service::ThresholdFheKeys,
     },
     util::meta_store::MetaStore,
@@ -79,8 +79,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         req_id: &RequestId,
         pp: CompactPkeCrs,
-        crs_info: CrsGenCallValues,
-        meta_store: Arc<RwLock<MetaStore<CrsGenCallValues>>>,
+        crs_info: CrsGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     ) {
         self.inner
             .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)
@@ -329,7 +329,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     pub async fn purge_crs_material(
         &self,
         req_id: &RequestId,
-        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenCallValues>>,
+        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenMetadata>>,
     ) {
         self.inner
             .purge_crs_material(req_id, guarded_meta_store)

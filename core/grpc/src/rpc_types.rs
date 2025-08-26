@@ -182,7 +182,7 @@ impl SignedPubDataHandleInternal {
     }
 }
 
-/// Wrapper struct to allow upgrading of CrsGenCallValues.
+/// Wrapper struct to allow upgrading of CrsGenMetadata.
 /// This is needed because `SignedPubDataHandleInternal`
 /// still need to be supported for other types so it cannot derive Version.
 /// See https://github.com/zama-ai/tfhe-rs/blob/main/utils/tfhe-versionable/examples/transparent_then_not.rs

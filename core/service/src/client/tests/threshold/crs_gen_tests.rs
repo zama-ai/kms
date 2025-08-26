@@ -3,7 +3,7 @@ cfg_if::cfg_if! {
     use crate::client::client_wasm::Client;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::dummy_domain;
-    use crate::engine::base::{derive_request_id, DSEP_PUBDATA_CRS};
+    use crate::engine::base::derive_request_id;
     use crate::util::key_setup::max_threshold;
     use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::{file::FileStorage, StorageType};
@@ -278,17 +278,11 @@ async fn wait_for_crsgen_result(
 
         // test that having [THRESHOLD] wrong signatures still works
         let mut final_responses_with_bad_sig = res_storage.clone();
-        let client_sk = internal_client.client_sk.clone().unwrap();
-        // TODO use a bad alloy signature
-        let bad_sig = bc2wrap::serialize(
-            &crate::cryptography::signcryption::internal_sign(
-                &DSEP_PUBDATA_CRS,
-                &"wrong msg".to_string(),
-                &client_sk,
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        let bad_sig = {
+            let mut tmp = res_storage[0].0.external_signature.clone();
+            tmp[0] ^= 0xff;
+            tmp
+        };
         set_signatures(&mut final_responses_with_bad_sig, threshold, &bad_sig);
 
         let _pp = internal_client

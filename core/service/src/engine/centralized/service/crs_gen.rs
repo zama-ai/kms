@@ -14,7 +14,7 @@ use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::engine::base::{retrieve_parameters, CrsGenCallValues};
+use crate::engine::base::{retrieve_parameters, CrsGenMetadata};
 use crate::engine::centralized::central_kms::{async_generate_crs, RealCentralizedKms};
 use crate::engine::validation::{
     parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
@@ -106,7 +106,7 @@ pub async fn get_crs_gen_result_impl<
     let crs_info = handle_res_mapping(status, &request_id, "CRS").await?;
 
     match crs_info {
-        CrsGenCallValues::LegacyV0(_) => {
+        CrsGenMetadata::LegacyV0(_) => {
             // This is a legacy result, we cannot return the crs_digest or external_signature
             // as they're signed using a different SolStruct and hashed using a different domain separator
             tracing::warn!(
@@ -119,7 +119,7 @@ pub async fn get_crs_gen_result_impl<
                 external_signature: vec![],
             }))
         }
-        CrsGenCallValues::Current(crs_info) => {
+        CrsGenMetadata::Current(crs_info) => {
             if request_id != crs_info.crs_id {
                 return Err(Status::internal(format!(
                     "Request ID mismatch: expected {}, got {}",
@@ -144,7 +144,7 @@ pub(crate) async fn crs_gen_background<
 >(
     req_id: &RequestId,
     rng: AesRng,
-    meta_store: Arc<RwLock<MetaStore<CrsGenCallValues>>>,
+    meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     sk: Arc<PrivateSigKey>,
     params: DKGParams,

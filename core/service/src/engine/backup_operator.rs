@@ -5,6 +5,7 @@ use crate::{
         internal_crypto_types::PrivateSigKey,
     },
     engine::{
+        base::CrsGenMetadata,
         context::ContextInfo,
         threshold::{service::ThresholdFheKeys, traits::BackupOperator},
     },
@@ -21,7 +22,7 @@ use crate::{
 use kms_grpc::{kms::v1::BackupRecoveryRequest, rpc_types::BackupDataType};
 use kms_grpc::{
     kms::v1::{Empty, OperatorPublicKey},
-    rpc_types::{PrivDataType, SignedPubDataHandleInternal},
+    rpc_types::PrivDataType,
     utils::tonic_result::tonic_handle_potential_err,
 };
 use strum::IntoEnumIterator;
@@ -211,12 +212,8 @@ where
                     .await?;
             }
             PrivDataType::CrsInfo => {
-                restore_data_type::<PrivS, SignedPubDataHandleInternal>(
-                    priv_storage,
-                    backup_vault,
-                    cur_type,
-                )
-                .await?;
+                restore_data_type::<PrivS, CrsGenMetadata>(priv_storage, backup_vault, cur_type)
+                    .await?;
             }
             PrivDataType::FhePrivateKey => {
                 restore_data_type::<PrivS, FhePrivateKey>(priv_storage, backup_vault, cur_type)
@@ -315,7 +312,7 @@ where
                             .await?;
                         }
                         PrivDataType::CrsInfo => {
-                            update_specific_backup_vault::<PrivS, SignedPubDataHandleInternal>(
+                            update_specific_backup_vault::<PrivS, CrsGenMetadata>(
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,

@@ -10,7 +10,7 @@ use crate::{
     },
     cryptography::{backup_pke::BackupPublicKey, internal_crypto_types::PrivateSigKey},
     engine::{
-        base::{CrsGenCallValues, KeyGenMetadata},
+        base::{CrsGenMetadata, KeyGenMetadata},
         context::ContextInfo,
         threshold::service::ThresholdFheKeys,
     },
@@ -396,8 +396,8 @@ where
         &self,
         req_id: &RequestId,
         pp: CompactPkeCrs,
-        crs_info: CrsGenCallValues,
-        meta_store: Arc<RwLock<MetaStore<CrsGenCallValues>>>,
+        crs_info: CrsGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     ) {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
@@ -497,7 +497,7 @@ where
     pub async fn purge_crs_material(
         &self,
         req_id: &RequestId,
-        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenCallValues>>,
+        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenMetadata>>,
     ) {
         // Enforce locking order for internal types
         let mut pub_storage = self.public_storage.lock().await;
