@@ -527,14 +527,11 @@ message KeyMaterialAvailabilityResponse {
   repeated string fhe_key_ids = 1;
 
   // Key IDs for generated CRS
-  repeated string crs_key_ids = 2;
+  repeated string crs_ids = 2;
 
   // Key IDs for preprocessing material (threshold only)
   repeated string preprocessing_ids = 3;
 
-  // Total count of available keys
-  int32 total_key_count = 4;
-
   // Storage backend information
-  string storage_info = 5;
+  string storage_info = 4;
 }

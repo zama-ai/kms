@@ -337,41 +337,18 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status> {
-        use kms_grpc::rpc_types::PrivDataType;
+        use crate::engine::utils::query_key_material_availability;
 
         // Get storage references
         let priv_storage = self.crypto_storage.inner.get_private_storage();
         let priv_guard = priv_storage.lock().await;
 
-        // Query FHE key IDs
-        let fhe_key_ids = priv_guard
-            .all_data_ids(&PrivDataType::FheKeyInfo.to_string())
-            .await
-            .map_err(|e| Status::internal(format!("Failed to query FHE keys: {}", e)))?;
-
-        // Query CRS IDs
-        let crs_key_ids = priv_guard
-            .all_data_ids(&PrivDataType::CrsInfo.to_string())
-            .await
-            .map_err(|e| Status::internal(format!("Failed to query CRS: {}", e)))?;
-
-        // Centralized KMS doesn't have preprocessing
-        let preprocessing_ids: Vec<String> = Vec::new();
-
-        // Calculate total count
-        let total_count = (fhe_key_ids.len() + crs_key_ids.len()) as i32;
-
-        // Get storage info
-        let storage_info = priv_guard.info();
-
-        // Build response
-        let response = KeyMaterialAvailabilityResponse {
-            fhe_key_ids: fhe_key_ids.iter().map(|id| id.to_string()).collect(),
-            crs_key_ids: crs_key_ids.iter().map(|id| id.to_string()).collect(),
-            preprocessing_ids,
-            total_key_count: total_count,
-            storage_info,
-        };
+        let response = query_key_material_availability(
+            &*priv_guard,
+            "Centralized KMS",
+            Vec::new(), // Centralized KMS doesn't support preprocessing material
+        )
+        .await?;
 
         Ok(Response::new(response))
     }

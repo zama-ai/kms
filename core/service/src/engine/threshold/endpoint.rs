@@ -357,13 +357,22 @@ impl_endpoint! {
             })
         }
 
-        #[tracing::instrument(skip(self, request))]
+        #[tracing::instrument(skip(self, _request))]
         async fn get_key_material_availability(
             &self,
-            request: Request<Empty>,
+            _request: Request<Empty>,
         ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status> {
-            // Delegate to backup_operator which has access to crypto_storage
-            self.backup_operator.get_key_material_availability(request).await
+            // Get preprocessing IDs from the preprocessor
+            let preprocessing_ids = self.keygen_preprocessor.get_all_preprocessing_ids().await?;
+
+            // Get storage references from backup_operator
+            let backup_response = self.backup_operator.get_key_material_availability(Request::new(Empty {})).await?;
+            let mut response = backup_response.into_inner();
+
+            // Update the response with preprocessing IDs
+            response.preprocessing_ids = preprocessing_ids;
+
+            Ok(Response::new(response))
         }
 
         #[tracing::instrument(skip(self, _request))]
