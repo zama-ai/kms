@@ -43,6 +43,20 @@ mod gen {
 }
 use self::gen::SendValueRequest;
 
+pub struct ArcSendValueRequest {
+    tag: Arc<Vec<u8>>,
+    value: Arc<Vec<u8>>,
+}
+
+impl ArcSendValueRequest {
+    fn deep_clone(&self) -> SendValueRequest {
+        SendValueRequest {
+            tag: self.tag.as_ref().clone(),
+            value: self.value.as_ref().clone(),
+        }
+    }
+}
+
 //Note if this struct was defined inside the protobuf we wouldnt have
 //to (de)serialize it at every network call
 #[derive(Serialize, Deserialize, Debug)]
@@ -66,15 +80,18 @@ pub trait SendingService: Send + Sync {
 
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
     async fn add_connection(
+
         &self,
+
         other: Role,
-    ) -> anyhow::Result<UnboundedSender<SendValueRequest>>;
+    ,
+    ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>>;
 
     ///Adds multiple connections at once
     async fn add_connections(
         &self,
         others: Vec<Role>,
-    ) -> anyhow::Result<HashMap<Role, UnboundedSender<SendValueRequest>>>;
+    ) -> anyhow::Result<HashMap<Role, UnboundedSender<ArcSendValueRequest>>>;
 }
 
 #[derive(Debug, Clone)]
@@ -184,7 +201,7 @@ impl GrpcSendingService {
     }
 
     async fn run_network_task(
-        mut receiver: UnboundedReceiver<SendValueRequest>,
+        mut receiver: UnboundedReceiver<ArcSendValueRequest>,
         network_channel: GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
         exponential_backoff: ExponentialBackoff<SystemClock>,
     ) {
@@ -195,9 +212,10 @@ impl GrpcSendingService {
             received_request += 1;
 
             let send_fn = || async {
+                let value = value.deep_clone();
                 network_channel
                     .clone()
-                    .send_value(value.clone())
+                    .send_value(value)
                     .await
                     .map(|_| ())
                     .map_err(|status| {
@@ -285,11 +303,14 @@ impl SendingService for GrpcSendingService {
 
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
     async fn add_connection(
+
         &self,
+
         other: Role,
-    ) -> anyhow::Result<UnboundedSender<SendValueRequest>> {
+    ,
+    ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>> {
         // 1. Create channel first (no allocation issues)
-        let (sender, receiver) = unbounded_channel::<SendValueRequest>();
+        let (sender, receiver) = unbounded_channel::<ArcSendValueRequest>();
 
         // 2. Connect to party (can fail, so do before any spawning)
         let network_channel = self.connect_to_party(other).await?;
@@ -320,7 +341,7 @@ impl SendingService for GrpcSendingService {
     async fn add_connections(
         &self,
         others: Vec<Role>,
-    ) -> anyhow::Result<HashMap<Role, UnboundedSender<SendValueRequest>>> {
+    ) -> anyhow::Result<HashMap<Role, UnboundedSender<ArcSendValueRequest>>> {
         let mut result = HashMap::with_capacity(others.len());
 
         for other in others {
@@ -355,7 +376,7 @@ pub struct NetworkSession {
     pub session_id: SessionId,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`]
     /// Sending channels for this session
-    pub sending_channels: HashMap<Role, UnboundedSender<SendValueRequest>>,
+    pub sending_channels: HashMap<Role, UnboundedSender<ArcSendValueRequest>>,
     /// Channels which are filled by the grpc server receiving messages from the other parties
     /// owned by the session and thus automatically cleaned up on drop
     pub receiving_channels: MessageQueueStore,
@@ -384,7 +405,7 @@ impl Networking for NetworkSession {
     ///
     //Note this need not be async, so do we want to keep the trait definition async
     //if we want to add other implems which may require async ?
-    async fn send(&self, value: Vec<u8>, receiver: &Role) -> anyhow::Result<()> {
+    async fn send(&self, value: Arc<Vec<u8>>, receiver: &Role) -> anyhow::Result<()> {
         // Lock the counter to ensure no modifications happens while sending
         // This may cause an error if someone tries to increase the round counter at the same time
         // however, this would imply incorrect use of the networking API and thus we want to fail fast.
@@ -395,15 +416,17 @@ impl Networking for NetworkSession {
             round_counter,
         };
 
-        let tag = bc2wrap::serialize(&tagged_value)
-            .map_err(|e| anyhow_error_and_log(format!("networking error: {e:?}")))?;
+        let tag = Arc::new(
+            bc2wrap::serialize(&tagged_value)
+                .map_err(|e| anyhow_error_and_log(format!("networking error: {e:?}")))?,
+        );
 
         #[cfg(feature = "choreographer")]
         {
             let mut sent = self.num_byte_sent.write().await;
             *sent += tag.len() + value.len();
         }
-        let request = SendValueRequest { tag, value };
+        let request = ArcSendValueRequest { tag, value };
 
         //Retrieve the local channel that corresponds to the party we want to send to and push into it
         match self.sending_channels.get(receiver) {
@@ -606,7 +629,7 @@ mod tests {
                 let (send, recv) = tokio::sync::oneshot::channel();
                 if role.one_based() == 1 {
                     tokio::spawn(async move {
-                        let msg = vec![1u8; 10];
+                        let msg = Arc::new(vec![1u8; 10]);
                         println!("Sending ONCE");
                         network_stack_1.send(msg.clone(), &role_2).await.unwrap();
                         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
@@ -635,7 +658,7 @@ mod tests {
                     });
                     tokio::spawn(async move {
                         println!("Trying to receive");
-                        let msg = network_stack_1.receive(&role_1).await.unwrap();
+                        let msg = Arc::new(network_stack_1.receive(&role_1).await.unwrap());
                         println!("Received ONCE {msg:?}");
                         send.send(msg).unwrap();
                     });
@@ -684,7 +707,7 @@ mod tests {
                 println!("Ready to receive");
                 let msg = network_stack_2.receive(&role_1).await.unwrap();
                 println!("Received TWICE {msg:?}");
-                send.send(msg).unwrap();
+                send.send(Arc::new(msg)).unwrap();
             });
             recv.blocking_recv().unwrap();
             println!("Second thread exiting");
