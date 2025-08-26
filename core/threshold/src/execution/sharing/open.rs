@@ -194,7 +194,10 @@ impl RobustOpen for SecureRobustOpen {
 
                         session
                             .network()
-                            .send(NetworkValue::VecRingValue(values).to_network(), &receiver)
+                            .send(
+                                Arc::new(NetworkValue::VecRingValue(values).to_network()),
+                                &receiver,
+                            )
                             .await?;
                     }
                 }

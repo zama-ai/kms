@@ -168,6 +168,8 @@ impl<Z: Eq + Zero> NetworkValue<Z> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::{
         algebra::base_ring::Z128,
         execution::{
@@ -205,8 +207,11 @@ mod tests {
             assert_eq!(*received_key, pk);
         });
 
-        let task2 =
-            tokio::spawn(async move { net_alice.send(value.to_network(), &bob.clone()).await });
+        let task2 = tokio::spawn(async move {
+            net_alice
+                .send(Arc::new(value.to_network()), &bob.clone())
+                .await
+        });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
     }

@@ -60,7 +60,10 @@ where
             let networking = Arc::clone(session.network());
             set.spawn(async move {
                 let _ = networking
-                    .send(NetworkValue::VecRingValue(to_send).to_network(), &receiver)
+                    .send(
+                        Arc::new(NetworkValue::VecRingValue(to_send).to_network()),
+                        &receiver,
+                    )
                     .await;
             });
         }

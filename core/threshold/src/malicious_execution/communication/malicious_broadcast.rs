@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use aes_prng::AesRng;
+use std::sync::Arc;
 use tonic::async_trait;
 
 use crate::{
@@ -100,7 +101,7 @@ impl Broadcast for MaliciousBroadcastSender {
                     if &my_role != other_role {
                         session
                             .network()
-                            .send(malicious_msg.to_network(), &other_id)
+                            .send(Arc::new(malicious_msg.to_network()), &other_id)
                             .await?;
                     }
                 }
@@ -242,10 +243,16 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
                     let other_id = other_identity.clone();
                     if &my_role != other_role && other_role != &role_to_lie_to {
                         let msg = NetworkValue::Send(message.clone());
-                        session.network().send(msg.to_network(), &other_id).await?;
+                        session
+                            .network()
+                            .send(Arc::new(msg.to_network()), &other_id)
+                            .await?;
                     } else if other_role == &role_to_lie_to {
                         let msg = NetworkValue::Send(random_message.clone());
-                        session.network().send(msg.to_network(), &other_id).await?;
+                        session
+                            .network()
+                            .send(Arc::new(msg.to_network()), &other_id)
+                            .await?;
                     }
                 }
             }
@@ -277,10 +284,16 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
             let other_id = other_identity.clone();
             if &my_role != other_role && other_role != &role_to_lie_to {
                 let msg = NetworkValue::EchoBatch(msg_to_others.clone());
-                session.network().send(msg.to_network(), &other_id).await?;
+                session
+                    .network()
+                    .send(Arc::new(msg.to_network()), &other_id)
+                    .await?;
             } else if other_role == &role_to_lie_to {
                 let msg = NetworkValue::EchoBatch(msg_to_victim.clone());
-                session.network().send(msg.to_network(), &other_id).await?;
+                session
+                    .network()
+                    .send(Arc::new(msg.to_network()), &other_id)
+                    .await?;
             }
         }
         let msg = msg_to_others;

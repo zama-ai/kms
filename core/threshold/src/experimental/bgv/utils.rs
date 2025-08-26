@@ -44,6 +44,7 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
 
         let pkval = NetworkValue::<LevelEll>::PubBgvKeySet(Box::new(pubkey_raw.clone()));
         tracing::debug!("Sending pk to all other parties");
+        let send_pk = Arc::new(pkval.to_network());
 
         let mut set = JoinSet::new();
         for to_send_role in 1..=num_parties {
@@ -51,10 +52,10 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
                 let identity = session.identity_from(&Role::indexed_from_one(to_send_role))?;
 
                 let networking = Arc::clone(session.network());
-                let send_pk = pkval.clone();
 
+                let send_pk = Arc::clone(&send_pk);
                 set.spawn(async move {
-                    let _ = networking.send(send_pk.to_network(), &identity).await;
+                    let _ = networking.send(send_pk, &identity).await;
                 });
             }
         }
@@ -110,7 +111,9 @@ pub async fn transfer_secret_key<S: BaseSessionHandles>(
                 let send_sk = network_sk_shares.clone();
 
                 set.spawn(async move {
-                    let _ = networking.send(send_sk.to_network(), &identity).await;
+                    let _ = networking
+                        .send(Arc::new(send_sk.to_network()), &identity)
+                        .await;
                 });
             }
         }
