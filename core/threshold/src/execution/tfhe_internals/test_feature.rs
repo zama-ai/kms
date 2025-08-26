@@ -681,7 +681,7 @@ async fn transfer_network_value<S: BaseSessionHandles>(
         );
 
         let mut set = JoinSet::new();
-        let buf_to_send = network_val.clone().to_network();
+        let buf_to_send = Arc::new(network_val.clone().to_network());
         for receiver in 1..=num_parties {
             if receiver != input_party_id {
                 let networking = Arc::clone(session.network());
