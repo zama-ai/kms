@@ -10,11 +10,10 @@ use kms_grpc::kms::v1::{
     FheParameter, KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
     KeySetAddedInfo, KeySetConfig,
 };
-use kms_grpc::rpc_types::KeygenVerification;
-use kms_grpc::rpc_types::PrepKeygenVerification;
 use kms_grpc::rpc_types::{
     alloy_to_protobuf_domain, PubDataType, PublicKeyType, WrappedPublicKeyOwned,
 };
+use kms_grpc::solidity_types::{KeygenVerification, PrepKeygenVerification};
 use kms_grpc::RequestId;
 use tfhe::CompactPublicKey;
 use tfhe::ServerKey;

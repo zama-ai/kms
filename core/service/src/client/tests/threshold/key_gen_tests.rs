@@ -5,6 +5,7 @@ cfg_if::cfg_if! {
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
+    use crate::engine::base::INSECURE_PREPROCESSING_ID;
     use crate::engine::threshold::service::ThresholdFheKeys;
     use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::StorageReader;
@@ -375,8 +376,6 @@ async fn wait_for_keygen_result(
             }
         }
     } else {
-        use crate::engine::base::INSECURE_PREPROCESSING_ID;
-
         let mut serialized_ref_pk = Vec::new();
         let mut serialized_ref_server_key = Vec::new();
         let mut all_threshold_fhe_keys = HashMap::new();

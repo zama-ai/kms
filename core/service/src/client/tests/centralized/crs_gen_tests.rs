@@ -9,7 +9,7 @@ use crate::{
     util::{key_setup::test_tools::purge, rate_limiter::RateLimiterConfig},
     vault::storage::StorageReader,
 };
-use kms_grpc::rpc_types::CrsgenVerification;
+use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::{
     kms::v1::{Empty, FheParameter},
     rpc_types::PubDataType,

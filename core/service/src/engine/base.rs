@@ -21,11 +21,11 @@ use kms_grpc::kms::v1::{
 };
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::CrsGenSignedPubDataHandleInternalWrapper;
-use kms_grpc::rpc_types::PrepKeygenVerification;
+use kms_grpc::rpc_types::PubDataType;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
-use kms_grpc::rpc_types::{
-    CrsgenVerification, FheDecompressionUpgradeKey, KeygenVerification, PubDataType,
+use kms_grpc::solidity_types::{
+    CrsgenVerification, FheDecompressionUpgradeKey, KeygenVerification, PrepKeygenVerification,
     PublicDecryptVerification,
 };
 use kms_grpc::utils::tonic_result::BoxedStatus;
@@ -210,7 +210,12 @@ pub(crate) fn compute_info_crs(
     let sol_type = CrsgenVerification::new(crs_id, max_num_bits, crs_digest.clone());
     let external_signature = compute_external_pubdata_signature(sk, &sol_type, domain)?;
 
-    Ok(CrsGenMetadata::new(*crs_id, crs_digest, external_signature))
+    Ok(CrsGenMetadata::new(
+        *crs_id,
+        crs_digest,
+        max_num_bits as u32,
+        external_signature,
+    ))
 }
 
 pub(crate) fn compute_external_signature_preprocessing(
@@ -854,6 +859,17 @@ impl KeyGenMetadata {
             external_signature,
         })
     }
+
+    #[cfg(test)]
+    pub fn external_signature(&self) -> &[u8] {
+        match self {
+            KeyGenMetadata::Current(inner) => &inner.external_signature,
+            KeyGenMetadata::LegacyV0(_inner) => {
+                // we cannot return a single external signature because there might be multiple
+                &[]
+            }
+        }
+    }
 }
 
 #[cfg(feature = "non-wasm")]
@@ -868,6 +884,7 @@ pub enum CrsGenMetadataInnerVersioned {
 pub struct CrsGenMetadataInner {
     pub(crate) crs_id: RequestId,
     pub(crate) crs_digest: Vec<u8>,
+    pub(crate) max_num_bits: u32,
     pub(crate) external_signature: Vec<u8>,
 }
 
@@ -896,12 +913,26 @@ impl Upgrade<CrsGenMetadata> for CrsGenSignedPubDataHandleInternalWrapper {
 
 #[cfg(feature = "non-wasm")]
 impl CrsGenMetadata {
-    pub fn new(crs_id: RequestId, crs_digest: Vec<u8>, external_signature: Vec<u8>) -> Self {
+    pub fn new(
+        crs_id: RequestId,
+        crs_digest: Vec<u8>,
+        max_num_bits: u32,
+        external_signature: Vec<u8>,
+    ) -> Self {
         CrsGenMetadata::Current(CrsGenMetadataInner {
             crs_id,
             crs_digest,
+            max_num_bits,
             external_signature,
         })
+    }
+
+    #[cfg(test)]
+    pub fn external_signature(&self) -> &[u8] {
+        match self {
+            CrsGenMetadata::Current(inner) => &inner.external_signature,
+            CrsGenMetadata::LegacyV0(_) => &[],
+        }
     }
 }
 
@@ -929,14 +960,34 @@ pub(crate) mod tests {
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
         cryptography::internal_crypto_types::gen_sig_keys,
         dummy_domain,
-        engine::centralized::central_kms::generate_fhe_keys,
+        engine::{
+            base::{
+                compute_external_signature_preprocessing, compute_info_standard_keygen,
+                hash_sol_struct, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS,
+                DSEP_PUBDATA_KEY,
+            },
+            centralized::central_kms::{
+                gen_centralized_crs, generate_client_fhe_key, generate_fhe_keys,
+            },
+        },
+        util::key_setup::FhePublicKey,
     };
     use aes_prng::AesRng;
-    use kms_grpc::{kms::v1::CiphertextFormat, RequestId};
+    use alloy_dyn_abi::Eip712Domain;
+    use alloy_primitives::Address;
+    use alloy_sol_types::SolStruct;
+    use kms_grpc::{
+        kms::v1::CiphertextFormat,
+        solidity_types::{CrsgenVerification, KeygenVerification, PrepKeygenVerification},
+        RequestId,
+    };
     use rand::{RngCore, SeedableRng};
-    use tfhe::{prelude::SquashNoise, safe_serialization::safe_serialize, FheTypes, FheUint32};
+    use tfhe::{
+        prelude::SquashNoise, safe_serialization::safe_serialize, FheTypes, FheUint32, Seed,
+    };
     use threshold_fhe::execution::{
-        keyset_config::StandardKeySetConfig, tfhe_internals::utils::expanded_encrypt,
+        keyset_config::StandardKeySetConfig,
+        tfhe_internals::{public_keysets::FhePubKeySet, utils::expanded_encrypt},
     };
 
     #[test]
@@ -1273,7 +1324,298 @@ pub(crate) mod tests {
         }
     }
 
-    // fn test_compute_external_pubdata_signature() {
-    //     // TODO
-    // }
+    fn recover_address(
+        data: impl SolStruct,
+        domain: &Eip712Domain,
+        external_sig: &[u8],
+    ) -> Address {
+        // Since the signature is 65 bytes long, the last byte is the parity bit
+        // so we extract it and use it as the parity.
+        let sig = alloy_signer::Signature::from_bytes_and_parity(
+            external_sig,
+            external_sig[64] & 0x01 == 0,
+        );
+        let hash = hash_sol_struct(&data, domain).unwrap();
+
+        sig.recover_address_from_prehash(&hash).unwrap()
+    }
+
+    #[test]
+    fn test_compute_info_standard_keygen() {
+        let mut rng = AesRng::seed_from_u64(123);
+        let (pk, sk) = gen_sig_keys(&mut rng);
+        let actual_address = alloy_signer::utils::public_key_to_address(pk.pk());
+        let prep_id = RequestId::new_random(&mut rng);
+        let key_id = RequestId::new_random(&mut rng);
+        let params = TEST_PARAM;
+        let client_key = generate_client_fhe_key(params, Some(Seed(1)));
+        let server_key = client_key.generate_server_key();
+        let public_key = FhePublicKey::new(&client_key);
+
+        let server_key_digest =
+            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &server_key).unwrap();
+        let public_key_digest =
+            safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key).unwrap();
+
+        let keyset = FhePubKeySet {
+            public_key,
+            server_key,
+        };
+        let domain = dummy_domain();
+        let meta_data = compute_info_standard_keygen(
+            &sk,
+            &crate::engine::base::DSEP_PUBDATA_KEY,
+            &prep_id,
+            &key_id,
+            &keyset,
+            &domain,
+        )
+        .unwrap();
+
+        {
+            // do the verification correctly
+            let sol_struct = KeygenVerification::new(
+                &prep_id,
+                &key_id,
+                server_key_digest.clone(),
+                public_key_digest.clone(),
+            );
+
+            assert_eq!(
+                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                actual_address
+            );
+        }
+        {
+            // wrong domain
+            let bad_domain = alloy_sol_types::eip712_domain!(
+                name: "Wrong name",
+                version: "1",
+                chain_id: 8006,
+                verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+            );
+            let sol_struct = KeygenVerification::new(
+                &prep_id,
+                &key_id,
+                server_key_digest.clone(),
+                public_key_digest.clone(),
+            );
+
+            assert_ne!(
+                recover_address(sol_struct, &bad_domain, meta_data.external_signature()),
+                actual_address
+            );
+        }
+        {
+            // should fail if we use a wrong prep_id
+            let bad_prep_id = RequestId::new_random(&mut rng);
+            let sol_struct = KeygenVerification::new(
+                &bad_prep_id,
+                &key_id,
+                server_key_digest.clone(),
+                public_key_digest.clone(),
+            );
+            assert_ne!(
+                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                actual_address
+            );
+        }
+        {
+            // should fail if we use the wrong key_id
+            let bad_key_id = RequestId::new_random(&mut rng);
+            let sol_struct = KeygenVerification::new(
+                &prep_id,
+                &bad_key_id,
+                server_key_digest.clone(),
+                public_key_digest.clone(),
+            );
+            assert_ne!(
+                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                actual_address
+            );
+        }
+        {
+            // should fail if we use the wrong digest
+            let mut bad_server_key_digest = server_key_digest.clone();
+            bad_server_key_digest[0] ^= 1;
+            let sol_struct = KeygenVerification::new(
+                &prep_id,
+                &key_id,
+                bad_server_key_digest.clone(),
+                public_key_digest.clone(),
+            );
+            assert_ne!(
+                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                actual_address
+            );
+        }
+        {
+            // should fail if we use the wrong signature
+
+            let (_, bad_sk) = gen_sig_keys(&mut rng);
+            let meta_data = compute_info_standard_keygen(
+                &bad_sk,
+                &crate::engine::base::DSEP_PUBDATA_KEY,
+                &prep_id,
+                &key_id,
+                &keyset,
+                &domain,
+            )
+            .unwrap();
+            let bad_signature = meta_data.external_signature();
+            let sol_struct = KeygenVerification::new(
+                &prep_id,
+                &key_id,
+                server_key_digest.clone(),
+                public_key_digest.clone(),
+            );
+            assert_ne!(
+                recover_address(sol_struct, &domain, bad_signature),
+                actual_address
+            );
+        }
+    }
+
+    #[test]
+    fn test_compute_info_crs() {
+        let mut rng = AesRng::seed_from_u64(123);
+        let (pk, sk) = gen_sig_keys(&mut rng);
+        let actual_address = alloy_signer::utils::public_key_to_address(pk.pk());
+        let crs_id = RequestId::new_random(&mut rng);
+        let params = TEST_PARAM;
+        let max_num_bits = 64;
+        let domain = dummy_domain();
+
+        let (crs, meta_data) =
+            gen_centralized_crs(&sk, &params, Some(max_num_bits), &domain, &crs_id, &mut rng)
+                .unwrap();
+
+        let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
+
+        {
+            // do the verification correctly
+            let sol_struct =
+                CrsgenVerification::new(&crs_id, max_num_bits as usize, crs_digest.clone());
+
+            assert_eq!(
+                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                actual_address
+            );
+        }
+        {
+            // should fail if we use a wrong crs_id
+            let bad_crs_id = RequestId::new_random(&mut rng);
+            let sol_struct =
+                CrsgenVerification::new(&bad_crs_id, max_num_bits as usize, crs_digest.clone());
+
+            assert_ne!(
+                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                actual_address
+            );
+        }
+        {
+            // wrong domain
+            let bad_domain = alloy_sol_types::eip712_domain!(
+                name: "Wrong name",
+                version: "1",
+                chain_id: 8006,
+                verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+            );
+            let sol_struct =
+                CrsgenVerification::new(&crs_id, max_num_bits as usize, crs_digest.clone());
+            assert_ne!(
+                recover_address(sol_struct, &bad_domain, meta_data.external_signature()),
+                actual_address
+            );
+        }
+        {
+            // should fail if we use the wrong max_num_bits
+            let wrong_max_num_bits = 16;
+            let sol_struct =
+                CrsgenVerification::new(&crs_id, wrong_max_num_bits as usize, crs_digest.clone());
+
+            assert_ne!(
+                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                actual_address
+            );
+        }
+        {
+            // should fail if we use the wrong digest
+            let mut wrong_digest = crs_digest.clone();
+            wrong_digest[0] ^= 1;
+            let sol_struct = CrsgenVerification::new(&crs_id, max_num_bits as usize, wrong_digest);
+
+            assert_ne!(
+                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                actual_address
+            );
+        }
+        {
+            // shold fail if we use the wrong signature
+            let (_, bad_sk) = gen_sig_keys(&mut rng);
+            let (crs, meta_data) = gen_centralized_crs(
+                &bad_sk, // using bad_sk
+                &params,
+                Some(max_num_bits),
+                &domain,
+                &crs_id,
+                &mut rng,
+            )
+            .unwrap();
+            let crs_digest =
+                safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
+
+            let sol_struct =
+                CrsgenVerification::new(&crs_id, max_num_bits as usize, crs_digest.clone());
+
+            assert_ne!(
+                recover_address(sol_struct, &domain, meta_data.external_signature()),
+                actual_address
+            );
+        }
+    }
+
+    #[test]
+    fn test_compute_external_signature_preproc() {
+        let mut rng = AesRng::seed_from_u64(123);
+        let (pk, sk) = gen_sig_keys(&mut rng);
+        let actual_address = alloy_signer::utils::public_key_to_address(pk.pk());
+        let preproc_id = RequestId::new_random(&mut rng);
+        let domain = dummy_domain();
+        let sig = compute_external_signature_preprocessing(&sk, &preproc_id, &domain).unwrap();
+
+        {
+            // happy path
+            let sol_struct = PrepKeygenVerification::new(&preproc_id);
+            assert_eq!(recover_address(sol_struct, &domain, &sig), actual_address);
+        }
+        {
+            // wrong ID
+            let bad_preproc_id = RequestId::new_random(&mut rng);
+            let sol_struct = PrepKeygenVerification::new(&bad_preproc_id);
+            assert_ne!(recover_address(sol_struct, &domain, &sig), actual_address);
+        }
+        {
+            // wrong domain
+            let bad_domain = alloy_sol_types::eip712_domain!(
+                name: "Wrong name",
+                version: "1",
+                chain_id: 8006,
+                verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+            );
+            let sol_struct = PrepKeygenVerification::new(&preproc_id);
+            assert_ne!(
+                recover_address(sol_struct, &bad_domain, &sig),
+                actual_address
+            );
+        }
+        {
+            // wrong signature
+            let (_, bad_sk) = gen_sig_keys(&mut rng);
+            let sig =
+                compute_external_signature_preprocessing(&bad_sk, &preproc_id, &domain).unwrap();
+            let sol_struct = PrepKeygenVerification::new(&preproc_id);
+            assert_ne!(recover_address(sol_struct, &domain, &sig), actual_address);
+        }
+    }
 }

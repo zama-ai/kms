@@ -924,7 +924,7 @@ fn check_standard_keyset_ext_signature(
         Ok(())
     } else {
         Err(anyhow!(
-            "External  signature verification failed for keygen!"
+            "External signature verification failed for keygen as it does not contain the right address!"
         ))
     }
 }
@@ -948,7 +948,7 @@ fn check_crsgen_ext_signature(
         Ok(())
     } else {
         Err(anyhow!(
-            "External  signature verification failed for keygen!"
+            "External signature verification failed for crsgen as it does not contain the right address!"
         ))
     }
 }
@@ -2640,7 +2640,8 @@ async fn fetch_and_check_keygen(
             &external_signature,
             &domain,
             kms_addrs,
-        )?;
+        )
+        .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
 
         tracing::info!("EIP712 verification of Public Key and Server Key successful.");
     }
@@ -2678,7 +2679,8 @@ async fn fetch_and_check_crsgen(
         );
         let external_signature = response.external_signature;
 
-        check_crsgen_ext_signature(&crs, &request_id, &external_signature, &domain, kms_addrs)?;
+        check_crsgen_ext_signature(&crs, &request_id, &external_signature, &domain, kms_addrs)
+            .inspect_err(|e| tracing::error!("signature check failed: {}", e))?;
 
         tracing::info!("EIP712 verification of CRS successful.");
     }

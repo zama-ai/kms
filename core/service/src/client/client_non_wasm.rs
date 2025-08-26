@@ -106,6 +106,15 @@ impl Client {
         domain: &Eip712Domain,
         external_sig: &[u8],
     ) -> Option<alloy_primitives::Address> {
+        if external_sig.len() != 65 {
+            tracing::error!(
+                "external signature has the wrong length, expected 65 got {}",
+                external_sig.len()
+            );
+            return None;
+        }
+        // Since the signature is 65 bytes long, the last byte is the parity bit
+        // so we extract it and use it as the parity.
         let sig = alloy_signer::Signature::from_bytes_and_parity(
             external_sig,
             external_sig[64] & 0x01 == 0,

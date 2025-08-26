@@ -2,7 +2,7 @@ use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::B256;
 use anyhow::anyhow;
 use kms_grpc::{
-    kms::v1::UserDecryptionResponsePayload, rpc_types::UserDecryptResponseVerification,
+    kms::v1::UserDecryptionResponsePayload, solidity_types::UserDecryptResponseVerification,
 };
 use std::{fmt, panic::Location};
 

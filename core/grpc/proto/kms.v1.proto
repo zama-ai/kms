@@ -138,11 +138,12 @@ message KeyGenResult {
   RequestId preprocessing_id = 2;
 
   // Mapping of key type string to digest
-  // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5])
+  // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5]).
+  // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
   map<string, bytes> key_digests = 3;
 
   // EIP-712 signature on the key generation result.
-  // The structure that signs has the following fields:
+  // The structure signed has the following fields:
   // struct KeygenVerification {
   //     /// @notice The ID of the preprocessed step.
   //     uint256 prepKeygenId;
@@ -174,6 +175,7 @@ message CrsGenRequest {
   
   // The FHE parameters for CRS generation.
   FheParameter params = 2;
+
   // This is the maximum number of bits that can be proven,
   // e.g. 64 for a single FheUint64 or 8 x FheUint8 values.
   // If this is not provided, then it defaults to ZK_DEFAULT_MAX_NUM_CLEARTEXT.
@@ -192,9 +194,12 @@ message CrsGenResult {
   // It is hashed with the domain separator DSEP_PUBDATA_CRS="PDAT_CRS".
   bytes crs_digest = 2;
   
+  // This is the maximum number of bits that can be proven.
+  uint32 max_num_bits = 3;
+  
   // EIP-712 signature on the CRS generation result using the following structure:
   // struct CrsgenVerification {
-  //     /// @notice The ID of the generated CRS.
+  //     /// @notice The ID of the generated CRS, which is the request ID that started the CRS generation.
   //     uint256 crsId;
   //     /// @notice The max bit length of the generated CRS.
   //     uint256 maxBitLength;

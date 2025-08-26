@@ -113,9 +113,15 @@ pub async fn get_crs_gen_result_impl<
                 "Received a legacy CRS generation result,
                 not returning crs_digest or external_signature"
             );
+            // The old SignedPubDataHandleInternal does not store max_num_bits
+            // so we have to read it from storage if we want to return it.
+            // But because this is a legacy result and the call path will not reach here
+            // (because a restart is needed to upgrade to the new version and the meta store is deleted from RAM)
+            // it is never needed, so we just return 0 for max_num_bits.
             Ok(Response::new(CrsGenResult {
                 request_id: Some(request_id.into()),
                 crs_digest: vec![],
+                max_num_bits: 0,
                 external_signature: vec![],
             }))
         }
@@ -130,6 +136,7 @@ pub async fn get_crs_gen_result_impl<
             Ok(Response::new(CrsGenResult {
                 request_id: Some(request_id.into()),
                 crs_digest: crs_info.crs_digest,
+                max_num_bits: crs_info.max_num_bits,
                 external_signature: crs_info.external_signature,
             }))
         }
