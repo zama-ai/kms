@@ -1,6 +1,6 @@
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::centralized::service::{delete_kms_context_impl, new_kms_context_impl};
-use crate::tonic_some_or_err;
+use crate::some_or_tonic_abort;
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
     self, BackupRecoveryRequest, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
@@ -34,7 +34,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_INIT);
         METRICS.increment_error_counter(OP_INIT, ERR_INVALID_REQUEST);
-        tonic_some_or_err(
+        some_or_tonic_abort(
             None,
             "Requesting init on centralized kms is not suported".to_string(),
         )
@@ -48,7 +48,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
         METRICS.increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, ERR_INVALID_REQUEST);
-        tonic_some_or_err(
+        some_or_tonic_abort(
             None,
             "Requesting preproc on centralized kms is not suported".to_string(),
         )
@@ -62,7 +62,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     ) -> Result<Response<KeyGenPreprocResult>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_RESULT);
         METRICS.increment_error_counter(OP_KEYGEN_PREPROC_RESULT, ERR_INVALID_REQUEST);
-        tonic_some_or_err(
+        some_or_tonic_abort(
             None,
             "Requesting preproc status on centralized kms is not suported".to_string(),
         )

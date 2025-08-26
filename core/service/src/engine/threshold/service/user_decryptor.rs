@@ -62,7 +62,7 @@ use crate::{
             DSEP_USER_DECRYPTION,
         },
     },
-    tonic_handle_potential_err,
+    ok_or_tonic_abort,
     util::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
@@ -212,7 +212,7 @@ impl<
 
             let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
-                    let session = tonic_handle_potential_err(
+                    let session = ok_or_tonic_abort(
                         session_prep
                             .prepare_ddec_data_from_sessionid_z128(session_id)
                             .await,
@@ -256,7 +256,7 @@ impl<
                     Ok(res)
                 }
                 DecryptionMode::BitDecSmall => {
-                    let mut session = tonic_handle_potential_err(
+                    let mut session = ok_or_tonic_abort(
                         session_prep
                             .prepare_ddec_data_from_sessionid_z64(session_id)
                             .await,
@@ -464,7 +464,7 @@ impl<
                 )));
             }
 
-            if !tonic_handle_potential_err(
+            if !ok_or_tonic_abort(
                 crypto_storage.threshold_fhe_keys_exists(&key_id).await,
                 "Could not check threshold fhe key existance".to_string(),
             )? {
@@ -482,13 +482,13 @@ impl<
         // otherwise it'll be in the "Started" state forever.
         {
             let mut guarded_meta_store = self.user_decrypt_meta_store.write().await;
-            tonic_handle_potential_err(
+            ok_or_tonic_abort(
                 guarded_meta_store.insert(&req_id),
                 "Could not insert user decryption request".to_string(),
             )?;
         }
 
-        tonic_handle_potential_err(
+        ok_or_tonic_abort(
             crypto_storage.refresh_threshold_fhe_keys(&key_id).await,
             format!("Cannot find threshold keys with key ID {key_id}"),
         )?;
@@ -585,12 +585,12 @@ impl<
         let (payload, external_signature, extra_data) =
             handle_res_mapping(status, &request_id, "UserDecryption").await?;
 
-        let sig_payload_vec = tonic_handle_potential_err(
+        let sig_payload_vec = ok_or_tonic_abort(
             bc2wrap::serialize(&payload),
             format!("Could not convert payload to bytes {payload:?}"),
         )?;
 
-        let sig = tonic_handle_potential_err(
+        let sig = ok_or_tonic_abort(
             self.base_kms.sign(&DSEP_USER_DECRYPTION, &sig_payload_vec),
             format!("Could not sign payload {payload:?}"),
         )?;
