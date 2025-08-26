@@ -449,10 +449,7 @@ impl Networking for NetworkSession {
             let mut sent = self.num_byte_sent.try_write().unwrap();
             *sent += tag.len() + value.len();
         }
-        let request = SendValueRequest {
-            tag,
-            value: value.clone(),
-        };
+        let request = SendValueRequest { tag, value };
 
         //Retrieve the local channel that corresponds to the party we want to send to and push into it
         match self.sending_channels.get(receiver) {
