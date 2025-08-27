@@ -11,7 +11,6 @@ COPY . .
 
 # Build with cargo install and caching
 ARG FEATURES
-RUN rustup update
 RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     mkdir -p /app/ddec/bin && \
     # cargo install --path . --root . --bins --no-default-features --features=${FEATURES}
