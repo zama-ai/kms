@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use tfhe::{
-    core_crypto::commons::traits::ByteRandomGenerator, shortint::parameters::PolynomialSize,
+    core_crypto::commons::traits::ParallelByteRandomGenerator, shortint::parameters::PolynomialSize,
 };
 
 use crate::algebra::{
@@ -79,7 +79,7 @@ pub fn encrypt_glwe_ciphertext_assign<Gen, Z, const EXTENSION_DEGREE: usize>(
     output: &mut GlweCiphertextShare<Z, EXTENSION_DEGREE>,
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) where
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
@@ -102,7 +102,7 @@ pub fn encrypt_glwe_ciphertext<Gen, Z, const EXTENSION_DEGREE: usize>(
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
 ) where
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
@@ -126,7 +126,7 @@ pub(crate) fn encrypt_glwe_ciphertext_list<Gen, Z, const EXTENSION_DEGREE: usize
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
 ) where
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
@@ -157,7 +157,7 @@ fn fill_glwe_mask_and_body_for_encryption_assign<Z, Gen, const EXTENSION_DEGREE:
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
     encryption_type: EncryptionType,
 ) where
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {

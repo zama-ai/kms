@@ -24,8 +24,8 @@ use crate::{
 use itertools::Itertools;
 use tfhe::{
     core_crypto::prelude::{
-        par_convert_standard_lwe_bootstrap_key_to_fourier, ByteRandomGenerator,
-        FourierLweBootstrapKey, LweBootstrapKey, SeededLweBootstrapKey,
+        par_convert_standard_lwe_bootstrap_key_to_fourier, FourierLweBootstrapKey, LweBootstrapKey,
+        ParallelByteRandomGenerator, SeededLweBootstrapKey,
     },
     shortint::{
         list_compression::{
@@ -42,7 +42,7 @@ pub(crate) async fn generate_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     private_glwe_compute_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -93,7 +93,7 @@ pub(crate) async fn generate_compressed_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     private_glwe_compute_key: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -131,7 +131,7 @@ where
 fn generate_packing_key_switching_key_shares_for_compression<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     private_glwe_compute_key_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -166,7 +166,7 @@ async fn generate_compression_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     private_glwe_compute_key_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -218,7 +218,7 @@ async fn generate_compressed_compression_decompression_keys<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     private_glwe_compute_key_as_lwe: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,

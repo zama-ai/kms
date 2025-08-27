@@ -35,11 +35,12 @@ use super::{
     randomness::MPCEncryptionRandomGenerator,
 };
 use itertools::Itertools;
+use rayon::prelude::*;
 use tfhe::{
     core_crypto::{
         commons::{
             math::decomposition::DecompositionLevel, parameters::GlweSize,
-            traits::ByteRandomGenerator,
+            traits::ParallelByteRandomGenerator,
         },
         entities::ggsw_level_matrix_size,
     },
@@ -246,7 +247,7 @@ pub fn encrypt_constant_ggsw_ciphertext<Z, Gen, const EXTENSION_DEGREE: usize>(
     encryption_type: EncryptionType,
 ) where
     Z: BaseRing,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     let max_level = output.decomposition_level_count();
@@ -264,47 +265,50 @@ pub fn encrypt_constant_ggsw_ciphertext<Z, Gen, const EXTENSION_DEGREE: usize>(
     let decomp_base_log = output.decomposition_base_log();
 
     // zip_eq can panic, but if it does it is due to a bug as we expect both vectors to be of same size
-    for (level_index, (level_matrix, mut generator)) in
-        output.data.iter_mut().zip_eq(gen_iter).enumerate()
-    {
-        let decomp_level = DecompositionLevel(max_level.0 - level_index);
+    output
+        .data
+        .par_iter_mut()
+        .zip_eq(gen_iter)
+        .enumerate()
+        .for_each(|(level_index, (level_matrix, mut generator))| {
+            let decomp_level = DecompositionLevel(max_level.0 - level_index);
 
-        //Note that here tfhe-rs still only works on the msg and
-        // lets [`encrypt_constant_ggsw_level_matrix_row`] deal with with mult the proper key component)
-        //but we cant do that as its a secret-secret mult (so ask for it as input, cf ggsw_encode_message)
+            //Note that here tfhe-rs still only works on the msg and
+            // lets [`encrypt_constant_ggsw_level_matrix_row`] deal with with mult the proper key component)
+            //but we cant do that as its a secret-secret mult (so ask for it as input, cf ggsw_encode_message)
 
-        let factor = match encryption_type {
-            EncryptionType::Bits64 => Z::ONE << (64 - (decomp_base_log.0 * decomp_level.0)),
-            EncryptionType::Bits128 => Z::ONE << (128 - (decomp_base_log.0 * decomp_level.0)),
-        };
+            let factor = match encryption_type {
+                EncryptionType::Bits64 => Z::ONE << (64 - (decomp_base_log.0 * decomp_level.0)),
+                EncryptionType::Bits128 => Z::ONE << (128 - (decomp_base_log.0 * decomp_level.0)),
+            };
 
-        let gen_iter = generator
-            .fork_ggsw_level_to_glwe(output_glwe_size, output_polynomial_size, encryption_type)
-            .expect("Failed to split generator into glwe");
+            let gen_iter = generator
+                .fork_ggsw_level_to_glwe(output_glwe_size, output_polynomial_size, encryption_type)
+                .expect("Failed to split generator into glwe");
 
-        let last_row_index = level_matrix.glwe_size().0 - 1;
+            let last_row_index = level_matrix.glwe_size().0 - 1;
 
-        // zip_eq can panic, but if it does it is due to a bug as we expect both vectors to be of same size
-        for ((row_index, row_as_glwe), mut generator) in level_matrix
-            .as_mut_glwe_list()
-            .iter_mut()
-            .enumerate()
-            .zip_eq(gen_iter)
-        {
-            encrypt_constant_ggsw_level_matrix_row(
-                glwe_secret_key_share,
-                (row_index, last_row_index),
-                factor,
-                row_as_glwe,
-                encoded
-                    .get(row_index)
-                    .expect("Can't access encoded at index {row_index}")
-                    .clone(),
-                &mut generator,
-            )
-            .expect("Failed to encrypt constant GGSW level matrix row");
-        }
-    }
+            // zip_eq can panic, but if it does it is due to a bug as we expect both vectors to be of same size
+            level_matrix
+                .as_mut_glwe_list()
+                .par_iter_mut()
+                .enumerate()
+                .zip_eq(gen_iter)
+                .for_each(|((row_index, row_as_glwe), mut generator)| {
+                    encrypt_constant_ggsw_level_matrix_row(
+                        glwe_secret_key_share,
+                        (row_index, last_row_index),
+                        factor,
+                        row_as_glwe,
+                        encoded
+                            .get(row_index)
+                            .expect("Can't access encoded at index {row_index}")
+                            .clone(),
+                        &mut generator,
+                    )
+                    .expect("Failed to encrypt constant GGSW level matrix row");
+                });
+        });
 }
 
 fn encrypt_constant_ggsw_level_matrix_row<Z, Gen, const EXTENSION_DEGREE: usize>(
@@ -317,7 +321,7 @@ fn encrypt_constant_ggsw_level_matrix_row<Z, Gen, const EXTENSION_DEGREE: usize>
 ) -> anyhow::Result<()>
 where
     Z: BaseRing,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
 {
     //Do proper scaling using the provided list of secret shared plaintexts

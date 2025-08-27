@@ -5,7 +5,9 @@ use crate::algebra::{
 use itertools::Itertools;
 use tfhe::{
     boolean::prelude::{DecompositionBaseLog, DecompositionLevelCount},
-    core_crypto::{commons::math::decomposition::DecompositionLevel, prelude::ByteRandomGenerator},
+    core_crypto::{
+        commons::math::decomposition::DecompositionLevel, prelude::ParallelByteRandomGenerator,
+    },
 };
 
 use super::{
@@ -30,7 +32,7 @@ fn generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
 ) where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
 {
     let decomp_base_log = lwe_packing_keyswitch_key.decomposition_base_log();
     let decomp_level_count = lwe_packing_keyswitch_key.decomposition_level_count();
@@ -82,7 +84,7 @@ pub fn allocate_and_generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_D
 where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
 {
     // Ensure the input key and output key have the same number of elements to avoid a panic in `generate_lwe_packing_keyswitch_key`
     let mut new_ksk = LwePackingKeyswitchKeyShares::new(

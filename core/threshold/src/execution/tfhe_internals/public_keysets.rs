@@ -3,7 +3,7 @@ use crate::execution::tfhe_internals::lwe_key::{
 };
 use crate::execution::tfhe_internals::parameters::DKGParams;
 use serde::{Deserialize, Serialize};
-use tfhe::core_crypto::algorithms::convert_standard_lwe_bootstrap_key_to_fourier_128;
+use tfhe::core_crypto::algorithms::par_convert_standard_lwe_bootstrap_key_to_fourier_128;
 use tfhe::core_crypto::entities::Fourier128LweBootstrapKey;
 use tfhe::core_crypto::prelude::{
     SeededLweBootstrapKey, SeededLweCompactPublicKey, SeededLweKeyswitchKey,
@@ -131,7 +131,7 @@ impl RawPubKeySet {
                     );
                     let sns_param = sns_param.sns_params;
 
-                    convert_standard_lwe_bootstrap_key_to_fourier_128(bk_sns, &mut fourier_bk);
+                    par_convert_standard_lwe_bootstrap_key_to_fourier_128(bk_sns, &mut fourier_bk);
                     let key = NoiseSquashingKey::from_raw_parts(
                         fourier_bk,
                         msnrk_sns.clone(),

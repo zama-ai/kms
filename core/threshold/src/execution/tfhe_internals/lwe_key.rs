@@ -2,7 +2,7 @@ use itertools::{EitherOrBoth, Itertools};
 use serde::{Deserialize, Serialize};
 use tfhe::{
     core_crypto::{
-        commons::{math::random::CompressionSeed, traits::ByteRandomGenerator},
+        commons::{math::random::CompressionSeed, traits::ParallelByteRandomGenerator},
         entities::{LweCompactPublicKey, LweCompactPublicKeyOwned},
         prelude::{SeededLweCompactPublicKey, SeededLweCompactPublicKeyOwned},
     },
@@ -231,7 +231,7 @@ pub fn allocate_and_generate_new_lwe_compact_public_key<Z, Gen, const EXTENSION_
 where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
 {
     let mut pk = LweCompactPublicKeyShare::new(lwe_secret_key.lwe_dimension());
 
@@ -247,7 +247,7 @@ pub fn generate_lwe_compact_public_key<Z, Gen, const EXTENSION_DEGREE: usize>(
 ) where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
 {
     let encryption_type = output.glwe_ciphertext_share.encryption_type;
     let (mask, body) = output.get_mut_mask_and_body();
@@ -268,7 +268,7 @@ fn generate_lwe_key_shares<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     params: &DKGParams,
@@ -312,7 +312,7 @@ pub(crate) async fn generate_lwe_private_public_key_pair<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     params: &DKGParams,
@@ -342,7 +342,7 @@ pub(crate) async fn generate_lwe_private_compressed_public_key_pair<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     params: &DKGParams,
