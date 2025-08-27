@@ -117,7 +117,9 @@ impl Client {
         }
     }
 
-    // NOTE: this only checks the signature is valid against one of the server addresses
+    // TODO(zama-ai/kms-internal#2727)
+    // this only checks the signature is valid against one of the server addresses
+    // we should fix it so that it does a proper verification
     pub async fn retrieve_server_key_and_public_key<R: StorageReader>(
         &self,
         preproc_id: &RequestId,

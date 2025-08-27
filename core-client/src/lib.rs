@@ -1286,6 +1286,8 @@ async fn do_preproc(
     let req_id = RequestId::new_random(rng);
 
     let max_iter = cmd_conf.max_iter;
+    // NOTE: we use a dummy domain because preprocessing is triggered by the gateway in production
+    // this function is only used for testing.
     let domain = dummy_domain();
     let pp_req = internal_client.preproc_request(&req_id, Some(param), None, &domain)?; //TODO keyset config
 

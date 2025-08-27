@@ -5,6 +5,7 @@ cfg_if::cfg_if! {
         use crate::dummy_domain;
         use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
         use crate::engine::base::INSECURE_PREPROCESSING_ID;
+        use crate::engine::base::{compute_info_crs, CrsGenMetadata};
         use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
         use crate::engine::threshold::service::{ThresholdFheKeys};
         use crate::vault::storage::crypto_material::{
@@ -1114,7 +1115,6 @@ where
         // Compute signed metadata for CRS verification
         // PANICS: If signature generation fails - would compromise security model
 
-        use crate::engine::base::{compute_info_crs, CrsGenMetadata};
         let crs_info = compute_info_crs(cur_sk, &DSEP_PUBDATA_CRS, crs_id, &pp, &domain)
             .unwrap_or_else(|e| {
                 panic!("Failed to compute CRS info for party: {e}");

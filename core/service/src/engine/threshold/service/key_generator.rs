@@ -491,6 +491,9 @@ impl<
                     "Legacy key generation result for request ID: {}",
                     request_id
                 );
+                // Because this is a legacy result and the call path will not reach here
+                // (because a restart is needed to upgrade to the new version and the meta store is deleted from RAM),
+                // we just return empty values for the fields below.
                 Ok(Response::new(KeyGenResult {
                     request_id: Some(request_id.into()),
                     preprocessing_id: None,

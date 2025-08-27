@@ -101,7 +101,7 @@ impl KeygenVerification {
 }
 
 // Solidity struct for DecompressionUpgradeKey
-// This is a placeholder since gateway does not support this yet.
+// TODO(zama-ai/kms-internal#2714) this is a placeholder since gateway does not support this yet.
 alloy_sol_types::sol! {
     struct FheDecompressionUpgradeKey {
         bytes decompressionUpgradeKeyDigest;

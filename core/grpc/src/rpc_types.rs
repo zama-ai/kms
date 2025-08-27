@@ -57,6 +57,7 @@ pub struct SignedPubDataHandleInternal {
     // This lower-case hex values without the 0x prefix.
     pub key_handle: String,
     // The signature on the handle
+    // OBSOLETE: no longer in use, but cannot be removed because of backwards compatibility
     pub signature: Vec<u8>,
     // The signature on the key for the external recipient
     // (e.g. using EIP712 for fhevm)

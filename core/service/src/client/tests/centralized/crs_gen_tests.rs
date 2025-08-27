@@ -111,7 +111,9 @@ async fn crs_gen_centralized_manual(
     assert_eq!(actual_digest, resp.crs_digest);
 
     let max_num_bits = max_num_bits_from_crs(&crs_unversioned);
-    // try verification with each of the server keys; at least one must pass
+
+    // there should be exactly one server since we're in the centralized case
+    assert_eq!(internal_client.server_identities.len(), 1);
     internal_client
         .verify_external_signature(
             &CrsgenVerification {
