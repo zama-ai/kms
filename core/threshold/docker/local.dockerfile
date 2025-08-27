@@ -2,7 +2,7 @@
 
 ################################################################
 ## Second stage builds the kms-core binaries
-FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms-golden-image:latest AS kms-threshold
+FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS kms-threshold
 
 WORKDIR /app/ddec
 
@@ -11,6 +11,7 @@ COPY . .
 
 # Build with cargo install and caching
 ARG FEATURES
+RUN rustup update
 RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     mkdir -p /app/ddec/bin && \
     # cargo install --path . --root . --bins --no-default-features --features=${FEATURES}
