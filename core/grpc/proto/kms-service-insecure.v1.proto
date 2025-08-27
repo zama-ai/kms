@@ -58,4 +58,6 @@ service CoreServiceEndpoint {
 
   // Recover the master decryption key secret shared with custodians as part of a custodian-based backup recovery
   rpc CustodianBackupRecovery(kms.v1.BackupRecoveryRequest) returns (kms.v1.Empty);
+
+  rpc GetKeyMaterialAvailability(kms.v1.Empty) returns (kms.v1.KeyMaterialAvailabilityResponse);
 }

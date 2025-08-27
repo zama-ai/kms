@@ -4,7 +4,7 @@ use crate::tonic_some_or_err;
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
     self, BackupRecoveryRequest, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
-    OperatorPublicKey,
+    KeyMaterialAvailabilityResponse, OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use tonic::{Request, Response, Status};
@@ -330,5 +330,26 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         Err(Status::unimplemented(
             "custodian_recovery_init is not implemented",
         ))
+    }
+
+    #[tracing::instrument(skip(self, _request))]
+    async fn get_key_material_availability(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status> {
+        use crate::engine::utils::query_key_material_availability;
+
+        // Get storage references
+        let priv_storage = self.crypto_storage.inner.get_private_storage();
+        let priv_guard = priv_storage.lock().await;
+
+        let response = query_key_material_availability(
+            &*priv_guard,
+            "Centralized KMS",
+            Vec::new(), // Centralized KMS doesn't support preprocessing material
+        )
+        .await?;
+
+        Ok(Response::new(response))
     }
 }

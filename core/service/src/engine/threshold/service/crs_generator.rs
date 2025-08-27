@@ -12,8 +12,8 @@ use kms_grpc::{
 use observability::{
     metrics,
     metrics_names::{
-        ERR_CANCELLED, ERR_CRS_GEN_FAILED, ERR_INVALID_REQUEST, OP_CRS_GEN_REQUEST,
-        OP_INSECURE_CRS_GEN_REQUEST, TAG_PARTY_ID,
+        ERR_CANCELLED, ERR_CRS_GEN_FAILED, OP_CRS_GEN_REQUEST, OP_INSECURE_CRS_GEN_REQUEST,
+        TAG_PARTY_ID,
     },
 };
 use threshold_fhe::{
@@ -187,9 +187,7 @@ impl<
             guarded_meta_store.insert(&req_id)?;
         }
 
-        let session_id = req_id.derive_session_id().inspect_err(|_| {
-            metrics::METRICS.increment_error_counter(op_tag, ERR_INVALID_REQUEST);
-        })?;
+        let session_id = req_id.derive_session_id()?;
         // CRS ceremony requires a sync network
         let session = self
             .session_preparer
