@@ -19,6 +19,8 @@ pub mod keyset_configuration;
 pub mod threshold;
 #[cfg(feature = "non-wasm")]
 pub mod traits;
+#[cfg(feature = "non-wasm")]
+pub mod utils;
 
 #[cfg(feature = "non-wasm")]
 mod validation_non_wasm;

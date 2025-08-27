@@ -62,6 +62,7 @@ pub trait KeyGenPreprocessor {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, Status>;
+    async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, Status>;
 }
 
 #[tonic::async_trait]
@@ -122,4 +123,9 @@ pub trait BackupOperator {
     ) -> Result<Response<Empty>, Status>;
 
     async fn backup_restore(&self, request: Request<Empty>) -> Result<Response<Empty>, Status>;
+
+    async fn get_key_material_availability(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status>;
 }
