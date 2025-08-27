@@ -665,6 +665,49 @@ The `signature` is a `secp256k1` signature on the `bincode::serialize` of the `p
 
 </details>
 
+## Key Material Availability
+
+<details>
+    <summary> GetKeyMaterialAvailability </summary>
+
+### Input
+
+```proto
+message Empty {}
+```
+
+### Output
+
+```proto
+message KeyMaterialAvailabilityResponse {
+  repeated string fhe_key_ids = 1;
+  repeated string crs_key_ids = 2;
+  repeated string preprocessing_ids = 3;
+  string storage_info = 4;
+}
+```
+
+### Description
+
+This RPC provides a comprehensive view of all available key material in the KMS, including FHE keys, CRS keys, and preprocessing material (threshold KMS only).
+
+The response contains:
+
+- `fhe_key_ids`: List of all available FHE key IDs (request IDs from KeyGen operations)
+- `crs_key_ids`: List of all available CRS key IDs (request IDs from CrsGen operations)  
+- `preprocessing_ids`: List of all available preprocessing material IDs (request IDs from KeyGenPreproc operations in threshold KMS, empty for centralized KMS)
+- `storage_info`: Diagnostic information about the storage backend (e.g., "Centralized KMS" or "Threshold KMS")
+
+This endpoint is useful for:
+- Health checks and monitoring
+- Verifying key material availability before operations
+- Debugging and diagnostics
+- CI/CD integration
+
+The endpoint queries the underlying storage directly and returns immediately with the current state.
+
+</details>
+
 ## User Decryption
 
 <details>
