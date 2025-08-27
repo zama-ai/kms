@@ -107,7 +107,7 @@ impl GrpcSendingService {
 
         let role_assignment = self.role_assignment.read().await;
 
-        let network_address = role_assignment.get(&receiver).ok_or_else(|| {
+        let network_address = role_assignment.identity(&receiver).ok_or_else(|| {
             anyhow_error_and_log(format!("No network address known for role {receiver:?}"))
         })?;
 
@@ -571,13 +571,13 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_network_stack() {
         let sid = SessionId::from(0);
-        let mut role_assignment = RoleAssignment::new();
+        let mut role_assignment = RoleAssignment::default();
         let role_1 = Role::indexed_from_one(1);
         let id_1 = Identity("127.0.0.1".to_string(), 6001);
         let role_2 = Role::indexed_from_one(2);
         let id_2 = Identity("127.0.0.1".to_string(), 6002);
-        role_assignment.insert(role_1, id_1.clone());
-        role_assignment.insert(role_2, id_2.clone());
+        role_assignment.insert_with_default_mpc_identity(role_1, id_1.clone());
+        role_assignment.insert_with_default_mpc_identity(role_2, id_2.clone());
 
         // Keep a Vec for collecting results
         let mut handles = OsThreadGroup::new();
@@ -585,7 +585,7 @@ mod tests {
             //Wait a little while to make sure retry works fine
             std::thread::sleep(Duration::from_secs(5));
             let role = *role;
-            let my_port = id.1;
+            let my_port = id.0.port();
             let id = id.clone();
 
             let networking_1 = GrpcNetworkingManager::new(
@@ -633,7 +633,7 @@ mod tests {
                     let core_future =
                         core_router.serve(format!("127.0.0.1:{my_port}").parse().unwrap());
                     tokio::spawn(async move {
-                        println!("Spinning up server on {id}");
+                        println!("Spinning up server on {id:?}");
                         let _res = futures::join!(core_future);
                     });
                     tokio::spawn(async move {

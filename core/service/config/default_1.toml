@@ -121,29 +121,40 @@ key.path = "certs/key_p1.pem"
 # list should be the same for all parties. Addresses and ports below are for
 # communicating with the cores to perform MPC tasks.
 #
+# The field `mpc_identity` is used to identify the core in the MPC protocol.
+# It must match the subject common name (CN) in the TLS certificate.
+# This is how cores authenticate each other in the MPC protocol,
+# i.e., party-2 connecting to party-1 must prove that it is indeed party-2
+# and not any other party that's in the list of TLS certificates.
+# If it is not configured it default to the `address` field.
+#
 # NOTE: in the future the peer list will be removed and loaded from the context.
 # See zama-ai/kms-internal#2530
 [[threshold.peers]]
 party_id = 1
 address = "p1"
+mpc_identity = "p1"
 port = 50001
 tls_cert.path = "certs/cert_p1.pem"
 
 [[threshold.peers]]
 party_id = 2
 address = "p2"
+mpc_identity = "p2"
 port = 50002
 tls_cert.path = "certs/cert_p2.pem"
 
 [[threshold.peers]]
 party_id = 3
 address = "p3"
+mpc_identity = "p3"
 port = 50003
 tls_cert.path = "certs/cert_p3.pem"
 
 [[threshold.peers]]
 party_id = 4
 address = "p4"
+mpc_identity = "p4"
 port = 50004
 tls_cert.path = "certs/cert_p4.pem"
 
