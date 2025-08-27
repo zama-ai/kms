@@ -116,9 +116,13 @@ impl GrpcSendingService {
             None => "http",
         };
         tracing::debug!("Creating {} channel to '{}'", proto, receiver);
-        let endpoint: Uri = format!("{proto}://{receiver}").parse().map_err(|_e| {
-            anyhow_error_and_log(format!("failed to parse identity as endpoint: {receiver}"))
-        })?;
+        let endpoint: Uri = format!("{proto}://{network_address}")
+            .parse()
+            .map_err(|_e| {
+                anyhow_error_and_log(format!(
+                    "failed to parse identity as endpoint: {network_address}"
+                ))
+            })?;
 
         let channel = match &self.tls_config {
             Some(client_config) => {
