@@ -1429,7 +1429,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_small_threshold_decrypt_malicious_f4() {
-        test_small_threshold_decrypt::<4>(1, 4, HashSet::from([Role::indexed_from_one(1)])).await
+        test_small_threshold_decrypt::<4>(1, 4, HashSet::from([Role::indexed_from_zero(1)])).await
     }
 
     #[cfg(feature = "extension_degree_3")]
