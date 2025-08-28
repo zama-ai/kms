@@ -15,7 +15,7 @@ data:
     [aws]
     region = "${AWS_REGION}"
     {{ if .Values.minio.enabled }}
-    s3_endpoint = "http://minio:9000"
+    s3_endpoint = "{{ .Values.minio.endpoint }}"
     {{ else }}
     role_arn = "${AWS_ROLE_ARN}"
       {{ if .Values.kmsCore.nitroEnclave.enabled }}

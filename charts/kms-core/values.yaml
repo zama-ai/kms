@@ -250,24 +250,18 @@ tracing:
   endpoint: "http://otel-deployment-opentelemetry-collector.observability.svc.cluster.local:4317"
   otlp_timeout_ms: 10000
 
+
+# Minio: you can handle it yourself
+# i.e: by deploying Minio operator or Minio chart community maintained
+#
 minio:
   enabled: false
-  fullnameOverride: minio
-  auth:
-    rootUser: minio-admin
-    rootPassword: minio-admin
-  provisioning:
-    enabled: true
-    buckets:
-      - name: kms-public
-        region: eu-west-1
-    users:
-      - username: kms-access-key-id
-        password: kms-secret-access-key
-        policies:
-          - readwrite
-    extraCommands:
-      - "mc anonymous set public provisioning/kms-public"
+  # If enabled, the minio endpoint will be used to store the keys. Example: http://minio:9000
+  endpoint:
+  # If enabled, the minio username will be used to store the keys
+  username:
+  # If enabled, the minio password will be used to store the keys
+  password:
 
 rustLog: info
 
