@@ -732,9 +732,10 @@ async fn vss_receive_round_1<Z: Ring, S: BaseSessionHandles>(
         Some(session.corrupt_roles()),
         |msg, _id| match msg {
             NetworkValue::Round1VSS(v) => Ok(v),
-            _ => Err(anyhow_error_and_log(
-                "Received something else, not a VSS round1 struct".to_string(),
-            )),
+            _ => Err(anyhow_error_and_log(format!(
+                "Received {}, not a VSS round1 struct",
+                msg.network_type_name()
+            ))),
         },
     )
     .await
@@ -1489,7 +1490,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             let _ = malicious_vss.execute_many(&mut session, &secrets).await;
-            secrets
+            Ok(secrets)
         };
 
         // VSS assumes sync network
@@ -1522,7 +1523,7 @@ pub(crate) mod tests {
         }
 
         if !params.should_be_detected {
-            for (party_role, result_malicious) in results_malicious.iter() {
+            for (party_role, result_malicious) in results_malicious.unwrap().iter() {
                 expected_secrets[party_role].clone_from(result_malicious);
             }
         }

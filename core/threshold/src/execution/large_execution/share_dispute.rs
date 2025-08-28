@@ -480,14 +480,13 @@ pub(crate) mod tests {
             let secrets = (0..num_secrets)
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
-            (
-                malicious_share_dispute
-                    .execute(&mut session, &secrets)
-                    .await,
-                malicious_share_dispute
-                    .execute_double(&mut session, &secrets)
-                    .await,
-            )
+            let _ = malicious_share_dispute
+                .execute(&mut session, &secrets)
+                .await;
+            let _ = malicious_share_dispute
+                .execute_double(&mut session, &secrets)
+                .await;
+            Ok(())
         };
 
         let mut malicious_roles_with_dispute = HashSet::from_iter(malicious_due_to_dispute.clone());

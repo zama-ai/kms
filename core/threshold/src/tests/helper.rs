@@ -558,12 +558,15 @@ pub mod tests {
         delay_vec: Option<Vec<tokio::time::Duration>>,
         task_honest: &mut dyn FnMut(LargeSession) -> TaskOutputT,
         task_malicious: &mut dyn FnMut(LargeSession, P) -> TaskOutputM,
-    ) -> (HashMap<Role, OutputT>, HashMap<Role, OutputM>)
+    ) -> (
+        HashMap<Role, OutputT>,
+        anyhow::Result<HashMap<Role, OutputM>>,
+    )
     where
         TaskOutputT: Future<Output = OutputT>,
         TaskOutputT: Send + 'static,
         OutputT: Send + 'static,
-        TaskOutputM: Future<Output = OutputM>,
+        TaskOutputM: Future<Output = anyhow::Result<OutputM>>,
         TaskOutputM: Send + 'static,
         OutputM: Send + 'static,
     {
@@ -620,7 +623,10 @@ pub mod tests {
 
         (
             results_honest.into_iter().collect(),
-            results_malicious.into_iter().collect(),
+            results_malicious
+                .into_iter()
+                .map(|(role, res)| res.map(|r| (role, r)))
+                .collect(),
         )
     }
 

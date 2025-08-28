@@ -197,13 +197,9 @@ pub(crate) mod tests {
         };
 
         let mut task_malicious = |mut session: LargeSession, malicious_coinflip: C| async move {
-            (
-                malicious_coinflip
-                    .execute::<Z, _>(&mut session)
-                    .await
-                    .unwrap(),
-                session.corrupt_roles().clone(),
-            )
+            let res = malicious_coinflip.execute::<Z, _>(&mut session).await;
+            let cur_roles = session.corrupt_roles().clone();
+            res.map(|inner| (inner, cur_roles))
         };
 
         //Coinflip assumes Sync network
@@ -288,7 +284,6 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
-    #[tracing_test::traced_test]
     #[cfg(feature = "slow_tests")]
     async fn test_coinflip_dropout<V: Vss + 'static>(
         #[case] params: TestingParameters,
@@ -336,7 +331,8 @@ pub(crate) mod tests {
         test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             real_coinflip_with_malicious_sub_protocols.clone(),
-        )).await;
+        ))
+        .await;
     }
 
     //Test malicious coinflip with all kinds of strategies for VSS (honest and malicious)

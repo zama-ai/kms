@@ -224,10 +224,10 @@ impl RobustOpen for SecureRobustOpen {
                 Some(session.corrupt_roles()),
                 |msg, _id| match msg {
                     NetworkValue::VecRingValue(v) => Ok(v),
-                    _ => Err(anyhow_error_and_log(
-                        "Received something else than a Ring value in robust open to all"
-                            .to_string(),
-                    )),
+                    _ => Err(anyhow_error_and_log(format!(
+                        "Received {}, expected a Ring value in robust open to all",
+                        msg.network_type_name()
+                    ))),
                 },
             )
             .await;

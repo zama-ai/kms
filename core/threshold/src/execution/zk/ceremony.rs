@@ -1174,9 +1174,9 @@ mod tests {
         };
 
         let mut task_malicious = |mut session: LargeSession, malicious_party: C| async move {
-            let _ = malicious_party
+            malicious_party
                 .execute::<Z, _>(&mut session, witness_dim, Some(1))
-                .await;
+                .await
         };
 
         //CRS generation is round robin, so Sync by nature
