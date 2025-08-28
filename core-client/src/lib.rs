@@ -1,7 +1,3 @@
-/// Core Client library
-///
-/// This library implements most functionalities to interact with deployed KMS cores.
-/// This library also includes an associated CLI.
 use aes_prng::AesRng;
 use alloy_primitives::Signature;
 use alloy_sol_types::Eip712Domain;
@@ -10,17 +6,22 @@ use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, CrsGenResult, CustodianRecoveryOutput, CustodianRecoveryRequest,
-    FheParameter, KeyGenPreprocResult, KeyGenResult, PublicDecryptionRequest,
-    PublicDecryptionResponse, TypedCiphertext, TypedPlaintext,
+    CiphertextFormat, CrsGenResult, CustodianContext, CustodianRecoveryOutput,
+    CustodianRecoveryRequest, Empty, FheParameter, KeyGenPreprocResult, KeyGenResult,
+    NewCustodianContextRequest, PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext,
+    TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, InternalCustodianRecoveryOutput, PubDataType};
 use kms_grpc::{KeyId, RequestId};
+use kms_lib::backup::custodian::InternalCustodianSetupMessage;
+use kms_lib::backup::operator::InternalRecoveryRequest;
 use kms_lib::client::{client_wasm::Client, user_decryption_wasm::ParsedUserDecryptionRequest};
 use kms_lib::consts::{DEFAULT_PARAM, SIGNING_KEY_ID, TEST_PARAM};
 use kms_lib::engine::base::{compute_external_pubdata_message_hash, compute_pt_message_hash};
-use kms_lib::util::file_handling::{read_element, write_element};
+use kms_lib::util::file_handling::{
+    read_element, safe_read_element_versioned, safe_write_element_versioned, write_element,
+};
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, load_crs_from_storage, load_pk_from_storage,
@@ -32,6 +33,11 @@ use observability::conf::Settings;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+/// Core Client library
+///
+/// This library implements most functionalities to interact with deployed KMS cores.
+/// This library also includes an associated CLI.
+use std::path::MAIN_SEPARATOR;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Once};
@@ -498,13 +504,21 @@ pub struct CrsParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct NewCustodianContextParameters {
+    #[clap(long, short = 't')]
+    pub threshold: u32,
+    #[clap(long, short = 'm')]
+    pub setup_msg_path: Vec<PathBuf>,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct ResultParameters {
     #[clap(long, short = 'i')]
     pub request_id: RequestId,
 }
 
 #[derive(Debug, Parser, Clone)]
-pub struct RestoreParameters {
+pub struct RecoveryParameters {
     #[clap(long, short = 'i')]
     pub custodian_context_id: RequestId,
     #[clap(long, short = 'r')]
@@ -529,8 +543,11 @@ pub enum CCCommand {
     CrsGenResult(ResultParameters),
     InsecureCrsGen(CrsParameters),
     InsecureCrsGenResult(ResultParameters),
+    NewCustodianContext(NewCustodianContextParameters),
     GetOperatorPublicKey(NoParameters),
-    CustodianBackupRestore(RestoreParameters),
+    CustodianRecoveryInit(NoParameters),
+    CustodianBackupRecovery(RecoveryParameters),
+    BackupRestore(NoParameters),
     DoNothing(NoParameters),
 }
 
@@ -1301,7 +1318,68 @@ async fn do_get_operator_pub_keys(
     Ok(backup_pks)
 }
 
-async fn do_custodian_backup_restore(
+async fn do_new_custodian_context(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    rng: &mut AesRng,
+    threshold: u32,
+    custodian_setup_msg: Vec<InternalCustodianSetupMessage>,
+) -> anyhow::Result<RequestId> {
+    let context_id = RequestId::new_random(rng);
+    let mut req_tasks = JoinSet::new();
+    let mut custodian_nodes = Vec::new();
+    for cur_setup in custodian_setup_msg {
+        custodian_nodes.push(cur_setup.try_into()?);
+    }
+    let new_context = CustodianContext {
+        custodian_nodes,
+        context_id: Some(context_id.into()),
+        previous_context_id: None, // TODO not really used now
+        threshold,
+    };
+    for ce in core_endpoints.iter_mut() {
+        let mut cur_client = ce.clone();
+        let new_context_cloned = new_context.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .new_custodian_context(tonic::Request::new(NewCustodianContextRequest {
+                    active_context: None, // TODO not really used now
+                    new_context: Some(new_context_cloned),
+                }))
+                .await
+        });
+    }
+
+    while let Some(inner) = req_tasks.join_next().await {
+        let _ = inner??;
+    }
+
+    Ok(context_id)
+}
+
+async fn do_custodian_recovery_init(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+) -> anyhow::Result<Vec<InternalRecoveryRequest>> {
+    let mut req_tasks = JoinSet::new();
+    for ce in core_endpoints.iter_mut() {
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .custodian_recovery_init(tonic::Request::new(Empty {}))
+                .await
+        });
+    }
+
+    let mut res = Vec::new();
+    while let Some(inner) = req_tasks.join_next().await {
+        let cur_rec_req = inner??;
+        let cur_inner_rec = cur_rec_req.into_inner();
+        res.push(cur_inner_rec.try_into()?);
+    }
+
+    Ok(res)
+}
+
+async fn do_custodian_backup_recovery(
     core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
     custodian_context_id: RequestId,
     custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
@@ -1331,6 +1409,26 @@ async fn do_custodian_backup_restore(
                     custodian_context_id: Some(custodian_context_id.into()),
                     custodian_recovery_outputs: cur_recoveries,
                 }))
+                .await
+        });
+    }
+
+    while let Some(inner) = req_tasks.join_next().await {
+        let _ = inner??;
+    }
+
+    Ok(())
+}
+
+async fn do_backup_restore(
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+) -> anyhow::Result<()> {
+    let mut req_tasks = JoinSet::new();
+    for ce in core_endpoints.iter_mut() {
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move {
+            cur_client
+                .custodian_recovery_init(tonic::Request::new(Empty {}))
                 .await
         });
     }
@@ -1953,27 +2051,68 @@ pub async fn execute_cmd(
             .await?;
             vec![(Some(req_id), "insecure crs gen result queried".to_string())]
         }
+        CCCommand::NewCustodianContext(new_custodian_context_parameters) => {
+            let mut setup_msgs = Vec::new();
+            for cur_path in &new_custodian_context_parameters.setup_msg_path {
+                let cur_setup: InternalCustodianSetupMessage =
+                    safe_read_element_versioned(cur_path).await?;
+                setup_msgs.push(cur_setup);
+            }
+            let context_id = do_new_custodian_context(
+                &mut core_endpoints_req,
+                &mut rng,
+                new_custodian_context_parameters.threshold,
+                setup_msgs,
+            )
+            .await?;
+            vec![(
+                Some(context_id),
+                "new custodian context created".to_string(),
+            )]
+        }
         CCCommand::GetOperatorPublicKey(NoParameters {}) => {
             let pks = do_get_operator_pub_keys(&mut core_endpoints_req).await?;
             pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
         }
-        CCCommand::CustodianBackupRestore(RestoreParameters {
+        CCCommand::CustodianRecoveryInit(NoParameters {}) => {
+            let res = do_custodian_recovery_init(&mut core_endpoints_req).await?;
+            for cur_rec_req in &res {
+                let path = destination_prefix.join("RECOVERY").join(format!(
+                    "{}{MAIN_SEPARATOR}{}",
+                    cur_rec_req.backup_id(),
+                    cur_rec_req.operator_role()
+                ));
+                safe_write_element_versioned(path, cur_rec_req).await?;
+            }
+            vec![(
+                Some(res[0].backup_id()),
+                "custodian recovery init queried and recovery request stored".to_string(),
+            )]
+        }
+        CCCommand::CustodianBackupRecovery(RecoveryParameters {
             custodian_context_id,
             custodian_recovery_outputs,
         }) => {
             let mut custodian_outputs = Vec::new();
             for recovery_path in custodian_recovery_outputs {
                 let read_recovery: InternalCustodianRecoveryOutput =
-                    read_element(&recovery_path).await?;
+                    safe_read_element_versioned(&recovery_path).await?;
                 custodian_outputs.push(read_recovery);
             }
-            do_custodian_backup_restore(
+            do_custodian_backup_recovery(
                 &mut core_endpoints_req,
                 *custodian_context_id,
                 custodian_outputs,
             )
             .await?;
-            vec![(None, "custodian backup restore complete".to_string())]
+            vec![(
+                Some(*custodian_context_id),
+                "custodian backup restore complete".to_string(),
+            )]
+        }
+        CCCommand::BackupRestore(NoParameters {}) => {
+            do_backup_restore(&mut core_endpoints_req).await?;
+            vec![(None, "backup restore complete".to_string())]
         }
     };
 

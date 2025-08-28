@@ -1,6 +1,7 @@
 use cc_tests_utils::{DockerCompose, KMSMode};
 use kms_core_client::*;
 use kms_grpc::KeyId;
+use kms_grpc::RequestId;
 use serial_test::serial;
 use std::path::Path;
 use std::path::PathBuf;
@@ -202,6 +203,104 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
     };
 
     key_id.to_string()
+}
+
+#[allow(dead_code)]
+async fn new_custodian_context<T: DockerComposeContext>(ctx: &T) -> String {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+
+    let keys_folder: &Path = Path::new("tests/data/keys");
+    let root = keys_folder.join("CUSTODIAN");
+    let mut setup_msg_paths = Vec::new();
+    for cur_file in std::fs::read_dir(root).unwrap() {
+        let cur_file = cur_file.unwrap();
+        setup_msg_paths.push(cur_file.path());
+    }
+    let command = CCCommand::NewCustodianContext(NewCustodianContextParameters {
+        threshold: 1,
+        setup_msg_path: setup_msg_paths,
+    });
+    let init_config = CmdConfig {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+    };
+
+    println!("Doing new custodian context");
+    let backup_init_results = execute_cmd(&init_config, keys_folder).await.unwrap();
+    println!("New custodian context done");
+    assert_eq!(backup_init_results.len(), 1);
+    let res_id = match backup_init_results.first().unwrap() {
+        (Some(value), _) => value,
+        _ => panic!("Error doing new custodian context"),
+    };
+
+    res_id.to_string()
+}
+
+#[allow(dead_code)]
+async fn backup_init<T: DockerComposeContext>(ctx: &T) -> String {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+
+    let keys_folder: &Path = Path::new("tests/data/keys");
+
+    let init_command = CCCommand::CustodianRecoveryInit(NoParameters {});
+    let init_config = CmdConfig {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command: init_command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+    };
+
+    println!("Doing backup init");
+    let backup_init_results = execute_cmd(&init_config, keys_folder).await.unwrap();
+    println!("Backup init done");
+    assert_eq!(backup_init_results.len(), 1);
+    let res_id = match backup_init_results.first().unwrap() {
+        (Some(value), _) => value,
+        _ => panic!("Error doing backup init"),
+    };
+
+    res_id.to_string()
+}
+
+#[allow(dead_code)]
+async fn backup_recovery<T: DockerComposeContext>(ctx: &T, backup_id: RequestId) -> String {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+
+    let keys_folder: &Path = Path::new("tests/data/keys");
+    let root = keys_folder.join("RECOVERY").join(format!("{backup_id}",));
+    let mut custodian_recovery_outputs = Vec::new();
+    for cur_file in std::fs::read_dir(root).unwrap() {
+        let cur_file = cur_file.unwrap();
+        custodian_recovery_outputs.push(cur_file.path());
+    }
+
+    let command = CCCommand::CustodianBackupRecovery(RecoveryParameters {
+        custodian_context_id: backup_id,
+        custodian_recovery_outputs,
+    });
+    let init_config = CmdConfig {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+    };
+
+    println!("Doing backup recovery");
+    let backup_recovery_results = execute_cmd(&init_config, keys_folder).await.unwrap();
+    println!("Backup init recovery");
+    assert_eq!(backup_recovery_results.len(), 1);
+    let res_id = match backup_recovery_results.first().unwrap() {
+        (Some(value), _) => value,
+        _ => panic!("Error doing backup recovery"),
+    };
+
+    res_id.to_string()
 }
 
 async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<CCCommand>) {
