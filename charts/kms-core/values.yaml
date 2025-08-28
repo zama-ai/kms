@@ -251,8 +251,9 @@ tracing:
   otlp_timeout_ms: 10000
 
 
-# Minio: you can handle it yourself
-# i.e: by deploying Minio operator or Minio chart community maintained
+# Minio: If we want to use local s3 storage, we can use Minio
+# i.e: by deploying Minio operator: https://docs.min.io/community/minio-object-store/operations/deployments/k8s-deploy-operator-helm-on-kubernetes.html?ref=github
+# or Minio chart community maintained: https://github.com/minio/minio/tree/master/helm/minio
 #
 minio:
   enabled: false
