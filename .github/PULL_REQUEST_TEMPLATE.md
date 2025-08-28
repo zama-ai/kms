@@ -11,7 +11,7 @@
 - [ ] I have performed a self-review of my code
 - [ ] I have not used `unwrap`. Or if I have it is only in tests. 
 - [ ] Any unfinished business is documented with a TODO and a reference to an issue describing what needs to be fixed.
-- [ ] I have only used `expect` or `panic!` in situations where it would imply that there is a bug in the code.
+- [ ] I have only used `expect` or `panic!` in situations where it would imply that there is a bug in the code, and I have documented this.
 - [ ] My PR is _not_ updating _any_ dependencies (i.e. no changes to `cargo.lock`). Or if it is, then it _only_ contains the dependency updates and any changes needed to fix compilation and tests.
 - [ ] My changes do not affect the architecture of the protocol. Or if they do these steps must be taken:
     - [ ] A parallel PR or issue has been open in the [tech-spec repo](https://github.com/zama-ai/tech-spec) (add the link here).
