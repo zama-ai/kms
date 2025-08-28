@@ -132,7 +132,7 @@ async fn test_user_decryption_threshold_malicious_failure() {
         4,    // no. of parties
         None,
         Some(
-            vec![1, 4]
+            [1, 4]
                 .iter()
                 .map(|id| Role::indexed_from_one(*id as usize))
                 .collect(),
@@ -162,7 +162,7 @@ async fn test_user_decryption_threshold_all_malicious_failure() {
         4,    // no. of parties
         None,
         Some(
-            vec![1, 2, 3, 4]
+            [1, 2, 3, 4]
                 .iter()
                 .map(|id| Role::indexed_from_one(*id as usize))
                 .collect(),
