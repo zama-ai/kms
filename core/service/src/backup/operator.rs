@@ -12,11 +12,16 @@ use crate::{
         internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature},
         signcryption::internal_verify_sig,
     },
-    engine::base::safe_serialize_hash_element_versioned,
+    engine::{
+        base::safe_serialize_hash_element_versioned,
+        validation::{parse_optional_proto_request_id, RequestIdParsingErr},
+    },
 };
 use itertools::Itertools;
 use kms_grpc::{
-    kms::v1::OperatorBackupOutput, rpc_types::InternalCustodianRecoveryOutput, RequestId,
+    kms::v1::{OperatorBackupOutput, RecoveryRequest},
+    rpc_types::InternalCustodianRecoveryOutput,
+    RequestId,
 };
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -25,7 +30,11 @@ use std::{
     fmt::Display,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tfhe::{named::Named, safe_serialization::safe_serialize, Versionize};
+use tfhe::{
+    named::Named,
+    safe_serialization::{safe_deserialize, safe_serialize},
+    Versionize,
+};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
     algebra::galois_rings::degree_4::ResiduePolyF4Z64,
@@ -157,6 +166,35 @@ impl Display for InternalRecoveryRequest {
             "InternalRecoveryRequest with:\n backup id: {}\n operator role: {}",
             self.backup_id, self.operator_role,
         )
+    }
+}
+
+impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
+    type Error = anyhow::Error;
+
+    fn try_from(value: RecoveryRequest) -> Result<InternalRecoveryRequest, Self::Error> {
+        let enc_key: BackupPublicKey =
+            safe_deserialize(std::io::Cursor::new(&value.enc_key), SAFE_SER_SIZE_LIMIT).map_err(
+                |e| anyhow_error_and_log(format!("Could not deserialize enc_key: {e:?}")),
+            )?;
+        let cts = value
+            .cts
+            .iter()
+            .map(|(cur_role_idx, cur_backup_out)| {
+                (
+                    Role::indexed_from_one(*cur_role_idx as usize),
+                    cur_backup_out.clone().into(),
+                )
+            })
+            .collect();
+        let backup_id: RequestId =
+            parse_optional_proto_request_id(&value.backup_id, RequestIdParsingErr::BackupRecovery)?;
+        Ok(Self {
+            enc_key,
+            cts,
+            backup_id,
+            operator_role: Role::indexed_from_one(value.operator_role as usize),
+        })
     }
 }
 

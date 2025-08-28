@@ -16,6 +16,7 @@ use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tfhe::safe_serialization::safe_serialize;
 use tfhe::{named::Named, safe_serialization::safe_deserialize, Versionize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{execution::runtime::party::Role, hashing::DomainSep};
@@ -92,6 +93,27 @@ impl TryFrom<CustodianSetupMessage> for InternalCustodianSetupMessage {
             timestamp: payload.timestamp,
             public_enc_key: payload.public_enc_key,
             public_verf_key: payload.verification_key,
+        })
+    }
+}
+
+impl TryFrom<InternalCustodianSetupMessage> for CustodianSetupMessage {
+    type Error = anyhow::Error;
+
+    fn try_from(value: InternalCustodianSetupMessage) -> Result<Self, Self::Error> {
+        let payload = CustodianSetupMessagePayload {
+            header: value.header,
+            random_value: value.random_value,
+            timestamp: value.timestamp,
+            public_enc_key: value.public_enc_key.clone(),
+            verification_key: value.public_verf_key.clone(),
+        };
+        let mut serialized_payload = Vec::new();
+        safe_serialize(&payload, &mut serialized_payload, SAFE_SER_SIZE_LIMIT)?;
+        Ok(CustodianSetupMessage {
+            custodian_role: value.custodian_role.one_based() as u64,
+            name: value.name,
+            payload: serialized_payload,
         })
     }
 }
