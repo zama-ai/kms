@@ -1,4 +1,4 @@
-name: "Helm Chart Release"
+name: helm-release
 
 on:
   workflow_call:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   helm-release:
-    name: "Helm Chart Release"
+    name: helm-release/helm-release
     permissions:
       actions: 'read'
       contents: 'read'

@@ -4,7 +4,7 @@
 # 2. Pull requests: For validation before merging
 # 3. Pushes: On main and release/* branches for building images
 # IMPORTANT NOTES: The tests are only executed for components that have been changed
-name: "[Global Common Workflow] Pipeline Run"
+name: global-common-workflow
 
 on:
   schedule:
@@ -30,7 +30,7 @@ jobs:
   # Initial job that determines which components have changed
   # Used by subsequent jobs to decide whether they need to run
   check-changes:
-    name: "Check for Component Changes"
+    name: global-common-workflow/check-changes
     permissions:
       actions: 'read'
       contents: 'read'
@@ -86,6 +86,7 @@ jobs:
   # - Changes to charts/**'
   ############################################################################
   test-helm-chart:
+    name: global-common-workflow/test-helm-chart
     permissions:
       actions: 'read'
       contents: 'read'
@@ -95,6 +96,7 @@ jobs:
     uses: ./.github/workflows/helm-test.yml
 
   lint-helm-chart:
+    name: global-common-workflow/lint-helm-chart
     permissions:
       actions: 'read'
       contents: 'read'
@@ -104,6 +106,7 @@ jobs:
     uses: ./.github/workflows/helm-lint.yml
 
   release-helm-chart:
+    name: global-common-workflow/release-helm-chart
     permissions:
       actions: 'read'
       contents: 'read'
@@ -120,6 +123,7 @@ jobs:
   # - Changes to workflow file itself
   ############################################################################
   check-docs:
+    name: global-common-workflow/check-docs
     permissions:
       actions: 'read'
       contents: 'read'
@@ -127,7 +131,6 @@ jobs:
       pull-requests: 'read'
     needs: check-changes
     if: needs.check-changes.outputs.changes-docs == 'true' || github.ref == 'refs/heads/main'
-    name: "Check Documentation Links"
     runs-on: ubuntu-latest
     container:
       image: python:3.10.17-bullseye@sha256:0b9be13617fed7d883b30e31a47371a8bdd60a4bb5e45fcda63cb4a3846f6d98
@@ -146,6 +149,7 @@ jobs:
   # - Changes to workflow file itself
   ############################################################################
   test-backward-compatibility:
+    name: global-common-workflow/test-backward-compatibility
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-backward-compatibility == 'true' ||
@@ -181,7 +185,7 @@ jobs:
   # - Changes to workflow file
   ############################################################################
   prepare-core-client-matrix:
-    name: "Prepare Core Client Test Matrix"
+    name: global-common-workflow/prepare-core-client-matrix
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-core-client == 'true' ||
@@ -205,6 +209,7 @@ jobs:
 
 
   test-core-client:
+    name: global-common-workflow/test-core-client
     needs:
       - prepare-core-client-matrix
       - check-changes
@@ -239,6 +244,7 @@ jobs:
   # Only runs on main/release branches after successful tests
   # Also runs on pull requests targeting main/release branches with the docker label
   docker-core-client:
+    name: global-common-workflow/docker-core-client
     permissions:
       actions: 'write'
       attestations: 'write'
@@ -271,6 +277,7 @@ jobs:
   # - Changes to workflow file
   ############################################################################
   test-grpc:
+    name: global-common-workflow/test-grpc
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -311,7 +318,7 @@ jobs:
   # - For scheduled runs: Runs comprehensive nightly tests in release mode
   # - For other events: Runs multiple test suites in parallel with specific features
   prepare-matrix:
-    name: "Prepare Core Service Test Matrix"
+    name: global-common-workflow/prepare-matrix
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-core-service == 'true' ||
@@ -342,6 +349,7 @@ jobs:
   # - MinIO for object storage testing
   # - WASM runtime for WebAssembly tests
   test-core-service:
+    name: global-common-workflow/test-core-service
     needs:
       - check-changes
       - prepare-matrix
@@ -376,6 +384,7 @@ jobs:
   # Only runs on main/release branches after successful tests
   # Uses a custom Dockerfile optimized for production
   docker-core-service:
+    name: global-common-workflow/docker-core-service
     permissions:
       actions: read
       contents: read
@@ -408,6 +417,7 @@ jobs:
   # Only runs on main/release branches after core service image is built
   # Creates both regular container and enclave-specific images
   docker-nitro-enclave:
+    name: global-common-workflow/docker-nitro-enclave
     permissions:
       actions: read
       contents: write
@@ -446,6 +456,7 @@ jobs:
   # Runs basic threshold tests for pull requests
   # Includes slow tests but runs only library tests
   test-core-threshold-pr:
+    name: global-common-workflow/test-core-threshold-pr
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -470,6 +481,7 @@ jobs:
   # Includes Redis integration and all test suites
   # Only runs when threshold-related changes are detected
   test-core-threshold-main:
+    name: global-common-workflow/test-core-threshold-main
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -495,6 +507,7 @@ jobs:
   # Only runs library tests without integration components
   # Helps validate dependency updates quickly
   build-dependabot:
+    name: global-common-workflow/build-dependabot
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
@@ -519,6 +532,7 @@ jobs:
   # Provides dependencies for building rust kms-core images
   ############################################################################
   docker-golden-image:
+    name: global-common-workflow/docker-golden-image
     permissions:
       actions: read
       contents: read
@@ -555,6 +569,7 @@ jobs:
   # Deploys to kms-threshold-staging namespace
   ############################################################################
   # update-kms-core-client-argocd-staging:
+  #   name: global-common-workflow/update-kms-core-client-argocd-staging
   #   if: github.event_name == 'schedule'
   #   needs:
   #     - test-core-client
@@ -570,6 +585,7 @@ jobs:
   #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
   # update-kms-core-argocd-staging:
+  #   name: global-common-workflow/update-kms-core-argocd-staging
   #   if: github.event_name == 'schedule'
   #   needs:
   #     - test-core-service
@@ -587,6 +603,7 @@ jobs:
   #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
   # update-kms-core-client-argocd-staging-with-enclave:
+  #   name: global-common-workflow/update-kms-core-client-argocd-staging-with-enclave
   #   if: github.event_name == 'schedule'
   #   needs:
   #     - test-core-client
@@ -603,6 +620,7 @@ jobs:
   #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
   # update-kms-core-argocd-staging-with-enclave:
+  #   name: global-common-workflow/update-kms-core-argocd-staging-with-enclave
   #   if: github.event_name == 'schedule'
   #   needs:
   #     - test-core-service

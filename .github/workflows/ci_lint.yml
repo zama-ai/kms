@@ -1,5 +1,5 @@
 # Lint and check CI
-name: "[CI Lint and Checks]"
+name: ci_lint
 
 on:
   pull_request:
@@ -17,7 +17,7 @@ env:
 
 jobs:
   lint-check:
-    name: Lint and checks
+    name: ci_lint/lint-check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout project
@@ -39,5 +39,5 @@ jobs:
       security-events: write
       actions: read
       contents: read
-    name: SAST Check
+    name: ci_lint/sast-check
     uses: zama-ai/ci-templates/.github/workflows/sast-zizmor.yml@7dafeba7efe0df52da9fb9dc0e8a84277a7dd34a

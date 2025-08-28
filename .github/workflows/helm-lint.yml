@@ -1,4 +1,4 @@
-name: "[PR] Helm Chart Lint"
+name: helm-lint
 
 on:
   workflow_call:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   lint:
-    name: "Lint Helm Chart"
+    name: helm-lint/lint
     runs-on: 'ubuntu-latest'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
