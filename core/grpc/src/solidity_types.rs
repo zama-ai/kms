@@ -72,15 +72,25 @@ impl PrepKeygenVerification {
 }
 
 alloy_sol_types::sol! {
+    enum KeyType {
+        SERVER,
+        PUBLIC
+    }
+
+    struct KeyDigest {
+        /// @notice The type of the generated key.
+        KeyType keyType;
+        /// @notice The digest of the generated key.
+        bytes digest;
+    }
+
     struct KeygenVerification {
-        /// @notice The ID of the preprocessed step.
+        /// @notice The ID of the preprocessing keygen request.
         uint256 prepKeygenId;
         /// @notice The ID of the generated key.
         uint256 keyId;
-        /// @notice The digest of the generated server key.
-        bytes serverKeyDigest;
-        /// @notice The digest of the generated public key.
-        bytes publicKeyDigest;
+        /// @notice The generated digests of keys.
+        KeyDigest[] keyDigests;
     }
 }
 
@@ -94,8 +104,17 @@ impl KeygenVerification {
         Self {
             prepKeygenId: U256::from_be_slice(preproc_id.as_bytes()),
             keyId: U256::from_be_slice(key_id.as_bytes()),
-            serverKeyDigest: server_key_digest.into(),
-            publicKeyDigest: public_key_digest.into(),
+            // NOTE: order should be in the order of the enum KeyType
+            keyDigests: vec![
+                KeyDigest {
+                    keyType: KeyType::SERVER,
+                    digest: server_key_digest.into(),
+                },
+                KeyDigest {
+                    keyType: KeyType::PUBLIC,
+                    digest: public_key_digest.into(),
+                },
+            ],
         }
     }
 }

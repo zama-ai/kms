@@ -144,16 +144,26 @@ message KeyGenResult {
 
   // EIP-712 signature on the key generation result.
   // The structure signed has the following fields:
+  // ```
   // struct KeygenVerification {
-  //     /// @notice The ID of the preprocessed step.
+  //     /// @notice The ID of the preprocessing keygen request.
   //     uint256 prepKeygenId;
   //     /// @notice The ID of the generated key.
   //     uint256 keyId;
-  //     /// @notice The digest of the generated server key.
-  //     bytes serverKeyDigest;
-  //     /// @notice The digest of the generated public key.
-  //     bytes publicKeyDigest;
+  //     /// @notice The generated digests of keys.
+  //     KeyDigest[] keyDigests;
   // }
+  // enum KeyType {
+  //     SERVER,
+  //     PUBLIC
+  // }
+  // struct KeyDigest {
+  //     /// @notice The type of the generated key.
+  //     KeyType keyType;
+  //     /// @notice The digest of the generated key.
+  //     bytes digest;
+  // }
+  // ```
   bytes external_signature = 4;
 }
 
@@ -198,6 +208,7 @@ message CrsGenResult {
   uint32 max_num_bits = 3;
   
   // EIP-712 signature on the CRS generation result using the following structure:
+  // ```
   // struct CrsgenVerification {
   //     /// @notice The ID of the generated CRS, which is the request ID that started the CRS generation.
   //     uint256 crsId;
@@ -206,6 +217,7 @@ message CrsGenResult {
   //     /// @notice The digest of the generated CRS.
   //     bytes crsDigest;
   // }
+  // ```
   bytes external_signature = 4;
 }
 
@@ -335,12 +347,14 @@ message UserDecryptionResponse {
 
   // This is the external signature created from the Eip712 domain
   // on the structure, where userDecryptedShare is bc2wrap::serialize(&payload)
+  // ```
   // struct UserDecryptResponseVerification {
   //     bytes publicKey;
   //     uint256[] ctHandles;
   //     bytes userDecryptedShare; // serialization of payload
   //     bytes extraData;
   // }
+  // ```
   bytes external_signature = 2;
 
   // The actual [UserDecryptionResponsePayload].
