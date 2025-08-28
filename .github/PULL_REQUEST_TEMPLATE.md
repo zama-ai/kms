@@ -41,6 +41,6 @@ If this is the first time a new dependency is added, then the questions must be 
 3. Is there an unusual jump in package versions?
 4. Is documentation lacking?
 5. Is there no CI enabled on the project's GitHub?
-6. Do the owners not make any statements in relation security and
+6. Do the owners not make any statements in relation to security and
 responsible disclosure of vulnerabilities?
 7. Is there a significant change in size of the crate?
