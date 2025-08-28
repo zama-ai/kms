@@ -36,7 +36,7 @@ RUN apk update && apk add --no-cache git && \
 
 
 
-FROM --platform=$BUILDPLATFORM cgr.dev/chainguard/glibc-dynamic:latest-dev AS prod
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
 
 USER root
 # Install required runtime dependencies

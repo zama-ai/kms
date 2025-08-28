@@ -15,7 +15,7 @@ RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
 
 ################################################################
 # Second stage: Copy the binaries from the base stage and the go-runtime stage
-FROM --platform=$BUILDPLATFORM cgr.dev/chainguard/glibc-dynamic:latest-dev AS prod
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
 
 USER root
 # Install required runtime dependencies
