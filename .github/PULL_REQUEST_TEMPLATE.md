@@ -21,17 +21,15 @@
     - [ ] I have put a devops person on the PR as reviewer.
 - [ ] My PR does not contain breaking changes to the gRPC interface or data serialized into data in the service gRPC interface. In particular there are no changes to the `extraData` fields. Or if it does the following steps have been taken:
     - [ ] The PR is marked using `!` in accordance with conventional commits. E.g. `chore!: changed decryption format according to Q3 release`. 
-    - [ ] The gateway teams has been notified about this change. 
+    - [ ] The Gateway and Connector teams have been notified about this change. 
 - [ ] I have not changed existing `versionized` structs, nor added new `versionized` structs. Or if I have, these steps must be taken:
-    - [ ] The backwards compatibility tests have been updated and/or new tests added. 
+    - [ ] The backwards compatibility tests have been updated and/or new tests covering the changes have been added. 
 - [ ] My PR does not contain changes to the critical business logic or cryptographic code. Or if it does then these steps must be taken:
     - [ ] At least two people must be assigned as reviewers (and eventually approve!) the PR.
 - [ ] I have not added new structs or modified struct to contain private or key data. Or if so then these steps must be taken:
     - [ ] The `zeroize` and `ZeroizeOnDrop` traits have been implemented to clean up private data.
 - [ ] I have not added data to the public storage. Or if I have, then these steps must be taken:
     - [ ] I have ensured that the data does _not_ need to be trusted. I.e. it can be validated through a signature or the existence of a digest in the private storage. 
-- [ ] I have not added data to the private storage. Or if I have, then these steps must be taken:
-    - [ ] 
 
 ### Checklist for dependency updates
 For dependency updates the following essay questions _must_ be also answered and comments where the import of the dependency happens must be updated if there is any changes in the answers since the last update.
