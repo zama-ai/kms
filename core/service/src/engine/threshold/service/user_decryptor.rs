@@ -344,7 +344,7 @@ impl<
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
             verification_key: server_verf_key,
-            party_id: (session_prep.my_role()?.one_based() - 1) as u32,
+            party_id: session_prep.my_role()?.one_based() as u32,
             degree: session_prep.threshold()? as u32,
         };
 
