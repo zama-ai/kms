@@ -22,7 +22,7 @@
 - [ ] My PR does not contain breaking changes to the gRPC interface or data serialized into data in the service gRPC interface. In particular there are no changes to the `extraData` fields. Or if it does the following steps have been taken:
     - [ ] The PR is marked using `!` in accordance with conventional commits. E.g. `chore!: changed decryption format according to Q3 release`. 
     - [ ] The gateway teams has been notified about this change. 
-- [ ] I have not changes existing `versionized` structs, nor added new `versionized` structs. Or if I have, these steps must be taken:
+- [ ] I have not changed existing `versionized` structs, nor added new `versionized` structs. Or if I have, these steps must be taken:
     - [ ] The backwards compatibility tests have been updated and/or new tests added. 
 - [ ] My PR does not contain changes to the critical business logic or cryptographic code. Or if it does then these steps must be taken:
     - [ ] At least two people must be assigned as reviewers (and eventually approve!) the PR.
