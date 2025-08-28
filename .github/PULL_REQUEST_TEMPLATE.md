@@ -7,7 +7,7 @@
 ## Checklist before requesting a review
 - [ ] My PR title follows [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/), e.g. "chore: made key gen consistent with tfhe-rs 1.4".
 - [ ] I have made sunshine tests for all new `pub` methods.
-- [ ] Code comments are in place for public method along with tricky or non-obvious code segments.
+- [ ] Code comments are in place for public methods along with tricky or non-obvious code segments.
 - [ ] I have performed a self-review of my code
 - [ ] I have not used `unwrap`. Or if I have it is only in tests. 
 - [ ] Any unfinished business is documented with a TODO and a reference to an issue describing what needs to be fixed.
