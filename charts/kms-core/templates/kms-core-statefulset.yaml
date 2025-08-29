@@ -57,20 +57,20 @@ spec:
               export AWS_ROLE_ARN="${AWS_ROLE_ARN:={{ .Values.kmsCore.aws.roleArn }}}"
               {{- if .Values.kmsCore.publicVault.s3.enabled }}
               export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET="${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.publicVault.s3.bucket }}}"
-              {{- if .Values.kmsCore.publicVault.s3.path }}
-              export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.path }}}"
+              {{- if .Values.kmsCore.publicVault.s3.prefix }}
+              export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.prefix }}}"
               {{- end }}
               {{- end }}
               {{- if .Values.kmsCore.privateVault.s3.enabled }}
               export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.privateVault.s3.bucket }}}"
-              {{- if .Values.kmsCore.privateVault.s3.path }}
-              export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.privateVault.s3.path }}}"
+              {{- if .Values.kmsCore.privateVault.s3.prefix }}
+              export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.privateVault.s3.prefix }}}"
               {{- end }}
               {{- end }}
               {{- if .Values.kmsCore.backupVault.s3.enabled }}
               export KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET="${KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.backupVault.s3.bucket }}}"
-              {{- if .Values.kmsCore.backupVault.s3.path }}
-              export KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.backupVault.s3.path }}}"
+              {{- if .Values.kmsCore.backupVault.s3.prefix }}
+              export KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.backupVault.s3.prefix }}}"
               {{- end }}
               {{- end }}
               {{- if .Values.kmsCore.nitroEnclave.enabled }}
@@ -326,8 +326,8 @@ spec:
               {{- if .Values.kmsCore.publicVault.s3.enabled -}}
               --public-storage s3 \
               --public-s3-bucket "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.publicVault.s3.bucket }}}" \
-                {{- if .Values.kmsCore.publicVault.s3.path }}
-              --public-s3-prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.path }}}" \
+                {{- if .Values.kmsCore.publicVault.s3.prefix }}
+              --public-s3-prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.prefix }}}" \
                 {{- end }}
               {{- else }}
               --public-storage file \
@@ -336,8 +336,8 @@ spec:
               {{- if .Values.kmsCore.privateVault.s3.enabled -}}
               --private-storage s3 \
               --private-s3-bucket "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.privateVault.s3.bucket }}}" \
-                {{- if .Values.kmsCore.privateVault.s3.path }}
-              --private-s3-prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.privateVault.s3.path }}}" \
+                {{- if .Values.kmsCore.privateVault.s3.prefix }}
+              --private-s3-prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:=={{ .Values.kmsCore.privateVault.s3.prefix }}}" \
                 {{- end }}
               {{- else }}
               --private-storage file \

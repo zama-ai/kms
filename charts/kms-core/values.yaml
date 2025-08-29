@@ -145,12 +145,12 @@ kmsCore:
     s3:
       enabled: true
       bucket: kms-public
-      path: kms
+      prefix: kms
   privateVault:
     s3:
       enabled: false
       bucket: kms-private
-      path: kms
+      prefix: kms
     awskms:
       enabled: false
       rootKeyId: 00000000-0000-0000-0000-000000000000
@@ -159,7 +159,7 @@ kmsCore:
     s3:
       enabled: false
       bucket: kms-private
-      path: ""
+      prefix: ""
     awskms:
       enabled: false
       rootKeyId: 00000000-0000-0000-0000-000000000000
