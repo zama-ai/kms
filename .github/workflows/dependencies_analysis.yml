@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   dependencies-check:
-    name: dependencies_analysis/dependencies-check
+    name: dependencies_analysis/dependencies-check (bpr)
     runs-on: ubuntu-latest
     steps:
 
