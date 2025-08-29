@@ -9,12 +9,13 @@
 - [ ] I have made sunshine tests for all new `pub` methods.
 - [ ] Code comments are in place for public methods along with tricky or non-obvious code segments.
 - [ ] I have performed a self-review of my code
-- [ ] Any unfinished business is documented with a TODO and a reference to an issue describing what needs to be fixed.
+- [ ] Any unfinished business is documented with a `TODO(#issue_number)` comment and brief description what needs to be fixed.
 - [ ] I have only used `unwrap`, `expect` or `panic!` tests or in situations where it would imply that there is a bug in the code, and I have documented this.
 - [ ] My PR is _not_ updating _any_ dependencies (i.e. no changes to `cargo.lock`). Or if it is, then it _only_ contains the dependency updates and any changes needed to fix compilation and tests.
 - [ ] My changes do not affect the architecture of the protocol. Or if they do these steps must be taken:
     - [ ] A parallel PR or issue has been open in the [tech-spec repo](https://github.com/zama-ai/tech-spec) (add the link here).
-- [ ] My PR does not contain any breaking changes to the configuration and deployment files. Or if it does then these steps must be taken:
+- [ ] My PR does not contain any breaking changes to the configuration and deployment files.
+      (A change is _only_ considered breaking if a deployment configuration must be changed as part of an update. E.g. adding new fields, with default values is _not_ considered breaking). Or if it does then these steps must be taken:
     - [ ] My PR is labeled with `devops`.
     - [ ] I have pinged the infra team on Slack (in the MPC channel) and I have updated the intermediate release notes to document this change. 
     - [ ] I have put a devops person on the PR as reviewer.
