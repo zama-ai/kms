@@ -2,6 +2,7 @@ use crate::client::test_tools::{
     await_server_ready, check_port_is_closed, get_health_client, get_status,
 };
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
+use crate::client::tests::threshold::common::threshold_handles;
 #[cfg(feature = "insecure")]
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};
@@ -61,10 +62,7 @@ async fn test_threshold_health_endpoint_availability() {
 
     // DON'T setup PRSS in order to ensure the server is not ready yet
     let (kms_servers, kms_clients, mut internal_client) =
-        crate::client::tests::threshold::common::threshold_handles(
-            TEST_PARAM, 4, false, None, None, false,
-        )
-        .await;
+        threshold_handles(TEST_PARAM, 4, false, None, None).await;
 
     // Validate that the core server is not ready
     let (dec_tasks, req_id) = crate::client::tests::common::send_dec_reqs(
@@ -171,10 +169,7 @@ async fn test_threshold_health_endpoint_availability() {
 async fn test_threshold_close_after_drop() {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (mut kms_servers, _kms_clients, _internal_client) =
-        crate::client::tests::threshold::common::threshold_handles(
-            TEST_PARAM, 4, true, None, None, false,
-        )
-        .await;
+        threshold_handles(TEST_PARAM, 4, true, None, None).await;
 
     // Get health client for main server 1
     let mut core_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
@@ -228,10 +223,7 @@ async fn test_threshold_close_after_drop() {
 async fn test_threshold_shutdown() {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (mut kms_servers, kms_clients, mut internal_client) =
-        crate::client::tests::threshold::common::threshold_handles(
-            TEST_PARAM, 4, true, None, None, false,
-        )
-        .await;
+        threshold_handles(TEST_PARAM, 4, true, None, None).await;
     // Ensure that the servers are ready
     for cur_handle in kms_servers.values() {
         let service_name = <CoreServiceEndpointServer<
@@ -318,15 +310,7 @@ async fn test_ratelimiter() {
         keygen: 1,
     };
     let (_kms_servers, kms_clients, internal_client) =
-        crate::client::tests::threshold::common::threshold_handles(
-            TEST_PARAM,
-            4,
-            true,
-            Some(rate_limiter_conf),
-            None,
-            false,
-        )
-        .await;
+        threshold_handles(TEST_PARAM, 4, true, Some(rate_limiter_conf), None).await;
 
     let req_id = derive_request_id("test rate limiter 1").unwrap();
     let req = internal_client
@@ -373,15 +357,7 @@ async fn default_insecure_dkg_backup() {
     purge(test_path, test_path, test_path, &key_id_1, amount_parties).await;
     purge(test_path, test_path, test_path, &key_id_2, amount_parties).await;
     let (kms_servers, kms_clients, internal_client) =
-        crate::client::tests::threshold::common::threshold_handles(
-            *dkg_param,
-            amount_parties,
-            true,
-            None,
-            None,
-            false,
-        )
-        .await;
+        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
     let _keys_1 = crate::client::tests::threshold::key_gen_tests::run_threshold_keygen(
         param,
@@ -488,15 +464,7 @@ async fn default_insecure_autobackup_after_deletion() {
 
     purge(test_path, test_path, test_path, &key_id, amount_parties).await;
     let (kms_servers, kms_clients, internal_client) =
-        crate::client::tests::threshold::common::threshold_handles(
-            *dkg_param,
-            amount_parties,
-            true,
-            None,
-            None,
-            false,
-        )
-        .await;
+        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
     let _keys = crate::client::tests::threshold::key_gen_tests::run_threshold_keygen(
         param,
@@ -519,15 +487,7 @@ async fn default_insecure_autobackup_after_deletion() {
 
     // Start the servers again
     let (_kms_servers, _kms_clients, _internal_client) =
-        crate::client::tests::threshold::common::threshold_handles(
-            *dkg_param,
-            amount_parties,
-            true,
-            None,
-            None,
-            false,
-        )
-        .await;
+        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
     // Check the storage
     let vault_storage_option = test_path.map(|path| {
         StorageConf::File(FileStorageConf {
@@ -570,15 +530,7 @@ async fn default_insecure_crs_backup() {
     let test_path = None;
     purge(test_path, test_path, test_path, &req_id, amount_parties).await;
     let (_kms_servers, kms_clients, internal_client) =
-        crate::client::tests::threshold::common::threshold_handles(
-            *dkg_param,
-            amount_parties,
-            true,
-            None,
-            None,
-            false,
-        )
-        .await;
+        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
     crate::client::tests::threshold::crs_gen_tests::run_crs(
         param,
         &kms_clients,

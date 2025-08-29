@@ -51,7 +51,7 @@ pub async fn setup_threshold_no_client<
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
-    ensure_testing_material_exists().await;
+    ensure_testing_material_exists(None).await;
     #[cfg(feature = "slow_tests")]
     ensure_default_material_exists().await;
 
@@ -396,7 +396,7 @@ pub async fn setup_centralized_no_client<
     priv_storage: PrivS,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> ServerHandle {
-    ensure_testing_material_exists().await;
+    ensure_testing_material_exists(None).await;
     #[cfg(feature = "slow_tests")]
     ensure_default_material_exists().await;
 

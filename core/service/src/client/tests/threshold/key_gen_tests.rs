@@ -1,5 +1,6 @@
 cfg_if::cfg_if! {
    if #[cfg(any(feature = "slow_tests", feature = "insecure"))] {
+    use crate::client::tests::threshold::common::threshold_handles;
     use crate::client::client_wasm::Client;
     use crate::consts::MAX_TRIES;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
@@ -77,7 +78,7 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
     .unwrap();
     purge(None, None, None, &key_id, amount_parties).await;
     let (_kms_servers, kms_clients, internal_client) =
-        super::common::threshold_handles(TEST_PARAM, amount_parties, true, None, None, false).await;
+        threshold_handles(TEST_PARAM, amount_parties, true, None, None).await;
     let keys = run_threshold_keygen(
         FheParameter::Test,
         &kms_clients,
@@ -114,7 +115,7 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
     .unwrap();
     purge(None, None, None, &key_id, amount_parties).await;
     let (_kms_servers, kms_clients, internal_client) =
-        super::common::threshold_handles(*dkg_param, amount_parties, true, None, None, false).await;
+        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
     let keys = run_threshold_keygen(
         param,
         &kms_clients,
@@ -522,7 +523,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let dkg_param: WrappedDKGParams = parameter.into();
     let (kms_servers, kms_clients, internal_client) =
-        super::common::threshold_handles(*dkg_param, amount_parties, true, None, None, false).await;
+        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
     if !insecure {
         run_preproc(
@@ -644,7 +645,7 @@ async fn run_threshold_sns_compression_keygen(
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let dkg_param: WrappedDKGParams = parameter.into();
     let (kms_servers, kms_clients, internal_client) =
-        super::common::threshold_handles(*dkg_param, amount_parties, true, None, None, false).await;
+        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
     // generate the sns compression key by overwriting the first key
     if !insecure {
@@ -725,13 +726,12 @@ pub(crate) async fn preproc_and_keygen(
     };
 
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (_kms_servers, kms_clients, internal_client) = super::common::threshold_handles(
+    let (_kms_servers, kms_clients, internal_client) = threshold_handles(
         *dkg_param,
         amount_parties,
         true,
         Some(rate_limiter_conf),
         None,
-        false,
     )
     .await;
 

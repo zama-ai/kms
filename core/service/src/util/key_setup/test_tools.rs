@@ -568,21 +568,35 @@ pub(crate) mod setup {
         vault::storage::{file::FileStorage, StorageType},
     };
     use kms_grpc::RequestId;
+    use std::path::Path;
     use threshold_fhe::execution::{runtime::party::Role, tfhe_internals::parameters::DKGParams};
 
-    pub async fn ensure_dir_exist() {
-        tokio::fs::create_dir_all(TMP_PATH_PREFIX).await.unwrap();
-        tokio::fs::create_dir_all(KEY_PATH_PREFIX).await.unwrap();
+    pub async fn ensure_dir_exist(path: Option<&Path>) {
+        match path {
+            Some(p) => {
+                tokio::fs::create_dir_all(p.join(TMP_PATH_PREFIX))
+                    .await
+                    .unwrap();
+                tokio::fs::create_dir_all(p.join(KEY_PATH_PREFIX))
+                    .await
+                    .unwrap();
+            }
+            None => {
+                tokio::fs::create_dir_all(TMP_PATH_PREFIX).await.unwrap();
+                tokio::fs::create_dir_all(KEY_PATH_PREFIX).await.unwrap();
+            }
+        }
     }
 
-    async fn testing_material() {
-        ensure_dir_exist().await;
-        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+    async fn testing_material(path: Option<&Path>) {
+        ensure_dir_exist(path).await;
+        ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
         central_material(
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_TEST_ID,
             &TEST_CENTRAL_CRS_ID,
+            path,
         )
         .await;
         threshold_material(
@@ -590,6 +604,7 @@ pub(crate) mod setup {
             &TEST_THRESHOLD_KEY_ID_4P,
             &TEST_THRESHOLD_CRS_ID_4P,
             4,
+            path,
         )
         .await;
         threshold_material(
@@ -597,6 +612,7 @@ pub(crate) mod setup {
             &TEST_THRESHOLD_KEY_ID_10P,
             &TEST_THRESHOLD_CRS_ID_10P,
             10,
+            path,
         )
         .await;
         #[cfg(feature = "slow_tests")]
@@ -605,12 +621,13 @@ pub(crate) mod setup {
             &TEST_THRESHOLD_KEY_ID_13P,
             &TEST_THRESHOLD_CRS_ID_13P,
             13,
+            path,
         )
         .await;
     }
 
-    pub(crate) async fn ensure_testing_material_exists() {
-        testing_material().await;
+    pub(crate) async fn ensure_testing_material_exists(path: Option<&Path>) {
+        testing_material(path).await;
     }
 
     #[cfg(feature = "slow_tests")]
@@ -621,13 +638,14 @@ pub(crate) mod setup {
             DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
             DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
         };
-        ensure_dir_exist().await;
+        ensure_dir_exist(None).await;
         ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
         central_material(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_DEFAULT_ID,
             &DEFAULT_CENTRAL_CRS_ID,
+            None,
         )
         .await;
         threshold_material(
@@ -635,6 +653,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_KEY_ID_4P,
             &DEFAULT_THRESHOLD_CRS_ID_4P,
             4,
+            None,
         )
         .await;
         threshold_material(
@@ -642,6 +661,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_KEY_ID_10P,
             &DEFAULT_THRESHOLD_CRS_ID_10P,
             10,
+            None,
         )
         .await;
         threshold_material(
@@ -649,6 +669,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_KEY_ID_13P,
             &DEFAULT_THRESHOLD_CRS_ID_13P,
             13,
+            None,
         )
         .await;
     }
@@ -658,9 +679,10 @@ pub(crate) mod setup {
         fhe_key_id: &RequestId,
         other_fhe_key_id: &RequestId,
         crs_id: &RequestId,
+        path: Option<&Path>,
     ) {
-        let mut central_pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
-        let mut central_priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
+        let mut central_pub_storage = FileStorage::new(path, StorageType::PUB, None).unwrap();
+        let mut central_priv_storage = FileStorage::new(path, StorageType::PRIV, None).unwrap();
 
         ensure_central_server_signing_keys_exist(
             &mut central_pub_storage,
@@ -694,17 +716,18 @@ pub(crate) mod setup {
         fhe_key_id: &RequestId,
         crs_id: &RequestId,
         amount_parties: usize,
+        path: Option<&Path>,
     ) {
         let mut threshold_pub_storages = Vec::with_capacity(amount_parties);
         for i in 1..=amount_parties {
             threshold_pub_storages.push(
-                FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap(),
+                FileStorage::new(path, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap(),
             );
         }
         let mut threshold_priv_storages = Vec::with_capacity(amount_parties);
         for i in 1..=amount_parties {
             threshold_priv_storages.push(
-                FileStorage::new(None, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap(),
+                FileStorage::new(path, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap(),
             );
         }
 
