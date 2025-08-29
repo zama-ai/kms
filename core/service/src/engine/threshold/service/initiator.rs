@@ -239,8 +239,8 @@ impl<
 
         let peers = tonic_some_or_err(self.threshold_config.peers.clone(), "Peer list not set in the configuration file, setting it through the context is unsupported yet".to_string())?;
 
-        let mut role_assignment_write = role_assignment.write().await;
-        role_assignment_write.extend(
+        // Careful not to hold the write lock longer than needed
+        role_assignment.write().await.extend(
             peers
                 .into_iter()
                 .map(|peer_config| peer_config.into_role_identity()),
@@ -290,6 +290,7 @@ mod tests {
 
     use crate::{
         client::test_tools::{self},
+        conf::threshold::PeerConf,
         consts::PRSS_INIT_REQ_ID,
         cryptography::internal_crypto_types::gen_sig_keys,
         engine::base::BaseKmsStruct,
@@ -330,7 +331,12 @@ mod tests {
                     min_dec_cache: 0,
                     preproc_redis: None,
                     num_sessions_preproc: None,
-                    peers: None,
+                    peers: Some(vec![PeerConf {
+                        party_id: 1,
+                        address: "dummy".to_string(),
+                        port: 1,
+                        tls_cert: None,
+                    }]),
                     core_to_core_net: None,
                     decryption_mode: DecryptionMode::NoiseFloodSmall,
                 },
