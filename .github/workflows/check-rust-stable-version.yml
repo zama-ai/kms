@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  check-rust-stable-version:
+  check:
     name: check-rust-stable-version/check
     runs-on: ubuntu-latest
     steps:
