@@ -107,40 +107,8 @@ pub(crate) async fn threshold_handles_secretsharing_backup(
     let mut vaults = Vec::new();
     for i in 1..=amount_parties {
         let cur_role = Role::indexed_from_one(i);
-        let store_path = test_data_path.map(|p| {
-            conf::Storage::File(conf::FileStorage {
-                path: p.to_path_buf(),
-            })
-        });
-        let priv_proxy_storage = make_storage(
-            store_path.clone(),
-            StorageType::PRIV,
-            Some(cur_role),
-            None,
-            None,
-        )
-        .unwrap();
-        let priv_vault = Vault {
-            storage: priv_proxy_storage,
-            keychain: None,
-        };
-        let backup_proxy_storage =
-            make_storage(store_path, StorageType::BACKUP, Some(cur_role), None, None).unwrap();
-        let keychain = Some(
-            make_keychain_proxy(
-                &Keychain::SecretSharing(SecretSharingKeychain {}),
-                None,
-                None,
-                Some(&priv_vault),
-            )
-            .await
-            .unwrap(),
-        );
-        let backup_vault = Vault {
-            storage: backup_proxy_storage,
-            keychain,
-        };
-        vaults.push(Some(backup_vault));
+        let cur_vault = secretsharing_backup_vault(cur_role, test_data_path).await;
+        vaults.push(Some(cur_vault));
     }
     threshold_handles_w_vaults(
         params,
@@ -152,4 +120,40 @@ pub(crate) async fn threshold_handles_secretsharing_backup(
         test_data_path,
     )
     .await
+}
+
+pub(crate) async fn secretsharing_backup_vault(role: Role, test_data_path: Option<&Path>) -> Vault {
+    let store_path = test_data_path.map(|p| {
+        conf::Storage::File(conf::FileStorage {
+            path: p.to_path_buf(),
+        })
+    });
+    let priv_proxy_storage = make_storage(
+        store_path.clone(),
+        StorageType::PRIV,
+        Some(role),
+        None,
+        None,
+    )
+    .unwrap();
+    let priv_vault = Vault {
+        storage: priv_proxy_storage,
+        keychain: None,
+    };
+    let backup_proxy_storage =
+        make_storage(store_path, StorageType::BACKUP, Some(role), None, None).unwrap();
+    let keychain = Some(
+        make_keychain_proxy(
+            &Keychain::SecretSharing(SecretSharingKeychain {}),
+            None,
+            None,
+            Some(&priv_vault),
+        )
+        .await
+        .unwrap(),
+    );
+    Vault {
+        storage: backup_proxy_storage,
+        keychain,
+    }
 }

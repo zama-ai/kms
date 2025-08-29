@@ -18,6 +18,7 @@ cfg_if::cfg_if! {
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
     use tokio::task::JoinSet;
     use tonic::transport::Channel;
+    use crate::client::tests::{common::TIME_TO_SLEEP_MS, threshold::common::threshold_handles};
 }}
 
 #[cfg(feature = "insecure")]
@@ -59,8 +60,6 @@ pub(crate) async fn crs_gen(
     iterations: usize,
     concurrent: bool,
 ) {
-    use crate::client::tests::{common::TIME_TO_SLEEP_MS, threshold::common::threshold_handles};
-
     for i in 0..iterations {
         let req_crs: RequestId = derive_request_id(&format!(
             "full_crs_{amount_parties}_{max_bits:?}_{parameter:?}_{i}_{insecure}"
@@ -124,7 +123,7 @@ pub(crate) async fn crs_gen(
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn run_crs(
+pub async fn run_crs(
     parameter: FheParameter,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,
@@ -185,7 +184,7 @@ async fn launch_crs(
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
-async fn wait_for_crsgen_result(
+pub async fn wait_for_crsgen_result(
     reqs: &Vec<CrsGenRequest>,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,

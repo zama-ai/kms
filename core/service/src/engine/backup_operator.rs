@@ -33,7 +33,7 @@ use crate::{
 use itertools::Itertools;
 use kms_grpc::{
     kms::v1::{CustodianRecoveryRequest, RecoveryRequest},
-    rpc_types::{BackupDataType, PubDataType},
+    rpc_types::PubDataType,
     RequestId,
 };
 use kms_grpc::{
@@ -407,8 +407,9 @@ async fn restore_data_type<
 where
     for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
 {
-    let backup_data_type = BackupDataType::PrivData(data_type_enum).to_string();
-    let req_ids = backup_vault.all_data_ids(&backup_data_type).await?;
+    let req_ids = backup_vault
+        .all_data_ids(&data_type_enum.to_string())
+        .await?;
     for request_id in req_ids.iter() {
         if priv_storage
             .data_exists(request_id, &data_type_enum.to_string())
@@ -421,7 +422,7 @@ where
             continue;
         }
         let cur_data: T = backup_vault
-            .read_data(request_id, &backup_data_type)
+            .read_data(request_id, &data_type_enum.to_string())
             .await?;
         store_versioned_at_request_id(
             priv_storage,
@@ -504,10 +505,9 @@ where
     let req_ids = priv_storage
         .all_data_ids(&data_type_enum.to_string())
         .await?;
-    let backup_data_type = BackupDataType::PrivData(data_type_enum).to_string();
     for request_id in req_ids.iter() {
         if !backup_vault
-            .data_exists(request_id, &backup_data_type.to_string())
+            .data_exists(request_id, &data_type_enum.to_string())
             .await?
         {
             let cur_data: T = priv_storage
@@ -517,7 +517,7 @@ where
                 backup_vault,
                 request_id,
                 &cur_data,
-                &backup_data_type.to_string(),
+                &data_type_enum.to_string(),
             )
             .await?;
         }
