@@ -729,10 +729,13 @@ impl Gnetworking for NetworkingImpl {
                     format!("wrong sender: hostname unknown for party {}", tag.sender),
                 ));
             };
-            if sender != *host.to_string() {
+            if sender != *host.hostname() {
                 return Err(tonic::Status::new(
                     tonic::Code::Unauthenticated,
-                    format!("wrong sender: expected {host:?} to be in {sender:?}"),
+                    format!(
+                        "wrong sender: expected {} to be in {sender:?}",
+                        host.hostname()
+                    ),
                 ));
             }
             tracing::debug!("TLS Check went fine for sender: {:?}", sender);
