@@ -139,7 +139,9 @@ impl Networking for LocalNetworking {
         let mut already_sent = self.already_sent.lock().await;
 
         if already_sent.contains(&(*receiver, *net_round)) {
-            panic!("Trying to send to {receiver} in round {net_round} more than once !")
+            return Err(anyhow::anyhow!(
+                "Trying to send to {receiver} in round {net_round} more than once !"
+            ));
         } else {
             already_sent.insert((*receiver, *net_round));
         }
@@ -328,6 +330,6 @@ mod tests {
         assert!(result2.is_err());
         let error_msg = result2.unwrap_err().to_string();
         assert!(error_msg
-            .contains(&format!("Duplicate send attempted to {bob} in round 0").to_string()));
+            .contains(&format!("Trying to send to {bob} in round 0 more than once !").to_string()));
     }
 }
