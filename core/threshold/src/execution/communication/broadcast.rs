@@ -830,8 +830,10 @@ mod tests {
             .map(|(role, (data, _, _))| (*role, data.clone()))
             .collect();
         if !params.should_be_detected {
-            results_malicious.iter().for_each(|(role, (data, _, _))| {
-                collected_results.insert(*role, data.clone());
+            results_malicious.iter().for_each(|(role, data)| {
+                if let Ok((data, _, _)) = data {
+                    collected_results.insert(*role, data.clone());
+                }
             })
         } else {
             params.malicious_roles.iter().for_each(|role| {
@@ -847,10 +849,13 @@ mod tests {
         }
 
         if !params.should_be_detected {
-            results_malicious.iter().for_each(|(role, (_, result, _))| {
+            results_malicious.iter().for_each(|(role, result)| {
+                if let Ok((_,result,_)) = result {
+
                 let result = result.as_ref().unwrap();
-                assert_eq!(*result, collected_results, "Malicious but undetected party {role} doesnt agree with the collected results. Output {result:?} expected {collected_results:?}")
-})
+                assert_eq!(*result, collected_results, "Malicious but undetected party {role} doesnt agree with the collected results. Output {result:?} expected {collected_results:?}");
+                }
+            });
         }
     }
 

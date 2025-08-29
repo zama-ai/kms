@@ -664,6 +664,7 @@ mod tests {
     };
     use itertools::Itertools;
     use std::collections::{HashMap, HashSet, VecDeque};
+    use tokio::task::JoinError;
 
     #[test]
     fn test_u8_xor() {
@@ -827,7 +828,7 @@ mod tests {
         //We use ResiduePolyF4Z128 as AgreeRandom doesn't care about the underlying ring
         let mut task_malicious =
             |mut session: SmallSession<ResiduePolyF4Z128>, malicious_agree_random: AMalicious| async move {
-                malicious_agree_random.execute(&mut session).await
+                malicious_agree_random.execute(&mut session).await.unwrap()
             };
 
         let (results_honest, results_malicious) = execute_protocol_small_w_malicious::<
@@ -950,7 +951,7 @@ mod tests {
     /// except for the roles in `ignore_roles`
     fn validate_result(
         honest_results: HashMap<Role, anyhow::Result<Vec<PrfKey>>>,
-        malicious_results: HashMap<Role, anyhow::Result<Vec<PrfKey>>>,
+        malicious_results: HashMap<Role, Result<Vec<PrfKey>, JoinError>>,
         num_parties: usize,
         threshold: usize,
         ignore_roles: Option<HashSet<Role>>,

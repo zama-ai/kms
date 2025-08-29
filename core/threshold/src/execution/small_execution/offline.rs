@@ -583,9 +583,9 @@ mod test {
             .collect::<Vec<_>>();
 
         let mut malicious_preprocessings = results_malicious
-            .iter()
-            .filter_map(|(role, (_, _, mp))| match mp {
-                Ok(mp) => Some((*role, mp.clone())),
+            .into_iter()
+            .filter_map(|(role, mp)| match mp {
+                Ok((_, _, Ok(mp))) => Some((role, mp)),
                 _ => None,
             })
             .collect::<HashMap<Role, _>>();

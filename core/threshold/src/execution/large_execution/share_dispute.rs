@@ -486,7 +486,6 @@ pub(crate) mod tests {
             let _ = malicious_share_dispute
                 .execute_double(&mut session, &secrets)
                 .await;
-            Ok(())
         };
 
         let mut malicious_roles_with_dispute = HashSet::from_iter(malicious_due_to_dispute.clone());

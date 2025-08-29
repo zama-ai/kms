@@ -2060,14 +2060,15 @@ mod tests {
 
         let mut task_malicious =
             |mut session: SmallSession<Z>, malicious_prss_init: PRSSMalicious| async move {
-                let setup = malicious_prss_init.init(&mut session).await?;
+                let setup = malicious_prss_init.init(&mut session).await.unwrap();
                 let mut state = setup.new_prss_session_state(session.session_id());
                 let role = session.my_role();
                 let prss_output_shares = (0..num_secrets)
                     .map(|_| {
                         Ok::<Share<Z>, anyhow::Error>(Share::<Z>::new(role, state.prss_next(role)?))
                     })
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
                 let przs_output_shares = (0..num_secrets)
                     .map(|_| {
                         Ok::<Share<Z>, anyhow::Error>(Share::<Z>::new(
@@ -2075,7 +2076,8 @@ mod tests {
                             state.przs_next(role, session.threshold())?,
                         ))
                     })
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
                 let mask_output_shares = if generate_masks {
                     (0..num_secrets)
                         .map(|_| {
@@ -2084,20 +2086,21 @@ mod tests {
                                 state.mask_next(role, B_SWITCH_SQUASH)?,
                             ))
                         })
-                        .collect::<Result<Vec<_>, _>>()?
+                        .collect::<Result<Vec<_>, _>>()
+                        .unwrap()
                 } else {
                     vec![Share::<Z>::new(role, Z::ZERO)]
                 };
 
-                let prss_check_zero = state.prss_check(&mut session, 0).await?;
-                let przs_check_zero = state.przs_check(&mut session, 0).await?;
+                let prss_check_zero = state.prss_check(&mut session, 0).await.unwrap();
+                let przs_check_zero = state.przs_check(&mut session, 0).await.unwrap();
 
-                Ok::<_, anyhow::Error>((
+                (
                     session,
                     (prss_output_shares, prss_check_zero),
                     (przs_output_shares, przs_check_zero),
                     mask_output_shares,
-                ))
+                )
             };
         let (results_honest, results_malicious) =
             execute_protocol_small_w_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(

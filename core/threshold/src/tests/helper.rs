@@ -261,7 +261,7 @@ pub mod tests {
         tests::test_data_setup::tests::{ensure_keys_exist, REAL_PARAMETERS, TEST_PARAMETERS},
     };
     use aes_prng::AesRng;
-    use futures_util::future::{join, join_all, Future, FutureExt};
+    use futures_util::future::{join_all, Future, FutureExt};
     use itertools::Itertools;
     use rand::SeedableRng;
     use std::fs;
@@ -269,6 +269,7 @@ pub mod tests {
         collections::{HashMap, HashSet},
         sync::Arc,
     };
+    use tokio::task::JoinError;
 
     #[derive(Default, Clone)]
     pub struct TestingParameters {
@@ -464,7 +465,10 @@ pub mod tests {
         delay_vec: Option<Vec<tokio::time::Duration>>,
         task_honest: &mut dyn FnMut(SmallSession<Z>) -> TaskOutputT,
         task_malicious: &mut dyn FnMut(SmallSession<Z>, P) -> TaskOutputM,
-    ) -> (HashMap<Role, OutputT>, HashMap<Role, OutputM>)
+    ) -> (
+        HashMap<Role, OutputT>,
+        HashMap<Role, Result<OutputM, JoinError>>,
+    )
     where
         TaskOutputT: Future<Output = OutputT>,
         TaskOutputT: Send + 'static,
@@ -509,12 +513,23 @@ pub mod tests {
                 .map(|s| (*party, s))
         }))
         .await;
-        let malicious_tasks = malicious_sessions.into_iter().map(|(party, session)| {
-            task_malicious(session, malicious_strategy.clone()).map(move |output| (party, output))
-        });
 
-        let (results_honest, results_malicious) =
-            join(join_all(honest_tasks), join_all(malicious_tasks)).await;
+        // Spawn the malicious task in its own tokio task as it may panic
+        let mut malicious_task = Vec::new();
+
+        for (party, session) in malicious_sessions.into_iter() {
+            malicious_task.push((
+                party,
+                tokio::spawn(task_malicious(session, malicious_strategy.clone())),
+            ));
+        }
+
+        let results_honest = join_all(honest_tasks).await;
+
+        let mut results_malicious = Vec::new();
+        for (role, task) in malicious_task.into_iter() {
+            results_malicious.push((role, task.await));
+        }
 
         // test that the number of rounds is as expected
         if let Some(e_r) = params.expected_rounds {
@@ -560,13 +575,13 @@ pub mod tests {
         task_malicious: &mut dyn FnMut(LargeSession, P) -> TaskOutputM,
     ) -> (
         HashMap<Role, OutputT>,
-        anyhow::Result<HashMap<Role, OutputM>>,
+        HashMap<Role, Result<OutputM, JoinError>>,
     )
     where
         TaskOutputT: Future<Output = OutputT>,
         TaskOutputT: Send + 'static,
         OutputT: Send + 'static,
-        TaskOutputM: Future<Output = anyhow::Result<OutputM>>,
+        TaskOutputM: Future<Output = OutputM>,
         TaskOutputM: Send + 'static,
         OutputM: Send + 'static,
     {
@@ -604,13 +619,22 @@ pub mod tests {
             let session = test_runtime.large_session_for_party(session_id, *party);
             (*party, session)
         });
-        let malicious_tasks = malicious_sessions.map(|(party, session)| {
-            task_malicious(session, malicious_strategy.clone()).map(move |output| (party, output))
-        });
 
-        let (results_honest, results_malicious) =
-            join(join_all(honest_tasks), join_all(malicious_tasks)).await;
+        // Spawn the malicious task in its own tokio task as it may panic
+        let mut malicious_task = Vec::new();
 
+        for (party, session) in malicious_sessions.into_iter() {
+            malicious_task.push((
+                party,
+                tokio::spawn(task_malicious(session, malicious_strategy.clone())),
+            ));
+        }
+
+        let results_honest = join_all(honest_tasks).await;
+        let mut results_malicious = Vec::new();
+        for (role, task) in malicious_task.into_iter() {
+            results_malicious.push((role, task.await));
+        }
         // test that the number of rounds is as expected
         if let Some(e_r) = params.expected_rounds {
             for n in test_runtime.user_nets.values() {
@@ -623,10 +647,7 @@ pub mod tests {
 
         (
             results_honest.into_iter().collect(),
-            results_malicious
-                .into_iter()
-                .map(|(role, res)| res.map(|r| (role, r)))
-                .collect(),
+            results_malicious.into_iter().collect(),
         )
     }
 

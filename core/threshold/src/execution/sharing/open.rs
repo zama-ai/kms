@@ -490,15 +490,14 @@ pub(crate) mod test {
         }
 
         if !params.should_be_detected {
-            for (role, result_malicious) in results_malicious.iter() {
-                let (secrets, openings) = result_malicious;
+            for (role, result_malicious) in results_malicious.into_iter() {
+                let (secrets, openings) = result_malicious.unwrap();
                 assert!(
                     openings.is_some(),
                     "Malicious Party {role} failed to open correctly, expected Some got None "
                 );
-                let openings = openings.as_ref().unwrap();
-                assert_eq!(*secrets, pivot.0);
-                assert_eq!(*secrets, *openings);
+                assert_eq!(secrets, pivot.0);
+                assert_eq!(secrets, openings.unwrap());
             }
         }
     }

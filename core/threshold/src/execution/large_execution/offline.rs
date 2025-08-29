@@ -377,7 +377,6 @@ mod tests {
             for _ in 0..num_batches {
                 let _ = malicious_offline.execute(&mut session, batch_sizes).await;
             }
-            Ok(())
         };
 
         let mut malicious_roles_with_dispute = HashSet::from_iter(malicious_due_to_dispute);

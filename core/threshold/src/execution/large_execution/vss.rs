@@ -1490,7 +1490,7 @@ pub(crate) mod tests {
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             let _ = malicious_vss.execute_many(&mut session, &secrets).await;
-            Ok(secrets)
+            secrets
         };
 
         // VSS assumes sync network
@@ -1523,8 +1523,8 @@ pub(crate) mod tests {
         }
 
         if !params.should_be_detected {
-            for (party_role, result_malicious) in results_malicious.unwrap().iter() {
-                expected_secrets[party_role].clone_from(result_malicious);
+            for (party_role, result_malicious) in results_malicious.into_iter() {
+                expected_secrets[&party_role] = result_malicious.unwrap();
             }
         }
 
