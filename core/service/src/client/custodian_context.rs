@@ -1,0 +1,50 @@
+use crate::{
+    backup::{
+        custodian::Custodian,
+        seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
+    },
+    client::client_wasm::Client,
+    cryptography::{backup_pke::BackupPrivateKey, internal_crypto_types::PrivateSigKey},
+};
+use aes_prng::AesRng;
+use kms_grpc::{
+    kms::v1::{CustodianContext, CustodianSetupMessage, NewCustodianContextRequest},
+    RequestId,
+};
+use threshold_fhe::execution::runtime::party::Role;
+
+impl Client {
+    pub fn new_custodian_context_request(
+        &mut self,
+        request_id: &RequestId,
+        amount_custodians: usize,
+        threshold: u32,
+    ) -> anyhow::Result<NewCustodianContextRequest> {
+        let custodian_setup_msgs = custodian_setup_msgs(&mut self.rng, amount_custodians)?;
+        Ok(NewCustodianContextRequest {
+            active_context: None, // TODO not used now
+            new_context: Some(CustodianContext {
+                custodian_nodes: custodian_setup_msgs,
+                context_id: Some((*request_id).into()),
+                previous_context_id: None, // TODO not used now
+                threshold,
+            }),
+        })
+    }
+}
+
+fn custodian_setup_msgs(
+    rng: &mut AesRng,
+    amount_custodians: usize,
+) -> anyhow::Result<Vec<CustodianSetupMessage>> {
+    let mut res = Vec::new();
+    for cur_idx in 1..=amount_custodians {
+        let role = Role::indexed_from_one(cur_idx);
+        let mnemonic = seed_phrase_from_rng(rng).expect("Failed to generate seed phrase");
+        let custodian: Custodian<PrivateSigKey, BackupPrivateKey> =
+            custodian_from_seed_phrase(&mnemonic, role)?;
+        let setup_msg = custodian.generate_setup_message(rng, format!("Custodian-{cur_idx}"))?;
+        res.push(setup_msg.try_into()?);
+    }
+    Ok(res)
+}

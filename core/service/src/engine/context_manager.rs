@@ -2,6 +2,7 @@ use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{BackupCommitments, InnerRecoveryRequest, Operator};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::backup_pke::{self, BackupCiphertext, BackupPrivateKey};
+use crate::cryptography::decompression::test_tools::safe_serialize_versioned;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::ThresholdFheKeys;
@@ -9,7 +10,9 @@ use crate::engine::traits::ContextManager;
 use crate::engine::validation::{parse_proto_request_id, RequestIdParsingErr};
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
-use crate::vault::storage::delete_context_at_request_id;
+use crate::vault::storage::{
+    delete_at_request_id, delete_context_at_request_id, store_versioned_at_request_id,
+};
 use crate::vault::Vault;
 use crate::{
     engine::base::BaseKmsStruct, grpc::metastore_status_service::CustodianMetaStore,
@@ -18,7 +21,7 @@ use crate::{
 use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{CustodianContext, NewKmsContextRequest};
-use kms_grpc::rpc_types::{BackupDataType, PrivDataType, SignedPubDataHandleInternal};
+use kms_grpc::rpc_types::{PrivDataType, SignedPubDataHandleInternal};
 use kms_grpc::RequestId;
 use kms_grpc::{kms::v1::Empty, utils::tonic_result::tonic_handle_potential_err};
 use std::sync::Arc;
@@ -172,8 +175,7 @@ where
         let data: T = priv_storage
             .read_data(data_id, &data_type_enum.to_string())
             .await?;
-        let mut serialized_data = Vec::new();
-        safe_serialize(&data, &mut serialized_data, SAFE_SER_SIZE_LIMIT)?;
+        let serialized_data = safe_serialize_versioned(&data);
         let encrypted_data = pub_enc_key.encrypt(rng, &serialized_data)?;
         let enc_ct = BackupCiphertext {
             ciphertext: encrypted_data,
@@ -181,15 +183,8 @@ where
         };
         // Delete the old backup data
         // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
-        backup_vault
-            .delete_data(data_id, &data_type_enum.to_string())
-            .await?;
-        backup_vault
-            .store_data(
-                &enc_ct,
-                data_id,
-                &BackupDataType::PrivData(data_type_enum).to_string(),
-            )
+        delete_at_request_id(backup_vault, data_id, &data_type_enum.to_string()).await?;
+        store_versioned_at_request_id(backup_vault, data_id, &enc_ct, &data_type_enum.to_string())
             .await?;
     }
     Ok(())
@@ -225,7 +220,8 @@ where
             if let Some(KeychainProxy::SecretSharing(secret_share_keychain)) =
                 guarded_backup_vault.keychain.as_mut()
             {
-                secret_share_keychain.set_current_backup_id(inner_context.context_id);
+                secret_share_keychain
+                    .set_backup_enc_key(inner_context.context_id, backup_enc_key.clone());
             } else {
                 return Err(anyhow::anyhow!("A secret sharing keychain is not configured! It is not possible to use custodian contexts"));
             }
@@ -307,7 +303,6 @@ where
             lock_acquired_time,
             total_lock_time
         );
-
         // Then store the results
         self.crypto_storage
             .write_backup_keys_with_meta_store(

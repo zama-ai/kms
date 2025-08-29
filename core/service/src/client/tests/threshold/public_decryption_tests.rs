@@ -223,6 +223,7 @@ pub async fn decryption_threshold(
         true,
         Some(rate_limiter_conf),
         decryption_mode,
+        false,
     )
     .await;
     let mut cts = Vec::new();

@@ -18,29 +18,39 @@ use tfhe::{
 /// The [`backup_enc_key`] is the encryption key used for encrypting private data which can the be stored in the backup vault.
 /// That is, the corresponding secret key share must have been secret shared among the custodians in order to allow recovery.
 /// In order to decrypt this key must first be reconstructed and used to make an [`Operator`] that can decrypt the data.
-/// For this reason the [`operator`] is optional, as it should _only_ be set as part of the recovery procedure
+/// For this reason the [`dec_key`] is optional, as it should _only_ be set as part of the recovery procedure
 /// when the private decryption key has been reconstructed with the help of the custodians.
 #[derive(Clone)]
 pub struct SecretShareKeychain<R: Rng + CryptoRng> {
     rng: R,
-    custodian_context_id: RequestId,
-    backup_enc_key: BackupPublicKey,
+    custodian_context_id: Option<RequestId>,
+    backup_enc_key: Option<BackupPublicKey>,
     dec_key: Option<BackupPrivateKey>,
 }
 
 /// Create a new [`SecretShareKeychain`] used for backups in order to securely store and retrieve sensitive information.
 impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
-    pub fn new(rng: R, custodian_context_id: RequestId, backup_enc_key: BackupPublicKey) -> Self {
+    pub fn new(rng: R) -> Self {
         Self {
             rng,
-            backup_enc_key,
-            custodian_context_id,
+            backup_enc_key: None,
+            custodian_context_id: None,
             dec_key: None,
         }
     }
 
-    pub fn operator_public_key_bytes(&self) -> Vec<u8> {
-        self.backup_enc_key.encapsulation_key.clone()
+    pub fn operator_public_key_bytes(&self) -> anyhow::Result<Vec<u8>> {
+        match &self.backup_enc_key {
+            Some(backup_key) => Ok(backup_key.encapsulation_key.clone()),
+            None => anyhow::bail!("Secret sharing keychain is not initialized"),
+        }
+    }
+
+    pub fn get_backup_enc_key(&self) -> anyhow::Result<BackupPublicKey> {
+        match &self.backup_enc_key {
+            Some(backup_key) => Ok(backup_key.clone()),
+            None => anyhow::bail!("Secret sharing keychain is not initialized"),
+        }
     }
 
     pub fn set_backup_enc_key(
@@ -48,8 +58,8 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
         custodian_context_id: RequestId,
         backup_enc_key: BackupPublicKey,
     ) {
-        self.backup_enc_key = backup_enc_key;
-        self.custodian_context_id = custodian_context_id;
+        self.backup_enc_key = Some(backup_enc_key);
+        self.custodian_context_id = Some(custodian_context_id);
     }
 
     /// After recovery of the private decryption key has been carried out with the help of the custodians
@@ -57,13 +67,12 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
     pub fn set_dec_key(&mut self, dec_key: Option<BackupPrivateKey>) {
         self.dec_key = dec_key;
     }
-
-    pub fn get_current_backup_id(&self) -> RequestId {
-        self.custodian_context_id
-    }
-
-    pub fn set_current_backup_id(&mut self, backup_id: RequestId) {
-        self.custodian_context_id = backup_id;
+    // continue making optional to allow booting
+    pub fn get_current_backup_id(&self) -> anyhow::Result<RequestId> {
+        match self.custodian_context_id {
+            Some(backup_id) => Ok(backup_id),
+            None => anyhow::bail!("No custodian context has been set yet"),
+        }
     }
 }
 
@@ -77,7 +86,7 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
         let mut payload_bytes = Vec::new();
         safe_serialize(data, &mut payload_bytes, SAFE_SER_SIZE_LIMIT)?;
         let raw_ct = self
-            .backup_enc_key
+            .get_backup_enc_key()?
             .encrypt(&mut self.rng, &payload_bytes)
             .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt backup: {e}")))?;
         let ct = BackupCiphertext {

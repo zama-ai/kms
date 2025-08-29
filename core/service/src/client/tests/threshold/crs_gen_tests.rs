@@ -74,7 +74,7 @@ pub(crate) async fn crs_gen(
     // The threshold handle should only be started after the storage is purged
     // since the threshold parties will load the CRS from private storage
     let (_kms_servers, kms_clients, internal_client) =
-        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
+        threshold_handles(*dkg_param, amount_parties, true, None, None, false).await;
 
     if concurrent {
         let arc_clients = Arc::new(kms_clients);

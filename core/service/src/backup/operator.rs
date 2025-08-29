@@ -439,7 +439,7 @@ impl Operator {
         verify_n_t(custodian_messages.len(), threshold)?;
 
         let mut custodian_keys = vec![];
-        for (i, msg) in custodian_messages.into_iter().enumerate() {
+        for msg in custodian_messages.into_iter() {
             let InternalCustodianSetupMessage {
                 header,
                 custodian_role,
@@ -452,15 +452,6 @@ impl Operator {
 
             if header != HEADER {
                 tracing::error!("Invalid header in custodian setup message from custodian {custodian_role}. Expected header {HEADER} but got {header}");
-                return Err(BackupError::CustodianSetupError);
-            }
-
-            if custodian_role != Role::indexed_from_zero(i) {
-                tracing::error!(
-                    "Invalid custodian role in setup message: expected {} but got {}",
-                    Role::indexed_from_zero(i),
-                    custodian_role
-                );
                 return Err(BackupError::CustodianSetupError);
             }
 

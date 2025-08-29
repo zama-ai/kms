@@ -24,7 +24,7 @@ use crate::{
 };
 use kms_grpc::{
     rpc_types::{
-        BackupDataType, PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
+        PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
         WrappedPublicKeyOwned,
     },
     RequestId,
@@ -333,7 +333,7 @@ where
             let result = delete_at_request_id(
                 &mut (*priv_storage),
                 req_id,
-                &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
+                &PrivDataType::FheKeyInfo.to_string(),
             )
             .await;
             if let Err(e) = &result {
@@ -351,7 +351,7 @@ where
                     let result = delete_at_request_id(
                         &mut (*guarded_backup_vault),
                         req_id,
-                        &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
+                        &PrivDataType::FheKeyInfo.to_string(),
                     )
                     .await;
                     if let Err(e) = &result {
@@ -454,7 +454,7 @@ where
                             &mut (*guarded_backup_vault),
                             req_id,
                             &crs_info,
-                            &BackupDataType::PrivData(PrivDataType::CrsInfo).to_string(),
+                            &PrivDataType::CrsInfo.to_string(),
                         )
                         .await;
 
@@ -543,7 +543,7 @@ where
                     let vault_result = delete_at_request_id(
                         &mut (*back_vault),
                         req_id,
-                        &BackupDataType::PrivData(PrivDataType::CrsInfo).to_string(),
+                        &PrivDataType::CrsInfo.to_string(),
                     )
                     .await;
                     if let Err(e) = &vault_result {

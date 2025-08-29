@@ -115,31 +115,32 @@ pub async fn make_keychain_proxy(
         KeychainConf::SecretSharing(SecretSharingKeychain {}) => {
             // If secret share backup is used with the centralized KMS, assume);
             // that my_id is 0
-            let private_vault = private_storage
-                .expect("Public vault must be provided to load custodian setup messages");
+            let private_vault = private_storage.expect(
+                "Public vault must be provided to be able to load custodian setup messages",
+            );
+            let mut ssk = secretsharing::SecretShareKeychain::new(rng);
             let all_custodian_ids = private_vault
                 .all_data_ids(&PrivDataType::CustodianInfo.to_string())
                 .await?;
             // Get the latest context ID which should be the most recent one
-            let latest_custodian_context_id = match all_custodian_ids.iter().sorted().last() {
-                Some(latest_context_id) => latest_context_id,
+            match all_custodian_ids.iter().sorted().last() {
+                Some(latest_context_id) => {
+                    let custodian_context: InternalCustodianContext = read_versioned_at_request_id(
+                        private_vault,
+                        latest_context_id,
+                        &PrivDataType::CustodianInfo.to_string(),
+                    )
+                    .await?;
+                    ssk.set_backup_enc_key(
+                        *latest_context_id,
+                        custodian_context.backup_enc_key.clone(),
+                    );
+                }
                 None => {
-                    return Err(anyhow_error_and_log(
-                        "No custodian setup available in the vault",
-                    ))
+                    tracing::warn!("No custodian setup available in the vault! No backups will be made until the custodian context is configured!");
                 }
             };
-            let custodian_context: InternalCustodianContext = read_versioned_at_request_id(
-                private_vault,
-                latest_custodian_context_id,
-                &PrivDataType::CustodianInfo.to_string(),
-            )
-            .await?;
-            KeychainProxy::from(secretsharing::SecretShareKeychain::new(
-                rng,
-                *latest_custodian_context_id,
-                custodian_context.backup_enc_key.clone(),
-            ))
+            KeychainProxy::from(ssk)
         }
     };
     Ok(keychain)

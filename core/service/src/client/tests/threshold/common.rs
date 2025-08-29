@@ -1,7 +1,9 @@
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
+use crate::conf::{Keychain, SecretSharingKeychain};
 use crate::util::key_setup::max_threshold;
 use crate::util::rate_limiter::RateLimiterConfig;
+use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::make_storage;
 use crate::vault::storage::{file::FileStorage, StorageType};
 use crate::vault::Vault;
@@ -24,6 +26,7 @@ pub(crate) async fn threshold_handles(
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
+    secret_sharing_backup: bool,
 ) -> (
     HashMap<u32, ServerHandle>,
     HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -35,24 +38,35 @@ pub(crate) async fn threshold_handles(
     let mut priv_storage = Vec::new();
     let mut vaults = Vec::new();
     for i in 1..=amount_parties {
-        priv_storage.push(
-            FileStorage::new(None, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap(),
-        );
-        pub_storage.push(
-            FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap(),
-        );
-        let public_storage = make_storage(
-            None,
-            StorageType::BACKUP,
-            Some(Role::indexed_from_one(i)),
-            None,
-            None,
-        )
-        .unwrap();
-        vaults.push(Some(Vault {
-            storage: public_storage,
+        let cur_role = Role::indexed_from_one(i);
+        priv_storage.push(FileStorage::new(None, StorageType::PRIV, Some(cur_role)).unwrap());
+        pub_storage.push(FileStorage::new(None, StorageType::PUB, Some(cur_role)).unwrap());
+        let priv_proxy_storage =
+            make_storage(None, StorageType::PRIV, Some(cur_role), None, None).unwrap();
+        let priv_vault = Vault {
+            storage: priv_proxy_storage,
             keychain: None,
-        }));
+        };
+        let backup_proxy_storage =
+            make_storage(None, StorageType::BACKUP, Some(cur_role), None, None).unwrap();
+        let keychain = match secret_sharing_backup {
+            true => Some(
+                make_keychain_proxy(
+                    &Keychain::SecretSharing(SecretSharingKeychain {}),
+                    None,
+                    None,
+                    Some(&priv_vault),
+                )
+                .await
+                .unwrap(),
+            ),
+            false => None,
+        };
+        let backup_vault = Vault {
+            storage: backup_proxy_storage,
+            keychain,
+        };
+        vaults.push(Some(backup_vault));
     }
     let (kms_servers, kms_clients) = crate::client::test_tools::setup_threshold(
         threshold as u8,

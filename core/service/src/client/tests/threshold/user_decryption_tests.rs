@@ -429,8 +429,15 @@ pub(crate) async fn user_decryption_threshold(
 ) {
     assert!(parallelism > 0);
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (mut kms_servers, mut kms_clients, mut internal_client) =
-        threshold_handles(dkg_params, amount_parties, true, None, decryption_mode).await;
+    let (mut kms_servers, mut kms_clients, mut internal_client) = threshold_handles(
+        dkg_params,
+        amount_parties,
+        true,
+        None,
+        decryption_mode,
+        false,
+    )
+    .await;
     let (ct, ct_format, fhe_type) =
         compute_cipher_from_stored_key(None, msg, key_id, enc_config).await;
 

@@ -62,7 +62,7 @@ async fn test_threshold_health_endpoint_availability() {
     // DON'T setup PRSS in order to ensure the server is not ready yet
     let (kms_servers, kms_clients, mut internal_client) =
         crate::client::tests::threshold::common::threshold_handles(
-            TEST_PARAM, 4, false, None, None,
+            TEST_PARAM, 4, false, None, None, false,
         )
         .await;
 
@@ -171,8 +171,10 @@ async fn test_threshold_health_endpoint_availability() {
 async fn test_threshold_close_after_drop() {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (mut kms_servers, _kms_clients, _internal_client) =
-        crate::client::tests::threshold::common::threshold_handles(TEST_PARAM, 4, true, None, None)
-            .await;
+        crate::client::tests::threshold::common::threshold_handles(
+            TEST_PARAM, 4, true, None, None, false,
+        )
+        .await;
 
     // Get health client for main server 1
     let mut core_health_client = get_health_client(kms_servers.get(&1).unwrap().service_port)
@@ -226,8 +228,10 @@ async fn test_threshold_close_after_drop() {
 async fn test_threshold_shutdown() {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (mut kms_servers, kms_clients, mut internal_client) =
-        crate::client::tests::threshold::common::threshold_handles(TEST_PARAM, 4, true, None, None)
-            .await;
+        crate::client::tests::threshold::common::threshold_handles(
+            TEST_PARAM, 4, true, None, None, false,
+        )
+        .await;
     // Ensure that the servers are ready
     for cur_handle in kms_servers.values() {
         let service_name = <CoreServiceEndpointServer<
@@ -320,6 +324,7 @@ async fn test_ratelimiter() {
             true,
             Some(rate_limiter_conf),
             None,
+            false,
         )
         .await;
 
@@ -374,6 +379,7 @@ async fn default_insecure_dkg_backup() {
             true,
             None,
             None,
+            false,
         )
         .await;
 
@@ -488,6 +494,7 @@ async fn default_insecure_autobackup_after_deletion() {
             true,
             None,
             None,
+            false,
         )
         .await;
 
@@ -518,6 +525,7 @@ async fn default_insecure_autobackup_after_deletion() {
             true,
             None,
             None,
+            false,
         )
         .await;
     // Check the storage
@@ -568,6 +576,7 @@ async fn default_insecure_crs_backup() {
             true,
             None,
             None,
+            false,
         )
         .await;
     crate::client::tests::threshold::crs_gen_tests::run_crs(

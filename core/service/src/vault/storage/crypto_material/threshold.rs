@@ -8,7 +8,7 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 use kms_grpc::{
     rpc_types::{
-        BackupDataType, PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
+        PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
         WrappedPublicKeyOwned,
     },
     RequestId,
@@ -191,7 +191,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                             &mut (*guarded_backup_vault),
                             key_id,
                             &threshold_key_clone,
-                            &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
+                            &PrivDataType::FheKeyInfo.to_string(),
                         )
                         .await;
 
@@ -201,7 +201,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                             log_storage_success(
                                 key_id,
                                 guarded_backup_vault.info(),
-                                &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string(),
+                                &PrivDataType::FheKeyInfo.to_string(),
                                 false,
                                 true,
                             );

@@ -144,7 +144,12 @@ where
                 let v = v.lock().await;
                 match v.keychain {
                     Some(KeychainProxy::SecretSharing(ref k)) => {
-                        let public_key = k.operator_public_key_bytes();
+                        let public_key = k.operator_public_key_bytes().map_err(|e| {
+                            Status::new(
+                                tonic::Code::Internal,
+                                format!("Could not get operator public key: {e}"),
+                            )
+                        })?;
                         let attestation_document = match &self.security_module {
                             Some(sm) => sm.attest_pk_bytes(public_key.clone()).await.map_err(|e| Status::new(Code::Internal, format!("Could not issue attestation document for operator backup public key: {e}")))?,
                             None => vec![],
@@ -532,6 +537,10 @@ where
                 let private_storage = private_storage.lock().await;
                 let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
                     backup_vault.lock().await;
+                if !keychain_initialized(&backup_vault).await {
+                    tracing::warn!("Secret sharing keychain in the backup vault has not been initialized yet. Skipping backup update.");
+                    return Ok(());
+                }
                 for cur_type in PrivDataType::iter() {
                     match cur_type {
                         PrivDataType::SigningKey => {
@@ -594,4 +603,14 @@ where
             None => Ok(()),
         }
     }
+}
+
+async fn keychain_initialized(backup_vault_guard: &tokio::sync::MutexGuard<'_, Vault>) -> bool {
+    if let Some(KeychainProxy::SecretSharing(ssk)) = &backup_vault_guard.keychain {
+        // If the backup key is not there, then it is not initialized
+        if ssk.get_backup_enc_key().is_err() {
+            return false;
+        }
+    }
+    true
 }

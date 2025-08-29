@@ -156,13 +156,15 @@ impl InternalCustodianContext {
             &custodian_context.context_id,
             RequestIdParsingErr::CustodianContext,
         )?;
+        let prev_context_id = custodian_context
+            .previous_context_id
+            .as_ref()
+            .map(|id| id.clone().try_into())
+            .transpose()?;
         Ok(InternalCustodianContext {
             context_id,
             threshold: custodian_context.threshold,
-            previous_context_id: Some(parse_optional_proto_request_id(
-                &custodian_context.previous_context_id,
-                RequestIdParsingErr::CustodianContext,
-            )?),
+            previous_context_id: prev_context_id,
             custodian_nodes: node_map,
             backup_enc_key,
         })
