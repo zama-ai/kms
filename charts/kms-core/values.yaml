@@ -80,14 +80,15 @@ kmsCore:
         - pcr0: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
           pcr1: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
           pcr2: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-    # Threshold value is the number of corruptions that the protocol handles.
     # This value appears in the config file as `threshold`.
     multiplier: 2
     maxInterval: 1
     maxElapsedTime: 300
     networkTimeout: 300
     initialIntervalMs: 100
-
+    enableSysMetrics: true
+    refreshIntervalMs: 5000
+    # Threshold value is the number of corruptions that the protocol handles.
     thresholdValue: 1
     decCapacity: 10000
     minDecCache: 6000

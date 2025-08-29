@@ -192,8 +192,11 @@ data:
       {{- else }}
     tracing_endpoint = {{ .Values.tracing.endpoint | quote }}
       {{- end }}
+
     tracing_otlp_timeout_ms = 10000
     metrics_bind_address = "0.0.0.0:{{ .Values.kmsCore.ports.metrics }}"
+    enable_sys_metrics = {{ .Values.kmsCore.thresholdMode.enableSysMetrics }}
+    refresh_interval_ms = {{ .Values.kmsCore.thresholdMode.refreshIntervalMs }}
 
     [telemetry.batch]
     max_queue_size = 8192
