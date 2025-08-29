@@ -51,6 +51,7 @@ use tracing::Instrument;
 
 // === Internal Crate Imports ===
 use crate::{
+    consts::DEFAULT_MPC_CONTEXT_BYTES,
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
         base::{
@@ -60,9 +61,7 @@ use crate::{
         keyset_configuration::InternalKeySetConfig,
         threshold::{
             service::{
-                kms_impl::compute_all_info,
-                session::{SessionPreparerGetter, DEFAULT_CONTEXT_ID_ARR},
-                ThresholdFheKeys,
+                kms_impl::compute_all_info, session::SessionPreparerGetter, ThresholdFheKeys,
             },
             traits::KeyGenerator,
         },
@@ -217,7 +216,7 @@ impl<
     ) -> anyhow::Result<()> {
         let session_preparer = self
             .session_preparer_getter
-            .get(&context_id.unwrap_or(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR)))
+            .get(&context_id.unwrap_or(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES)))
             .await?;
 
         //Retrieve the right metric tag
@@ -1417,7 +1416,7 @@ mod tests {
         );
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -1437,7 +1436,7 @@ mod tests {
         for prep_id in &prep_ids {
             let session_id = prep_id.derive_session_id().unwrap();
             let session_preparer = session_preparer_manager
-                .get(&RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR))
+                .get(&RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES))
                 .await
                 .unwrap();
             let dummy_prep = Box::new(DummyPreprocessing::<ResiduePolyF4Z128>::new(
@@ -1477,7 +1476,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
 
             assert_eq!(
@@ -1505,7 +1504,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
 
             assert_eq!(
@@ -1529,7 +1528,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: Some(keyset_config),
                 keyset_added_info: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
 
             assert_eq!(
@@ -1560,7 +1559,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         });
 
         assert_eq!(
@@ -1588,7 +1587,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
 
             assert_eq!(
@@ -1627,7 +1626,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         });
 
         // keygen should pass because the failure occurs in background process
@@ -1662,7 +1661,7 @@ mod tests {
             domain: Some(domain.clone()),
             keyset_config: None,
             keyset_added_info: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         };
 
         kg.key_gen(tonic::Request::new(request0)).await.unwrap();
@@ -1676,7 +1675,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         };
         assert_eq!(
             kg.key_gen(tonic::Request::new(request1))
@@ -1710,7 +1709,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         });
 
         kg.key_gen(tonic_req).await.unwrap();

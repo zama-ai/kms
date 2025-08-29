@@ -2,11 +2,12 @@ use anyhow::anyhow;
 use clap::Parser;
 use rcgen::BasicConstraints::Constrained;
 use rcgen::{
-    Certificate, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,
+    Certificate, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, SerialNumber, PKCS_ECDSA_P256_SHA256
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+
+pub const DEFAULT_SESSION_ID_FROM_CONTEXT: u128 = 75144625629816062620302474174838463545;
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy)]
 enum CertFileType {
@@ -141,6 +142,10 @@ fn create_ca_cert(
         ExtendedKeyUsagePurpose::ClientAuth,
     ];
 
+    cp.serial_number = Some(SerialNumber::from_slice(
+        &DEFAULT_SESSION_ID_FROM_CONTEXT.to_le_bytes(),
+    ));
+
     // self-sign cert with CA key
     tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
     let cert = cp.self_signed(&keypair)?;
@@ -187,6 +192,10 @@ fn create_core_certs(
                 ExtendedKeyUsagePurpose::ServerAuth,
                 ExtendedKeyUsagePurpose::ClientAuth,
             ];
+
+            cp.serial_number = Some(SerialNumber::from_slice(
+                &DEFAULT_SESSION_ID_FROM_CONTEXT.to_le_bytes(),
+            ));
 
             tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
             let core_cert = cp

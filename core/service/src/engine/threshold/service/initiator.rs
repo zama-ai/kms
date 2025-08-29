@@ -23,12 +23,10 @@ use tonic_health::server::HealthReporter;
 // === Internal Crate ===
 use crate::{
     conf::threshold::ThresholdPartyConf,
+    consts::DEFAULT_MPC_CONTEXT_BYTES,
     engine::{
         base::derive_request_id,
-        threshold::{
-            service::session::{SessionPreparer, DEFAULT_CONTEXT_ID_ARR},
-            traits::Initiator,
-        },
+        threshold::{service::session::SessionPreparer, traits::Initiator},
         validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
     tonic_some_or_err,
@@ -66,7 +64,7 @@ impl<
         // TODO set the correct context ID here.
         let session_preparer = self
             .session_preparer_manager
-            .get(&RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR))
+            .get(&RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES))
             .await?;
 
         let prss_setup_z128_from_file = {
@@ -145,7 +143,7 @@ impl<
         // TODO set the correct context ID here.
         let session_preparer = self
             .session_preparer_manager
-            .get(&RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR))
+            .get(&RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES))
             .await?;
 
         // TODO(zama-ai/kms-internal/issues/2721),
@@ -257,7 +255,7 @@ impl<
         );
         self.session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -446,7 +444,7 @@ mod tests {
         );
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -476,7 +474,7 @@ mod tests {
         );
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -526,7 +524,7 @@ mod tests {
         );
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -570,7 +568,7 @@ mod tests {
         );
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;

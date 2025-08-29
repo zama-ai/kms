@@ -46,6 +46,7 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
+    consts::DEFAULT_MPC_CONTEXT_BYTES,
     cryptography::{
         internal_crypto_types::{PrivateSigKey, UnifiedPublicEncKey},
         signcryption::{signcrypt, SigncryptionPayload},
@@ -55,10 +56,7 @@ use crate::{
             compute_external_user_decrypt_signature, deserialize_to_low_level, BaseKmsStruct,
             UserDecryptCallValues,
         },
-        threshold::{
-            service::session::{SessionPreparerGetter, DEFAULT_CONTEXT_ID_ARR},
-            traits::UserDecryptor,
-        },
+        threshold::{service::session::SessionPreparerGetter, traits::UserDecryptor},
         traits::BaseKms,
         validation::{
             parse_proto_request_id, validate_user_decrypt_req, RequestIdParsingErr,
@@ -432,7 +430,7 @@ impl<
         let context_id = inner
             .context_id
             .clone()
-            .unwrap_or(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into());
+            .unwrap_or(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into());
         let session_preparer = Arc::new(
             self.session_preparer_getter
                 .get(
@@ -725,7 +723,7 @@ mod tests {
         );
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -818,7 +816,7 @@ mod tests {
                 request_id: Some(bad_req_id),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -840,7 +838,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -867,7 +865,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -894,7 +892,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: "bad client address".to_string(),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -937,7 +935,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -983,7 +981,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         });
         assert_eq!(
             user_decryptor
@@ -1029,7 +1027,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         });
         assert_eq!(
             user_decryptor
@@ -1081,7 +1079,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         };
         user_decryptor
             .user_decrypt(Request::new(request.clone()))
@@ -1132,7 +1130,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         });
         user_decryptor.user_decrypt(request).await.unwrap();
         user_decryptor

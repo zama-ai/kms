@@ -3,8 +3,10 @@ use crate::session_id::SessionId;
 use anyhow::{anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha384};
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+};
 use tokio_rustls::rustls::{
     client::{
         danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
@@ -127,13 +129,13 @@ Crypto provider should exist at this point"
         })
     }
 
-    pub async fn add_context(
+    pub fn add_context(
         &self,
         context_id: SessionId,
         ca_certs: HashMap<String, Pem>,
         release_pcrs: Option<Arc<Vec<ReleasePCRValues>>>,
     ) -> anyhow::Result<()> {
-        let mut contexts = self.contexts.write().await;
+        let mut contexts = self.contexts.write().unwrap();
         ensure!(
             !contexts.contains_key(&context_id),
             "Context with ID {context_id} already exists"
@@ -144,9 +146,10 @@ Crypto provider should exist at this point"
         Ok(())
     }
 
-    pub async fn remove_context(&self, context_id: SessionId) {
-        let mut contexts = self.contexts.write().await;
+    pub fn remove_context(&self, context_id: SessionId) -> anyhow::Result<()> {
+        let mut contexts = self.contexts.write().unwrap();
         contexts.remove(&context_id);
+        Ok(())
     }
 
     #[allow(clippy::type_complexity)]
@@ -165,15 +168,21 @@ Crypto provider should exist at this point"
             extract_context_id_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
         let subject = extract_subject_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
 
-        let contexts = self.contexts.blocking_read();
+        let contexts = self.contexts.read().unwrap();
         let context = contexts
             .get(&context_id)
-            .ok_or_else(|| Error::General(format!("Context {context_id} not found")))?;
+            .ok_or_else(|| Error::General(format!("Context {context_id} not found")))
+            .inspect_err(|e| {
+                tracing::error!("{e}");
+            })?;
         let (client_verifier, server_verifier) = context
             .verifiers
             .get(subject.as_str())
             .ok_or(Error::General(format!("{subject} is not a trust anchor")))
-            .cloned()?;
+            .cloned()
+            .inspect_err(|e| {
+                tracing::error!("{e}");
+            })?;
         Ok((context.clone(), client_verifier, server_verifier))
     }
 
@@ -211,13 +220,11 @@ impl ServerCertVerifier for AttestedVerifier {
         let (context, _, server_verifier) = self.get_context_and_verifiers_for_x509_cert(&cert)?;
         // check the enclave-generated certificate used for the TLS session as
         // usual (however, we expect it to be self-signed)
-        server_verifier.verify_server_cert(
-            end_entity,
-            intermediates,
-            server_name,
-            ocsp_response,
-            now,
-        )?;
+        server_verifier
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+            .inspect_err(|e| {
+                tracing::error!("server verifier validation error: {e}");
+            })?;
         // check the bundled attestation document and EIF signing certificate
         if let Some(release_pcrs) = &context.release_pcrs {
             validate_wrapped_cert(
@@ -228,7 +235,10 @@ impl ServerCertVerifier for AttestedVerifier {
                 intermediates,
                 now,
             )
-            .map_err(|e| Error::General(e.to_string()))?;
+            .map_err(|e| {
+                tracing::error!("bundled attestation document validation error: {e}");
+                Error::General(e.to_string())
+            })?;
         }
         Ok(ServerCertVerified::assertion())
     }
@@ -294,7 +304,11 @@ impl ClientCertVerifier for AttestedVerifier {
 
         // check the enclave-generated certificate used for the TLS session as
         // usual
-        client_verifier.verify_client_cert(end_entity, intermediates, now)?;
+        client_verifier
+            .verify_client_cert(end_entity, intermediates, now)
+            .inspect_err(|e| {
+                tracing::error!("client verifier validation error: {e}");
+            })?;
 
         // check the bundled attestation document and EIF signing certificate
         if let Some(release_pcrs) = &context.release_pcrs {
@@ -306,7 +320,10 @@ impl ClientCertVerifier for AttestedVerifier {
                 intermediates,
                 now,
             )
-            .map_err(|e| Error::General(e.to_string()))?;
+            .map_err(|e| {
+                tracing::error!("bundled attestation document validation error: {e}");
+                Error::General(e.to_string())
+            })?;
         }
 
         Ok(ClientCertVerified::assertion())
@@ -453,8 +470,8 @@ fn validate_wrapped_cert(
 /// by the party CA certificate, so we can see context ID as the serial number
 /// of the certificate.
 pub fn extract_context_id_from_cert(cert: &X509Certificate) -> anyhow::Result<SessionId> {
-    // Each TLS certificate is issued in a specific configuration context, we
-    // use the context ID as the certificate serial number
+    // // Each TLS certificate is issued in a specific configuration context, we
+    // // use the context ID as the certificate serial number
     let context_id = SessionId::from(u128::from_le_bytes(
         cert.serial
             .to_bytes_le()

@@ -39,13 +39,11 @@ use tracing::Instrument;
 
 // === Internal Crate ===
 use crate::{
+    consts::DEFAULT_MPC_CONTEXT_BYTES,
     engine::{
         base::retrieve_parameters,
         keyset_configuration::preproc_proto_to_keyset_config,
-        threshold::{
-            service::session::{SessionPreparerGetter, DEFAULT_CONTEXT_ID_ARR},
-            traits::KeyGenPreprocessor,
-        },
+        threshold::{service::session::SessionPreparerGetter, traits::KeyGenPreprocessor},
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -86,7 +84,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
     ) -> anyhow::Result<()> {
         let session_preparer = self
             .session_preparer_getter
-            .get(&context_id.unwrap_or(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR)))
+            .get(&context_id.unwrap_or(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES)))
             .await?;
 
         // Prepare the timer before giving it to the tokio task
@@ -372,7 +370,7 @@ mod tests {
             SessionPreparer::new_test_session(base_kms, prss_setup_z128.clone(), prss_setup_z64);
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -413,7 +411,7 @@ mod tests {
                 request_id: None,
                 params: FheParameter::Test as i32,
                 keyset_config: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -431,7 +429,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 params: 10,
                 keyset_config: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -461,7 +459,7 @@ mod tests {
             SessionPreparer::new_test_session(base_kms, prss_setup_z128.clone(), prss_setup_z64);
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -477,7 +475,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         };
         assert_eq!(
             prep.key_gen_preproc(tonic::Request::new(request))
@@ -505,7 +503,7 @@ mod tests {
             SessionPreparer::new_test_session(base_kms, prss_setup_z128.clone(), prss_setup_z64);
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -520,7 +518,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         };
 
         // even though we use a failing preprocessor, the request should be ok
@@ -556,7 +554,7 @@ mod tests {
             SessionPreparer::new_test_session(base_kms, prss_setup_z128.clone(), prss_setup_z64);
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -595,7 +593,7 @@ mod tests {
             SessionPreparer::new_test_session(base_kms, prss_setup_z128.clone(), prss_setup_z64);
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -611,7 +609,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         };
         prep.key_gen_preproc(tonic::Request::new(request.clone()))
             .await
@@ -640,7 +638,7 @@ mod tests {
         );
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -655,7 +653,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         };
         assert_eq!(
             prep.key_gen_preproc(tonic::Request::new(request))
@@ -683,7 +681,7 @@ mod tests {
             SessionPreparer::new_test_session(base_kms, prss_setup_z128.clone(), prss_setup_z64);
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -698,7 +696,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         };
         prep.key_gen_preproc(tonic::Request::new(request))
             .await

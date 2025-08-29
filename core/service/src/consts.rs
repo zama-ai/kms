@@ -133,6 +133,12 @@ cfg_if::cfg_if! {
     }
 }
 
+// This is a temporary workaround for when we do not get a context ID from the connector.
+pub const DEFAULT_MPC_CONTEXT_BYTES: [u8; 32] = [
+    1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
+    4,
+];
+
 #[cfg(feature = "non-wasm")]
 lazy_static::lazy_static! {
     // The static ID we will use for the signing key for each of the MPC parties.
@@ -140,5 +146,17 @@ lazy_static::lazy_static! {
     // This is a bit hackish, but it works for now.
     pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
 
-    pub static ref DEFAULT_MPC_CONTEXT: RequestId = derive_request_id("DEFAULT_MPC_CONTEXT").unwrap();
+    pub static ref DEFAULT_MPC_CONTEXT: RequestId = RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES);
+}
+
+#[test]
+fn test_context_derivation() {
+    let context_id = RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES);
+    let sid = context_id.derive_session_id().unwrap();
+    assert_eq!(
+        threshold_fhe::session_id::SessionId::from(
+            threshold_fhe::tls_certs::DEFAULT_SESSION_ID_FROM_CONTEXT
+        ),
+        sid
+    );
 }

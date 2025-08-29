@@ -43,6 +43,7 @@ use crate::{
     anyhow_error_and_log,
     backup::custodian::InternalCustodianContext,
     conf::threshold::ThresholdPartyConf,
+    consts::DEFAULT_MPC_CONTEXT_BYTES,
     consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
     cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
     engine::{
@@ -52,7 +53,7 @@ use crate::{
         prepare_shutdown_signals,
         threshold::{
             service::public_decryptor::SecureNoiseFloodDecryptor,
-            service::session::{SessionPreparer, SessionPreparerManager, DEFAULT_CONTEXT_ID_ARR},
+            service::session::{SessionPreparer, SessionPreparerManager},
             service::user_decryptor::SecureNoiseFloodPartialDecryptor,
             threshold_kms::ThresholdKms,
         },
@@ -397,7 +398,7 @@ where
             );
             session_preparer_manager
                 .insert(
-                    RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                    RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                     session_preparer,
                 )
                 .await;

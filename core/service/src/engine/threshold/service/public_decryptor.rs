@@ -44,15 +44,13 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
+    consts::DEFAULT_MPC_CONTEXT_BYTES,
     engine::{
         base::{
             compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct,
             PubDecCallValues,
         },
-        threshold::{
-            service::session::{SessionPreparerGetter, DEFAULT_CONTEXT_ID_ARR},
-            traits::PublicDecryptor,
-        },
+        threshold::{service::session::SessionPreparerGetter, traits::PublicDecryptor},
         traits::BaseKms,
         validation::{
             parse_proto_request_id, validate_public_decrypt_req, RequestIdParsingErr,
@@ -272,7 +270,7 @@ impl<
         let context_id = inner
             .context_id
             .clone()
-            .unwrap_or(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into());
+            .unwrap_or(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into());
         let session_preparer = Arc::new(
             self.session_preparer_getter
                 .get(
@@ -820,7 +818,7 @@ mod tests {
         );
         session_preparer_manager
             .insert(
-                RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR),
+                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                 session_preparer,
             )
             .await;
@@ -910,7 +908,7 @@ mod tests {
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         });
         assert_eq!(
             public_decryptor
@@ -952,7 +950,7 @@ mod tests {
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         };
         public_decryptor
             .public_decrypt(Request::new(request.clone()))
@@ -996,7 +994,7 @@ mod tests {
             key_id: Some(bad_key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         });
         assert_eq!(
             public_decryptor
@@ -1050,7 +1048,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1071,7 +1069,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1100,7 +1098,7 @@ mod tests {
                 key_id: Some(bad_key_id),
                 domain: Some(domain),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1125,7 +1123,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: None,
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1152,7 +1150,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1207,7 +1205,7 @@ mod tests {
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_CONTEXT_ID_ARR).into()),
+            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
         });
         public_decryptor.public_decrypt(request).await.unwrap();
         // there's no need to check the decryption result since it's a dummy protocol

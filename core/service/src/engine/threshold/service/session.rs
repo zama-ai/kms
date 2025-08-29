@@ -22,12 +22,6 @@ use crate::{engine::base::BaseKmsStruct, tonic_some_or_err};
 
 const ERR_SESSION_NOT_INITIALIZED: &str = "SessionPreparer is not initialized";
 
-// This is a temporary workaround for when we do not get a context ID from the connector.
-pub(crate) const DEFAULT_CONTEXT_ID_ARR: [u8; 32] = [
-    1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
-    4,
-];
-
 /// This is a singleton for managing session preparers.
 /// Essentially keeping a map of `RequestId` (which is the context ID) to `SessionPreparer`.
 ///

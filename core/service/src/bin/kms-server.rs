@@ -1,14 +1,14 @@
 use clap::Parser;
 use futures_util::future::OptionFuture;
 use k256::ecdsa::SigningKey;
-use kms_grpc::rpc_types::PubDataType;
+use kms_grpc::{rpc_types::PubDataType, RequestId};
 use kms_lib::{
     conf::{
         init_conf_kms_core_telemetry,
         threshold::{PeerConf, ThresholdPartyConf, TlsConf},
         CoreConfig,
     },
-    consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID},
+    consts::{DEFAULT_MPC_CONTEXT_BYTES, SIGNING_KEY_ID},
     cryptography::{
         attestation::{make_security_module, SecurityModule, SecurityModuleProxy},
         internal_crypto_types::PrivateSigKey,
@@ -124,6 +124,7 @@ async fn build_tls_config(
     public_vault: &Vault,
     sk: &PrivateSigKey,
 ) -> anyhow::Result<(ServerConfig, ClientConfig)> {
+    let context_id = RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES);
     aws_lc_rs_default_provider()
         .install_default()
         .unwrap_or_else(|_| {
@@ -167,7 +168,7 @@ async fn build_tls_config(
             tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
             let eif_signing_cert_pem = cert.into_pem(my_id, peers)?;
             let (cert, key) = security_module
-                .wrap_x509_cert(*DEFAULT_MPC_CONTEXT, eif_signing_cert_pem)
+                .wrap_x509_cert(context_id, eif_signing_cert_pem)
                 .await?;
             (cert, key, Some(Arc::new(trusted_releases.clone())), true)
         }
@@ -189,7 +190,7 @@ async fn build_tls_config(
             let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
 
             let (cert, key) = security_module
-                .issue_x509_cert(*DEFAULT_MPC_CONTEXT, ca_cert, sk)
+                .issue_x509_cert(context_id, ca_cert, sk)
                 .await?;
             (cert, key, Some(Arc::new(trusted_releases.clone())), false)
         }
@@ -203,13 +204,7 @@ async fn build_tls_config(
     // Adding a context to the verifier is optional at this point and
     // can be done at any point of the application lifecycle, for
     // example, when a new context is set through a GRPC call.
-    verifier
-        .add_context(
-            DEFAULT_MPC_CONTEXT.derive_session_id()?,
-            ca_certs,
-            trusted_releases,
-        )
-        .await?;
+    verifier.add_context(context_id.derive_session_id()?, ca_certs, trusted_releases)?;
 
     let server_config = ServerConfig::builder()
         .with_client_cert_verifier(verifier.clone())
