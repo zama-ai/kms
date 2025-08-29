@@ -18,7 +18,7 @@ use threshold_fhe::{
 use tokio::sync::RwLock;
 
 // === Internal Crate ===
-use crate::{engine::base::BaseKmsStruct, tonic_some_or_err};
+use crate::{engine::base::BaseKmsStruct, some_or_tonic_abort};
 
 const ERR_SESSION_NOT_INITIALIZED: &str = "SessionPreparer is not initialized";
 
@@ -306,7 +306,7 @@ struct InnerSessionPreparer {
 impl InnerSessionPreparer {
     async fn own_identity(&self) -> anyhow::Result<Identity> {
         let role_assignment_read = self.role_assignment.read().await;
-        let id = tonic_some_or_err(
+        let id = some_or_tonic_abort(
             role_assignment_read.get(&self.my_role),
             "Could not find my own identity in role assignments".to_string(),
         )?;
@@ -367,7 +367,7 @@ impl InnerSessionPreparer {
         let base_session = self
             .make_base_session(session_id, NetworkMode::Async)
             .await?;
-        let prss_setup = tonic_some_or_err(
+        let prss_setup = some_or_tonic_abort(
             self.prss_setup_z128.read().await.clone(),
             "No PRSS setup Z128 exists".to_string(),
         )?;
@@ -388,7 +388,7 @@ impl InnerSessionPreparer {
         let base_session = self
             .make_base_session(session_id, NetworkMode::Async)
             .await?;
-        let prss_setup = tonic_some_or_err(
+        let prss_setup = some_or_tonic_abort(
             self.prss_setup_z64.read().await.clone(),
             "No PRSS setup Z64 exists".to_string(),
         )?;

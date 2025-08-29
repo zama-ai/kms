@@ -510,7 +510,7 @@ message CustodianRecoveryOutput {
   uint64 operator_role = 4;
 }
 
-// The recovery request which contains the needed recovery data from all the custodians, 
+// The recovery request which contains the needed recovery data from all the custodians,
 // which is sent to the KMS to recover the private backup master decryption key
 message BackupRecoveryRequest { // TODO rename to CustodiansRecoveryRequest
   RequestId custodian_context_id = 1;
@@ -524,7 +524,7 @@ message OperatorBackupOutput {
   bytes signature = 2;
 }
 
-// The request constructed by a KMS to initiate custodian based backup recovery 
+// The request constructed by a KMS to initiate custodian based backup recovery
 message RecoveryRequest {
   // The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
   bytes enc_key = 1;
@@ -534,4 +534,19 @@ message RecoveryRequest {
   RequestId backup_id = 3;
   /// The role of the operator
   uint64 operator_role = 4;
+}
+
+// Response containing available key material information
+message KeyMaterialAvailabilityResponse {
+  // Key IDs for generated FHE keys
+  repeated string fhe_key_ids = 1;
+
+  // Key IDs for generated CRS
+  repeated string crs_ids = 2;
+
+  // Key IDs for preprocessing material (threshold only)
+  repeated string preprocessing_ids = 3;
+
+  // Storage backend information
+  string storage_info = 4;
 }

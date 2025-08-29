@@ -57,7 +57,7 @@ use crate::{
             DSEP_PUBLIC_DECRYPTION,
         },
     },
-    tonic_handle_potential_err,
+    ok_or_tonic_abort,
     util::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
@@ -174,7 +174,7 @@ impl<
 
         let dec = match dec_mode {
             DecryptionMode::NoiseFloodSmall => {
-                let session = tonic_handle_potential_err(
+                let session = ok_or_tonic_abort(
                     session_prep
                         .prepare_ddec_data_from_sessionid_z128(session_id)
                         .await,
@@ -194,7 +194,7 @@ impl<
                 .await
             }
             DecryptionMode::BitDecSmall => {
-                let mut session = tonic_handle_potential_err(
+                let mut session = ok_or_tonic_abort(
                     session_prep
                         .prepare_ddec_data_from_sessionid_z64(session_id)
                         .await,
@@ -317,7 +317,7 @@ impl<
                 )));
             }
 
-            if !tonic_handle_potential_err(
+            if !ok_or_tonic_abort(
                 self.crypto_storage.threshold_fhe_keys_exists(&key_id).await,
                 "Could not check threshold fhe key existance".to_string(),
             )? {
@@ -345,7 +345,7 @@ impl<
             let lock_start = std::time::Instant::now();
             let mut guarded_meta_store = self.pub_dec_meta_store.write().await;
             let lock_acquired_time = lock_start.elapsed();
-            tonic_handle_potential_err(
+            ok_or_tonic_abort(
                 guarded_meta_store.insert(&req_id),
                 "Could not insert decryption into meta store".to_string(),
             )?;
@@ -359,7 +359,7 @@ impl<
             req_id, key_id, session_preparer.my_role().map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?, ciphertexts.len(), lock_acquired_time, total_lock_time
         );
 
-        tonic_handle_potential_err(
+        ok_or_tonic_abort(
             self.crypto_storage
                 .refresh_threshold_fhe_keys(&key_id)
                 .await,
@@ -393,7 +393,7 @@ impl<
                     ),
                 ])
                 .start();
-            let internal_sid = tonic_handle_potential_err(
+            let internal_sid = ok_or_tonic_abort(
                 req_id.derive_session_id_with_counter(ctr as u64),
                 "failed to derive session ID from counter".to_string(),
             )?;
@@ -666,12 +666,12 @@ impl<
             request_id: Some(retrieved_req_id.into()),
         };
 
-        let sig_payload_vec = tonic_handle_potential_err(
+        let sig_payload_vec = ok_or_tonic_abort(
             bc2wrap::serialize(&sig_payload),
             format!("Could not convert payload to bytes {sig_payload:?}"),
         )?;
 
-        let sig = tonic_handle_potential_err(
+        let sig = ok_or_tonic_abort(
             self.base_kms
                 .sign(&DSEP_PUBLIC_DECRYPTION, &sig_payload_vec),
             format!("Could not sign payload {sig_payload:?}"),

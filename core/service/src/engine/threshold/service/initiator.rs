@@ -6,6 +6,7 @@ use kms_grpc::{
     kms::v1::{self, Empty},
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::PrivDataType,
+    utils::tonic_result::some_or_tonic_abort,
     RequestId,
 };
 use threshold_fhe::{
@@ -29,7 +30,6 @@ use crate::{
         threshold::{service::session::SessionPreparer, traits::Initiator},
         validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
-    tonic_some_or_err,
     vault::storage::{read_versioned_at_request_id, store_versioned_at_request_id, Storage},
 };
 
@@ -235,7 +235,7 @@ impl<
         let networking_manager = self.session_preparer_manager.get_networking_manager().await;
         let role_assignment = self.session_preparer_manager.get_role_assignment().await;
 
-        let peers = tonic_some_or_err(self.threshold_config.peers.clone(), "Peer list not set in the configuration file, setting it through the context is unsupported yet".to_string())?;
+        let peers = some_or_tonic_abort(self.threshold_config.peers.clone(), "Peer list not set in the configuration file, setting it through the context is unsupported yet".to_string())?;
 
         // Careful not to hold the write lock longer than needed
         role_assignment.write().await.extend(
