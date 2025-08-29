@@ -53,7 +53,7 @@ pub trait SecurityModule {
         distinguished_name.push(DnType::CommonName, subject);
         cp.distinguished_name = distinguished_name;
         cp.serial_number = Some(SerialNumber::from_slice(
-            &context_id.derive_session_id()?.to_le_bytes(),
+            &context_id.derive_session_id()?.to_be_bytes(),
         ));
 
         // Key usages
@@ -155,7 +155,7 @@ pub trait SecurityModule {
         distinguished_name.push(DnType::CommonName, subject);
         tls_cp.distinguished_name = distinguished_name;
         tls_cp.serial_number = Some(SerialNumber::from_slice(
-            &context_id.derive_session_id()?.to_le_bytes(),
+            &context_id.derive_session_id()?.to_be_bytes(),
         ));
 
         // Key usages

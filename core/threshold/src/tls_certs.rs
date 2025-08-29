@@ -2,7 +2,8 @@ use anyhow::anyhow;
 use clap::Parser;
 use rcgen::BasicConstraints::Constrained;
 use rcgen::{
-    Certificate, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, SerialNumber, PKCS_ECDSA_P256_SHA256
+    Certificate, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair, KeyUsagePurpose, SerialNumber, PKCS_ECDSA_P256_SHA256,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -143,7 +144,7 @@ fn create_ca_cert(
     ];
 
     cp.serial_number = Some(SerialNumber::from_slice(
-        &DEFAULT_SESSION_ID_FROM_CONTEXT.to_le_bytes(),
+        &DEFAULT_SESSION_ID_FROM_CONTEXT.to_be_bytes(),
     ));
 
     // self-sign cert with CA key
@@ -194,7 +195,7 @@ fn create_core_certs(
             ];
 
             cp.serial_number = Some(SerialNumber::from_slice(
-                &DEFAULT_SESSION_ID_FROM_CONTEXT.to_le_bytes(),
+                &DEFAULT_SESSION_ID_FROM_CONTEXT.to_be_bytes(),
             ));
 
             tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
@@ -402,5 +403,16 @@ mod tests {
             validate_ca_name("party/is#bad!").is_err(),
             "this should have been an invalid CA name."
         );
+    }
+
+    #[test]
+    fn test_serial_number() {
+        let ca_name = "p1.kms.zama.ai";
+        let is_ca = IsCa::NoCa;
+
+        let (_ca_keypair, ca_cert, _ca_cert_params) = create_ca_cert(ca_name, &is_ca).unwrap();
+        let (_, cert) = x509_parser::parse_x509_certificate(ca_cert.der().as_ref()).unwrap();
+        let sid = u128::from_le_bytes(cert.serial.to_bytes_be().try_into().unwrap());
+        assert_eq!(sid, super::DEFAULT_SESSION_ID_FROM_CONTEXT);
     }
 }
