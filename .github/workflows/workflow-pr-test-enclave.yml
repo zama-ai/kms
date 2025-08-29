@@ -11,7 +11,7 @@ permissions: {}
 
 jobs:
   docker:
-    name: workflow-pr-test-enclave/docker
+    name: workflow-pr-test-enclave/docker (bpr)
     uses: ./.github/workflows/common-docker-big-instance.yml
     permissions:
       actions: read
