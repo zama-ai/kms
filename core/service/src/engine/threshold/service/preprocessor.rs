@@ -49,7 +49,7 @@ use crate::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
     },
-    tonic_handle_potential_err, tonic_some_or_err,
+    ok_or_tonic_abort, some_or_tonic_abort,
     util::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
@@ -116,7 +116,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let bucket_store = Arc::clone(&self.preproc_buckets);
         let bucket_store_cancellation = Arc::clone(&self.preproc_buckets);
 
-        let prss_setup = tonic_some_or_err(
+        let prss_setup = some_or_tonic_abort(
             (*self.prss_setup.read().await).clone(),
             "No PRSS setup exists".to_string(),
         )?;
@@ -293,7 +293,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         if !entry_exists {
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
             // We don't increment the error counter here but rather in launch_dkg_preproc
-            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, &domain, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
+            ok_or_tonic_abort(self.launch_dkg_preproc(dkg_params, keyset_config, request_id, &domain, permit).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {dkg_params:?}"))?;
             Ok(Response::new(Empty {}))
         } else {
             Err(tonic::Status::already_exists(format!(

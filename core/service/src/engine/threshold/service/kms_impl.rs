@@ -68,7 +68,7 @@ use crate::{
         },
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
-    tonic_some_or_err,
+    some_or_tonic_abort,
     util::{
         meta_store::MetaStore,
         rate_limiter::{RateLimiter, RateLimiterConfig},
@@ -263,7 +263,7 @@ where
         .map(|peer_config| peer_config.into_role_identity())
         .collect();
 
-    let own_identity = tonic_some_or_err(
+    let own_identity = some_or_tonic_abort(
         role_assignments.get(&Role::indexed_from_one(config.my_id)),
         "Could not find my own identity".to_string(),
     )?;

@@ -18,7 +18,7 @@ use itertools::Itertools;
 use kms_grpc::kms::v1::CustodianContext;
 use kms_grpc::rpc_types::{BackupDataType, PrivDataType};
 use kms_grpc::RequestId;
-use kms_grpc::{kms::v1::Empty, utils::tonic_result::tonic_handle_potential_err};
+use kms_grpc::{kms::v1::Empty, utils::tonic_result::ok_or_tonic_abort};
 use std::collections::BTreeMap;
 use std::{collections::HashMap, sync::Arc};
 use strum::IntoEnumIterator;
@@ -74,7 +74,7 @@ where
             inner.previous_context_id,
             inner.custodian_nodes.len()
         );
-        tonic_handle_potential_err(
+        ok_or_tonic_abort(
             self.inner_new_custodian_context(inner).await,
             "Could not create new custodian context".to_string(),
         )?;

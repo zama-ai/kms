@@ -23,7 +23,7 @@ use kms_grpc::{kms::v1::BackupRecoveryRequest, rpc_types::BackupDataType};
 use kms_grpc::{
     kms::v1::{Empty, KeyMaterialAvailabilityResponse, OperatorPublicKey},
     rpc_types::PrivDataType,
-    utils::tonic_result::tonic_handle_potential_err,
+    utils::tonic_result::ok_or_tonic_abort,
 };
 use strum::IntoEnumIterator;
 use tokio::sync::MutexGuard;
@@ -95,7 +95,7 @@ where
                         // let mut private_storage = private_storage.lock().await;
                         // let custodian_recovery_output =
                         //     request.into_inner().custodian_recovery_output;
-                        // tonic_handle_potential_err(
+                        // ok_or_tonic_abort(
                         //     keychain
                         //         .custodian_backup_recovery(
                         //             &mut private_storage,
@@ -135,7 +135,7 @@ where
                 let private_storage = self.crypto_storage.get_private_storage().clone();
                 let mut private_storage = private_storage.lock().await;
                 let backup_vault: tokio::sync::MutexGuard<'_, Vault> = backup_vault.lock().await;
-                tonic_handle_potential_err(
+                ok_or_tonic_abort(
                     restore_data(&backup_vault, &mut private_storage).await,
                     "Failed to restore".to_string(),
                 )?;

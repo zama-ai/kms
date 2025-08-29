@@ -17,7 +17,7 @@ use threshold_fhe::{
 use tokio::sync::RwLock;
 
 // === Internal Crate ===
-use crate::{engine::base::BaseKmsStruct, tonic_some_or_err};
+use crate::{engine::base::BaseKmsStruct, some_or_tonic_abort};
 
 /// This is a shared type between all the modules,
 /// it's responsible for creating sessions and holds
@@ -34,7 +34,7 @@ pub struct SessionPreparer {
 
 impl SessionPreparer {
     pub fn own_identity(&self) -> anyhow::Result<Identity> {
-        let id = tonic_some_or_err(
+        let id = some_or_tonic_abort(
             self.role_assignments
                 .get(&Role::indexed_from_one(self.my_id)),
             "Could not find my own identity in role assignments".to_string(),
@@ -93,7 +93,7 @@ impl SessionPreparer {
         let base_session = self
             .make_base_session(session_id, NetworkMode::Async)
             .await?;
-        let prss_setup = tonic_some_or_err(
+        let prss_setup = some_or_tonic_abort(
             self.prss_setup_z128.read().await.clone(),
             "No PRSS setup Z128 exists".to_string(),
         )?;
@@ -114,7 +114,7 @@ impl SessionPreparer {
         let base_session = self
             .make_base_session(session_id, NetworkMode::Async)
             .await?;
-        let prss_setup = tonic_some_or_err(
+        let prss_setup = some_or_tonic_abort(
             self.prss_setup_z64.read().await.clone(),
             "No PRSS setup Z64 exists".to_string(),
         )?;

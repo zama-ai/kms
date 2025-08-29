@@ -1,6 +1,6 @@
 use kms_grpc::{
     kms::v1::{DestroyKmsContextRequest, Empty, NewKmsContextRequest},
-    utils::tonic_result::tonic_handle_potential_err,
+    utils::tonic_result::ok_or_tonic_abort,
 };
 use tonic::{Request, Response, Status};
 
@@ -57,7 +57,7 @@ pub async fn new_kms_context_impl<
         .write_context_info(new_context.context_id(), &new_context, false)
         .await;
 
-    tonic_handle_potential_err(
+    ok_or_tonic_abort(
         res,
         format!(
             "Failed to write new KMS context for ID {}",

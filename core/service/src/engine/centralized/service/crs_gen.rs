@@ -19,7 +19,7 @@ use crate::engine::centralized::central_kms::{async_generate_crs, RealCentralize
 use crate::engine::validation::{
     parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
 };
-use crate::tonic_handle_potential_err;
+use crate::ok_or_tonic_abort;
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
 use crate::vault::storage::crypto_material::CentralizedCryptoMaterialStorage;
 use crate::vault::storage::Storage;
@@ -44,7 +44,7 @@ pub async fn crs_gen_impl<
 
     {
         let mut guarded_meta_store = service.crs_meta_map.write().await;
-        tonic_handle_potential_err(
+        ok_or_tonic_abort(
             guarded_meta_store.insert(&req_id),
             "Could not insert CRS generation into meta store".to_string(),
         )?;
