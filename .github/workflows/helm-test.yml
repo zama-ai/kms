@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   helm-test:
-    name: helm-test/helm-test
+    name: helm-test/helm-test (bpr)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
