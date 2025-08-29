@@ -41,8 +41,6 @@ import "kms.v1.proto";
 // `Aborted` - Other issues we do not specifically capture above, e.g., meta
 // store issues (e.g., failing to insert), session creation issues, missing PRSS
 // and (de)serialization issues. The caller should not retry in this case.
-// NOTE: at the moment missing PRSS is considered as Aborted, but we can
-// consider changing this to NotFound in the future.
 service CoreServiceEndpoint {
   // Initializes the threshold KMS service.
   //
