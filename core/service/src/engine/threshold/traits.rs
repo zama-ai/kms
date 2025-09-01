@@ -62,6 +62,7 @@ pub trait KeyGenPreprocessor {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, Status>;
+    async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, Status>;
 }
 
 #[tonic::async_trait]

@@ -5,7 +5,12 @@ use crate::engine::threshold::traits::{
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
 use crate::engine::traits::{BackupOperator, ContextManager};
-use kms_grpc::kms::v1::*;
+use kms_grpc::kms::v1::{
+    CrsGenRequest, CrsGenResult, DestroyKmsContextRequest, Empty, InitRequest,
+    KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
+    KeyMaterialAvailabilityResponse, NewKmsContextRequest, PublicDecryptionRequest,
+    PublicDecryptionResponse, RequestId, UserDecryptionRequest, UserDecryptionResponse,
+};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use observability::{
     metrics::METRICS,
@@ -350,6 +355,24 @@ impl_endpoint! {
                 let _ = METRICS
                     .increment_error_counter(OP_BACKUP_RESTORE, tag);
             })
+        }
+
+        #[tracing::instrument(skip(self, _request))]
+        async fn get_key_material_availability(
+            &self,
+            _request: Request<Empty>,
+        ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status> {
+            // Get preprocessing IDs from the preprocessor
+            let preprocessing_ids = self.keygen_preprocessor.get_all_preprocessing_ids().await?;
+
+            // Get storage references from backup_operator
+            let backup_response = self.backup_operator.get_key_material_availability(Request::new(Empty {})).await?;
+            let mut response = backup_response.into_inner();
+
+            // Update the response with preprocessing IDs
+            response.preprocessing_ids = preprocessing_ids;
+
+            Ok(Response::new(response))
         }
 
         #[tracing::instrument(skip(self, request))]

@@ -23,7 +23,7 @@ use itertools::Itertools;
 use kms_grpc::kms::v1::{CustodianContext, NewKmsContextRequest};
 use kms_grpc::rpc_types::{PrivDataType, SignedPubDataHandleInternal};
 use kms_grpc::RequestId;
-use kms_grpc::{kms::v1::Empty, utils::tonic_result::tonic_handle_potential_err};
+use kms_grpc::{kms::v1::Empty, utils::tonic_result::ok_or_tonic_abort};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::safe_serialize;
@@ -88,7 +88,7 @@ where
             .write_context_info(new_context.context_id(), &new_context, false)
             .await;
 
-        tonic_handle_potential_err(
+        ok_or_tonic_abort(
             res,
             format!(
                 "Failed to write new KMS context for ID {}",
@@ -131,7 +131,7 @@ where
             inner.previous_context_id,
             inner.custodian_nodes.len()
         );
-        tonic_handle_potential_err(
+        ok_or_tonic_abort(
             self.inner_new_custodian_context(inner).await,
             "Could not create new custodian context".to_string(),
         )?;

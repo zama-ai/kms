@@ -1,12 +1,12 @@
 use crate::engine::centralized::central_kms::CentralizedKms;
 use crate::engine::traits::{BackupOperator, ContextManager};
-use crate::tonic_some_or_err;
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
     self, CustodianRecoveryRequest, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
-    OperatorPublicKey,
+    KeyMaterialAvailabilityResponse, OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
+use kms_grpc::utils::tonic_result::some_or_tonic_abort;
 use tonic::{Request, Response, Status};
 
 use crate::engine::centralized::service::{crs_gen_impl, get_crs_gen_result_impl};
@@ -38,7 +38,7 @@ impl<
     async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_INIT);
         METRICS.increment_error_counter(OP_INIT, ERR_INVALID_REQUEST);
-        tonic_some_or_err(
+        some_or_tonic_abort(
             None,
             "Requesting init on centralized kms is not suported".to_string(),
         )
@@ -52,7 +52,7 @@ impl<
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
         METRICS.increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, ERR_INVALID_REQUEST);
-        tonic_some_or_err(
+        some_or_tonic_abort(
             None,
             "Requesting preproc on centralized kms is not suported".to_string(),
         )
@@ -66,7 +66,7 @@ impl<
     ) -> Result<Response<KeyGenPreprocResult>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_RESULT);
         METRICS.increment_error_counter(OP_KEYGEN_PREPROC_RESULT, ERR_INVALID_REQUEST);
-        tonic_some_or_err(
+        some_or_tonic_abort(
             None,
             "Requesting preproc status on centralized kms is not suported".to_string(),
         )
@@ -360,5 +360,26 @@ impl<
                 let tag = map_tonic_code_to_metric_tag(err.code());
                 let _ = METRICS.increment_error_counter(OP_CUSTODIAN_RECOVERY_INIT, tag);
             })
+    }
+
+    #[tracing::instrument(skip(self, _request))]
+    async fn get_key_material_availability(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status> {
+        use crate::engine::utils::query_key_material_availability;
+
+        // Get storage references
+        let priv_storage = self.crypto_storage.inner.get_private_storage();
+        let priv_guard = priv_storage.lock().await;
+
+        let response = query_key_material_availability(
+            &*priv_guard,
+            "Centralized KMS",
+            Vec::new(), // Centralized KMS doesn't support preprocessing material
+        )
+        .await?;
+
+        Ok(Response::new(response))
     }
 }

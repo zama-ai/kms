@@ -11,16 +11,23 @@ import "kms.v1.proto";
 //
 // All endpoints may return the following errors, any exceptions are
 // also documented in the RPC documentation below.
+// In summary, only `NotFound`, `Unavailable`, and `ResourceExhausted` can be retried by the caller,
+// the other errors indicate that the caller should not retry.
 // 
 // `InvalidArgument` - Data in the request is incorrect or not set according to
 // the pre and post conditions. The caller should fix the arguments before
-// trying again.
+// trying again. The request ID is consumed and cannot be used again.
+// NOTE: this is not 100% enforced in the code yet.
 //
 // `NotFound` - If a resource does not exist, e.g. preprocessing is not there
 // or a key under some key ID does not exist.
+// It is possible to retry the request at a later point using the same request ID
+// after the resource is available.
 //
 // `Internal` - A bug in the KMS code, usually the protocol started to execute
-// but failed before the end.
+// but failed before the end. This error should only occur in the asynchronous
+// grpc calls while getting a result. It indicates that a catastrophic failure,
+// most likely due to a software bug, and should not be retried.
 //
 // `Unavailable` - An async request is not done yet. The caller can retry at a
 // later point and may obtain the result.
@@ -32,8 +39,8 @@ import "kms.v1.proto";
 // the caller should not retry in this case.
 //
 // `Aborted` - Other issues we do not specifically capture above, e.g., meta
-// store issues (e.g., failing to insert), session creation issues,
-// (de)serialization issues.
+// store issues (e.g., failing to insert), session creation issues, missing PRSS
+// and (de)serialization issues. The caller should not retry in this case.
 service CoreServiceEndpoint {
   // Initializes the threshold KMS service.
   //
@@ -366,7 +373,7 @@ service CoreServiceEndpoint {
   // ## Pre-condition:  -
   // ## Post-condition: -
   rpc CustodianRecoveryInit(kms.v1.Empty) returns (kms.v1.RecoveryRequest);
-  
+
   // Recover the master decryption key secret shared with custodians as part of a custodian-based backup recovery
   //
   // WARNING: This method is not fully implemented yet.
@@ -378,4 +385,26 @@ service CoreServiceEndpoint {
   // ## Pre-condition:  -
   // ## Post-condition: -
   rpc CustodianBackupRecovery(kms.v1.CustodianRecoveryRequest) returns (kms.v1.Empty);
+
+  // Get available key material information.
+  //
+  // Returns all key IDs that this KMS core has access to, organized by type.
+  // This endpoint uses the existing storage abstraction to query all available
+  // key material without loading the actual cryptographic data.
+  //
+  // # Parameters
+  // * `request` - Empty request
+  //
+  // # Returns
+  // * `Response<KeyMaterialAvailabilityResponse>` containing:
+  //   - List of FHE key IDs
+  //   - List of CRS key IDs
+  //   - List of preprocessing IDs (threshold only)
+  //   - Total count of available keys
+  //   - Storage backend information
+  //
+  // # Conditions
+  // ## Pre-condition: KMS service must be initialized
+  // ## Post-condition: No state changes, read-only operation
+  rpc GetKeyMaterialAvailability(kms.v1.Empty) returns (kms.v1.KeyMaterialAvailabilityResponse);
 }

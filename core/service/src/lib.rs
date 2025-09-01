@@ -41,8 +41,7 @@ pub mod vault;
 
 #[cfg(feature = "non-wasm")]
 pub use kms_grpc::utils::tonic_result::{
-    box_tonic_err, tonic_handle_potential_err, tonic_some_or_err, tonic_some_or_err_ref,
-    tonic_some_ref_or_err, BoxedStatus, TonicResult,
+    box_tonic_err, ok_or_tonic_abort, some_or_tonic_abort, BoxedStatus, TonicResult,
 };
 
 /// Truncate s to a maximum of 128 chars.

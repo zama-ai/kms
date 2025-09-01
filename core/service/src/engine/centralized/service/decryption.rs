@@ -22,7 +22,7 @@ use crate::engine::validation::{
     parse_proto_request_id, validate_public_decrypt_req, validate_user_decrypt_req,
     RequestIdParsingErr, DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
 };
-use crate::tonic_handle_potential_err;
+use crate::ok_or_tonic_abort;
 use crate::util::meta_store::handle_res_mapping;
 use crate::vault::storage::Storage;
 
@@ -48,16 +48,16 @@ pub async fn user_decrypt_impl<
     let inner = request.into_inner();
 
     let (typed_ciphertexts, link, client_enc_key, client_address, key_id, request_id, domain) =
-        tonic_handle_potential_err(
-            validate_user_decrypt_req(&inner),
-            format!("Failed to validate user decryption request: {inner:?}"),
-        )?;
+        validate_user_decrypt_req(&inner).map_err(|e| {
+            tracing::error!("Failed to validate user decryption request: {inner:?}, error: {e}");
+            Status::invalid_argument("Failed to validate user decryption request: {e:?}")
+        })?;
 
     timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
     {
         let mut guarded_meta_store = service.user_decrypt_meta_map.write().await;
-        tonic_handle_potential_err(
+        ok_or_tonic_abort(
             guarded_meta_store.insert(&request_id),
             "Could not insert user decryption into meta store".to_string(),
         )?;
@@ -68,7 +68,7 @@ pub async fn user_decrypt_impl<
     let crypto_storage = service.crypto_storage.clone();
     let mut rng = service.base_kms.new_rng().await;
 
-    tonic_handle_potential_err(
+    ok_or_tonic_abort(
         crypto_storage.refresh_centralized_fhe_keys(&key_id).await,
         format!("Cannot find centralized keys with key ID {key_id}"),
     )?;
@@ -169,12 +169,12 @@ pub async fn get_user_decryption_result_impl<
         handle_res_mapping(status, &request_id, "UserDecryption").await?;
 
     // sign the response
-    let sig_payload_vec = tonic_handle_potential_err(
+    let sig_payload_vec = ok_or_tonic_abort(
         bc2wrap::serialize(&payload),
         format!("Could not convert payload to bytes {payload:?}"),
     )?;
 
-    let sig = tonic_handle_potential_err(
+    let sig = ok_or_tonic_abort(
         service.sign(&DSEP_USER_DECRYPTION, &sig_payload_vec),
         format!("Could not sign payload {payload:?}"),
     )?;
@@ -209,10 +209,11 @@ pub async fn public_decrypt_impl<
     let start = tokio::time::Instant::now();
     let inner = request.into_inner();
 
-    let (ciphertexts, key_id, request_id, eip712_domain) = tonic_handle_potential_err(
-        validate_public_decrypt_req(&inner),
-        format!("Failed to validate decrypt request {inner:?}"),
-    )?;
+    let (ciphertexts, key_id, request_id, eip712_domain) = validate_public_decrypt_req(&inner)
+        .map_err(|e| {
+            tracing::error!("Failed to validate public decryption request: {inner:?}, error: {e}");
+            Status::invalid_argument("Failed to validate public decryption request: {e:?}")
+        })?;
 
     timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
@@ -225,7 +226,7 @@ pub async fn public_decrypt_impl<
 
     {
         let mut guarded_meta_store = service.pub_dec_meta_store.write().await;
-        tonic_handle_potential_err(
+        ok_or_tonic_abort(
             guarded_meta_store.insert(&request_id),
             "Could not insert decryption into meta store".to_string(),
         )?;
@@ -235,7 +236,7 @@ pub async fn public_decrypt_impl<
     let sigkey = Arc::clone(&service.base_kms.sig_key);
     let crypto_storage = service.crypto_storage.clone();
 
-    tonic_handle_potential_err(
+    ok_or_tonic_abort(
         crypto_storage.refresh_centralized_fhe_keys(&key_id).await,
         format!("Cannot find centralized keys with key ID {key_id}"),
     )?;
@@ -376,13 +377,13 @@ pub async fn get_public_decryption_result_impl<
         request_id: Some(retrieved_req_id.into()),
     };
 
-    let kms_sig_payload_vec = tonic_handle_potential_err(
+    let kms_sig_payload_vec = ok_or_tonic_abort(
         bc2wrap::serialize(&kms_sig_payload),
         format!("Could not convert payload to bytes {kms_sig_payload:?}"),
     )?;
 
     // sign the decryption result with the central KMS key
-    let sig = tonic_handle_potential_err(
+    let sig = ok_or_tonic_abort(
         service.sign(&DSEP_PUBLIC_DECRYPTION, &kms_sig_payload_vec),
         format!("Could not sign payload {kms_sig_payload:?}"),
     )?;

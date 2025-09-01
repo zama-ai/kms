@@ -66,7 +66,7 @@ use crate::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
     },
-    tonic_handle_potential_err,
+    ok_or_tonic_abort,
     util::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
@@ -429,7 +429,7 @@ impl<
             )
         };
 
-        tonic_handle_potential_err(
+        ok_or_tonic_abort(
             self.launch_dkg(
                 dkg_params,
                 internal_keyset_config,

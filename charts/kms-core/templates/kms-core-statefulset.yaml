@@ -283,7 +283,7 @@ spec:
               --public-storage s3 \
               --public-s3-bucket "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.publicVault.s3.bucket }}}" \
                 {{- if .Values.kmsCore.publicVault.s3.path }}
-              --public-s3-prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:=={{ .Values.kmsCore.publicVault.s3.path }}}" \
+              --public-s3-prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.path }}}" \
                 {{- end }}
               {{- else }}
               --public-storage file \
@@ -293,7 +293,7 @@ spec:
               --private-storage s3 \
               --private-s3-bucket "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.privateVault.s3.bucket }}}" \
                 {{- if .Values.kmsCore.privateVault.s3.path }}
-              --private-s3-prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:=={{ .Values.kmsCore.privateVault.s3.path }}}" \
+              --private-s3-prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.privateVault.s3.path }}}" \
                 {{- end }}
               {{- else }}
               --private-storage file \

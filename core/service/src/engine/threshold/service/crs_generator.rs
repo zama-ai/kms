@@ -6,7 +6,7 @@ use aes_prng::AesRng;
 use kms_grpc::{
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
     rpc_types::{optional_protobuf_to_alloy_domain, SignedPubDataHandleInternal},
-    utils::tonic_result::tonic_handle_potential_err,
+    utils::tonic_result::ok_or_tonic_abort,
     RequestId,
 };
 use observability::{
@@ -130,7 +130,7 @@ impl<
                 )));
             }
 
-            if tonic_handle_potential_err(
+            if ok_or_tonic_abort(
                 self.crypto_storage.crs_exists(&req_id).await,
                 "Could not check crs existance in storage".to_string(),
             )? {

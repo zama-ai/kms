@@ -3,6 +3,7 @@ use kms_grpc::kms::v1::CustodianRecoveryRequest;
 use kms_grpc::kms::v1::DestroyCustodianContextRequest;
 use kms_grpc::kms::v1::DestroyKmsContextRequest;
 use kms_grpc::kms::v1::Empty;
+use kms_grpc::kms::v1::KeyMaterialAvailabilityResponse;
 use kms_grpc::kms::v1::NewCustodianContextRequest;
 use kms_grpc::kms::v1::NewKmsContextRequest;
 use kms_grpc::kms::v1::OperatorPublicKey;
@@ -105,4 +106,9 @@ pub trait BackupOperator {
     ) -> Result<Response<Empty>, Status>;
 
     async fn backup_restore(&self, request: Request<Empty>) -> Result<Response<Empty>, Status>;
+
+    async fn get_key_material_availability(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status>;
 }
