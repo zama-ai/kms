@@ -26,6 +26,7 @@ pub mod metastore_status {
 
 pub mod identifiers;
 pub mod rpc_types;
+pub mod solidity_types;
 pub mod utils;
 
 // Re-export identifier types for easier access

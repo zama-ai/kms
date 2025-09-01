@@ -3,6 +3,7 @@ use crate::backup::operator::{BackupCommitments, InternalRecoveryRequest, Operat
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::backup_pke::{self, BackupCiphertext};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::engine::base::CrsGenMetadata;
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr};
@@ -15,7 +16,7 @@ use crate::{
 use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::kms::v1::CustodianContext;
-use kms_grpc::rpc_types::{BackupDataType, PrivDataType, SignedPubDataHandleInternal};
+use kms_grpc::rpc_types::{BackupDataType, PrivDataType};
 use kms_grpc::RequestId;
 use kms_grpc::{kms::v1::Empty, utils::tonic_result::ok_or_tonic_abort};
 use std::collections::BTreeMap;
@@ -220,7 +221,7 @@ where
                         .await?;
                     }
                     PrivDataType::CrsInfo => {
-                        backup_priv_data::<PrivS, SignedPubDataHandleInternal>(
+                        backup_priv_data::<PrivS, CrsGenMetadata>(
                             &mut rng,
                             &guarded_priv_storage,
                             &mut guarded_backup_vault,

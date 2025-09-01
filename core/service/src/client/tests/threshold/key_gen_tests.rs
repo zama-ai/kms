@@ -5,6 +5,7 @@ cfg_if::cfg_if! {
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::dummy_domain;
     use crate::engine::base::derive_request_id;
+    use crate::engine::base::INSECURE_PREPROCESSING_ID;
     use crate::engine::threshold::service::ThresholdFheKeys;
     use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::StorageReader;
@@ -355,7 +356,7 @@ async fn wait_for_keygen_result(
             let kg_res = kg_res.unwrap().into_inner();
             let storage = FileStorage::new(None, StorageType::PUB, Some(role)).unwrap();
             let decompression_key: Option<DecompressionKey> = internal_client
-                .retrieve_key(&kg_res, PubDataType::DecompressionKey, &storage)
+                .retrieve_key_no_verification(&kg_res, PubDataType::DecompressionKey, &storage)
                 .await
                 .unwrap();
             assert!(decompression_key.is_some());
@@ -380,36 +381,38 @@ async fn wait_for_keygen_result(
         let mut all_threshold_fhe_keys = HashMap::new();
         let mut final_public_key = None;
         let mut final_server_key = None;
+
+        let preproc_id = match req_preproc {
+            Some(ref id) => id,
+            None => &INSECURE_PREPROCESSING_ID,
+        };
+
         for (idx, kg_res) in finished.into_iter() {
             let role = Role::indexed_from_one(idx as usize);
             let kg_res = kg_res.unwrap().into_inner();
             let storage = FileStorage::new(None, StorageType::PUB, Some(role)).unwrap();
-            let pk = internal_client
-                .retrieve_public_key(&kg_res, &storage)
-                .await
-                .unwrap();
-            assert!(pk.is_some());
-            if role.one_based() == 1 {
-                serialized_ref_pk = bc2wrap::serialize(pk.as_ref().unwrap()).unwrap();
-            } else {
-                assert_eq!(
-                    serialized_ref_pk,
-                    bc2wrap::serialize(pk.as_ref().unwrap()).unwrap()
+
+            let (server_key, public_key) = internal_client
+                .retrieve_server_key_and_public_key(
+                    preproc_id,
+                    &req_get_keygen,
+                    &kg_res,
+                    &domain,
+                    &storage,
                 )
-            }
-            let server_key: Option<tfhe::ServerKey> = internal_client
-                .retrieve_server_key(&kg_res, &storage)
                 .await
+                .unwrap()
                 .unwrap();
-            assert!(server_key.is_some());
+
             if role.one_based() == 1 {
-                serialized_ref_server_key =
-                    bc2wrap::serialize(server_key.as_ref().unwrap()).unwrap();
+                serialized_ref_pk = bc2wrap::serialize(&public_key).unwrap();
+                serialized_ref_server_key = bc2wrap::serialize(&server_key).unwrap();
             } else {
+                assert_eq!(serialized_ref_pk, bc2wrap::serialize(&public_key).unwrap());
                 assert_eq!(
                     serialized_ref_server_key,
-                    bc2wrap::serialize(server_key.as_ref().unwrap()).unwrap()
-                )
+                    bc2wrap::serialize(&server_key).unwrap()
+                );
             }
 
             let key_id =
@@ -423,12 +426,10 @@ async fn wait_for_keygen_result(
             threshold_fhe_keys.sns_key = None;
             all_threshold_fhe_keys.insert(role, threshold_fhe_keys);
             if final_public_key.is_none() {
-                final_public_key = match pk.unwrap() {
-                    kms_grpc::rpc_types::WrappedPublicKeyOwned::Compact(inner) => Some(inner),
-                };
+                final_public_key = Some(public_key);
             }
             if final_server_key.is_none() {
-                final_server_key = server_key;
+                final_server_key = Some(server_key);
             }
         }
 
@@ -870,8 +871,10 @@ async fn run_preproc(
         }
     };
 
+    let domain = dummy_domain();
+
     let preproc_request = internal_client
-        .preproc_request(preproc_req_id, Some(parameter), keyset_config)
+        .preproc_request(preproc_req_id, Some(parameter), keyset_config, &domain)
         .unwrap();
 
     // Execute preprocessing
@@ -892,7 +895,12 @@ async fn run_preproc(
     assert_eq!(preproc_res.len(), amount_parties);
 
     // the responses should be empty
-    let _responses = poll_key_gen_preproc_result(preproc_request, kms_clients, MAX_TRIES).await;
+    let responses = poll_key_gen_preproc_result(preproc_request, kms_clients, MAX_TRIES).await;
+    for response in responses {
+        internal_client
+            .process_preproc_response(preproc_req_id, &domain, &response)
+            .unwrap();
+    }
 }
 
 //Check status of preproc request

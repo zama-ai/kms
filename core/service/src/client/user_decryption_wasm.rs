@@ -18,7 +18,8 @@ use itertools::Itertools;
 use kms_grpc::kms::v1::{
     TypedPlaintext, UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
 };
-use kms_grpc::rpc_types::{fhe_types_to_num_blocks, UserDecryptionLinker};
+use kms_grpc::rpc_types::fhe_types_to_num_blocks;
+use kms_grpc::solidity_types::UserDecryptionLinker;
 use std::num::Wrapping;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::FheTypes;
