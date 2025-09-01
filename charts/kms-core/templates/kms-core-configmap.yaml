@@ -1,4 +1,4 @@
-{{- if .Values.kmsCore.enabled -}}
+{{- if or .Values.kmsCore.enabled .Values.kmsGenCertAndKeys.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
 apiVersion: v1
