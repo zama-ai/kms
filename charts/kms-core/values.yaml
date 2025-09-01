@@ -80,14 +80,15 @@ kmsCore:
         - pcr0: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
           pcr1: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
           pcr2: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-    # Threshold value is the number of corruptions that the protocol handles.
     # This value appears in the config file as `threshold`.
     multiplier: 2
     maxInterval: 1
     maxElapsedTime: 300
     networkTimeout: 300
     initialIntervalMs: 100
-
+    enableSysMetrics: true
+    refreshIntervalMs: 5000
+    # Threshold value is the number of corruptions that the protocol handles.
     thresholdValue: 1
     decCapacity: 10000
     minDecCache: 6000
@@ -250,24 +251,19 @@ tracing:
   endpoint: "http://otel-deployment-opentelemetry-collector.observability.svc.cluster.local:4317"
   otlp_timeout_ms: 10000
 
+
+# Minio: If we want to use local s3 storage, we can use Minio
+# i.e: by deploying Minio operator: https://docs.min.io/community/minio-object-store/operations/deployments/k8s-deploy-operator-helm-on-kubernetes.html?ref=github
+# or Minio chart community maintained: https://github.com/minio/minio/tree/master/helm/minio
+#
 minio:
   enabled: false
-  fullnameOverride: minio
-  auth:
-    rootUser: minio-admin
-    rootPassword: minio-admin
-  provisioning:
-    enabled: true
-    buckets:
-      - name: kms-public
-        region: eu-west-1
-    users:
-      - username: kms-access-key-id
-        password: kms-secret-access-key
-        policies:
-          - readwrite
-    extraCommands:
-      - "mc anonymous set public provisioning/kms-public"
+  # If enabled, the minio endpoint will be used to store the keys. Example: http://minio:9000
+  endpoint:
+  # If enabled, the minio username will be used to store the keys
+  username:
+  # If enabled, the minio password will be used to store the keys
+  password:
 
 rustLog: info
 

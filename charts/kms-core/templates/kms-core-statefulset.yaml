@@ -278,7 +278,7 @@ spec:
               echo "generating keys"
               kms-gen-keys --cmd signing-keys \
               {{- if .Values.minio.enabled }}
-              --aws-s3-endpoint http://minio:9000 \
+              --aws-s3-endpoint {{ .Values.minio.endpoint }} \
               {{- end }}
               --aws-region {{ .Values.kmsCore.aws.region }} \
               {{- if .Values.kmsCore.publicVault.s3.enabled -}}
@@ -328,9 +328,9 @@ spec:
                   fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
             {{- if .Values.minio.enabled }}
             - name: AWS_ACCESS_KEY_ID
-              value: {{ (index .Values.minio.provisioning.users 0).username}}
+              value: {{ .Values.minio.username}}
             - name: AWS_SECRET_ACCESS_KEY
-              value: {{ (index .Values.minio.provisioning.users 0).password}}
+              value: {{ .Values.minio.password}}
             {{- end }}
             - name: "NO_COLOR"
               value: "true"
@@ -434,9 +434,9 @@ spec:
               value: {{ .Values.rustLog }}
             {{- if .Values.minio.enabled }}
             - name: AWS_ACCESS_KEY_ID
-              value: {{ (index .Values.minio.provisioning.users 0).username}}
+              value: {{ .Values.minio.username}}
             - name: AWS_SECRET_ACCESS_KEY
-              value: {{ (index .Values.minio.provisioning.users 0).password}}
+              value: {{ .Values.minio.password}}
             {{- end }}
           {{- if .Values.kmsCore.envFrom.configmap.name }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}

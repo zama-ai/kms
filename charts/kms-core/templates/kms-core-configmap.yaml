@@ -15,7 +15,7 @@ data:
     [aws]
     region = "${AWS_REGION}"
     {{ if .Values.minio.enabled }}
-    s3_endpoint = "http://minio:9000"
+    s3_endpoint = "{{ .Values.minio.endpoint }}"
     {{ else }}
     role_arn = "${AWS_ROLE_ARN}"
       {{ if .Values.kmsCore.nitroEnclave.enabled }}
@@ -192,8 +192,11 @@ data:
       {{- else }}
     tracing_endpoint = {{ .Values.tracing.endpoint | quote }}
       {{- end }}
+
     tracing_otlp_timeout_ms = 10000
     metrics_bind_address = "0.0.0.0:{{ .Values.kmsCore.ports.metrics }}"
+    enable_sys_metrics = {{ .Values.kmsCore.thresholdMode.enableSysMetrics }}
+    refresh_interval_ms = {{ .Values.kmsCore.thresholdMode.refreshIntervalMs }}
 
     [telemetry.batch]
     max_queue_size = 8192

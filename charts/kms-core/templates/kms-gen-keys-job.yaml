@@ -33,7 +33,7 @@ spec:
           env:
             {{- if .Values.minio.enabled }}
             - name: S3_ENDPOINT
-              value: "http://minio:9000/{{ .Values.kmsCore.publicVault.s3.bucket }}{{- $path := default "" .Values.kmsCore.publicVault.s3.path }}{{- if ne $path "" }}/{{ $path }}{{- end }}"
+              value: "{{ .Values.minio.endpoint }}/{{ .Values.kmsCore.publicVault.s3.bucket }}{{- $path := default "" .Values.kmsCore.publicVault.s3.path }}{{- if ne $path "" }}/{{ $path }}{{- end }}"
             {{- else }}
             - name: CORE_CLIENT__S3_ENDPOINT
               valueFrom:
