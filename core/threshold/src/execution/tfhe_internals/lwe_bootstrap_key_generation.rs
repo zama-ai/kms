@@ -1,7 +1,8 @@
-use itertools::{EitherOrBoth, Itertools};
+use itertools::Itertools;
+use rayon::prelude::*;
 use tfhe::{
     core_crypto::prelude::{
-        ByteRandomGenerator, LweBootstrapKey, SeededLweBootstrapKey, UnsignedInteger,
+        LweBootstrapKey, ParallelByteRandomGenerator, SeededLweBootstrapKey, UnsignedInteger,
     },
     shortint::parameters::{DecompositionBaseLog, DecompositionLevelCount},
 };
@@ -12,7 +13,6 @@ use crate::{
         galois_rings::common::ResiduePoly,
         structure_traits::{BaseRing, ErrorCorrect},
     },
-    error::error_handler::anyhow_error_and_log,
     execution::{
         online::preprocessing::{DKGPreprocessing, TriplePreprocessing},
         runtime::session::BaseSessionHandles,
@@ -39,7 +39,7 @@ pub async fn generate_lwe_bootstrap_key<Z, Gen, S, P, const EXTENSION_DEGREE: us
 ) -> anyhow::Result<()>
 where
     Z: BaseRing,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     S: BaseSessionHandles,
     P: TriplePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
@@ -61,26 +61,20 @@ where
     )
     .await?;
 
-    for ggsw_encoded_generator in output
+    output
         .ggsw_list
-        .iter_mut()
-        .zip_longest(encoded_input_key_elements.into_iter())
-        .zip_longest(gen_iter)
-    {
-        if let EitherOrBoth::Both(EitherOrBoth::Both(ggsw, encoded), mut generator) =
-            ggsw_encoded_generator
-        {
+        .par_iter_mut()
+        .zip_eq(encoded_input_key_elements.into_par_iter())
+        .zip_eq(gen_iter)
+        .for_each(|((ggsw, input_key_element), mut generator)| {
             encrypt_constant_ggsw_ciphertext(
                 output_glwe_secret_key,
                 ggsw,
-                encoded,
+                input_key_element,
                 &mut generator,
                 encryption_type,
             );
-        } else {
-            return Err(anyhow_error_and_log("zip error"));
-        }
-    }
+        });
     Ok(())
 }
 
@@ -97,7 +91,7 @@ pub async fn allocate_and_generate_lwe_bootstrap_key<Z, Gen, S, P, const EXTENSI
 ) -> anyhow::Result<LweBootstrapKeyShare<Z, EXTENSION_DEGREE>>
 where
     Z: BaseRing,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     S: BaseSessionHandles,
     P: TriplePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
@@ -129,7 +123,7 @@ async fn generate_bootstrap_key_share<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -179,7 +173,7 @@ pub(crate) async fn generate_bootstrap_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     Scalar: UnsignedInteger,
     const EXTENSION_DEGREE: usize,
 >(
@@ -218,7 +212,7 @@ pub(crate) async fn generate_compressed_bootstrap_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     Scalar: UnsignedInteger,
     const EXTENSION_DEGREE: usize,
 >(

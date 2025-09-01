@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use tfhe::{
-    core_crypto::prelude::ByteRandomGenerator,
+    core_crypto::prelude::ParallelByteRandomGenerator,
     shortint::server_key::{
         CompressedModulusSwitchNoiseReductionKey, ModulusSwitchNoiseReductionKey,
     },
@@ -32,7 +32,7 @@ pub(crate) async fn generate_mod_switch_noise_reduction_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -67,7 +67,7 @@ pub(crate) async fn generate_compressed_mod_switch_noise_reduction_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -103,7 +103,7 @@ fn generate_encrypted_zeros<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,

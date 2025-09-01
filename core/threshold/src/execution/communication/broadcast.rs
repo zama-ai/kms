@@ -3,9 +3,11 @@ use crate::algebra::structure_traits::Ring;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::Role;
 use crate::execution::runtime::session::BaseSessionHandles;
+use crate::execution::runtime::session::DeSerializationRunTime;
 use crate::networking::value::BcastHash;
 use crate::networking::value::BroadcastValue;
 use crate::networking::value::NetworkValue;
+use crate::thread_handles::spawn_compute_bound;
 use crate::ProtocolDescription;
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -33,7 +35,7 @@ pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
     /// the malicious set with malicious senders.
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
-        session: &B,
+        session: &mut B,
         sender_list: &[Role],
         my_message: Option<BroadcastValue<Z>>,
     ) -> anyhow::Result<RoleValueMap<Z>>;
@@ -51,7 +53,7 @@ pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
     /// the malicious set with malicious senders.
     async fn broadcast_from_all<Z: Ring, B: BaseSessionHandles>(
         &self,
-        session: &B,
+        session: &mut B,
         my_message: BroadcastValue<Z>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
         let sender_list = session.role_assignments().keys().cloned().collect_vec();
@@ -229,8 +231,11 @@ pub(crate) async fn receive_echos_from_all_batched<Z: Ring, B: BaseSessionHandle
     session: &B,
     receiver: &Role,
     non_answering_parties: &mut HashSet<Role>,
-    echoed_data: &mut HashMap<(Role, BroadcastValue<Z>), u32>,
-) -> anyhow::Result<HashMap<(Role, BcastHash), u32>> {
+    echoed_data: HashMap<(Role, BroadcastValue<Z>), u32>,
+) -> anyhow::Result<(
+    HashMap<(Role, BcastHash), u32>,
+    HashMap<(Role, BcastHash), BroadcastValue<Z>>,
+)> {
     //Receiving from every parties as everyone can send an echo
     let mut jobs = JoinSet::<Result<SendEchoJobType<Z>, Elapsed>>::new();
     generic_receive_from_all(
@@ -248,7 +253,7 @@ pub(crate) async fn receive_echos_from_all_batched<Z: Ring, B: BaseSessionHandle
     )?;
 
     //Process all the messages we just received, looking for values we can vote for
-    let registered_votes = process_echos(
+    process_echos(
         receiver,
         &mut jobs,
         echoed_data,
@@ -256,8 +261,7 @@ pub(crate) async fn receive_echos_from_all_batched<Z: Ring, B: BaseSessionHandle
         session.threshold() as usize,
         non_answering_parties,
     )
-    .await?;
-    Ok(registered_votes)
+    .await
 }
 
 /// Receives the votes from all parties, for all the parallel bcast
@@ -311,8 +315,8 @@ where
             if let Ok(rcv_vote_or_echo) = data {
                 debug_assert!(rcv_vote_or_echo.len() <= num_parties);
                 // iterate through the echo batched message and check the frequency of each message
-                rcv_vote_or_echo.iter().for_each(|(role, m)| {
-                    let entry = map_data.entry((*role, m.clone())).or_insert(0);
+                rcv_vote_or_echo.into_iter().for_each(|(role, m)| {
+                    let entry = map_data.entry((role, m)).or_insert(0);
                     *entry += 1;
                 });
             } else {
@@ -341,31 +345,40 @@ where
 async fn process_echos<Z: Ring>(
     receiver: &Role,
     echo_recv_tasks: &mut JoinSet<Result<SendEchoJobType<Z>, Elapsed>>,
-    echoed_data: &mut HashMap<(Role, BroadcastValue<Z>), u32>,
+    mut echoed_data: HashMap<(Role, BroadcastValue<Z>), u32>,
     num_parties: usize,
     threshold: usize,
     non_answering_parties: &mut HashSet<Role>,
-) -> anyhow::Result<HashMap<(Role, BcastHash), u32>> {
+) -> anyhow::Result<(
+    HashMap<(Role, BcastHash), u32>,
+    HashMap<(Role, BcastHash), BroadcastValue<Z>>,
+)> {
     internal_process_echos_or_votes(
         receiver,
         echo_recv_tasks,
-        echoed_data,
+        &mut echoed_data,
         num_parties,
         non_answering_parties,
     )
     .await?;
 
-    let mut registered_votes = HashMap::new();
-    //Any entry with at least N-t times is good for a vote
-    for ((role, m), num_entries) in echoed_data.iter() {
-        if num_entries >= &((num_parties - threshold) as u32) {
+    let (registered_vote, map_hash_to_value) = spawn_compute_bound(move || {
+        let mut registered_votes = HashMap::new();
+        let mut map_hash_to_value = HashMap::new();
+        //Any entry with at least N-t times is good for a vote
+        for ((role, m), num_entries) in echoed_data.into_iter() {
             let hash = m.to_bcast_hash().map_err(|e| {
                 anyhow::anyhow!("Failed to compute broadcast hash for role {}: {}", role, e)
             })?;
-            registered_votes.insert((*role, hash), 1);
+            map_hash_to_value.insert((role, hash), m);
+            if num_entries >= ((num_parties - threshold) as u32) {
+                registered_votes.insert((role, hash), 1);
+            }
         }
-    }
-    Ok(registered_votes)
+        Ok::<_, anyhow::Error>((registered_votes, map_hash_to_value))
+    })
+    .await??;
+    Ok((registered_vote, map_hash_to_value))
 }
 
 /// Sender casts a vote only for messages m in registered_votes for which numbers of votes >= threshold
@@ -469,7 +482,7 @@ impl Broadcast for SyncReliableBroadcast {
     #[instrument(name= "Syn-Bcast",skip(self,session,sender_list,my_message),fields(sid = ?session.session_id(),own_identity = ?session.own_identity()))]
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
-        session: &B,
+        session: &mut B,
         sender_list: &[Role],
         my_message: Option<BroadcastValue<Z>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
@@ -503,10 +516,14 @@ impl Broadcast for SyncReliableBroadcast {
         let mut round1_contributions = HashMap::<Role, BroadcastValue<Z>>::new();
         match (my_message, is_sender) {
             (Some(my_message), true) => {
-                bcast_data.insert(my_role, my_message);
-                round1_contributions.insert(my_role, bcast_data[&my_role].clone());
-                let msg = NetworkValue::Send(round1_contributions[&my_role].clone());
-                send_to_all(session, &my_role, msg).await?;
+                bcast_data.insert(my_role, my_message.clone());
+                let msg = NetworkValue::Send(my_message);
+                send_to_all(session, &my_role, &msg).await?;
+                let msg = match msg {
+                    NetworkValue::Send(v) => v,
+                    _ => panic!("Bug here, we just wrapped send into Send"),
+                };
+                round1_contributions.insert(my_role, msg);
             }
             (None, false) => {
                 session.network().increase_round_counter()?; // We're not sending, but we must increase the round counter to stay in sync
@@ -530,40 +547,34 @@ impl Broadcast for SyncReliableBroadcast {
 
         // Communication round 2
         // Parties send Echo to the other parties
-        send_to_all(
-            session,
-            &my_role,
-            NetworkValue::EchoBatch(round1_contributions.clone()),
-        )
-        .await?;
+        let to_send = NetworkValue::EchoBatch(round1_contributions);
+        send_to_all(session, &my_role, &to_send).await?;
+        let round1_contributions = match to_send {
+            NetworkValue::EchoBatch(v) => v,
+            _ => panic!("Bug here, we just wrapped send into EchoBatch"),
+        };
 
         // Parties receive Echo from others and process them,
         // if there are enough Echo messages then they will cast a vote in subsequent rounds
         // adding own echo to the map
-        let mut echos_count: HashMap<(Role, BroadcastValue<Z>), u32> = round1_contributions
-            .iter()
-            .map(|(k, v)| ((*k, v.clone()), 1))
+        let echos_count: HashMap<(Role, BroadcastValue<Z>), u32> = round1_contributions
+            .into_iter()
+            .map(|(k, v)| ((k, v), 1))
             .collect();
         // receive echos from all parties,
         // updates the echos_count and outputs the values I should vote for
-        let mut registered_votes = receive_echos_from_all_batched(
+        let (mut registered_votes, mut map_hash_to_value) = receive_echos_from_all_batched(
             session,
             &my_role,
             &mut non_answering_parties,
-            &mut echos_count,
+            echos_count,
         )
         .await?;
 
-        let mut map_hash_to_value: HashMap<(Role, BcastHash), BroadcastValue<Z>> = echos_count
-            .into_iter()
-            .map(|((role, value), _)| {
-                let hash = value.to_bcast_hash().map_err(|e| {
-                    anyhow::anyhow!("Failed to compute broadcast hash for role {}: {}", role, e)
-                })?;
-                Ok(((role, hash), value))
-            })
-            .collect::<anyhow::Result<HashMap<_, _>>>()?;
         // Communication round 3 onward
+        // We are only exchanging hashes at this point, so we use the tokio runtime for deserialization
+        let old_deser_runtime = session.get_deserialization_runtime();
+        session.set_deserialization_runtime(DeSerializationRunTime::Tokio);
         // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
         // Here propagate error if my own casted hashmap does not contain the expected party's id
         let mut casted_vote: HashMap<Role, bool> =
@@ -594,10 +605,10 @@ impl Broadcast for SyncReliableBroadcast {
             &mut non_answering_parties,
         )
         .await?;
-        for ((role, value), hits) in registered_votes.into_iter() {
+        for ((role, hash), hits) in registered_votes.into_iter() {
             if hits >= min_honest_nodes {
                 //Retrieve the actual data from the hash
-                let value = map_hash_to_value.remove(&(role, value)).ok_or_else(|| {
+                let value = map_hash_to_value.remove(&(role, hash)).ok_or_else(|| {
                     anyhow_error_and_log(format!(
                         "Can't retrieve the value from the hash in broadcast. Role {role}.",
                     ))
@@ -606,6 +617,8 @@ impl Broadcast for SyncReliableBroadcast {
                 bcast_data.insert(role, value);
             }
         }
+        // Set back the old runtime
+        session.set_deserialization_runtime(old_deser_runtime);
         Ok(bcast_data)
     }
 }
@@ -660,29 +673,29 @@ mod tests {
         );
         if identities.len() == sender_parties.len() {
             for (party_no, my_data) in input_values.iter().cloned().enumerate() {
-                let session = test_runtime.base_session_for_party(session_id, party_no, None);
+                let mut session = test_runtime.base_session_for_party(session_id, party_no, None);
                 set.spawn(async move {
                     SyncReliableBroadcast::default()
-                        .broadcast_from_all(&session, my_data)
+                        .broadcast_from_all(&mut session, my_data)
                         .await
                         .unwrap()
                 });
             }
         } else {
             for (party_no, my_data) in input_values.iter().cloned().enumerate() {
-                let session = test_runtime.base_session_for_party(session_id, party_no, None);
+                let mut session = test_runtime.base_session_for_party(session_id, party_no, None);
                 let sender_list = sender_parties.to_vec();
                 if sender_parties.contains(&Role::indexed_from_zero(party_no)) {
                     set.spawn(async move {
                         SyncReliableBroadcast::default()
-                            .execute(&session, &sender_list, Some(my_data))
+                            .execute(&mut session, &sender_list, Some(my_data))
                             .await
                             .unwrap()
                     });
                 } else {
                     set.spawn(async move {
                         SyncReliableBroadcast::default()
-                            .execute(&session, &sender_list, None)
+                            .execute(&mut session, &sender_list, None)
                             .await
                             .unwrap()
                     });

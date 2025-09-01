@@ -1,6 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use tokio::sync::{mpsc::Receiver, Mutex};
+use tokio::sync::{mpsc::Receiver, Mutex, RwLock};
 
 use crate::{
     error::error_handler::anyhow_error_and_log,
@@ -41,11 +41,10 @@ impl<Z: Clone + Send + Sync, T: TriplePreprocessing<Z>> TriplesAggregator<Z, T> 
                 .await
                 .ok_or_else(|| anyhow_error_and_log("Error receiving Triples"))?;
             let num_triples = std::cmp::min(num_triples_needed, triple_batch.len());
-            (*self
-                .triple_writer
+            self.triple_writer
                 .write()
-                .map_err(|e| anyhow_error_and_log(format!("Locking Error: {e}")))?)
-            .append_triples(triple_batch[..num_triples].to_vec());
+                .await
+                .append_triples(triple_batch[..num_triples].to_vec());
             num_triples_needed -= num_triples;
             if num_triples_needed == 0 {
                 return Ok(());

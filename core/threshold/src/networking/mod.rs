@@ -38,7 +38,7 @@ pub enum NetworkMode {
 /// Requirements for networking interface.
 #[async_trait]
 pub trait Networking {
-    async fn send(&self, value: Vec<u8>, receiver: &Identity) -> anyhow::Result<()>;
+    async fn send(&self, value: Arc<Vec<u8>>, receiver: &Identity) -> anyhow::Result<()>;
 
     async fn receive(&self, sender: &Identity) -> anyhow::Result<Vec<u8>>;
 
