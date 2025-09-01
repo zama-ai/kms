@@ -698,7 +698,7 @@ async fn process_batch_threshold_user_decryption(
             responses.iter_mut().for_each(|resp| {
                 if let Some(payload) = &mut resp.payload {
                     if let Some(mal_parties) = &malicious_parties {
-                        if mal_parties.contains(&Role::indexed_from_zero(payload.party_id as usize))
+                        if mal_parties.contains(&Role::indexed_from_one(payload.party_id as usize))
                         {
                             let orig_party_id = payload.party_id;
                             // Modify the party ID maliciously
