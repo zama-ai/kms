@@ -64,7 +64,7 @@ data:
     prefix = "${KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX}"
       {{- end }}
     {{- end }}
-    {{- if .Values.kmsCore.nitroEnclave.enabled }}
+    {{- if .Values.kmsCore.backupVault.awskms.enabled }}
     [backup_vault.keychain.aws_kms]
     root_key_id = "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID}"
     root_key_spec = "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC}"
