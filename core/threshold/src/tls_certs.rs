@@ -412,7 +412,7 @@ mod tests {
 
         let (_ca_keypair, ca_cert, _ca_cert_params) = create_ca_cert(ca_name, &is_ca).unwrap();
         let (_, cert) = x509_parser::parse_x509_certificate(ca_cert.der().as_ref()).unwrap();
-        let sid = u128::from_le_bytes(cert.serial.to_bytes_be().try_into().unwrap());
+        let sid = u128::from_be_bytes(cert.serial.to_bytes_be().try_into().unwrap());
         assert_eq!(sid, super::DEFAULT_SESSION_ID_FROM_CONTEXT);
     }
 }
