@@ -8,8 +8,7 @@ use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
 
 use kms_grpc::{
     rpc_types::{
-        BackupDataType, PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
-        WrappedPublicKeyOwned,
+        BackupDataType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned,
     },
     RequestId,
 };
@@ -17,7 +16,10 @@ use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
-    engine::threshold::service::ThresholdFheKeys,
+    engine::{
+        base::{CrsGenMetadata, KeyGenMetadata},
+        threshold::service::ThresholdFheKeys,
+    },
     util::meta_store::MetaStore,
     vault::{
         storage::{
@@ -77,8 +79,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         req_id: &RequestId,
         pp: CompactPkeCrs,
-        crs_info: SignedPubDataHandleInternal,
-        meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
+        crs_info: CrsGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     ) {
         self.inner
             .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)
@@ -101,8 +103,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         key_id: &RequestId,
         threshold_fhe_keys: ThresholdFheKeys,
         fhe_key_set: FhePubKeySet,
-        info: HashMap<PubDataType, SignedPubDataHandleInternal>,
-        meta_store: Arc<RwLock<MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>>>,
+        info: KeyGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
@@ -315,10 +317,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     pub async fn purge_key_material(
         &self,
         req_id: &RequestId,
-        guarded_meta_store: RwLockWriteGuard<
-            '_,
-            MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>,
-        >,
+        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
     ) {
         self.inner
             .purge_key_material(req_id, guarded_meta_store)
@@ -330,7 +329,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
     pub async fn purge_crs_material(
         &self,
         req_id: &RequestId,
-        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<SignedPubDataHandleInternal>>,
+        guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenMetadata>>,
     ) {
         self.inner
             .purge_crs_material(req_id, guarded_meta_store)
@@ -342,8 +341,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         req_id: &RequestId,
         decompression_key: DecompressionKey,
-        info: HashMap<PubDataType, SignedPubDataHandleInternal>,
-        meta_store: Arc<RwLock<MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>>>,
+        info: KeyGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
         self.inner
             .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)

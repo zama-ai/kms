@@ -702,7 +702,8 @@ mod tests {
         consts::TEST_PARAM,
         cryptography::internal_crypto_types::gen_sig_keys,
         dummy_domain,
-        engine::threshold::service::{compute_all_info, session::SessionPreparerManager},
+        engine::base::{compute_info_standard_keygen, DSEP_PUBDATA_KEY},
+        engine::threshold::service::session::SessionPreparerManager,
         vault::storage::ram,
     };
 
@@ -844,7 +845,16 @@ mod tests {
         )
         .unwrap();
 
-        let info = compute_all_info(&sk, &fhe_key_set, &dummy_domain()).unwrap();
+        let dummy_prep_id = RequestId::new_random(rng);
+        let info = compute_info_standard_keygen(
+            &sk,
+            &DSEP_PUBDATA_KEY,
+            &dummy_prep_id,
+            &key_id,
+            &fhe_key_set,
+            &dummy_domain(),
+        )
+        .unwrap();
 
         let dummy_meta_store = Arc::new(RwLock::new(MetaStore::new_unlimited()));
         {

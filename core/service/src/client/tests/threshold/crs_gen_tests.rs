@@ -3,7 +3,7 @@ cfg_if::cfg_if! {
     use crate::client::client_wasm::Client;
     use crate::cryptography::internal_crypto_types::WrappedDKGParams;
     use crate::dummy_domain;
-    use crate::engine::base::{derive_request_id, DSEP_PUBDATA_CRS};
+    use crate::engine::base::derive_request_id;
     use crate::util::key_setup::max_threshold;
     use crate::util::key_setup::test_tools::purge;
     use crate::vault::storage::{file::FileStorage, StorageType};
@@ -135,7 +135,7 @@ pub(crate) async fn run_crs(
     let dkg_param: WrappedDKGParams = parameter.into();
     let domain = dummy_domain();
     let crs_req = internal_client
-        .crs_gen_request(crs_req_id, max_bits, Some(parameter), domain)
+        .crs_gen_request(crs_req_id, max_bits, Some(parameter), &domain)
         .unwrap();
 
     let responses = launch_crs(&vec![crs_req.clone()], kms_clients, insecure).await;
@@ -200,6 +200,7 @@ async fn wait_for_crsgen_result(
     // the public parameter is checked in ddec tests, so we don't specifically check _pp
     for req in reqs {
         use itertools::Itertools;
+        use kms_grpc::rpc_types::protobuf_to_alloy_domain;
 
         let req_id: RequestId = req.clone().request_id.unwrap().try_into().unwrap();
         let joined_responses: Vec<_> = joined_responses
@@ -213,6 +214,8 @@ async fn wait_for_crsgen_result(
                 }
             })
             .collect();
+        // domain should always exist
+        let domain = protobuf_to_alloy_domain(&req.domain.clone().unwrap()).unwrap();
 
         // we need to setup the storage devices in the right order
         // so that the client can read the CRS
@@ -234,7 +237,7 @@ async fn wait_for_crsgen_result(
         let min_count_agree = (threshold + 1) as u32;
 
         let pp = internal_client
-            .process_distributed_crs_result(&req_id, res_storage.clone(), min_count_agree)
+            .process_distributed_crs_result(&req_id, res_storage.clone(), &domain, min_count_agree)
             .await
             .unwrap();
         crate::client::crs_gen::tests::verify_pp(param, &pp);
@@ -244,6 +247,7 @@ async fn wait_for_crsgen_result(
             .process_distributed_crs_result(
                 &req_id,
                 res_storage[0..res_storage.len() - threshold].to_vec(),
+                &domain,
                 min_count_agree,
             )
             .await
@@ -254,6 +258,7 @@ async fn wait_for_crsgen_result(
             .process_distributed_crs_result(
                 &req_id,
                 res_storage[0..threshold].to_vec(),
+                &domain,
                 min_count_agree
             )
             .await
@@ -262,26 +267,31 @@ async fn wait_for_crsgen_result(
         // if the request_id is wrong, we get nothing
         let bad_request_id = derive_request_id("bad_request_id").unwrap();
         assert!(internal_client
-            .process_distributed_crs_result(&bad_request_id, res_storage.clone(), min_count_agree)
+            .process_distributed_crs_result(
+                &bad_request_id,
+                res_storage.clone(),
+                &domain,
+                min_count_agree
+            )
             .await
             .is_err());
 
         // test that having [THRESHOLD] wrong signatures still works
         let mut final_responses_with_bad_sig = res_storage.clone();
-        let client_sk = internal_client.client_sk.clone().unwrap();
-        let bad_sig = bc2wrap::serialize(
-            &crate::cryptography::signcryption::internal_sign(
-                &DSEP_PUBDATA_CRS,
-                &"wrong msg".to_string(),
-                &client_sk,
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        let bad_sig = {
+            let mut tmp = res_storage[0].0.external_signature.clone();
+            tmp[0] ^= 0xff;
+            tmp
+        };
         set_signatures(&mut final_responses_with_bad_sig, threshold, &bad_sig);
 
         let _pp = internal_client
-            .process_distributed_crs_result(&req_id, final_responses_with_bad_sig, min_count_agree)
+            .process_distributed_crs_result(
+                &req_id,
+                final_responses_with_bad_sig,
+                &domain,
+                min_count_agree,
+            )
             .await
             .unwrap();
 
@@ -293,7 +303,12 @@ async fn wait_for_crsgen_result(
             &bad_sig,
         );
         assert!(internal_client
-            .process_distributed_crs_result(&req_id, final_responses_with_bad_sig, min_count_agree)
+            .process_distributed_crs_result(
+                &req_id,
+                final_responses_with_bad_sig,
+                &domain,
+                min_count_agree
+            )
             .await
             .is_err());
 
@@ -302,12 +317,15 @@ async fn wait_for_crsgen_result(
         set_digests(
             &mut final_responses_with_bad_digest,
             amount_parties - (threshold + 1),
-            "9fdca770403e2eed9dacb4cdd405a14fc6df7226",
+            hex::decode("9fdca770403e2eed9dacb4cdd405a14fc6df7226")
+                .unwrap()
+                .as_slice(),
         );
         let _pp = internal_client
             .process_distributed_crs_result(
                 &req_id,
                 final_responses_with_bad_digest,
+                &domain,
                 min_count_agree,
             )
             .await
@@ -318,12 +336,15 @@ async fn wait_for_crsgen_result(
         set_digests(
             &mut final_responses_with_bad_digest,
             amount_parties - threshold,
-            "9fdca770403e2eed9dacb4cdd405a14fc6df7226",
+            hex::decode("9fdca770403e2eed9dacb4cdd405a14fc6df7226")
+                .unwrap()
+                .as_slice(),
         );
         assert!(internal_client
             .process_distributed_crs_result(
                 &req_id,
                 final_responses_with_bad_digest,
+                &domain,
                 min_count_agree
             )
             .await
@@ -338,12 +359,7 @@ fn set_signatures(
     sig: &[u8],
 ) {
     for (crs_gen_result, _) in crs_res_storage.iter_mut().take(count) {
-        match &mut crs_gen_result.crs_results {
-            Some(info) => {
-                info.signature = sig.to_vec();
-            }
-            None => panic!("missing SignedPubDataHandle"),
-        };
+        crs_gen_result.external_signature = sig.to_vec();
     }
 }
 
@@ -351,18 +367,10 @@ fn set_signatures(
 fn set_digests(
     crs_res_storage: &mut [(kms_grpc::kms::v1::CrsGenResult, FileStorage)],
     count: usize,
-    digest: &str,
+    digest: &[u8],
 ) {
     for (crs_gen_result, _) in crs_res_storage.iter_mut().take(count) {
-        match &mut crs_gen_result.crs_results {
-            Some(info) => {
-                // each hex-digit is 4 bits, 256 bits is 64 characters
-                assert_eq!(64, info.key_handle.len());
-                // it's unlikely that we generate the same signature more than once
-                info.key_handle = digest.to_string();
-            }
-            None => panic!("missing SignedPubDataHandle"),
-        }
+        crs_gen_result.crs_digest = digest.to_vec();
     }
 }
 
