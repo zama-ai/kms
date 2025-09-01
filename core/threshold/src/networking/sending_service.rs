@@ -568,36 +568,39 @@ mod tests {
     use std::{sync::Arc, time::Duration};
     use tokio::sync::RwLock;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_network_stack() {
         let sid = SessionId::from(0);
         let mut role_assignment = RoleAssignment::new();
         let role_1 = Role::indexed_from_one(1);
-        let id_1 = Identity("localhost".to_string(), 6001);
+        let id_1 = Identity("127.0.0.1".to_string(), 6001);
         let role_2 = Role::indexed_from_one(2);
-        let id_2 = Identity("localhost".to_string(), 6002);
+        let id_2 = Identity("127.0.0.1".to_string(), 6002);
         role_assignment.insert(role_1, id_1.clone());
         role_assignment.insert(role_2, id_2.clone());
-        let role_assignment = Arc::new(RwLock::new(role_assignment));
 
         // Keep a Vec for collecting results
-        let role_assignment = role_assignment.clone();
-        let role_assignment_read = role_assignment.read().await;
         let mut handles = OsThreadGroup::new();
-        for (role, _id) in role_assignment_read.iter() {
+        for (role, id) in role_assignment.iter() {
             //Wait a little while to make sure retry works fine
             std::thread::sleep(Duration::from_secs(5));
             let role = *role;
-            let port_digit = role.one_based() - 1;
+            let my_port = id.1;
+            let id = id.clone();
 
-            let networking_1 =
-                GrpcNetworkingManager::new(role, None, None, false, role_assignment.clone())
-                    .unwrap();
-            let networking_server_1 = networking_1.new_server(TlsExtensionGetter::default());
+            let networking_1 = GrpcNetworkingManager::new(
+                role,
+                None,
+                None,
+                false,
+                Arc::new(RwLock::new(role_assignment.clone())),
+            )
+            .unwrap();
+
             let network_stack_1 = networking_1
                 .make_session(
                     sid,
-                    role_assignment.clone(),
+                    Arc::new(RwLock::new(role_assignment.clone())),
                     crate::networking::NetworkMode::Sync,
                 )
                 .await
@@ -606,20 +609,6 @@ mod tests {
             handles.add(std::thread::spawn(move || {
                 let runtime = tokio::runtime::Runtime::new().unwrap();
                 let _guard = runtime.enter();
-
-                let core_grpc_layer = tower::ServiceBuilder::new().timeout(Duration::from_secs(3));
-
-                let core_router = tonic::transport::Server::builder()
-                    .timeout(Duration::from_secs(3))
-                    .layer(core_grpc_layer)
-                    .add_service(networking_server_1);
-
-                let core_future =
-                    core_router.serve(format!("0.0.0.0:600{port_digit}").parse().unwrap());
-
-                tokio::spawn(async move {
-                    let _res = futures::join!(core_future);
-                });
 
                 let (send, recv) = tokio::sync::oneshot::channel();
                 if role.one_based() == 1 {
@@ -635,29 +624,53 @@ mod tests {
                     //Keep this std thread alive for a while
                     std::thread::sleep(Duration::from_secs(20));
                 } else {
+                    let networking_server_1 =
+                        networking_1.new_server(TlsExtensionGetter::default());
+                    let core_grpc_layer =
+                        tower::ServiceBuilder::new().timeout(Duration::from_secs(3));
+
+                    let core_router = tonic::transport::Server::builder()
+                        .timeout(Duration::from_secs(3))
+                        .layer(core_grpc_layer)
+                        .add_service(networking_server_1);
+
+                    let core_future =
+                        core_router.serve(format!("127.0.0.1:{my_port}").parse().unwrap());
                     tokio::spawn(async move {
+                        println!("Spinning up server on {id}");
+                        let _res = futures::join!(core_future);
+                    });
+                    tokio::spawn(async move {
+                        println!("Trying to receive");
                         let msg = network_stack_1.receive(&role_1).await.unwrap();
                         println!("Received ONCE {msg:?}");
                         send.send(msg).unwrap();
                     });
                 }
-                recv.blocking_recv().unwrap()
+                recv.blocking_recv().unwrap();
+                println!("Thread for {role} exiting");
             }));
         }
 
-        let networking_2 =
-            GrpcNetworkingManager::new(role_2, None, None, false, role_assignment.clone()).unwrap();
+        let networking_2 = GrpcNetworkingManager::new(
+            role_2,
+            None,
+            None,
+            false,
+            Arc::new(RwLock::new(role_assignment.clone())),
+        )
+        .unwrap();
         let networking_server_2 = networking_2.new_server(TlsExtensionGetter::default());
         let network_stack_2 = networking_2
             .make_session(
                 sid,
-                role_assignment.clone(),
+                Arc::new(RwLock::new(role_assignment.clone())),
                 crate::networking::NetworkMode::Sync,
             )
             .await
             .unwrap();
 
-        let port_digit = 1;
+        let port_p2 = id_2.1;
         handles.add(std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(5));
             let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -670,8 +683,7 @@ mod tests {
                 .layer(core_grpc_layer)
                 .add_service(networking_server_2);
 
-            let core_future =
-                core_router.serve(format!("0.0.0.0:600{port_digit}").parse().unwrap());
+            let core_future = core_router.serve(format!("127.0.0.1:{port_p2}").parse().unwrap());
 
             tokio::spawn(async move {
                 println!("Spinning up second server");
@@ -685,7 +697,8 @@ mod tests {
                 println!("Received TWICE {msg:?}");
                 send.send(msg).unwrap();
             });
-            recv.blocking_recv().unwrap()
+            recv.blocking_recv().unwrap();
+            println!("Second thread exiting");
         }));
 
         // Join all threads and collect results
