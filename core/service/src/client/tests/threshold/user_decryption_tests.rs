@@ -78,14 +78,14 @@ async fn test_user_decryption_threshold(
 }
 
 #[rstest::rstest]
-#[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P, vec![1])]
-#[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P, vec![4])]
+#[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P, vec![Role::indexed_from_one(1)])]
+#[case(TestingPlaintext::U32(u32::MAX), &TEST_THRESHOLD_KEY_ID_4P, vec![Role::indexed_from_one(4)])]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_user_decryption_threshold_malicious(
     #[case] pt: TestingPlaintext,
     #[case] key_id: &RequestId,
-    #[case] malicious_set: Vec<u32>,
+    #[case] malicious_set: Vec<Role>,
 ) {
     user_decryption_threshold(
         TEST_PARAM,
@@ -101,12 +101,7 @@ async fn test_user_decryption_threshold_malicious(
         true, // secure
         4,    // no. of parties
         None,
-        Some(
-            malicious_set
-                .iter()
-                .map(|id| Role::indexed_from_zero(*id as usize))
-                .collect(),
-        ),
+        Some(HashSet::from_iter(malicious_set.into_iter())),
         None,
     )
     .await;
