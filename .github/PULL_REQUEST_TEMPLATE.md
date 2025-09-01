@@ -11,7 +11,7 @@
 - [ ] I have performed a self-review of my code
 - [ ] Any unfinished business is documented with a `TODO(#issue_number)` comment and brief description what needs to be fixed.
 - [ ] I have only used `unwrap`, `expect` or `panic!` tests or in situations where it would imply that there is a bug in the code, and I have documented this.
-- [ ] My PR is _not_ updating _any_ dependencies (i.e. no changes to `cargo.lock`). Or if it is, then it _only_ contains the dependency updates and any changes needed to fix compilation and tests.
+- [ ] My PR is _not_ updating _any_ dependencies (i.e. no changes to `cargo.lock`). Or if it is, then it _only_ contains the dependency updates and any changes needed to fix compilation and tests (see [here](#Checklist-for-dependency-updates) for details.)
 - [ ] My changes do not affect the architecture of the protocol. Or if they do these steps must be taken:
     - [ ] A parallel PR or issue has been open in the [tech-spec repo](https://github.com/zama-ai/tech-spec) (add the link here).
 - [ ] My PR does not contain any breaking changes to the configuration and deployment files.
@@ -42,3 +42,5 @@ If this is the first time a new dependency is added, then the questions must be 
 6. Do the owners not make any statements in relation to security and
 responsible disclosure of vulnerabilities?
 7. Is there a significant change in size of the crate?
+
+Finally, observe that an update or addition of a dependency will cause an update to secondary imports in `cargo.lock`. We currently consider this an acceptable risk. Hence there is no need to manually modify `cargo.lock`. 
