@@ -63,9 +63,6 @@ data:
       {{- if .Values.kmsCore.backupVault.s3.prefix }}
     prefix = "${KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX}"
       {{- end }}
-    {{- else }}
-    [backup_vault.storage.file]
-    path = "./backup-keys"
     {{- end }}
     {{- if .Values.kmsCore.nitroEnclave.enabled }}
     [backup_vault.keychain.aws_kms]
