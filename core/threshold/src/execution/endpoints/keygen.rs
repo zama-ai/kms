@@ -106,8 +106,8 @@ trait Finalizable<const EXTENSION_DEGREE: usize> {
 impl<const EXTENSION_DEGREE: usize> Finalizable<EXTENSION_DEGREE>
     for GenericPrivateKeySet<Z128, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
 {
     fn finalize_keyset(self, parameters: ClassicPBSParameters) -> PrivateKeySet<EXTENSION_DEGREE> {
         self.finalize_keyset(parameters)
@@ -117,7 +117,7 @@ where
 impl<const EXTENSION_DEGREE: usize> Finalizable<EXTENSION_DEGREE>
     for GenericPrivateKeySet<Z64, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
 {
     fn finalize_keyset(self, parameters: ClassicPBSParameters) -> PrivateKeySet<EXTENSION_DEGREE> {
         self.finalize_keyset(parameters)
@@ -347,7 +347,10 @@ where
         LweSecretKeyShare::new_from_preprocessing(
             params_basics_handle.lwe_dimension(),
             preprocessing,
-        )?
+            params_basics_handle.get_lwe_deviation(),
+            session,
+        )
+        .await?
     } else {
         lwe_hat_secret_key_share.clone()
     };
@@ -360,7 +363,10 @@ where
         params_basics_handle.glwe_sk_num_bits(),
         params_basics_handle.polynomial_size(),
         preprocessing,
-    )?;
+        params_basics_handle.get_glwe_deviation(),
+        session,
+    )
+    .await?;
 
     let glwe_sk_share_as_lwe = glwe_secret_key_share.clone().into_lwe_secret_key();
 
@@ -416,7 +422,10 @@ where
                 sns_params.glwe_sk_num_bits_sns(),
                 sns_params.polynomial_size_sns(),
                 preprocessing,
-            )?;
+                sns_params.get_glwe_deviation_sns(),
+                session,
+            )
+            .await?;
 
             //Computing and opening BK SNS can take a while, so we increase the timeout
             //(in theory we should be in async setting here anyway)
@@ -637,7 +646,10 @@ where
         LweSecretKeyShare::new_from_preprocessing(
             params_basics_handle.lwe_dimension(),
             preprocessing,
-        )?
+            params_basics_handle.get_lwe_deviation(),
+            session,
+        )
+        .await?
     } else {
         lwe_hat_secret_key_share.clone()
     };
@@ -650,7 +662,10 @@ where
         params_basics_handle.glwe_sk_num_bits(),
         params_basics_handle.polynomial_size(),
         preprocessing,
-    )?;
+        params_basics_handle.get_glwe_deviation(),
+        session,
+    )
+    .await?;
 
     let glwe_sk_share_as_lwe = glwe_secret_key_share.clone().into_lwe_secret_key();
 
@@ -709,7 +724,10 @@ where
                 sns_params.glwe_sk_num_bits_sns(),
                 sns_params.polynomial_size_sns(),
                 preprocessing,
-            )?;
+                sns_params.get_glwe_deviation_sns(),
+                session,
+            )
+            .await?;
 
             //Computing and opening BK SNS can take a while, so we increase the timeout
             //(in theory we should be in async setting here anyway)
@@ -1026,7 +1044,7 @@ pub mod tests {
         algebra::{
             base_ring::{Z128, Z64},
             galois_rings::common::ResiduePoly,
-            structure_traits::{ErrorCorrect, Invert, Ring, Solve},
+            structure_traits::{ErrorCorrect, Invert, Solve},
         },
         execution::{
             online::preprocessing::dummy::DummyPreprocessing,
@@ -2050,7 +2068,10 @@ pub mod tests {
                             .unwrap()
                             .raw_compression_parameters,
                         &mut dummy_preproc,
+                        params_basics_handles.get_compression_deviation(),
+                        &mut session,
                     )
+                    .await
                     .unwrap(),
                 )
             } else {
@@ -2140,7 +2161,7 @@ pub mod tests {
         run_compressed: bool,
     ) where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
-        ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+        ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
     {
         let mut task = |mut session: LargeSession| async move {
             let my_role = session.my_role();
