@@ -23,7 +23,7 @@ use threshold_fhe::{
         },
         runtime::party::{Role, RoleAssignment},
         small_execution::prss::RobustSecurePrssInit,
-        tfhe_internals::private_keysets::PrivateKeySet,
+        tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
         zk::ceremony::SecureCeremony,
     },
     networking::{
@@ -173,6 +173,7 @@ pub struct BucketMetaStore {
     pub(crate) preprocessing_id: RequestId,
     pub(crate) external_signature: Vec<u8>,
     pub(crate) preprocessing_store: Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>,
+    pub(crate) dkg_param: DKGParams,
 }
 
 #[cfg(not(feature = "insecure"))]

@@ -40,7 +40,7 @@ pub async fn crs_gen_impl<
     let inner = request.into_inner();
     let req_id =
         parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::CrsGenRequest)?;
-    let params = retrieve_parameters(inner.params)?;
+    let params = retrieve_parameters(Some(inner.params))?;
 
     {
         let mut guarded_meta_store = service.crs_meta_map.write().await;
