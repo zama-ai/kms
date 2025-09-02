@@ -549,23 +549,19 @@ pub(crate) fn compute_external_pt_signature(
     pts: &[TypedPlaintext],
     extra_data: Vec<u8>,
     eip712_domain: Eip712Domain,
-) -> Vec<u8> {
-    let message_hash = compute_pt_message_hash(ext_handles_bytes, pts, eip712_domain, extra_data);
+) -> anyhow::Result<Vec<u8>> {
+    let message_hash = compute_pt_message_hash(ext_handles_bytes, pts, eip712_domain, extra_data)?;
 
     let signer = PrivateKeySigner::from_signing_key(server_sk.sk().clone());
     let signer_address = signer.address();
     tracing::info!("Signer address: {:?}", signer_address);
 
     // Sign the hash synchronously with the wallet.
-    let signature = signer
-        .sign_hash_sync(&message_hash)
-        .unwrap()
-        .as_bytes()
-        .to_vec();
+    let signature = signer.sign_hash_sync(&message_hash)?.as_bytes().to_vec();
 
     tracing::info!("PT Signature: {:?}", hex::encode(signature.clone()));
 
-    signature
+    Ok(signature)
 }
 
 pub fn hash_sol_struct<D: SolStruct>(
@@ -776,27 +772,40 @@ pub fn compute_pt_message_hash(
     pts: &[TypedPlaintext],
     eip712_domain: Eip712Domain,
     extra_data: Vec<u8>,
-) -> B256 {
+) -> anyhow::Result<B256> {
     // convert external_handles back to U256 to be signed
-    #[allow(clippy::useless_conversion)]
-    // Added `allow` as without using `.into()` displays an error despite it works
     let external_handles: Vec<_> = ext_handles_bytes
         .into_iter()
-        .map(|e| FixedBytes::<32>::left_padding_from(e.as_slice()).into())
-        .collect();
+        .enumerate()
+        .map(|(idx, h)| {
+            if h.as_slice().len() > 32 {
+                anyhow::bail!(
+                    "external_handle at index {idx} too long: {} bytes (max 32)",
+                    h.as_slice().len()
+                );
+            }
+            Ok(FixedBytes::<32>::left_padding_from(h.as_slice()))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let pt_bytes = abi_encode_plaintexts(pts);
 
     // the solidity structure to sign with EIP-712
     let message = PublicDecryptVerification {
-        ctHandles: external_handles,
-        decryptedResult: pt_bytes,
-        extraData: extra_data.into(),
+        ctHandles: external_handles.clone(),
+        decryptedResult: pt_bytes.clone(),
+        extraData: extra_data.clone().into(),
     };
 
     let message_hash = message.eip712_signing_hash(&eip712_domain);
-    tracing::info!("PT EIP-712 Message hash: {:?}", message_hash);
-    message_hash
+    tracing::info!(
+        "PT EIP-712 Message hash: {:?}. Handles: {:?}. PT Bytes: {:?}. Extra Data: {:?}",
+        message_hash,
+        external_handles,
+        pt_bytes,
+        extra_data
+    );
+    Ok(message_hash)
 }
 
 /// Attempt to find the concrete parameters from an enum variant defined by

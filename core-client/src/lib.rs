@@ -976,7 +976,7 @@ fn check_ext_pt_signature(
     tracing::debug!("PTs: {:?}", plaintexts);
     tracing::debug!("ext. handles: {:?}", external_handles);
 
-    let hash = compute_pt_message_hash(external_handles, plaintexts, domain, extra_data);
+    let hash = compute_pt_message_hash(external_handles, plaintexts, domain, extra_data)?;
 
     let addr = sig.recover_address_from_prehash(&hash)?;
     tracing::info!("recovered address: {}", addr);

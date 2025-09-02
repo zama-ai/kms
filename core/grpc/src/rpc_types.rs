@@ -376,8 +376,19 @@ impl crate::kms::v1::UserDecryptionRequest {
         let handles = self
             .typed_ciphertexts
             .iter()
-            .map(|x| alloy_primitives::FixedBytes::<32>::left_padding_from(&x.external_handle))
-            .collect::<Vec<_>>();
+            .enumerate()
+            .map(|(idx, c)| {
+                if c.external_handle.len() > 32 {
+                    anyhow::bail!(
+                        "external_handle at index {idx} too long: {} bytes (max 32)",
+                        c.external_handle.len()
+                    );
+                }
+                Ok(alloy_primitives::FixedBytes::<32>::left_padding_from(
+                    &c.external_handle,
+                ))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         if handles.is_empty() {
             anyhow::bail!(ERR_THERE_ARE_NO_HANDLES);
