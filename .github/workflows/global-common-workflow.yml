@@ -64,16 +64,24 @@ jobs:
           core-client:
             - 'core-client/**'
             - 'observability/**'
+            - 'Cargo.toml'
+            - 'Cargo.lock'
           core-grpc:
             - 'core/grpc/**'
+            - 'Cargo.toml'
+            - 'Cargo.lock'
           core-service:
             - 'core/grpc/**'
             - 'core/service/**'
             - 'core/threshold/**'
             - 'observability/**'
+            - 'Cargo.toml'
+            - 'Cargo.lock'
           core-threshold:
             - 'core/threshold/**'
             - 'observability/**'
+            - 'Cargo.toml'
+            - 'Cargo.lock'
           docs:
             - 'docs/**'
           helm-chart:
