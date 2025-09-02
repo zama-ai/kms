@@ -210,6 +210,19 @@ pub struct RoleAssignment {
     pub inner: HashMap<Role, (Identity, String)>,
 }
 
+impl From<HashMap<Role, Identity>> for RoleAssignment {
+    fn from(map: HashMap<Role, Identity>) -> Self {
+        let inner = map
+            .into_iter()
+            .map(|(role, identity)| {
+                let mpc_identity = identity.hostname().to_string();
+                (role, (identity, mpc_identity))
+            })
+            .collect();
+        RoleAssignment { inner }
+    }
+}
+
 impl RoleAssignment {
     pub fn empty() -> Self {
         RoleAssignment {
