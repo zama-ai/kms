@@ -105,7 +105,6 @@ kmsCore:
   nitroEnclave:
     enabled: false
     signed: false
-    debug: true
     # Enclave CPU count, must be a multiple of 2 since whole cores (not hyperthreads) are sliced off and dedicated to the enclave
     cpuCount: 6
     # Enclave Memory in GiB
