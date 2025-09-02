@@ -140,14 +140,12 @@ spec:
           args:
             - -c
             - |
-              {{- if .Values.kmsCore.nitroEnclave.debug }}
               echo "### BEGIN - enclave.json ###"
               cat /var/lib/kms-core/config/enclave.json
               echo "### END - enclave.json ###"
               echo "### BEGIN - describe-eif ###"
               nitro-cli describe-eif --eif-path {{ .Values.kmsCore.nitroEnclave.eifPath }}
               echo "### END - describe-eif ###"
-              {{- end }}
               # enclave config vsock is hardcoded to 4000 in init_enclave.sh
               # it can't be a separate container
               # because we need to serve kms-gen-keys.toml on the same port later

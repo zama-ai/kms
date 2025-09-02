@@ -387,14 +387,12 @@ spec:
           args:
             - -c
             - |
-              {{- if .Values.kmsCore.nitroEnclave.debug }}
               echo "### BEGIN - enclave.json ###"
               cat /var/lib/kms-core/config/enclave.json
               echo "### END - enclave.json ###"
               echo "### BEGIN - describe-eif ###"
               nitro-cli describe-eif --eif-path {{ .Values.kmsCore.nitroEnclave.eifPath }}
               echo "### END - describe-eif ###"
-              {{- end }}
               {{- if .Values.kmsCore.nitroEnclave.signed }}
               nitro-cli sign-eif --eif-path {{ .Values.kmsCore.nitroEnclave.eifPath }} --signing-certificate /var/lib/kms-core/config/party_cert.pem --private-key {{ .Values.kmsCore.nitroEnclave.eifSignKey }}
               {{- end }}
