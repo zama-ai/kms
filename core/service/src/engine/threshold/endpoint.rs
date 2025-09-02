@@ -384,5 +384,150 @@ impl_endpoint! {
                 "custodian_recovery_init is not implemented",
             ))
         }
+
+        #[tracing::instrument(skip(self, _request))]
+        async fn get_health_status(
+            &self,
+            _request: Request<Empty>,
+        ) -> Result<Response<kms_grpc::kms::v1::HealthStatusResponse>, Status> {
+            use kms_grpc::kms::v1::{health_status_response::PeerHealth, HealthStatusResponse};
+            use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
+            use std::time::Instant;
+            use tonic::transport::Channel;
+
+            // Get own key material
+            let own_material = self.get_key_material_availability(Request::new(Empty {})).await?;
+            let own_material = own_material.into_inner();
+
+            // Check peer health
+            let mut peer_health_infos = Vec::new();
+            let mut nodes_reachable = 1; // Count self as reachable
+
+            for peer in &self.peers {
+                // Skip self-check - we already know we're healthy
+                if peer.party_id == self.my_party_id {
+                    continue;
+                }
+
+                // Determine gRPC port: use explicit config or apply convention
+                let grpc_port = match peer.grpc_port {
+                    Some(port) => port,
+                    None => {
+                        // Convention: P2P port 5000X maps to gRPC port 50X00
+                        // e.g., 50001 -> 50100, 50002 -> 50200, etc.
+                        if peer.port >= 50000 && peer.port < 50100 {
+                            let offset = peer.port - 50000;
+                            50000 + (offset * 100)
+                        } else {
+                            // For non-standard ports, assume gRPC = P2P + 99
+                            peer.port + 99
+                        }
+                    }
+                };
+                // gRPC health check endpoints are always HTTP (TLS is for P2P, not gRPC)
+                let protocol = "http";
+
+                // TODO: Determine protocol based on TLS configuration if/when needed
+                // let protocol = if peer.tls_cert.is_some() {
+                //     "https"
+                // } else {
+                //     "http"
+                // };
+
+                let endpoint = format!("{}://{}:{}", protocol, peer.address, grpc_port);
+                let start = Instant::now();
+
+                let peer_info = match Channel::from_shared(endpoint.clone()) {
+                    Ok(channel_builder) => {
+                        match channel_builder
+                            .timeout(std::time::Duration::from_secs(5))
+                            .connect()
+                            .await
+                        {
+                            Ok(channel) => {
+                                let mut client = CoreServiceEndpointClient::new(channel);
+                                match client.get_key_material_availability(Empty {}).await {
+                                    Ok(response) => {
+                                        let resp = response.into_inner();
+                                        nodes_reachable += 1;
+                                        PeerHealth {
+                                            peer_id: peer.party_id as u32,
+                                            endpoint: endpoint.clone(),
+                                            reachable: true,
+                                            latency_ms: start.elapsed().as_millis() as u64,
+                                            fhe_keys: resp.fhe_key_ids.len() as u32,
+                                            crs_keys: resp.crs_ids.len() as u32,
+                                            preprocessing_keys: resp.preprocessing_ids.len() as u32,
+                                            storage_info: resp.storage_info,
+                                            error: String::new(),
+                                        }
+                                    }
+                                    Err(e) => PeerHealth {
+                                        peer_id: peer.party_id as u32,
+                                        endpoint: endpoint.clone(),
+                                        reachable: false,
+                                        latency_ms: start.elapsed().as_millis() as u64,
+                                        fhe_keys: 0,
+                                        crs_keys: 0,
+                                        preprocessing_keys: 0,
+                                        storage_info: String::new(),
+                                        error: e.to_string(),
+                                    },
+                                }
+                            }
+                            Err(e) => PeerHealth {
+                                peer_id: peer.party_id as u32,
+                                endpoint: endpoint.clone(),
+                                reachable: false,
+                                latency_ms: 0,
+                                fhe_keys: 0,
+                                crs_keys: 0,
+                                preprocessing_keys: 0,
+                                storage_info: String::new(),
+                                error: format!("Connection failed: {}", e),
+                            },
+                        }
+                    }
+                    Err(e) => PeerHealth {
+                        peer_id: peer.party_id as u32,
+                        endpoint: endpoint.clone(),
+                        reachable: false,
+                        latency_ms: 0,
+                        fhe_keys: 0,
+                        crs_keys: 0,
+                        preprocessing_keys: 0,
+                        storage_info: String::new(),
+                        error: format!("Invalid endpoint: {}", e),
+                    },
+                };
+
+                peer_health_infos.push(peer_info);
+            }
+
+            // Determine overall health status
+            let threshold_required = self.threshold as u32;
+            let status = if nodes_reachable >= threshold_required {
+                "healthy"
+            } else if nodes_reachable > 1 {
+                "degraded"
+            } else {
+                "unhealthy"
+            };
+
+            let response = HealthStatusResponse {
+                status: status.to_string(),
+                peers: peer_health_infos,
+                my_fhe_keys: own_material.fhe_key_ids.len() as u32,
+                my_crs_keys: own_material.crs_ids.len() as u32,
+                my_preprocessing_keys: own_material.preprocessing_ids.len() as u32,
+                my_storage_info: own_material.storage_info,
+                node_type: "threshold".to_string(),
+                my_party_id: self.my_party_id as u32,
+                threshold_required,
+                nodes_reachable,
+            };
+
+            Ok(Response::new(response))
+        }
     }
 }

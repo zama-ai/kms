@@ -174,6 +174,10 @@ pub struct PeerConf {
     pub address: String,
     #[validate(range(min = 1, max = 65535))]
     pub port: u16,
+    // Optional gRPC port for health checks (if not specified, will use convention)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(range(min = 1, max = 65535))]
+    pub grpc_port: Option<u16>,
     pub tls_cert: Option<TlsCert>,
 }
 

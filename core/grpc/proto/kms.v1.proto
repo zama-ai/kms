@@ -617,3 +617,54 @@ message KeyMaterialAvailabilityResponse {
   // Storage backend information
   string storage_info = 4;
 }
+
+// Response containing comprehensive health status
+message HealthStatusResponse {
+  // Overall health status: "healthy", "degraded", "unhealthy"
+  string status = 1;
+  
+  // Health information for a peer node
+  message PeerHealth {
+    // Peer party ID (for threshold mode)
+    uint32 peer_id = 1;
+    
+    // Peer endpoint address
+    string endpoint = 2;
+    
+    // Whether the peer is reachable
+    bool reachable = 3;
+    
+    // Connection latency in milliseconds
+    uint64 latency_ms = 4;
+    
+    // Number of FHE keys on peer
+    uint32 fhe_keys = 5;
+    
+    // Number of CRS keys on peer
+    uint32 crs_keys = 6;
+    
+    // Number of preprocessing keys on peer
+    uint32 preprocessing_keys = 7;
+    
+    // Storage info from peer
+    string storage_info = 8;
+    
+    // Error message if peer is unreachable
+    string error = 9;
+  }
+  
+  // Health status of all peers
+  repeated PeerHealth peers = 2;
+  
+  // Self key material counts
+  uint32 my_fhe_keys = 3;
+  uint32 my_crs_keys = 4;
+  uint32 my_preprocessing_keys = 5;
+  string my_storage_info = 6;
+  
+  // Runtime configuration info
+  string node_type = 7; // "threshold" or "centralized"
+  uint32 my_party_id = 8; // Only for threshold mode
+  uint32 threshold_required = 9; // Minimum nodes needed
+  uint32 nodes_reachable = 10; // Currently reachable nodes
+}
