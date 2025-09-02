@@ -1,4 +1,4 @@
-name: Publish npm release
+name: npm-release
 
 on:
   release:
@@ -8,6 +8,7 @@ permissions: {}
 
 jobs:
   start-runner:
+    name: npm-release/start-runner
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
       working-directory: './core/service'

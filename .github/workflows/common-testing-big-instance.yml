@@ -1,4 +1,4 @@
-name: Run Testing On Big Instance
+name: common-testing-big-instance
 on:
   workflow_call:
     inputs:
@@ -83,7 +83,7 @@ permissions:
 
 jobs:
   start-runner:
-    name: Start self-hosted EC2 runner
+    name: common-testing-big-instance/start-runner
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
@@ -100,6 +100,7 @@ jobs:
           profile: ${{ inputs.slab-backend }}
 
   run-build:
+    name: common-testing-big-instance/run-build
     needs: start-runner
     uses: ./.github/workflows/common-testing.yml
     secrets:
@@ -126,7 +127,7 @@ jobs:
       app-cache-dir: ${{ inputs.app-cache-dir }}
 
   stop-runner:
-    name: Stops self-hosted EC2 runner
+    name: common-testing-big-instance/stop-runner
     needs:
       - start-runner
       - run-build

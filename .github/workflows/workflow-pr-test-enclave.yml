@@ -1,4 +1,4 @@
-name: "[Enclave core/service PR] Pipeline Run"
+name: workflow-pr-test-enclave
 
 on:
   workflow_dispatch:
@@ -11,6 +11,7 @@ permissions: {}
 
 jobs:
   docker:
+    name: workflow-pr-test-enclave/docker (bpr)
     uses: ./.github/workflows/common-docker-big-instance.yml
     permissions:
       actions: read
@@ -34,6 +35,7 @@ jobs:
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
 
   enclave:
+    name: workflow-pr-test-enclave/enclave
     needs:
       - docker
     uses: ./.github/workflows/common-nitro-enclave.yml
