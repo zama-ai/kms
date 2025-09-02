@@ -1748,6 +1748,9 @@ mod tests {
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let tonic_req = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
+            // The test parameters will be used under the hood
+            // since we configured the dummy key generator with preprocessing materials from prep_ids.
+            // Those preprocessing materials have the test parameters.
             params: None,
             preproc_id: Some(prep_id.into()),
             domain: Some(domain),

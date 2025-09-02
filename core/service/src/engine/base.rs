@@ -805,6 +805,7 @@ pub fn compute_pt_message_hash(
 ///
 /// Since this function is normally used by the grpc service, we return the error code
 /// InvalidArgument if the concrete parameter does not exist.
+/// The default DKG parameters are returned if None is provided.
 pub(crate) fn retrieve_parameters(fhe_parameter: Option<i32>) -> Result<DKGParams, BoxedStatus> {
     match fhe_parameter {
         Some(inner) => {
