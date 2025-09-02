@@ -1,8 +1,10 @@
 //! Settings based on [`config-rs`] crate which follows 12-factor configuration model.
 //! Configuration file by default is under `config` folder.
 //!
+use std::collections::HashMap;
+
 use crate::choreography::choreographer::NetworkTopology;
-use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
+use crate::execution::runtime::party::{Identity, Role};
 use observability::conf::TelemetryConfig;
 use serde::{Deserialize, Serialize};
 use tonic::transport::Uri;
@@ -60,8 +62,8 @@ pub struct ThresholdTopology {
     pub threshold: u32,
 }
 
-impl From<&ThresholdTopology> for RoleAssignment {
-    fn from(topology: &ThresholdTopology) -> RoleAssignment {
+impl From<&ThresholdTopology> for HashMap<Role, Identity> {
+    fn from(topology: &ThresholdTopology) -> HashMap<Role, Identity> {
         topology
             .peers
             .iter()
