@@ -1,7 +1,7 @@
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect, Ring, Zero},
+        structure_traits::{BaseRing, ErrorCorrect, Zero},
     },
     execution::{
         online::preprocessing::DKGPreprocessing, runtime::session::BaseSessionHandles,
@@ -38,7 +38,7 @@ pub fn generate_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
 ) -> anyhow::Result<()>
 where
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
     Gen: ParallelByteRandomGenerator,
 {
     let decomp_base_log = lwe_keyswitch_key.decomposition_base_log();
@@ -92,7 +92,7 @@ pub fn allocate_and_generate_new_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGRE
 ) -> anyhow::Result<LweKeySwitchKeyShare<Z, EXTENSION_DEGREE>>
 where
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
     Gen: ParallelByteRandomGenerator,
 {
     let mut new_lwe_keyswitch_key = LweKeySwitchKeyShare::new(
