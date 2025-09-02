@@ -250,8 +250,8 @@ kmsGenKeys:
 
 kubeUtils:
   image:
-    name: ghcr.io/zama-ai/kube-utils
-    tag: 0.2.0
+    name: ghcr.io/zama-ai/security-hub/infra/kube-utils
+    tag: 0.4.0-safe
     pullPolicy: Always
 
 runMode: dev
