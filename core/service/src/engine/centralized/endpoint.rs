@@ -352,4 +352,34 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
         Ok(Response::new(response))
     }
+
+    #[tracing::instrument(skip(self, _request))]
+    async fn get_health_status(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<kms_grpc::kms::v1::HealthStatusResponse>, Status> {
+        use kms_grpc::kms::v1::HealthStatusResponse;
+
+        // Get own key material
+        let own_material = self
+            .get_key_material_availability(Request::new(Empty {}))
+            .await?;
+        let own_material = own_material.into_inner();
+
+        // Centralized mode has no peers, always healthy if reachable
+        let response = HealthStatusResponse {
+            status: "healthy".to_string(),
+            peers: Vec::new(), // No peers in centralized mode
+            my_fhe_keys: own_material.fhe_key_ids.len() as u32,
+            my_crs_keys: own_material.crs_ids.len() as u32,
+            my_preprocessing_keys: 0, // Centralized doesn't use preprocessing
+            my_storage_info: own_material.storage_info,
+            node_type: "centralized".to_string(),
+            my_party_id: 0,        // Not applicable for centralized
+            threshold_required: 0, // Not applicable for centralized
+            nodes_reachable: 1,    // Only self
+        };
+
+        Ok(Response::new(response))
+    }
 }

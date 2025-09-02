@@ -407,4 +407,27 @@ service CoreServiceEndpoint {
   // ## Pre-condition: KMS service must be initialized
   // ## Post-condition: No state changes, read-only operation
   rpc GetKeyMaterialAvailability(kms.v1.Empty) returns (kms.v1.KeyMaterialAvailabilityResponse);
+
+  // Get comprehensive health status of the KMS node and its peers.
+  //
+  // This endpoint provides a complete health check by:
+  // 1. Reporting the node's own key material availability
+  // 2. Checking connectivity to all configured peers (threshold mode)
+  // 3. Querying peer key material via GetKeyMaterialAvailability
+  // 4. Computing overall health status based on threshold requirements
+  //
+  // # Parameters
+  // * `request` - Empty request
+  //
+  // # Returns
+  // * `Response<HealthStatusResponse>` containing:
+  //   - Overall health status ("healthy", "degraded", "unhealthy")
+  //   - Peer connectivity and key material information
+  //   - Self key material counts
+  //   - Runtime configuration details
+  //
+  // # Conditions
+  // ## Pre-condition: KMS service must be initialized
+  // ## Post-condition: No state changes, read-only operation
+  rpc GetHealthStatus(kms.v1.Empty) returns (kms.v1.HealthStatusResponse);
 }
