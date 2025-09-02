@@ -307,7 +307,10 @@ where
                 let private_compression_key = CompressionPrivateKeyShares::new_from_preprocessing(
                     comp_params.raw_compression_parameters,
                     preprocessing,
-                )?;
+                    comp_params.pmax,
+                    session,
+                )
+                .await?;
 
                 let compression_keys = generate_compression_decompression_keys(
                     glwe_sk_share_as_lwe,
@@ -380,7 +383,10 @@ where
                 let private_compression_key = CompressionPrivateKeyShares::new_from_preprocessing(
                     comp_params.raw_compression_parameters,
                     preprocessing,
-                )?;
+                    comp_params.pmax,
+                    session,
+                )
+                .await?;
 
                 let compression_keys = generate_compressed_compression_decompression_keys(
                     glwe_sk_share_as_lwe,
