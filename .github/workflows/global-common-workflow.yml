@@ -267,11 +267,11 @@ jobs:
       - test-core-client
       - docker-golden-image
     if: >-
-      always() &&
+      !cancelled() &&
       (needs.docker-golden-image.result == 'skipped' || needs.docker-golden-image.result == 'success') &&
       ((startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')))
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@9e809b1809b930dd2f6eb5f79fc772e5ac75bacf
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@4535ae4e10aa611c897fce7e3b10baa31f008b23
     with:
       docker-file: "./docker/core-client/Dockerfile"
       working-directory: "./core-client"
@@ -409,7 +409,7 @@ jobs:
       - test-core-service
       - docker-golden-image
     if: >-
-      always() &&
+      !cancelled() &&
       (needs.docker-golden-image.result == 'skipped' || needs.docker-golden-image.result == 'success') &&
       ((startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')))
@@ -560,7 +560,7 @@ jobs:
       needs.check-changes.outputs.changes-rust-golden-image == 'true' &&
       ((github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main'))
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@9e809b1809b930dd2f6eb5f79fc772e5ac75bacf
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@4535ae4e10aa611c897fce7e3b10baa31f008b23
     with:
       docker-file: "./docker/base/Dockerfile"
       working-directory: "./base"
