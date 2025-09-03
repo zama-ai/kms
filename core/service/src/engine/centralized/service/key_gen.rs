@@ -49,7 +49,10 @@ pub async fn key_gen_impl<
     );
     let req_id =
         parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::KeyGenRequest)?;
+
+    // If parameter is not configured, the default one will be used
     let params = retrieve_parameters(inner.params)?;
+
     let internal_keyset_config = ok_or_tonic_abort(
         InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info),
         "Invalid keyset config".to_string(),

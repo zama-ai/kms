@@ -1,4 +1,4 @@
-name: "Dependency analysis"
+name: dependencies_analysis
 
 on:
   push:
@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   dependencies-check:
-    name: "Dependency check"
+    name: dependencies_analysis/dependencies-check (bpr)
     runs-on: ubuntu-latest
     steps:
 

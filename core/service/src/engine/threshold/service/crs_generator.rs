@@ -104,7 +104,7 @@ impl<
             inner.request_id
         );
 
-        let dkg_params = retrieve_parameters(inner.params)?;
+        let dkg_params = retrieve_parameters(Some(inner.params))?;
         let crs_params = dkg_params
             .get_params_basics_handle()
             .get_compact_pk_enc_params();

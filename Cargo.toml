@@ -96,7 +96,7 @@ tonic-build = "=0.13.1"
 tracing = { version = "=0.1.41", features = ["log"] }
 tracing-appender = "=0.2.3"
 tracing-opentelemetry = "=0.30.0"
-tracing-subscriber = { version = "=0.3.19", features = ["fmt", "std"] }
+tracing-subscriber = { version = "=0.3.20", features = ["fmt", "std"] }
 trait-variant = "0.1.2"
 validator = { version = "=0.20.0", features = ["derive"] }
 zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }

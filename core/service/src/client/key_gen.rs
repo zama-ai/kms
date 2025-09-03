@@ -46,7 +46,7 @@ impl Client {
 
         let prep_id = preproc_id.map(|res| res.into());
         Ok(KeyGenRequest {
-            params: parsed_param,
+            params: Some(parsed_param),
             preproc_id: prep_id,
             request_id: Some((*request_id).into()),
             domain: Some(alloy_to_protobuf_domain(&eip712_domain)?),
