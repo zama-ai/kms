@@ -1,5 +1,4 @@
-# Main build workflow that handles both x86 and ARM builds
-name: Compile Rust Project and Run Tests
+name: common-testing
 
 on:
   workflow_call:
@@ -83,7 +82,7 @@ permissions:
 
 jobs:
   compile-rust-unit-tests:
-    name: "Compile Rust & Unit Tests"
+    name: common-testing/compile-rust-unit-tests
     timeout-minutes: 500
     runs-on: ${{ inputs.runs-on }}
     services:

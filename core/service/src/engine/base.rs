@@ -4,6 +4,7 @@ use crate::consts::ID_LENGTH;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::decompression;
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signcryption::internal_verify_sig;
 use crate::util::key_setup::FhePrivateKey;
@@ -804,12 +805,19 @@ pub fn compute_pt_message_hash(
 ///
 /// Since this function is normally used by the grpc service, we return the error code
 /// InvalidArgument if the concrete parameter does not exist.
-pub(crate) fn retrieve_parameters(fhe_parameter: i32) -> Result<DKGParams, BoxedStatus> {
-    let fhe_parameter: crate::cryptography::internal_crypto_types::WrappedDKGParams =
-        FheParameter::try_from(fhe_parameter)
-            .map_err(|e| tonic::Status::invalid_argument(format!("DKG parameter not found: {e}")))?
-            .into();
-    Ok(*fhe_parameter)
+/// The default DKG parameters are returned if None is provided.
+pub(crate) fn retrieve_parameters(fhe_parameter: Option<i32>) -> Result<DKGParams, BoxedStatus> {
+    match fhe_parameter {
+        Some(inner) => {
+            let fhe_parameter: WrappedDKGParams = FheParameter::try_from(inner)
+                .map_err(|e| {
+                    tonic::Status::invalid_argument(format!("DKG parameter not found: {e}"))
+                })?
+                .into();
+            Ok(*fhe_parameter)
+        }
+        None => Ok(*WrappedDKGParams::from(FheParameter::default())),
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]

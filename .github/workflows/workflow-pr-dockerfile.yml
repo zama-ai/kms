@@ -1,4 +1,4 @@
-name: "[Workflow-PR-Dockerfile] Pipeline Run"
+name: workflow-pr-dockerfile
 
 on:
   pull_request:
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
     prepare-batch:
-        name: "Prepare Batch of Changed Dockerfiles"
+        name: workflow-pr-dockerfile/prepare-batch
         runs-on: ubuntu-latest
         outputs:
           DOCKERFILE_CHANGED: ${{ steps.list_dockerfile.outputs.DOCKERFILE_CHANGED }}
@@ -51,7 +51,7 @@ jobs:
                 echo "DOCKERFILE_CHANGED=${ANY_CHANGED}" >> "$GITHUB_OUTPUT"
 
     lint-dockerfile:
-        name: "Lint Dockerfiles"
+        name: workflow-pr-dockerfile/lint-dockerfile
         needs: prepare-batch
         runs-on: ubuntu-latest
         steps:
@@ -70,6 +70,7 @@ jobs:
                 done
 
     docker-scanning:
+        name: workflow-pr-dockerfile/docker-scanning
         uses: zama-ai/security-hub/.github/workflows/03-sca-trivy-docker-kms-callable-wf.yml@a3df5139ef24c0c917472cdf558a2086caa2a874
         secrets:
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}

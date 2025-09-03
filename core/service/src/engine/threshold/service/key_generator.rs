@@ -384,9 +384,6 @@ impl<
         let request_id =
             parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::KeyGenRequest)?;
 
-        // Retrieve kg params and preproc_id
-        let dkg_params = retrieve_parameters(inner.params)?;
-
         let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
 
         let internal_keyset_config =
@@ -415,8 +412,13 @@ impl<
         // preferrably right before running the threshold protocol,
         // because if some error happens later on, e.g., in launch_dkg,
         // then the preprocessing is essentially lost
-        let preproc_handle = if insecure {
-            PreprocHandleWithMode::Insecure
+        //
+        // If inner.params is not set, then we need to retrieve the preprocessing
+        // unless we are in insecure mode.
+        // In the insecure mode the default parameters will be used if not set.
+        let (preproc_handle, dkg_params) = if insecure {
+            let dkg_params = retrieve_parameters(inner.params)?;
+            (PreprocHandleWithMode::Insecure, dkg_params)
         } else {
             let preproc_id = parse_optional_proto_request_id(
                 &inner.preproc_id,
@@ -435,7 +437,14 @@ impl<
                     preproc_id, prep_bucket.preprocessing_id
                 )));
             }
-            PreprocHandleWithMode::Secure((preproc_id, prep_bucket.preprocessing_store))
+            let dkg_param = match inner.params {
+                Some(fhe_param) => retrieve_parameters(Some(fhe_param))?,
+                None => prep_bucket.dkg_param,
+            };
+            (
+                PreprocHandleWithMode::Secure((preproc_id, prep_bucket.preprocessing_store)),
+                dkg_param,
+            )
         };
 
         ok_or_tonic_abort(
@@ -1396,7 +1405,7 @@ mod tests {
         },
     };
 
-    use crate::{dummy_domain, vault::storage::ram};
+    use crate::{consts::TEST_PARAM, dummy_domain, vault::storage::ram};
 
     use super::*;
 
@@ -1487,6 +1496,7 @@ mod tests {
                         .await
                         .unwrap(),
                 )))),
+                dkg_param: TEST_PARAM,
             };
             let mut guarded_prep_bucket = kg.preproc_buckets.write().await;
             (*guarded_prep_bucket).insert(prep_id).unwrap();
@@ -1513,7 +1523,7 @@ mod tests {
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let request = tonic::Request::new(KeyGenRequest {
                 request_id: Some(bad_key_id.clone()),
-                params: FheParameter::Test as i32,
+                params: Some(FheParameter::Test as i32),
                 preproc_id: Some(prep_id.into()),
                 domain: Some(domain),
                 keyset_config: None,
@@ -1540,7 +1550,7 @@ mod tests {
 
             let request = tonic::Request::new(KeyGenRequest {
                 request_id: Some(key_id.into()),
-                params: FheParameter::Test as i32,
+                params: Some(FheParameter::Test as i32),
                 preproc_id: Some(prep_id.into()),
                 domain: Some(domain),
                 keyset_config: None,
@@ -1563,7 +1573,7 @@ mod tests {
 
             let request = tonic::Request::new(KeyGenRequest {
                 request_id: Some(key_id.into()),
-                params: FheParameter::Test as i32,
+                params: Some(FheParameter::Test as i32),
                 preproc_id: Some(prep_id.into()),
                 domain: Some(domain),
                 keyset_config: Some(keyset_config),
@@ -1593,7 +1603,7 @@ mod tests {
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
-            params: FheParameter::Test as i32,
+            params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id.into()),
             domain: Some(domain),
             keyset_config: None,
@@ -1620,7 +1630,7 @@ mod tests {
             let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
             let request = tonic::Request::new(KeyGenRequest {
                 request_id: Some(key_id.into()),
-                params: FheParameter::Test as i32,
+                params: Some(FheParameter::Test as i32),
                 preproc_id: Some(bad_prep_id.into()),
                 domain: Some(domain),
                 keyset_config: None,
@@ -1658,7 +1668,7 @@ mod tests {
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
-            params: FheParameter::Test as i32,
+            params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id.into()),
             domain: Some(domain),
             keyset_config: None,
@@ -1692,7 +1702,7 @@ mod tests {
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request0 = KeyGenRequest {
             request_id: Some(key_id.into()),
-            params: FheParameter::Test as i32,
+            params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id0.into()),
             domain: Some(domain.clone()),
             keyset_config: None,
@@ -1705,7 +1715,7 @@ mod tests {
         // NOTE: we need to use a different preproc ID to avoid the `NotFound` error
         let request1 = KeyGenRequest {
             request_id: Some(key_id.into()),
-            params: FheParameter::Test as i32,
+            params: Some(FheParameter::Test as i32),
             preproc_id: Some(prep_id1.into()),
             domain: Some(domain),
             keyset_config: None,
@@ -1738,7 +1748,10 @@ mod tests {
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let tonic_req = tonic::Request::new(KeyGenRequest {
             request_id: Some(key_id.into()),
-            params: FheParameter::Test as i32,
+            // The test parameters will be used under the hood
+            // since we configured the dummy key generator with preprocessing materials from prep_ids.
+            // Those preprocessing materials have the test parameters.
+            params: None,
             preproc_id: Some(prep_id.into()),
             domain: Some(domain),
             keyset_config: None,

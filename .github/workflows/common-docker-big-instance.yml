@@ -1,4 +1,4 @@
-name: Run Docker On Big Instance
+name: common-docker-big-instance
 on:
   workflow_call:
     inputs:
@@ -55,7 +55,7 @@ permissions: {}
 
 jobs:
   start-amd64-runner:
-    name: Start self-hosted EC2 runner (AMD64)
+    name: common-docker-big-instance/start-amd64-runner
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.start-ec2-runner-amd64.outputs.label }}
@@ -72,6 +72,7 @@ jobs:
           profile: docker-big-instance
 
   run-docker:
+    name: common-docker-big-instance/run-docker
     permissions:
       contents: read
       packages: write
@@ -96,7 +97,7 @@ jobs:
       app-cache-dir: ${{ inputs.app-cache-dir }}
 
   stop-runners:
-    name: Stop self-hosted EC2 runners
+    name: common-docker-big-instance/stop-runners
     needs:
       - start-amd64-runner
       - run-docker

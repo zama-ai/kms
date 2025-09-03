@@ -109,9 +109,18 @@ message KeyGenRequest {
   // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
   RequestId request_id = 1;
 
-  // The FHE parameters for key generation. This must match
-  // what was used in the preprocessing step.
-  FheParameter params = 2;
+  // The FHE parameters for key generation.
+  //
+  // When used in the secure endpoint:
+  // If it's not set, it will use the paramter that was used in the preprocessing step,
+  // referenced by preproc_id.
+  // If it's set, we assume the parameter used in preprocessing is compatible
+  // with the parameter set here (which can be the same).
+  //
+  // When used in the insecure endpoint:
+  // If it's not set, the default parameter will be used.
+  // If it is set, the specified parameter will be used.
+  optional FheParameter params = 2;
 
   // The 32 Byte / 256 Bit request ID that generated the preprocessing
   // materials.
@@ -180,7 +189,7 @@ message CrsGenRequest {
   // The 32 Byte / 256 Bit ID of the crs generation request, without `0x`
   // prefix.
   RequestId request_id = 1;
-  
+
   // The FHE parameters for CRS generation.
   FheParameter params = 2;
 
@@ -201,10 +210,10 @@ message CrsGenResult {
   // The digest of the generated CRS.
   // It is hashed with the domain separator DSEP_PUBDATA_CRS="PDAT_CRS".
   bytes crs_digest = 2;
-  
+
   // This is the maximum number of bits that can be proven.
   uint32 max_num_bits = 3;
-  
+
   // EIP-712 signature on the CRS generation result using the following structure:
   // struct CrsgenVerification {
   //     /// @notice The ID of the generated CRS, which is the request ID that started the CRS generation.

@@ -1,5 +1,5 @@
 # Sync repos
-name: Sync repos
+name: sync-on-push
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions: {}
 
 jobs:
   sync-repo:
-    name: Sync repo
+    name: sync-on-push/sync-repo
     if: ${{ github.repository == 'zama-ai/kms' }}
     runs-on: ubuntu-latest
     steps:
