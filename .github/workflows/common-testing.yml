@@ -145,6 +145,7 @@ jobs:
       ############################################################################
       # Initialize Docker Buildx for multi-platform builds.
       - name: Set up Docker Buildx
+        id: setup-buildx
         if: inputs.package-name == 'simulator'
         uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
         with:
@@ -193,6 +194,7 @@ jobs:
       - name: inject cache into docker
         uses: reproducible-containers/buildkit-cache-dance@5b6db76d1da5c8b307d5d2e0706d266521b710de # v3.1.2
         with:
+          builder: ${{ steps.setup-buildx.outputs.name }}
           cache-map: |
             {
               "var-cache-apk": "/var/cache/apk",

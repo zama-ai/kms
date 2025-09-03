@@ -80,7 +80,7 @@ jobs:
       attestations: write
       id-token: write
     needs: [start-amd64-runner]
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@904cb8a1344d14a62f24971f2092084d9cfd4081 # 904cb8a1344d14a62f24971f2092084d9cfd4081
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
