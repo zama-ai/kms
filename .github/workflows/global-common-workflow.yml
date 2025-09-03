@@ -573,7 +573,7 @@ jobs:
   conditional-job:
     needs:
       - docker-golden-image
-    if: ${{ true }}
+    if: always()
     runs-on: ubuntu-latest
     steps:
       - name: check result
