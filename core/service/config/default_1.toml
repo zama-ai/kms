@@ -122,6 +122,7 @@ key.path = "certs/key_p1.pem"
 # communicating with the cores to perform MPC tasks.
 #
 # NOTE: in the future the peer list will be removed and loaded from the context.
+# See zama-ai/kms-internal#2530
 [[threshold.peers]]
 party_id = 1
 address = "p1"

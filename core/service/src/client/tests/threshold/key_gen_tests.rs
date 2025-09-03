@@ -101,7 +101,6 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
 #[case(4)]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-#[tracing_test::traced_test]
 async fn default_insecure_dkg(#[case] amount_parties: usize) {
     // NOTE: amount_parties must not be too high
     // because every party will load all the keys and each ServerKey is 1.5 GB
@@ -159,7 +158,6 @@ async fn test_threshold_sns_compression_keygen() {
 #[cfg(all(feature = "slow_tests", feature = "insecure"))]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-#[tracing_test::traced_test]
 async fn test_insecure_threshold_sns_compression_keygen() {
     run_threshold_sns_compression_keygen(4, FheParameter::Test, &TEST_THRESHOLD_KEY_ID_4P, true)
         .await;

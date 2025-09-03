@@ -58,7 +58,6 @@ async fn test_decryption_threshold_no_decompression(
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::NoiseFloodSmall)]
 #[case(4, &TEST_THRESHOLD_KEY_ID_4P, DecryptionMode::BitDecSmall)]
 #[serial]
-#[tracing_test::traced_test]
 async fn test_decryption_threshold(
     #[case] amount_parties: usize,
     #[case] key_id: &RequestId,
