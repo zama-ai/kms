@@ -972,8 +972,8 @@ pub(crate) mod tests {
         engine::{
             base::{
                 compute_external_signature_preprocessing, compute_info_standard_keygen,
-                hash_sol_struct, safe_serialize_hash_element_versioned, DSEP_PUBDATA_CRS,
-                DSEP_PUBDATA_KEY,
+                compute_pt_message_hash, hash_sol_struct, safe_serialize_hash_element_versioned,
+                DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
             },
             centralized::central_kms::{
                 gen_centralized_crs, generate_client_fhe_key, generate_fhe_keys,
@@ -1582,6 +1582,84 @@ pub(crate) mod tests {
                 actual_address
             );
         }
+    }
+
+    #[test]
+    fn test_compute_pt_message_hash() {
+        let domain = dummy_domain();
+
+        // Plaintexts to sign
+        let pts: Vec<TypedPlaintext> = vec![
+            TypedPlaintext::from_u16(16),
+            TypedPlaintext::from_bool(true),
+        ];
+
+        // External handles (all 32 bytes long)
+        let handles = vec![vec![0xAAu8; 32], vec![0xBBu8; 32]];
+
+        // Extra data (empty for now)
+        let extra_data: Vec<u8> = vec![];
+
+        // Determinism: same inputs -> same hash
+        let h1 = compute_pt_message_hash(handles.clone(), &pts, domain.clone(), extra_data.clone())
+            .expect("hash computation should succeed");
+        let h2 = compute_pt_message_hash(handles.clone(), &pts, domain.clone(), extra_data.clone())
+            .expect("hash computation should succeed");
+        assert_eq!(h1, h2, "Hashes must be the same for identical inputs");
+
+        // Changing a handle changes the hash
+        let mut mutated_handles = handles.clone();
+        mutated_handles[1][0] ^= 0x23;
+        let h_changed_handle =
+            compute_pt_message_hash(mutated_handles, &pts, domain.clone(), extra_data.clone())
+                .expect("hash computation should succeed");
+        assert_ne!(
+            h1, h_changed_handle,
+            "Hash should change when a handle changes"
+        );
+
+        // Changing a plaintext value changes the hash
+        let mut pts_modified = pts.clone();
+        pts_modified[0] = TypedPlaintext::from_u16(69);
+        let h_changed_pt = compute_pt_message_hash(
+            handles.clone(),
+            &pts_modified,
+            domain.clone(),
+            extra_data.clone(),
+        )
+        .expect("hash computation should succeed");
+        assert_ne!(
+            h1, h_changed_pt,
+            "Hash should change when a plaintext changes"
+        );
+
+        // Changing extra data changes the hash
+        let extra_data2 = vec![1u8, 2, 3, 5, 23];
+        let h_changed_extra =
+            compute_pt_message_hash(handles.clone(), &pts, domain.clone(), extra_data2)
+                .expect("hash computation should succeed");
+        assert_ne!(
+            h1, h_changed_extra,
+            "Hash should change when extra_data changes"
+        );
+
+        // Error path: a handle longer than 32 bytes should fail
+        let bad_handles = vec![vec![0u8; 33]];
+        let err = compute_pt_message_hash(bad_handles, &pts, domain, vec![])
+            .expect_err("Expected error for handle > 32 bytes");
+        assert!(
+            err.to_string().contains("too long"),
+            "Error message should mention 'too long', got: {err}"
+        );
+
+        // If the following test fails, we have changed how the hash is computed so the reference does not match anymore.
+        // This is a breaking change that needs to be synced across components. The reference should then be updated.
+        let reference_hash_hex = "4fd5c11201089afe441112103fd55bf025d46bad722a3236242dbaa6f3aa4bb6";
+        assert_eq!(
+            hex::encode(h1),
+            reference_hash_hex,
+            "Reference hash mismatch"
+        );
     }
 
     #[test]
