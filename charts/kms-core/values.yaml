@@ -157,7 +157,7 @@ kmsCore:
   backupVault:
     s3:
       enabled: false
-      bucket: kms-private
+      bucket: kms-private-backup
       prefix: ""
     awskms:
       enabled: false
