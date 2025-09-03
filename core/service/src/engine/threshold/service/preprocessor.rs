@@ -237,6 +237,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 external_signature,
                 preprocessing_id: *req_id,
                 preprocessing_store: inner,
+                dkg_param: params,
             }),
         );
 
@@ -278,7 +279,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
         )?;
 
         //Retrieve the DKG parameters
-        let dkg_params = retrieve_parameters(inner.params)?;
+        let dkg_params = retrieve_parameters(Some(inner.params))?;
 
         //Ensure there's no entry in preproc buckets for that request_id
         let entry_exists = {

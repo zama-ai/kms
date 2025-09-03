@@ -1,4 +1,4 @@
-name: "[Release KMS] - Create Docker Images"
+name: on-release-images
 
 on:
   release:
@@ -15,6 +15,7 @@ permissions: {}
 
 jobs:
   docker-golden-image:
+    name: on-release-images/docker-golden-image
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
     permissions:
       actions: read
@@ -35,6 +36,7 @@ jobs:
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
 
   docker-kms-core-client:
+    name: on-release-images/docker-kms-core-client
     needs: docker-golden-image
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
     permissions:
@@ -57,6 +59,7 @@ jobs:
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
 
   docker-kms-service:
+    name: on-release-images/docker-kms-service
     needs: docker-golden-image
     uses: ./.github/workflows/common-docker-big-instance.yml
     permissions:
@@ -82,6 +85,7 @@ jobs:
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
 
   docker-nitro-enclave:
+    name: on-release-images/docker-nitro-enclave
     needs:
       - docker-kms-service
     uses: ./.github/workflows/common-nitro-enclave.yml
