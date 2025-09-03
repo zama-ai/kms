@@ -95,6 +95,60 @@ kms-health-check full --config /path/to/config.toml --endpoint localhost:9091 --
 
 Default is text with colors. Use `--format json` for machine-readable output.
 
+## gRPC Health Endpoint
+
+The KMS exposes a `GetHealthStatus` gRPC endpoint that returns comprehensive health information:
+
+### Endpoint
+- **Service**: `kms.v1.CoreService`
+- **Method**: `GetHealthStatus(Empty) -> HealthStatusResponse`
+- **Ports**: 9090 (centralized), 9091 (threshold)
+
+### Response Structure
+
+```protobuf
+message HealthStatusResponse {
+  // Overall status: "healthy", "degraded", "unhealthy"
+  string status = 1;
+  
+  // Peer health information (threshold mode only)
+  repeated PeerHealth peers = 2;
+  
+  // Self key material counts
+  uint32 my_fhe_keys = 3;
+  uint32 my_crs_keys = 4;
+  uint32 my_preprocessing_keys = 5;
+  string my_storage_info = 6;
+  
+  // Runtime configuration
+  string node_type = 7;           // "threshold" or "centralized"
+  uint32 my_party_id = 8;         // Only for threshold mode
+  uint32 threshold_required = 9;   // Minimum nodes needed
+  uint32 nodes_reachable = 10;    // Currently reachable nodes
+}
+
+message PeerHealth {
+  uint32 peer_id = 1;
+  string endpoint = 2;
+  bool reachable = 3;
+  uint32 latency_ms = 4;
+  uint32 fhe_keys = 5;
+  uint32 crs_keys = 6;
+  uint32 preprocessing_keys = 7;
+  string storage_info = 8;
+  string error = 9;              // Error if unreachable
+}
+```
+
+### Usage Example
+
+```bash
+# Using grpcurl
+grpcurl -plaintext localhost:9091 kms.v1.CoreService/GetHealthStatus
+
+# Using the health check tool (which calls this endpoint internally)
+kms-health-check live --endpoint localhost:9091
+```
 
 ## Integration
 
