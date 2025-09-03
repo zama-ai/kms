@@ -1,12 +1,11 @@
 use crate::backup::custodian::Custodian;
 use crate::backup::operator::InternalRecoveryRequest;
 use crate::backup::seed_phrase::custodian_from_seed_phrase;
+#[cfg(feature = "insecure")]
+use crate::client::tests::threshold::crs_gen_tests::run_crs;
+use crate::client::tests::threshold::custodian_context_tests::backup_files;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::client::tests::threshold::public_decryption_tests::decryption_threshold;
-#[cfg(feature = "insecure")]
-use crate::client::tests::threshold::{
-    crs_gen_tests::run_crs, custodian_context_tests::backup_files,
-};
 use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID, TEST_THRESHOLD_KEY_ID_4P};
 use crate::cryptography::backup_pke::BackupPrivateKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
