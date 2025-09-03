@@ -473,7 +473,10 @@ where
             let params =
                 SessionParameters::new(threshold, session_id, self.my_role, roles.clone()).unwrap();
             let aes_rng = if let Some(seed) = seed {
-                AesRng::seed_from_u64(seed + (self.my_role.one_based() as u64) + (idx as u64))
+                let mut computed_seed = Wrapping(seed);
+                computed_seed += Wrapping((self.my_role.one_based() * num_sessions) as u64);
+                computed_seed += Wrapping(idx as u64);
+                AesRng::seed_from_u64(computed_seed.0)
             } else {
                 AesRng::from_entropy()
             };

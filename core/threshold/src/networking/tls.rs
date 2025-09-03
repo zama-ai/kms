@@ -470,8 +470,8 @@ fn validate_wrapped_cert(
 /// by the party CA certificate, so we can see context ID as the serial number
 /// of the certificate.
 pub fn extract_context_id_from_cert(cert: &X509Certificate) -> anyhow::Result<SessionId> {
-    // // Each TLS certificate is issued in a specific configuration context, we
-    // // use the context ID as the certificate serial number
+    // Each TLS certificate is issued in a specific configuration context, we
+    // use the context ID as the certificate serial number
     let context_id = SessionId::from(u128::from_le_bytes(
         cert.serial
             .to_bytes_le()

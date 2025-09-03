@@ -46,7 +46,7 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    consts::DEFAULT_MPC_CONTEXT_BYTES,
+    consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
         internal_crypto_types::{PrivateSigKey, UnifiedPublicEncKey},
         signcryption::{signcrypt, SigncryptionPayload},
@@ -430,7 +430,7 @@ impl<
         let context_id = inner
             .context_id
             .clone()
-            .unwrap_or(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into());
+            .unwrap_or((*DEFAULT_MPC_CONTEXT).into());
         let session_preparer = Arc::new(
             self.session_preparer_getter
                 .get(
@@ -629,12 +629,9 @@ mod tests {
     use kms_grpc::{kms::v1::CiphertextFormat, rpc_types::alloy_to_protobuf_domain};
     use rand::SeedableRng;
     use tfhe::FheTypes;
-    use threshold_fhe::{
-        algebra::galois_rings::degree_4::ResiduePolyF4Z64,
-        execution::{
-            runtime::session::ParameterHandles, small_execution::prss::PRSSSetup,
-            tfhe_internals::utils::expanded_encrypt,
-        },
+    use threshold_fhe::execution::{
+        runtime::session::ParameterHandles, small_execution::prss::PRSSSetup,
+        tfhe_internals::utils::expanded_encrypt,
     };
 
     use crate::{
@@ -705,8 +702,6 @@ mod tests {
     }
 
     async fn setup_user_decryptor(
-        prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
-        prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
         rng: &mut AesRng,
     ) -> (
         RequestId,
@@ -717,16 +712,23 @@ mod tests {
         let param = TEST_PARAM;
         let base_kms = BaseKmsStruct::new(sk.clone()).unwrap();
         let session_preparer_manager = SessionPreparerManager::new_test_session();
+
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+
         let session_preparer = SessionPreparer::new_test_session(
             base_kms.new_instance().await,
             prss_setup_z128,
             prss_setup_z64,
         );
         session_preparer_manager
-            .insert(
-                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
-                session_preparer,
-            )
+            .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
             .await;
         let user_decryptor = RealUserDecryptor::init_test_dummy_decryptor(
             base_kms,
@@ -794,16 +796,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(1123);
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let (key_id, ct_buf, user_decryptor) =
-            setup_user_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
+        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(&mut rng).await;
 
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
@@ -825,7 +818,7 @@ mod tests {
                 request_id: Some(bad_req_id),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -847,7 +840,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -874,7 +867,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -901,7 +894,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: "bad client address".to_string(),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -944,7 +937,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -960,16 +953,7 @@ mod tests {
     #[tokio::test]
     async fn resource_exhausted() {
         let mut rng = AesRng::seed_from_u64(123);
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let (key_id, ct_buf, mut user_decryptor) =
-            setup_user_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
+        let (key_id, ct_buf, mut user_decryptor) = setup_user_decryptor(&mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
@@ -990,7 +974,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
         assert_eq!(
             user_decryptor
@@ -1008,16 +992,7 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         let mut rng = AesRng::seed_from_u64(123);
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let (_key_id, ct_buf, user_decryptor) =
-            setup_user_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
+        let (_key_id, ct_buf, user_decryptor) = setup_user_decryptor(&mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 
@@ -1036,7 +1011,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
         assert_eq!(
             user_decryptor
@@ -1061,16 +1036,7 @@ mod tests {
     #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(123);
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let (key_id, ct_buf, user_decryptor) =
-            setup_user_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
+        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(&mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 
@@ -1088,7 +1054,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
         user_decryptor
             .user_decrypt(Request::new(request.clone()))
@@ -1109,16 +1075,7 @@ mod tests {
     #[tokio::test]
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(123);
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let (key_id, ct_buf, user_decryptor) =
-            setup_user_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
+        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(&mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 
@@ -1139,7 +1096,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
         user_decryptor.user_decrypt(request).await.unwrap();
         user_decryptor

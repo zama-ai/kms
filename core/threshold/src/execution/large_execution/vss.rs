@@ -1309,7 +1309,7 @@ pub(crate) mod tests {
         for (party, result) in results.iter().cloned() {
             let x_0 = ResiduePolyF4::from_scalar(Wrapping(0));
             let y_0 = ResiduePolyF4::from_scalar(Wrapping(0));
-            let expected_secret = &secrets[party.one_based() - 1];
+            let expected_secret = &secrets[&party];
             assert_eq!(
                 &result
                     .my_poly
@@ -1654,7 +1654,6 @@ pub(crate) mod tests {
     ///If it lies to strictly more than t parties, we expect this party to get caught
     //Otherwise, we expect everything to happen normally - dispute will settle
     #[cfg(feature = "slow_tests")]
-    #[tracing_test::traced_test]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[3],&[],false,None), 1)]
     #[case(TestingParameters::init(4,1,&[0],&[3],&[],false,None), 2)]

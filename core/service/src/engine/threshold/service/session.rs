@@ -68,7 +68,7 @@ impl SessionPreparerManager {
 
 /// Getter for the session preparer.
 ///
-/// Unlike [SessionPreparer], we are allowed clone this type
+/// Unlike [SessionPreparer], we are allowed to clone this type
 /// as it's inside an Arc and to get the actual [SessionPreparer] we
 /// must call [SessionPreparerGetter::get] which will return a new instance
 /// that does not have a cloned Rng state.

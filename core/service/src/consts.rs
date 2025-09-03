@@ -133,8 +133,7 @@ cfg_if::cfg_if! {
     }
 }
 
-// This is a temporary workaround for when we do not get a context ID from the connector.
-pub const DEFAULT_MPC_CONTEXT_BYTES: [u8; 32] = [
+const DEFAULT_MPC_CONTEXT_BYTES: [u8; 32] = [
     1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
     4,
 ];
@@ -151,7 +150,7 @@ lazy_static::lazy_static! {
 
 #[test]
 fn test_context_derivation() {
-    let context_id = RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES);
+    let context_id = *DEFAULT_MPC_CONTEXT;
     let sid = context_id.derive_session_id().unwrap();
     assert_eq!(
         threshold_fhe::session_id::SessionId::from(

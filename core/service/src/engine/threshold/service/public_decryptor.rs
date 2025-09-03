@@ -44,7 +44,7 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    consts::DEFAULT_MPC_CONTEXT_BYTES,
+    consts::DEFAULT_MPC_CONTEXT,
     engine::{
         base::{
             compute_external_pt_signature, deserialize_to_low_level, BaseKmsStruct,
@@ -270,7 +270,7 @@ impl<
         let context_id = inner
             .context_id
             .clone()
-            .unwrap_or(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into());
+            .unwrap_or((*DEFAULT_MPC_CONTEXT).into());
         let session_preparer = Arc::new(
             self.session_preparer_getter
                 .get(
@@ -690,12 +690,9 @@ mod tests {
     use aes_prng::AesRng;
     use kms_grpc::{kms::v1::TypedCiphertext, rpc_types::alloy_to_protobuf_domain};
     use rand::SeedableRng;
-    use threshold_fhe::{
-        algebra::galois_rings::degree_4::ResiduePolyF4Z64,
-        execution::{
-            runtime::session::ParameterHandles, small_execution::prss::PRSSSetup,
-            tfhe_internals::utils::expanded_encrypt,
-        },
+    use threshold_fhe::execution::{
+        runtime::session::ParameterHandles, small_execution::prss::PRSSSetup,
+        tfhe_internals::utils::expanded_encrypt,
     };
 
     use crate::{
@@ -800,8 +797,6 @@ mod tests {
     }
 
     async fn setup_public_decryptor(
-        prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
-        prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
         rng: &mut AesRng,
     ) -> (
         RequestId,
@@ -812,16 +807,23 @@ mod tests {
         let base_kms = BaseKmsStruct::new(sk.clone()).unwrap();
         let param = TEST_PARAM;
         let session_preparer_manager = SessionPreparerManager::new_test_session();
+
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+
         let session_preparer = SessionPreparer::new_test_session(
             base_kms.new_instance().await,
             prss_setup_z128,
             prss_setup_z64,
         );
         session_preparer_manager
-            .insert(
-                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
-                session_preparer,
-            )
+            .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
             .await;
         let public_decryptor = RealPublicDecryptor::init_test_dummy_decryptor(
             base_kms,
@@ -890,17 +892,8 @@ mod tests {
     async fn test_resource_exhausted() {
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
         let mut rng = AesRng::seed_from_u64(12);
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
 
-        let (key_id, ct_buf, mut public_decryptor) =
-            setup_public_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
+        let (key_id, ct_buf, mut public_decryptor) = setup_public_decryptor(&mut rng).await;
 
         // Set bucket size to zero, so no operations are allowed
         public_decryptor.set_bucket_size(0);
@@ -918,7 +911,7 @@ mod tests {
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
         assert_eq!(
             public_decryptor
@@ -936,17 +929,7 @@ mod tests {
     #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(12);
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-
-        let (key_id, ct_buf, public_decryptor) =
-            setup_public_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = PublicDecryptionRequest {
@@ -960,7 +943,7 @@ mod tests {
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
         public_decryptor
             .public_decrypt(Request::new(request.clone()))
@@ -979,17 +962,7 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         let mut rng = AesRng::seed_from_u64(1123);
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-
-        let (_key_id, ct_buf, public_decryptor) =
-            setup_public_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
+        let (_key_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
         let bad_key_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
@@ -1004,7 +977,7 @@ mod tests {
             key_id: Some(bad_key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
         assert_eq!(
             public_decryptor
@@ -1030,17 +1003,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(13);
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-
-        let (key_id, ct_buf, public_decryptor) =
-            setup_public_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
         {
             // Bad request ID
             let bad_req_id = kms_grpc::kms::v1::RequestId {
@@ -1058,7 +1021,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1079,7 +1042,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1108,7 +1071,7 @@ mod tests {
                 key_id: Some(bad_key_id),
                 domain: Some(domain),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1133,7 +1096,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: None,
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1160,7 +1123,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain),
                 extra_data: vec![],
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 public_decryptor
@@ -1189,17 +1152,7 @@ mod tests {
     #[tokio::test]
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(13);
-        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
-            vec![],
-            vec![],
-        ))));
-
-        let (key_id, ct_buf, public_decryptor) =
-            setup_public_decryptor(prss_setup_z128, prss_setup_z64, &mut rng).await;
+        let (key_id, ct_buf, public_decryptor) = setup_public_decryptor(&mut rng).await;
         let req_id = RequestId::new_random(&mut rng);
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = Request::new(PublicDecryptionRequest {
@@ -1215,7 +1168,7 @@ mod tests {
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
         public_decryptor.public_decrypt(request).await.unwrap();
         // there's no need to check the decryption result since it's a dummy protocol

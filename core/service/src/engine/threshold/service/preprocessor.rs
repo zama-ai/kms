@@ -40,7 +40,7 @@ use tracing::Instrument;
 
 // === Internal Crate ===
 use crate::{
-    consts::DEFAULT_MPC_CONTEXT_BYTES,
+    consts::DEFAULT_MPC_CONTEXT,
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
         base::{compute_external_signature_preprocessing, retrieve_parameters},
@@ -88,7 +88,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
     ) -> anyhow::Result<()> {
         let session_preparer = self
             .session_preparer_getter
-            .get(&context_id.unwrap_or(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES)))
+            .get(&context_id.unwrap_or(*DEFAULT_MPC_CONTEXT))
             .await?;
 
         // Prepare the timer before giving it to the tokio task
@@ -421,10 +421,7 @@ mod tests {
         let session_preparer =
             SessionPreparer::new_test_session(base_kms, prss_setup_z128.clone(), prss_setup_z64);
         session_preparer_manager
-            .insert(
-                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
-                session_preparer,
-            )
+            .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
             .await;
         RealPreprocessor::<P>::init_test(
             Arc::new(sk),
@@ -473,7 +470,7 @@ mod tests {
                 request_id: None,
                 params: FheParameter::Test as i32,
                 keyset_config: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 domain: Some(domain.clone()),
             };
             assert_eq!(
@@ -492,7 +489,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 params: 10,
                 keyset_config: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 domain: Some(domain.clone()),
             };
             assert_eq!(
@@ -511,7 +508,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 params: FheParameter::Test as i32,
                 keyset_config: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 domain: None,
             };
             assert_eq!(
@@ -538,7 +535,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain),
         };
         assert_eq!(
@@ -563,7 +560,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain),
         };
 
@@ -610,7 +607,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain),
         };
         prep.key_gen_preproc(tonic::Request::new(request.clone()))
@@ -639,7 +636,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain),
         };
         assert_eq!(
@@ -663,7 +660,7 @@ mod tests {
             request_id: Some(req_id.into()),
             params: FheParameter::Test as i32,
             keyset_config: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain.clone()),
         };
         prep.key_gen_preproc(tonic::Request::new(request))

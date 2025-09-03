@@ -43,7 +43,7 @@ use crate::{
     anyhow_error_and_log,
     backup::custodian::InternalCustodianContext,
     conf::threshold::ThresholdPartyConf,
-    consts::DEFAULT_MPC_CONTEXT_BYTES,
+    consts::DEFAULT_MPC_CONTEXT,
     consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
     cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
     engine::{
@@ -395,10 +395,7 @@ where
                 Arc::clone(&prss_setup_z64),
             );
             session_preparer_manager
-                .insert(
-                    RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
-                    session_preparer,
-                )
+                .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
                 .await;
             // TODO this is a workaround where we need to set the same role assignment
             // to the GrpcNetworkingManager.

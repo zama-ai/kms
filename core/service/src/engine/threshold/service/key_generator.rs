@@ -51,7 +51,7 @@ use tracing::Instrument;
 
 // === Internal Crate Imports ===
 use crate::{
-    consts::DEFAULT_MPC_CONTEXT_BYTES,
+    consts::DEFAULT_MPC_CONTEXT,
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
         base::{
@@ -221,7 +221,7 @@ impl<
     ) -> anyhow::Result<()> {
         let session_preparer = self
             .session_preparer_getter
-            .get(&context_id.unwrap_or(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES)))
+            .get(&context_id.unwrap_or(*DEFAULT_MPC_CONTEXT))
             .await?;
 
         //Retrieve the right metric tag
@@ -1509,10 +1509,7 @@ mod tests {
             Arc::new(RwLock::new(None)),
         );
         session_preparer_manager
-            .insert(
-                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
-                session_preparer,
-            )
+            .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
             .await;
         let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
             base_kms,
@@ -1530,7 +1527,7 @@ mod tests {
         for prep_id in &prep_ids {
             let session_id = prep_id.derive_session_id().unwrap();
             let session_preparer = session_preparer_manager
-                .get(&RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES))
+                .get(&DEFAULT_MPC_CONTEXT)
                 .await
                 .unwrap();
             let dummy_prep = BucketMetaStore {
@@ -1577,7 +1574,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
 
             assert_eq!(
@@ -1605,7 +1602,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
 
             assert_eq!(
@@ -1629,7 +1626,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: Some(keyset_config),
                 keyset_added_info: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
 
             assert_eq!(
@@ -1660,7 +1657,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
 
         assert_eq!(
@@ -1688,7 +1685,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
 
             assert_eq!(
@@ -1727,7 +1724,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
 
         // keygen should pass because the failure occurs in background process
@@ -1762,7 +1759,7 @@ mod tests {
             domain: Some(domain.clone()),
             keyset_config: None,
             keyset_added_info: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
 
         kg.key_gen(tonic::Request::new(request0)).await.unwrap();
@@ -1776,7 +1773,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
         assert_eq!(
             kg.key_gen(tonic::Request::new(request1))
@@ -1813,7 +1810,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
 
         kg.key_gen(tonic_req).await.unwrap();

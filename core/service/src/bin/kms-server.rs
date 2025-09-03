@@ -124,7 +124,7 @@ async fn build_tls_config(
     public_vault: &Vault,
     sk: &PrivateSigKey,
 ) -> anyhow::Result<(ServerConfig, ClientConfig)> {
-    let context_id = RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES);
+    let context_id = DEFAULT_MPC_CONTEXT;
     aws_lc_rs_default_provider()
         .install_default()
         .unwrap_or_else(|_| {

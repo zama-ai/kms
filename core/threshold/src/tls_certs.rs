@@ -8,6 +8,7 @@ use rcgen::{
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+/// This is the serial number derived from DEFAULT_MPC_CONTEXT.derive_session_id().unwrap().
 pub const DEFAULT_SESSION_ID_FROM_CONTEXT: u128 = 75144625629816062620302474174838463545;
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy)]

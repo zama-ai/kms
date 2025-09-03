@@ -32,7 +32,7 @@ use tracing::Instrument;
 
 // === Internal Crate ===
 use crate::{
-    consts::DEFAULT_MPC_CONTEXT_BYTES,
+    consts::DEFAULT_MPC_CONTEXT,
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
         base::{
@@ -183,11 +183,7 @@ impl<
     ) -> anyhow::Result<()> {
         let session_preparer = self
             .session_preparer_getter
-            .get(
-                context_id
-                    .as_ref()
-                    .unwrap_or(&RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES)),
-            )
+            .get(context_id.as_ref().unwrap_or(&DEFAULT_MPC_CONTEXT))
             .await?;
 
         // Retrieve the correct tag
@@ -606,10 +602,7 @@ mod tests {
             prss_setup_z64,
         );
         session_preparer_manager
-            .insert(
-                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
-                session_preparer,
-            )
+            .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
             .await;
 
         let pub_storage = ram::RamStorage::new();
@@ -636,7 +629,7 @@ mod tests {
                 max_num_bits: None,
                 request_id: None,
                 domain: Some(domain),
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             };
 
             let request = Request::new(req);
@@ -666,7 +659,7 @@ mod tests {
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: Some(domain),
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             };
 
             let request = Request::new(req);
@@ -683,7 +676,7 @@ mod tests {
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: None,
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             };
 
             let request = Request::new(req);
@@ -703,7 +696,7 @@ mod tests {
                 max_num_bits: None,
                 request_id: Some(req_id.into()),
                 domain: Some(domain),
-                context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             };
 
             let request = Request::new(req);
@@ -745,7 +738,7 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
 
         let request = Request::new(req);
@@ -768,7 +761,7 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
 
         // we expect the CRS generation call to pass, but only get an error when we try to retrieve the result
@@ -799,7 +792,7 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
 
         let request = Request::new(req);
@@ -826,7 +819,7 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
 
         crs_gen.crs_gen(Request::new(req.clone())).await.unwrap();
@@ -851,7 +844,7 @@ mod tests {
             max_num_bits: None,
             request_id: Some(req_id.into()),
             domain: Some(domain),
-            context_id: Some(RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES).into()),
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
 
         let request = Request::new(req);
