@@ -14,8 +14,8 @@ use std::hint::black_box;
 use std::ops::*;
 use tfhe::prelude::*;
 use tfhe::{
-    set_server_key, ClientKey, CompressedServerKey, ConfigBuilder, FheUint128, FheUint16, FheUint2,
-    FheUint32, FheUint4, FheUint64, FheUint8,
+    set_server_key, ClientKey, ConfigBuilder, FheUint128, FheUint16, FheUint2, FheUint32, FheUint4,
+    FheUint64, FheUint8, ServerKey,
 };
 #[cfg(feature = "measure_memory")]
 use utilities::MemoryProfiler;
@@ -179,10 +179,9 @@ fn main() {
         .build();
 
         let cks = ClientKey::generate(config);
-        let compressed_sks = CompressedServerKey::new(&cks);
-        let decompressed_sks = compressed_sks.decompress();
+        let sks = ServerKey::new(&cks);
 
-        set_server_key(decompressed_sks);
+        set_server_key(sks);
 
         let bench_name = format!("non-threshold_basic-ops_{name}");
         #[cfg(feature = "measure_memory")]

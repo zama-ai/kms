@@ -16,7 +16,7 @@ use rand::thread_rng;
 use rayon::prelude::*;
 use std::ops::{Add, Mul};
 use tfhe::prelude::*;
-use tfhe::{set_server_key, ClientKey, CompressedServerKey, ConfigBuilder, FheBool, FheUint64};
+use tfhe::{set_server_key, ClientKey, ConfigBuilder, FheBool, FheUint64, ServerKey};
 #[cfg(feature = "measure_memory")]
 use utilities::MemoryProfiler;
 use utilities::ALL_PARAMS;
@@ -129,9 +129,7 @@ fn main() {
         )
         .build();
         let cks = ClientKey::generate(config);
-        let compressed_sks = CompressedServerKey::new(&cks);
-
-        let sks = compressed_sks.decompress();
+        let sks = ServerKey::new(&cks);
 
         rayon::broadcast(|_| set_server_key(sks.clone()));
         set_server_key(sks);
