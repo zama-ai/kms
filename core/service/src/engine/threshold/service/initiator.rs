@@ -6,16 +6,12 @@ use kms_grpc::{
     kms::v1::{self, Empty},
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
     rpc_types::PrivDataType,
-    utils::tonic_result::some_or_tonic_abort,
     RequestId,
 };
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
-        runtime::{
-            party::{Role, RoleAssignment},
-            session::ParameterHandles,
-        },
+        runtime::session::ParameterHandles,
         small_execution::prss::{PRSSInit, PRSSSetup},
     },
     networking::{grpc::GrpcNetworkingManager, NetworkMode},
@@ -30,7 +26,7 @@ use crate::{
     consts::DEFAULT_MPC_CONTEXT_BYTES,
     engine::{
         base::derive_request_id,
-        threshold::{service::session::SessionPreparer, traits::Initiator},
+        threshold::traits::Initiator,
         validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
     vault::storage::{read_versioned_at_request_id, store_versioned_at_request_id, Storage},
@@ -236,27 +232,8 @@ impl<
         // eventually this piece of code will move to the context endpoint and this
         // endpoint will be removed.
 
-        let peers = some_or_tonic_abort(self.threshold_config.peers.clone(), "Peer list not set in the configuration file, setting it through the context is unsupported yet".to_string())?;
-        let role_assignment: RoleAssignment = peers
-            .into_iter()
-            .map(|peer_config| peer_config.into_role_identity())
-            .collect();
-
-        let session_preparer = SessionPreparer::new(
-            self.base_kms.new_instance().await,
-            self.threshold_config.threshold,
-            Role::indexed_from_one(self.threshold_config.my_id),
-            role_assignment.clone(),
-            self.networking_manager.clone(),
-            Arc::clone(&self.prss_setup_z128),
-            Arc::clone(&self.prss_setup_z64),
-        );
-        self.session_preparer_manager
-            .insert(
-                RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
-                session_preparer,
-            )
-            .await;
+        // TODO the only way to set the role assignment is through the configuration
+        // so we do not attempt to modify `session_preparer_manager` or `networking_manager`
 
         let inner = request.into_inner();
         let request_id =
@@ -289,7 +266,7 @@ mod tests {
         conf::threshold::PeerConf,
         consts::PRSS_INIT_REQ_ID,
         cryptography::internal_crypto_types::gen_sig_keys,
-        engine::base::BaseKmsStruct,
+        engine::{base::BaseKmsStruct, threshold::service::session::SessionPreparer},
         util::key_setup::test_tools::purge,
         vault::storage::{file::FileStorage, ram, StorageType},
     };
@@ -297,7 +274,10 @@ mod tests {
     use kms_grpc::kms::v1::InitRequest;
     use rand::SeedableRng;
     use threshold_fhe::{
-        execution::{endpoints::decryption::DecryptionMode, runtime::party::Role},
+        execution::{
+            endpoints::decryption::DecryptionMode,
+            runtime::party::{Role, RoleAssignment},
+        },
         malicious_execution::small_execution::malicious_prss::{EmptyPrss, FailingPrss},
     };
 

@@ -588,8 +588,14 @@ mod tests {
             let my_port = id.1;
             let id = id.clone();
 
-            let networking_1 =
-                GrpcNetworkingManager::new(role, None, None, false, &role_assignment).unwrap();
+            let networking_1 = GrpcNetworkingManager::new(
+                role,
+                None,
+                None,
+                false,
+                Arc::new(RwLock::new(role_assignment.clone())),
+            )
+            .unwrap();
 
             let network_stack_1 = networking_1
                 .make_session(sid, &role_assignment, crate::networking::NetworkMode::Sync)
@@ -652,11 +658,7 @@ mod tests {
         .unwrap();
         let networking_server_2 = networking_2.new_server(TlsExtensionGetter::default());
         let network_stack_2 = networking_2
-            .make_session(
-                sid,
-                Arc::new(RwLock::new(role_assignment.clone())),
-                crate::networking::NetworkMode::Sync,
-            )
+            .make_session(sid, &role_assignment, crate::networking::NetworkMode::Sync)
             .await
             .unwrap();
 
