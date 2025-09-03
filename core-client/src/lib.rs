@@ -1428,7 +1428,7 @@ async fn do_backup_restore(
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
-                .custodian_recovery_init(tonic::Request::new(Empty {}))
+                .backup_restore(tonic::Request::new(Empty {}))
                 .await
         });
     }

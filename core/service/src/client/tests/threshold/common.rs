@@ -128,18 +128,8 @@ pub(crate) async fn secretsharing_backup_vault(role: Role, test_data_path: Optio
             path: p.to_path_buf(),
         })
     });
-    let priv_proxy_storage = make_storage(
-        store_path.clone(),
-        StorageType::PRIV,
-        Some(role),
-        None,
-        None,
-    )
-    .unwrap();
-    let priv_vault = Vault {
-        storage: priv_proxy_storage,
-        keychain: None,
-    };
+    let pub_proxy_storage =
+        make_storage(store_path.clone(), StorageType::PUB, Some(role), None, None).unwrap();
     let backup_proxy_storage =
         make_storage(store_path, StorageType::BACKUP, Some(role), None, None).unwrap();
     let keychain = Some(
@@ -147,7 +137,7 @@ pub(crate) async fn secretsharing_backup_vault(role: Role, test_data_path: Optio
             &Keychain::SecretSharing(SecretSharingKeychain {}),
             None,
             None,
-            Some(&priv_vault),
+            Some(&pub_proxy_storage),
         )
         .await
         .unwrap(),

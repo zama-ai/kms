@@ -298,30 +298,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tls_subject: _,
             } => Some(Role::indexed_from_one(i)),
         };
-        pub_storages.push(
-            make_storage(
-                match args.public_storage {
-                    StorageCommand::File => args.public_file_path.as_ref().map(|path| {
-                        StorageConf::File(FileStorage {
-                            path: path.to_path_buf(),
-                        })
-                    }),
-                    StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
-                        bucket: args
-                            .public_s3_bucket
-                            .as_ref()
-                            .expect("S3 bucket must be set for public storage")
-                            .clone(),
-                        prefix: args.public_s3_prefix.clone(),
-                    })),
-                },
-                StorageType::PUB,
-                party_role,
-                None,
-                s3_client.clone(),
-            )
-            .unwrap(),
-        );
+        let pub_proxy_storage = make_storage(
+            match args.public_storage {
+                StorageCommand::File => args.public_file_path.as_ref().map(|path| {
+                    StorageConf::File(FileStorage {
+                        path: path.to_path_buf(),
+                    })
+                }),
+                StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
+                    bucket: args
+                        .public_s3_bucket
+                        .as_ref()
+                        .expect("S3 bucket must be set for public storage")
+                        .clone(),
+                    prefix: args.public_s3_prefix.clone(),
+                })),
+            },
+            StorageType::PUB,
+            party_role,
+            None,
+            s3_client.clone(),
+        )
+        .unwrap();
+        let pub_vault = Vault {
+            storage: pub_proxy_storage,
+            keychain: None,
+        };
         let private_keychain = OptionFuture::from(
             args.root_key_id
                 .as_ref()
@@ -334,11 +336,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .as_ref()
                 .map(|k| {
-                    make_keychain_proxy(k, awskms_client.clone(), security_module.clone(), None)
+                    make_keychain_proxy(
+                        k,
+                        awskms_client.clone(),
+                        security_module.clone(),
+                        Some(&pub_vault),
+                    )
                 }),
         )
         .await
         .transpose()?;
+        pub_storages.push(pub_vault);
         priv_vaults.push(Vault {
             storage: make_storage(
                 match args.private_storage {

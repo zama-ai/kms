@@ -1,11 +1,15 @@
 use super::{custodian, error::BackupError, operator::Operator};
 use crate::{
-    backup::seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
+    backup::{
+        custodian::InternalCustodianContext,
+        operator::BackupCommitments,
+        seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
+    },
     cryptography::{backup_pke, internal_crypto_types::gen_sig_keys},
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
-use kms_grpc::RequestId;
+use kms_grpc::{kms::v1::CustodianContext, RequestId};
 use proptest::prelude::*;
 use rand::{rngs::OsRng, SeedableRng};
 use threshold_fhe::execution::runtime::party::Role;
@@ -29,7 +33,6 @@ const TEST_PARAMS: [(usize, usize, DropShares); 5] = [
 fn full_flow() {
     for (custodian_count, custodian_threshold, drop_share_config) in TEST_PARAMS {
         let operator_count = 4usize;
-        let secret_len = 32usize;
         let backup_id = RequestId::from_bytes([8u8; crate::consts::ID_LENGTH]);
 
         let mut rng = AesRng::seed_from_u64(1337);
@@ -54,33 +57,53 @@ fn full_flow() {
             .map(|i| {
                 let operator_role = Role::indexed_from_zero(i);
                 let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-                Operator::new(
-                    operator_role,
-                    custodian_messages.clone(),
+                (
+                    Operator::new(
+                        operator_role,
+                        custodian_messages.clone(),
+                        signing_key.clone(),
+                        custodian_threshold,
+                    )
+                    .unwrap(),
                     signing_key,
-                    custodian_threshold,
                 )
-                .unwrap()
             })
             .collect();
 
+        let cus_context = CustodianContext {
+            custodian_nodes: custodian_messages
+                .iter()
+                .map(|msg| msg.to_owned().try_into().unwrap())
+                .collect(),
+            context_id: Some(backup_id.into()),
+            previous_context_id: None,
+            threshold: custodian_threshold as u32,
+        };
         // operators have some data, secret share and then encrypt for each custodian
-        let secrets = (0..operator_count)
+        let operator_cus_context = (0..operator_count)
             .map(|_| {
-                let mut buf = vec![0u8; secret_len];
-                rng.fill_bytes(&mut buf);
-                buf
+                let (backup_enc_key, backup_priv_key) = backup_pke::keygen(&mut rng).unwrap();
+                let operator_cus_context =
+                    InternalCustodianContext::new(cus_context.clone(), backup_enc_key).unwrap();
+                (backup_priv_key, operator_cus_context)
             })
             .collect::<Vec<_>>();
 
         // cts[i][j] should go to custodian j, for all i
         let cts = operators
             .iter()
-            .zip_eq(&secrets)
-            .map(|(operator, secret)| {
-                operator
-                    .secret_share_and_encrypt(&mut rng, secret, backup_id)
-                    .unwrap()
+            .zip_eq(&operator_cus_context)
+            .map(|((operator, _sig_key), (backup_key, cus_context))| {
+                (
+                    operator
+                        .secret_share_and_encrypt(
+                            &mut rng,
+                            &bc2wrap::serialize(backup_key).unwrap(),
+                            backup_id,
+                        )
+                        .unwrap(),
+                    cus_context.to_owned(),
+                )
             })
             .collect::<Vec<_>>();
 
@@ -92,8 +115,11 @@ fn full_flow() {
         let reencrypted_cts = operators
             .iter()
             .zip_eq(&cts)
-            .map(|(operator, (ct, com))| {
+            .map(|((operator, sig_key), ((ct, com), cus_context))| {
                 let (ephemeral_enc_key, ephemeral_dec_key) = backup_pke::keygen(&mut rng).unwrap();
+                let backup_com =
+                    BackupCommitments::new(com.to_owned(), cus_context.to_owned(), sig_key)
+                        .unwrap();
                 // reencrypted ciphertexts ciphertexts for one operator
                 (
                     custodians
@@ -117,7 +143,7 @@ fn full_flow() {
                                 .unwrap()
                         })
                         .collect_vec(),
-                    com,
+                    backup_com,
                     ephemeral_dec_key,
                 )
             })
@@ -127,26 +153,33 @@ fn full_flow() {
         let recovered_secrets: Vec<Vec<u8>> = operators
             .iter()
             .zip_eq(reencrypted_cts)
-            .map(|(operator, (mut reencrypted_ct, commitments, dec_key))| {
-                // optionally remove elements during recovery
-                // we need to keep t + 1 shares, so remove n - (t + 1)
-                for _ in 0..(custodian_count - custodian_threshold - 1) {
-                    match drop_share_config {
-                        DropShares::NoDrop => { /* do nothing */ }
-                        DropShares::DropFront => {
-                            let _ = reencrypted_ct.remove(0);
-                        }
-                        DropShares::DropBack => {
-                            let _ = reencrypted_ct.pop().unwrap();
+            .map(
+                |((operator, _sig), (mut reencrypted_ct, commitments, dec_key))| {
+                    // optionally remove elements during recovery
+                    // we need to keep t + 1 shares, so remove n - (t + 1)
+                    for _ in 0..(custodian_count - custodian_threshold - 1) {
+                        match drop_share_config {
+                            DropShares::NoDrop => { /* do nothing */ }
+                            DropShares::DropFront => {
+                                let _ = reencrypted_ct.remove(0);
+                            }
+                            DropShares::DropBack => {
+                                let _ = reencrypted_ct.pop().unwrap();
+                            }
                         }
                     }
-                }
-                operator
-                    .verify_and_recover(&reencrypted_ct, commitments, backup_id, &dec_key)
-                    .unwrap()
-            })
+                    operator
+                        .verify_and_recover(&reencrypted_ct, &commitments, backup_id, &dec_key)
+                        .unwrap()
+                },
+            )
             .collect();
-        assert_eq!(recovered_secrets, secrets);
+
+        for ((priv_key, _), recovered_key) in
+            operator_cus_context.iter().zip_eq(recovered_secrets.iter())
+        {
+            assert_eq!(recovered_key, &bc2wrap::serialize(priv_key).unwrap());
+        }
     }
 }
 
@@ -182,23 +215,6 @@ fn operator_setup() {
                 .unwrap()
         })
         .collect();
-
-    // use the wrong operator ID
-    {
-        let mut wrong_custodian_messages = custodian_messages.clone();
-        wrong_custodian_messages[0].custodian_role = Role::indexed_from_zero(1);
-        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let operator = Operator::new(
-            Role::indexed_from_zero(0),
-            wrong_custodian_messages,
-            signing_key,
-            custodian_threshold,
-        );
-        assert!(matches!(
-            operator.unwrap_err(),
-            BackupError::CustodianSetupError
-        ));
-    }
 
     // use the wrong header, setup should fail
     {

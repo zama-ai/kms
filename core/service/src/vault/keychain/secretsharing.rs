@@ -1,10 +1,16 @@
 use super::{EnvelopeLoad, EnvelopeStore, Keychain};
 use crate::{
     anyhow_error_and_log,
+    backup::operator::InnerRecoveryRequest,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::backup_pke::{self, BackupCiphertext, BackupPrivateKey, BackupPublicKey},
+    vault::storage::{read_versioned_at_request_id, StorageReader},
 };
-use kms_grpc::{rpc_types::PrivDataType, RequestId};
+use itertools::Itertools;
+use kms_grpc::{
+    rpc_types::{PrivDataType, PubDataType},
+    RequestId,
+};
 use rand::{CryptoRng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
 use tfhe::{
@@ -29,14 +35,50 @@ pub struct SecretShareKeychain<R: Rng + CryptoRng> {
 }
 
 /// Create a new [`SecretShareKeychain`] used for backups in order to securely store and retrieve sensitive information.
+/// If the `pub_storage` is not provided, the keychain will be created without a backup key and must be set later.
 impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
-    pub fn new(rng: R) -> Self {
-        Self {
+    pub async fn new<PubS>(rng: R, pub_storage: Option<&PubS>) -> anyhow::Result<Self>
+    where
+        PubS: StorageReader,
+    {
+        let (backup_enc_key, custodian_context_id) = match pub_storage {
+            Some(pub_storage) => {
+                // Try to see if there is already a backup key set
+                let all_backup_ids = pub_storage
+                    .all_data_ids(&PubDataType::RecoveryRequest.to_string())
+                    .await?;
+                // Get the latest context ID which should be the most recent one
+                match all_backup_ids.iter().sorted().last() {
+                    Some(id) => {
+                        let rec_req: InnerRecoveryRequest = read_versioned_at_request_id(
+                            pub_storage,
+                            id,
+                            &PubDataType::RecoveryRequest.to_string(),
+                        )
+                        .await?;
+                        (Some(rec_req.backup_enc_key), Some(id.to_owned()))
+                    }
+                    None => {
+                        tracing::warn!(
+                            "No custodian context found in public vault. Secret sharing keychain will be created without a backup key and must be set later."
+                        );
+                        (None, None)
+                    }
+                }
+            }
+            None => {
+                tracing::warn!(
+                    "Public vault not provided. Secret sharing keychain will be created without a backup key and must be set later."
+                );
+                (None, None)
+            }
+        };
+        Ok(Self {
             rng,
-            backup_enc_key: None,
-            custodian_context_id: None,
+            backup_enc_key,
+            custodian_context_id,
             dec_key: None,
-        }
+        })
     }
 
     pub fn operator_public_key_bytes(&self) -> anyhow::Result<Vec<u8>> {
@@ -116,9 +158,6 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
             }
             PrivDataType::PrssSetup => {
                 anyhow::bail!("PRSS backup is not supported")
-            }
-            PrivDataType::CustodianInfo => {
-                read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key)
             }
             PrivDataType::ContextInfo => read_backup_data(&backup_ct.ciphertext, unwrapped_dec_key),
         }

@@ -103,9 +103,14 @@ impl Storage for Vault {
         let inner_type = BackupDataType::PrivData(data_type.try_into()?).to_string();
         match self.keychain.as_mut() {
             Some(kcp) => {
-                let envelope = kcp.encrypt(data, data_type).await?;
                 let coerced_backup_type =
                     if let KeychainProxy::SecretSharing(secret_share_keychain) = kcp {
+                        if secret_share_keychain.get_current_backup_id().is_err() {
+                            tracing::warn!(
+                            "No custodian context has been set yet! NO BACKUP WILL BE PRODUCED!!!"
+                        );
+                            return Ok(());
+                        }
                         &format!(
                             "{}{MAIN_SEPARATOR}{inner_type}",
                             secret_share_keychain.get_current_backup_id()?
@@ -113,6 +118,7 @@ impl Storage for Vault {
                     } else {
                         &inner_type
                     };
+                let envelope = kcp.encrypt(data, data_type).await?;
                 match envelope {
                     EnvelopeStore::AppKeyBlob(blob) => {
                         self.storage

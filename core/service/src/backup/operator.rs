@@ -2,22 +2,22 @@ use super::{
     custodian::{InternalCustodianSetupMessage, DSEP_BACKUP_CUSTODIAN, HEADER},
     error::BackupError,
     secretsharing,
-    traits::{BackupDecryptor, BackupSigner},
+    traits::BackupDecryptor,
 };
+use crate::backup::custodian::InternalCustodianContext;
 use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         backup_pke::{BackupPrivateKey, BackupPublicKey},
         internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature},
-        signcryption::internal_verify_sig,
+        signcryption::{internal_sign, internal_verify_sig},
     },
     engine::{
         base::safe_serialize_hash_element_versioned,
         validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
 };
-use itertools::Itertools;
 use kms_grpc::{
     kms::v1::{OperatorBackupOutput, RecoveryRequest},
     rpc_types::InternalCustodianRecoveryOutput,
@@ -46,7 +46,6 @@ use threshold_fhe::{
 };
 
 pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
-pub(crate) const DSEP_BACKUP_CIPHER: DomainSep = *b"BKUPCIPH";
 pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRREQ";
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -86,6 +85,7 @@ pub enum InnerRecoveryRequestVersioned {
 pub struct InnerRecoveryRequest {
     /// The ciphertexts that are the backup. Indexed by the custodian role.
     pub cts: BTreeMap<Role, InnerOperatorBackupOutput>,
+    pub backup_enc_key: BackupPublicKey,
 }
 
 impl Named for InnerRecoveryRequest {
@@ -201,7 +201,7 @@ impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
 #[derive(Clone)]
 pub struct Operator {
     my_role: Role,
-    custodian_keys: Vec<(BackupPublicKey, PublicSigKey)>,
+    custodian_keys: HashMap<Role, (BackupPublicKey, PublicSigKey)>,
     signer: PrivateSigKey,
     // the public component of [signer] above
     verification_key: PublicSigKey,
@@ -266,9 +266,9 @@ fn verify_n_t(n: usize, t: usize) -> Result<(), BackupError> {
         return Err(BackupError::SetupError("t cannot be 0".to_string()));
     }
     if t * 2 >= n {
-        return Err(BackupError::SetupError(
-            "t < n/2 is not satisfied".to_string(),
-        ));
+        return Err(BackupError::SetupError(format!(
+            "t < n/2 is not satisfied, t is {t} and n is {n}"
+        )));
     }
     Ok(())
 }
@@ -278,10 +278,11 @@ pub enum BackupCommitmentsVersioned {
     V0(BackupCommitments),
 }
 
+// todo rename
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(BackupCommitmentsVersioned)]
 pub struct BackupCommitments {
-    commitments: BTreeMap<Role, Vec<u8>>,
+    payload: InnerBackupCommitments,
     signature: Vec<u8>,
 }
 
@@ -290,32 +291,59 @@ impl Named for BackupCommitments {
 }
 
 impl BackupCommitments {
-    pub fn new(commitments: BTreeMap<Role, Vec<u8>>, sk: &PrivateSigKey) -> anyhow::Result<Self> {
-        let serialized_coms = bc2wrap::serialize(&commitments).map_err(|e| {
+    pub fn new(
+        commitments: BTreeMap<Role, Vec<u8>>,
+        custodian_context: InternalCustodianContext,
+        sk: &PrivateSigKey,
+    ) -> anyhow::Result<Self> {
+        let payload = InnerBackupCommitments {
+            commitments,
+            custodian_context,
+        };
+        let serialized_payload = bc2wrap::serialize(&payload).map_err(|e| {
             anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
         })?;
         let signature = &crate::cryptography::signcryption::internal_sign(
             &DSEP_BACKUP_RECOVERY,
-            &serialized_coms,
+            &serialized_payload,
             sk,
         )?;
         let signature_buf = signature.sig.to_vec();
         Ok(Self {
-            commitments,
+            payload,
             signature: signature_buf,
         })
     }
 
     pub fn get(&self, role: &Role) -> anyhow::Result<&[u8]> {
-        if role.one_based() > self.commitments.len() {
+        if role.one_based() > self.payload.commitments.len() {
             anyhow::bail!("Role {} is out of bounds for commitments", role);
         }
         let res = self
+            .payload
             .commitments
             .get(role)
             .ok_or_else(|| anyhow::anyhow!("No commitment found for role {}", role))?;
         Ok(res)
     }
+
+    pub fn custodian_context(&self) -> &InternalCustodianContext {
+        &self.payload.custodian_context
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum InnerBackupCommitmentsVersioned {
+    V0(InnerBackupCommitments),
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(InnerBackupCommitmentsVersioned)]
+pub struct InnerBackupCommitments {
+    pub commitments: BTreeMap<Role, Vec<u8>>,
+    pub custodian_context: InternalCustodianContext,
+}
+impl Named for InnerBackupCommitments {
+    const NAME: &'static str = "backup::InnerBackupCommitments";
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -438,7 +466,7 @@ impl Operator {
     ) -> Result<Self, BackupError> {
         verify_n_t(custodian_messages.len(), threshold)?;
 
-        let mut custodian_keys = vec![];
+        let mut custodian_keys = HashMap::new();
         for msg in custodian_messages.into_iter() {
             let InternalCustodianSetupMessage {
                 header,
@@ -465,7 +493,7 @@ impl Operator {
                 return Err(BackupError::CustodianSetupError);
             }
 
-            custodian_keys.push((public_enc_key, public_verf_key));
+            custodian_keys.insert(custodian_role, (public_enc_key, public_verf_key));
         }
         let verf_key = signer.clone().into();
         Ok(Self {
@@ -489,12 +517,22 @@ impl Operator {
     // the function fails afterwards.
     #[allow(unknown_lints)]
     #[allow(non_local_effect_before_error_return)]
+    #[allow(clippy::type_complexity)]
+    /// Construct a secret sharing of a `secret` and return a map of the basic backup recovery material,
+    /// indexed by the role of each custodian. Also return a map of each commitment to the secret share,
+    /// indexed by the role of each custodian.
     pub fn secret_share_and_encrypt<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
         secret: &[u8],
         backup_id: RequestId,
-    ) -> Result<(BTreeMap<Role, InnerOperatorBackupOutput>, BackupCommitments), BackupError> {
+    ) -> Result<
+        (
+            BTreeMap<Role, InnerOperatorBackupOutput>,
+            BTreeMap<Role, Vec<u8>>,
+        ),
+        BackupError,
+    > {
         let n = self.custodian_keys.len();
         let t = self.threshold;
 
@@ -532,9 +570,7 @@ impl Operator {
 
         // Zip_eq will panic in case the two iterators are not of the same length.
         // Since `plain_ij` is created in this method from `shares` such a panic can only happen in case of a bug in this method
-        for ((role_j, shares), (enc_pk, sig_pk)) in
-            plain_ij.into_iter().zip_eq(&self.custodian_keys)
-        {
+        for (role_j, shares) in plain_ij.into_iter() {
             // Do a sanity check that we expect enough entropy in the shares
             // s.t. hashing these cannot allow a feasible brute-force attack.
             //
@@ -549,7 +585,11 @@ impl Operator {
                     "share is not long enough: actual={actual_length} < minimum={minimum_expected_length}"
                 )));
             }
-
+            let (enc_pk, sig_pk) = self.custodian_keys.get(&role_j).ok_or_else(|| {
+                BackupError::OperatorError(format!(
+                    "Could not find custodian keys for role {role_j}"
+                ))
+            })?;
             let backup_material = BackupMaterial {
                 backup_id,
                 custodian_pk: sig_pk.clone(),
@@ -563,8 +603,10 @@ impl Operator {
             safe_serialize(&backup_material, &mut msg, SAFE_SER_SIZE_LIMIT)
                 .map_err(|e| BackupError::BincodeError(e.to_string()))?;
             let ciphertext = enc_pk.encrypt(rng, &msg)?;
-            let signature = self.signer.sign(&DSEP_BACKUP_CIPHER, &ciphertext)?;
-
+            let signature = internal_sign(&DSEP_BACKUP_RECOVERY, &ciphertext, &self.signer)
+                .map_err(|e| BackupError::OperatorError(e.to_string()))?
+                .sig
+                .to_vec();
             // Commitment by the operator, which is a hash of [BackupMaterial].
             //
             // We cannot use the regular commitment routines from commitment.rs
@@ -591,8 +633,6 @@ impl Operator {
         }
 
         // 6. The commitments are stored by `P_i` and can be used to verify the shares later.
-        let commitments = BackupCommitments::new(commitments, &self.signer)
-            .map_err(|e| BackupError::OperatorError(format!("Could not sign commitments: {e}")))?;
         Ok((ct_shares, commitments))
     }
 
@@ -616,7 +656,7 @@ impl Operator {
         let decrypted_buf = custodian_recovery_output
             .iter()
             .map(|ct| {
-                let key = ct.custodian_role.get_from(&self.custodian_keys).ok_or(
+                let (_enc_key, verf_key) = self.custodian_keys.get(&ct.custodian_role).ok_or(
                     BackupError::OperatorError(format!(
                         "missing custodian key for {}",
                         ct.custodian_role
@@ -629,7 +669,7 @@ impl Operator {
                 let commitment = commitments
                     .get(&ct.custodian_role)
                     .map_err(|_| BackupError::OperatorError("missing commitment".to_string()))?;
-                internal_verify_sig(&DSEP_BACKUP_CUSTODIAN, &ct.ciphertext, &signature, &key.1)
+                internal_verify_sig(&DSEP_BACKUP_CUSTODIAN, &ct.ciphertext, &signature, verf_key)
                     .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
                 // st_ij
                 checked_decryption_deserialize(
@@ -637,7 +677,7 @@ impl Operator {
                     &ct.ciphertext,
                     commitment,
                     backup_id,
-                    &key.1,
+                    verf_key,
                     ct.custodian_role,
                     &self.verification_key,
                     self.my_role,

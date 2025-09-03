@@ -1,19 +1,13 @@
 use crate::{
     anyhow_error_and_log,
-    backup::custodian::InternalCustodianContext,
     conf::{AwsKmsKeySpec, AwsKmsKeychain, Keychain as KeychainConf, SecretSharingKeychain},
     cryptography::{attestation::SecurityModuleProxy, backup_pke::BackupCiphertext},
-    vault::{
-        storage::{read_versioned_at_request_id, StorageReader},
-        Vault,
-    },
+    vault::storage::StorageReader,
 };
 use aes_gcm_siv::{AeadInPlace, Aes256GcmSiv, KeyInit, Nonce};
 use aes_prng::AesRng;
 use aws_sdk_kms::Client as AWSKMSClient;
 use enum_dispatch::enum_dispatch;
-use itertools::Itertools;
-use kms_grpc::rpc_types::PrivDataType;
 use rand::SeedableRng;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::convert::Into;
@@ -84,7 +78,7 @@ pub async fn make_keychain_proxy(
     keychain_conf: &KeychainConf,
     awskms_client: Option<AWSKMSClient>,
     security_module: Option<SecurityModuleProxy>,
-    private_storage: Option<&Vault>,
+    pub_storage: Option<&impl StorageReader>,
 ) -> anyhow::Result<KeychainProxy> {
     let rng = AesRng::from_entropy();
     let keychain = match keychain_conf {
@@ -113,33 +107,7 @@ pub async fn make_keychain_proxy(
         // This presents a bootstrapping issue hence the system needs to initially NOT use the secret share keychain but once a custodian context is set up,
         // it can switch to it by rebooting.
         KeychainConf::SecretSharing(SecretSharingKeychain {}) => {
-            // If secret share backup is used with the centralized KMS, assume);
-            // that my_id is 0
-            let private_vault = private_storage.expect(
-                "Public vault must be provided to be able to load custodian setup messages",
-            );
-            let mut ssk = secretsharing::SecretShareKeychain::new(rng);
-            let all_custodian_ids = private_vault
-                .all_data_ids(&PrivDataType::CustodianInfo.to_string())
-                .await?;
-            // Get the latest context ID which should be the most recent one
-            match all_custodian_ids.iter().sorted().last() {
-                Some(latest_context_id) => {
-                    let custodian_context: InternalCustodianContext = read_versioned_at_request_id(
-                        private_vault,
-                        latest_context_id,
-                        &PrivDataType::CustodianInfo.to_string(),
-                    )
-                    .await?;
-                    ssk.set_backup_enc_key(
-                        *latest_context_id,
-                        custodian_context.backup_enc_key.clone(),
-                    );
-                }
-                None => {
-                    tracing::warn!("No custodian setup available in the vault! No backups will be made until the custodian context is configured!");
-                }
-            };
+            let ssk = secretsharing::SecretShareKeychain::new(rng, pub_storage).await?;
             KeychainProxy::from(ssk)
         }
     };

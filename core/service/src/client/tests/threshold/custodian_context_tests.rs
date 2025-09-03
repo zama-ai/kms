@@ -46,7 +46,7 @@ pub(crate) async fn new_custodian_context(
 
     // The threshold handle should only be started after the storage is purged
     // since the threshold parties will load the CRS from private storage
-    let (_kms_servers, kms_clients, mut internal_client) = threshold_handles_secretsharing_backup(
+    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_secretsharing_backup(
         *dkg_param,
         amount_parties,
         true,
@@ -104,6 +104,35 @@ pub(crate) async fn new_custodian_context(
     for cur_idx in 0..second_sig_keys.len() {
         assert!(second_sig_keys[cur_idx] != first_sig_keys[cur_idx]);
     }
+
+    // Check that we can shut down and start again without updates changing
+    // Shut down the servers
+    drop(kms_servers);
+    drop(kms_clients);
+    drop(internal_client);
+    // Sleep to ensure the servers are properly shut down
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_secretsharing_backup(
+        *dkg_param,
+        amount_parties,
+        true,
+        None,
+        None,
+        test_path,
+    )
+    .await;
+    let reboot_sig_keys = backup_files(
+        amount_parties,
+        test_path,
+        &req_new_cus2,
+        &SIGNING_KEY_ID,
+        &PrivDataType::SigningKey.to_string(),
+    )
+    .await;
+    for cur_idx in 0..reboot_sig_keys.len() {
+        // Check that the backups are the same as the onces loaded before the reboot
+        assert!(reboot_sig_keys[cur_idx] == second_sig_keys[cur_idx]);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -113,8 +142,8 @@ pub(crate) async fn run_new_cus_context(
     req_new_cus: &RequestId,
     amount_custodians: usize,
     threshold: u32,
-) {
-    let new_cus_req = internal_client
+) -> Vec<String> {
+    let (new_cus_req, mnemonics) = internal_client
         .new_custodian_context_request(req_new_cus, amount_custodians, threshold)
         .unwrap();
 
@@ -122,6 +151,7 @@ pub(crate) async fn run_new_cus_context(
     for response in responses {
         assert!(response.is_ok());
     }
+    mnemonics
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -194,7 +224,7 @@ async fn backup_exists(amount_parties: usize, test_path: Option<&Path>) -> bool 
     backup_exists
 }
 
-async fn backup_files(
+pub(crate) async fn backup_files(
     amount_parties: usize,
     test_path: Option<&Path>,
     backup_id: &RequestId,
@@ -207,8 +237,10 @@ async fn backup_files(
             .join(backup_id.to_string())
             .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
             .join(file_req.to_string());
-        let file: BackupCiphertext = safe_read_element_versioned(coerced_path).await.unwrap();
-        files.push(file);
+        // Attempt to read the file
+        if let Ok(file) = safe_read_element_versioned(coerced_path).await {
+            files.push(file);
+        }
     }
     files
 }

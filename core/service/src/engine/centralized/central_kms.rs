@@ -1,6 +1,6 @@
 use crate::anyhow_error_and_log;
 #[cfg(feature = "non-wasm")]
-use crate::backup::custodian::InternalCustodianContext;
+use crate::backup::operator::BackupCommitments;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 #[cfg(feature = "non-wasm")]
@@ -42,6 +42,8 @@ use kms_grpc::kms::v1::{CiphertextFormat, TypedCiphertext, TypedPlaintext};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::rpc_types::PrivDataType;
+#[cfg(feature = "non-wasm")]
+use kms_grpc::rpc_types::PubDataType;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
 #[cfg(feature = "non-wasm")]
@@ -943,11 +945,14 @@ impl<
             .collect();
         let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-        let custodian_info: HashMap<RequestId, InternalCustodianContext> =
-            read_all_data_versioned(&private_storage, &PrivDataType::CustodianInfo.to_string())
-                .await?;
-
-        let custodian_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(custodian_info)));
+        let backup_com: HashMap<RequestId, BackupCommitments> =
+            read_all_data_versioned(&public_storage, &PubDataType::Commitments.to_string()).await?;
+        let custodian_context = backup_com
+            .into_iter()
+            .map(|(r, com)| (r, com.custodian_context().to_owned()))
+            .collect();
+        let custodian_meta_store =
+            Arc::new(RwLock::new(MetaStore::new_from_map(custodian_context)));
         let tracker = Arc::new(TaskTracker::new());
 
         let crypto_storage = CentralizedCryptoMaterialStorage::new(

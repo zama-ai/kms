@@ -4,6 +4,8 @@ use crate::client::test_tools::{
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::tests::threshold::common::threshold_handles;
 #[cfg(feature = "insecure")]
+use crate::client::tests::threshold::crs_gen_tests::run_crs;
+#[cfg(feature = "insecure")]
 use crate::consts::DEFAULT_PARAM;
 use crate::consts::{PRSS_INIT_REQ_ID, TEST_PARAM, TEST_THRESHOLD_KEY_ID};
 #[cfg(feature = "insecure")]
@@ -531,7 +533,7 @@ async fn default_insecure_crs_backup() {
     purge(test_path, test_path, test_path, &req_id, amount_parties).await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
-    crate::client::tests::threshold::crs_gen_tests::run_crs(
+    run_crs(
         param,
         &kms_clients,
         &internal_client,

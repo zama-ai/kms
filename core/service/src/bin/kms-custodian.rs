@@ -226,10 +226,12 @@ fn get_rng(randomness: Option<&String>) -> AesRng {
 mod tests {
     use crate::{get_rng, SEED_PHRASE_DESC};
     use assert_cmd::Command;
-    use kms_grpc::{rpc_types::InternalCustodianRecoveryOutput, RequestId};
+    use kms_grpc::{
+        kms::v1::CustodianContext, rpc_types::InternalCustodianRecoveryOutput, RequestId,
+    };
     use kms_lib::{
         backup::{
-            custodian::InternalCustodianSetupMessage,
+            custodian::{InternalCustodianContext, InternalCustodianSetupMessage},
             operator::{BackupCommitments, InternalRecoveryRequest, Operator},
             seed_phrase::custodian_from_seed_phrase,
         },
@@ -323,20 +325,21 @@ mod tests {
         // Generate operator keys along with the message to be backed up
         let mut commitments = Vec::new();
         let mut operators = Vec::new();
-        let mut dec_keys = Vec::new();
+        let mut ephemeral_dec_keys = Vec::new();
+        let mut backup_dec_keys = Vec::new();
         for operator_index in 1..=amount_operators {
-            let (cur_commitments, operator, dec_key) = make_backup(
+            let (cur_commitments, operator, ephemeral_dec, backup_dec) = make_backup(
                 temp_dir.path(),
                 threshold,
                 Role::indexed_from_one(operator_index),
                 setup_msgs.clone(),
                 backup_id,
-                format!("super secret data{operator_index}").as_bytes(),
             )
             .await;
             commitments.push(cur_commitments);
             operators.push(operator);
-            dec_keys.push(dec_key);
+            ephemeral_dec_keys.push(ephemeral_dec);
+            backup_dec_keys.push(backup_dec);
         }
 
         // Decrypt
@@ -369,7 +372,9 @@ mod tests {
         }
 
         // Validate the decryption
-        for ((operator, commitment), dec_key) in operators.iter().zip(&commitments).zip(&dec_keys) {
+        for ((operator, commitment), dec_key) in
+            operators.iter().zip(&commitments).zip(&ephemeral_dec_keys)
+        {
             let cur_res = decrypt_recovery(
                 temp_dir.path(),
                 amount_custodians,
@@ -433,8 +438,12 @@ mod tests {
         operator_role: Role,
         setup_msgs: Vec<InternalCustodianSetupMessage>,
         backup_id: RequestId,
-        msg: &[u8],
-    ) -> (BackupCommitments, Operator, BackupPrivateKey) {
+    ) -> (
+        BackupCommitments,
+        Operator,
+        BackupPrivateKey,
+        BackupPrivateKey,
+    ) {
         let request_path = root_path.join(format!(
             "operator-{operator_role}{MAIN_SEPARATOR}{backup_id}-request.bin"
         ));
@@ -445,12 +454,37 @@ mod tests {
         let mut rng = get_rng(Some(&format!("operator{operator_role}").to_string()));
         // Note that in the actual deployment, the operator keys are generated before the encryption keys
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
-        let operator =
-            Operator::new(operator_role, setup_msgs, signing_key.clone(), threshold).unwrap();
+        let (ephemeral_pub_key, ephemeral_priv_key) = backup_pke::keygen(&mut rng).unwrap();
+        let operator: Operator = Operator::new(
+            operator_role,
+            setup_msgs.clone(),
+            signing_key.clone(),
+            threshold,
+        )
+        .unwrap();
+        let (backup_pke, backup_ske) = backup_pke::keygen(&mut rng).unwrap();
         let (ct_map, commitments) = operator
-            .secret_share_and_encrypt(&mut rng, msg, backup_id)
+            .secret_share_and_encrypt(
+                &mut rng,
+                &bc2wrap::serialize(&backup_ske).unwrap(),
+                backup_id,
+            )
             .unwrap();
+        let custodian_context = InternalCustodianContext::new(
+            CustodianContext {
+                custodian_nodes: setup_msgs
+                    .iter()
+                    .map(|cur| cur.to_owned().try_into().unwrap())
+                    .collect(),
+                context_id: Some(backup_id.into()),
+                previous_context_id: None,
+                threshold: threshold as u32,
+            },
+            backup_pke,
+        )
+        .unwrap();
+        let backup_com =
+            BackupCommitments::new(commitments.clone(), custodian_context, &signing_key).unwrap();
         let mut ciphertexts = BTreeMap::new();
         for custodian_index in 1..=amount_custodians {
             let custodian_role = Role::indexed_from_one(custodian_index);
@@ -458,7 +492,7 @@ mod tests {
             ciphertexts.insert(custodian_role, ct.to_owned());
         }
         let recovery_request = InternalRecoveryRequest::new(
-            public_key,
+            ephemeral_pub_key,
             ciphertexts,
             backup_id,
             operator_role,
@@ -471,7 +505,7 @@ mod tests {
         safe_write_element_versioned(&Path::new(&request_path), &recovery_request)
             .await
             .unwrap();
-        (commitments, operator, private_key)
+        (backup_com, operator, ephemeral_priv_key, backup_ske)
     }
 
     async fn decrypt_recovery(

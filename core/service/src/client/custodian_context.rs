@@ -19,32 +19,38 @@ impl Client {
         request_id: &RequestId,
         amount_custodians: usize,
         threshold: u32,
-    ) -> anyhow::Result<NewCustodianContextRequest> {
-        let custodian_setup_msgs = custodian_setup_msgs(&mut self.rng, amount_custodians)?;
-        Ok(NewCustodianContextRequest {
-            active_context: None, // TODO not used now
-            new_context: Some(CustodianContext {
-                custodian_nodes: custodian_setup_msgs,
-                context_id: Some((*request_id).into()),
-                previous_context_id: None, // TODO not used now
-                threshold,
-            }),
-        })
+    ) -> anyhow::Result<(NewCustodianContextRequest, Vec<String>)> {
+        let (custodian_setup_msgs, mnemonics) =
+            custodian_setup_msgs(&mut self.rng, amount_custodians)?;
+        Ok((
+            NewCustodianContextRequest {
+                active_context: None, // TODO not used now
+                new_context: Some(CustodianContext {
+                    custodian_nodes: custodian_setup_msgs,
+                    context_id: Some((*request_id).into()),
+                    previous_context_id: None, // TODO not used now
+                    threshold,
+                }),
+            },
+            mnemonics,
+        ))
     }
 }
 
 fn custodian_setup_msgs(
     rng: &mut AesRng,
     amount_custodians: usize,
-) -> anyhow::Result<Vec<CustodianSetupMessage>> {
-    let mut res = Vec::new();
+) -> anyhow::Result<(Vec<CustodianSetupMessage>, Vec<String>)> {
+    let mut setup_msgs = Vec::new();
+    let mut mnemonics = Vec::new();
     for cur_idx in 1..=amount_custodians {
         let role = Role::indexed_from_one(cur_idx);
         let mnemonic = seed_phrase_from_rng(rng).expect("Failed to generate seed phrase");
         let custodian: Custodian<PrivateSigKey, BackupPrivateKey> =
             custodian_from_seed_phrase(&mnemonic, role)?;
         let setup_msg = custodian.generate_setup_message(rng, format!("Custodian-{cur_idx}"))?;
-        res.push(setup_msg.try_into()?);
+        setup_msgs.push(setup_msg.try_into()?);
+        mnemonics.push(mnemonic);
     }
-    Ok(res)
+    Ok((setup_msgs, mnemonics))
 }

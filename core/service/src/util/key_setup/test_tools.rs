@@ -530,9 +530,38 @@ pub async fn purge(
     }
 }
 
-pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
+/// Purge the entire content of the private storage.
+/// This is useful for testing backup
+pub async fn purge_priv(priv_path: Option<&Path>, amount_parties: usize) {
+    let final_central_path = match priv_path {
+        Some(path) => path.to_path_buf(),
+        None => FileStorage::default_path(StorageType::PRIV, None).unwrap(),
+    };
+    // Ignore if the dir does not exist
+    let _ = tokio::fs::remove_dir_all(&final_central_path).await;
     for cur_party in 1..=amount_parties {
-        let final_path = match backup_path {
+        let final_threshold_path = match priv_path {
+            Some(path) => path.to_path_buf(),
+            None => FileStorage::default_path(
+                StorageType::PRIV,
+                Some(Role::indexed_from_one(cur_party)),
+            )
+            .unwrap(),
+        };
+        // Ignore if the dir does not exist
+        let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
+    }
+}
+
+pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
+    let final_central_path = match backup_path {
+        Some(path) => path.to_path_buf(),
+        None => FileStorage::default_path(StorageType::BACKUP, None).unwrap(),
+    };
+    // Ignore if the dir does not exist
+    let _ = tokio::fs::remove_dir_all(&final_central_path).await;
+    for cur_party in 1..=amount_parties {
+        let final_threshold_path = match backup_path {
             Some(path) => path.to_path_buf(),
             None => FileStorage::default_path(
                 StorageType::BACKUP,
@@ -540,7 +569,8 @@ pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
             )
             .unwrap(),
         };
-        tokio::fs::remove_dir_all(&final_path).await.unwrap();
+        // Ignore if the dir does not exist
+        let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
     }
 }
 

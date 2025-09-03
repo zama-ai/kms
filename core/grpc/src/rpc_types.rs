@@ -252,8 +252,8 @@ pub enum PubDataType {
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO validation needs to be added, see https://github.com/zama-ai/kms-internal/issues/2723
-    RecoveryRequest, // Recovery request for backup vault
-    Commitments, // Commitments for the backup vault
+    RecoveryRequest, // Recovery request for backup vault TODO should it be stored in backup or public vault, issue with private is that it can get locked in case of aws issue!
+    Commitments, // Commitments for the backup vault TODO rename since it also contains custodian context. it could also be combined with the recovery request
 }
 
 impl fmt::Display for PubDataType {
@@ -297,7 +297,6 @@ pub enum PrivDataType {
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
-    CustodianInfo, // Custodian information for the custodian context
     ContextInfo,
 }
 
@@ -309,7 +308,6 @@ impl fmt::Display for PrivDataType {
             PrivDataType::CrsInfo => write!(f, "CrsInfo"),
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
-            PrivDataType::CustodianInfo => write!(f, "CustodianInfo"),
             PrivDataType::ContextInfo => write!(f, "Context"),
         }
     }
@@ -1008,6 +1006,19 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
             ciphertext: value.ciphertext,
             custodian_role: Role::indexed_from_one(value.custodian_role as usize),
             operator_role: Role::indexed_from_one(value.operator_role as usize),
+        })
+    }
+}
+
+impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
+    type Error = anyhow::Error;
+
+    fn try_from(value: InternalCustodianRecoveryOutput) -> Result<Self, Self::Error> {
+        Ok(CustodianRecoveryOutput {
+            signature: value.signature,
+            ciphertext: value.ciphertext,
+            custodian_role: value.custodian_role.one_based() as u64,
+            operator_role: value.operator_role.one_based() as u64,
         })
     }
 }

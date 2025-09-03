@@ -1,3 +1,4 @@
+use crate::backup::operator::DSEP_BACKUP_RECOVERY;
 use crate::engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr};
 use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
@@ -23,7 +24,7 @@ use threshold_fhe::{execution::runtime::party::Role, hashing::DomainSep};
 
 use super::{
     error::BackupError,
-    operator::{BackupMaterial, InnerOperatorBackupOutput, DSEP_BACKUP_CIPHER},
+    operator::{BackupMaterial, InnerOperatorBackupOutput},
     traits::{BackupDecryptor, BackupSigner},
 };
 
@@ -235,7 +236,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
             sig: k256::ecdsa::Signature::from_slice(&backup.signature)?,
         };
         internal_verify_sig(
-            &DSEP_BACKUP_CIPHER,
+            &DSEP_BACKUP_RECOVERY,
             &backup.ciphertext,
             &signature,
             operator_verification_key,

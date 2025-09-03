@@ -2,10 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     anyhow_error_and_log,
-    backup::{
-        custodian::InternalCustodianContext,
-        operator::{BackupCommitments, InnerRecoveryRequest, Operator, DSEP_BACKUP_CIPHER},
-    },
+    backup::operator::{BackupCommitments, InnerRecoveryRequest, Operator, DSEP_BACKUP_RECOVERY},
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         attestation::{SecurityModule, SecurityModuleProxy},
@@ -95,7 +92,7 @@ where
                 sig: k256::ecdsa::Signature::from_slice(&cur_cus_ct.signature)?,
             };
             internal_verify_sig(
-                &DSEP_BACKUP_CIPHER,
+                &DSEP_BACKUP_RECOVERY,
                 &cur_cus_ct.ciphertext,
                 &signature,
                 &verification_key,
@@ -185,7 +182,7 @@ where
                 "Ephemeral decryption key already exists. Cannot initialize recovery again before previous recovery is completed.",
             ));
         }
-        let backup_id = get_latest_backup_id(&self.crypto_storage.private_storage)
+        let backup_id = get_latest_backup_id(&self.crypto_storage.backup_vault)
             .await
             .map_err(|e| {
                 Status::new(
@@ -278,18 +275,6 @@ where
                     )
                 })?
         };
-        let custodian_data: InternalCustodianContext = {
-            let guarded_priv_storage = self.crypto_storage.private_storage.lock().await;
-            guarded_priv_storage
-                .read_data(&context_id, &PrivDataType::CustodianInfo.to_string())
-                .await
-                .map_err(|e| {
-                    Status::new(
-                        tonic::Code::Internal,
-                        format!("Failed to read custodian info: {e}"),
-                    )
-                })?
-        };
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
@@ -298,9 +283,9 @@ where
                     Some(KeychainProxy::SecretSharing(ref mut keychain)) => {
                         let operator = Operator::new(
                             self.my_role,
-                            custodian_data.custodian_nodes.values().cloned().collect_vec(),
+                            commitments.custodian_context().custodian_nodes.values().cloned().collect_vec(),
                             self.base_kms.sig_key.as_ref().clone(),
-                            custodian_data.threshold as usize,
+                            commitments.custodian_context().threshold as usize,
                         ).map_err(|e| {
                             Status::new(
                                 tonic::Code::Internal,
@@ -394,19 +379,24 @@ where
     }
 }
 
-async fn get_latest_backup_id<PrivS>(priv_storage: &Arc<Mutex<PrivS>>) -> anyhow::Result<RequestId>
-where
-    PrivS: Storage + Sync + Send + 'static,
-{
-    let guarded_priv_storage = priv_storage.lock().await;
-    let all_custodian_ids = guarded_priv_storage
-        .all_data_ids(&PrivDataType::CustodianInfo.to_string())
-        .await?;
-    match all_custodian_ids.iter().sorted().last() {
-        Some(latest_context_id) => Ok(*latest_context_id),
+async fn get_latest_backup_id(
+    backup_vault: &Option<Arc<Mutex<Vault>>>,
+) -> anyhow::Result<RequestId> {
+    match backup_vault {
         None => Err(anyhow_error_and_log(
-            "No custodian setup available in the vault",
+            "Backup vault is not configured".to_string(),
         )),
+        Some(backup_vault) => {
+            let guarded_vault_storage = backup_vault.lock().await;
+            if let Some(KeychainProxy::SecretSharing(ssk)) = guarded_vault_storage.keychain.as_ref()
+            {
+                ssk.get_current_backup_id()
+            } else {
+                anyhow::bail!(
+                    "Backup vault is not setup with a keychain for custodian-based backup recovery"
+                );
+            }
+        }
     }
 }
 
@@ -487,14 +477,6 @@ where
             }
             PrivDataType::PrssSetup => {
                 tracing::info!("PRSS setup data is not backed up currently. Skipping for now.");
-            }
-            PrivDataType::CustodianInfo => {
-                restore_data_type::<PrivS, InternalCustodianContext>(
-                    priv_storage,
-                    backup_vault,
-                    cur_type,
-                )
-                .await?;
             }
             PrivDataType::ContextInfo => {
                 restore_data_type::<PrivS, ContextInfo>(priv_storage, backup_vault, cur_type)
@@ -600,14 +582,6 @@ where
                             tracing::info!(
                                 "PRSS setup data is not backed up currently. Skipping for now."
                             );
-                        }
-                        PrivDataType::CustodianInfo => {
-                            update_specific_backup_vault::<PrivS, InternalCustodianContext>(
-                                &private_storage,
-                                &mut backup_vault,
-                                cur_type,
-                            )
-                            .await?;
                         }
                         PrivDataType::ContextInfo => {
                             update_specific_backup_vault::<PrivS, ContextInfo>(

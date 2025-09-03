@@ -4,10 +4,7 @@
 //! both centralized and threshold KMS variants.
 use crate::{
     anyhow_error_and_warn_log,
-    backup::{
-        custodian::InternalCustodianContext,
-        operator::{BackupCommitments, InnerRecoveryRequest},
-    },
+    backup::operator::{BackupCommitments, InnerRecoveryRequest},
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{context::ContextInfo, threshold::service::ThresholdFheKeys},
     grpc::metastore_status_service::CustodianMetaStore,
@@ -600,7 +597,6 @@ where
     pub async fn write_backup_keys_with_meta_store(
         &self,
         recovery_request: &InnerRecoveryRequest,
-        custodian_context: &InternalCustodianContext,
         commitments: &BackupCommitments,
         meta_store: Arc<RwLock<CustodianMetaStore>>,
     ) {
@@ -608,37 +604,11 @@ where
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
         let mut guarded_meta_store = meta_store.write().await;
-        let req_id = custodian_context.context_id;
-        let (priv_res, pub_res) = {
+        let req_id = commitments.custodian_context().context_id;
+        let pub_res = {
             // Lock the storage needed in correct order to avoid deadlocks.
             let mut public_storage_guard = self.public_storage.lock().await;
-            let mut private_storage_guard = self.private_storage.lock().await;
 
-            let priv_storage_future = async {
-                let custodian_context_store_res = store_versioned_at_request_id(
-                    &mut (*private_storage_guard),
-                    &req_id,
-                    custodian_context,
-                    &PrivDataType::CustodianInfo.to_string(),
-                )
-                .await;
-                if let Err(e) = &custodian_context_store_res {
-                    tracing::error!(
-                        "Failed to store custodian context to private storage for request {}: {}",
-                        req_id,
-                        e
-                    );
-                } else {
-                    log_storage_success(
-                        req_id,
-                        private_storage_guard.info(),
-                        &PrivDataType::CustodianInfo.to_string(),
-                        false,
-                        true,
-                    );
-                }
-                custodian_context_store_res.is_ok()
-            };
             let pub_storage_future = async {
                 let recovery_store_result = store_versioned_at_request_id(
                     &mut (*public_storage_guard),
@@ -686,7 +656,7 @@ where
                 }
                 recovery_store_result.is_ok() && commit_store_result.is_ok()
             };
-            tokio::join!(priv_storage_future, pub_storage_future)
+            tokio::join!(pub_storage_future).0
         };
         {
             // Update meta store
@@ -702,8 +672,10 @@ where
                 }
             };
             // If everything is ok, we update the meta store with a success
-            if priv_res && pub_res {
-                if let Err(e) = guarded_meta_store.update(&req_id, Ok(custodian_context.clone())) {
+            if pub_res {
+                if let Err(e) =
+                    guarded_meta_store.update(&req_id, Ok(commitments.custodian_context().clone()))
+                {
                     tracing::error!("Failed to update meta store for request {req_id}: {e}");
                     self.purge_backup_material(&req_id, guarded_meta_store)
                         .await;
@@ -712,9 +684,8 @@ where
                 self.purge_backup_material(&req_id, guarded_meta_store)
                     .await;
                 tracing::error!(
-                    "Failed to store backup keys for request {}: priv_res: {}, pub_res: {}",
+                    "Failed to store backup keys for request {}: pub_res: {}",
                     req_id,
-                    priv_res,
                     pub_res,
                 );
             }
@@ -728,7 +699,7 @@ where
                         Some(keychain) => {
                             if let KeychainProxy::SecretSharing(sharing_chain) = keychain {
                                 // Store the public key in the secret sharing keychain
-                                sharing_chain.set_backup_enc_key(req_id, custodian_context.backup_enc_key.clone());
+                                sharing_chain.set_backup_enc_key(req_id, commitments.custodian_context().backup_enc_key.clone());
                             }
                         },
                         None => {
@@ -754,28 +725,11 @@ where
     ) {
         // Enforce locking order for internal types
         let mut pub_storage = self.public_storage.lock().await;
-        let mut priv_storage = self.private_storage.lock().await;
         let back_vault = match self.backup_vault {
             Some(ref x) => Some(x.lock().await),
             None => None,
         };
 
-        let priv_purge = async {
-            let result = delete_at_request_id(
-                &mut (*priv_storage),
-                req_id,
-                &PrivDataType::CustodianInfo.to_string(),
-            )
-            .await;
-            if let Err(e) = &result {
-                tracing::warn!(
-                    "Failed to delete custodian info for request {}: {}",
-                    req_id,
-                    e
-                );
-            }
-            result.is_err()
-        };
         let pub_purge = async {
             let request_res = delete_at_request_id(
                 &mut (*pub_storage),
@@ -814,9 +768,8 @@ where
                 None => false, // No backup vault, so no error
             }
         };
-        let (priv_purge_res, pub_purge_res, vault_purge_res) =
-            tokio::join!(priv_purge, pub_purge, vault_purge);
-        if priv_purge_res || pub_purge_res || vault_purge_res {
+        let (pub_purge_res, vault_purge_res) = tokio::join!(pub_purge, vault_purge);
+        if pub_purge_res || vault_purge_res {
             tracing::error!("Failed to delete backup material for request {}", req_id);
         } else {
             tracing::info!("Deleted all backup material for request {}", req_id);

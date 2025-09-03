@@ -176,7 +176,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .inspect_err(|e| tracing::warn!("Could not initialize public storage: {e}"))?;
     let public_vault = Vault {
-        storage: public_storage,
+        storage: public_storage.clone(),
         keychain: None,
     };
 
@@ -197,7 +197,16 @@ async fn main() -> anyhow::Result<()> {
             .private_vault
             .as_ref()
             .and_then(|v| v.keychain.as_ref())
-            .map(|k| make_keychain_proxy(k, awskms_client.clone(), security_module.clone(), None)),
+            .map(|k| {
+                // Observe that the public storage is used to load a backup_id and backup key
+                // in the case where the custodian based secret sharing is used
+                make_keychain_proxy(
+                    k,
+                    awskms_client.clone(),
+                    security_module.clone(),
+                    Some(&public_storage),
+                )
+            }),
     )
     .await
     .transpose()
