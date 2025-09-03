@@ -1,1 +1,1 @@
-See ../../docs/references/api/README.md for the gRPC service definitions.
+See ../../docs/references/api/core_grpc.md for the gRPC service definitions.
