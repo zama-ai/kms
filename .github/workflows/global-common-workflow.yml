@@ -570,7 +570,15 @@ jobs:
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
 
-
+  conditional-job:
+    needs:
+      - docker-golden-image
+    if: ${{ true }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: check result
+        run: |
+         echo 'needs.docker-golden-image.result'
   ############################################################################
   # ██████╗ ██████╗  ██████╗  ██████╗  ██████╗██████╗
   #██╔══██╗██╔══██╗██╔════╝ ██╔═══██╗██╔════╝██╔══██╗
