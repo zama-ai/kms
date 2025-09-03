@@ -260,7 +260,6 @@ where
     let (threshold_health_reporter, threshold_health_service) =
         tonic_health::server::health_reporter();
 
-    let manager_clone = Arc::clone(&networking_manager);
     let networking_server = networking_manager
         .write()
         .await
@@ -276,6 +275,7 @@ where
         mpc_socket_addr
     );
 
+    let manager_clone = Arc::clone(&networking_manager);
     let abort_handle = tokio::spawn(async move {
         let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::spawn(prepare_shutdown_signals(shutdown_signal, tx));
@@ -376,7 +376,7 @@ where
     // Note that the manager is empty, it needs to be filled with session preparers
     // For testing this needs to be done manually.
     let session_preparer_manager =
-        SessionPreparerManager::empty(config.my_id.to_string(), networking_manager.clone());
+        SessionPreparerManager::empty(config.my_id.to_string());
 
     // Optionally add a testing session preparer.
     let _ = match config.peers {
@@ -436,6 +436,7 @@ where
         prss_setup_z64: Arc::clone(&prss_setup_z64),
         private_storage: crypto_storage.get_private_storage(),
         session_preparer_manager,
+        networking_manager,
         health_reporter: thread_core_health_reporter.clone(),
         _init: PhantomData,
         threshold_config: config.clone(),

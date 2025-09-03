@@ -18,7 +18,7 @@ use threshold_fhe::{
         },
         small_execution::prss::{PRSSInit, PRSSSetup},
     },
-    networking::NetworkMode,
+    networking::{grpc::GrpcNetworkingManager, NetworkMode},
 };
 use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Response, Status};
@@ -48,6 +48,7 @@ pub struct RealInitiator<
     pub prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
     pub private_storage: Arc<Mutex<PrivS>>,
     pub session_preparer_manager: SessionPreparerManager,
+    pub networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
     pub health_reporter: HealthReporter,
     pub(crate) _init: PhantomData<Init>,
     // This is needed as a workaround to initialize the session preparer
@@ -235,28 +236,18 @@ impl<
         // eventually this piece of code will move to the context endpoint and this
         // endpoint will be removed.
 
-        let networking_manager = self.session_preparer_manager.get_networking_manager().await;
-
         let peers = some_or_tonic_abort(self.threshold_config.peers.clone(), "Peer list not set in the configuration file, setting it through the context is unsupported yet".to_string())?;
         let role_assignment: RoleAssignment = peers
             .into_iter()
             .map(|peer_config| peer_config.into_role_identity())
             .collect();
 
-        // Careful not to hold the write lock longer than needed
-        // why is this needed??
-        // role_assignment.write().await.extend(
-        //     peers
-        //         .into_iter()
-        //         .map(|peer_config| peer_config.into_role_identity()),
-        // );
-
         let session_preparer = SessionPreparer::new(
             self.base_kms.new_instance().await,
             self.threshold_config.threshold,
             Role::indexed_from_one(self.threshold_config.my_id),
             role_assignment.clone(),
-            networking_manager.clone(),
+            self.networking_manager.clone(),
             Arc::clone(&self.prss_setup_z128),
             Arc::clone(&self.prss_setup_z64),
         );
@@ -318,12 +309,14 @@ mod tests {
         fn init_test(
             base_kms: BaseKmsStruct,
             session_preparer_manager: SessionPreparerManager,
+            networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         ) -> Self {
             Self {
                 prss_setup_z128: Arc::new(RwLock::new(None)),
                 prss_setup_z64: Arc::new(RwLock::new(None)),
                 private_storage: Arc::new(Mutex::new(ram::RamStorage::new())),
                 session_preparer_manager,
+                networking_manager,
                 health_reporter: HealthReporter::new(),
                 _init: PhantomData,
                 threshold_config: ThresholdPartyConf {
@@ -439,6 +432,30 @@ mod tests {
         ));
     }
 
+    fn test_network_manager() -> Arc<RwLock<GrpcNetworkingManager>> {
+        let role_assignment = RoleAssignment::from_iter((1..=4).map(|i| {
+            (
+                Role::indexed_from_one(i),
+                threshold_fhe::execution::runtime::party::Identity(
+                    "localhost".to_string(),
+                    8080 + i as u16,
+                ),
+            )
+        }));
+        let role_assignment = Arc::new(RwLock::new(role_assignment));
+
+        Arc::new(RwLock::new(
+            GrpcNetworkingManager::new(
+                Role::indexed_from_one(1),
+                None,
+                None,
+                false,
+                role_assignment.clone(),
+            )
+            .unwrap(),
+        ))
+    }
+
     #[tokio::test]
     async fn sunshine() {
         let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
@@ -455,9 +472,11 @@ mod tests {
                 session_preparer,
             )
             .await;
+
         let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(
             base_kms,
             session_preparer_manager,
+            test_network_manager(),
         );
 
         let mut rng = AesRng::seed_from_u64(42);
@@ -488,6 +507,7 @@ mod tests {
         let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(
             base_kms,
             session_preparer_manager,
+            test_network_manager(),
         );
 
         {
@@ -539,6 +559,7 @@ mod tests {
         let initiator = RealInitiator::<ram::RamStorage, EmptyPrss>::init_test(
             base_kms,
             session_preparer_manager,
+            test_network_manager(),
         );
 
         let mut rng = AesRng::seed_from_u64(42);
@@ -582,6 +603,7 @@ mod tests {
         let initiator = RealInitiator::<ram::RamStorage, FailingPrss>::init_test(
             base_kms,
             session_preparer_manager,
+            test_network_manager(),
         );
 
         let mut rng = AesRng::seed_from_u64(42);

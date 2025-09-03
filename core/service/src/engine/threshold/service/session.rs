@@ -28,15 +28,13 @@ const ERR_SESSION_NOT_INITIALIZED: &str = "SessionPreparer is not initialized";
 /// This data structure should only be used by the Init GRPC endpoint.
 /// The other GRPC endpoints that use session should use `SessionPreparerGetter`.
 pub struct SessionPreparerManager {
-    networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
     inner: SessionPreparerGetter,
 }
 
 impl SessionPreparerManager {
     /// Creates a new `SessionPreparerManager`.
-    pub fn empty(name: String, networking_manager: Arc<RwLock<GrpcNetworkingManager>>) -> Self {
+    pub fn empty(name: String) -> Self {
         Self {
-            networking_manager,
             inner: SessionPreparerGetter {
                 session_preparer: Arc::new(RwLock::new(HashMap::new())),
                 name,
@@ -62,32 +60,9 @@ impl SessionPreparerManager {
         self.inner.insert(request_id, session_preparer).await
     }
 
-    pub async fn get_networking_manager(&self) -> Arc<RwLock<GrpcNetworkingManager>> {
-        self.networking_manager.clone()
-    }
-
     #[cfg(test)]
     pub(crate) fn new_test_session() -> Self {
-        let role_assignment = RoleAssignment::from_iter((1..=4).map(|i| {
-            (
-                Role::indexed_from_one(i),
-                Identity("localhost".to_string(), 8080 + i as u16),
-            )
-        }));
-        let role_assignment = Arc::new(RwLock::new(role_assignment));
-
-        let networking_manager = Arc::new(RwLock::new(
-            GrpcNetworkingManager::new(
-                Role::indexed_from_one(1),
-                None,
-                None,
-                false,
-                role_assignment.clone(),
-            )
-            .unwrap(),
-        ));
-
-        SessionPreparerManager::empty(Role::indexed_from_one(1).to_string(), networking_manager)
+        SessionPreparerManager::empty(Role::indexed_from_one(1).to_string())
     }
 }
 
