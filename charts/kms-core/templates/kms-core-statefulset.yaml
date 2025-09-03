@@ -432,9 +432,9 @@ spec:
               value: {{ .Values.rustLog }}
             {{- if .Values.minio.enabled }}
             - name: AWS_ACCESS_KEY_ID
-              value: {{ .Values.minio.username | quote }}
+              value: {{ .Values.minio.username }}
             - name: AWS_SECRET_ACCESS_KEY
-              value: {{ .Values.minio.password | quote }}
+              value: {{ .Values.minio.password }}
             {{- end }}
           {{- if .Values.kmsCore.envFrom.configmap.name }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
