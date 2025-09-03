@@ -212,7 +212,7 @@ impl ExperimentalGrpcChoreography {
             //We are executing offline phase, so requires Sync network
             let networking = self
                 .networking_manager
-                .make_session(session_id, role_assignment.clone(), network_mode)
+                .make_session(session_id, &*role_assignment.read().await, network_mode)
                 .await
                 .map_err(|e| {
                     tonic::Status::new(
@@ -587,19 +587,10 @@ impl Choreography for ExperimentalGrpcChoreography {
                         format!("Failed to parse role assignment: {e:?}"),
                     )
                 })?;
-            let roles = role_assignment.keys().cloned().collect();
-            let role_assignment = Arc::new(RwLock::new(role_assignment));
-            let params =
-                SessionParameters::new(0, session_id, self.my_role, roles).map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        format!("Failed to create a base session parameters: {e:?}"),
-                    )
-                })?;
 
             let networking = self
                 .networking_manager
-                .make_session(session_id, role_assignment, NetworkMode::Async)
+                .make_session(session_id, &role_assignment, NetworkMode::Async)
                 .map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
@@ -607,6 +598,15 @@ impl Choreography for ExperimentalGrpcChoreography {
                     )
                 })
                 .await?;
+
+            let roles = role_assignment.keys().cloned().collect();
+            let params =
+                SessionParameters::new(0, session_id, self.my_role, roles).map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to create a base session parameters: {e:?}"),
+                    )
+                })?;
 
             //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
             let mut base_session = BaseSession::new(params, networking, AesRng::from_entropy())

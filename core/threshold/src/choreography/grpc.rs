@@ -462,7 +462,7 @@ where
             //We are executing offline phase, so requires Sync network
             let networking = self
                 .networking_manager
-                .make_session(session_id, role_assignment.clone(), network_mode)
+                .make_session(session_id, &*role_assignment.read().await, network_mode)
                 .map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
@@ -1913,7 +1913,11 @@ where
             //This is running the online phase of ddec, so can work in Async network
             let networking = self
                 .networking_manager
-                .make_session(session_id, role_assignment.clone(), NetworkMode::Async)
+                .make_session(
+                    session_id,
+                    &*role_assignment.read().await,
+                    NetworkMode::Async,
+                )
                 .await
                 .unwrap();
 
