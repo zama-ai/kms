@@ -267,6 +267,7 @@ jobs:
       - test-core-client
       - docker-golden-image
     if: >-
+      always() &&
       (needs.docker-golden-image.result == 'skipped' || needs.docker-golden-image.result == 'success') &&
       ((startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')))
@@ -408,6 +409,7 @@ jobs:
       - test-core-service
       - docker-golden-image
     if: >-
+      always() &&
       (needs.docker-golden-image.result == 'skipped' || needs.docker-golden-image.result == 'success') &&
       ((startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')))
@@ -570,15 +572,6 @@ jobs:
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
 
-  conditional-job:
-    needs:
-      - docker-golden-image
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: check result
-        run: |
-         echo '${{ needs.docker-golden-image.result }}'
   ############################################################################
   # ██████╗ ██████╗  ██████╗  ██████╗  ██████╗██████╗
   #██╔══██╗██╔══██╗██╔════╝ ██╔═══██╗██╔════╝██╔══██╗
