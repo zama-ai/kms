@@ -21,7 +21,7 @@ pub struct PeerStatus {
     pub peer_id: u32, // Party ID for threshold mode
     pub endpoint: String,
     pub reachable: bool,
-    pub latency_ms: u64,
+    pub latency_ms: u32,
     pub fhe_keys: usize,
     pub crs_keys: usize,
     pub preprocessing_keys: usize,
