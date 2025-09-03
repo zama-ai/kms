@@ -635,7 +635,7 @@ message HealthStatusResponse {
     bool reachable = 3;
     
     // Connection latency in milliseconds
-    uint64 latency_ms = 4;
+    uint32 latency_ms = 4;
     
     // Number of FHE keys on peer
     uint32 fhe_keys = 5;
