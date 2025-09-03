@@ -395,17 +395,20 @@ impl_endpoint! {
             use std::time::Instant;
             use tonic::transport::Channel;
 
-            // Get own key material
-            let own_material = self.get_key_material_availability(Request::new(Empty {})).await?;
-            let own_material = own_material.into_inner();
+            // Get own key material directly from backup_operator (avoid redundant gRPC call to self)
+            let backup_response = self.backup_operator.get_key_material_availability(Request::new(Empty {})).await?;
+            let mut own_material = backup_response.into_inner();
+
+            // Add preprocessing IDs from the preprocessor
+            own_material.preprocessing_ids = self.keygen_preprocessor.get_all_preprocessing_ids().await?;
 
             // Check peer health
             let mut peer_health_infos = Vec::new();
             let mut nodes_reachable = 1; // Count self as reachable
 
-            for peer in &self.peers {
+            for peer in &self.config.peers {
                 // Skip self-check - we already know we're healthy
-                if peer.party_id == self.my_party_id {
+                if peer.party_id == self.config.my_id {
                     continue;
                 }
 
@@ -455,11 +458,11 @@ impl_endpoint! {
                                             endpoint: endpoint.clone(),
                                             reachable: true,
                                             latency_ms: start.elapsed().as_millis() as u32,
-                                            fhe_keys: resp.fhe_key_ids.len() as u32,
-                                            crs_keys: resp.crs_ids.len() as u32,
-                                            preprocessing_keys: resp.preprocessing_ids.len() as u32,
                                             storage_info: resp.storage_info,
                                             error: String::new(),
+                                            fhe_key_ids: resp.fhe_key_ids,
+                                            crs_ids: resp.crs_ids,
+                                            preprocessing_key_ids: resp.preprocessing_ids,
                                         }
                                     }
                                     Err(e) => PeerHealth {
@@ -467,11 +470,11 @@ impl_endpoint! {
                                         endpoint: endpoint.clone(),
                                         reachable: false,
                                         latency_ms: start.elapsed().as_millis() as u32,
-                                        fhe_keys: 0,
-                                        crs_keys: 0,
-                                        preprocessing_keys: 0,
                                         storage_info: String::new(),
                                         error: e.to_string(),
+                                        fhe_key_ids: Vec::new(),
+                                        crs_ids: Vec::new(),
+                                        preprocessing_key_ids: Vec::new(),
                                     },
                                 }
                             }
@@ -480,11 +483,11 @@ impl_endpoint! {
                                 endpoint: endpoint.clone(),
                                 reachable: false,
                                 latency_ms: 0,
-                                fhe_keys: 0,
-                                crs_keys: 0,
-                                preprocessing_keys: 0,
                                 storage_info: String::new(),
                                 error: format!("Connection failed: {}", e),
+                                fhe_key_ids: Vec::new(),
+                                crs_ids: Vec::new(),
+                                preprocessing_key_ids: Vec::new(),
                             },
                         }
                     }
@@ -493,22 +496,24 @@ impl_endpoint! {
                         endpoint: endpoint.clone(),
                         reachable: false,
                         latency_ms: 0,
-                        fhe_keys: 0,
-                        crs_keys: 0,
-                        preprocessing_keys: 0,
                         storage_info: String::new(),
                         error: format!("Invalid endpoint: {}", e),
+                        fhe_key_ids: Vec::new(),
+                        crs_ids: Vec::new(),
+                        preprocessing_key_ids: Vec::new(),
                     },
                 };
 
-                peer_health_infos.push(peer_info);
+        peer_health_infos.push(peer_info);
             }
 
+            // Calculate threshold requirements
+            let threshold_required = self.config.threshold as u32;
+
             // Determine overall health status
-            let threshold_required = self.threshold as u32;
             let status = if nodes_reachable >= threshold_required {
                 "healthy"
-            } else if nodes_reachable > 1 {
+            } else if nodes_reachable > 0 {
                 "degraded"
             } else {
                 "unhealthy"
@@ -517,12 +522,12 @@ impl_endpoint! {
             let response = HealthStatusResponse {
                 status: status.to_string(),
                 peers: peer_health_infos,
-                my_fhe_keys: own_material.fhe_key_ids.len() as u32,
-                my_crs_keys: own_material.crs_ids.len() as u32,
-                my_preprocessing_keys: own_material.preprocessing_ids.len() as u32,
+                my_fhe_key_ids: own_material.fhe_key_ids,
+                my_crs_ids: own_material.crs_ids,
+                my_preprocessing_key_ids: own_material.preprocessing_ids,
                 my_storage_info: own_material.storage_info,
                 node_type: "threshold".to_string(),
-                my_party_id: self.my_party_id as u32,
+                my_party_id: self.config.my_id as u32,
                 threshold_required,
                 nodes_reachable,
             };

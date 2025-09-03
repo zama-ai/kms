@@ -69,9 +69,28 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
     if let Some(keys) = &result.key_material {
         writeln!(output, "\n[KEY MATERIAL]:")?;
         if keys.available {
-            writeln!(output, "  [OK] FHE Keys: {}", keys.fhe_keys)?;
-            writeln!(output, "  [OK] CRS Keys: {}", keys.crs_keys)?;
-            writeln!(output, "  [OK] Preprocessing: {}", keys.preprocessing_keys)?;
+            writeln!(output, "  [OK] FHE Keys: {}", keys.fhe_key_ids.len())?;
+            if !keys.fhe_key_ids.is_empty() {
+                for key_id in &keys.fhe_key_ids {
+                    writeln!(output, "       - {}", key_id)?;
+                }
+            }
+            writeln!(output, "  [OK] CRS Keys: {}", keys.crs_ids.len())?;
+            if !keys.crs_ids.is_empty() {
+                for key_id in &keys.crs_ids {
+                    writeln!(output, "       - {}", key_id)?;
+                }
+            }
+            writeln!(
+                output,
+                "  [OK] Preprocessing: {}",
+                keys.preprocessing_key_ids.len()
+            )?;
+            if !keys.preprocessing_key_ids.is_empty() {
+                for key_id in &keys.preprocessing_key_ids {
+                    writeln!(output, "       - {}", key_id)?;
+                }
+            }
             writeln!(output, "  [OK] Storage: {}", keys.storage_backend)?;
         } else {
             writeln!(output, "  [FAIL] Key material unavailable")?;
@@ -113,27 +132,44 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
 
         for peer in peers {
             if peer.reachable {
-                write!(
+                writeln!(
                     output,
-                    "  [OK] Party {} @ {} (latency: {}ms, FHE: {}, CRS: {}, Preprocessing: {})",
-                    peer.peer_id,
-                    peer.endpoint,
-                    peer.latency_ms,
-                    peer.fhe_keys,
-                    peer.crs_keys,
-                    peer.preprocessing_keys
+                    "  [OK] Party {} @ {} ({}ms)",
+                    peer.peer_id, peer.endpoint, peer.latency_ms
                 )?;
+
+                // Display key material in consistent format with host
+                writeln!(output, "       FHE Keys: {}", peer.fhe_key_ids.len())?;
+                for key_id in &peer.fhe_key_ids {
+                    writeln!(output, "         - {}", key_id)?;
+                }
+
+                writeln!(output, "       CRS Keys: {}", peer.crs_ids.len())?;
+                for key_id in &peer.crs_ids {
+                    writeln!(output, "         - {}", key_id)?;
+                }
+
+                writeln!(
+                    output,
+                    "       Preprocessing: {}",
+                    peer.preprocessing_key_ids.len()
+                )?;
+                for key_id in &peer.preprocessing_key_ids {
+                    writeln!(output, "         - {}", key_id)?;
+                }
+
                 if !peer.storage_info.is_empty() {
-                    writeln!(output, "\n       Storage: {}", peer.storage_info)?;
-                } else {
-                    writeln!(output)?;
+                    writeln!(output, "       Storage: {}", peer.storage_info)?;
                 }
             } else {
                 writeln!(
                     output,
-                    "  [FAIL] Party {} @ {} - {}",
-                    peer.peer_id,
-                    peer.endpoint,
+                    "  [FAIL] Party {} @ {}",
+                    peer.peer_id, peer.endpoint
+                )?;
+                writeln!(
+                    output,
+                    "         Error: {}",
                     peer.error.as_ref().unwrap_or(&"Unreachable".to_string())
                 )?;
             }

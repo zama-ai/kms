@@ -370,9 +370,9 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let response = HealthStatusResponse {
             status: "healthy".to_string(),
             peers: Vec::new(), // No peers in centralized mode
-            my_fhe_keys: own_material.fhe_key_ids.len() as u32,
-            my_crs_keys: own_material.crs_ids.len() as u32,
-            my_preprocessing_keys: 0, // Centralized doesn't use preprocessing
+            my_fhe_key_ids: own_material.fhe_key_ids,
+            my_crs_ids: own_material.crs_ids,
+            my_preprocessing_key_ids: Vec::new(), // Centralized doesn't use preprocessing
             my_storage_info: own_material.storage_info,
             node_type: "centralized".to_string(),
             my_party_id: 1,        // Not applicable for centralized

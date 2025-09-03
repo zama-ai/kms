@@ -1,3 +1,4 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -22,9 +23,9 @@ pub struct PeerStatus {
     pub endpoint: String,
     pub reachable: bool,
     pub latency_ms: u32,
-    pub fhe_keys: usize,
-    pub crs_keys: usize,
-    pub preprocessing_keys: usize,
+    pub fhe_key_ids: Vec<String>,
+    pub crs_ids: Vec<String>,
+    pub preprocessing_key_ids: Vec<String>,
     pub storage_info: String, // Storage backend info from peer
     pub error: Option<String>,
 }
@@ -55,9 +56,9 @@ pub struct ConnectivityCheck {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyMaterialCheck {
     pub available: bool,
-    pub fhe_keys: usize,
-    pub crs_keys: usize,
-    pub preprocessing_keys: usize,
+    pub fhe_key_ids: Vec<String>,
+    pub crs_ids: Vec<String>,
+    pub preprocessing_key_ids: Vec<String>,
     pub storage_backend: String,
     pub error: Option<String>,
 }
@@ -78,7 +79,7 @@ pub enum HealthStatus {
 }
 
 /// Validate configuration file only
-pub async fn run_config_validation(config_path: &str) -> anyhow::Result<HealthCheckResult> {
+pub async fn run_config_validation(config_path: &str) -> Result<HealthCheckResult> {
     let mut result = HealthCheckResult {
         config_valid: None,
         connectivity: None,
@@ -92,17 +93,22 @@ pub async fn run_config_validation(config_path: &str) -> anyhow::Result<HealthCh
 
     match config::parse_config(Path::new(config_path)).await {
         Ok(config_type) => {
-            let (type_str, storage_type) = match &config_type {
-                config::KmsConfig::Centralized(c) => {
-                    ("centralized", c.storage.storage_type.clone())
-                }
-                config::KmsConfig::Threshold(t) => (
-                    "threshold",
-                    t.storage
-                        .as_ref()
-                        .map(|s| s.storage_type.clone())
-                        .unwrap_or_else(|| "unknown".to_string()),
-                ),
+            let (type_str, storage_type) = if config_type.threshold.is_some() {
+                // Threshold KMS mode
+                let storage_info = config_type
+                    .private_vault
+                    .as_ref()
+                    .map(|v| format!("{:?}", v.storage))
+                    .unwrap_or_else(|| "unknown".to_string());
+                ("threshold", storage_info)
+            } else {
+                // Centralized KMS mode
+                let storage_info = config_type
+                    .private_vault
+                    .as_ref()
+                    .map(|v| format!("{:?}", v.storage))
+                    .unwrap_or_else(|| "unknown".to_string());
+                ("centralized", storage_info)
             };
 
             result.config_valid = Some(ConfigValidation {
@@ -117,38 +123,37 @@ pub async fn run_config_validation(config_path: &str) -> anyhow::Result<HealthCh
             println!("  [OK] Storage: {}", storage_type);
 
             if type_str == "threshold" {
-                if let config::KmsConfig::Threshold(t) = &config_type {
+                if let Some(threshold_conf) = &config_type.threshold {
                     // Report listen address for validation
                     println!(
                         "  [OK] Listen address: {}:{}",
-                        t.listen_address, t.listen_port
+                        config_type.service.listen_address, config_type.service.listen_port
                     );
 
                     // Validate threshold setting
                     // threshold = max number of malicious/offline nodes tolerated
                     // min_nodes = 2*threshold + 1 = total_nodes - threshold (for MPC operations)
-                    if let Some(threshold) = t.threshold {
-                        let total_nodes = t.peers.len(); // peers list includes self
-                        let min_nodes_required = 2 * threshold + 1;
-                        let min_nodes = total_nodes.saturating_sub(threshold);
+                    let threshold = threshold_conf.threshold;
+                    let total_nodes = threshold_conf.peers.len(); // peers list includes self
+                    let min_nodes_required = 2 * (threshold as usize) + 1;
+                    let min_nodes = total_nodes.saturating_sub(threshold as usize);
 
-                        if total_nodes < min_nodes_required {
-                            result.overall_health = HealthStatus::Unhealthy;
-                            result.recommendations.push(format!(
-                                "Config error: {} nodes defined but threshold={} requires at least {} nodes (2t+1)",
-                                total_nodes, threshold, min_nodes_required
-                            ));
-                        } else {
-                            println!(
-                                "  [OK] Threshold: {} (requires {} of {} nodes for MPC)",
-                                threshold, min_nodes, total_nodes
-                            );
-                        }
+                    if total_nodes < min_nodes_required {
+                        result.overall_health = HealthStatus::Unhealthy;
+                        result.recommendations.push(format!(
+                            "Config error: {} nodes defined but threshold={} requires at least {} nodes (2t+1)",
+                            total_nodes, threshold, min_nodes_required
+                        ));
+                    } else {
+                        println!(
+                            "  [OK] Threshold: {} (requires {} of {} nodes for MPC)",
+                            threshold, min_nodes, total_nodes
+                        );
                     }
 
                     // Validate peer addresses
-                    println!("  [OK] {} peers configured:", t.peers.len());
-                    for peer in &t.peers {
+                    println!("  [OK] {} peers configured:", threshold_conf.peers.len());
+                    for peer in &threshold_conf.peers {
                         println!(
                             "      - Peer {} at {}:{}",
                             peer.party_id, peer.address, peer.port
@@ -157,9 +162,9 @@ pub async fn run_config_validation(config_path: &str) -> anyhow::Result<HealthCh
 
                     result.recommendations.push(format!(
                         "Config defines {} peers for threshold KMS at {}:{}",
-                        t.peers.len(),
-                        t.listen_address,
-                        t.listen_port
+                        threshold_conf.peers.len(),
+                        threshold_conf.listen_address,
+                        threshold_conf.listen_port
                     ));
                 }
             }
@@ -218,20 +223,24 @@ async fn check_connectivity(
 }
 
 // Helper function to process health status response
-fn process_health_status(
+async fn process_health_status(
     health_status: &kms_grpc::kms::v1::HealthStatusResponse,
     result: &mut HealthCheckResult,
 ) {
     // Set key material from health status response
-    let total_keys = health_status.my_fhe_keys + health_status.my_crs_keys;
-    result.key_material = Some(KeyMaterialCheck {
+    let total_keys = health_status.my_fhe_key_ids.len() + health_status.my_crs_ids.len();
+
+    // Use detailed key IDs from health status response
+    let key_material = KeyMaterialCheck {
         available: true,
-        fhe_keys: health_status.my_fhe_keys as usize,
-        crs_keys: health_status.my_crs_keys as usize,
-        preprocessing_keys: health_status.my_preprocessing_keys as usize,
+        fhe_key_ids: health_status.my_fhe_key_ids.clone(),
+        crs_ids: health_status.my_crs_ids.clone(),
+        preprocessing_key_ids: health_status.my_preprocessing_key_ids.clone(),
         storage_backend: health_status.my_storage_info.clone(),
         error: None,
-    });
+    };
+
+    result.key_material = Some(key_material);
 
     if total_keys == 0 {
         result.overall_health = HealthStatus::Degraded;
@@ -257,9 +266,9 @@ fn process_health_status(
                 endpoint: peer.endpoint.clone(),
                 reachable: peer.reachable,
                 latency_ms: peer.latency_ms,
-                fhe_keys: peer.fhe_keys as usize,
-                crs_keys: peer.crs_keys as usize,
-                preprocessing_keys: peer.preprocessing_keys as usize,
+                fhe_key_ids: peer.fhe_key_ids.clone(),
+                crs_ids: peer.crs_ids.clone(),
+                preprocessing_key_ids: peer.preprocessing_key_ids.clone(),
                 storage_info: peer.storage_info.clone(),
                 error: if peer.error.is_empty() {
                     None
@@ -308,9 +317,9 @@ async fn check_key_material_fallback(client: &GrpcHealthClient, result: &mut Hea
             let total_keys = material.fhe_key_ids.len() + material.crs_ids.len();
             result.key_material = Some(KeyMaterialCheck {
                 available: true,
-                fhe_keys: material.fhe_key_ids.len(),
-                crs_keys: material.crs_ids.len(),
-                preprocessing_keys: material.preprocessing_ids.len(),
+                fhe_key_ids: material.fhe_key_ids.clone(),
+                crs_ids: material.crs_ids.clone(),
+                preprocessing_key_ids: material.preprocessing_ids.clone(),
                 storage_backend: material.storage_info.clone(),
                 error: None,
             });
@@ -324,11 +333,11 @@ async fn check_key_material_fallback(client: &GrpcHealthClient, result: &mut Hea
         }
         Err(e) => {
             result.key_material = Some(KeyMaterialCheck {
-                fhe_keys: 0,
-                crs_keys: 0,
-                preprocessing_keys: 0,
-                storage_backend: String::new(),
                 available: false,
+                fhe_key_ids: Vec::new(),
+                crs_ids: Vec::new(),
+                preprocessing_key_ids: Vec::new(),
+                storage_backend: String::new(),
                 error: Some(e.to_string()),
             });
             result.overall_health = HealthStatus::Degraded;
@@ -363,10 +372,7 @@ async fn check_operator_key(client: &GrpcHealthClient, result: &mut HealthCheckR
 }
 
 /// Check live KMS instance
-pub async fn check_live(
-    endpoint: &str,
-    _config_path: Option<&Path>,
-) -> anyhow::Result<HealthCheckResult> {
+pub async fn check_live(endpoint: &str, _config_path: Option<&Path>) -> Result<HealthCheckResult> {
     let mut result = HealthCheckResult {
         config_valid: None,
         connectivity: None,
@@ -395,7 +401,7 @@ pub async fn check_live(
     // Try to get comprehensive health status first (includes peer health)
     match client.get_health_status().await {
         Ok(health_status) => {
-            process_health_status(&health_status, &mut result);
+            process_health_status(&health_status, &mut result).await;
         }
         Err(_) => {
             // Fall back to basic key material check if health status RPC not available
@@ -419,7 +425,7 @@ pub async fn check_live(
 pub async fn run_full_check(
     config_path: Option<&str>,
     endpoint: &str,
-) -> anyhow::Result<HealthCheckResult> {
+) -> Result<HealthCheckResult> {
     let mut result = check_live(endpoint, config_path.map(Path::new)).await?;
 
     // If we have config, parse it to get peer information
