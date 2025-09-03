@@ -578,7 +578,7 @@ jobs:
     steps:
       - name: check result
         run: |
-         echo 'needs.docker-golden-image.result'
+         echo '${{ needs.docker-golden-image.result }}'
   ############################################################################
   # ██████╗ ██████╗  ██████╗  ██████╗  ██████╗██████╗
   #██╔══██╗██╔══██╗██╔════╝ ██╔═══██╗██╔════╝██╔══██╗
