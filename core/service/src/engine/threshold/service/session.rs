@@ -29,20 +29,14 @@ const ERR_SESSION_NOT_INITIALIZED: &str = "SessionPreparer is not initialized";
 /// The other GRPC endpoints that use session should use `SessionPreparerGetter`.
 pub struct SessionPreparerManager {
     networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
-    role_assignment: Arc<RwLock<RoleAssignment>>,
     inner: SessionPreparerGetter,
 }
 
 impl SessionPreparerManager {
     /// Creates a new `SessionPreparerManager`.
-    pub fn empty(
-        name: String,
-        networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
-        role_assignment: Arc<RwLock<RoleAssignment>>,
-    ) -> Self {
+    pub fn empty(name: String, networking_manager: Arc<RwLock<GrpcNetworkingManager>>) -> Self {
         Self {
             networking_manager,
-            role_assignment,
             inner: SessionPreparerGetter {
                 session_preparer: Arc::new(RwLock::new(HashMap::new())),
                 name,
@@ -72,10 +66,6 @@ impl SessionPreparerManager {
         self.networking_manager.clone()
     }
 
-    pub async fn get_role_assignment(&self) -> Arc<RwLock<RoleAssignment>> {
-        self.role_assignment.clone()
-    }
-
     #[cfg(test)]
     pub(crate) fn new_test_session() -> Self {
         let role_assignment = RoleAssignment::from_iter((1..=4).map(|i| {
@@ -97,11 +87,7 @@ impl SessionPreparerManager {
             .unwrap(),
         ));
 
-        SessionPreparerManager::empty(
-            Role::indexed_from_one(1).to_string(),
-            networking_manager,
-            role_assignment,
-        )
+        SessionPreparerManager::empty(Role::indexed_from_one(1).to_string(), networking_manager)
     }
 }
 
@@ -164,7 +150,7 @@ impl SessionPreparer {
         base_kms: BaseKmsStruct,
         threshold: u8,
         my_role: Role,
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: RoleAssignment,
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
         prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>, // TODO make generic?
         prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,   // TODO make generic?
@@ -297,7 +283,7 @@ struct InnerSessionPreparer {
     pub base_kms: BaseKmsStruct,
     pub threshold: u8,
     pub my_role: Role,
-    pub role_assignment: Arc<RwLock<RoleAssignment>>,
+    pub role_assignment: RoleAssignment,
     pub networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
     pub prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>, // TODO make generic?
     pub prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,   // TODO make generic?
@@ -305,9 +291,8 @@ struct InnerSessionPreparer {
 
 impl InnerSessionPreparer {
     async fn own_identity(&self) -> anyhow::Result<Identity> {
-        let role_assignment_read = self.role_assignment.read().await;
         let id = some_or_tonic_abort(
-            role_assignment_read.get(&self.my_role),
+            self.role_assignment.get(&self.my_role),
             "Could not find my own identity in role assignments".to_string(),
         )?;
         Ok(id.to_owned())
@@ -320,7 +305,7 @@ impl InnerSessionPreparer {
     ) -> anyhow::Result<threshold_fhe::execution::runtime::session::NetworkingImpl> {
         let nm = self.networking_manager.read().await;
         let networking = nm
-            .make_session(session_id, self.role_assignment.clone(), network_mode)
+            .make_session(session_id, &self.role_assignment, network_mode)
             .await?;
         Ok(networking)
     }
@@ -329,12 +314,11 @@ impl InnerSessionPreparer {
         &self,
         session_id: SessionId,
     ) -> anyhow::Result<SessionParameters> {
-        let role_assignment = self.role_assignment.read().await;
         let parameters = SessionParameters::new(
             self.threshold,
             session_id,
             self.my_role,
-            role_assignment.keys().cloned().collect(),
+            self.role_assignment.keys().cloned().collect(),
         )?;
         Ok(parameters)
     }
@@ -346,13 +330,11 @@ impl InnerSessionPreparer {
     ) -> anyhow::Result<BaseSession> {
         let networking = self.get_networking(session_id, network_mode).await;
 
-        let role_assignment_read = self.role_assignment.read().await;
-
         let parameters = SessionParameters::new(
             self.threshold,
             session_id,
             self.my_role,
-            role_assignment_read.keys().cloned().collect(),
+            self.role_assignment.keys().cloned().collect(),
         )?;
         let base_session =
             BaseSession::new(parameters, networking?, self.base_kms.new_rng().await)?;
@@ -428,14 +410,13 @@ impl InnerSessionPreparer {
                 Identity("localhost".to_string(), 8080 + i as u16),
             )
         }));
-        let role_assignment = Arc::new(RwLock::new(role_assignment));
         let networking_manager = Arc::new(RwLock::new(
             GrpcNetworkingManager::new(
                 Role::indexed_from_one(1),
                 None,
                 None,
                 false,
-                role_assignment.clone(),
+                Arc::new(RwLock::new(role_assignment.clone())),
             )
             .unwrap(),
         ));

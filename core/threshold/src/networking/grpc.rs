@@ -340,10 +340,9 @@ impl GrpcNetworkingManager {
     pub async fn make_session(
         &self,
         session_id: SessionId,
-        role_assignment: Arc<RwLock<RoleAssignment>>,
+        role_assignment: &RoleAssignment,
         network_mode: NetworkMode,
     ) -> anyhow::Result<Arc<impl Networking>> {
-        let role_assignment = role_assignment.read().await;
         let party_count = role_assignment.len();
         let mut others = role_assignment.clone();
         others.remove(&self.owner);

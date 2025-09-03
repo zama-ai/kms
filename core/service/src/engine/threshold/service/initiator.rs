@@ -12,7 +12,10 @@ use kms_grpc::{
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
-        runtime::{party::Role, session::ParameterHandles},
+        runtime::{
+            party::{Role, RoleAssignment},
+            session::ParameterHandles,
+        },
         small_execution::prss::{PRSSInit, PRSSSetup},
     },
     networking::NetworkMode,
@@ -233,16 +236,20 @@ impl<
         // endpoint will be removed.
 
         let networking_manager = self.session_preparer_manager.get_networking_manager().await;
-        let role_assignment = self.session_preparer_manager.get_role_assignment().await;
 
         let peers = some_or_tonic_abort(self.threshold_config.peers.clone(), "Peer list not set in the configuration file, setting it through the context is unsupported yet".to_string())?;
+        let role_assignment: RoleAssignment = peers
+            .into_iter()
+            .map(|peer_config| peer_config.into_role_identity())
+            .collect();
 
         // Careful not to hold the write lock longer than needed
-        role_assignment.write().await.extend(
-            peers
-                .into_iter()
-                .map(|peer_config| peer_config.into_role_identity()),
-        );
+        // why is this needed??
+        // role_assignment.write().await.extend(
+        //     peers
+        //         .into_iter()
+        //         .map(|peer_config| peer_config.into_role_identity()),
+        // );
 
         let session_preparer = SessionPreparer::new(
             self.base_kms.new_instance().await,

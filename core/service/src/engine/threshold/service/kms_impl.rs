@@ -21,7 +21,7 @@ use threshold_fhe::{
             create_memory_factory, create_redis_factory,
             orchestration::producer_traits::SecureSmallProducerFactory, DKGPreprocessing,
         },
-        runtime::party::Role,
+        runtime::party::{Role, RoleAssignment},
         small_execution::prss::RobustSecurePrssInit,
         tfhe_internals::private_keysets::PrivateKeySet,
         zk::ceremony::SecureCeremony,
@@ -243,9 +243,6 @@ where
     let crs_info: HashMap<RequestId, CrsGenMetadata> =
         read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
-    // The mapping from roles to network addresses is dependent on contexts set dynamically, so we put it in a mutable map
-    let role_assignment = Arc::new(RwLock::new(HashMap::new()));
-
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
         Role::indexed_from_one(config.my_id),
         tls_config
@@ -253,7 +250,8 @@ where
             .map(|(_, client_config)| client_config.clone()),
         config.core_to_core_net,
         peer_tcp_proxy,
-        role_assignment.clone(),
+        // The mapping from roles to network addresses is dependent on contexts set dynamically, so we put it in a mutable map
+        Arc::new(RwLock::new(HashMap::new())),
     )?));
 
     // the initial MPC node might not accept any peers because initially there's no context
@@ -377,26 +375,21 @@ where
 
     // Note that the manager is empty, it needs to be filled with session preparers
     // For testing this needs to be done manually.
-    let session_preparer_manager = SessionPreparerManager::empty(
-        config.my_id.to_string(),
-        networking_manager.clone(),
-        role_assignment.clone(),
-    );
+    let session_preparer_manager =
+        SessionPreparerManager::empty(config.my_id.to_string(), networking_manager.clone());
 
     // Optionally add a testing session preparer.
     let _ = match config.peers {
         Some(ref peers) => {
-            let mut role_assignment_write = role_assignment.write().await;
-            role_assignment_write.extend(
-                peers
-                    .iter()
-                    .map(|peer_config| peer_config.into_role_identity()),
-            );
+            let role_assignment: RoleAssignment = peers
+                .iter()
+                .map(|peer_config| peer_config.into_role_identity())
+                .collect();
             let session_preparer = SessionPreparer::new(
                 base_kms.new_instance().await,
                 config.threshold,
                 Role::indexed_from_one(config.my_id),
-                role_assignment.clone(),
+                role_assignment,
                 networking_manager.clone(),
                 Arc::clone(&prss_setup_z128),
                 Arc::clone(&prss_setup_z64),
