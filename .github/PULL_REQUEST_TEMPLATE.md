@@ -17,7 +17,7 @@
 - [ ] My PR does not contain any breaking changes to the configuration and deployment files.
       (A change is _only_ considered breaking if a deployment configuration must be changed as part of an update. E.g. adding new fields, with default values is _not_ considered breaking). Or if it does then these steps must be taken:
     - [ ] My PR is labeled with `devops`.
-    - [ ] I have pinged the infra team on Slack (in the MPC channel) and I have updated the intermediate release notes to document this change. 
+    - [ ] I have pinged the infra team on Slack (in the MPC channel).
     - [ ] I have put a devops person on the PR as reviewer.
 - [ ] My PR does not contain breaking changes to the gRPC interface or data serialized into data in the service gRPC interface. In particular there are no changes to the `extraData` fields. Or if it does the following steps have been taken:
     - [ ] The PR is marked using `!` in accordance with conventional commits. E.g. `chore!: changed decryption format according to Q3 release`. 
