@@ -389,7 +389,7 @@ where
                 base_kms.new_instance().await,
                 config.threshold,
                 Role::indexed_from_one(config.my_id),
-                role_assignment,
+                role_assignment.clone(),
                 networking_manager.clone(),
                 Arc::clone(&prss_setup_z128),
                 Arc::clone(&prss_setup_z64),
@@ -399,6 +399,13 @@ where
                     RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES),
                     session_preparer,
                 )
+                .await;
+            // TODO this is a workaround where we need to set the same role assignment
+            // to the GrpcNetworkingManager.
+            networking_manager
+                .write()
+                .await
+                .set_global_role_assignment(role_assignment)
                 .await;
             Some(())
         }

@@ -209,6 +209,8 @@ pub struct GrpcNetworkingManager {
     pub opened_sessions_tracker: Arc<DashMap<Role, u64>>,
     owner: Role,
     conf: OptionConfigWrapper,
+    // TODO: this data structure should contain mapping from context to RoleAssignment
+    // it should be possible to add contexts, but the value of the mapping should be immutable
     role_assignment: Arc<RwLock<RoleAssignment>>,
     pub sending_service: GrpcSendingService,
     #[cfg(feature = "testing")]
@@ -330,6 +332,12 @@ impl GrpcNetworkingManager {
             #[cfg(feature = "testing")]
             force_tls,
         })
+    }
+
+    // TODO: in the future this function should include a context parameter
+    pub async fn set_global_role_assignment(&self, role_assignment: RoleAssignment) {
+        let mut write_lock = self.role_assignment.write().await;
+        *write_lock = role_assignment;
     }
 
     /// Create a new session from the network manager.
