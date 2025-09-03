@@ -375,8 +375,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             my_preprocessing_keys: 0, // Centralized doesn't use preprocessing
             my_storage_info: own_material.storage_info,
             node_type: "centralized".to_string(),
-            my_party_id: 0,        // Not applicable for centralized
-            threshold_required: 0, // Not applicable for centralized
+            my_party_id: 1,        // Not applicable for centralized
+            threshold_required: 1, // Not applicable for centralized
             nodes_reachable: 1,    // Only self
         };
 
