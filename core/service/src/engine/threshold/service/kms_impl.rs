@@ -12,7 +12,7 @@ use tfhe::{
     core_crypto::prelude::LweKeyswitchKey, integer::compression_keys::DecompressionKey,
     named::Named, Versionize,
 };
-use tfhe_versionable::VersionsDispatch;
+use tfhe_versionable::{Upgrade, Version, VersionsDispatch};
 use threshold_fhe::{
     algebra::{galois_rings::degree_4::ResiduePolyF4Z128, structure_traits::Ring},
     execution::{
@@ -23,7 +23,7 @@ use threshold_fhe::{
         },
         runtime::party::{Role, RoleAssignment},
         small_execution::prss::RobustSecurePrssInit,
-        tfhe_internals::{private_keysets::PrivateKeySet, public_keysets::FhePubKeySet},
+        tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
         zk::ceremony::SecureCeremony,
     },
     networking::{
@@ -56,7 +56,7 @@ use crate::{
     cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
     engine::{
         backup_operator::RealBackupOperator,
-        base::{compute_info, BaseKmsStruct, KeyGenCallValues, DSEP_PUBDATA_KEY},
+        base::{BaseKmsStruct, CrsGenMetadata, KeyGenMetadata},
         context_manager::RealContextManager,
         prepare_shutdown_signals,
         threshold::{
@@ -93,9 +93,10 @@ use super::{
 #[cfg(feature = "insecure")]
 use super::{crs_generator::RealInsecureCrsGenerator, key_generator::RealInsecureKeyGenerator};
 
-#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum ThresholdFheKeysVersioned {
-    V0(ThresholdFheKeys),
+    V0(ThresholdFheKeysV0),
+    V1(ThresholdFheKeys),
 }
 
 /// These are the internal key materials (public and private)
@@ -107,7 +108,32 @@ pub struct ThresholdFheKeys {
     pub integer_server_key: tfhe::integer::ServerKey,
     pub sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey>,
     pub decompression_key: Option<DecompressionKey>,
-    pub pk_meta_data: KeyGenCallValues,
+    pub meta_data: KeyGenMetadata,
+}
+
+/// These are the internal key materials (public and private)
+/// that's needed for decryption, user decryption and verifying a proven input.
+#[derive(Clone, Serialize, Deserialize, Version)]
+pub struct ThresholdFheKeysV0 {
+    pub private_keys: PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
+    pub integer_server_key: tfhe::integer::ServerKey,
+    pub sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey>,
+    pub decompression_key: Option<DecompressionKey>,
+    pub pk_meta_data: HashMap<PubDataType, SignedPubDataHandleInternal>,
+}
+
+impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV0 {
+    type Error = std::convert::Infallible;
+
+    fn upgrade(self) -> Result<ThresholdFheKeys, Self::Error> {
+        Ok(ThresholdFheKeys {
+            private_keys: self.private_keys,
+            integer_server_key: self.integer_server_key,
+            sns_key: self.sns_key,
+            decompression_key: self.decompression_key,
+            meta_data: KeyGenMetadata::LegacyV0(self.pk_meta_data),
+        })
+    }
 }
 
 impl ThresholdFheKeys {
@@ -136,38 +162,18 @@ impl std::fmt::Debug for ThresholdFheKeys {
             .field("private_keys", &"ommitted")
             .field("server_key", &"ommitted")
             .field("decompression_key", &"ommitted")
-            .field("pk_meta_data", &self.pk_meta_data)
+            .field("pk_meta_data", &self.meta_data)
             .field("ksk", &"ommitted")
             .finish()
     }
 }
 
-pub type BucketMetaStore = Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>;
-
-/// Compute all the info of a [FhePubKeySet] and return the result as as [KeyGenCallValues]
-pub fn compute_all_info(
-    sig_key: &PrivateSigKey,
-    fhe_key_set: &FhePubKeySet,
-    domain: &alloy_sol_types::Eip712Domain,
-) -> anyhow::Result<KeyGenCallValues> {
-    //Compute all the info required for storing
-    let pub_key_info = compute_info(sig_key, &DSEP_PUBDATA_KEY, &fhe_key_set.public_key, domain);
-    let serv_key_info = compute_info(sig_key, &DSEP_PUBDATA_KEY, &fhe_key_set.server_key, domain);
-
-    //Make sure we did manage to compute the info
-    Ok(match (pub_key_info, serv_key_info) {
-        (Ok(pub_key_info), Ok(serv_key_info)) => {
-            let mut info = HashMap::new();
-            info.insert(PubDataType::PublicKey, pub_key_info);
-            info.insert(PubDataType::ServerKey, serv_key_info);
-            info
-        }
-        _ => {
-            return Err(anyhow_error_and_log(
-                "Could not compute info on some public key element",
-            ));
-        }
-    })
+#[derive(Clone)]
+pub struct BucketMetaStore {
+    pub(crate) preprocessing_id: RequestId,
+    pub(crate) external_signature: Vec<u8>,
+    pub(crate) preprocessing_store: Arc<Mutex<Box<dyn DKGPreprocessing<ResiduePolyF4Z128>>>>,
+    pub(crate) dkg_param: DKGParams,
 }
 
 #[cfg(not(feature = "insecure"))]
@@ -243,14 +249,14 @@ where
         .map(|(r, com)| (r, com.custodian_context().to_owned()))
         .collect();
     for (id, info) in key_info_versioned.clone().into_iter() {
-        public_key_info.insert(id, info.pk_meta_data.clone());
+        public_key_info.insert(id, info.meta_data.clone());
 
         let pk = read_pk_at_request_id(&public_storage, &id).await?;
         pk_map.insert(id, pk);
     }
 
     // load crs_info (roughly hashes of CRS) from storage
-    let crs_info: HashMap<RequestId, SignedPubDataHandleInternal> =
+    let crs_info: HashMap<RequestId, CrsGenMetadata> =
         read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
     // set up the MPC service
@@ -543,6 +549,7 @@ where
     let insecure_keygenerator = RealInsecureKeyGenerator::from_real_keygen(&keygenerator).await;
 
     let keygen_preprocessor = RealPreprocessor {
+        sig_key: Arc::clone(&base_kms.sig_key),
         prss_setup: prss_setup_z128,
         preproc_buckets,
         preproc_factory,
@@ -649,6 +656,8 @@ async fn extract_tls_certs(
 
 #[cfg(test)]
 mod tests {
+    use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
+
     use super::*;
 
     impl ThresholdFheKeys {
@@ -685,7 +694,12 @@ mod tests {
                 integer_server_key,
                 sns_key,
                 decompression_key,
-                pk_meta_data: HashMap::new(),
+                meta_data: KeyGenMetadata::new(
+                    RequestId::zeros(),
+                    RequestId::zeros(),
+                    HashMap::new(),
+                    vec![],
+                ),
             };
 
             (priv_key_set, pub_key_set)

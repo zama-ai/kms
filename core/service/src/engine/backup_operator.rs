@@ -12,6 +12,7 @@ use crate::{
     },
     engine::{
         base::BaseKmsStruct,
+        base::CrsGenMetadata,
         context::ContextInfo,
         threshold::service::ThresholdFheKeys,
         traits::BackupOperator,
@@ -35,7 +36,7 @@ use kms_grpc::{
 };
 use kms_grpc::{
     kms::v1::{Empty, KeyMaterialAvailabilityResponse, OperatorPublicKey},
-    rpc_types::{PrivDataType, SignedPubDataHandleInternal},
+    rpc_types::PrivDataType,
 };
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
@@ -464,12 +465,8 @@ where
                     .await?;
             }
             PrivDataType::CrsInfo => {
-                restore_data_type::<PrivS, SignedPubDataHandleInternal>(
-                    priv_storage,
-                    backup_vault,
-                    cur_type,
-                )
-                .await?;
+                restore_data_type::<PrivS, CrsGenMetadata>(priv_storage, backup_vault, cur_type)
+                    .await?;
             }
             PrivDataType::FhePrivateKey => {
                 restore_data_type::<PrivS, FhePrivateKey>(priv_storage, backup_vault, cur_type)
@@ -563,7 +560,7 @@ where
                             .await?;
                         }
                         PrivDataType::CrsInfo => {
-                            update_specific_backup_vault::<PrivS, SignedPubDataHandleInternal>(
+                            update_specific_backup_vault::<PrivS, CrsGenMetadata>(
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,

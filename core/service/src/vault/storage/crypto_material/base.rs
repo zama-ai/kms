@@ -6,7 +6,11 @@ use crate::{
     anyhow_error_and_warn_log,
     backup::operator::{BackupCommitments, InnerRecoveryRequest},
     cryptography::internal_crypto_types::PrivateSigKey,
-    engine::{context::ContextInfo, threshold::service::ThresholdFheKeys},
+    engine::{
+        base::{CrsGenMetadata, KeyGenMetadata},
+        context::ContextInfo,
+        threshold::service::ThresholdFheKeys,
+    },
     grpc::metastore_status_service::CustodianMetaStore,
     util::meta_store::MetaStore,
     vault::{
@@ -20,10 +24,7 @@ use crate::{
     },
 };
 use kms_grpc::{
-    rpc_types::{
-        PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
-        WrappedPublicKeyOwned,
-    },
+    rpc_types::{PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
     RequestId,
 };
 use serde::Serialize;
@@ -297,10 +298,7 @@ where
     pub async fn purge_key_material(
         &self,
         req_id: &RequestId,
-        mut guarded_meta_store: RwLockWriteGuard<
-            '_,
-            MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>,
-        >,
+        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
     ) {
         // Lock all stores here as storing will be executed concurrently and hence we can otherwise not enforce the locking order
         let mut pub_storage = self.public_storage.lock().await;
@@ -393,8 +391,8 @@ where
         &self,
         req_id: &RequestId,
         pp: CompactPkeCrs,
-        crs_info: SignedPubDataHandleInternal,
-        meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
+        crs_info: CrsGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     ) {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
@@ -494,7 +492,7 @@ where
     pub async fn purge_crs_material(
         &self,
         req_id: &RequestId,
-        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<SignedPubDataHandleInternal>>,
+        mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<CrsGenMetadata>>,
     ) {
         // Enforce locking order for internal types
         let mut pub_storage = self.public_storage.lock().await;
@@ -804,8 +802,8 @@ where
         &self,
         req_id: &RequestId,
         decompression_key: DecompressionKey,
-        info: HashMap<PubDataType, SignedPubDataHandleInternal>,
-        meta_store: Arc<RwLock<MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>>>,
+        info: KeyGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up

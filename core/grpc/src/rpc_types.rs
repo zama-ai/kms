@@ -1,8 +1,8 @@
+use crate::kms::v1::UserDecryptionResponsePayload;
 use crate::kms::v1::{
     CustodianRecoveryOutput, CustodianRecoveryRequest, Eip712DomainMsg, TypedCiphertext,
     TypedPlaintext, TypedSigncryptedCiphertext,
 };
-use crate::kms::v1::{SignedPubDataHandle, UserDecryptionResponsePayload};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use tfhe::integer::bigint::StaticUnsignedBigInt;
 use tfhe::named::Named;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{FheTypes, Versionize};
-use tfhe_versionable::VersionsDispatch;
+use tfhe_versionable::{Version, VersionsDispatch};
 use threshold_fhe::execution::runtime::party::Role;
 
 pub use crate::identifiers::{KeyId, RequestId, ID_LENGTH};
@@ -39,63 +39,57 @@ pub static USER_DECRYPT_REQUEST_NAME: &str = "user_decrypt_request";
 
 static UNSUPPORTED_FHE_TYPE_STR: &str = "UnsupportedFheType";
 
-alloy_sol_types::sol! {
-    struct UserDecryptResponseVerification {
-        bytes publicKey;
-        bytes32[] ctHandles;
-        bytes userDecryptedShare;
-        bytes extraData;
+/// The format of what will be stored, and returned in gRPC, as a result of CRS generation in the KMS
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
+pub enum SignedPubDataHandleInternalVersioned {
+    V0(SignedPubDataHandleInternal),
+}
+
+/// This type is the internal type that corresponds to
+/// the generate protobuf type `SignedPubDataHandle`.
+///
+/// It's needed because we are not able to derive versioned
+/// for the protobuf type.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(SignedPubDataHandleInternalVersioned)]
+pub struct SignedPubDataHandleInternal {
+    // Digest (the 256-bit hex-encoded value, computed using compute_info/handle)
+    // This lower-case hex values without the 0x prefix.
+    pub key_handle: String,
+    // The signature on the handle
+    // OBSOLETE: no longer in use, but cannot be removed because of backwards compatibility
+    pub signature: Vec<u8>,
+    // The signature on the key for the external recipient
+    // (e.g. using EIP712 for fhevm)
+    pub external_signature: Vec<u8>,
+}
+
+impl Named for SignedPubDataHandleInternal {
+    const NAME: &'static str = "SignedPubDataHandleInternal";
+}
+
+impl SignedPubDataHandleInternal {
+    pub fn new(
+        key_handle: String,
+        signature: Vec<u8>,
+        external_signature: Vec<u8>,
+    ) -> SignedPubDataHandleInternal {
+        SignedPubDataHandleInternal {
+            key_handle,
+            signature,
+            external_signature,
+        }
     }
 }
 
-// This is used internally to link a request and a response.
-alloy_sol_types::sol! {
-    struct UserDecryptionLinker {
-        bytes publicKey;
-        bytes32[] handles;
-        address userAddress;
-    }
-}
-
-// Solidity struct for decryption result signature
-// Struct needs to match what is in
-// https://github.com/zama-ai/gateway-l2/blob/main/contracts/DecryptionManager.sol#L18
-// and the name must be what is defined under `EIP712_PUBLIC_DECRYPT_TYPE`
-alloy_sol_types::sol! {
-    struct PublicDecryptVerification {
-        bytes32[] ctHandles;
-        bytes decryptedResult;
-        bytes extraData;
-    }
-}
-
-// Solidity struct for signing the FHE public key
-alloy_sol_types::sol! {
-    struct FhePubKey {
-        bytes pubkey;
-    }
-}
-
-// Solidity struct for signing the FHE server key
-alloy_sol_types::sol! {
-    struct FheServerKey {
-        bytes server_key;
-    }
-}
-
-// Solidity struct for signing the CRS
-alloy_sol_types::sol! {
-    struct CRS {
-        bytes crs;
-    }
-}
-
-// Solidity struct for DecompressionUpgradeKey
-alloy_sol_types::sol! {
-    struct FheDecompressionUpgradeKey {
-        bytes decompression_upgrade_key;
-    }
-}
+/// Wrapper struct to allow upgrading of CrsGenMetadata.
+/// This is needed because `SignedPubDataHandleInternal`
+/// still need to be supported for other types so it cannot derive Version.
+/// See https://github.com/zama-ai/tfhe-rs/blob/main/utils/tfhe-versionable/examples/transparent_then_not.rs
+/// for more details.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Version)]
+#[repr(transparent)]
+pub struct CrsGenSignedPubDataHandleInternalWrapper(pub SignedPubDataHandleInternal);
 
 // This function needs to use the non-wasm feature because tonic is not available in wasm builds.
 #[cfg(feature = "non-wasm")]
@@ -168,66 +162,6 @@ pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712D
         salt: domain.salt.map(|x| x.to_vec()),
     };
     Ok(domain_msg)
-}
-
-/// The format of what will be stored, and returned in gRPC, as a result of CRS generation in the KMS
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
-pub enum SignedPubDataHandleInternalVersioned {
-    V0(SignedPubDataHandleInternal),
-}
-
-/// This type is the internal type that corresponds to
-/// the generate protobuf type `SignedPubDataHandle`.
-///
-/// It's needed because we are not able to derive versioned
-/// for the protobuf type.
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(SignedPubDataHandleInternalVersioned)]
-pub struct SignedPubDataHandleInternal {
-    // Digest (the 256-bit hex-encoded value, computed using compute_info/handle)
-    pub key_handle: String,
-    // The signature on the handle
-    pub signature: Vec<u8>,
-    // The signature on the key for the external recipient
-    // (e.g. using EIP712 for fhevm)
-    pub external_signature: Vec<u8>,
-}
-
-impl Named for SignedPubDataHandleInternal {
-    const NAME: &'static str = "SignedPubDataHandleInternal";
-}
-
-impl SignedPubDataHandleInternal {
-    pub fn new(
-        key_handle: String,
-        signature: Vec<u8>,
-        external_signature: Vec<u8>,
-    ) -> SignedPubDataHandleInternal {
-        SignedPubDataHandleInternal {
-            key_handle,
-            signature,
-            external_signature,
-        }
-    }
-}
-
-impl From<SignedPubDataHandle> for SignedPubDataHandleInternal {
-    fn from(handle: SignedPubDataHandle) -> Self {
-        SignedPubDataHandleInternal {
-            key_handle: handle.key_handle,
-            signature: handle.signature,
-            external_signature: handle.external_signature,
-        }
-    }
-}
-impl From<SignedPubDataHandleInternal> for SignedPubDataHandle {
-    fn from(crs: SignedPubDataHandleInternal) -> Self {
-        SignedPubDataHandle {
-            key_handle: crs.key_handle,
-            signature: crs.signature,
-            external_signature: crs.external_signature,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
@@ -429,6 +363,8 @@ impl crate::kms::v1::UserDecryptionRequest {
     /// to the user *and* to the KMS.
     /// So we can only use these information to link the request and the response.
     pub fn compute_link_checked(&self) -> anyhow::Result<(Vec<u8>, alloy_sol_types::Eip712Domain)> {
+        use crate::solidity_types::UserDecryptionLinker;
+
         let domain = protobuf_to_alloy_domain(
             self.domain
                 .as_ref()

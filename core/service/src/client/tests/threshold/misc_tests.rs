@@ -316,7 +316,7 @@ async fn test_ratelimiter() {
 
     let req_id = derive_request_id("test rate limiter 1").unwrap();
     let req = internal_client
-        .crs_gen_request(&req_id, Some(16), Some(FheParameter::Test), domain.clone())
+        .crs_gen_request(&req_id, Some(16), Some(FheParameter::Test), &domain)
         .unwrap();
     let mut cur_client = kms_clients.get(&1).unwrap().clone();
     let res = cur_client.crs_gen(req).await;
@@ -328,7 +328,7 @@ async fn test_ratelimiter() {
     // processed in the kms.
     let req_id_2 = derive_request_id("test rate limiter2").unwrap();
     let req_2 = internal_client
-        .crs_gen_request(&req_id_2, Some(1), Some(FheParameter::Test), domain)
+        .crs_gen_request(&req_id_2, Some(1), Some(FheParameter::Test), &domain)
         .unwrap();
     let res = cur_client.crs_gen(req_2).await;
     assert_eq!(res.unwrap_err().code(), tonic::Code::ResourceExhausted);
