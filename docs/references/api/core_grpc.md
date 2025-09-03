@@ -681,7 +681,7 @@ message Empty {}
 ```proto
 message KeyMaterialAvailabilityResponse {
   repeated string fhe_key_ids = 1;
-  repeated string crs_key_ids = 2;
+  repeated string crs_ids = 2;
   repeated string preprocessing_ids = 3;
   string storage_info = 4;
 }
@@ -694,7 +694,7 @@ This RPC provides a comprehensive view of all available key material in the KMS,
 The response contains:
 
 - `fhe_key_ids`: List of all available FHE key IDs (request IDs from KeyGen operations)
-- `crs_key_ids`: List of all available CRS key IDs (request IDs from CrsGen operations)  
+- `crs_ids`: List of all available CRS key IDs (request IDs from CrsGen operations)  
 - `preprocessing_ids`: List of all available preprocessing material IDs (request IDs from KeyGenPreproc operations in threshold KMS, empty for centralized KMS)
 - `storage_info`: Diagnostic information about the storage backend (e.g., "Centralized KMS" or "Threshold KMS")
 
@@ -740,20 +740,20 @@ message HealthStatusResponse {
     // Connection latency in milliseconds
     uint32 latency_ms = 4;
     
-    // Number of FHE keys on peer
-    uint32 fhe_keys = 5;
-    
-    // Number of CRS keys on peer
-    uint32 crs_keys = 6;
-    
-    // Number of preprocessing keys on peer
-    uint32 preprocessing_keys = 7;
-    
     // Storage info from peer
-    string storage_info = 8;
+    string storage_info = 5;
     
     // Error message if peer is unreachable
-    string error = 9;
+    string error = 6;
+    
+    // Key IDs for FHE keys on peer (when available)
+    repeated string fhe_key_ids = 7;
+    
+    // Key IDs for CRS keys on peer (when available)
+    repeated string crs_ids = 8;
+    
+    // Key IDs for preprocessing keys on peer (when available)
+    repeated string preprocessing_key_ids = 9;
   }
   
   // Health status of all peers
@@ -782,10 +782,10 @@ The response contains:
 - `status`: Overall health assessment - "healthy", "degraded", or "unhealthy"
 - `peers`: Detailed health information for each peer in threshold mode, including:
   - Connectivity status and latency
-  - Key material counts on each peer
+  - Actual key IDs for FHE keys, CRS keys, and preprocessing material (when available)
   - Storage backend information
   - Error details if unreachable
-- `my_*` fields: Self key material counts and storage information
+- `my_*` fields: Self key material IDs and storage information
 - Configuration details: node type, party ID, threshold requirements, and reachable node count
 
 Health status levels:
@@ -801,6 +801,12 @@ This endpoint is useful for:
 - Operational dashboards
 
 The endpoint performs real-time connectivity checks to peers and returns current system status.
+
+**Implementation Notes:**
+- Self key material is retrieved directly from internal storage components (no redundant gRPC calls)
+- Peer key material is fetched via gRPC calls to each peer's health endpoint
+- Preprocessing key IDs are included for threshold nodes when available from the keygen preprocessor
+- Storage backend information provides visibility into the underlying storage type (file, RAM, S3)
 
 </details>
 

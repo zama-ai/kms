@@ -9,19 +9,17 @@ readme = "README.md"
 # Inherited from repository root Cargo.toml
 
 [dependencies]
-# Reuse existing KMS dependencies
+anyhow.workspace = true
+clap.workspace = true
+hex.workspace = true
 kms-grpc = { path = "../../core/grpc" }
-
-# Use workspace dependencies for consistency
-tokio = { workspace = true }
-tonic = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-anyhow = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
-
-# Direct dependencies
+kms = { path = "../../core/service" }
+observability.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
 toml = "0.9.5"
-hex = "0.4"
+tonic.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+validator.workspace = true

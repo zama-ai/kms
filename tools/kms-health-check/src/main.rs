@@ -37,7 +37,7 @@ enum Commands {
     },
     /// Check live KMS instance health
     Live {
-        /// KMS endpoint (e.g., http://localhost:9090)
+        /// KMS endpoint (e.g., http://localhost:50100)
         #[arg(short, long)]
         endpoint: String,
 

@@ -4,10 +4,10 @@ Health monitoring tool for Zama KMS deployments. Validates configurations, check
 
 ## Features
 
-- **Config Validation**: Parse and validate KMS configuration files
+- **Config Validation**: Parse and validate KMS configuration files using actual KMS server validation logic
 - **Connectivity Check**: Test gRPC endpoint connectivity and latency
-- **Key Material Check**: Verify FHE keys, CRS keys, and preprocessing material
-- **Peer Health**: Check connectivity to all threshold peers (threshold mode only)
+- **Key Material Check**: Display actual key IDs for FHE keys, CRS keys, and preprocessing material
+- **Peer Health**: Check connectivity to all threshold peers with detailed key information
 - **JSON Output**: Machine-readable output for CI/CD integration
 
 ## Usage
@@ -20,13 +20,13 @@ cargo build --release -p kms-health-check
 kms-health-check config --file /path/to/config.toml
 
 # Check running instance
-kms-health-check live --endpoint localhost:9091
+kms-health-check live --endpoint localhost:50100
 
 # Full check (config + running instance)
-kms-health-check full --config /path/to/config.toml --endpoint localhost:9091
+kms-health-check full --config /path/to/config.toml --endpoint localhost:50100
 
 # JSON output for monitoring
-kms-health-check full --config /path/to/config.toml --endpoint localhost:9091 --format json
+kms-health-check full --config /path/to/config.toml --endpoint localhost:50100 --format json
 ```
 
 ## Example Output
@@ -63,8 +63,10 @@ kms-health-check full --config /path/to/config.toml --endpoint localhost:9091 --
 
 [KEY MATERIAL]:
   [OK] FHE Keys: 1
+       - a178eec2319d082f82f844ee2d07f2357ab643511786f116ecf7afba74f28ffe
   [OK] CRS Keys: 0
   [OK] Preprocessing: 1
+       - b289ffd3420e193g93g955ff3e18g3468bc754622897g227fdf8bgcb85g39ggg
   [OK] Storage: Threshold KMS - file storage with root_path '/app/kms/core/service/keys/PRIV-p3'
 
 [OPERATOR KEY]:
@@ -72,11 +74,26 @@ kms-health-check full --config /path/to/config.toml --endpoint localhost:9091 --
 
 [PEER STATUS]:
   3 of 3 peers reachable
-  [OK] Party 1 @ http://dev-kms-core-1:50100 (latency: 0ms, FHE: 1, CRS: 0, Preprocessing: 1)
+  [OK] Party 1 @ http://dev-kms-core-1:50100 (1ms)
+       FHE Keys: 1
+         - a178eec2319d082f82f844ee2d07f2357ab643511786f116ecf7afba74f28ffe
+       CRS Keys: 0
+       Preprocessing: 1
+         - b289ffd3420e193g93g955ff3e18g3468bc754622897g227fdf8bgcb85g39ggg
        Storage: Threshold KMS - file storage with root_path '/app/kms/core/service/keys/PRIV-p1'
-  [OK] Party 2 @ http://dev-kms-core-2:50200 (latency: 41ms, FHE: 1, CRS: 0, Preprocessing: 1)
+  [OK] Party 2 @ http://dev-kms-core-2:50200 (41ms)
+       FHE Keys: 1
+         - a178eec2319d082f82f844ee2d07f2357ab643511786f116ecf7afba74f28ffe
+       CRS Keys: 0
+       Preprocessing: 1
+         - b289ffd3420e193g93g955ff3e18g3468bc754622897g227fdf8bgcb85g39ggg
        Storage: Threshold KMS - file storage with root_path '/app/kms/core/service/keys/PRIV-p2'
-  [OK] Party 4 @ http://dev-kms-core-4:50400 (latency: 0ms, FHE: 1, CRS: 0, Preprocessing: 1)
+  [OK] Party 4 @ http://dev-kms-core-4:50400 (10ms)
+       FHE Keys: 1
+         - a178eec2319d082f82f844ee2d07f2357ab643511786f116ecf7afba74f28ffe
+       CRS Keys: 0
+       Preprocessing: 1
+         - b289ffd3420e193g93g955ff3e18g3468bc754622897g227fdf8bgcb85g39ggg
        Storage: Threshold KMS - file storage with root_path '/app/kms/core/service/keys/PRIV-p4'
 
 [INFO]:
@@ -95,14 +112,36 @@ kms-health-check full --config /path/to/config.toml --endpoint localhost:9091 --
 
 Default is text with colors. Use `--format json` for machine-readable output.
 
-## gRPC Health Endpoint
+## gRPC Health Endpoints
 
-The KMS exposes a `GetHealthStatus` gRPC endpoint that returns comprehensive health information:
+The KMS exposes two complementary gRPC endpoints for health monitoring and key material inspection:
+
+```mermaid
+graph TD
+    A[Health Check Tool] --> B[GetHealthStatus on Self]
+    
+    B --> C[Self KMS Core]
+    C --> D[Query own storage]
+    C --> E[GetKeyMaterialAvailability on each Peer]
+    
+    D --> F[Own key counts]
+    E --> G[Peer key IDs + connectivity]
+    
+    F --> H[HealthStatusResponse]
+    G --> H
+    
+    H --> I[Display: Self + Peer key details]
+    
+    style A fill:#e1f5fe
+    style C fill:#f3e5f5
+    style I fill:#e8f5e8
+```
 
 ### Endpoint
 - **Service**: `kms.v1.CoreService`
 - **Method**: `GetHealthStatus(Empty) -> HealthStatusResponse`
-- **Ports**: 9090 (centralized), 9091 (threshold)
+- **Additional**: `GetKeyMaterialAvailability(Empty) -> KeyMaterialAvailabilityResponse`
+- **Ports**: 50100 (default KMS port)
 
 ### Response Structure
 
@@ -140,14 +179,28 @@ message PeerHealth {
 }
 ```
 
+### Key Material Availability Response
+
+The health check tool now uses the `GetKeyMaterialAvailability` endpoint to display actual key IDs:
+
+```protobuf
+message KeyMaterialAvailabilityResponse {
+  repeated string fhe_key_ids = 1;
+  repeated string crs_ids = 2;
+  repeated string preprocessing_ids = 3;
+  string storage_info = 4;
+}
+```
+
 ### Usage Example
 
 ```bash
 # Using grpcurl
-grpcurl -plaintext localhost:9091 kms.v1.CoreService/GetHealthStatus
+grpcurl -plaintext localhost:50100 kms.v1.CoreService/GetHealthStatus
+grpcurl -plaintext localhost:50100 kms.v1.CoreService/GetKeyMaterialAvailability
 
-# Using the health check tool (which calls this endpoint internally)
-kms-health-check live --endpoint localhost:9091
+# Using the health check tool (which calls both endpoints internally)
+kms-health-check live --endpoint localhost:50100
 ```
 
 ## Integration
