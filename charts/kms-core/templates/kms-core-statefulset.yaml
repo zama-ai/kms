@@ -326,9 +326,9 @@ spec:
                   fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
             {{- if .Values.minio.enabled }}
             - name: AWS_ACCESS_KEY_ID
-              value: {{ .Values.minio.username}}
+              value: {{ .Values.minio.username | quote }}
             - name: AWS_SECRET_ACCESS_KEY
-              value: {{ .Values.minio.password}}
+              value: {{ .Values.minio.password | quote }}
             {{- end }}
             - name: "NO_COLOR"
               value: "true"
@@ -432,9 +432,9 @@ spec:
               value: {{ .Values.rustLog }}
             {{- if .Values.minio.enabled }}
             - name: AWS_ACCESS_KEY_ID
-              value: {{ .Values.minio.username}}
+              value: {{ .Values.minio.username | quote }}
             - name: AWS_SECRET_ACCESS_KEY
-              value: {{ .Values.minio.password}}
+              value: {{ .Values.minio.password | quote }}
             {{- end }}
           {{- if .Values.kmsCore.envFrom.configmap.name }}
             - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}

@@ -47,6 +47,7 @@ jobs:
       changes-core-threshold: ${{ steps.filter.outputs.core-threshold }}
       changes-docs: ${{ steps.filter.outputs.docs }}
       changes-helm-chart: ${{ steps.filter.outputs.helm-chart }}
+      changes-rust-golden-image: ${{ steps.filter.outputs.rust-golden-image }}
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       with:
@@ -86,6 +87,8 @@ jobs:
             - 'docs/**'
           helm-chart:
             - 'charts/**'
+          rust-golden-image:
+            - 'docker/base/**'
 
 
   ############################################################################
@@ -264,8 +267,9 @@ jobs:
       - test-core-client
       - docker-golden-image
     if: >-
-      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+      (needs.docker-golden-image.result == 'skipped' || needs.docker-golden-image.result == 'success') &&
+      ((startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')))
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
     with:
       docker-file: "./docker/core-client/Dockerfile"
@@ -404,8 +408,9 @@ jobs:
       - test-core-service
       - docker-golden-image
     if: >-
-      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+      (needs.docker-golden-image.result == 'skipped' || needs.docker-golden-image.result == 'success') &&
+      ((startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')))
     uses: ./.github/workflows/common-docker-big-instance.yml
     with:
       docker-file: "./docker/core/service/Dockerfile"
@@ -541,6 +546,7 @@ jobs:
   ############################################################################
   docker-golden-image:
     name: global-common-workflow/docker-golden-image
+    needs: check-changes
     permissions:
       actions: read
       contents: read
@@ -549,8 +555,9 @@ jobs:
       packages: write
       attestations: write
     if: >-
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
-      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
+      needs.check-changes.outputs.changes-rust-golden-image == 'true' &&
+      ((github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
+      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main'))
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
     with:
       docker-file: "./docker/base/Dockerfile"
