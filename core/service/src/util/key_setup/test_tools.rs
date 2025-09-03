@@ -554,14 +554,15 @@ pub async fn purge_priv(priv_path: Option<&Path>, amount_parties: usize) {
 }
 
 pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
-    let final_central_path = match backup_path {
+    let final_backup_central_path = match backup_path {
         Some(path) => path.to_path_buf(),
         None => FileStorage::default_path(StorageType::BACKUP, None).unwrap(),
     };
     // Ignore if the dir does not exist
-    let _ = tokio::fs::remove_dir_all(&final_central_path).await;
+    let _ = tokio::fs::remove_dir_all(&final_backup_central_path).await;
+
     for cur_party in 1..=amount_parties {
-        let final_threshold_path = match backup_path {
+        let final_backup_threshold_path = match backup_path {
             Some(path) => path.to_path_buf(),
             None => FileStorage::default_path(
                 StorageType::BACKUP,
@@ -570,7 +571,40 @@ pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
             .unwrap(),
         };
         // Ignore if the dir does not exist
-        let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
+        let _ = tokio::fs::remove_dir_all(&final_backup_threshold_path).await;
+    }
+}
+
+pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
+    let final_backup_central_path = match path {
+        Some(path) => path.to_path_buf(),
+        None => FileStorage::default_path(StorageType::BACKUP, None).unwrap(),
+    };
+    let _ = tokio::fs::remove_dir_all(
+        &final_backup_central_path.join(PubDataType::RecoveryRequest.to_string()),
+    )
+    .await;
+    let _ = tokio::fs::remove_dir_all(
+        &final_backup_central_path.join(PubDataType::Commitments.to_string()),
+    )
+    .await;
+    for cur_party in 1..=amount_parties {
+        // Next purge recovery info
+        let final_backup_threshold_path = match path {
+            Some(path) => path.to_path_buf(),
+            None => {
+                FileStorage::default_path(StorageType::PUB, Some(Role::indexed_from_one(cur_party)))
+                    .unwrap()
+            }
+        };
+        let _ = tokio::fs::remove_dir_all(
+            &final_backup_threshold_path.join(PubDataType::RecoveryRequest.to_string()),
+        )
+        .await;
+        let _ = tokio::fs::remove_dir_all(
+            &final_backup_threshold_path.join(PubDataType::Commitments.to_string()),
+        )
+        .await;
     }
 }
 

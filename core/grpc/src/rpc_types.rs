@@ -187,7 +187,7 @@ pub enum PubDataType {
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO validation needs to be added, see https://github.com/zama-ai/kms-internal/issues/2723
     RecoveryRequest, // Recovery request for backup vault TODO should it be stored in backup or public vault, issue with private is that it can get locked in case of aws issue!
-    Commitments, // Commitments for the backup vault TODO rename since it also contains custodian context. it could also be combined with the recovery request
+    Commitments, // Commitments for the backup vault TODO rename since it also contains custodian context. it could also be combined with the recovery request. We should consider this to be stored in the backup vault instead
 }
 
 impl fmt::Display for PubDataType {

@@ -1,14 +1,16 @@
 use crate::client::client_wasm::Client;
+#[cfg(feature = "insecure")]
 use crate::client::tests::threshold::common::threshold_handles;
 use crate::client::tests::threshold::common::threshold_handles_secretsharing_backup;
 use crate::consts::KEY_PATH_PREFIX;
 use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::backup_pke::BackupCiphertext;
 use crate::util::file_handling::safe_read_element_versioned;
+#[cfg(feature = "insecure")]
+use crate::util::key_setup::test_tools::purge;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
-    util::key_setup::test_tools::purge,
 };
 use kms_grpc::kms::v1::{Empty, NewCustodianContextRequest};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -154,7 +156,6 @@ pub(crate) async fn run_new_cus_context(
     mnemonics
 }
 
-#[cfg(any(feature = "slow_tests", feature = "insecure"))]
 async fn launch_new_cus(
     req: &NewCustodianContextRequest,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
@@ -238,6 +239,7 @@ pub(crate) async fn backup_files(
             .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
             .join(file_req.to_string());
         // Attempt to read the file
+        println!("reading {}", coerced_path.display());
         if let Ok(file) = safe_read_element_versioned(coerced_path).await {
             files.push(file);
         }

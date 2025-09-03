@@ -3,19 +3,20 @@ use crate::backup::operator::InternalRecoveryRequest;
 use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 use crate::client::tests::threshold::public_decryption_tests::decryption_threshold;
+#[cfg(feature = "insecure")]
+use crate::client::tests::threshold::{
+    crs_gen_tests::run_crs, custodian_context_tests::backup_files,
+};
 use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID, TEST_THRESHOLD_KEY_ID_4P};
 use crate::cryptography::backup_pke::BackupPrivateKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::util::key_setup::test_tools::purge_backup;
 use crate::util::key_setup::test_tools::{purge, EncryptionConfig, TestingPlaintext};
+use crate::util::key_setup::test_tools::{purge_backup, purge_recovery_info};
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
-    client::tests::threshold::{
-        common::threshold_handles_secretsharing_backup, crs_gen_tests::run_crs,
-        custodian_context_tests::backup_files,
-    },
+    client::tests::threshold::common::threshold_handles_secretsharing_backup,
     cryptography::{backup_pke::BackupCiphertext, internal_crypto_types::WrappedDKGParams},
     engine::base::derive_request_id,
     util::key_setup::test_tools::{purge_priv, setup::ensure_testing_material_exists},
@@ -32,15 +33,15 @@ use tfhe::safe_serialization::safe_deserialize;
 use threshold_fhe::execution::runtime::party::Role;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
+
 // todo add similar tests to central
-#[cfg(feature = "insecure")]
+#[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_auto_update_backups_threshold() {
     auto_update_backup(5, 2).await;
 }
 
-#[cfg(feature = "insecure")]
 pub(crate) async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
     let req_new_cus: RequestId = derive_request_id(&format!(
@@ -57,6 +58,9 @@ pub(crate) async fn auto_update_backup(amount_custodians: usize, threshold: u32)
         amount_parties,
     )
     .await;
+    // Clean up backups to not interfere with test
+    purge_backup(test_path, amount_parties).await;
+    purge_recovery_info(test_path, amount_parties).await;
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_servers, kms_clients, mut internal_client) = threshold_handles_secretsharing_backup(
@@ -114,11 +118,8 @@ pub(crate) async fn auto_update_backup(amount_custodians: usize, threshold: u32)
     )
     .await;
     assert_eq!(reread_backup.len(), amount_parties);
-    // Clean up backups to not interfere with other tests
-    purge_backup(test_path, amount_parties).await;
 }
 
-#[tracing_test::traced_test]
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
@@ -148,6 +149,9 @@ pub(crate) async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         amount_parties,
     )
     .await;
+    // Clean up backups to not interfere with test
+    purge_backup(test_path, amount_parties).await;
+    purge_recovery_info(test_path, amount_parties).await;
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     // The threshold handle should only be started after the storage is purged
@@ -228,8 +232,6 @@ pub(crate) async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     for i in 0..amount_parties {
         assert!(reread_crss[i] == crss[i]);
     }
-    // Clean up backups to not interfere with other tests
-    purge_backup(test_path, amount_parties).await;
 }
 
 #[tracing_test::traced_test]
@@ -256,7 +258,9 @@ pub(crate) async fn decrypt_after_recovery(amount_custodians: usize, threshold: 
         amount_parties,
     )
     .await;
-
+    // Clean up backups to not interfere with test
+    purge_backup(test_path, amount_parties).await;
+    purge_recovery_info(test_path, amount_parties).await;
     let (kms_servers, kms_clients, mut internal_client) = threshold_handles_secretsharing_backup(
         *dkg_param,
         amount_parties,
@@ -323,8 +327,6 @@ pub(crate) async fn decrypt_after_recovery(amount_custodians: usize, threshold: 
         None,
     )
     .await;
-    // Clean up backups to not interfere with other tests
-    purge_backup(test_path, amount_parties).await;
 }
 
 async fn run_custodian_recovery_init(
