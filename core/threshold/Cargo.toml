@@ -71,7 +71,6 @@ tfhe = { workspace = true, features = [
     "shortint",
     "integer",
     "zk-pok",
-    "experimental-force_fft_algo_dif4"
 ] }
 tfhe-csprng.workspace = true
 tracing = { workspace = true, features = ["log"] }
@@ -88,7 +87,7 @@ getrandom = { version = "=0.2.15", features = ["js"] }
 tonic-build.workspace = true
 
 [dev-dependencies]
-criterion = "=0.5.1"
+criterion = {version = "=0.5.1", features = ["html_reports"]}
 ctor = "=0.4.2"
 proptest = "=1.6.0"
 pprof = { version = "=0.15.0", features = ["flamegraph", "criterion"] }
@@ -182,11 +181,6 @@ name = "non-threshold_erc20"
 path = "benches/non-threshold/erc20.rs"
 harness = false
 
-[[bench]]
-name = "non-threshold_erc20_memory"
-path = "benches/non-threshold/erc20.rs"
-harness = false
-required-features = ["non-wasm", "measure_memory"]
 
 [[bench]]
 name = "non-threshold_basic-ops"
@@ -194,10 +188,9 @@ path = "benches/non-threshold/basic_ops.rs"
 harness = false
 
 [[bench]]
-name = "non-threshold_basic-ops_memory"
-path = "benches/non-threshold/basic_ops.rs"
+name = "non-threshold_keygen"
+path = "benches/non-threshold/keygen.rs"
 harness = false
-required-features = ["non-wasm", "measure_memory"]
 
 [features]
 default = ["non-wasm", "extension_degree_4"]
