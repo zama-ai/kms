@@ -91,10 +91,20 @@ pub fn compute_user_decrypt_message_hash(
     let external_handles: Vec<_> = payload
         .signcrypted_ciphertexts
         .iter()
-        .map(|e| {
-            alloy_primitives::FixedBytes::<32>::left_padding_from(e.external_handle.as_slice())
+        .enumerate()
+        .map(|(idx, c)| {
+            if c.external_handle.len() > 32 {
+                anyhow::bail!(
+                    "external_handle at index {idx} too long: {} bytes (max 32)",
+                    c.external_handle.len()
+                );
+            } else {
+                Ok(alloy_primitives::FixedBytes::<32>::left_padding_from(
+                    c.external_handle.as_slice(),
+                ))
+            }
         })
-        .collect();
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let user_decrypted_share_buf = bc2wrap::serialize(payload)?;
 

@@ -284,13 +284,33 @@ pub async fn public_decrypt_impl<
             match decryptions {
                 Ok(Ok(pts)) => {
                     // sign the plaintexts and handles for external verification (in fhevm)
-                    let external_sig = compute_external_pt_signature(
+                    let external_sig = match compute_external_pt_signature(
                         &sigkey,
                         ext_handles_bytes,
                         &pts,
                         extra_data.clone(),
                         eip712_domain,
-                    );
+                    )
+                    {
+                        Ok(sig) => sig,
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to compute external signature for public decrypt request {request_id}: {e:?}"
+                            );
+                            METRICS.increment_error_counter(
+                                OP_PUBLIC_DECRYPT_REQUEST,
+                                ERR_PUBLIC_DECRYPTION_FAILED,
+                            );
+                            let mut guarded_meta_store = meta_store.write().await;
+                            let _ = guarded_meta_store.update(
+                                &request_id,
+                                Err(format!(
+                                    "Failed to compute external signature: {e:?}"
+                                )),
+                            );
+                            return;
+                        }
+                    };
 
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store
