@@ -16,7 +16,7 @@ permissions: {}
 jobs:
   docker-golden-image:
     name: on-release-images/docker-golden-image
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@18b2fae980d9d1f799d6b5c62262d5703dd1cf0c
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@f640d675cba64b9688903487f88171a87c6ff50a
     permissions:
       actions: read
       contents: read
@@ -38,7 +38,7 @@ jobs:
   docker-kms-core-client:
     name: on-release-images/docker-kms-core-client
     needs: docker-golden-image
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@18b2fae980d9d1f799d6b5c62262d5703dd1cf0c
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@f640d675cba64b9688903487f88171a87c6ff50a
     permissions:
       actions: read
       contents: read
