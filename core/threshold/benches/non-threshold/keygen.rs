@@ -55,8 +55,6 @@ pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
 
 #[cfg(feature = "measure_memory")]
 fn main() {
-    let args = std::env::args().collect::<Vec<String>>();
-    println!("{args:?}");
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
     for (name, params) in ALL_PARAMS.iter().rev() {
