@@ -135,7 +135,10 @@ Crypto provider should exist at this point"
         ca_certs: HashMap<String, Pem>,
         release_pcrs: Option<Arc<Vec<ReleasePCRValues>>>,
     ) -> anyhow::Result<()> {
-        let mut contexts = self.contexts.write().unwrap();
+        let mut contexts = self
+            .contexts
+            .write()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {e}"))?;
         ensure!(
             !contexts.contains_key(&context_id),
             "Context with ID {context_id} already exists"
@@ -147,7 +150,10 @@ Crypto provider should exist at this point"
     }
 
     pub fn remove_context(&self, context_id: SessionId) -> anyhow::Result<()> {
-        let mut contexts = self.contexts.write().unwrap();
+        let mut contexts = self
+            .contexts
+            .write()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {e}"))?;
         contexts.remove(&context_id);
         Ok(())
     }
@@ -168,7 +174,10 @@ Crypto provider should exist at this point"
             extract_context_id_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
         let subject = extract_subject_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
 
-        let contexts = self.contexts.read().unwrap();
+        let contexts = self
+            .contexts
+            .read()
+            .map_err(|e| Error::General(format!("Failed to acquire read lock: {e}")))?;
         let context = contexts
             .get(&context_id)
             .ok_or_else(|| Error::General(format!("Context {context_id} not found")))
