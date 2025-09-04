@@ -1,53 +1,41 @@
 #[path = "../utilities.rs"]
 mod utilities;
 
-use criterion::measurement::Measurement;
 #[cfg(not(feature = "measure_memory"))]
-use criterion::{measurement::WallTime, Throughput};
+use criterion::measurement::WallTime;
+#[cfg(not(feature = "measure_memory"))]
 use criterion::{BenchmarkGroup, Criterion};
-use tfhe::Config;
-use tfhe::{ClientKey, ConfigBuilder, ServerKey};
+use tfhe::{ClientKey, Config, ServerKey};
+#[cfg(not(feature = "measure_memory"))]
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "measure_memory")]
-use utilities::MemoryProfiler;
+use utilities::bench_memory;
 use utilities::ALL_PARAMS;
 
 fn keygen(config: Config) -> (ClientKey, ServerKey) {
     let cks = ClientKey::generate(config);
     let sks = ServerKey::new(&cks);
+
+    let size = bc2wrap::serialize(&cks).unwrap().len() + bc2wrap::serialize(&sks).unwrap().len();
+    println!("Keygen size: {size} B");
     (cks, sks)
 }
 
-fn bench_keygen<M: Measurement>(c: &mut BenchmarkGroup<'_, M>, params: DKGParams) {
-    let config = ConfigBuilder::with_custom_parameters(
-        params
-            .get_params_basics_handle()
-            .to_classic_pbs_parameters(),
-    )
-    .build();
+#[cfg(not(feature = "measure_memory"))]
+fn bench_keygen(c: &mut BenchmarkGroup<'_, WallTime>, params: DKGParams) {
+    let config = params.to_tfhe_config();
 
     c.bench_function("keygen", |b| {
         b.iter(|| std::hint::black_box(keygen(config)));
     });
 }
 
-#[cfg(feature = "measure_memory")]
-#[global_allocator]
-pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
-
-#[allow(unused_mut)]
+#[cfg(not(feature = "measure_memory"))]
 fn main() {
-    #[cfg(feature = "measure_memory")]
-    threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
-
     for (name, params) in ALL_PARAMS {
         let mut c = Criterion::default().sample_size(10).configure_from_args();
-        #[cfg(feature = "measure_memory")]
-        let mut c = c.with_profiler(MemoryProfiler);
 
         let bench_name = format!("non-threshold_keygen_{name}");
-        #[cfg(feature = "measure_memory")]
-        let bench_name = format!("{bench_name}_memory");
         // FheUint64 latency
         {
             let mut group = c.benchmark_group(&bench_name);
@@ -58,5 +46,22 @@ fn main() {
         }
 
         c.final_summary();
+    }
+}
+
+#[cfg(feature = "measure_memory")]
+#[global_allocator]
+pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
+
+#[cfg(feature = "measure_memory")]
+fn main() {
+    let args = std::env::args().collect::<Vec<String>>();
+    println!("{args:?}");
+    threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
+
+    for (name, params) in ALL_PARAMS.iter().rev() {
+        let bench_name = format!("non-threshold_keygen_{name}_memory");
+        let config = params.to_tfhe_config();
+        bench_memory(keygen, config, bench_name);
     }
 }

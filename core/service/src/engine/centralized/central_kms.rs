@@ -393,45 +393,7 @@ pub fn generate_fhe_keys(
 
 #[cfg(feature = "non-wasm")]
 pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientKey {
-    let pbs_params: ClassicPBSParameters = params
-        .get_params_basics_handle()
-        .to_classic_pbs_parameters();
-    let compression_params = params
-        .get_params_basics_handle()
-        .get_compression_decompression_params();
-    let rerand_params = params.get_params_basics_handle().get_rerand_params();
-    let sns_params = match params {
-        DKGParams::WithoutSnS(_) => None,
-        DKGParams::WithSnS(dkg_sns) => Some((dkg_sns.sns_params, dkg_sns.sns_compression_params)),
-    };
-    let config = ConfigBuilder::with_custom_parameters(pbs_params);
-    let config = if let Some(dedicated_pk_params) =
-        params.get_params_basics_handle().get_dedicated_pk_params()
-    {
-        config.use_dedicated_compact_public_key_parameters(dedicated_pk_params)
-    } else {
-        config
-    };
-    let config = if let Some(params) = compression_params {
-        config.enable_compression(params.raw_compression_parameters)
-    } else {
-        config
-    };
-    let config = if let Some((params, compression_params)) = sns_params {
-        let config = config.enable_noise_squashing(params);
-        if let Some(compression_params) = compression_params {
-            config.enable_noise_squashing_compression(compression_params)
-        } else {
-            config
-        }
-    } else {
-        config
-    };
-    let config = if let Some(rerand_params) = rerand_params {
-        config.enable_ciphertext_re_randomization(rerand_params)
-    } else {
-        config
-    };
+    let config = params.to_tfhe_config();
     match seed {
         Some(seed) => ClientKey::generate_with_seed(config, seed),
         None => ClientKey::generate(config),
