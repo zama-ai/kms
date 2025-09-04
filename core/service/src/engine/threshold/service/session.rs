@@ -27,13 +27,13 @@ const ERR_SESSION_NOT_INITIALIZED: &str = "SessionPreparer is not initialized";
 ///
 /// This data structure should only be used by the Init GRPC endpoint.
 /// The other GRPC endpoints that use session should use `SessionPreparerGetter`.
-pub struct SessionPreparerManager {
+pub(crate) struct SessionPreparerManager {
     inner: SessionPreparerGetter,
 }
 
 impl SessionPreparerManager {
     /// Creates a new `SessionPreparerManager`.
-    pub fn empty(name: String) -> Self {
+    pub(crate) fn empty(name: String) -> Self {
         Self {
             inner: SessionPreparerGetter {
                 session_preparer: Arc::new(RwLock::new(HashMap::new())),
@@ -43,7 +43,7 @@ impl SessionPreparerManager {
     }
 
     /// Make a getter that cannot modify the manager.
-    pub fn make_getter(&self) -> SessionPreparerGetter {
+    pub(crate) fn make_getter(&self) -> SessionPreparerGetter {
         SessionPreparerGetter {
             session_preparer: self.inner.session_preparer.clone(),
             name: self.inner.name.clone(),
@@ -51,12 +51,12 @@ impl SessionPreparerManager {
     }
 
     /// Returns a new instance of the session preparer for the given context ID.
-    pub async fn get(&self, request_id: &RequestId) -> anyhow::Result<SessionPreparer> {
+    pub(crate) async fn get(&self, request_id: &RequestId) -> anyhow::Result<SessionPreparer> {
         self.inner.get(request_id).await
     }
 
     /// Inserts a new session preparer into the manager.
-    pub async fn insert(&self, request_id: RequestId, session_preparer: SessionPreparer) {
+    pub(crate) async fn insert(&self, request_id: RequestId, session_preparer: SessionPreparer) {
         self.inner.insert(request_id, session_preparer).await
     }
 

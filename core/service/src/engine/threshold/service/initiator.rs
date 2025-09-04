@@ -43,7 +43,7 @@ pub struct RealInitiator<
     pub prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
     pub prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
     pub private_storage: Arc<Mutex<PrivS>>,
-    pub session_preparer_manager: SessionPreparerManager,
+    pub(crate) session_preparer_manager: SessionPreparerManager,
     pub networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
     pub health_reporter: HealthReporter,
     pub(crate) _init: PhantomData<Init>,
