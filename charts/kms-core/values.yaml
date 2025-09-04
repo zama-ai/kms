@@ -86,19 +86,20 @@ kmsCore:
           pcr1: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
           pcr2: "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     # This value appears in the config file as `threshold`.
-    multiplier: 2
-    maxInterval: 1
+    multiplier: 2.0
+    maxInterval: 60
     maxElapsedTime: 300
     networkTimeout: 300
     initialIntervalMs: 100
     enableSysMetrics: true
     refreshIntervalMs: 5000
     # Threshold value is the number of corruptions that the protocol handles.
-    thresholdValue: 1
+    # 1 for 4 parties, 4 for 13 parties
+    thresholdValue: 4
     decCapacity: 10000
     minDecCache: 6000
     # Number of sessions to pre-process should be equal to number of vCPUs
-    numSessionsPreproc: 2
+    numSessionsPreproc: 64
     decryptionMode: "NoiseFloodSmall"
   # Add the following to enable nitro enclave:
   # Nitro enclave needs specific instance types
@@ -106,9 +107,9 @@ kmsCore:
     enabled: false
     signed: false
     # Enclave CPU count, must be a multiple of 2 since whole cores (not hyperthreads) are sliced off and dedicated to the enclave
-    cpuCount: 6
+    cpuCount: 48
     # Enclave Memory in GiB
-    memoryGiB: 20
+    memoryGiB: 96
     grpcPeerProxy:
       resources: {}
         # requests:
@@ -204,13 +205,10 @@ kmsCoreClient:
       name:
       privateVaultStorageKey:
       publicVaultStorageKey:
-  num_majority: 2
-  num_reconstruct: 3
-  decryption_mode: "NoiseFloodSmall"
-  fhe_parameter: Test
-  storage:
-    # storageClassName: gp3
-    capacity: 1Gi
+  num_majority: 5
+  num_reconstruct: 9
+  decryption_mode: NoiseFloodSmall
+  fhe_parameter: Default
   resources:
     requests: {}
       # memory: 1Gi
