@@ -596,9 +596,15 @@ pub fn public_parameters_by_trusted_setup<R: Rng + CryptoRng>(
     let pparam = InternalPublicParameter::new_from_tfhe_param(params, max_num_bits)?;
 
     let mut tau = curve::ZeroizeZp::ZERO;
-    tau.rand_in_place(rng);
+    // ensure tau is random and non-zero
+    while tau == curve::ZeroizeZp::ZERO {
+        tau.rand_in_place(rng);
+    }
     let mut r = curve::ZeroizeZp::ZERO;
-    r.rand_in_place(rng);
+    // ensure r is random and non-zero
+    while r == curve::ZeroizeZp::ZERO {
+        r.rand_in_place(rng);
+    }
 
     let pproof = make_partial_proof_deterministic(&pparam, &tau, 1, &r, sid);
 
