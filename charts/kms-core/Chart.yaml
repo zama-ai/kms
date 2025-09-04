@@ -1,6 +1,6 @@
 name: kms-service
 description: A helm chart to distribute and deploy the Zama KMS application stack
-version: 1.0.11
+version: 1.1.0
 apiVersion: v2
 keywords:
   - kms-service

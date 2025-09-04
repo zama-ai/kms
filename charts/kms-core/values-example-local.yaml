@@ -28,7 +28,7 @@ kmsCore:
     s3:
       enabled: true
       bucket: kms-public
-      path: ""
+      prefix: ""
   thresholdMode:
     enabled: false
     initializationScript:
