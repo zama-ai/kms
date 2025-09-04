@@ -133,11 +133,6 @@ cfg_if::cfg_if! {
     }
 }
 
-const DEFAULT_MPC_CONTEXT_BYTES: [u8; 32] = [
-    1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
-    4,
-];
-
 #[cfg(feature = "non-wasm")]
 lazy_static::lazy_static! {
     // The static ID we will use for the signing key for each of the MPC parties.
@@ -145,7 +140,10 @@ lazy_static::lazy_static! {
     // This is a bit hackish, but it works for now.
     pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
 
-    pub static ref DEFAULT_MPC_CONTEXT: RequestId = RequestId::from_bytes(DEFAULT_MPC_CONTEXT_BYTES);
+    pub static ref DEFAULT_MPC_CONTEXT: RequestId = RequestId::from_bytes([
+        1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
+        4,
+    ]);
 }
 
 #[test]

@@ -1,14 +1,14 @@
 use clap::Parser;
 use futures_util::future::OptionFuture;
 use k256::ecdsa::SigningKey;
-use kms_grpc::{rpc_types::PubDataType, RequestId};
+use kms_grpc::rpc_types::PubDataType;
 use kms_lib::{
     conf::{
         init_conf_kms_core_telemetry,
         threshold::{PeerConf, ThresholdPartyConf, TlsConf},
         CoreConfig,
     },
-    consts::{DEFAULT_MPC_CONTEXT_BYTES, SIGNING_KEY_ID},
+    consts::{DEFAULT_MPC_CONTEXT, SIGNING_KEY_ID},
     cryptography::{
         attestation::{make_security_module, SecurityModule, SecurityModuleProxy},
         internal_crypto_types::PrivateSigKey,
@@ -124,7 +124,7 @@ async fn build_tls_config(
     public_vault: &Vault,
     sk: &PrivateSigKey,
 ) -> anyhow::Result<(ServerConfig, ClientConfig)> {
-    let context_id = DEFAULT_MPC_CONTEXT;
+    let context_id = *DEFAULT_MPC_CONTEXT;
     aws_lc_rs_default_provider()
         .install_default()
         .unwrap_or_else(|_| {
