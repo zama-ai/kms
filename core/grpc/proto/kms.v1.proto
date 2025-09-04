@@ -80,13 +80,20 @@ message KeySetConfig {
 message KeyGenPreprocRequest {
   // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
   RequestId request_id = 1;
+
   // The FHE parameters for key generation.
   FheParameter params = 2;
+
   // The keyset configuration that controls what kind of key to generate.
   KeySetConfig keyset_config = 3;
+
   // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
+
   // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 5;
 }
 
@@ -142,6 +149,9 @@ message KeyGenRequest {
   KeySetAddedInfo keyset_added_info = 6;
 
   // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 7;
 }
 
@@ -208,6 +218,9 @@ message CrsGenRequest {
   Eip712DomainMsg domain = 4;
 
   // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 5;
 }
 
@@ -285,6 +298,9 @@ message PublicDecryptionRequest {
   bytes extra_data = 5;
 
   // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 6;
 }
 
@@ -359,6 +375,9 @@ message UserDecryptionRequest {
   bytes extra_data = 7;
 
   // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 8;
 }
 
