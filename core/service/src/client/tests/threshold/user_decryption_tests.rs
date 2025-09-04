@@ -328,7 +328,6 @@ async fn default_user_decryption_threshold_and_write_transcript(
 #[case(TestingPlaintext::U8(u8::MAX), 1, 4, &DEFAULT_THRESHOLD_KEY_ID_4P)]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-#[tracing_test::traced_test]
 async fn default_user_decryption_threshold(
     #[case] msg: TestingPlaintext,
     #[case] parallelism: usize,

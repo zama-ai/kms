@@ -127,8 +127,8 @@ impl SessionPreparer {
         my_role: Role,
         role_assignment: RoleAssignment,
         networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
-        prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>, // TODO make generic?
-        prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,   // TODO make generic?
+        prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
+        prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
     ) -> Self {
         Self {
             inner: Some(InnerSessionPreparer {
@@ -260,8 +260,8 @@ struct InnerSessionPreparer {
     pub my_role: Role,
     pub role_assignment: RoleAssignment,
     pub networking_manager: Arc<RwLock<GrpcNetworkingManager>>,
-    pub prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>, // TODO make generic?
-    pub prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,   // TODO make generic?
+    pub prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
+    pub prss_setup_z64: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z64>>>>,
 }
 
 impl InnerSessionPreparer {

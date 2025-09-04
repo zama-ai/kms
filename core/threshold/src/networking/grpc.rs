@@ -209,7 +209,8 @@ pub struct GrpcNetworkingManager {
     pub opened_sessions_tracker: Arc<DashMap<Role, u64>>,
     owner: Role,
     conf: OptionConfigWrapper,
-    // TODO: this data structure should contain mapping from context to RoleAssignment
+    // TODO(zama-ai/kms-internal/#2530)
+    // this data structure should contain mapping from context to RoleAssignment
     // it should be possible to add contexts, but the value of the mapping should be immutable
     role_assignment: Arc<RwLock<RoleAssignment>>,
     pub sending_service: GrpcSendingService,
