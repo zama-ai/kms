@@ -6,19 +6,15 @@
 #[path = "../utilities.rs"]
 mod utilities;
 
-use criterion::measurement::Measurement;
 #[cfg(not(feature = "measure_memory"))]
-use criterion::{measurement::WallTime, Throughput};
-use criterion::{BenchmarkGroup, Criterion};
+use criterion::{measurement::WallTime, BenchmarkGroup, Criterion, Throughput};
 use rand::prelude::*;
 use rand::thread_rng;
 #[cfg(not(feature = "measure_memory"))]
 use rayon::prelude::*;
 use std::ops::{Add, Mul};
 use tfhe::prelude::*;
-use tfhe::{set_server_key, ClientKey, ConfigBuilder, FheBool, FheUint64, ServerKey};
-#[cfg(feature = "measure_memory")]
-use utilities::MemoryProfiler;
+use tfhe::{set_server_key, ClientKey, FheBool, FheUint64, ServerKey};
 use utilities::ALL_PARAMS;
 
 /// This one uses overflowing sub to remove the need for comparison
@@ -45,8 +41,9 @@ where
     (new_from_amount, new_to_amount)
 }
 
-fn bench_transfer_latency<FheType, F, M: Measurement>(
-    c: &mut BenchmarkGroup<'_, M>,
+#[cfg(not(feature = "measure_memory"))]
+fn bench_transfer_latency<FheType, F>(
+    c: &mut BenchmarkGroup<'_, WallTime>,
     client_key: &ClientKey,
     bench_name: &str,
     type_name: &str,
@@ -112,22 +109,12 @@ fn bench_transfer_throughput<FheType, F>(
     }
 }
 
-#[cfg(feature = "measure_memory")]
-#[global_allocator]
-pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
-
+#[cfg(not(feature = "measure_memory"))]
 #[allow(unused_mut)]
 fn main() {
-    #[cfg(feature = "measure_memory")]
-    threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
-
     for (name, params) in ALL_PARAMS {
-        let config = ConfigBuilder::with_custom_parameters(
-            params
-                .get_params_basics_handle()
-                .to_classic_pbs_parameters(),
-        )
-        .build();
+        let config = params.to_tfhe_config();
+
         let cks = ClientKey::generate(config);
         let sks = ServerKey::new(&cks);
 
@@ -135,12 +122,8 @@ fn main() {
         set_server_key(sks);
 
         let mut c = Criterion::default().sample_size(10).configure_from_args();
-        #[cfg(feature = "measure_memory")]
-        let mut c = c.with_profiler(MemoryProfiler);
 
         let bench_name = format!("non-threshold_erc20_{name}");
-        #[cfg(feature = "measure_memory")]
-        let bench_name = format!("{bench_name}_memory");
         // FheUint64 latency
         {
             let mut group = c.benchmark_group(&bench_name);
@@ -157,7 +140,6 @@ fn main() {
             group.finish();
         }
 
-        #[cfg(not(feature = "measure_memory"))]
         // FheUint64 Throughput
         {
             let mut group = c.benchmark_group(&bench_name);
@@ -175,5 +157,39 @@ fn main() {
         }
 
         c.final_summary();
+    }
+}
+
+#[cfg(feature = "measure_memory")]
+#[global_allocator]
+pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
+
+#[cfg(feature = "measure_memory")]
+fn main() {
+    threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
+
+    let transfer = |(from_amount, to_amount, amount): (FheUint64, FheUint64, FheUint64)| {
+        transfer_overflow(&from_amount, &to_amount, &amount)
+    };
+
+    for (name, params) in ALL_PARAMS {
+        use crate::utilities::bench_memory;
+
+        let bench_name = format!("non-threshold_erc20_{name}_memory");
+
+        let config = params.to_tfhe_config();
+
+        let cks = ClientKey::generate(config);
+        let sks = ServerKey::new(&cks);
+
+        rayon::broadcast(|_| set_server_key(sks.clone()));
+        set_server_key(sks);
+        let mut rng = thread_rng();
+
+        let from_amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
+        let to_amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
+        let amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
+
+        bench_memory(transfer, (from_amount, to_amount, amount), bench_name);
     }
 }
