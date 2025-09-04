@@ -53,6 +53,7 @@ impl Client {
             keyset_config,
             keyset_added_info,
             context_id: None,
+            epoch_id: None,
         })
     }
 
@@ -77,6 +78,7 @@ impl Client {
             request_id: Some((*request_id).into()),
             context_id: None,
             domain: Some(domain),
+            epoch_id: None,
         })
     }
 

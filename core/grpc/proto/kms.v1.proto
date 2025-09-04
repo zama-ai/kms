@@ -95,6 +95,9 @@ message KeyGenPreprocRequest {
   // NOTE: at the moment this can be None since we do not fully support multiple contexts.
   // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 5;
+
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  RequestId epoch_id = 6;
 }
 
 enum KeySetCompressionConfig {
@@ -153,6 +156,9 @@ message KeyGenRequest {
   // NOTE: at the moment this can be None since we do not fully support multiple contexts.
   // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 7;
+
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  RequestId epoch_id = 8;
 }
 
 message KeyGenResult {
@@ -302,6 +308,9 @@ message PublicDecryptionRequest {
   // NOTE: at the moment this can be None since we do not fully support multiple contexts.
   // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 6;
+
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  RequestId epoch_id = 7;
 }
 
 // KMS-internal Public Decryption Response Payload, containing meta data, plaintexts
@@ -379,6 +388,9 @@ message UserDecryptionRequest {
   // NOTE: at the moment this can be None since we do not fully support multiple contexts.
   // See https://github.com/zama-ai/kms-internal/issues/2530
   RequestId context_id = 8;
+
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  RequestId epoch_id = 9;
 }
 
 message UserDecryptionResponse {

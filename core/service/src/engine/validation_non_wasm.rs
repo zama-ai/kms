@@ -562,6 +562,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -578,6 +579,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -597,6 +599,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -613,6 +616,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -629,6 +633,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             let (_, _, _, _domain) = validate_public_decrypt_req(&req).unwrap();
         }
@@ -678,6 +683,7 @@ mod tests {
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -696,6 +702,7 @@ mod tests {
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -717,6 +724,7 @@ mod tests {
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -735,6 +743,7 @@ mod tests {
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -753,6 +762,7 @@ mod tests {
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(
                 validate_user_decrypt_req(&req).unwrap_err().to_string().contains(
@@ -774,6 +784,7 @@ mod tests {
                 enc_key: bad_enc_pk_buf,
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -792,6 +803,7 @@ mod tests {
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req).is_ok());
         }
@@ -851,6 +863,7 @@ mod tests {
             domain: Some(domain_msg),
             extra_data: vec![],
             context_id: None,
+            epoch_id: None,
         };
 
         {
@@ -1271,6 +1284,7 @@ mod tests {
             domain: None,
             extra_data: vec![],
             context_id: None,
+            epoch_id: None,
         };
 
         let resp0 = {
@@ -1380,6 +1394,7 @@ mod tests {
                 domain: None,
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
@@ -1411,6 +1426,7 @@ mod tests {
                 domain: None,
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
@@ -1447,6 +1463,7 @@ mod tests {
                 domain: None,
                 extra_data: vec![],
                 context_id: None,
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
