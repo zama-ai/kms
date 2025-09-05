@@ -1,16 +1,15 @@
 use super::{EnvelopeLoad, EnvelopeStore, Keychain};
+use crate::cryptography::backup_pke::{BackupPrivateKey, BackupPublicKey};
 use crate::{
     anyhow_error_and_log,
     backup::operator::InnerRecoveryRequest,
     consts::SAFE_SER_SIZE_LIMIT,
-    cryptography::backup_pke::{self, BackupCiphertext, BackupPrivateKey, BackupPublicKey},
+    cryptography::backup_pke::{self, BackupCiphertext},
     vault::storage::{read_versioned_at_request_id, StorageReader},
 };
 use itertools::Itertools;
-use kms_grpc::{
-    rpc_types::{PrivDataType, PubDataType},
-    RequestId,
-};
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
+use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
 use tfhe::{
@@ -174,4 +173,75 @@ fn read_backup_data<
     let mut buf = std::io::Cursor::new(plain_text);
     safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT)
         .map_err(|e| anyhow_error_and_log(format!("Cannot decrypt backup: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        cryptography::internal_crypto_types::{gen_sig_keys, PrivateSigKey},
+        engine::base::derive_request_id,
+        vault::storage::ram::RamStorage,
+    };
+    use aes_prng::AesRng;
+    use rand::SeedableRng;
+
+    #[tokio::test]
+    async fn test_new_keychain_without_pub_storage() {
+        let rng = AesRng::seed_from_u64(42);
+        let keychain = SecretShareKeychain::<AesRng>::new::<RamStorage>(rng, None)
+            .await
+            .unwrap();
+        assert!(keychain.backup_enc_key.is_none());
+        assert!(keychain.custodian_context_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_set_and_get_backup_enc_key() {
+        let rng = AesRng::seed_from_u64(42);
+        let mut keychain = SecretShareKeychain::<AesRng>::new::<RamStorage>(rng, None)
+            .await
+            .unwrap();
+        let backup_key = BackupPublicKey {
+            encapsulation_key: vec![1, 2, 3],
+        };
+        let req_id = RequestId::zeros();
+        keychain.set_backup_enc_key(req_id, backup_key.clone());
+        assert_eq!(keychain.get_backup_enc_key().unwrap(), backup_key);
+        assert_eq!(keychain.get_current_backup_id().unwrap(), req_id);
+    }
+
+    #[tokio::test]
+    async fn test_operator_public_key_bytes_error() {
+        let rng = AesRng::seed_from_u64(42);
+        let keychain = SecretShareKeychain::<AesRng>::new::<RamStorage>(rng, None)
+            .await
+            .unwrap();
+        let result = keychain.operator_public_key_bytes();
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_encrypt_and_decrypt_roundtrip() {
+        let mut rng = AesRng::seed_from_u64(42);
+        let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let (enc_key, dec_key) = backup_pke::keygen(&mut rng).unwrap();
+        let mut keychain = SecretShareKeychain {
+            rng,
+            custodian_context_id: Some(derive_request_id("test").unwrap()),
+            backup_enc_key: Some(enc_key.clone()),
+            dec_key: Some(dec_key.clone()),
+        };
+
+        let envelope = keychain
+            .encrypt(&sig_key, &PrivDataType::SigningKey.to_string())
+            .await
+            .unwrap();
+        let mut envelope_load = match envelope {
+            EnvelopeStore::OperatorBackupOutput(ct) => EnvelopeLoad::OperatorRecoveryInput(ct),
+            _ => panic!("Unexpected envelope type"),
+        };
+        let decrypted_key: PrivateSigKey = keychain.decrypt(&mut envelope_load).await.unwrap();
+        assert_eq!(decrypted_key, sig_key);
+    }
 }

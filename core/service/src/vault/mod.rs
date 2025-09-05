@@ -105,31 +105,35 @@ impl Storage for Vault {
     ) -> anyhow::Result<()> {
         match self.keychain.as_mut() {
             Some(kcp) => {
-                let coerced_backup_type =
-                    if let KeychainProxy::SecretSharing(secret_share_keychain) = kcp {
-                        if secret_share_keychain.get_current_backup_id().is_err() {
-                            tracing::warn!(
-                            "No custodian context has been set yet! NO BACKUP WILL BE PRODUCED!!!"
-                        );
-                            return Ok(());
-                        }
-                        let inner_type =
-                            BackupDataType::PrivData(data_type.try_into()?).to_string();
-                        &format!(
-                            "{}{MAIN_SEPARATOR}{inner_type}",
-                            secret_share_keychain.get_current_backup_id()?
-                        )
-                    } else {
-                        data_type
-                    };
                 let envelope = kcp.encrypt(data, data_type).await?;
                 match envelope {
                     EnvelopeStore::AppKeyBlob(blob) => {
-                        self.storage
-                            .store_data(&blob, data_id, coerced_backup_type)
-                            .await?
+                        self.storage.store_data(&blob, data_id, data_type).await?
                     }
                     EnvelopeStore::OperatorBackupOutput(ct) => {
+                        let coerced_backup_type = if let KeychainProxy::SecretSharing(
+                            secret_share_keychain,
+                        ) = kcp
+                        {
+                            if secret_share_keychain.get_current_backup_id().is_err() {
+                                tracing::warn!("No custodian context has been set yet! NO BACKUP WILL BE PRODUCED!!!");
+                                return Ok(());
+                            }
+                            let inner_type =
+                                BackupDataType::PrivData(data_type.try_into()?).to_string();
+                            &format!(
+                                "{}{MAIN_SEPARATOR}{inner_type}",
+                                secret_share_keychain.get_current_backup_id()?
+                            )
+                        } else {
+                            data_type
+                        };
+                        println!(
+                            "Storing data type {}, req {} name {}",
+                            coerced_backup_type,
+                            data_id,
+                            T::NAME
+                        );
                         self.storage
                             .store_data(&ct, data_id, coerced_backup_type)
                             .await?;

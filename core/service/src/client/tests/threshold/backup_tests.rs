@@ -5,11 +5,10 @@ use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::tests::threshold::crs_gen_tests::run_crs;
 use crate::client::tests::threshold::custodian_context_tests::backup_files;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
-use crate::client::tests::threshold::public_decryption_tests::decryption_threshold;
-use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID, TEST_THRESHOLD_KEY_ID_4P};
+use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::backup_pke::BackupPrivateKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::util::key_setup::test_tools::{purge, EncryptionConfig, TestingPlaintext};
+use crate::util::key_setup::test_tools::purge;
 use crate::util::key_setup::test_tools::{purge_backup, purge_recovery_info};
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
@@ -66,6 +65,7 @@ pub(crate) async fn auto_update_backup(amount_custodians: usize, threshold: u32)
         *dkg_param,
         amount_parties,
         true,
+        false,
         None,
         None,
         test_path,
@@ -103,6 +103,7 @@ pub(crate) async fn auto_update_backup(amount_custodians: usize, threshold: u32)
         *dkg_param,
         amount_parties,
         true,
+        false,
         None,
         None,
         test_path,
@@ -159,6 +160,7 @@ pub(crate) async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         *dkg_param,
         amount_parties,
         true,
+        false,
         None,
         None,
         test_path,
@@ -214,6 +216,7 @@ pub(crate) async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         *dkg_param,
         amount_parties,
         true,
+        false,
         None,
         None,
         test_path,
@@ -248,6 +251,22 @@ pub(crate) async fn decrypt_after_recovery(amount_custodians: usize, threshold: 
     .unwrap();
     let test_path = None;
     ensure_testing_material_exists(test_path).await;
+    let mut sig_keys = Vec::new();
+    // Read the private signing key for reference
+    for i in 1..=amount_parties {
+        let cur_role = Role::indexed_from_one(i);
+        let cur_priv_store =
+            FileStorage::new(test_path, StorageType::PRIV, Some(cur_role)).unwrap();
+        let cur_sk: PrivateSigKey = read_versioned_at_request_id(
+            &cur_priv_store,
+            &SIGNING_KEY_ID,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+        sig_keys.push(cur_sk);
+    }
+
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     purge(
         test_path,
@@ -264,6 +283,7 @@ pub(crate) async fn decrypt_after_recovery(amount_custodians: usize, threshold: 
         *dkg_param,
         amount_parties,
         true,
+        false,
         None,
         None,
         test_path,
@@ -288,44 +308,45 @@ pub(crate) async fn decrypt_after_recovery(amount_custodians: usize, threshold: 
 
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Reboot the servers
-    let (kms_servers, kms_clients, internal_client) = threshold_handles_secretsharing_backup(
+    let (_kms_servers, kms_clients, _internal_client) = threshold_handles_secretsharing_backup(
         *dkg_param,
         amount_parties,
         true,
+        false,
         None,
         None,
         test_path,
     )
     .await;
+    // Purge the private storage again to delete the signing key
+    // TODO this will get handled more gracefully with contexts
+    purge_priv(test_path, amount_parties).await;
 
     // Execute the backup restoring
     let mut rng = AesRng::seed_from_u64(13);
     let recovery_req_resp = run_custodian_recovery_init(&kms_clients).await;
+    assert_eq!(recovery_req_resp.len(), amount_parties);
     let cus_out = emulate_custodian(&mut rng, test_path, recovery_req_resp, mnemnonics).await;
-    let res = run_custodian_backup_recovery(&kms_clients, &cus_out).await;
+    let recovery_output = run_custodian_backup_recovery(&kms_clients, &cus_out).await;
+    assert_eq!(recovery_output.len(), amount_parties);
+    let res = run_backup_restore(&kms_clients).await;
     assert_eq!(res.len(), amount_parties);
 
-    // Shut down the servers
-    drop(kms_servers);
-    drop(kms_clients);
-    drop(internal_client);
-    // Sleep to ensure the servers are properly shut down
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-    // Check that we can decrypt with the recovered keys after reboot
-    decryption_threshold(
-        *dkg_param,
-        &TEST_THRESHOLD_KEY_ID_4P,
-        vec![TestingPlaintext::U8(42)],
-        EncryptionConfig {
-            compression: false,
-            precompute_sns: false,
-        },
-        1,
-        amount_parties,
-        None,
-        None,
-    )
-    .await;
+    // Check that the key material is back
+    for i in 1..=amount_parties {
+        let cur_role = Role::indexed_from_one(i);
+        let cur_priv_store =
+            FileStorage::new(test_path, StorageType::PRIV, Some(cur_role)).unwrap();
+        let cur_sk: PrivateSigKey = read_versioned_at_request_id(
+            &cur_priv_store,
+            &SIGNING_KEY_ID,
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+        // Check the data is correctly recovered
+        assert_eq!(cur_sk, sig_keys[i - 1]);
+    }
 }
 
 async fn run_custodian_recovery_init(
@@ -367,6 +388,33 @@ async fn run_custodian_backup_recovery(
         tasks_gen.spawn(async move {
             cur_client
                 .custodian_backup_recovery(tonic::Request::new(req_clone))
+                .await
+        });
+    }
+    let mut responses_gen = Vec::new();
+    while let Some(inner) = tasks_gen.join_next().await {
+        let resp = inner.unwrap();
+        responses_gen.push(resp);
+    }
+    assert_eq!(responses_gen.len(), amount_parties);
+    let mut res = Vec::new();
+    for response in responses_gen {
+        assert!(response.is_ok());
+        res.push(response.unwrap().into_inner());
+    }
+    res
+}
+
+async fn run_backup_restore(
+    kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+) -> Vec<Empty> {
+    let amount_parties = kms_clients.len();
+    let mut tasks_gen = JoinSet::new();
+    for i in 1..=amount_parties as u32 {
+        let mut cur_client = kms_clients.get(&i).unwrap().clone();
+        tasks_gen.spawn(async move {
+            cur_client
+                .backup_restore(tonic::Request::new(Empty {}))
                 .await
         });
     }

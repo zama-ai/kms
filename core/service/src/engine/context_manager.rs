@@ -1,8 +1,7 @@
 use crate::backup::custodian::InternalCustodianContext;
 use crate::backup::operator::{BackupCommitments, InnerRecoveryRequest, Operator};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
-use crate::cryptography::backup_pke::{self, BackupCiphertext, BackupPrivateKey, BackupPublicKey};
-use crate::cryptography::decompression::test_tools::safe_serialize_versioned;
+use crate::cryptography::backup_pke::{self, BackupPrivateKey, BackupPublicKey};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::base::CrsGenMetadata;
 use crate::engine::context::ContextInfo;
@@ -160,11 +159,9 @@ async fn backup_priv_data<
         + Sync
         + 'static,
 >(
-    rng: &mut AesRng,
     priv_storage: &S1,
     backup_vault: &mut Vault,
     data_type_enum: PrivDataType,
-    pub_enc_key: &backup_pke::BackupPublicKey,
 ) -> anyhow::Result<()>
 where
     for<'a> <T as tfhe::Versionize>::Versioned<'a>: Send + Sync,
@@ -176,16 +173,10 @@ where
         let data: T = priv_storage
             .read_data(data_id, &data_type_enum.to_string())
             .await?;
-        let serialized_data = safe_serialize_versioned(&data);
-        let encrypted_data = pub_enc_key.encrypt(rng, &serialized_data)?;
-        let enc_ct = BackupCiphertext {
-            ciphertext: encrypted_data,
-            priv_data_type: data_type_enum,
-        };
         // Delete the old backup data
         // Observe that no backups from previous contexts are deleted, only backups for current custodian context in case they exist.
         delete_at_request_id(backup_vault, data_id, &data_type_enum.to_string()).await?;
-        store_versioned_at_request_id(backup_vault, data_id, &enc_ct, &data_type_enum.to_string())
+        store_versioned_at_request_id(backup_vault, data_id, &data, &data_type_enum.to_string())
             .await?;
     }
     Ok(())
@@ -237,41 +228,33 @@ where
                 match cur_type {
                     PrivDataType::SigningKey => {
                         backup_priv_data::<PrivS, PrivateSigKey>(
-                            &mut rng,
                             &guarded_priv_storage,
                             &mut guarded_backup_vault,
                             cur_type,
-                            &backup_enc_key,
                         )
                         .await?;
                     }
                     PrivDataType::FheKeyInfo => {
                         backup_priv_data::<PrivS, ThresholdFheKeys>(
-                            &mut rng,
                             &guarded_priv_storage,
                             &mut guarded_backup_vault,
                             cur_type,
-                            &backup_enc_key,
                         )
                         .await?;
                     }
                     PrivDataType::CrsInfo => {
                         backup_priv_data::<PrivS, CrsGenMetadata>(
-                            &mut rng,
                             &guarded_priv_storage,
                             &mut guarded_backup_vault,
                             cur_type,
-                            &backup_enc_key,
                         )
                         .await?;
                     }
                     PrivDataType::FhePrivateKey => {
                         backup_priv_data::<PrivS, ClientKey>(
-                            &mut rng,
                             &guarded_priv_storage,
                             &mut guarded_backup_vault,
                             cur_type,
-                            &backup_enc_key,
                         )
                         .await?;
                     }
@@ -281,11 +264,9 @@ where
                     }
                     PrivDataType::ContextInfo => {
                         backup_priv_data::<PrivS, ContextInfo>(
-                            &mut rng,
                             &guarded_priv_storage,
                             &mut guarded_backup_vault,
                             cur_type,
-                            &backup_enc_key,
                         )
                         .await?;
                     }

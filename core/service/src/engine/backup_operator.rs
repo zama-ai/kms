@@ -331,6 +331,8 @@ where
     /// Observe that if secret sharing is used for backup (i.e. with a master key being shared with a set of custodians)
     /// then [`custodian_recovery`] _must_ be called first in order to ensure that the master key is restored,
     /// which is needed to allow decryption of the backup data.
+    /// TODO @reviewer should this be split into a separate component for exporting, allowing to use another export location than the backup?
+    /// since right now they are entangled and you can only use one. Alternatively should there be two different kinds of backup operators?
     async fn backup_restore(&self, _request: Request<Empty>) -> Result<Response<Empty>, Status> {
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {

@@ -1,7 +1,13 @@
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::ServerHandle;
 use crate::conf::{self, Keychain, SecretSharingKeychain};
-use crate::util::key_setup::max_threshold;
+use crate::consts::SIGNING_KEY_ID;
+#[cfg(feature = "slow_tests")]
+use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
+use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
+use crate::util::key_setup::{
+    ensure_threshold_server_signing_keys_exist, max_threshold, ThresholdSigningKeyConfig,
+};
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::keychain::make_keychain_proxy;
 use crate::vault::storage::make_storage;
@@ -15,10 +21,12 @@ use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tonic::transport::Channel;
 
+#[allow(clippy::too_many_arguments)]
 async fn threshold_handles_w_vaults(
     params: DKGParams,
     amount_parties: usize,
     run_prss: bool,
+    generate_test_material: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
     vaults: Vec<Option<Vault>>,
@@ -38,6 +46,24 @@ async fn threshold_handles_w_vaults(
             .push(FileStorage::new(test_data_path, StorageType::PRIV, Some(cur_role)).unwrap());
         pub_storage
             .push(FileStorage::new(test_data_path, StorageType::PUB, Some(cur_role)).unwrap());
+    }
+    if generate_test_material {
+        ensure_testing_material_exists(test_data_path).await;
+        #[cfg(feature = "slow_tests")]
+        ensure_default_material_exists().await;
+    } else {
+        // Only ensure that the signing key is there s.t. the KMS can start
+        // TODO this will be handled better when we add contexts s.t. we have different signing keys
+        let _ = ensure_threshold_server_signing_keys_exist(
+            &mut pub_storage,
+            &mut priv_storage,
+            &SIGNING_KEY_ID,
+            true,
+            ThresholdSigningKeyConfig::AllParties(
+                (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
+            ),
+        )
+        .await;
     }
     let (kms_servers, kms_clients) = crate::client::test_tools::setup_threshold(
         threshold as u8,
@@ -84,6 +110,7 @@ pub(crate) async fn threshold_handles(
         params,
         amount_parties,
         run_prss,
+        true,
         rate_limiter_conf,
         decryption_mode,
         vaults,
@@ -92,10 +119,14 @@ pub(crate) async fn threshold_handles(
     .await
 }
 
+/// Setup servers for backup tests
+/// This means that secret sharing based custodian backup gets setup and
+/// that test material does NOT get automatically generated
 pub(crate) async fn threshold_handles_secretsharing_backup(
     params: DKGParams,
     amount_parties: usize,
     run_prss: bool,
+    generate_test_material: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
     test_data_path: Option<&Path>,
@@ -114,6 +145,7 @@ pub(crate) async fn threshold_handles_secretsharing_backup(
         params,
         amount_parties,
         run_prss,
+        generate_test_material,
         rate_limiter_conf,
         decryption_mode,
         vaults,
