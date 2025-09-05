@@ -19,7 +19,7 @@ use tracing::instrument;
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, ErrorCorrect, Ring},
+        structure_traits::{BaseRing, ErrorCorrect},
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
@@ -29,7 +29,10 @@ use crate::{
         },
         runtime::session::BaseSessionHandles,
         sharing::share::Share,
-        tfhe_internals::parameters::{DKGParams, NoiseInfo},
+        tfhe_internals::{
+            parameters::{DKGParams, NoiseInfo},
+            utils::compute_hamming_weight_secret_vector,
+        },
     },
 };
 
@@ -198,17 +201,42 @@ pub(crate) fn to_tfhe_hl_api_compressed_compact_public_key(
 
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> LweSecretKeyShare<Z, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    pub fn new_from_preprocessing<
+    pub async fn new_from_preprocessing<
         P: BitPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+        S: BaseSessionHandles,
     >(
         dimension: LweDimension,
         preprocessing: &mut P,
+        max_deviation_from_mean: Option<usize>,
+        session: &mut S,
     ) -> anyhow::Result<Self> {
-        Ok(Self {
-            data: preprocessing.next_bit_vec(dimension.0)?,
-        })
+        let data = if let Some(max_dev) = max_deviation_from_mean {
+            let mean = (dimension.0 / 2) as u128;
+            let max_dev = max_dev as u128;
+            let max_hw = Z::from_u128(mean + max_dev);
+            let min_hw = Z::from_u128(mean - max_dev);
+
+            let mut data;
+            loop {
+                data = preprocessing.next_bit_vec(dimension.0)?;
+                let hw = compute_hamming_weight_secret_vector(&data, session)
+                    .await?
+                    .to_scalar()?;
+                if hw <= max_hw && hw >= min_hw {
+                    tracing::info!("Hamming weight within bounds: {hw}");
+                    break;
+                }
+                tracing::info!(
+                    "Hamming weight out of bounds: {hw}. Expected mean : {mean}, max_dev : {max_dev}"
+                );
+            }
+            data
+        } else {
+            preprocessing.next_bit_vec(dimension.0)?
+        };
+        Ok(Self { data })
     }
 
     pub fn lwe_dimension(&self) -> LweDimension {
@@ -230,7 +258,7 @@ pub fn allocate_and_generate_new_lwe_compact_public_key<Z, Gen, const EXTENSION_
 ) -> LweCompactPublicKeyShare<Z, EXTENSION_DEGREE>
 where
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
     Gen: ByteRandomGenerator,
 {
     let mut pk = LweCompactPublicKeyShare::new(lwe_secret_key.lwe_dimension());
@@ -246,7 +274,7 @@ pub fn generate_lwe_compact_public_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) where
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
     Gen: ByteRandomGenerator,
 {
     let encryption_type = output.glwe_ciphertext_share.encryption_type;
@@ -264,7 +292,7 @@ pub fn get_batch_param_lwe_key_gen(lwe_dimension: LweDimension) -> (usize, usize
 }
 
 /// Generates the lwe private key share and associated public key
-fn generate_lwe_key_shares<
+async fn generate_lwe_key_shares<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
@@ -286,8 +314,13 @@ where
     let my_role = session.my_role();
     //Init the shared LWE secret key
     tracing::info!("(Party {my_role}) Generating LWE Secret key...Start");
-    let lwe_secret_key_share =
-        LweSecretKeyShare::new_from_preprocessing(params.lwe_hat_dimension(), preprocessing)?;
+    let lwe_secret_key_share = LweSecretKeyShare::new_from_preprocessing(
+        params.lwe_hat_dimension(),
+        preprocessing,
+        params.get_lwe_deviation(),
+        session,
+    )
+    .await?;
     tracing::info!("(Party {my_role}) Generating corresponding public key...Start");
     let NoiseInfo { amount, bound } = params.num_needed_noise_pk();
     let vec_tuniform_noise = preprocessing
@@ -327,7 +360,7 @@ where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let (lwe_secret_key_share, lwe_public_key_shared) =
-        generate_lwe_key_shares(params, mpc_encryption_rng, session, preprocessing)?;
+        generate_lwe_key_shares(params, mpc_encryption_rng, session, preprocessing).await?;
 
     //Open the public key and cast it to TFHE-RS type
     Ok((
@@ -358,7 +391,7 @@ where
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let (lwe_secret_key_share, lwe_public_key_shared) =
-        generate_lwe_key_shares(params, mpc_encryption_rng, session, preprocessing)?;
+        generate_lwe_key_shares(params, mpc_encryption_rng, session, preprocessing).await?;
 
     //Open the public key and cast it to TFHE-RS type
     Ok((

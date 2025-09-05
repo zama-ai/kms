@@ -78,6 +78,8 @@ pub trait BaseRing:
     + std::ops::Shl<usize, Output = Self>
     + for<'a> AddAssign<&'a Self>
     + Display
+    + PartialOrd
+    + Ord
 {
 }
 

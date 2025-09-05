@@ -243,7 +243,7 @@ pub fn encrypt_constant_ggsw_ciphertext<Z, Gen, const EXTENSION_DEGREE: usize>(
 ) where
     Z: BaseRing,
     Gen: ByteRandomGenerator,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let max_level = output.decomposition_level_count();
     let gen_iter = generator
@@ -314,7 +314,7 @@ fn encrypt_constant_ggsw_level_matrix_row<Z, Gen, const EXTENSION_DEGREE: usize>
 where
     Z: BaseRing,
     Gen: ByteRandomGenerator,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     //Do proper scaling using the provided list of secret shared plaintexts
     if row_index < last_row_index {
