@@ -5,6 +5,10 @@ on:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
+        required: true
     inputs:
       ref:
         type: string
@@ -168,6 +172,7 @@ jobs:
           run: |
             dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel docker -y
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u USERNAME --password-stdin # zizmor: ignore[template-injection]
+            echo ${{ secrets.CGR_PASSWORD }} | docker login cgr.dev -u ${{ secrets.CGR_USERNAME }} --password-stdin # zizmor: ignore[template-injection]
             docker pull --platform=linux/amd64 ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} # zizmor: ignore[template-injection]
             nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} --name ${{ inputs.image-name }} --output-file /output/enclave.eif # zizmor: ignore[template-injection]
             nitro-cli describe-eif --eif-path /output/enclave.eif > /output/eif-info.txt
