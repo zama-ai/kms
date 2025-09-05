@@ -6,12 +6,14 @@
 #[path = "../utilities.rs"]
 mod utilities;
 
+//#[cfg(not(feature = "measure_memory"))]
+//use criterion::{Throughput};
 #[cfg(not(feature = "measure_memory"))]
-use criterion::{measurement::WallTime, BenchmarkGroup, Criterion, Throughput};
+use criterion::{measurement::WallTime, BenchmarkGroup, Criterion};
 use rand::prelude::*;
 use rand::thread_rng;
-#[cfg(not(feature = "measure_memory"))]
-use rayon::prelude::*;
+//#[cfg(not(feature = "measure_memory"))]
+//use rayon::prelude::*;
 use std::ops::{Add, Mul};
 use tfhe::prelude::*;
 use tfhe::{set_server_key, ClientKey, FheBool, FheUint64, ServerKey};
@@ -67,47 +69,47 @@ fn bench_transfer_latency<FheType, F>(
     });
 }
 
-#[cfg(not(feature = "measure_memory"))]
-fn bench_transfer_throughput<FheType, F>(
-    group: &mut BenchmarkGroup<'_, WallTime>,
-    client_key: &ClientKey,
-    bench_name: &str,
-    type_name: &str,
-    fn_name: &str,
-    transfer_func: F,
-) where
-    FheType: FheEncrypt<u64, ClientKey> + Send + Sync,
-    F: for<'a> Fn(&'a FheType, &'a FheType, &'a FheType) -> (FheType, FheType) + Sync,
-{
-    let mut rng = thread_rng();
-
-    {
-        let num_elems = 10;
-        group.throughput(Throughput::Elements(num_elems));
-        let bench_id =
-            format!("{bench_name}::throughput::{fn_name}::{type_name}::{num_elems}_elems");
-        group.bench_with_input(&bench_id, &num_elems, |b, &num_elems| {
-            let from_amounts = (0..num_elems)
-                .map(|_| FheType::encrypt(rng.gen::<u64>(), client_key))
-                .collect::<Vec<_>>();
-            let to_amounts = (0..num_elems)
-                .map(|_| FheType::encrypt(rng.gen::<u64>(), client_key))
-                .collect::<Vec<_>>();
-            let amounts = (0..num_elems)
-                .map(|_| FheType::encrypt(rng.gen::<u64>(), client_key))
-                .collect::<Vec<_>>();
-
-            b.iter(|| {
-                from_amounts
-                    .par_iter()
-                    .zip_eq(to_amounts.par_iter().zip_eq(amounts.par_iter()))
-                    .for_each(|(from_amount, (to_amount, amount))| {
-                        let (_, _) = transfer_func(from_amount, to_amount, amount);
-                    })
-            })
-        });
-    }
-}
+//#[cfg(not(feature = "measure_memory"))]
+//fn bench_transfer_throughput<FheType, F>(
+//    group: &mut BenchmarkGroup<'_, WallTime>,
+//    client_key: &ClientKey,
+//    bench_name: &str,
+//    type_name: &str,
+//    fn_name: &str,
+//    transfer_func: F,
+//) where
+//    FheType: FheEncrypt<u64, ClientKey> + Send + Sync,
+//    F: for<'a> Fn(&'a FheType, &'a FheType, &'a FheType) -> (FheType, FheType) + Sync,
+//{
+//    let mut rng = thread_rng();
+//
+//    {
+//        let num_elems = 10;
+//        group.throughput(Throughput::Elements(num_elems));
+//        let bench_id =
+//            format!("{bench_name}::throughput::{fn_name}::{type_name}::{num_elems}_elems");
+//        group.bench_with_input(&bench_id, &num_elems, |b, &num_elems| {
+//            let from_amounts = (0..num_elems)
+//                .map(|_| FheType::encrypt(rng.gen::<u64>(), client_key))
+//                .collect::<Vec<_>>();
+//            let to_amounts = (0..num_elems)
+//                .map(|_| FheType::encrypt(rng.gen::<u64>(), client_key))
+//                .collect::<Vec<_>>();
+//            let amounts = (0..num_elems)
+//                .map(|_| FheType::encrypt(rng.gen::<u64>(), client_key))
+//                .collect::<Vec<_>>();
+//
+//            b.iter(|| {
+//                from_amounts
+//                    .par_iter()
+//                    .zip_eq(to_amounts.par_iter().zip_eq(amounts.par_iter()))
+//                    .for_each(|(from_amount, (to_amount, amount))| {
+//                        let (_, _) = transfer_func(from_amount, to_amount, amount);
+//                    })
+//            })
+//        });
+//    }
+//}
 
 #[cfg(not(feature = "measure_memory"))]
 #[allow(unused_mut)]
@@ -140,21 +142,21 @@ fn main() {
             group.finish();
         }
 
-        // FheUint64 Throughput
-        {
-            let mut group = c.benchmark_group(&bench_name);
+        //// FheUint64 Throughput
+        //{
+        //    let mut group = c.benchmark_group(&bench_name);
 
-            bench_transfer_throughput(
-                &mut group,
-                &cks,
-                &bench_name,
-                "FheUint64",
-                "overflow",
-                transfer_overflow::<FheUint64>,
-            );
+        //    bench_transfer_throughput(
+        //        &mut group,
+        //        &cks,
+        //        &bench_name,
+        //        "FheUint64",
+        //        "overflow",
+        //        transfer_overflow::<FheUint64>,
+        //    );
 
-            group.finish();
-        }
+        //    group.finish();
+        //}
 
         c.final_summary();
     }
