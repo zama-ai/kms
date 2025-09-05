@@ -8,7 +8,7 @@
 # Assumes the build.sh script was used
 TARGET_DIR="$HOME/kms/core/threshold"
 OUTPUT_FILE="$TARGET_DIR/bench_results.json"
-MEMORY_OUTPUT_FILE="$TARGET_DIR/memory_bench_results.json"
+MEMORY_OUTPUT_FILE="$TARGET_DIR/memory_bench_results.txt"
 
 cd $TARGET_DIR
 touch $OUTPUT_FILE
