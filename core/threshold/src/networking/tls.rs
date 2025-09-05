@@ -481,6 +481,11 @@ fn validate_wrapped_cert(
 pub fn extract_context_id_from_cert(cert: &X509Certificate) -> anyhow::Result<SessionId> {
     // Each TLS certificate is issued in a specific configuration context, we
     // use the context ID as the certificate serial number
+    //
+    // Note that `cert.serial` is a BigInt, so we need to convert it to
+    // bytes and then convert it to u128. As such, it does not matter
+    // what endianess we use for the conversion, as long as we are
+    // consistent on both sides. Here we use little-endian.
     let context_id = SessionId::from(u128::from_le_bytes(
         cert.serial
             .to_bytes_le()
