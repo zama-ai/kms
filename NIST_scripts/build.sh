@@ -54,7 +54,8 @@ REPO_URL="https://github.com/zama-ai/kms.git"
 TARGET_DIR="$HOME/kms/core/threshold"
 
 if [ ! -d "$TARGET_DIR" ]; then
-    git clone "$REPO_URL" "$HOME/"
+    cd $HOME
+    git clone "$REPO_URL"
 else
     echo "Directory $TARGET_DIR already exists. Skipping clone."
 fi
