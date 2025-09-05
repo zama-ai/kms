@@ -34,7 +34,7 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
     role: &Role,
     input_party_id: usize,
 ) -> anyhow::Result<PublicBgvKeySet> {
-    session.network().increase_round_counter()?;
+    session.network().increase_round_counter().await;
     if role.one_based() == input_party_id {
         let pubkey_raw =
             pubkey.ok_or_else(|| anyhow_error_and_log("I have no public key to send!"))?;
@@ -46,28 +46,29 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
         let mut set = JoinSet::new();
         for to_send_role in 1..=num_parties {
             if to_send_role != input_party_id {
-                let identity = session.identity_from(&Role::indexed_from_one(to_send_role))?;
-
                 let networking = Arc::clone(session.network());
                 let send_pk = pkval.clone();
 
                 set.spawn(async move {
-                    let _ = networking.send(send_pk.to_network(), &identity).await;
+                    let _ = networking
+                        .send(send_pk.to_network(), &Role::indexed_from_one(to_send_role))
+                        .await;
                 });
             }
         }
         while (set.join_next().await).is_some() {}
         Ok(pubkey_raw)
     } else {
-        let receiver = session.identity_from(&Role::indexed_from_one(input_party_id))?;
         let networking = Arc::clone(session.network());
-        let timeout = session.network().get_timeout_current_round()?;
+        let timeout = session.network().get_timeout_current_round().await;
         tracing::debug!(
             "Waiting for receiving public key from input party with timeout {:?}",
             timeout
         );
         let data = tokio::spawn(timeout_at(timeout, async move {
-            networking.receive(&receiver).await
+            networking
+                .receive(&Role::indexed_from_one(input_party_id))
+                .await
         }))
         .await??;
 
@@ -97,8 +98,7 @@ pub async fn transfer_secret_key<S: BaseSessionHandles>(
 
         let mut set = JoinSet::new();
         for (to_send_role, sk) in ks.iter().enumerate() {
-            if &Role::indexed_from_zero(to_send_role) != role {
-                let identity = session.identity_from(&Role::indexed_from_zero(to_send_role))?;
+            if to_send_role + 1 != role.one_based() {
                 let sk_vec = sk.sk.iter().map(|item| item.value()).collect_vec();
                 let network_sk_shares = NetworkValue::<LevelOne>::VecRingValue(sk_vec);
 
@@ -106,7 +106,9 @@ pub async fn transfer_secret_key<S: BaseSessionHandles>(
                 let send_sk = network_sk_shares.clone();
 
                 set.spawn(async move {
-                    let _ = networking.send(send_sk.to_network(), &identity).await;
+                    let _ = networking
+                        .send(send_sk.to_network(), &Role::indexed_from_zero(to_send_role))
+                        .await;
                 });
             }
         }
@@ -118,11 +120,12 @@ pub async fn transfer_secret_key<S: BaseSessionHandles>(
             .collect_vec();
         Ok(PrivateBgvKeySet::from_eval_domain(ntt_shares))
     } else {
-        let receiver = session.identity_from(&Role::indexed_from_one(input_party_id))?;
         let networking = Arc::clone(session.network());
-        let timeout = session.network().get_timeout_current_round()?;
+        let timeout = session.network().get_timeout_current_round().await;
         let data = tokio::spawn(timeout_at(timeout, async move {
-            networking.receive(&receiver).await
+            networking
+                .receive(&Role::indexed_from_one(input_party_id))
+                .await
         }))
         .await??;
 

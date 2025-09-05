@@ -129,7 +129,7 @@ fn validate_user_decrypt_meta_data_and_signature(
     let resp_verf_key: PublicSigKey = bc2wrap::deserialize(&other_resp.verification_key)?;
     let resp_addr = alloy_signer::utils::public_key_to_address(resp_verf_key.pk());
 
-    let expected_addr = if let Some(expected_addr) = server_addreses.get(&other_resp.party_id) {
+    let expected_addr = if let Some(expected_addr) = server_addreses.get(&(other_resp.party_id)) {
         if *expected_addr != resp_addr {
             anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
         }

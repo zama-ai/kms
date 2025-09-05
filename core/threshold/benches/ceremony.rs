@@ -7,7 +7,7 @@ use threshold_fhe::{
     execution::{
         runtime::{
             session::ParameterHandles,
-            test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+            test_runtime::{generate_fixed_roles, DistributedTestRuntime},
         },
         zk::ceremony::{Ceremony, SecureCeremony},
     },
@@ -31,17 +31,12 @@ fn bench_ceremony(c: &mut Criterion) {
             BenchmarkId::from_parameter(witness_dim),
             &witness_dim,
             |b, dim| {
-                let identities = generate_fixed_identities(num_parties);
+                let roles = generate_fixed_roles(num_parties);
                 //CRS generation requires sync network
                 let runtime: DistributedTestRuntime<
                     ResiduePolyF8Z64,
                     { ResiduePolyF8Z64::EXTENSION_DEGREE },
-                > = DistributedTestRuntime::new(
-                    identities,
-                    threshold as u8,
-                    NetworkMode::Sync,
-                    None,
-                );
+                > = DistributedTestRuntime::new(roles, threshold as u8, NetworkMode::Sync, None);
 
                 let session_id = SessionId::from(2);
                 let rt = tokio::runtime::Runtime::new().unwrap();
@@ -49,11 +44,14 @@ fn bench_ceremony(c: &mut Criterion) {
 
                 b.iter(|| {
                     let mut set = JoinSet::new();
-                    for (index_id, _identity) in runtime.identities.clone().into_iter().enumerate()
-                    {
+                    let roles = runtime.roles.clone();
+                    for role in roles {
                         let dim = *dim;
-                        let mut session =
-                            runtime.small_session_for_party(session_id, index_id, None);
+                        let mut session = rt.block_on(async {
+                            runtime
+                                .small_session_for_party(session_id, role, None)
+                                .await
+                        });
                         set.spawn(async move {
                             let real_ceremony = SecureCeremony::default();
                             let out = real_ceremony

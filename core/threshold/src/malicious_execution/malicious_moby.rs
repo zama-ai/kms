@@ -1,11 +1,13 @@
+use std::sync::Arc;
+
 use tonic::transport::server::Router;
 
 use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve, Syndrome};
 use crate::execution::online::preprocessing::PreprocessorFactory;
-use crate::execution::runtime::party::Identity;
+use crate::execution::runtime::party::Role;
 use crate::grpc::server::SecureGrpcChoreography;
 
-use crate::networking::NetworkingStrategy;
+use crate::networking::grpc::GrpcNetworkingManager;
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
@@ -95,8 +97,8 @@ type GrpcChoreographyDropAll<const EXTENSION_DEGREE: usize> = GrpcChoreography<
 
 pub fn add_strategy_to_router<const EXTENSION_DEGREE: usize, L>(
     router: Router<L>,
-    own_identity: Identity,
-    networking_strategy: NetworkingStrategy,
+    my_role: Role,
+    networking_strategy: Arc<GrpcNetworkingManager>,
     factory: Box<dyn PreprocessorFactory<EXTENSION_DEGREE>>,
 ) -> Router<L>
 where
@@ -108,18 +110,18 @@ where
 
     let router = match strategy.as_str() {
         "secure" => router.add_service(
-            SecureGrpcChoreography::new(own_identity, networking_strategy, factory).into_server(),
+            SecureGrpcChoreography::new(my_role, networking_strategy, factory).into_server(),
         ),
         "malicious_broadcast" => router.add_service(
             GrpcChoreographyMaliciousBroadcastSenderEcho::new(
-                own_identity,
+                my_role,
                 networking_strategy,
                 factory,
             )
             .into_server(),
         ),
         "drop_all" => router.add_service(
-            GrpcChoreographyDropAll::new(own_identity, networking_strategy, factory).into_server(),
+            GrpcChoreographyDropAll::new(my_role, networking_strategy, factory).into_server(),
         ),
         _ => panic!("Unknown moby strategy: {strategy}"),
     };

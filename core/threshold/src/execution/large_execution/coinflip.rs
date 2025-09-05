@@ -76,7 +76,7 @@ impl<V: Vss, RO: RobustOpen> RealCoinflip<V, RO> {
 
 #[async_trait]
 impl<V: Vss, RO: RobustOpen> Coinflip for RealCoinflip<V, RO> {
-    #[instrument(name="CoinFlip",skip(self,session),fields(sid = ?session.session_id(), own_identity=?session.own_identity()))]
+    #[instrument(name="CoinFlip",skip(self,session),fields(sid = ?session.session_id(), my_role=?session.my_role()))]
     async fn execute<Z, L: LargeSessionHandles>(&self, session: &mut L) -> anyhow::Result<Z>
     where
         Z: ErrorCorrect,
@@ -121,9 +121,9 @@ pub(crate) mod tests {
     use crate::{
         algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
         execution::runtime::{
-            party::{Identity, Role},
-            session::{BaseSessionHandles, LargeSession, ParameterHandles},
-            test_runtime::DistributedTestRuntime,
+            party::Role,
+            session::{BaseSessionHandles, LargeSession},
+            test_runtime::generate_fixed_roles,
         },
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious,
@@ -135,40 +135,27 @@ pub(crate) mod tests {
         networking::NetworkMode,
     };
     use aes_prng::AesRng;
+    use futures_util::future::join;
     use rand::SeedableRng;
     use rstest::rstest;
     use tokio::task::JoinSet;
 
     #[test]
     fn test_dummy_coinflip() {
-        let identities = vec![
-            Identity("localhost".to_string(), 5000),
-            Identity("localhost".to_string(), 5001),
-            Identity("localhost".to_string(), 5002),
-            Identity("localhost".to_string(), 5003),
-            Identity("localhost".to_string(), 5004),
-        ];
+        let roles = generate_fixed_roles(5);
         let threshold = 1;
-        //Coinflip assumes Sync network
-        let runtime = DistributedTestRuntime::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >::new(identities.clone(), threshold, NetworkMode::Sync, None);
-
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
 
         let mut set = JoinSet::new();
-        for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = get_networkless_large_session_for_parties(
-                identities.len(),
-                threshold,
-                Role::indexed_from_zero(party_nb),
-            );
+        let party_amount = roles.len();
+        for party in roles {
+            let mut session =
+                get_networkless_large_session_for_parties(party_amount, threshold, party);
             set.spawn(async move {
                 let dummy_coinflip = DummyCoinflip::default();
                 (
-                    party_nb,
+                    party,
                     dummy_coinflip
                         .execute::<ResiduePolyF4Z128, _>(&mut session)
                         .await
@@ -193,7 +180,7 @@ pub(crate) mod tests {
     }
 
     //Helper function to plug malicious coinflip strategies
-    fn test_coinflip_strategies<
+    async fn test_coinflip_strategies<
         Z: ErrorCorrect,
         const EXTENSION_DEGREE: usize,
         C: Coinflip + 'static,
@@ -204,21 +191,15 @@ pub(crate) mod tests {
         let mut task_honest = |mut session: LargeSession| async move {
             let real_coinflip = SecureCoinflip::default();
             (
-                session.my_role(),
                 real_coinflip.execute::<Z, _>(&mut session).await.unwrap(),
                 session.corrupt_roles().clone(),
             )
         };
 
         let mut task_malicious = |mut session: LargeSession, malicious_coinflip: C| async move {
-            (
-                session.my_role(),
-                malicious_coinflip
-                    .execute::<Z, _>(&mut session)
-                    .await
-                    .unwrap(),
-                session.corrupt_roles().clone(),
-            )
+            let res = malicious_coinflip.execute::<Z, _>(&mut session).await;
+            let cur_roles = session.corrupt_roles().clone();
+            res.map(|inner| (inner, cur_roles))
         };
 
         //Coinflip assumes Sync network
@@ -232,11 +213,12 @@ pub(crate) mod tests {
                 None,
                 &mut task_honest,
                 &mut task_malicious,
-            );
+            )
+            .await;
 
         //make sure the  malicious set of all honest parties is in sync
-        let ref_malicious_set = results_honest[0].2.clone();
-        for (_, _, malicious_set) in results_honest.iter() {
+        let ref_malicious_set = results_honest[&Role::indexed_from_one(1)].1.clone();
+        for (_, malicious_set) in results_honest.values() {
             assert_eq!(malicious_set, &ref_malicious_set);
         }
 
@@ -264,13 +246,13 @@ pub(crate) mod tests {
         }
 
         //make sure result for p1 is correct and all parties have the same result
-        for (_, r, corrupt_roles) in results_honest {
+        for (r, corrupt_roles) in results_honest.values() {
             if params.should_be_detected {
                 for role in params.malicious_roles.iter() {
                     assert!(corrupt_roles.contains(role));
                 }
             }
-            assert_eq!(r, expected_res);
+            assert_eq!(*r, expected_res);
         }
     }
 
@@ -279,16 +261,16 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_honest(4, 1, Some(6)))]
     #[case(TestingParameters::init_honest(7, 2, Some(7)))]
     #[case(TestingParameters::init_honest(10, 3, Some(8)))]
-    fn test_coinflip_honest_z128(#[case] params: TestingParameters) {
+    async fn test_coinflip_honest_z128(#[case] params: TestingParameters) {
         let malicious_coinflip = SecureCoinflip::default();
-        test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+        join(test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip.clone(),
-        );
+        ),
         test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip.clone(),
-        );
+        )).await;
     }
 
     //Test when coinflip aborts after the VSS for all kinds of VSS
@@ -303,21 +285,21 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
     #[cfg(feature = "slow_tests")]
-    fn test_coinflip_dropout<V: Vss + 'static>(
+    async fn test_coinflip_dropout<V: Vss + 'static>(
         #[case] params: TestingParameters,
         #[case] malicious_vss: V,
     ) {
         use crate::malicious_execution::large_execution::malicious_coinflip::DroppingCoinflipAfterVss;
 
         let dropping_coinflip = DroppingCoinflipAfterVss::new(malicious_vss.clone());
-        test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+        join(test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             dropping_coinflip.clone(),
-        );
+        ),
         test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             dropping_coinflip.clone(),
-        );
+        )).await;
     }
 
     //Test honest coinflip with all kinds of malicious strategies for VSS
@@ -332,7 +314,7 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
     #[cfg(feature = "slow_tests")]
-    fn test_coinflip_malicious_vss<V: Vss + 'static, RO: RobustOpen + 'static>(
+    async fn test_coinflip_malicious_vss<V: Vss + 'static, RO: RobustOpen + 'static>(
         #[case] params: TestingParameters,
         #[case] malicious_vss: V,
         #[case] malicious_robust_open: RO,
@@ -342,14 +324,15 @@ pub(crate) mod tests {
             robust_open: malicious_robust_open.clone(),
         };
 
-        test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+        join(test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             real_coinflip_with_malicious_sub_protocols.clone(),
-        );
+        ),
         test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             real_coinflip_with_malicious_sub_protocols.clone(),
-        );
+        ))
+        .await;
     }
 
     //Test malicious coinflip with all kinds of strategies for VSS (honest and malicious)
@@ -362,8 +345,9 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
+    #[tracing_test::traced_test]
     #[cfg(feature = "slow_tests")]
-    fn test_malicious_coinflip_malicious_vss<V: Vss + 'static, RO: RobustOpen + 'static>(
+    async fn test_malicious_coinflip_malicious_vss<V: Vss + 'static, RO: RobustOpen + 'static>(
         #[case] params: TestingParameters,
         #[case] malicious_vss: V,
         #[case] malicious_robust_open: RO,
@@ -372,13 +356,13 @@ pub(crate) mod tests {
         let malicious_coinflip_recons =
             MaliciousCoinflipRecons::new(malicious_vss.clone(), malicious_robust_open.clone());
 
-        test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+        join(test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip_recons.clone(),
-        );
+        ),
         test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip_recons.clone(),
-        );
+        )).await;
     }
 }

@@ -139,4 +139,21 @@ lazy_static::lazy_static! {
     // We do so, since there is ever only one conceptual signing key per party (at least for now).
     // This is a bit hackish, but it works for now.
     pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
+
+    pub static ref DEFAULT_MPC_CONTEXT: RequestId = RequestId::from_bytes([
+        1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
+        4,
+    ]);
+}
+
+#[test]
+fn test_context_derivation() {
+    let context_id = *DEFAULT_MPC_CONTEXT;
+    let sid = context_id.derive_session_id().unwrap();
+    assert_eq!(
+        threshold_fhe::session_id::SessionId::from(
+            threshold_fhe::tls_certs::DEFAULT_SESSION_ID_FROM_CONTEXT
+        ),
+        sid
+    );
 }

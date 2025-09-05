@@ -19,6 +19,7 @@ pub enum RoleVersioned {
     Copy,
     Clone,
     Debug,
+    Default,
     PartialEq,
     Eq,
     PartialOrd,
@@ -203,4 +204,79 @@ impl FromStr for Identity {
     }
 }
 
-pub type RoleAssignment = HashMap<Role, Identity>;
+#[derive(Debug, Clone, Default)]
+pub struct RoleAssignment {
+    // NOTE: the String is the MPC identity
+    pub inner: HashMap<Role, (Identity, String)>,
+}
+
+impl From<HashMap<Role, Identity>> for RoleAssignment {
+    fn from(map: HashMap<Role, Identity>) -> Self {
+        let inner = map
+            .into_iter()
+            .map(|(role, identity)| {
+                let mpc_identity = identity.hostname().to_string();
+                (role, (identity, mpc_identity))
+            })
+            .collect();
+        RoleAssignment { inner }
+    }
+}
+
+impl RoleAssignment {
+    pub fn empty() -> Self {
+        RoleAssignment {
+            inner: HashMap::new(),
+        }
+    }
+
+    pub fn identity(&self, role: &Role) -> Option<&Identity> {
+        self.inner.get(role).map(|(id, _)| id)
+    }
+
+    pub fn mpc_identity(&self, role: &Role) -> Option<&String> {
+        self.inner.get(role).map(|(_, mpc_id)| mpc_id)
+    }
+
+    pub fn contains_key(&self, role: &Role) -> bool {
+        self.inner.contains_key(role)
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &Role> {
+        self.inner.keys()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&Role, &(Identity, String))> {
+        self.inner.iter()
+    }
+
+    pub fn remove(&mut self, role: &Role) -> Option<(Identity, String)> {
+        self.inner.remove(role)
+    }
+
+    pub fn insert(
+        &mut self,
+        role: Role,
+        identity: Identity,
+        mpc_identity: String,
+    ) -> Option<(Identity, String)> {
+        self.inner.insert(role, (identity, mpc_identity))
+    }
+
+    pub fn insert_with_default_mpc_identity(
+        &mut self,
+        role: Role,
+        identity: Identity,
+    ) -> Option<(Identity, String)> {
+        let mpc_identity = identity.0.clone();
+        self.inner.insert(role, (identity, mpc_identity))
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}

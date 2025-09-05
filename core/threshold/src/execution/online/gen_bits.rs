@@ -34,7 +34,7 @@ pub struct SecureBitGenEven {}
 impl BitGenEven for SecureBitGenEven {
     /// Generates a vector of secret shared random bits using a preprocessing functionality and a session.
     /// The code only works when the modulo of the ring used is even.
-    #[instrument(name="MPC.GenBits", skip(amount, preproc, session), fields(sid = ?session.session_id(), own_identity = ?session.own_identity(),batch_size=?amount))]
+    #[instrument(name="MPC.GenBits", skip(amount, preproc, session), fields(sid = ?session.session_id(), my_role = ?session.my_role(),batch_size=?amount))]
     async fn gen_bits_even<
         Z: Invert + Solve + ErrorCorrect,
         Ses: BaseSessionHandles,
@@ -109,8 +109,8 @@ mod tests {
     macro_rules! test_bitgen {
         ($z:ty, $u:ty) => {
             paste! {
-                #[test]
-                fn [<even_sunshine_ $z:lower>]() {
+                #[tokio::test]
+                async fn [<even_sunshine_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
                     const AMOUNT: usize = 10;
@@ -126,12 +126,12 @@ mod tests {
                     // Async because the triple gen is dummy
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small::<_,_,$z, {$z::EXTENSION_DEGREE}>(parties, threshold, Some(3), NetworkMode::Async, Some(delay_vec), &mut task, None);
+                    let results = execute_protocol_small::<_,_,$z, {$z::EXTENSION_DEGREE}>(parties, threshold, Some(3), NetworkMode::Async, Some(delay_vec), &mut task, None).await;
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);
                 }
 
-                #[test]
-                fn [<even_malicious_ $z:lower>]() {
+                #[tokio::test]
+                async fn [<even_malicious_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
                     let bad_party: Role = Role::indexed_from_one(2);
@@ -170,7 +170,7 @@ mod tests {
                     // Async because the triple gen is dummy
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small::<_,_,$z, {$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task, None);
+                    let results = execute_protocol_small::<_,_,$z, {$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task, None).await;
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);
                 }
 
