@@ -591,10 +591,15 @@ impl Choreography for ExperimentalGrpcChoreography {
                         format!("Failed to parse role assignment: {e:?}"),
                     )
                 })?;
+            let roles = role_assignment.keys().cloned().collect();
 
             let networking = self
                 .networking_manager
-                .make_session(session_id, &role_assignment, NetworkMode::Async)
+                .make_session(
+                    session_id,
+                    &RoleAssignment::from(role_assignment),
+                    NetworkMode::Async,
+                )
                 .map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
@@ -603,7 +608,6 @@ impl Choreography for ExperimentalGrpcChoreography {
                 })
                 .await?;
 
-            let roles = role_assignment.keys().cloned().collect();
             let params =
                 SessionParameters::new(0, session_id, self.my_role, roles).map_err(|e| {
                     tonic::Status::new(
