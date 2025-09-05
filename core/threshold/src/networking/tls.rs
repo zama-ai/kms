@@ -110,7 +110,14 @@ pub struct AttestedVerifier {
     // SessionId is supposed to be based on RequestId, and we're representing
     // ContextId as RequestId so far, so let's say it's all the same for now
     contexts: RwLock<HashMap<SessionId, Arc<AttestedTLSContext>>>,
-    // are enclave images signed?
+    // If the "semi-auto" TLS scheme is used, where the party TLS identity is
+    // linked to some certificate issued and managed by some traditional PKI,
+    // the enclave image should be signed by that certificate and the
+    // certificate hash is stored in PCR8. Enabling this flag will compare the
+    // PCR8 against the hash of the party certificate found in the peer
+    // list. This flag is not used in the "full-auto" TLS scheme where the party
+    // TLS identity is based on the decryption signing key, and no traditional
+    // PKI is used.
     pcr8_expected: bool,
 }
 
