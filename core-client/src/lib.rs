@@ -1400,7 +1400,6 @@ async fn do_new_custodian_context(
                 .await
         });
     }
-
     while let Some(inner) = req_tasks.join_next().await {
         let _ = inner??;
     }
@@ -1437,16 +1436,16 @@ async fn do_custodian_backup_recovery(
     custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
-    for ce in core_endpoints.iter_mut() {
+    for (op_idx, ce) in core_endpoints.iter_mut().enumerate() {
         let mut cur_client = ce.clone();
         // We assume the core client endpoints are ordered by the server identity
         let mut cur_recoveries = Vec::new();
-        for (idx, cur_recover) in custodian_recovery_outputs.iter().enumerate() {
+        for cur_recover in custodian_recovery_outputs.iter() {
             // Find the recoveries designated for the correct server
             // Observe that in real world deployments this would mean everyone since
             // if each KMS nodes has knowledge of _all_ the recoveries for all parites, then
             // they can trivially recover the secret key!
-            if cur_recover.operator_role == Role::indexed_from_zero(idx) {
+            if cur_recover.operator_role == Role::indexed_from_zero(op_idx) {
                 cur_recoveries.push(CustodianRecoveryOutput {
                     signature: cur_recover.signature.clone(),
                     ciphertext: cur_recover.ciphertext.clone(),
@@ -1534,7 +1533,11 @@ pub async fn execute_cmd(
         | CCCommand::InsecureKeyGen(_)
         | CCCommand::CrsGen(_)
         | CCCommand::InsecureCrsGen(_)
-        | CCCommand::PreprocKeyGen(_) => {
+        | CCCommand::PreprocKeyGen(_)
+        | CCCommand::BackupRestore(_)
+        | CCCommand::NewCustodianContext(_)
+        | CCCommand::CustodianRecoveryInit(_)
+        | CCCommand::CustodianBackupRecovery(_) => {
             tracing::info!("Fetching verification keys. ({command:?})");
             fetch_verf_keys(&cc_conf, destination_prefix).await?;
         }
@@ -2127,13 +2130,17 @@ pub async fn execute_cmd(
             pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
         }
         CCCommand::CustodianRecoveryInit(NoParameters {}) => {
+            // todo should have path as param
             let res = do_custodian_recovery_init(&mut core_endpoints_req).await?;
             for cur_rec_req in &res {
-                let path = destination_prefix.join("RECOVERY").join(format!(
-                    "{}{MAIN_SEPARATOR}{}",
-                    cur_rec_req.backup_id(),
-                    cur_rec_req.operator_role()
-                ));
+                let path = destination_prefix
+                    .join("CUSTODIAN")
+                    .join("recovery")
+                    .join(format!(
+                        "{}{MAIN_SEPARATOR}{}",
+                        cur_rec_req.backup_id(),
+                        cur_rec_req.operator_role()
+                    ));
                 safe_write_element_versioned(path, cur_rec_req).await?;
             }
             vec![(

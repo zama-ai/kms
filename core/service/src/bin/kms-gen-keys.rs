@@ -320,10 +320,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             s3_client.clone(),
         )
         .unwrap();
-        let pub_vault = Vault {
-            storage: pub_proxy_storage,
-            keychain: None,
-        };
         let private_keychain = OptionFuture::from(
             args.root_key_id
                 .as_ref()
@@ -340,13 +336,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         k,
                         awskms_client.clone(),
                         security_module.clone(),
-                        Some(&pub_vault),
+                        Some(&pub_proxy_storage),
                     )
                 }),
         )
         .await
         .transpose()?;
-        pub_storages.push(pub_vault);
+        pub_storages.push(pub_proxy_storage);
         priv_vaults.push(Vault {
             storage: make_storage(
                 match args.private_storage {
