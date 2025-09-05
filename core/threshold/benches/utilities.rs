@@ -8,7 +8,6 @@ use threshold_fhe::execution::tfhe_internals::parameters::{
 
 #[cfg(feature = "measure_memory")]
 fn print_memory_usage(bench_name: String, results: Vec<usize>) {
-    println!("ALL RESULTS: {:?}", results);
     let num_runs = results.len();
     // Compute mean and std deviation of the results
     let mean = results.iter().sum::<usize>() as f64 / num_runs as f64;
@@ -27,9 +26,9 @@ fn print_memory_usage(bench_name: String, results: Vec<usize>) {
     let max = sorted.last().unwrap();
     let median = sorted[sorted.len() / 2];
     println!(
-        "Memory usage for {bench_name} (over {num_runs} runs) :
+        "Memory usage for {bench_name} (avg over {num_runs} runs) : {mean} B.
         \t [min:{min}, median:{median}, max:{max}]
-        \t AVG: {mean} B, STD_DV: {std_dv}\n"
+        \t STD_DV: {std_dv}\n"
     );
 }
 
