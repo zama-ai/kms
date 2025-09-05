@@ -130,13 +130,13 @@ pub async fn run_config_validation(config_path: &str) -> Result<HealthCheckResul
                         config_type.service.listen_address, config_type.service.listen_port
                     );
 
-                    // Validate threshold setting
+                    // Validate threshold setting - consistent with server-side health logic
                     // threshold = max number of malicious/offline nodes tolerated
-                    // min_nodes = 2*threshold + 1 = total_nodes - threshold (for MPC operations)
+                    // For Byzantine fault tolerance, need 2/3 majority for healthy status
                     let threshold = threshold_conf.threshold;
                     let total_nodes = threshold_conf.peers.len(); // peers list includes self
-                    let min_nodes_required = 2 * (threshold as usize) + 1;
-                    let min_nodes = total_nodes.saturating_sub(threshold as usize);
+                    let min_nodes_required = 2 * (threshold as usize) + 1; // Basic MPC requirement
+                    let min_nodes_for_healthy = (2 * total_nodes).div_ceil(3); // 2/3 majority + 1
 
                     if total_nodes < min_nodes_required {
                         result.overall_health = HealthStatus::Unhealthy;
@@ -146,8 +146,8 @@ pub async fn run_config_validation(config_path: &str) -> Result<HealthCheckResul
                         ));
                     } else {
                         println!(
-                            "  [OK] Threshold: {} (requires {} of {} nodes for MPC)",
-                            threshold, min_nodes, total_nodes
+                            "  [OK] Threshold: {} (requires {} of {} nodes for MPC, {} for healthy status)",
+                            threshold, min_nodes_required, total_nodes, min_nodes_for_healthy
                         );
                     }
 
@@ -250,8 +250,13 @@ async fn process_health_status(
     }
 
     // Set node info from health response
+    let node_type_str = match health_status.node_type {
+        1 => "centralized",
+        2 => "threshold",
+        _ => "unknown",
+    };
     result.node_info = Some(NodeInfo {
-        node_type: health_status.node_type.clone(),
+        node_type: node_type_str.to_string(),
         my_party_id: health_status.my_party_id,
         threshold_required: health_status.threshold_required,
         nodes_reachable: health_status.nodes_reachable,
@@ -280,7 +285,8 @@ async fn process_health_status(
         result.peer_status = Some(peer_statuses);
 
         // Check threshold requirements if applicable
-        if health_status.node_type == "threshold" && health_status.threshold_required > 0 {
+        if health_status.node_type == 2 && health_status.threshold_required > 0 {
+            // NODE_TYPE_THRESHOLD
             if health_status.nodes_reachable < health_status.threshold_required {
                 result.overall_health = HealthStatus::Unhealthy;
                 result.recommendations.push(format!(
@@ -299,14 +305,15 @@ async fn process_health_status(
     }
 
     // Set overall health based on server's assessment
-    match health_status.status.as_str() {
-        "unhealthy" => result.overall_health = HealthStatus::Unhealthy,
-        "degraded" => {
+    match health_status.status {
+        3 => result.overall_health = HealthStatus::Unhealthy, // HEALTH_STATUS_UNHEALTHY
+        2 => {
+            // HEALTH_STATUS_DEGRADED
             if result.overall_health != HealthStatus::Unhealthy {
                 result.overall_health = HealthStatus::Degraded;
             }
         }
-        _ => {} // Keep current status
+        _ => {} // Keep current status (1 = HEALTH_STATUS_HEALTHY)
     }
 }
 

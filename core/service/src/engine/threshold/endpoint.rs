@@ -5,13 +5,17 @@ use crate::engine::threshold::traits::{
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
+use kms_grpc::kms::v1::{health_status_response::PeerHealth, HealthStatusResponse};
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DestroyKmsContextRequest, Empty, InitRequest,
     KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
     KeyMaterialAvailabilityResponse, NewKmsContextRequest, PublicDecryptionRequest,
     PublicDecryptionResponse, RequestId, UserDecryptionRequest, UserDecryptionResponse,
 };
-use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
+use kms_grpc::kms_service::v1::{
+    core_service_endpoint_client::CoreServiceEndpointClient,
+    core_service_endpoint_server::CoreServiceEndpoint,
+};
 use observability::{
     metrics::METRICS,
     metrics_names::{
@@ -23,7 +27,8 @@ use observability::{
         OP_USER_DECRYPT_RESULT,
     },
 };
-use tonic::{Request, Response, Status};
+use std::time::Instant;
+use tonic::{transport::Channel, Request, Response, Status};
 
 macro_rules! impl_endpoint {
     { impl CoreServiceEndpoint $implementations:tt } => {
@@ -390,10 +395,6 @@ impl_endpoint! {
             &self,
             _request: Request<Empty>,
         ) -> Result<Response<kms_grpc::kms::v1::HealthStatusResponse>, Status> {
-            use kms_grpc::kms::v1::{health_status_response::PeerHealth, HealthStatusResponse};
-            use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-            use std::time::Instant;
-            use tonic::transport::Channel;
 
             // Get own key material directly from backup_operator (avoid redundant gRPC call to self)
             let backup_response = self.backup_operator.get_key_material_availability(Request::new(Empty {})).await?;
@@ -509,24 +510,26 @@ impl_endpoint! {
 
             // Calculate threshold requirements
             let threshold_required = self.config.threshold as u32;
+            let total_nodes = self.config.peers.len() as u32; // includes self
+            let min_nodes_for_healthy = (2 * total_nodes).div_ceil(3); // 2/3 majority + 1
 
             // Determine overall health status
-            let status = if nodes_reachable >= threshold_required {
-                "healthy"
-            } else if nodes_reachable > 0 {
-                "degraded"
+            let status = if nodes_reachable >= min_nodes_for_healthy {
+                1 // HEALTH_STATUS_HEALTHY - sufficient majority available (includes all nodes)
+            } else if nodes_reachable > threshold_required {
+                2 // HEALTH_STATUS_DEGRADED - above minimum threshold but below 2/3
             } else {
-                "unhealthy"
+                3 // HEALTH_STATUS_UNHEALTHY - insufficient nodes for operations
             };
 
             let response = HealthStatusResponse {
-                status: status.to_string(),
+                status,
                 peers: peer_health_infos,
                 my_fhe_key_ids: own_material.fhe_key_ids,
                 my_crs_ids: own_material.crs_ids,
                 my_preprocessing_key_ids: own_material.preprocessing_ids,
                 my_storage_info: own_material.storage_info,
-                node_type: "threshold".to_string(),
+                node_type: 2, // NODE_TYPE_THRESHOLD
                 my_party_id: self.config.my_id as u32,
                 threshold_required,
                 nodes_reachable,

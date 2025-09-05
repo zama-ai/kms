@@ -722,9 +722,24 @@ message Empty {}
 ### Output
 
 ```proto
+// Health status levels
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_DEGRADED = 2;
+  HEALTH_STATUS_UNHEALTHY = 3;
+}
+
+// Node type for KMS deployment
+enum NodeType {
+  NODE_TYPE_UNSPECIFIED = 0;
+  NODE_TYPE_CENTRALIZED = 1;
+  NODE_TYPE_THRESHOLD = 2;
+}
+
 message HealthStatusResponse {
-  // Overall health status: "healthy", "degraded", "unhealthy"
-  string status = 1;
+  // Overall health status
+  HealthStatus status = 1;
   
   // Health information for a peer node
   message PeerHealth {
@@ -759,14 +774,14 @@ message HealthStatusResponse {
   // Health status of all peers
   repeated PeerHealth peers = 2;
   
-  // Self key material counts
-  uint32 my_fhe_keys = 3;
-  uint32 my_crs_keys = 4;
-  uint32 my_preprocessing_keys = 5;
+  // Self key material IDs
+  repeated string my_fhe_key_ids = 3;
+  repeated string my_crs_ids = 4;
+  repeated string my_preprocessing_key_ids = 5;
   string my_storage_info = 6;
   
   // Runtime configuration info
-  string node_type = 7; // "threshold" or "centralized"
+  NodeType node_type = 7;
   uint32 my_party_id = 8; // Only for threshold mode
   uint32 threshold_required = 9; // Minimum nodes needed
   uint32 nodes_reachable = 10; // Currently reachable nodes
@@ -779,14 +794,14 @@ This RPC provides comprehensive health status information for the KMS instance, 
 
 The response contains:
 
-- `status`: Overall health assessment - "healthy", "degraded", or "unhealthy"
+- `status`: Overall health assessment using HealthStatus enum (HEALTH_STATUS_HEALTHY, HEALTH_STATUS_DEGRADED, or HEALTH_STATUS_UNHEALTHY)
 - `peers`: Detailed health information for each peer in threshold mode, including:
   - Connectivity status and latency
   - Actual key IDs for FHE keys, CRS keys, and preprocessing material (when available)
   - Storage backend information
   - Error details if unreachable
 - `my_*` fields: Self key material IDs and storage information
-- Configuration details: node type, party ID, threshold requirements, and reachable node count
+- Configuration details: node type (NodeType enum), party ID, threshold requirements, and reachable node count
 
 Health status levels:
 - **Healthy**: All checks passed, keys present, all required peers reachable

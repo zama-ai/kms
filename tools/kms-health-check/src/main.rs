@@ -57,7 +57,7 @@ enum Commands {
     },
 }
 
-#[derive(Clone, ValueEnum)]
+#[derive(Debug, Clone, ValueEnum)]
 enum OutputFormat {
     Text,
     Json,
@@ -77,6 +77,11 @@ async fn main() -> Result<()> {
     };
 
     tracing_subscriber::fmt().with_env_filter(log_level).init();
+
+    // Display startup configuration info
+    tracing::info!("KMS Health Check Tool starting...");
+    tracing::info!("Log level: {}", log_level);
+    tracing::info!("Output format: {:?}", cli.format);
 
     let result = match cli.command {
         Commands::Config { file } => checks::run_config_validation(file.to_str().unwrap()).await?,
