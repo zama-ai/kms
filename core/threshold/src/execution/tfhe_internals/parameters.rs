@@ -1586,13 +1586,13 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
         }),
         dedicated_compact_public_key_parameters: Some((
             CompactPublicKeyEncryptionParameters {
-                encryption_lwe_dimension: LweDimension(256),
+                encryption_lwe_dimension: LweDimension(512),
                 encryption_noise_distribution: DynamicDistribution::new_t_uniform(0),
                 message_modulus: MessageModulus(4),
                 carry_modulus: CarryModulus(4),
                 ciphertext_modulus: CiphertextModulus::new_native(),
                 expansion_kind: CompactCiphertextListExpansionKind::RequiresCasting,
-                zk_scheme: SupportedCompactPkeZkScheme::V1,
+                zk_scheme: SupportedCompactPkeZkScheme::V2,
             },
             ShortintKeySwitchingParameters {
                 ks_level: DecompositionLevelCount(1),

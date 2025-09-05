@@ -148,12 +148,7 @@ pub(crate) async fn crs_gen_centralized(
     let (kms_server, mut kms_client, internal_client) =
         crate::client::test_tools::centralized_handles(&dkg_param, Some(rate_limiter_conf)).await;
 
-    let max_num_bits = if params == FheParameter::Test {
-        Some(1)
-    } else {
-        // The default is 2048 which is too slow for tests, so we switch to 256
-        Some(256)
-    };
+    let max_num_bits = Some(2048);
     let domain = dummy_domain();
     let gen_req = internal_client
         .crs_gen_request(crs_req_id, max_num_bits, Some(params), &domain)
