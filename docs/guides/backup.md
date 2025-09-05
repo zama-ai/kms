@@ -12,7 +12,7 @@ WARNING: This tool is only mean to be used in a highly secure setting. This mean
 In particular, for all usages, the following steps must be taken:
 1. Construct a trusted live version of an operating system.
 2. Boot this live OS on a factory new machine.
-3. On a separate machine prepare necessary install files: I.e. either Rust and the source code of this repository, or a trusted pre-compiled binary of the backup utility. 
+3. On a separate machine prepare necessary installation files: I.e. either Rust and the source code of this repository, or a trusted pre-compiled binary of the backup utility. 
 4. These must then be copied to a factory-fresh USB stick.
 
 ### Custodian setup
@@ -37,7 +37,7 @@ The call will print any inconsistencies found between the public keys generated 
 
 ### Recovery (decryption of backup)
 
-Run the CLI tool with the `decrypt` command in order decrypt a backup, and then reencrypt it under a supplied operator keyset. More specifically:
+Run the CLI tool with the `decrypt` command in order to decrypt a backup, and then reencrypt it under a supplied operator keyset. More specifically:
 ```bash
 $ kms-backup decrypt --seed-phrase <the seed phrased used for generation> --randomness <random string of chars> --custodian-role <1-index role> --recovery-request-path <path and name of the file where the operator recovery request reside> --output-path <path and name of the file where the result of the reencryption should be stored>
 ```

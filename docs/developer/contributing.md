@@ -90,7 +90,7 @@ Any code changes must adhere to certain policies and stylistic choices. These ar
 ### Errors
 1. Checks for potential errors, e.g. malformed data, should happen as soon as possible and not be deferred down the line.
 2. When the error is because of bad input or adversarial behavior no panic should happen. Instead the error should be logged appropriately and with sufficient detail to uniquely figure out where it happened and why.
-3. Errors that can only happen because of a bug *should* cause a panic. E.g. and index-out-of-bound exception on a vector that has a known size, or a `None` value in a segment of code that should never be executed if this is the case.
+3. Errors that can only happen because of a bug *should* cause a panic. E.g. an index-out-of-bound exception on a vector that has a known size, or a `None` value in a segment of code that should never be executed if this is the case.
 4. Whenever a `panic` happens or an error is `unwrap`ed a comment should explain why this is indeed a bug.
 5. In fact, unless the `unwrap()` is in an obvious place in the code and it can be inferred from the context what it wrong, it is preferred to use `expect()` with a detailed error message that explains the details.
 
