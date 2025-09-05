@@ -5,7 +5,7 @@ use crate::hashing::serialize_hash_element;
 use crate::session_id::DSEP_SESSION_ID;
 
 use super::basics::PrivateBgvKeySet;
-use crate::execution::runtime::party::Identity;
+use crate::execution::runtime::party::Role;
 use crate::execution::runtime::session::ParameterHandles;
 use crate::execution::runtime::session::SmallSession;
 use crate::execution::sharing::share::Share;
@@ -54,7 +54,7 @@ pub fn threshold_decrypt(
     runtime: &BGVTestRuntime,
     private_keys: &[NttForm<LevelOne>],
     ct: &LevelledCiphertext<LevelEll, N65536>,
-) -> anyhow::Result<HashMap<Identity, Vec<u32>>> {
+) -> anyhow::Result<HashMap<Role, Vec<u32>>> {
     let session_id = SessionId::from_bgv_ct(ct)?;
 
     let rt = tokio::runtime::Runtime::new()?;
@@ -62,14 +62,12 @@ pub fn threshold_decrypt(
 
     let mut set = JoinSet::new();
 
-    for (role, identity) in runtime.role_assignments.clone().into_iter() {
-        let role_assignments = runtime.role_assignments.clone();
-        let net = Arc::clone(&runtime.user_nets[&role]);
+    for role in runtime.roles.clone().into_iter() {
+        let net = Arc::clone(&runtime.user_nets[role.one_based() - 1]);
         let threshold = runtime.threshold;
 
         let session_params =
-            SessionParameters::new(threshold, session_id, identity.clone(), role_assignments)
-                .unwrap();
+            SessionParameters::new(threshold, session_id, role, runtime.roles.clone()).unwrap();
         let base_session = BaseSession::new(session_params, net, AesRng::from_entropy()).unwrap();
 
         let sk_shares = private_keys[&role]
@@ -84,14 +82,14 @@ pub fn threshold_decrypt(
                 .await
                 .unwrap();
 
-            (identity, out)
+            (role, out)
         });
     }
     let results = rt.block_on(async {
         let mut results = HashMap::new();
         while let Some(v) = set.join_next().await {
-            let (identity, val) = v.unwrap();
-            results.insert(identity, val);
+            let (role, val) = v.unwrap();
+            results.insert(role, val);
         }
         results
     });

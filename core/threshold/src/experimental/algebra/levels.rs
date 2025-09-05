@@ -1218,8 +1218,8 @@ mod tests {
         assert_eq!(f_zero, secret);
     }
 
-    #[test]
-    fn test_levelksw_triple_gen() {
+    #[tokio::test]
+    async fn test_levelksw_triple_gen() {
         let parties = 5;
         let threshold = 1;
         let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
@@ -1246,7 +1246,8 @@ mod tests {
             None,
             &mut task,
             None,
-        );
+        )
+        .await;
 
         //Reconstruct everything and check triples are triples
         for idx in 0..100 {

@@ -46,6 +46,7 @@ use tracing::Instrument;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
+    consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
         internal_crypto_types::{PrivateSigKey, UnifiedPublicEncKey},
         signcryption::{signcrypt, SigncryptionPayload},
@@ -55,7 +56,7 @@ use crate::{
             compute_external_user_decrypt_signature, deserialize_to_low_level, BaseKmsStruct,
             UserDecryptCallValues,
         },
-        threshold::traits::UserDecryptor,
+        threshold::{service::session::SessionPreparerGetter, traits::UserDecryptor},
         traits::BaseKms,
         validation::{
             parse_proto_request_id, validate_user_decrypt_req, RequestIdParsingErr,
@@ -138,7 +139,7 @@ pub struct RealUserDecryptor<
     pub base_kms: BaseKmsStruct,
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
     pub user_decrypt_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
-    pub session_preparer: Arc<SessionPreparer>,
+    pub session_preparer_getter: SessionPreparerGetter,
     pub tracker: Arc<TaskTracker>,
     pub rate_limiter: RateLimiter,
     pub decryption_mode: DecryptionMode,
@@ -341,8 +342,8 @@ impl<
             signcrypted_ciphertexts: all_signcrypted_cts,
             digest: link,
             verification_key: server_verf_key,
-            party_id: session_prep.my_id as u32,
-            degree: session_prep.threshold as u32,
+            party_id: session_prep.my_role()?.one_based() as u32,
+            degree: session_prep.threshold()? as u32,
         };
 
         // NOTE: extra_data is not used in the current implementation
@@ -359,9 +360,10 @@ impl<
 
     #[cfg(test)]
     async fn init_test(
+        base_kms: BaseKmsStruct,
         pub_storage: PubS,
         priv_storage: PrivS,
-        session_preparer: SessionPreparer,
+        session_preparer_getter: SessionPreparerGetter,
     ) -> Self {
         let crypto_storage = ThresholdCryptoMaterialStorage::new(
             pub_storage,
@@ -375,10 +377,10 @@ impl<
         let rate_limiter = RateLimiter::default();
 
         Self {
-            base_kms: session_preparer.base_kms.new_instance().await,
+            base_kms,
             crypto_storage,
             user_decrypt_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-            session_preparer: Arc::new(session_preparer.new_instance().await),
+            session_preparer_getter,
             tracker,
             rate_limiter,
             decryption_mode: DecryptionMode::NoiseFloodSmall,
@@ -420,20 +422,42 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
+        let inner = request.into_inner();
+        tracing::info!(
+            request_id = ?inner.request_id,
+            "Received a new user decryption request",
+        );
+        let context_id = inner
+            .context_id
+            .clone()
+            .unwrap_or((*DEFAULT_MPC_CONTEXT).into());
+        let session_preparer = Arc::new(
+            self.session_preparer_getter
+                .get(
+                    &context_id
+                        .try_into()
+                        .map_err(|e: kms_grpc::IdentifierError| {
+                            tonic::Status::new(tonic::Code::Internal, e.to_string())
+                        })?,
+                )
+                .await
+                .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?,
+        );
+
         // Start timing and counting before any operations
         let mut timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_REQUEST)
-            .tag(TAG_PARTY_ID, self.session_preparer.my_id.to_string())
+            .tag(
+                TAG_PARTY_ID,
+                session_preparer
+                    .my_role()
+                    .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?
+                    .to_string(),
+            )
             .start();
 
         let permit = self.rate_limiter.start_user_decrypt().await?;
 
-        let inner = request.into_inner();
-        tracing::info!(
-            "Party {:?} received a new user decryption request with request_id {:?}",
-            self.session_preparer.own_identity(),
-            inner.request_id
-        );
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) =
             validate_user_decrypt_req(&inner).inspect_err(|e| {
                 tracing::error!(
@@ -457,8 +481,7 @@ impl<
 
             if guarded_meta_store.exists(&req_id) {
                 return Err(Status::already_exists(format!(
-                    "User decryption request with ID {} already exists",
-                    req_id
+                    "User decryption request with ID {req_id} already exists"
                 )));
             }
 
@@ -467,8 +490,7 @@ impl<
                 "Could not check threshold fhe key existance".to_string(),
             )? {
                 return Err(Status::not_found(format!(
-                    "Threshold FHE keys with key ID {} not found",
-                    key_id,
+                    "Threshold FHE keys with key ID {key_id} not found"
                 )));
             }
         }
@@ -491,11 +513,11 @@ impl<
             format!("Cannot find threshold keys with key ID {key_id}"),
         )?;
 
-        let prep = Arc::clone(&self.session_preparer);
+        let prep = Arc::clone(&session_preparer);
         let dec_mode = self.decryption_mode;
 
         let metric_tags = vec![
-            (TAG_PARTY_ID, prep.my_id.to_string()),
+            (TAG_PARTY_ID, prep.my_role_string_unchecked()),
             (TAG_KEY_ID, key_id.as_str()),
             (
                 TAG_PUBLIC_DECRYPTION_KIND,
@@ -608,7 +630,8 @@ mod tests {
     use rand::SeedableRng;
     use tfhe::FheTypes;
     use threshold_fhe::execution::{
-        runtime::session::ParameterHandles, tfhe_internals::utils::expanded_encrypt,
+        runtime::session::ParameterHandles, small_execution::prss::PRSSSetup,
+        tfhe_internals::utils::expanded_encrypt,
     };
 
     use crate::{
@@ -618,6 +641,7 @@ mod tests {
         },
         dummy_domain,
         engine::base::{compute_info_standard_keygen, DSEP_PUBDATA_KEY},
+        engine::threshold::service::session::SessionPreparerManager,
         vault::storage::ram,
     };
 
@@ -654,10 +678,13 @@ mod tests {
     }
 
     impl RealUserDecryptor<ram::RamStorage, ram::RamStorage, DummyNoiseFloodPartialDecryptor> {
-        pub async fn init_test_dummy_decryptor(session_preparer: SessionPreparer) -> Self {
+        pub async fn init_test_dummy_decryptor(
+            base_kms: BaseKmsStruct,
+            session_preparer_getter: SessionPreparerGetter,
+        ) -> Self {
             let pub_storage = ram::RamStorage::new();
             let priv_storage = ram::RamStorage::new();
-            Self::init_test(pub_storage, priv_storage, session_preparer).await
+            Self::init_test(base_kms, pub_storage, priv_storage, session_preparer_getter).await
         }
     }
 
@@ -675,7 +702,6 @@ mod tests {
     }
 
     async fn setup_user_decryptor(
-        with_prss: bool,
         rng: &mut AesRng,
     ) -> (
         RequestId,
@@ -684,8 +710,31 @@ mod tests {
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
-        let session_preparer = SessionPreparer::new_test_session(with_prss);
-        let user_decryptor = RealUserDecryptor::init_test_dummy_decryptor(session_preparer).await;
+        let base_kms = BaseKmsStruct::new(sk.clone()).unwrap();
+        let session_preparer_manager = SessionPreparerManager::new_test_session();
+
+        let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+        let prss_setup_z64 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
+            vec![],
+            vec![],
+        ))));
+
+        let session_preparer = SessionPreparer::new_test_session(
+            base_kms.new_instance().await,
+            prss_setup_z128,
+            prss_setup_z64,
+        );
+        session_preparer_manager
+            .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
+            .await;
+        let user_decryptor = RealUserDecryptor::init_test_dummy_decryptor(
+            base_kms,
+            session_preparer_manager.make_getter(),
+        )
+        .await;
 
         let key_id = RequestId::new_random(rng);
 
@@ -747,7 +796,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(1123);
-        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true, &mut rng).await;
+        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(&mut rng).await;
 
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
@@ -769,6 +818,7 @@ mod tests {
                 request_id: Some(bad_req_id),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -790,6 +840,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -816,6 +867,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -842,6 +894,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: "bad client address".to_string(),
                 extra_data: vec![],
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -884,6 +937,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
+                context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             });
             assert_eq!(
                 user_decryptor
@@ -899,7 +953,7 @@ mod tests {
     #[tokio::test]
     async fn resource_exhausted() {
         let mut rng = AesRng::seed_from_u64(123);
-        let (key_id, ct_buf, mut user_decryptor) = setup_user_decryptor(true, &mut rng).await;
+        let (key_id, ct_buf, mut user_decryptor) = setup_user_decryptor(&mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
         // `ResourceExhausted` - If the KMS is currently busy with too many requests.
@@ -920,6 +974,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
         assert_eq!(
             user_decryptor
@@ -937,7 +992,7 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         let mut rng = AesRng::seed_from_u64(123);
-        let (_key_id, ct_buf, user_decryptor) = setup_user_decryptor(true, &mut rng).await;
+        let (_key_id, ct_buf, user_decryptor) = setup_user_decryptor(&mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 
@@ -956,6 +1011,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
         assert_eq!(
             user_decryptor
@@ -980,7 +1036,7 @@ mod tests {
     #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(123);
-        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true, &mut rng).await;
+        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(&mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 
@@ -998,6 +1054,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         };
         user_decryptor
             .user_decrypt(Request::new(request.clone()))
@@ -1018,7 +1075,7 @@ mod tests {
     #[tokio::test]
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(123);
-        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(true, &mut rng).await;
+        let (key_id, ct_buf, user_decryptor) = setup_user_decryptor(&mut rng).await;
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let domain = dummy_domain();
 
@@ -1039,6 +1096,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
+            context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
         });
         user_decryptor.user_decrypt(request).await.unwrap();
         user_decryptor

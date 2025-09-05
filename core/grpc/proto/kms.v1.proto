@@ -2,6 +2,7 @@ syntax = "proto3";
 package kms.v1;
 
 // Initialization request for bootstrapping the threshold KMS.
+// This request will be removed in favor of NewKmsContextRequest.
 message InitRequest {
     // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
     RequestId request_id = 1;
@@ -79,12 +80,21 @@ message KeySetConfig {
 message KeyGenPreprocRequest {
   // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
   RequestId request_id = 1;
+
   // The FHE parameters for key generation.
   FheParameter params = 2;
+
   // The keyset configuration that controls what kind of key to generate.
   KeySetConfig keyset_config = 3;
+
   // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 5;
 }
 
 enum KeySetCompressionConfig {
@@ -137,6 +147,12 @@ message KeyGenRequest {
   // For certain keyset_config, additional information is needed,
   // this is given by the documentation of KeySetAddedInfo.
   KeySetAddedInfo keyset_added_info = 6;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 7;
 }
 
 message KeyGenResult {
@@ -200,6 +216,12 @@ message CrsGenRequest {
 
   // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 5;
 }
 
 message CrsGenResult {
@@ -274,6 +296,12 @@ message PublicDecryptionRequest {
 
   // Extra data from the gateway.
   bytes extra_data = 5;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 6;
 }
 
 // KMS-internal Public Decryption Response Payload, containing meta data, plaintexts
@@ -345,6 +373,12 @@ message UserDecryptionRequest {
 
   // Extra data from the gateway.
   bytes extra_data = 7;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 8;
 }
 
 message UserDecryptionResponse {
