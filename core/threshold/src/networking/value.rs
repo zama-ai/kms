@@ -48,6 +48,23 @@ pub enum BroadcastValue<Z: Eq + Zero + Sized> {
     PartialProof(ceremony::PartialProof),
 }
 
+impl<Z: Eq + Zero + Sized> BroadcastValue<Z> {
+    pub fn type_name(&self) -> String {
+        match self {
+            BroadcastValue::Bot => "Bot".to_string(),
+            BroadcastValue::RingVector(_) => "RingVector".to_string(),
+            BroadcastValue::RingValue(_) => "RingValue".to_string(),
+            BroadcastValue::PRSSVotes(_) => "PRSSVotes".to_string(),
+            BroadcastValue::Round2VSS(_) => "Round2VSS".to_string(),
+            BroadcastValue::Round3VSS(_) => "Round3VSS".to_string(),
+            BroadcastValue::Round4VSS(_) => "Round4VSS".to_string(),
+            BroadcastValue::LocalSingleShare(_) => "LocalSingleShare".to_string(),
+            BroadcastValue::LocalDoubleShare(_) => "LocalDoubleShare".to_string(),
+            BroadcastValue::PartialProof(_) => "PartialProof".to_string(),
+        }
+    }
+}
+
 impl<Z: Eq + Zero + Serialize> BroadcastValue<Z> {
     pub fn to_bcast_hash(&self) -> Result<BcastHash, anyhow::Error> {
         // Note that we are implicitly assuming that the serialization of a broadcast value ensure uniqueness

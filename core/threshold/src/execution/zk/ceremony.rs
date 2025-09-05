@@ -936,7 +936,8 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                                     }
                                 } else {
                                     tracing::error!(
-                                        "unexpected message type in crs ceremony from {sender}"
+                                        "unexpected message type {} in crs ceremony from {sender}",
+                                        msg.type_name()
                                     );
                                 }
                             } else {
