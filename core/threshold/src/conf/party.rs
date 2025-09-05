@@ -92,6 +92,8 @@ impl CertificatePaths {
             ca_certs,
             trusted_releases: None,
             pcr8_expected: false,
+            #[cfg(feature = "insecure")]
+            mock_enclave: true,
         })
     }
 

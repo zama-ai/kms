@@ -25,6 +25,7 @@ use kms_grpc::{
     rpc_types::PrivDataType,
     utils::tonic_result::ok_or_tonic_abort,
 };
+use std::sync::Arc;
 use strum::IntoEnumIterator;
 use tokio::sync::MutexGuard;
 use tonic::{Code, Request, Response, Status};
@@ -34,7 +35,7 @@ pub struct RealBackupOperator<
     PrivS: Storage + Sync + Send + 'static,
 > {
     pub crypto_storage: ThresholdCryptoMaterialStorage<PubS, PrivS>,
-    pub security_module: Option<SecurityModuleProxy>,
+    pub security_module: Option<Arc<SecurityModuleProxy>>,
 }
 
 #[tonic::async_trait]

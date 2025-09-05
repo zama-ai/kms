@@ -41,6 +41,7 @@ use tokio::{
 use tokio_rustls::rustls::{
     pki_types::{CertificateDer, PrivateKeyDer},
     server::ServerConfig,
+    version::TLS13,
 };
 use tokio_util::task::TaskTracker;
 use tonic::transport::{server::TcpIncoming, Server};
@@ -220,7 +221,7 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     public_storage: PubS,
     private_storage: PrivS,
     backup_storage: Option<Vault>,
-    security_module: Option<SecurityModuleProxy>,
+    security_module: Option<Arc<SecurityModuleProxy>>,
     mpc_listener: TcpListener,
     sk: PrivateSigKey,
     tls_identity: Option<BasicTLSConfig>,
@@ -286,14 +287,21 @@ where
             ca_certs,
             trusted_releases,
             pcr8_expected,
+            #[cfg(feature = "insecure")]
+            mock_enclave,
         }) => {
             let cert_chain =
                 vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()];
             let key_der = PrivateKeyDer::try_from(key.contents.as_slice())
                 .map_err(|e| anyhow_error_and_log(e.to_string()))?
                 .clone_key();
-            let client_verifier =
-                AttestedClientVerifier::new(ca_certs, trusted_releases.clone(), pcr8_expected)?;
+            let client_verifier = AttestedClientVerifier::new(
+                ca_certs,
+                trusted_releases.clone(),
+                pcr8_expected,
+                #[cfg(feature = "insecure")]
+                mock_enclave,
+            )?;
 
             match trusted_releases {
                 Some(_) => tracing::info!("Creating server with TLS and AWS Nitro attestation"),
@@ -302,7 +310,7 @@ where
                 }
             }
             Some(
-                ServerConfig::builder()
+                ServerConfig::builder_with_protocol_versions(&[&TLS13])
                     .with_client_cert_verifier(Arc::new(client_verifier))
                     .with_single_cert(cert_chain, key_der)?,
             )
@@ -622,6 +630,8 @@ async fn extract_tls_certs(
         key,
         trusted_releases,
         pcr8_expected,
+        #[cfg(feature = "insecure")]
+        mock_enclave,
     }) = tls_identity
     {
         let mut cert_strings = Vec::new();
@@ -644,6 +654,8 @@ async fn extract_tls_certs(
             ca_certs,
             trusted_releases,
             pcr8_expected,
+            #[cfg(feature = "insecure")]
+            mock_enclave,
         }))
     } else {
         Ok(None)
