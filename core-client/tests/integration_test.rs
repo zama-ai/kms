@@ -1,13 +1,31 @@
+use aes_prng::AesRng;
 use cc_tests_utils::{DockerCompose, KMSMode};
 use kms_core_client::*;
+use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::KeyId;
+use kms_grpc::RequestId;
+use kms_lib::backup::custodian::Custodian;
+use kms_lib::backup::operator::InternalRecoveryRequest;
+use kms_lib::backup::seed_phrase::custodian_from_seed_phrase;
+use kms_lib::backup::seed_phrase::seed_phrase_from_rng;
+use kms_lib::consts::SIGNING_KEY_ID;
+use kms_lib::cryptography::backup_pke::BackupPrivateKey;
+use kms_lib::cryptography::internal_crypto_types::PrivateSigKey;
+use kms_lib::util::file_handling::safe_read_element_versioned;
+use kms_lib::util::file_handling::safe_write_element_versioned;
+use kms_lib::vault::storage::file::FileStorage;
+use kms_lib::vault::storage::StorageReader;
+use kms_lib::vault::storage::StorageType;
+use rand::SeedableRng;
 use serial_test::serial;
 use std::path::Path;
 use std::path::PathBuf;
+use std::path::MAIN_SEPARATOR;
 use std::str::FromStr;
 use std::string::String;
 use test_context::futures::future::join_all;
 use test_context::{test_context, AsyncTestContext};
+use threshold_fhe::execution::runtime::party::Role;
 
 // IMPORTANT: These integration tests require Docker running and images build.
 // You can build the images by running the following commands from the root of the repo:
@@ -202,6 +220,144 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
     };
 
     key_id.to_string()
+}
+
+#[allow(dead_code)]
+async fn new_custodian_context<T: DockerComposeContext>(
+    ctx: &T,
+    custodian_threshold: u32,
+    setup_msg_paths: Vec<PathBuf>,
+) -> String {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+
+    let keys_folder: &Path = Path::new("tests/data/keys");
+    let command = CCCommand::NewCustodianContext(NewCustodianContextParameters {
+        threshold: custodian_threshold,
+        setup_msg_path: setup_msg_paths,
+    });
+    let init_config = CmdConfig {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+    };
+
+    println!("Doing new custodian context");
+    let backup_init_results = execute_cmd(&init_config, keys_folder).await.unwrap();
+    println!("New custodian context done");
+    assert_eq!(backup_init_results.len(), 1);
+    let res_id = match backup_init_results.first().unwrap() {
+        (Some(value), _) => value,
+        _ => panic!("Error doing new custodian context"),
+    };
+
+    res_id.to_string()
+}
+
+#[allow(dead_code)]
+async fn backup_init<T: DockerComposeContext>(ctx: &T) -> String {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+
+    let keys_folder: &Path = Path::new("tests/data/keys");
+
+    let init_command = CCCommand::CustodianRecoveryInit(NoParameters {}); //todo path should be given as arugment
+    let init_config = CmdConfig {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command: init_command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+    };
+
+    println!("Doing backup init");
+    let backup_init_results = execute_cmd(&init_config, keys_folder).await.unwrap();
+    println!("Backup init done");
+    assert_eq!(backup_init_results.len(), 1);
+    let res_id = match backup_init_results.first().unwrap() {
+        (Some(value), _) => value,
+        _ => panic!("Error doing backup init"),
+    };
+
+    res_id.to_string()
+}
+
+#[allow(dead_code)]
+async fn backup_recovery<T: DockerComposeContext>(
+    ctx: &T,
+    rng: &mut AesRng,
+    amount_operators: usize,
+    backup_id: RequestId,
+    seeds: Vec<String>,
+) -> String {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+    let keys_folder: &Path = Path::new("tests/data/keys");
+    let mut custodian_recovery_outputs = Vec::new();
+    for op_idx in 1..=amount_operators {
+        let pub_store = FileStorage::new(
+            Some(keys_folder),
+            StorageType::PUB,
+            Some(Role::indexed_from_one(op_idx)),
+        )
+        .unwrap();
+        let verf_key = pub_store
+            .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
+            .await
+            .unwrap();
+
+        let path = keys_folder
+            .join("CUSTODIAN")
+            .join("recovery")
+            .join(format!("{}{MAIN_SEPARATOR}{}", backup_id, op_idx));
+        let cur_rec_req: InternalRecoveryRequest = safe_read_element_versioned(path).await.unwrap();
+        assert_eq!(cur_rec_req.operator_role(), Role::indexed_from_one(op_idx));
+        for cus_idx in 1..=seeds.len() {
+            let custodian =
+                custodian_from_seed_phrase(&seeds[cus_idx - 1], Role::indexed_from_one(cus_idx))
+                    .expect("Failed to reconstruct custodians");
+            let cur_rec_output = custodian
+                .verify_reencrypt(
+                    rng,
+                    cur_rec_req.ciphertexts()[&Role::indexed_from_one(cus_idx)],
+                    &verf_key,
+                    cur_rec_req.encryption_key(),
+                    cur_rec_req.backup_id(),
+                    cur_rec_req.operator_role(),
+                )
+                .unwrap();
+            let cur_path = keys_folder
+                .join("CUSTODIAN")
+                .join("response")
+                .join(format!("recovery-response-{}-{}", op_idx, cus_idx,));
+            safe_write_element_versioned(&cur_path, &cur_rec_output)
+                .await
+                .unwrap();
+            custodian_recovery_outputs.push(cur_path);
+        }
+    }
+
+    let command = CCCommand::CustodianBackupRecovery(RecoveryParameters {
+        custodian_context_id: backup_id,
+        custodian_recovery_outputs,
+    });
+    let init_config = CmdConfig {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+    };
+
+    println!("Doing backup recovery");
+    let backup_recovery_results = execute_cmd(&init_config, keys_folder).await.unwrap();
+    println!("Backup init recovery");
+    assert_eq!(backup_recovery_results.len(), 1);
+    let res_id = match backup_recovery_results.first().unwrap() {
+        (Some(value), _) => value,
+        _ => panic!("Error doing backup recovery"),
+    };
+
+    res_id.to_string()
 }
 
 async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<CCCommand>) {
@@ -581,6 +737,72 @@ async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdContextDefaul
     init_testing();
     let res = join_all([crs_gen(ctx, false), crs_gen(ctx, false)]).await;
     assert_ne!(res[0], res[1]);
+}
+
+// TODO Add normal backup recovery test
+
+#[test_context(DockerComposeThresholdContextTest)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdContextTest) {
+    init_testing();
+    // We don't have endpoints that allow us to purge the generate material within the docker images
+    // so we can here only test that the end points are alive and acting as expected, rather than validating that
+    // data gets restored. Instead test in the client within core have tests for validating this
+    // First setup context, then back up init, use the result with the custodian client and then call recovery
+    // Start by setting up the custodians
+    let amount_custodians = 5;
+    let custodian_threshold = 2;
+    let amount_operators = 4; // TODO should not be hardcoded but not sure how I can get it easily
+    let mut rng = AesRng::seed_from_u64(41);
+    let keys_folder: &Path = Path::new("tests/data/keys");
+    // let root = keys_folder.join("CUSTODIAN");
+    // TODO HERE I think we need to import kms core here, the alternative to refactor all the crypto and backup stuff out of the core
+    // alternatively we stick with tests in core
+    let (seeds, setup_msg_paths) =
+        generate_custodian_keys_to_file(&mut rng, keys_folder, amount_custodians).await;
+    let backup_id = new_custodian_context(ctx, custodian_threshold, setup_msg_paths).await;
+    let _backup_id = backup_init(ctx).await;
+    let _backup_id = backup_recovery(
+        ctx,
+        &mut rng,
+        amount_operators,
+        RequestId::from_str(&backup_id).unwrap(),
+        seeds,
+    )
+    .await;
+    // Observe that we cannot modify the state of the servers, so we cannot really validate recovery.
+    // However we are testing this in the service/client. Hence this tests is mainly to ensure that the outer
+    // end points and content returned from the KMS to the custodians work as expected.
+}
+
+async fn generate_custodian_keys_to_file(
+    rng: &mut AesRng,
+    root_path: &Path,
+    amount_custodians: usize,
+) -> (Vec<String>, Vec<PathBuf>) {
+    let mut seeds = Vec::new();
+    let mut paths = Vec::new();
+    for cur_idx in 1..=amount_custodians {
+        let role = Role::indexed_from_one(cur_idx);
+        let mnemonic = seed_phrase_from_rng(rng).expect("Failed to generate seed phrase");
+        let custodian: Custodian<PrivateSigKey, BackupPrivateKey> =
+            custodian_from_seed_phrase(&mnemonic, role).unwrap();
+        let setup_msg = custodian
+            .generate_setup_message(rng, format!("CUSTODIAN_{cur_idx}"))
+            .unwrap();
+        let path = root_path.join("CUSTODIAN").join("setup-msg").join(format!(
+            "setup-{}", //{MAIN_SEPARATOR}{}",
+            // cur_rec_req.backup_id(),
+            cur_idx
+        ));
+        safe_write_element_versioned(&path, &setup_msg)
+            .await
+            .unwrap();
+        seeds.push(mnemonic);
+        paths.push(path);
+    }
+    (seeds, paths)
 }
 
 ///////// FULL GEN TESTS//////////

@@ -46,6 +46,14 @@ pub struct KeyId([u8; ID_LENGTH]);
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
 pub struct RequestId([u8; ID_LENGTH]);
 
+/// The default is 1 in most significant byte and the rest 0.
+impl Default for RequestId {
+    fn default() -> Self {
+        let mut res = [0; ID_LENGTH];
+        res[0] = 1;
+        RequestId(res)
+    }
+}
 /// Compared the request ID as if it is an integer
 impl PartialOrd for RequestId {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {

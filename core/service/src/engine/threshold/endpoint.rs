@@ -1,10 +1,10 @@
 use crate::engine::threshold::threshold_kms::ThresholdKms;
 use crate::engine::threshold::traits::{
-    BackupOperator, ContextManager, CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator,
-    PublicDecryptor, UserDecryptor,
+    CrsGenerator, Initiator, KeyGenPreprocessor, KeyGenerator, PublicDecryptor, UserDecryptor,
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
+use crate::engine::traits::{BackupOperator, ContextManager};
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DestroyKmsContextRequest, Empty, InitRequest,
     KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
@@ -16,11 +16,11 @@ use observability::{
     metrics::METRICS,
     metrics_names::{
         map_tonic_code_to_metric_tag, OP_BACKUP_RESTORE, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
-        OP_CUSTODIAN_BACKUP_RECOVERY, OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_KMS_CONTEXT,
-        OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT,
-        OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_KMS_CONTEXT,
-        OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST,
-        OP_USER_DECRYPT_RESULT,
+        OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_DESTROY_CUSTODIAN_CONTEXT,
+        OP_DESTROY_KMS_CONTEXT, OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST,
+        OP_KEYGEN_PREPROC_RESULT, OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT,
+        OP_NEW_KMS_CONTEXT, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
+        OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
     },
 };
 use tonic::{Request, Response, Status};
@@ -334,7 +334,7 @@ impl_endpoint! {
         #[tracing::instrument(skip(self, request))]
         async fn custodian_backup_recovery(
             &self,
-            request: Request<kms_grpc::kms::v1::BackupRecoveryRequest>,
+            request: Request<kms_grpc::kms::v1::CustodianRecoveryRequest>,
         ) -> Result<Response<kms_grpc::kms::v1::Empty>, Status> {
             METRICS.increment_request_counter(OP_CUSTODIAN_BACKUP_RECOVERY);
             self.backup_operator.custodian_backup_recovery(request).await.inspect_err(|err| {
@@ -375,14 +375,17 @@ impl_endpoint! {
             Ok(Response::new(response))
         }
 
-        #[tracing::instrument(skip(self, _request))]
+        #[tracing::instrument(skip(self, request))]
         async fn custodian_recovery_init(
             &self,
-            _request: Request<kms_grpc::kms::v1::Empty>,
+            request: Request<kms_grpc::kms::v1::Empty>,
         ) -> Result<Response<kms_grpc::kms::v1::RecoveryRequest>, Status> {
-            Err(Status::unimplemented(
-                "custodian_recovery_init is not implemented",
-            ))
+            METRICS.increment_request_counter(OP_CUSTODIAN_RECOVERY_INIT);
+            self.backup_operator.custodian_recovery_init(request).await.inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS
+                    .increment_error_counter(OP_CUSTODIAN_RECOVERY_INIT, tag);
+            })
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::kms::v1::UserDecryptionResponsePayload;
 use crate::kms::v1::{
-    BackupRecoveryRequest, CustodianRecoveryOutput, Eip712DomainMsg, TypedCiphertext,
+    CustodianRecoveryOutput, CustodianRecoveryRequest, Eip712DomainMsg, TypedCiphertext,
     TypedPlaintext, TypedSigncryptedCiphertext,
 };
 use alloy_primitives::{Address, B256, U256};
@@ -186,8 +186,8 @@ pub enum PubDataType {
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO validation needs to be added, see https://github.com/zama-ai/kms-internal/issues/2723
-    RecoveryRequest, // Recovery request for backup vault
-    Commitments, // Commitments for the backup vault
+    RecoveryRequest, // Recovery request for backup vault TODO should it be stored in backup or public vault, issue with private is that it can get locked in case of aws issue!
+    Commitments, // Commitments for the backup vault TODO rename since it also contains custodian context. it could also be combined with the recovery request. We should consider this to be stored in the backup vault instead
 }
 
 impl fmt::Display for PubDataType {
@@ -231,7 +231,6 @@ pub enum PrivDataType {
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,
-    CustodianInfo, // Custodian information for the custodian context
     ContextInfo,
 }
 
@@ -243,7 +242,6 @@ impl fmt::Display for PrivDataType {
             PrivDataType::CrsInfo => write!(f, "CrsInfo"),
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
             PrivDataType::PrssSetup => write!(f, "PrssSetup"),
-            PrivDataType::CustodianInfo => write!(f, "CustodianInfo"),
             PrivDataType::ContextInfo => write!(f, "Context"),
         }
     }
@@ -959,36 +957,47 @@ impl TryFrom<CustodianRecoveryOutput> for InternalCustodianRecoveryOutput {
     }
 }
 
+impl TryFrom<InternalCustodianRecoveryOutput> for CustodianRecoveryOutput {
+    type Error = anyhow::Error;
+
+    fn try_from(value: InternalCustodianRecoveryOutput) -> Result<Self, Self::Error> {
+        Ok(CustodianRecoveryOutput {
+            signature: value.signature,
+            ciphertext: value.ciphertext,
+            custodian_role: value.custodian_role.one_based() as u64,
+            operator_role: value.operator_role.one_based() as u64,
+        })
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum InternalBackupRecoveryRequestVersioned {
-    V0(InternalBackupRecoveryRequest),
+pub enum InternalCustodianRecoveryRequestVersioned {
+    V0(InternalCustodianRecoveryRequest),
 }
 
 /// This is the internal representation of the custodian context.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
-#[versionize(InternalBackupRecoveryRequestVersioned)]
-pub struct InternalBackupRecoveryRequest {
+#[versionize(InternalCustodianRecoveryRequestVersioned)]
+pub struct InternalCustodianRecoveryRequest {
     pub custodian_context_id: RequestId,
-    pub threshold: u32,
     pub custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
 }
 
-impl Named for InternalBackupRecoveryRequest {
+impl Named for InternalCustodianRecoveryRequest {
     const NAME: &'static str = "backup::BackupRestoreRequest";
 }
 
-impl TryFrom<BackupRecoveryRequest> for InternalBackupRecoveryRequest {
+impl TryFrom<CustodianRecoveryRequest> for InternalCustodianRecoveryRequest {
     type Error = anyhow::Error;
 
-    fn try_from(value: BackupRecoveryRequest) -> Result<Self, Self::Error> {
-        Ok(InternalBackupRecoveryRequest {
+    fn try_from(value: CustodianRecoveryRequest) -> Result<Self, Self::Error> {
+        Ok(InternalCustodianRecoveryRequest {
             custodian_context_id: value
                 .custodian_context_id
                 .ok_or_else(|| {
                     anyhow::anyhow!("Missing custodian context ID in BackupRestoreRequest")
                 })?
                 .try_into()?,
-            threshold: value.threshold,
             custodian_recovery_outputs: value
                 .custodian_recovery_outputs
                 .into_iter()

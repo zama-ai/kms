@@ -50,7 +50,7 @@ use tonic_tls::rustls::TlsIncoming;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    backup::custodian::InternalCustodianContext,
+    backup::{custodian::InternalCustodianContext, operator::BackupCommitments},
     conf::threshold::{PeerConf, ThresholdPartyConf, TlsCert},
     consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
     cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
@@ -242,9 +242,12 @@ where
         read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
     let mut public_key_info = HashMap::new();
     let mut pk_map = HashMap::new();
-    let custodian_context: HashMap<RequestId, InternalCustodianContext> =
-        read_all_data_versioned(&private_storage, &PrivDataType::CustodianInfo.to_string()).await?;
-
+    let backup_com: HashMap<RequestId, BackupCommitments> =
+        read_all_data_versioned(&public_storage, &PubDataType::Commitments.to_string()).await?;
+    let custodian_context: HashMap<RequestId, InternalCustodianContext> = backup_com
+        .into_iter()
+        .map(|(r, com)| (r, com.custodian_context().to_owned()))
+        .collect();
     for (id, info) in key_info_versioned.clone().into_iter() {
         public_key_info.insert(id, info.meta_data.clone());
 
@@ -574,16 +577,17 @@ where
 
     let context_manager = RealContextManager {
         base_kms: base_kms.new_instance().await,
-        crypto_storage: crypto_storage.clone(),
+        crypto_storage: crypto_storage.inner.clone(),
         custodian_meta_store,
         my_role: Role::indexed_from_one(config.my_id),
-        tracker: Arc::clone(&tracker),
     };
 
-    let backup_operator = RealBackupOperator {
-        crypto_storage: crypto_storage.clone(),
+    let backup_operator = RealBackupOperator::new(
+        Role::indexed_from_one(config.my_id),
+        base_kms.new_instance().await,
+        crypto_storage.inner.clone(),
         security_module,
-    };
+    );
     // Update backup vault if it exists
     // This ensures that all files in the private storage are also in the backup vault
     // Thus the vault gets automatically updated incase its location changes, or in case of a deletion

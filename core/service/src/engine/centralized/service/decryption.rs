@@ -15,9 +15,9 @@ use tracing::Instrument;
 
 use crate::engine::base::compute_external_pt_signature;
 use crate::engine::centralized::central_kms::{
-    async_user_decrypt, central_public_decrypt, RealCentralizedKms,
+    async_user_decrypt, central_public_decrypt, CentralizedKms,
 };
-use crate::engine::traits::BaseKms;
+use crate::engine::traits::{BackupOperator, BaseKms, ContextManager};
 use crate::engine::validation::{
     parse_proto_request_id, validate_public_decrypt_req, validate_user_decrypt_req,
     RequestIdParsingErr, DSEP_PUBLIC_DECRYPTION, DSEP_USER_DECRYPTION,
@@ -30,8 +30,10 @@ use crate::vault::storage::Storage;
 pub async fn user_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<UserDecryptionRequest>,
 ) -> Result<Response<Empty>, Status> {
     // Start timing and counting before any operations
@@ -149,8 +151,10 @@ pub async fn user_decrypt_impl<
 pub async fn get_user_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<UserDecryptionResponse>, Status> {
     let request_id =
@@ -187,8 +191,10 @@ pub async fn get_user_decryption_result_impl<
 pub async fn public_decrypt_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<PublicDecryptionRequest>,
 ) -> Result<Response<Empty>, Status> {
     // Start timing and counting before any operations
@@ -350,8 +356,10 @@ pub async fn public_decrypt_impl<
 pub async fn get_public_decryption_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<PublicDecryptionResponse>, Status> {
     let request_id = parse_proto_request_id(

@@ -51,10 +51,6 @@ pub async fn setup_threshold_no_client<
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
-    ensure_testing_material_exists().await;
-    #[cfg(feature = "slow_tests")]
-    ensure_default_material_exists().await;
-
     let mut handles = Vec::new();
     tracing::info!("Spawning servers...");
     let num_parties = priv_storage.len();
@@ -396,10 +392,6 @@ pub async fn setup_centralized_no_client<
     priv_storage: PrivS,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> ServerHandle {
-    ensure_testing_material_exists().await;
-    #[cfg(feature = "slow_tests")]
-    ensure_default_material_exists().await;
-
     let ip_addr = DEFAULT_URL.parse().unwrap();
     // we use port numbers above 40001 so that it's easy to identify
     // which cores are running in the centralized mode from the logs
@@ -411,7 +403,7 @@ pub async fn setup_centralized_no_client<
     let (tx, rx) = tokio::sync::oneshot::channel();
     let sk = get_core_signing_key(&priv_storage).await.unwrap();
     let (kms, health_service) =
-        RealCentralizedKms::new(pub_storage, priv_storage, None, sk, rate_limiter_conf)
+        RealCentralizedKms::new(pub_storage, priv_storage, None, None, sk, rate_limiter_conf)
             .await
             .expect("Could not create KMS");
     let arc_kms = Arc::new(kms);
@@ -476,6 +468,11 @@ pub async fn centralized_handles(
 ) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
     let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
     let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
+
+    ensure_testing_material_exists(None).await;
+    #[cfg(feature = "slow_tests")]
+    ensure_default_material_exists().await;
+
     let (kms_server, kms_client) =
         setup_centralized(pub_storage, priv_storage, rate_limiter_conf).await;
     let pub_storage =
