@@ -401,6 +401,7 @@ mod tests {
                 params: FheParameter::Test as i32,
                 keyset_config: None,
                 domain: Some(domain.clone()),
+                epoch_id: None,
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -426,6 +427,7 @@ mod tests {
                 params: FheParameter::Test as i32,
                 keyset_config: None,
                 domain: Some(domain.clone()),
+                epoch_id: None,
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -444,6 +446,7 @@ mod tests {
                 params: 10,
                 keyset_config: None,
                 domain: Some(domain.clone()),
+                epoch_id: None,
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -462,6 +465,7 @@ mod tests {
                 params: FheParameter::Test as i32,
                 keyset_config: None,
                 domain: None,
+                epoch_id: None,
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -490,6 +494,7 @@ mod tests {
             params: FheParameter::Test as i32,
             keyset_config: None,
             domain: Some(domain),
+            epoch_id: None,
         };
         assert_eq!(
             prep.key_gen_preproc(tonic::Request::new(request))
@@ -515,6 +520,7 @@ mod tests {
             params: FheParameter::Test as i32,
             keyset_config: None,
             domain: Some(domain),
+            epoch_id: None,
         };
 
         // even though we use a failing preprocessor, the request should be ok
@@ -566,6 +572,7 @@ mod tests {
             params: FheParameter::Test as i32,
             keyset_config: None,
             domain: Some(domain),
+            epoch_id: None,
         };
         prep.key_gen_preproc(tonic::Request::new(request.clone()))
             .await
@@ -596,6 +603,7 @@ mod tests {
             params: FheParameter::Test as i32,
             keyset_config: None,
             domain: Some(domain),
+            epoch_id: None,
         };
         assert_eq!(
             prep.key_gen_preproc(tonic::Request::new(request))
@@ -620,6 +628,7 @@ mod tests {
             params: FheParameter::Test as i32,
             keyset_config: None,
             domain: Some(domain.clone()),
+            epoch_id: None,
         };
         prep.key_gen_preproc(tonic::Request::new(request))
             .await

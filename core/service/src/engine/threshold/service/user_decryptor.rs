@@ -769,6 +769,7 @@ mod tests {
                 request_id: Some(bad_req_id),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
+                epoch_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -790,6 +791,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
+                epoch_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -816,6 +818,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
+                epoch_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -842,6 +845,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: "bad client address".to_string(),
                 extra_data: vec![],
+                epoch_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -884,6 +888,7 @@ mod tests {
                 request_id: Some(req_id.into()),
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
+                epoch_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -920,6 +925,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
+            epoch_id: None,
         });
         assert_eq!(
             user_decryptor
@@ -956,6 +962,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
+            epoch_id: None,
         });
         assert_eq!(
             user_decryptor
@@ -998,6 +1005,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
+            epoch_id: None,
         };
         user_decryptor
             .user_decrypt(Request::new(request.clone()))
@@ -1039,6 +1047,7 @@ mod tests {
             request_id: Some(req_id.into()),
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
+            epoch_id: None,
         });
         user_decryptor.user_decrypt(request).await.unwrap();
         user_decryptor

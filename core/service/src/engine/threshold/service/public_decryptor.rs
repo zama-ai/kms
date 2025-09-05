@@ -865,6 +865,7 @@ mod tests {
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
+            epoch_id: None,
         });
         assert_eq!(
             public_decryptor
@@ -896,6 +897,7 @@ mod tests {
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
+            epoch_id: None,
         };
         public_decryptor
             .public_decrypt(Request::new(request.clone()))
@@ -929,6 +931,7 @@ mod tests {
             key_id: Some(bad_key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
+            epoch_id: None,
         });
         assert_eq!(
             public_decryptor
@@ -972,6 +975,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain),
                 extra_data: vec![],
+                epoch_id: None,
             });
             assert_eq!(
                 public_decryptor
@@ -992,6 +996,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain),
                 extra_data: vec![],
+                epoch_id: None,
             });
             assert_eq!(
                 public_decryptor
@@ -1020,6 +1025,7 @@ mod tests {
                 key_id: Some(bad_key_id),
                 domain: Some(domain),
                 extra_data: vec![],
+                epoch_id: None,
             });
             assert_eq!(
                 public_decryptor
@@ -1044,6 +1050,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: None,
                 extra_data: vec![],
+                epoch_id: None,
             });
             assert_eq!(
                 public_decryptor
@@ -1070,6 +1077,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain),
                 extra_data: vec![],
+                epoch_id: None,
             });
             assert_eq!(
                 public_decryptor
@@ -1114,6 +1122,7 @@ mod tests {
             key_id: Some(key_id.into()),
             domain: Some(domain),
             extra_data: vec![],
+            epoch_id: None,
         });
         public_decryptor.public_decrypt(request).await.unwrap();
         // there's no need to check the decryption result since it's a dummy protocol

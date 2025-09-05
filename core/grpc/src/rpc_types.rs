@@ -1161,6 +1161,7 @@ mod tests {
                 enc_key: vec![],
                 domain: None,
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(req
                 .compute_link_checked()
@@ -1179,6 +1180,7 @@ mod tests {
                 enc_key: vec![],
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(req
                 .compute_link_checked()
@@ -1200,6 +1202,7 @@ mod tests {
                 enc_key: vec![],
                 domain: Some(bad_domain),
                 extra_data: vec![],
+                epoch_id: None,
             };
 
             assert!(req
@@ -1219,6 +1222,7 @@ mod tests {
                 enc_key: vec![],
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(req.compute_link_checked().is_ok());
         }

@@ -1528,6 +1528,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
+                epoch_id: None,
             });
 
             assert_eq!(
@@ -1555,6 +1556,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
+                epoch_id: None,
             });
 
             assert_eq!(
@@ -1578,6 +1580,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: Some(keyset_config),
                 keyset_added_info: None,
+                epoch_id: None,
             });
 
             assert_eq!(
@@ -1608,6 +1611,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
+            epoch_id: None,
         });
 
         assert_eq!(
@@ -1635,6 +1639,7 @@ mod tests {
                 domain: Some(domain),
                 keyset_config: None,
                 keyset_added_info: None,
+                epoch_id: None,
             });
 
             assert_eq!(
@@ -1673,6 +1678,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
+            epoch_id: None,
         });
 
         // keygen should pass because the failure occurs in background process
@@ -1707,6 +1713,7 @@ mod tests {
             domain: Some(domain.clone()),
             keyset_config: None,
             keyset_added_info: None,
+            epoch_id: None,
         };
 
         kg.key_gen(tonic::Request::new(request0)).await.unwrap();
@@ -1720,6 +1727,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
+            epoch_id: None,
         };
         assert_eq!(
             kg.key_gen(tonic::Request::new(request1))
@@ -1756,6 +1764,7 @@ mod tests {
             domain: Some(domain),
             keyset_config: None,
             keyset_added_info: None,
+            epoch_id: None,
         });
 
         kg.key_gen(tonic_req).await.unwrap();

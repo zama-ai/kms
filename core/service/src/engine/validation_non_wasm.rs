@@ -561,6 +561,7 @@ mod tests {
                 key_id: None,
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -576,6 +577,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -594,6 +596,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -609,6 +612,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -624,6 +628,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                epoch_id: None,
             };
             let (_, _, _, _domain) = validate_public_decrypt_req(&req).unwrap();
         }
@@ -672,6 +677,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -689,6 +695,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -709,6 +716,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -726,6 +734,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -743,6 +752,7 @@ mod tests {
                 client_address: client_address.to_checksum(Some(1)),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(
                 validate_user_decrypt_req(&req).unwrap_err().to_string().contains(
@@ -763,6 +773,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: bad_enc_pk_buf,
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -780,6 +791,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(validate_user_decrypt_req(&req).is_ok());
         }
@@ -838,6 +850,7 @@ mod tests {
             typed_ciphertexts: vec![typed_ciphertext],
             domain: Some(domain_msg),
             extra_data: vec![],
+            epoch_id: None,
         };
 
         {
@@ -1257,6 +1270,7 @@ mod tests {
             ),
             domain: None,
             extra_data: vec![],
+            epoch_id: None,
         };
 
         let resp0 = {
@@ -1365,6 +1379,7 @@ mod tests {
                 ),
                 domain: None,
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
@@ -1395,6 +1410,7 @@ mod tests {
                 ),
                 domain: None,
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
@@ -1430,6 +1446,7 @@ mod tests {
                 ),
                 domain: None,
                 extra_data: vec![],
+                epoch_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
