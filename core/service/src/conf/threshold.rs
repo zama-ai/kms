@@ -174,7 +174,27 @@ pub struct PeerConf {
     pub address: String,
     #[validate(range(min = 1, max = 65535))]
     pub port: u16,
-    // Optional gRPC port for health checks (if not specified, will use convention)
+    /// Optional gRPC port for peer health checks and service discovery.
+    /// 
+    /// This field specifies the gRPC endpoint port for each peer node, enabling
+    /// deterministic discovery of all peers from a single config file. This is
+    /// distinct from the local service's `listen_port` which only applies to the
+    /// current node.
+    /// 
+    /// **Port Usage Strategy:**
+    /// - **gRPC ports (e.g., 50X00)**: Safe, read-only interfaces for health checks
+    ///   and service discovery. These are considered public-facing endpoints.
+    /// - **P2P ports (e.g., 5000X)**: Security-critical endpoints used exclusively 
+    ///   for MPC operations. Exposing these for discovery would add unnecessary
+    ///   complexity and potential security risks.
+    /// 
+    /// **Fallback Behavior:**
+    /// If not specified, the system applies a port convention based on peer
+    /// configuration to maintain backward compatibility.
+    /// 
+    /// **Security Considerations:**
+    /// P2P ports are treated as security-critical and may be monitored for
+    /// unusual traffic patterns or unauthorized access attempts in the future.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(range(min = 1, max = 65535))]
     pub grpc_port: Option<u16>,
