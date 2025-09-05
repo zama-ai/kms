@@ -326,7 +326,7 @@ fn main() {
         let bench_name = format!("non-threshold_basic-ops_{name}");
 
         #[cfg(not(feature = "measure_memory"))]
-        let mut c = Criterion::default().configure_from_args();
+        let mut c = Criterion::default().sample_size(10).configure_from_args();
 
         //{
         //    let bench_name = format!("{bench_name}_FheUint2");
