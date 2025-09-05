@@ -16,8 +16,6 @@ fn keygen(config: Config) -> (ClientKey, ServerKey) {
     let cks = ClientKey::generate(config);
     let sks = ServerKey::new(&cks);
 
-    let size = bc2wrap::serialize(&cks).unwrap().len() + bc2wrap::serialize(&sks).unwrap().len();
-    println!("Keygen size: {size} B");
     (cks, sks)
 }
 
@@ -57,7 +55,7 @@ pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
 fn main() {
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
-    for (name, params) in ALL_PARAMS.iter().rev() {
+    for (name, params) in ALL_PARAMS {
         let bench_name = format!("non-threshold_keygen_{name}_memory");
         let config = params.to_tfhe_config();
         bench_memory(keygen, config, bench_name);

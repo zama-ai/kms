@@ -16,10 +16,8 @@ use std::fmt::Write;
 use std::hint::black_box;
 use std::ops::*;
 use tfhe::prelude::*;
-use tfhe::{
-    set_server_key, ClientKey, FheUint128, FheUint16, FheUint2, FheUint32, FheUint4, FheUint64,
-    FheUint8, ServerKey,
-};
+use tfhe::{set_server_key, ClientKey, FheUint64, ServerKey};
+//use tfhe::{FheUint128, FheUint16, FheUint2, FheUint32, FheUint4,FheUint8,}
 
 #[cfg(feature = "measure_memory")]
 use crate::utilities::bench_memory;
@@ -303,13 +301,13 @@ macro_rules! bench_type {
     };
 }
 
-bench_type!(FheUint2);
-bench_type!(FheUint4);
-bench_type!(FheUint8);
-bench_type!(FheUint16);
-bench_type!(FheUint32);
+//bench_type!(FheUint2);
+//bench_type!(FheUint4);
+//bench_type!(FheUint8);
+//bench_type!(FheUint16);
+//bench_type!(FheUint32);
 bench_type!(FheUint64);
-bench_type!(FheUint128);
+//bench_type!(FheUint128);
 
 #[cfg(feature = "measure_memory")]
 #[global_allocator]
@@ -330,36 +328,36 @@ fn main() {
         #[cfg(not(feature = "measure_memory"))]
         let mut c = Criterion::default().configure_from_args();
 
-        {
-            let bench_name = format!("{bench_name}_FheUint2");
-            #[cfg(not(feature = "measure_memory"))]
-            let mut group = c.benchmark_group(&bench_name);
-            bench_fhe_uint2(&mut group, &cks);
-        }
+        //{
+        //    let bench_name = format!("{bench_name}_FheUint2");
+        //    #[cfg(not(feature = "measure_memory"))]
+        //    let mut group = c.benchmark_group(&bench_name);
+        //    bench_fhe_uint2(&mut group, &cks);
+        //}
 
-        {
-            let bench_name = format!("{bench_name}_FheUint4");
-            let mut group = c.benchmark_group(&bench_name);
-            bench_fhe_uint4(&mut group, &cks);
-        }
+        //{
+        //    let bench_name = format!("{bench_name}_FheUint4");
+        //    let mut group = c.benchmark_group(&bench_name);
+        //    bench_fhe_uint4(&mut group, &cks);
+        //}
 
-        {
-            let bench_name = format!("{bench_name}_FheUint8");
-            let mut group = c.benchmark_group(&bench_name);
-            bench_fhe_uint8(&mut group, &cks);
-        }
+        //{
+        //    let bench_name = format!("{bench_name}_FheUint8");
+        //    let mut group = c.benchmark_group(&bench_name);
+        //    bench_fhe_uint8(&mut group, &cks);
+        //}
 
-        {
-            let bench_name = format!("{bench_name}_FheUint16");
-            let mut group = c.benchmark_group(&bench_name);
-            bench_fhe_uint16(&mut group, &cks);
-        }
+        //{
+        //    let bench_name = format!("{bench_name}_FheUint16");
+        //    let mut group = c.benchmark_group(&bench_name);
+        //    bench_fhe_uint16(&mut group, &cks);
+        //}
 
-        {
-            let bench_name = format!("{bench_name}_FheUint32");
-            let mut group = c.benchmark_group(&bench_name);
-            bench_fhe_uint32(&mut group, &cks);
-        }
+        //{
+        //    let bench_name = format!("{bench_name}_FheUint32");
+        //    let mut group = c.benchmark_group(&bench_name);
+        //    bench_fhe_uint32(&mut group, &cks);
+        //}
 
         {
             let bench_name = format!("{bench_name}_FheUint64");
@@ -367,11 +365,11 @@ fn main() {
             bench_fhe_uint64(&mut group, &cks);
         }
 
-        {
-            let bench_name = format!("{bench_name}_FheUint128");
-            let mut group = c.benchmark_group(&bench_name);
-            bench_fhe_uint128(&mut group, &cks);
-        }
+        //{
+        //    let bench_name = format!("{bench_name}_FheUint128");
+        //    let mut group = c.benchmark_group(&bench_name);
+        //    bench_fhe_uint128(&mut group, &cks);
+        //}
 
         #[cfg(not(feature = "measure_memory"))]
         c.final_summary();
@@ -392,32 +390,32 @@ fn main() {
 
         let bench_name = format!("non-threshold_basic-ops_{name}");
 
-        {
-            bench_fhe_uint2(&cks, &bench_name);
-        }
+        //{
+        //    bench_fhe_uint2(&cks, &bench_name);
+        //}
 
-        {
-            bench_fhe_uint4(&cks, &bench_name);
-        }
+        //{
+        //    bench_fhe_uint4(&cks, &bench_name);
+        //}
 
-        {
-            bench_fhe_uint8(&cks, &bench_name);
-        }
+        //{
+        //    bench_fhe_uint8(&cks, &bench_name);
+        //}
 
-        {
-            bench_fhe_uint16(&cks, &bench_name);
-        }
+        //{
+        //    bench_fhe_uint16(&cks, &bench_name);
+        //}
 
-        {
-            bench_fhe_uint32(&cks, &bench_name);
-        }
+        //{
+        //    bench_fhe_uint32(&cks, &bench_name);
+        //}
 
         {
             bench_fhe_uint64(&cks, &bench_name);
         }
 
-        {
-            bench_fhe_uint128(&cks, &bench_name);
-        }
+        //{
+        //    bench_fhe_uint128(&cks, &bench_name);
+        //}
     }
 }
