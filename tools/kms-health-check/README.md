@@ -27,6 +27,66 @@ kms-health-check full --config /path/to/config.toml --endpoint localhost:50100
 
 # JSON output for monitoring
 kms-health-check full --config /path/to/config.toml --endpoint localhost:50100 --format json
+
+# Using custom timeout configuration
+kms-health-check live --endpoint localhost:50100 --health-config health-check.toml
+
+# Using environment variables for timeouts (note the double underscore separator)
+HEALTH_CHECK__CONNECTION_TIMEOUT_SECS=10 HEALTH_CHECK__REQUEST_TIMEOUT_SECS=30 kms-health-check live --endpoint localhost:50100
+```
+
+## Configuration
+
+The health check tool supports configurable timeouts through a dedicated configuration file and environment variables.
+
+### Health Check Configuration File
+
+Create a `health-check.toml` file to configure timeout settings:
+
+```toml
+# Health Check Tool Configuration
+# Connection timeout in seconds (default: 5)
+connection_timeout_secs = 5
+
+# Request timeout in seconds (default: 10)  
+request_timeout_secs = 10
+```
+
+Use the configuration file with the `--health-config` flag:
+
+```bash
+kms-health-check live --endpoint localhost:50100 --health-config health-check.toml
+```
+
+### Environment Variables
+
+All configuration settings can be overridden with environment variables using the `HEALTH_CHECK_` prefix:
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `HEALTH_CHECK__CONNECTION_TIMEOUT_SECS` | Connection timeout in seconds | 5 |
+| `HEALTH_CHECK__REQUEST_TIMEOUT_SECS` | Request timeout in seconds | 10 |
+
+Examples:
+
+```bash
+# Set custom timeouts via environment variables (note the double underscore separator)
+export HEALTH_CHECK__CONNECTION_TIMEOUT_SECS=10
+export HEALTH_CHECK__REQUEST_TIMEOUT_SECS=30
+kms-health-check live --endpoint localhost:50100
+
+# Or inline
+HEALTH_CHECK__CONNECTION_TIMEOUT_SECS=15 kms-health-check live --endpoint localhost:50100
+```
+
+### Configuration Precedence
+
+Configuration values are applied in the following order (highest precedence first):
+
+1. Environment variables (`HEALTH_CHECK__*`)
+2. Configuration file (`--health-config`)
+3. Default values
+
 ```
 
 ## Example Output
@@ -146,21 +206,36 @@ graph TD
 ### Response Structure
 
 ```protobuf
+// Health status levels
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_DEGRADED = 2;
+  HEALTH_STATUS_UNHEALTHY = 3;
+}
+
+// Node type for KMS deployment
+enum NodeType {
+  NODE_TYPE_UNSPECIFIED = 0;
+  NODE_TYPE_CENTRALIZED = 1;
+  NODE_TYPE_THRESHOLD = 2;
+}
+
 message HealthStatusResponse {
-  // Overall status: "healthy", "degraded", "unhealthy"
-  string status = 1;
+  // Overall health status
+  HealthStatus status = 1;
   
   // Peer health information (threshold mode only)
   repeated PeerHealth peers = 2;
   
-  // Self key material counts
-  uint32 my_fhe_keys = 3;
-  uint32 my_crs_keys = 4;
-  uint32 my_preprocessing_keys = 5;
+  // Self key material IDs
+  repeated string my_fhe_key_ids = 3;
+  repeated string my_crs_ids = 4;
+  repeated string my_preprocessing_key_ids = 5;
   string my_storage_info = 6;
   
   // Runtime configuration
-  string node_type = 7;           // "threshold" or "centralized"
+  NodeType node_type = 7;
   uint32 my_party_id = 8;         // Only for threshold mode
   uint32 threshold_required = 9;   // Minimum nodes needed
   uint32 nodes_reachable = 10;    // Currently reachable nodes
