@@ -1097,7 +1097,7 @@ mod tests {
     //NOTE: Need to generalize (some of) the tests to ResiduePolyF4Z64 ?
     impl<Z: RingWithExceptionalSequence + Invert> PRSSSetup<Z> {
         // initializes the epoch for a single party (without actual networking)
-        pub fn testing_party_epoch_init(
+        pub async fn testing_party_epoch_init(
             num_parties: usize,
             threshold: usize,
             party_role: Role,
@@ -1120,10 +1120,9 @@ mod tests {
 
             let mut sess =
                 get_networkless_base_session_for_parties(num_parties, threshold as u8, party_role);
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            let _guard = rt.enter();
-            let random_agreed_keys = rt
-                .block_on(async { DummyAgreeRandom::default().execute(&mut sess).await })
+            let random_agreed_keys = DummyAgreeRandom::default()
+                .execute(&mut sess)
+                .await
                 .unwrap();
 
             let f_a_points = party_compute_f_a_points(&all_roles, &party_sets)?;
@@ -1194,6 +1193,7 @@ mod tests {
                 threshold,
                 *p,
             )
+            .await
             .unwrap();
 
             let mut state = prss_setup.new_prss_session_state(sid);
@@ -1330,7 +1330,6 @@ mod tests {
     #[case(1)]
     #[case(2)]
     #[case(23)]
-    #[tokio::test]
     async fn test_prss_mask_next_ctr(#[case] rounds: u128) {
         let num_parties = 4;
         let threshold = 1;
@@ -1338,7 +1337,9 @@ mod tests {
         let sid = SessionId::from(23425);
 
         let role_one = Role::indexed_from_one(1);
-        let prss = PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one).unwrap();
+        let prss = PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one)
+            .await
+            .unwrap();
 
         let mut state = prss.new_prss_session_state(sid);
 
@@ -1364,7 +1365,7 @@ mod tests {
     #[case(4, 1)]
     #[case(10, 3)]
     /// check that points computed on f_A are well-formed
-    fn test_prss_fa_poly(#[case] num_parties: usize, #[case] threshold: usize) {
+    async fn test_prss_fa_poly(#[case] num_parties: usize, #[case] threshold: usize) {
         let all_roles = (1..=num_parties)
             .map(Role::indexed_from_one)
             .collect::<Vec<_>>();
@@ -1374,6 +1375,7 @@ mod tests {
             threshold,
             Role::indexed_from_one(1),
         )
+        .await
         .unwrap();
 
         for set in prss.sets.iter() {
@@ -1388,14 +1390,15 @@ mod tests {
         }
     }
 
-    #[test]
+    #[tokio::test]
     #[should_panic(expected = "PRSS set size is too large!")]
-    fn test_prss_too_large() {
+    async fn test_prss_too_large() {
         let _prss = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(
             22,
             7,
             Role::indexed_from_one(1),
         )
+        .await
         .unwrap();
     }
 
@@ -1444,6 +1447,7 @@ mod tests {
         let shares = join_all(all_roles.into_iter().map(|p| async move {
             let prss_setup =
                 PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(num_parties, threshold, p)
+                    .await
                     .unwrap();
 
             let mut state = prss_setup.new_prss_session_state(sid);
@@ -1478,8 +1482,9 @@ mod tests {
         // create shares for each party using PRSS.next()
         let shares = join_all(all_roles.clone().into_iter().map(|p| async move {
             // initialize PRSSSetup for this epoch
-            let prss_setup =
-                PRSSSetup::testing_party_epoch_init(num_parties, threshold, p).unwrap();
+            let prss_setup = PRSSSetup::testing_party_epoch_init(num_parties, threshold, p)
+                .await
+                .unwrap();
 
             let mut state = prss_setup.new_prss_session_state(sid);
 
