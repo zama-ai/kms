@@ -80,11 +80,8 @@ pub trait SendingService: Send + Sync {
 
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
     async fn add_connection(
-
         &self,
-
         other: Role,
-    ,
     ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>>;
 
     ///Adds multiple connections at once
@@ -303,11 +300,8 @@ impl SendingService for GrpcSendingService {
 
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
     async fn add_connection(
-
         &self,
-
         other: Role,
-    ,
     ) -> anyhow::Result<UnboundedSender<ArcSendValueRequest>> {
         // 1. Create channel first (no allocation issues)
         let (sender, receiver) = unbounded_channel::<ArcSendValueRequest>();

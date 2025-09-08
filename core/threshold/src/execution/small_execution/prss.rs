@@ -575,7 +575,7 @@ where
             Ok(res)}).try_collect()
     }).instrument(tracing::Span::current()).await??;
 
-        // increase counter by two for each elemet generated, since we have two phi calls above
+        // increase counter by two for each element generated, since we have two phi calls above
         self.counters.mask_ctr += 2 * (amount as u128);
 
         Ok(res)

@@ -104,7 +104,7 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     (y_vec_cloned,triples_a,res)
     }).await?;
 
-    //NOTE: That's a lot of memory manipulation, could execute the "linear equation loop" with epsilonrho directly
+    //NOTE: We execute the "linear equation loop" with epsilonrho directly
     // Open and seperate the list of both epsilon and rho values into two lists of values
     let epsilonrho = open_list(&to_open, session).await?;
 

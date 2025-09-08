@@ -54,8 +54,8 @@ pub trait Broadcast: ProtocolDescription + Send + Sync + Clone {
         session: &mut B,
         my_message: BroadcastValue<Z>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
-        self.execute(session, session.roles(), Some(my_message))
-            .await
+        let sender_list = session.roles().clone();
+        self.execute(session, &sender_list, Some(my_message)).await
     }
 
     /// Blanket implementation that relies on Self implementation of [`Broadcast::execute`].
@@ -225,6 +225,7 @@ pub(crate) async fn receive_contribution_from_all_senders<Z: Ring, B: BaseSessio
 ///
 /// Output is:
 ///  - a Map from (Role, Hash(contribution)) to (contribution, 1) with an entry __IFF__ there was enough echo for this particular contribution
+/// - a Map from (Role, Hash(contribution)) to contribution for all the contributions we received
 pub(crate) async fn receive_echos_from_all_batched<Z: Ring, B: BaseSessionHandles>(
     session: &B,
     receiver: &Role,
@@ -680,18 +681,10 @@ mod tests {
                         .await
                         .unwrap()
                 });
-            }
-        } else {
-            for (party_no, my_data) in input_values.iter().cloned().enumerate() {
-                let mut session = test_runtime.base_session_for_party(session_id, party_no, None);
-                let sender_list = sender_parties.to_vec();
-                if sender_parties.contains(&Role::indexed_from_zero(party_no)) {
-                    set.spawn(async move {
-                        SyncReliableBroadcast::default()
-                            .execute(&mut session, &sender_list, Some(my_data))
-                            .await
-                            .unwrap()
-                    });
+            } else {
+                let senders = senders.clone();
+                let msg = if senders.contains(party) {
+                    Some(my_data)
                 } else {
                     None
                 };

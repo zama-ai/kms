@@ -143,6 +143,16 @@ impl<Z: Ring> Sub<Z> for Share<Z> {
     }
 }
 
+impl<Z: Ring> Sub<Z> for &Share<Z> {
+    type Output = Share<Z>;
+    fn sub(self, rhs: Z) -> Self::Output {
+        Share::<Z> {
+            value: self.value - rhs,
+            owner: self.owner,
+        }
+    }
+}
+
 impl<Z: Ring> SubAssign for Share<Z> {
     fn sub_assign(&mut self, rhs: Self) {
         debug_assert_eq!(self.owner, rhs.owner);
