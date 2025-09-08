@@ -538,10 +538,10 @@ async fn test_centralized_insecure(ctx: &mut DockerComposeCentralizedContext) {
 }
 
 // Test restore without custodians
-#[test_context(DockerComposeCentralizedCustodianContext)]
+#[test_context(DockerComposeCentralizedContext)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized_backup_restore(ctx: &DockerComposeCentralizedCustodianContext) {
+async fn test_centralized_backup_restore(ctx: &DockerComposeCentralizedContext) {
     init_testing();
     let _crs_id = crs_gen(ctx, true).await;
     let _ = backup_restore(ctx).await;

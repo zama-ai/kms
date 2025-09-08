@@ -296,7 +296,6 @@ async fn default_insecure_central_autobackup_after_deletion() {
         .data_exists(&key_id, &PrivDataType::FheKeyInfo.to_string())
         .await
         .unwrap());
-    panic!("check that insecure gets executed by CI!")
 }
 
 #[tracing_test::traced_test]
