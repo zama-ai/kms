@@ -166,7 +166,7 @@ Configuration values are applied in the following order (highest precedence firs
 
 - **Optimal**: All nodes online and reachable, perfect operational state
 - **Healthy**: Sufficient 2/3 majority but not all nodes online, functional but should investigate offline nodes  
-- **Degraded**: Above minimum threshold but below 2/3 majority, operational with reduced fault tolerance
+- **Degraded**: At least threshold + 1 but below 2/3 majority, operational with reduced fault tolerance
 - **Unhealthy**: Insufficient nodes for operations, critical issues requiring immediate attention
 
 ## Output Format
