@@ -9,6 +9,7 @@ use kms_grpc::{
         self, CiphertextFormat, Empty, PublicDecryptionRequest, PublicDecryptionResponse,
         PublicDecryptionResponsePayload, TypedPlaintext,
     },
+    utils::tonic_result::BoxedStatus,
     RequestId,
 };
 use observability::{
@@ -305,10 +306,14 @@ impl<
 
         let (ciphertexts, key_id, req_id, eip712_domain) = {
             let inner_compute = inner.clone();
-            tonic_handle_potential_err(
-                spawn_compute_bound(move || validate_public_decrypt_req(&inner_compute)).await,
-                "Error delegating validate_public_decrypt_req to rayon".to_string(),
-            )?
+            spawn_compute_bound(move || validate_public_decrypt_req(&inner_compute))
+                .await
+                .map_err(|_| {
+                    BoxedStatus::from(tonic::Status::new(
+                        tonic::Code::Internal,
+                        "Error delegating validate_public_decrypt_req to rayon".to_string(),
+                    ))
+                })?
         }
         .inspect_err(|e| {
             tracing::error!(
@@ -606,7 +611,7 @@ impl<
             let extra_data = vec![];
 
             // Compute expensive signature OUTSIDE the lock
-            let external_sig = match {
+            let external_sig = {
                 let extra_data = extra_data.clone();
                 let pts = pts.clone();
                 spawn_compute_bound(move || {
@@ -619,7 +624,8 @@ impl<
                     )
                 })
                 .await
-            } {
+            };
+            let external_sig = match external_sig {
                 Ok(Ok(sig)) => sig,
                 Err(e) | Ok(Err(e)) => {
                     let msg = format!(
@@ -635,7 +641,7 @@ impl<
 
             // Single success update with minimal lock hold time
             let pts_len = pts.len();
-            let success_result = external_sig.map(|sig| (req_id, pts, sig, extra_data));
+            let success_result = Ok((req_id, pts, external_sig, extra_data));
 
             let (lock_acquired_time, total_lock_time) = {
                 let lock_start = std::time::Instant::now();
@@ -650,7 +656,7 @@ impl<
             // Log after lock is released
             tracing::info!(
                 "MetaStore SUCCESS update - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
-                req_id, key_id, party, pts.len(), lock_acquired_time, total_lock_time
+                req_id, key_id, party, pts_len, lock_acquired_time, total_lock_time
             );
             Ok(())
         };

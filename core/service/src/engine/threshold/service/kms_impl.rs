@@ -105,10 +105,10 @@ pub struct ThresholdFheKeys {
 /// that's needed for decryption, user decryption and verifying a proven input.
 #[derive(Clone, Serialize, Deserialize, Version)]
 pub struct ThresholdFheKeysV0 {
-    pub private_keys: PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    pub integer_server_key: tfhe::integer::ServerKey,
-    pub sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-    pub decompression_key: Option<DecompressionKey>,
+    pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
+    pub integer_server_key: Arc<tfhe::integer::ServerKey>,
+    pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
+    pub decompression_key: Option<Arc<DecompressionKey>>,
     pub pk_meta_data: HashMap<PubDataType, SignedPubDataHandleInternal>,
 }
 
@@ -117,10 +117,12 @@ impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV0 {
 
     fn upgrade(self) -> Result<ThresholdFheKeys, Self::Error> {
         Ok(ThresholdFheKeys {
-            private_keys: self.private_keys,
-            integer_server_key: self.integer_server_key,
-            sns_key: self.sns_key,
-            decompression_key: self.decompression_key,
+            private_keys: Arc::clone(&self.private_keys),
+            integer_server_key: Arc::clone(&self.integer_server_key),
+            sns_key: self.sns_key.map(|sns_key| Arc::clone(&sns_key)),
+            decompression_key: self
+                .decompression_key
+                .map(|decompression_key| Arc::clone(&decompression_key)),
             meta_data: KeyGenMetadata::LegacyV0(self.pk_meta_data),
         })
     }
