@@ -184,13 +184,10 @@ pub struct PeerConf {
 }
 
 impl PeerConf {
-    pub fn into_role_identity(&self) -> (Role, (Identity, String)) {
+    pub fn into_role_identity(&self) -> (Role, Identity) {
         (
             Role::indexed_from_one(self.party_id),
-            (
-                Identity(self.address.clone(), self.port),
-                self.mpc_identity.clone().unwrap_or(self.address.clone()),
-            ),
+            Identity::new(self.address.clone(), self.port, self.mpc_identity.clone()),
         )
     }
 }

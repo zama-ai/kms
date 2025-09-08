@@ -267,7 +267,7 @@ struct InnerSessionPreparer {
 impl InnerSessionPreparer {
     async fn own_identity(&self) -> anyhow::Result<Identity> {
         let id = some_or_tonic_abort(
-            self.role_assignment.identity(&self.my_role),
+            self.role_assignment.get(&self.my_role),
             "Could not find my own identity in role assignments".to_string(),
         )?;
         Ok(id.to_owned())
@@ -383,10 +383,7 @@ impl InnerSessionPreparer {
             inner: HashMap::from_iter((1..=4).map(|i| {
                 (
                     Role::indexed_from_one(i),
-                    (
-                        Identity("localhost".to_string(), 8080 + i as u16),
-                        "localhost".to_string(),
-                    ),
+                    Identity::new("localhost".to_string(), 8080 + i as u16, None),
                 )
             })),
         };

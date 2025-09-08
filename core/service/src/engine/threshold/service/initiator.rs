@@ -422,12 +422,12 @@ mod tests {
     fn test_network_manager() -> Arc<RwLock<GrpcNetworkingManager>> {
         let role_assignment = RoleAssignment {
             inner: HashMap::from_iter((1..=4).map(|i| {
-                let identity = threshold_fhe::execution::runtime::party::Identity(
+                let identity = threshold_fhe::execution::runtime::party::Identity::new(
                     "localhost".to_string(),
                     8080 + i as u16,
+                    None,
                 );
-                let mpc_identity = identity.hostname().to_string();
-                (Role::indexed_from_one(i), (identity, mpc_identity))
+                (Role::indexed_from_one(i), identity)
             })),
         };
         let role_assignment = Arc::new(RwLock::new(role_assignment));
