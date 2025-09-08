@@ -994,11 +994,13 @@ mod tests {
     use tokio::task::JoinSet;
 
     #[test]
+    #[serial_test::serial]
     fn test_honest_crs_ceremony_secure() {
         test_honest_crs_ceremony(SecureCeremony::default)
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_honest_crs_ceremony_insecure() {
         test_honest_crs_ceremony(InsecureCeremony::default)
     }
@@ -1220,6 +1222,7 @@ mod tests {
     }
 
     #[rstest]
+    #[serial_test::serial]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     async fn test_dropping_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
@@ -1234,6 +1237,7 @@ mod tests {
     }
 
     #[rstest]
+    #[serial_test::serial]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     async fn test_bad_proof_ceremony<BCast: Broadcast + Default + 'static>(
@@ -1252,6 +1256,7 @@ mod tests {
     }
 
     #[rstest]
+    #[serial_test::serial]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     async fn test_rushing_ceremony<BCast: Broadcast + Default + 'static>(
