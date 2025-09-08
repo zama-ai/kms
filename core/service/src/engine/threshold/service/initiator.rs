@@ -317,7 +317,7 @@ mod tests {
                         party_id: 1,
                         address: "dummy".to_string(),
                         port: 1,
-                        grpc_port: None,
+                        service_port: None,
                         tls_cert: None,
                     }]),
                     core_to_core_net: None,

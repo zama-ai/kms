@@ -197,7 +197,7 @@ pub struct PeerConf {
     /// unusual traffic patterns or unauthorized access attempts in the future.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[validate(range(min = 1, max = 65535))]
-    pub grpc_port: Option<u16>,
+    pub service_port: Option<u16>,
     pub tls_cert: Option<TlsCert>,
 }
 

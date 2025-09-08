@@ -415,7 +415,7 @@ impl_endpoint! {
                     }
 
                     // Determine gRPC port: use explicit config or apply convention
-                    let grpc_port = match peer.grpc_port {
+                    let service_port = match peer.service_port {
                     Some(port) => port,
                     None => {
                         // Convention: P2P port 5000X maps to gRPC port 50X00
@@ -439,7 +439,7 @@ impl_endpoint! {
                 //     "http"
                 // };
 
-                let endpoint = format!("{}://{}:{}", protocol, peer.address, grpc_port);
+                let endpoint = format!("{}://{}:{}", protocol, peer.address, service_port);
                 let start = Instant::now();
 
                 let peer_info = match Channel::from_shared(endpoint.clone()) {
