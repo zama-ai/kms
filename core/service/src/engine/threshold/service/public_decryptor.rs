@@ -565,13 +565,25 @@ impl<
             let extra_data = vec![];
 
             // Compute expensive signature OUTSIDE the lock
-            let external_sig = compute_external_pt_signature(
+            let external_sig = match compute_external_pt_signature(
                 &sigkey,
                 ext_handles_bytes,
                 &pts,
                 extra_data.clone(),
                 eip712_domain,
-            );
+            ) {
+                Ok(sig) => sig,
+                Err(e) => {
+                    let msg = format!(
+                        "Failed to compute external signature for decryption request {req_id}: {e:?}"
+                    );
+                    tracing::error!(msg);
+                    // Update meta-store with the failure so clients are unblocked
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(&req_id, Err(msg));
+                    return Err(());
+                }
+            };
 
             // Single success update with minimal lock hold time
             let success_result = Ok((req_id, pts.clone(), external_sig, extra_data));

@@ -9,6 +9,7 @@ metadata:
     app: kms-core
     app.kubernetes.io/name: {{ $kmsGenCertAndKeysName }}
   annotations:
+    "helm.sh/hook": post-install
     "helm.sh/hook-weight": "-2"
   name: {{ $kmsGenCertAndKeysName }}
 spec:
@@ -31,42 +32,13 @@ spec:
           args:
             - -c
             - |
-              export AWS_REGION="${AWS_REGION:={{ .Values.kmsCore.aws.region }}}"
-              export AWS_ROLE_ARN="${AWS_ROLE_ARN:={{ .Values.kmsCore.aws.roleArn }}}"
-              {{ if .Values.kmsCore.publicVault.s3.enabled }}
-              export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET="${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.publicVault.s3.bucket }}}"
-              {{ if .Values.kmsCore.publicVault.s3.path }}
-              export KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.publicVault.s3.path }}}"
-              {{ end }}
-              {{ end }}
-              {{ if .Values.kmsCore.privateVault.s3.enabled }}
-              export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET:={{ .Values.kmsCore.privateVault.s3.bucket }}}"
-              {{ if .Values.kmsCore.privateVault.s3.path }}
-              export KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX="${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX:={{ .Values.kmsCore.privateVault.s3.path }}}"
-              {{ end }}
-              {{ end }}
-              export KMS_CORE__THRESHOLD__MY_ID="${KMS_CORE__THRESHOLD__MY_ID:={{ .Values.kmsPeers.id }}}"
-              {{ if .Values.kmsCore.nitroEnclave.enabled }}
-              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID:={{ .Values.kmsCore.privateVault.awskms.rootKeyId }}}"
-              export KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC="${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC:={{ .Values.kmsCore.privateVault.awskms.rootKeySpec }}}"
-              {{ end }}
-              envsubst < /var/lib/kms-core/config/aws.toml > aws.toml
-              envsubst < /var/lib/kms-core/config/vaults.toml > vaults.toml
+              {{ include "kmsCoreInitEnvVars" . | indent 14 | trim }}
               envsubst < /var/lib/kms-core/config/kms-gen-keys.toml > kms-gen-keys.toml
-              envsubst < /var/lib/kms-core/config/kms-server.toml > kms-server.toml
-              cat aws.toml vaults.toml >> kms-gen-keys.toml
-              cat aws.toml vaults.toml >> kms-server.toml
-              {{- if .Values.kmsCore.nitroEnclave.debug }}
-              echo "### BEGIN - env ###"
-              env
-              echo "### END - env ###"
+              envsubst < /var/lib/kms-core/config/aws.toml >> kms-gen-keys.toml
+              envsubst < /var/lib/kms-core/config/vaults.toml >> kms-gen-keys.toml
               echo "### BEGIN - kms-gen-keys.toml ###"
               cat kms-gen-keys.toml
               echo "### END - kms-gen-keys.toml ###"
-              echo "### BEGIN - kms-server.toml ###"
-              cat kms-server.toml
-              echo "### END - kms-server.toml ###"
-              {{- end }}
           env:
             - name: KMS_CORE__THRESHOLD__MY_ID
               value: "{{ .Values.kmsPeers.id }}"
@@ -76,22 +48,22 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
-            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
+            - name: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultStorageBucket }}
-            - name: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
+            - name: KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.publicVaultStorageBucket }}
-            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
+            - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeySpec }}
-            - name: {{ .Values.kmsCore.envFrom.configmap.key.privateVaultKeychainAWSKMSRootKeyID }}
+            - name: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID
               valueFrom:
                 configMapKeyRef:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
@@ -169,14 +141,12 @@ spec:
           args:
             - -c
             - |
-              {{- if .Values.kmsCore.nitroEnclave.debug }}
               echo "### BEGIN - enclave.json ###"
               cat /var/lib/kms-core/config/enclave.json
               echo "### END - enclave.json ###"
               echo "### BEGIN - describe-eif ###"
               nitro-cli describe-eif --eif-path {{ .Values.kmsCore.nitroEnclave.eifPath }}
               echo "### END - describe-eif ###"
-              {{- end }}
               # enclave config vsock is hardcoded to 4000 in init_enclave.sh
               # it can't be a separate container
               # because we need to serve kms-gen-keys.toml on the same port later
@@ -219,10 +189,6 @@ spec:
               memory: 4Gi
               aws.ec2.nitro/nitro_enclaves: "1"
               hugepages-1Gi: {{ .Values.kmsCore.nitroEnclave.memoryGiB }}Gi
-          # lifecycle:
-          #   preStop:
-          #     exec:
-          #       command: [ "nitro-cli", "terminate-enclave", "--all" ]
       imagePullSecrets:
         - name: registry-credentials
       nodeSelector:

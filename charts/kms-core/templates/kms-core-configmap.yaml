@@ -1,4 +1,4 @@
-{{- if .Values.kmsCore.enabled -}}
+{{- if or .Values.kmsCore.enabled .Values.kmsGenCertAndKeys.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
 apiVersion: v1
@@ -33,7 +33,7 @@ data:
     {{ if .Values.kmsCore.publicVault.s3.enabled }}
     [public_vault.storage.s3]
     bucket = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}"
-      {{ if .Values.kmsCore.publicVault.s3.path }}
+      {{ if .Values.kmsCore.publicVault.s3.prefix }}
     prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX}"
       {{ end }}
     {{ else }}
@@ -41,11 +41,10 @@ data:
     path = "/keys"
     {{ end }}
 
-
     {{ if .Values.kmsCore.privateVault.s3.enabled }}
     [private_vault.storage.s3]
     bucket = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET}"
-      {{ if .Values.kmsCore.publicVault.s3.path }}
+      {{ if .Values.kmsCore.publicVault.s3.prefix }}
     prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX}"
       {{ end }}
 
@@ -58,6 +57,18 @@ data:
     root_key_id = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID}"
     root_key_spec = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC}"
     {{ end }}
+    {{- if .Values.kmsCore.backupVault.s3.enabled }}
+    [backup_vault.storage.s3]
+    bucket = "${KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET}"
+      {{- if .Values.kmsCore.backupVault.s3.prefix }}
+    prefix = "${KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX}"
+      {{- end }}
+    {{- end }}
+    {{- if .Values.kmsCore.backupVault.awskms.enabled }}
+    [backup_vault.keychain.aws_kms]
+    root_key_id = "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID}"
+    root_key_spec = "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC}"
+    {{- end }}
   kms-gen-keys.toml: |
     [keygen]
     enabled = true
