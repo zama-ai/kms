@@ -32,8 +32,6 @@ use threshold_fhe::execution::runtime::party::Role;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
-// todo add similar tests to central
-#[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_auto_update_backups_threshold() {
@@ -118,6 +116,9 @@ pub(crate) async fn auto_update_backup(amount_custodians: usize, threshold: u32)
     )
     .await;
     assert_eq!(reread_backup.len(), amount_parties);
+    for i in 0..amount_parties {
+        assert_eq!(reread_backup[i], initial_backup[i]);
+    }
 }
 
 #[cfg(feature = "insecure")]

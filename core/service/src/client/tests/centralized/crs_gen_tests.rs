@@ -1,3 +1,4 @@
+use crate::client::client_wasm::Client;
 use crate::engine::base::safe_serialize_hash_element_versioned;
 use crate::vault::storage::{file::FileStorage, StorageType};
 use crate::{
@@ -9,6 +10,7 @@ use crate::{
     util::{key_setup::test_tools::purge, rate_limiter::RateLimiterConfig},
     vault::storage::StorageReader,
 };
+use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::solidity_types::CrsgenVerification;
 use kms_grpc::{
     kms::v1::{Empty, FheParameter},
@@ -19,6 +21,7 @@ use serial_test::serial;
 use tfhe::zk::CompactPkeCrs;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
+use tonic::transport::Channel;
 
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
@@ -130,11 +133,7 @@ async fn crs_gen_centralized_manual(
 }
 
 /// test centralized crs generation via client interface
-pub(crate) async fn crs_gen_centralized(
-    crs_req_id: &RequestId,
-    params: FheParameter,
-    insecure: bool,
-) {
+pub async fn crs_gen_centralized(crs_req_id: &RequestId, params: FheParameter, insecure: bool) {
     let dkg_param: WrappedDKGParams = params.into();
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100,
@@ -147,7 +146,25 @@ pub(crate) async fn crs_gen_centralized(
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client, internal_client) =
         crate::client::test_tools::centralized_handles(&dkg_param, Some(rate_limiter_conf)).await;
+    run_crs_centralized(
+        &mut kms_client,
+        &internal_client,
+        crs_req_id,
+        params,
+        insecure,
+    )
+    .await;
+    kms_server.assert_shutdown().await;
+}
 
+pub(crate) async fn run_crs_centralized(
+    kms_client: &mut CoreServiceEndpointClient<Channel>,
+    internal_client: &Client,
+    crs_req_id: &RequestId,
+    params: FheParameter,
+    insecure: bool,
+) {
+    let dkg_param: WrappedDKGParams = params.into();
     let max_num_bits = if params == FheParameter::Test {
         Some(1)
     } else {
@@ -202,6 +219,4 @@ pub(crate) async fn crs_gen_centralized(
 
     // Validate the CRS as a sanity check
     crate::client::crs_gen::tests::verify_pp(&dkg_param, &pp);
-
-    kms_server.assert_shutdown().await;
 }

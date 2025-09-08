@@ -31,19 +31,35 @@ async fn test_new_custodian_context_threshold() {
     new_custodian_context(4, FheParameter::Test, 5, 2).await;
 }
 
-pub(crate) async fn new_custodian_context(
+async fn new_custodian_context(
     amount_parties: usize,
     parameter: FheParameter,
     amount_custodians: usize,
     threshold: u32,
 ) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
+    ensure_testing_material_exists(test_path).await;
     let req_new_cus: RequestId =
         derive_request_id(&format!("new_custodian_{amount_parties}")).unwrap();
     let req_new_cus2: RequestId =
         derive_request_id(&format!("new_custodian_2_{amount_parties}")).unwrap();
-    let temp_dir = tempfile::tempdir().unwrap();
-    let test_path = Some(temp_dir.path());
-    ensure_testing_material_exists(test_path).await;
+    purge(
+        test_path,
+        test_path,
+        test_path,
+        &req_new_cus,
+        amount_parties,
+    )
+    .await;
+    purge(
+        test_path,
+        test_path,
+        test_path,
+        &req_new_cus2,
+        amount_parties,
+    )
+    .await;
     let dkg_param: WrappedDKGParams = parameter.into();
 
     // The threshold handle should only be started after the storage is purged
@@ -191,7 +207,7 @@ async fn threshold_new_custodian() {
     let dkg_param: WrappedDKGParams = param.into();
 
     let key_id: RequestId = derive_request_id(&format!(
-        "default_insecure_autobackup_after_deletion_{amount_parties}_{param:?}",
+        "threshold_new_custodian_{amount_parties}_{param:?}",
     ))
     .unwrap();
     let test_path = None;
@@ -218,7 +234,6 @@ async fn backup_exists(amount_parties: usize, test_path: Option<&Path>) -> bool 
     let mut backup_exists = false;
     for cur_role in 1..=amount_parties {
         let base_path = base_backup_path(cur_role, test_path);
-        println!("Checking path {:?}", base_path);
         let mut files = tokio::fs::read_dir(base_path).await.unwrap();
         if files.next_entry().await.unwrap().is_some() {
             backup_exists = true;
@@ -241,7 +256,6 @@ pub(crate) async fn backup_files(
             .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
             .join(file_req.to_string());
         // Attempt to read the file
-        println!("reading {}", coerced_path.display());
         if let Ok(file) = safe_read_element_versioned(coerced_path).await {
             files.push(file);
         }
