@@ -39,7 +39,7 @@ impl BGVShareSecretKey {
     }
 }
 
-#[instrument(name="BGV.Threshold-KeyGen",skip_all, fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="BGV.Threshold-KeyGen",skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn bgv_distributed_keygen<N, S: BaseSessionHandles, P: BGVDkgPreprocessing>(
     session: &mut S,
     preprocessing: &mut P,
@@ -245,8 +245,8 @@ mod tests {
         assert_eq!(plaintext, plaintext_vec);
     }
 
-    #[test]
-    fn test_dkg_dummy_preproc() {
+    #[tokio::test]
+    async fn test_dkg_dummy_preproc() {
         let parties = 5;
         let threshold = 1;
         let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
@@ -276,12 +276,13 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        );
+        )
+        .await;
         test_dkg(&mut results, PLAINTEXT_MODULUS.get().0);
     }
 
-    #[test]
-    fn test_dkg_with_offline() {
+    #[tokio::test]
+    async fn test_dkg_with_offline() {
         let parties = 5;
         let threshold = 1;
         let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
@@ -290,7 +291,7 @@ mod tests {
             session
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(600))
-                .unwrap();
+                .await;
             let mut bgv_preproc = InMemoryBGVDkgPreprocessing::default();
             bgv_preproc
                 .fill_from_base_preproc(N65536::VALUE, &mut session, &mut dummy_preproc)
@@ -300,7 +301,7 @@ mod tests {
             session
                 .network()
                 .set_timeout_for_next_round(*NETWORK_TIMEOUT_ASYNC)
-                .unwrap();
+                .await;
             let (pk, sk) = bgv_distributed_keygen::<N65536, _, _>(
                 &mut session,
                 &mut bgv_preproc,
@@ -323,7 +324,8 @@ mod tests {
             None,
             &mut task,
             None,
-        );
+        )
+        .await;
 
         test_dkg(&mut results, PLAINTEXT_MODULUS.get().0);
     }

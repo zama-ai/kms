@@ -29,6 +29,7 @@ crypto-bigint = { version = "=0.6.1", features = [
 dashmap = "=6.1.0"
 derive_more = { version = "=2.0.1", features = ["display"] }
 futures.workspace = true
+futures-util.workspace = true
 g2p = "=1.2.2"
 hex = { version = "=0.4.3", features = ["serde"] }
 hyper-rustls = { version = "=0.27.7", default-features = false, features = ["http2", "ring"] , optional = true }
@@ -87,7 +88,8 @@ getrandom = { version = "=0.2.15", features = ["js"] }
 tonic-build.workspace = true
 
 [dev-dependencies]
-criterion = "=0.5.1"
+async-std = { version = "=1.13.1", features = ["attributes", "tokio1"] }
+criterion = { version = "=0.5.1", features = ["async_tokio"] }
 ctor = "=0.4.2"
 proptest = "=1.6.0"
 pprof = { version = "=0.15.0", features = ["flamegraph", "criterion"] }

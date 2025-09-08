@@ -26,22 +26,13 @@ use threshold_fhe::{
         tfhe_internals::{parameters::DKGParams, private_keysets::PrivateKeySet},
         zk::ceremony::SecureCeremony,
     },
-    networking::{
-        grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
-        tls::{
-            build_ca_certs_map, AttestedClientVerifier, BasicTLSConfig, SendingServiceTLSConfig,
-        },
-        Networking, NetworkingStrategy,
-    },
+    networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter},
 };
 use tokio::{
     net::TcpListener,
     sync::{Mutex, RwLock},
 };
-use tokio_rustls::rustls::{
-    pki_types::{CertificateDer, PrivateKeyDer},
-    server::ServerConfig,
-};
+use tokio_rustls::rustls::{client::ClientConfig, server::ServerConfig};
 use tokio_util::task::TaskTracker;
 use tonic::transport::{server::TcpIncoming, Server};
 use tonic_health::pb::health_server::{Health, HealthServer};
@@ -51,7 +42,8 @@ use tonic_tls::rustls::TlsIncoming;
 use crate::{
     anyhow_error_and_log,
     backup::custodian::InternalCustodianContext,
-    conf::threshold::{PeerConf, ThresholdPartyConf, TlsCert},
+    conf::threshold::ThresholdPartyConf,
+    consts::DEFAULT_MPC_CONTEXT,
     consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
     cryptography::{attestation::SecurityModuleProxy, internal_crypto_types::PrivateSigKey},
     engine::{
@@ -60,15 +52,13 @@ use crate::{
         context_manager::RealContextManager,
         prepare_shutdown_signals,
         threshold::{
-            service::{
-                public_decryptor::SecureNoiseFloodDecryptor,
-                user_decryptor::SecureNoiseFloodPartialDecryptor,
-            },
+            service::public_decryptor::SecureNoiseFloodDecryptor,
+            service::session::{SessionPreparer, SessionPreparerManager},
+            service::user_decryptor::SecureNoiseFloodPartialDecryptor,
             threshold_kms::ThresholdKms,
         },
     },
     grpc::metastore_status_service::MetaStoreStatusServiceImpl,
-    some_or_tonic_abort,
     util::{
         meta_store::MetaStore,
         rate_limiter::{RateLimiter, RateLimiterConfig},
@@ -86,7 +76,7 @@ use crate::{
 use super::{
     crs_generator::RealCrsGenerator, initiator::RealInitiator, key_generator::RealKeyGenerator,
     preprocessor::RealPreprocessor, public_decryptor::RealPublicDecryptor,
-    session::SessionPreparer, user_decryptor::RealUserDecryptor,
+    user_decryptor::RealUserDecryptor,
 };
 
 // === Insecure Feature-Specific Imports ===
@@ -223,7 +213,8 @@ pub async fn new_real_threshold_kms<PubS, PrivS, F>(
     security_module: Option<SecurityModuleProxy>,
     mpc_listener: TcpListener,
     sk: PrivateSigKey,
-    tls_identity: Option<BasicTLSConfig>,
+    tls_config: Option<(ServerConfig, ClientConfig)>,
+    peer_tcp_proxy: bool,
     run_prss: bool,
     rate_limiter_conf: Option<RateLimiterConfig>,
     shutdown_signal: F,
@@ -242,9 +233,6 @@ where
         read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
     let mut public_key_info = HashMap::new();
     let mut pk_map = HashMap::new();
-    let custodian_context: HashMap<RequestId, InternalCustodianContext> =
-        read_all_data_versioned(&private_storage, &PrivDataType::CustodianInfo.to_string()).await?;
-
     for (id, info) in key_info_versioned.clone().into_iter() {
         public_key_info.insert(id, info.meta_data.clone());
 
@@ -256,102 +244,39 @@ where
     let crs_info: HashMap<RequestId, CrsGenMetadata> =
         read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
-    // set up the MPC service
-    let role_assignments: RoleAssignment = config
-        .peers
-        .clone()
-        .into_iter()
-        .map(|peer_config| peer_config.into_role_identity())
-        .collect();
+    let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
+        Role::indexed_from_one(config.my_id),
+        tls_config
+            .as_ref()
+            .map(|(_, client_config)| client_config.clone()),
+        config.core_to_core_net,
+        peer_tcp_proxy,
+        // The mapping from roles to network addresses is dependent on contexts set dynamically, so we put it in a mutable map
+        Arc::new(RwLock::new(HashMap::new())),
+    )?));
 
-    let own_identity = some_or_tonic_abort(
-        role_assignments.get(&Role::indexed_from_one(config.my_id)),
-        "Could not find my own identity".to_string(),
-    )?;
+    // the initial MPC node might not accept any peers because initially there's no context
     let mpc_socket_addr = mpc_listener.local_addr()?;
-
-    // We put the party CA certificates into a hashmap keyed by party addresses
-    // to be able to limit trust anchors to only one CA certificate both on
-    // client and server.
-    let tls_certs = extract_tls_certs(tls_identity, &config.peers).await?;
-
-    // We have to construct a rustls config ourselves instead of using the
-    // wrapper from tonic::transport because we need to provide our own
-    // certificate verifier that can also validate bundled attestation
-    // documents.
-    let tls_config = match tls_certs.clone() {
-        Some(SendingServiceTLSConfig {
-            cert,
-            key,
-            ca_certs,
-            trusted_releases,
-            pcr8_expected,
-        }) => {
-            let cert_chain =
-                vec![CertificateDer::from_slice(cert.contents.as_slice()).into_owned()];
-            let key_der = PrivateKeyDer::try_from(key.contents.as_slice())
-                .map_err(|e| anyhow_error_and_log(e.to_string()))?
-                .clone_key();
-            let client_verifier =
-                AttestedClientVerifier::new(ca_certs, trusted_releases.clone(), pcr8_expected)?;
-
-            match trusted_releases {
-                Some(_) => tracing::info!("Creating server with TLS and AWS Nitro attestation"),
-                None => {
-                    tracing::info!("Creating server with TLS and without AWS Nitro attestation")
-                }
-            }
-            Some(
-                ServerConfig::builder()
-                    .with_client_cert_verifier(Arc::new(client_verifier))
-                    .with_single_cert(cert_chain, key_der)?,
-            )
-        }
-        None => {
-            tracing::warn!("Creating server without TLS");
-            None
-        }
-    };
 
     let (threshold_health_reporter, threshold_health_service) =
         tonic_health::server::health_reporter();
-    // This will setup client TLS if tls_certs is set to Some(...)
-    let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
-        own_identity.to_owned(),
-        tls_certs,
-        config.core_to_core_net,
-    )?));
-    let manager_clone = Arc::clone(&networking_manager);
+
     let networking_server = networking_manager
         .write()
         .await
         .new_server(TlsExtensionGetter::SslConnectInfo);
-    // we won't be setting TLS configuration through tonic::transport knobs here
-    // since it doesn't permit setting rustls configuration directly, and we
-    // need to supply a custom certificate verifier to enable AWS Nitro
-    // attestation in TLS
     let router = Server::builder()
         .http2_adaptive_window(Some(true))
         .add_service(networking_server)
         .add_service(threshold_health_service);
 
     tracing::info!(
-        "Starting core-to-core server for identity {} on address {:?}.",
-        own_identity,
+        "Starting core-to-core server for party {} on address {:?}.",
+        config.my_id,
         mpc_socket_addr
     );
 
-    let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
-        move |session_id, roles, network_mode| {
-            let nm = networking_manager.clone();
-            Box::pin(async move {
-                let manager = nm.read().await;
-                let impl_networking = manager.make_session(session_id, roles, network_mode)?;
-                Ok(impl_networking as Arc<dyn Networking + Send + Sync>)
-            })
-        },
-    )));
-
+    let manager_clone = Arc::clone(&networking_manager);
     let abort_handle = tokio::spawn(async move {
         let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::spawn(prepare_shutdown_signals(shutdown_signal, tx));
@@ -378,10 +303,10 @@ where
         // API dependent on rustls)
         let tcp_incoming = TcpIncoming::from(mpc_listener);
         match tls_config {
-            Some(tls_config) => {
+            Some((server_config, _)) => {
                 router
                     .serve_with_incoming_shutdown(
-                        TlsIncoming::new(tcp_incoming, tls_config.into()),
+                        TlsIncoming::new(tcp_incoming, server_config.into()),
                         graceful_shutdown_signal,
                     )
                     .await
@@ -404,9 +329,12 @@ where
         Ok(())
     });
 
+    let custodian_context: HashMap<RequestId, InternalCustodianContext> =
+        read_all_data_versioned(&private_storage, &PrivDataType::CustodianInfo.to_string()).await?;
+
     // If no RedisConf is provided, we just use in-memory storage for the
     // preprocessing. Note: This is only allowed for testing.
-    let preproc_factory = match config.preproc_redis {
+    let preproc_factory = match &config.preproc_redis {
         None => {
             if cfg!(feature = "insecure") || cfg!(feature = "testing") {
                 create_memory_factory()
@@ -414,7 +342,7 @@ where
                 panic!("Redis configuration must be provided")
             }
         }
-        Some(conf) => create_redis_factory(format!("PARTY_{}", config.my_id), &conf),
+        Some(conf) => create_redis_factory(format!("PARTY_{}", config.my_id), conf),
     };
     let num_sessions_preproc = config
         .num_sessions_preproc
@@ -446,15 +374,41 @@ where
         key_info_versioned,
     );
 
-    let session_preparer = SessionPreparer {
-        base_kms: base_kms.new_instance().await,
-        threshold: config.threshold,
-        my_id: config.my_id,
-        role_assignments: role_assignments.clone(),
-        networking_strategy,
-        prss_setup_z128: Arc::clone(&prss_setup_z128),
-        prss_setup_z64: Arc::clone(&prss_setup_z64),
+    // Note that the manager is empty, it needs to be filled with session preparers
+    // For testing this needs to be done manually.
+    let session_preparer_manager = SessionPreparerManager::empty(config.my_id.to_string());
+
+    // Optionally add a testing session preparer.
+    let _ = match config.peers {
+        Some(ref peers) => {
+            let role_assignment: RoleAssignment = peers
+                .iter()
+                .map(|peer_config| peer_config.into_role_identity())
+                .collect();
+            let session_preparer = SessionPreparer::new(
+                base_kms.new_instance().await,
+                config.threshold,
+                Role::indexed_from_one(config.my_id),
+                role_assignment.clone(),
+                networking_manager.clone(),
+                Arc::clone(&prss_setup_z128),
+                Arc::clone(&prss_setup_z64),
+            );
+            session_preparer_manager
+                .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
+                .await;
+            // TODO this is a workaround where we need to set the same role assignment
+            // to the GrpcNetworkingManager.
+            networking_manager
+                .write()
+                .await
+                .set_global_role_assignment(role_assignment)
+                .await;
+            Some(())
+        }
+        None => None,
     };
+    let session_preparer_getter = session_preparer_manager.make_getter();
 
     let metastore_status_service = MetaStoreStatusServiceImpl::new(
         Some(dkg_pubinfo_meta_store.clone()),  // key_gen_store
@@ -478,17 +432,22 @@ where
         prss_setup_z128: Arc::clone(&prss_setup_z128),
         prss_setup_z64: Arc::clone(&prss_setup_z64),
         private_storage: crypto_storage.get_private_storage(),
-        session_preparer: session_preparer.new_instance().await,
+        session_preparer_manager,
+        networking_manager,
         health_reporter: thread_core_health_reporter.clone(),
         _init: PhantomData,
+        threshold_config: config.clone(),
+        base_kms: base_kms.new_instance().await,
     };
+
+    // TODO eventually this PRSS ID should come from the context request
+    // the PRSS should never be run in this function.
     let req_id_prss = RequestId::try_from(PRSS_INIT_REQ_ID.to_string())?; // the init epoch ID is currently fixed to PRSS_INIT_REQ_ID
     if run_prss {
         tracing::info!(
             "Initializing threshold KMS server and generating a new PRSS Setup for {}",
             config.my_id
         );
-
         initiator.init_prss(&req_id_prss).await?;
     } else {
         tracing::info!(
@@ -512,7 +471,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         user_decrypt_meta_store,
-        session_preparer: Arc::new(session_preparer.new_instance().await),
+        session_preparer_getter: session_preparer_getter.clone(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         decryption_mode: config.decryption_mode,
@@ -523,7 +482,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         pub_dec_meta_store,
-        session_preparer: Arc::new(session_preparer.new_instance().await),
+        session_preparer_getter: session_preparer_getter.clone(),
         tracker: Arc::clone(&tracker),
         rate_limiter: rate_limiter.clone(),
         decryption_mode: config.decryption_mode,
@@ -535,7 +494,7 @@ where
         crypto_storage: crypto_storage.clone(),
         preproc_buckets: Arc::clone(&preproc_buckets),
         dkg_pubinfo_meta_store,
-        session_preparer: session_preparer.new_instance().await,
+        session_preparer_getter: session_preparer_getter.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
@@ -551,7 +510,7 @@ where
         preproc_buckets,
         preproc_factory,
         num_sessions_preproc,
-        session_preparer: session_preparer.new_instance().await,
+        session_preparer_getter: session_preparer_getter.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
@@ -562,7 +521,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         crs_meta_store,
-        session_preparer,
+        session_preparer_getter,
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
@@ -609,45 +568,6 @@ where
     );
 
     Ok((kms, core_service_health_service, metastore_status_service))
-}
-
-/// Helper function to extract the TLS certificates from the peer configurations and TLS configuration.
-/// It returns a `SendingServiceTLSConfig` which consists of a tuple of the server certificate, private key, and a map of CA certificates
-async fn extract_tls_certs(
-    tls_identity: Option<BasicTLSConfig>,
-    peer_configs: &[PeerConf],
-) -> anyhow::Result<Option<SendingServiceTLSConfig>> {
-    if let Some(BasicTLSConfig {
-        cert,
-        key,
-        trusted_releases,
-        pcr8_expected,
-    }) = tls_identity
-    {
-        let mut cert_strings = Vec::new();
-        for peer in peer_configs {
-            match peer.tls_cert.as_ref() {
-                Some(TlsCert::Path(path)) => cert_strings.push(
-                    tokio::fs::read_to_string(path)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("Could not read CA certificates: {e}")),
-                ),
-                Some(TlsCert::Pem(bytes)) => cert_strings.push(Ok(bytes.to_string())),
-                None => {}
-            };
-        }
-        let ca_certs = build_ca_certs_map(cert_strings.into_iter())?;
-        tracing::info!("Using TLS trust anchors: {:?}", ca_certs.keys());
-        Ok(Some(SendingServiceTLSConfig {
-            cert,
-            key,
-            ca_certs,
-            trusted_releases,
-            pcr8_expected,
-        }))
-    } else {
-        Ok(None)
-    }
 }
 
 #[cfg(test)]

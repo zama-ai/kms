@@ -38,6 +38,7 @@ impl Client {
             domain: Some(domain_msg),
             request_id: Some((*request_id).into()),
             extra_data: vec![],
+            context_id: None,
         };
         Ok(req)
     }

@@ -45,7 +45,7 @@ pub struct RealBitGenOdd {}
 impl BitGenOdd for RealBitGenOdd {
     /// Generates a vector of secret shared random bits using a preprocessing functionality and a session.
     /// The code only works when the modulo of the ring used is odd.
-    #[instrument(name="MPC.GenBits",skip(amount, preproc, session), fields(sid = ?session.session_id(), own_identity= ?session.own_identity(), batch_size=?amount))]
+    #[instrument(name="MPC.GenBits",skip(amount, preproc, session), fields(sid = ?session.session_id(), my_role= ?session.my_role(), batch_size=?amount))]
     async fn gen_bits_odd<
         Z: Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
         Ses: SmallSessionHandles<Z>,
@@ -145,8 +145,8 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_bitgen() {
+    #[tokio::test]
+    async fn test_bitgen() {
         let parties = 4;
         let threshold = 1;
         let amount = 100;
@@ -169,7 +169,8 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        );
+        )
+        .await;
 
         //Make sure all are bits
         let mut one_count = 0;

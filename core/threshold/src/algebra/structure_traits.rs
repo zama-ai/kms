@@ -5,7 +5,7 @@ use rand::CryptoRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Display,
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
@@ -160,7 +160,7 @@ pub trait Derive: Sized {
         x: &Self,
         g: u8,
         l: usize,
-        roles: &[Role],
+        roles: &HashSet<Role>,
     ) -> HashMap<Role, Vec<Self>>;
 }
 
