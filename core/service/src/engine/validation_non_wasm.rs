@@ -70,7 +70,7 @@ pub(crate) enum RequestIdParsingErr {
 impl std::fmt::Display for RequestIdParsingErr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RequestIdParsingErr::Other(msg) => write!(f, "Other request ID error: {}", msg),
+            RequestIdParsingErr::Other(msg) => write!(f, "Other request ID error: {msg}"),
             RequestIdParsingErr::Context => write!(f, "Invalid context ID"),
             RequestIdParsingErr::Init => write!(f, "Invalid init ID"),
 
@@ -122,7 +122,7 @@ pub(crate) fn parse_optional_proto_request_id(
         .clone()
         .ok_or(BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,
-            format!("{}: {request_id:?}", id_type),
+            format!("{id_type}: {request_id:?}"),
         )))?;
 
     parse_proto_request_id(&req_id, id_type)
@@ -135,7 +135,7 @@ pub(crate) fn parse_proto_request_id(
     request_id.try_into().map_err(|_| {
         BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,
-            format!("{}: {request_id:?}", id_type),
+            format!("{id_type}: {request_id:?}"),
         ))
     })
 }
@@ -565,6 +565,7 @@ mod tests {
                 key_id: None,
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -580,6 +581,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -598,6 +600,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -613,6 +616,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_public_decrypt_req(&req)
                 .unwrap_err()
@@ -628,6 +632,7 @@ mod tests {
                 key_id: Some(key_id.into()),
                 domain: Some(domain.clone()),
                 extra_data: vec![],
+                context_id: None,
             };
             let (_, _, _, _domain) = validate_public_decrypt_req(&req).unwrap();
         }
@@ -676,6 +681,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -693,6 +699,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -713,6 +720,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -730,6 +738,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -747,6 +756,7 @@ mod tests {
                 client_address: client_address.to_checksum(Some(1)),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(
                 validate_user_decrypt_req(&req).unwrap_err().to_string().contains(
@@ -767,6 +777,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: bad_enc_pk_buf,
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_user_decrypt_req(&req)
                 .unwrap_err()
@@ -784,6 +795,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 enc_key: enc_pk_buf.clone(),
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_user_decrypt_req(&req).is_ok());
         }
@@ -832,7 +844,7 @@ mod tests {
         );
         let domain_msg = alloy_to_protobuf_domain(&domain).unwrap();
 
-        let req = kms_grpc::kms::v1::UserDecryptionRequest {
+        let req = UserDecryptionRequest {
             request_id: Some(v1::RequestId {
                 request_id: "dummy request ID".to_owned(),
             }),
@@ -842,6 +854,7 @@ mod tests {
             typed_ciphertexts: vec![typed_ciphertext],
             domain: Some(domain_msg),
             extra_data: vec![],
+            context_id: None,
         };
 
         {
@@ -1261,6 +1274,7 @@ mod tests {
             ),
             domain: None,
             extra_data: vec![],
+            context_id: None,
         };
 
         let resp0 = {
@@ -1369,6 +1383,7 @@ mod tests {
                 ),
                 domain: None,
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
@@ -1399,6 +1414,7 @@ mod tests {
                 ),
                 domain: None,
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,
@@ -1434,6 +1450,7 @@ mod tests {
                 ),
                 domain: None,
                 extra_data: vec![],
+                context_id: None,
             };
             assert!(validate_public_decrypt_responses_against_request(
                 &pks,

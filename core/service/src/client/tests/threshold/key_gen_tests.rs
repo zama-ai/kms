@@ -159,7 +159,6 @@ async fn test_threshold_sns_compression_keygen() {
 #[cfg(all(feature = "slow_tests", feature = "insecure"))]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-#[tracing_test::traced_test]
 async fn test_insecure_threshold_sns_compression_keygen() {
     run_threshold_sns_compression_keygen(4, FheParameter::Test, &TEST_THRESHOLD_KEY_ID_4P, true)
         .await;

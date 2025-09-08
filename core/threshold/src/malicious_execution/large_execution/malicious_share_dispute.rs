@@ -10,12 +10,11 @@ use crate::{
         runtime::{party::Role, session::LargeSessionHandles},
     },
     networking::value::NetworkValue,
-    tests::helper::tests_and_benches::roles_from_idxs,
     ProtocolDescription,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 ///Dropout strategy
 #[derive(Default, Clone)]
@@ -140,7 +139,7 @@ impl ShareDispute for WrongShareDisputeRecons {
 /// Not really used to test ShareDispute itself, but rather higher level protocols
 #[derive(Default, Clone)]
 pub struct MaliciousShareDisputeRecons {
-    roles_to_lie_to: Vec<Role>,
+    roles_to_lie_to: HashSet<Role>,
 }
 
 impl ProtocolDescription for MaliciousShareDisputeRecons {
@@ -151,9 +150,9 @@ impl ProtocolDescription for MaliciousShareDisputeRecons {
 }
 
 impl MaliciousShareDisputeRecons {
-    pub fn new(roles_from_zero: &[usize]) -> Self {
+    pub fn new(roles_to_lie_to: &HashSet<Role>) -> Self {
         Self {
-            roles_to_lie_to: roles_from_idxs(roles_from_zero),
+            roles_to_lie_to: roles_to_lie_to.clone(),
         }
     }
 }

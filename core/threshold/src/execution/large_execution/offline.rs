@@ -93,7 +93,7 @@ impl<
         large_session: &mut Ses,
         batch_sizes: BatchParams,
     ) -> anyhow::Result<InMemoryBasePreprocessing<Z>> {
-        let init_span = info_span!("MPC_Large.Init", sid=?large_session.session_id(), own_identity=?large_session.own_identity(), batch_size=?batch_sizes);
+        let init_span = info_span!("MPC_Large.Init", sid=?large_session.session_id(), my_role=?large_session.my_role(), batch_size=?batch_sizes);
         // We always want the session to use in-memory storage, it's up to higher level process (e.g. orchestrator)
         // to maybe decide to store data somewhere else
         let mut base_preprocessing = InMemoryBasePreprocessing::<Z>::default();
@@ -137,7 +137,7 @@ impl<
 
 /// Constructs a new batch of triples and appends this to the internal triple storage.
 /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
-#[instrument(name="MPC_Large.GenTriples",skip_all, fields(sid = ?session.session_id(), own_identity = ?session.own_identity(), ?batch_size=amount))]
+#[instrument(name="MPC_Large.GenTriples",skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role(), ?batch_size=amount))]
 async fn next_triple_batch<
     Z: ErrorCorrect,
     L: LargeSessionHandles,
@@ -160,7 +160,7 @@ async fn next_triple_batch<
     let single_sharing_span = info_span!(
         "SingleSharing.Next",
         session_id = ?session.session_id(),
-        own_identity = ?session.own_identity(),
+        my_role = ?session.my_role(),
         batch_size = 2 * amount
     );
 
@@ -168,8 +168,8 @@ async fn next_triple_batch<
     //Next will simply pop stuff
     let double_sharing_span = info_span!("DoubleSharing.Next",
         sid = ?session.session_id(),
-            own_identity = ?session.own_identity(),
-            batch_size = amount
+        my_role = ?session.my_role(),
+        batch_size = amount
     );
 
     let mut vec_share_x = Vec::with_capacity(amount);
@@ -242,7 +242,7 @@ async fn next_triple_batch<
 
 /// Computes a new batch of random values and appends the new batch to the the existing stash of prepreocessing random values.
 /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
-#[instrument(name="MPC_Large.GenRandom",skip_all, fields(sid = ?session.session_id(), own_identity = ?session.own_identity(), batch_size = ?amount))]
+#[instrument(name="MPC_Large.GenRandom",skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role(), batch_size = ?amount))]
 pub(crate) async fn next_random_batch<Z: Ring, S: SingleSharing<Z>, L: LargeSessionHandles>(
     amount: usize,
     single_sharing: &mut S,
@@ -253,7 +253,7 @@ pub(crate) async fn next_random_batch<Z: Ring, S: SingleSharing<Z>, L: LargeSess
     let single_sharing_span = info_span!(
         "SingleSharing.Next",
         sid = ?session.session_id(),
-        own_identity = ?session.own_identity(),
+        my_role = ?session.my_role(),
         batch_size = amount
     );
     let my_role = session.my_role();
@@ -312,8 +312,9 @@ mod tests {
                 vss::{RealVss, SecureVss, Vss},
             },
             online::triple::Triple,
-            runtime::session::{
-                BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
+            runtime::{
+                party::Role,
+                session::{BaseSessionHandles, LargeSession, LargeSessionHandles},
             },
             sharing::{
                 open::{RobustOpen, SecureRobustOpen},
@@ -328,8 +329,9 @@ mod tests {
         },
     };
     use rstest::rstest;
+    use std::collections::HashSet;
 
-    fn test_offline_strategies<
+    async fn test_offline_strategies<
         Z: Derive + Invert + ErrorCorrect,
         const EXTENSION_DEGREE: usize,
         P: Preprocessing<Z, LargeSession> + Clone + 'static,
@@ -365,7 +367,6 @@ mod tests {
             }
 
             (
-                session.my_role(),
                 (res_triples, res_randoms),
                 session.corrupt_roles().clone(),
                 session.disputed_roles().clone(),
@@ -376,44 +377,37 @@ mod tests {
             for _ in 0..num_batches {
                 let _ = malicious_offline.execute(&mut session, batch_sizes).await;
             }
-
-            session.my_role()
         };
+
+        let mut malicious_roles_with_dispute = HashSet::from_iter(malicious_due_to_dispute);
+        malicious_roles_with_dispute.extend(params.malicious_roles.clone());
 
         //Preprocessing assumes Sync network
         let (result_honest, _) =
             execute_protocol_large_w_disputes_and_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
                 &params,
                 &params.dispute_pairs,
-                &[
-                    malicious_due_to_dispute.clone(),
-                    params.malicious_roles.to_vec(),
-                ]
-                .concat(),
+                &malicious_roles_with_dispute,
                 malicious_offline,
                 NetworkMode::Sync,
                 None,
                 &mut task_honest,
                 &mut task_malicious,
-            );
+            )
+            .await;
 
         //make sure the dispute and malicious set of all honest parties is in sync
-        let ref_malicious_set = result_honest[0].2.clone();
-        let ref_dispute_set = result_honest[0].3.clone();
-        for (_, _, malicious_set, dispute_set) in result_honest.iter() {
-            assert_eq!(malicious_set, &ref_malicious_set);
-            assert_eq!(dispute_set, &ref_dispute_set);
+        let ref_malicious_set = result_honest[&Role::indexed_from_one(1)].1.clone();
+        let ref_dispute_set = result_honest[&Role::indexed_from_one(1)].2.clone();
+        for (_, malicious_set, dispute_set) in result_honest.values() {
+            assert_eq!(*malicious_set, ref_malicious_set);
+            assert_eq!(*dispute_set, ref_dispute_set);
         }
 
         //If it applies
         //Make sure malicious parties are detected as such
         if params.should_be_detected {
-            for role in &[
-                malicious_due_to_dispute.clone(),
-                params.malicious_roles.to_vec(),
-            ]
-            .concat()
-            {
+            for role in &malicious_roles_with_dispute {
                 assert!(ref_malicious_set.contains(role));
             }
         } else {
@@ -426,7 +420,7 @@ mod tests {
             let mut vec_y = Vec::new();
             let mut vec_z = Vec::new();
             let mut vec_r = Vec::new();
-            for (_, res, _, _) in result_honest.iter() {
+            for (res, _, _) in result_honest.values() {
                 let (x, y, z) = res.0[triple_idx].take();
                 let r = res.1[triple_idx];
                 vec_x.push(x);
@@ -467,30 +461,32 @@ mod tests {
     #[rstest]
     #[case(TestingParameters::init_honest(5, 1, Some(3 * 177)))]
     #[case(TestingParameters::init_honest(9, 2, Some(3 * 219)))]
-    fn test_large_offline_z128(#[case] params: TestingParameters) {
+    async fn test_large_offline_z128(#[case] params: TestingParameters) {
         let honest_offline = SecureLargePreprocessing::default();
 
         test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params,
             honest_offline,
-        );
+        )
+        .await;
     }
 
     // Rounds: same as for z128, see above
     #[rstest]
     #[case(TestingParameters::init_honest(5, 1, Some(3 * 177)))]
     #[case(TestingParameters::init_honest(9, 2, Some(3 * 219)))]
-    fn test_large_offline_z64(#[case] params: TestingParameters) {
+    async fn test_large_offline_z64(#[case] params: TestingParameters) {
         let honest_offline = SecureLargePreprocessing::default();
 
         test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params,
             honest_offline,
-        );
+        )
+        .await;
     }
 
     #[rstest]
-    fn test_large_offline_malicious_subprotocols_caught<
+    async fn test_large_offline_malicious_subprotocols_caught<
         V: Vss,
         C: Coinflip,
         S: ShareDispute,
@@ -550,7 +546,8 @@ mod tests {
         test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
-        );
+        )
+        .await;
 
         let malicious_offline = RealLargePreprocessing::new(
             RealSingleSharing::new(lsl_strategy.clone()),
@@ -560,11 +557,12 @@ mod tests {
         test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
-        );
+        )
+        .await;
     }
 
     #[rstest]
-    fn test_large_offline_malicious_subprotocols_caught_bis<
+    async fn test_large_offline_malicious_subprotocols_caught_bis<
         V: Vss,
         C: Coinflip,
         S: ShareDispute,
@@ -619,7 +617,8 @@ mod tests {
         test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
-        );
+        )
+        .await;
 
         let malicious_offline = RealLargePreprocessing::new(
             RealSingleSharing::new(lsl_strategy.clone()),
@@ -629,11 +628,12 @@ mod tests {
         test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
-        );
+        )
+        .await;
     }
 
     #[rstest]
-    fn test_large_offline_malicious_subprotocols_not_caught<
+    async fn test_large_offline_malicious_subprotocols_not_caught<
         V: Vss,
         C: Coinflip,
         S: ShareDispute,
@@ -697,7 +697,8 @@ mod tests {
         test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
-        );
+        )
+        .await;
 
         let malicious_offline = RealLargePreprocessing::new(
             RealSingleSharing::new(lsl_strategy.clone()),
@@ -707,12 +708,13 @@ mod tests {
         test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
-        );
+        )
+        .await;
     }
 
     // Test what happens when no more triples are present
-    #[test]
-    fn test_no_more_elements() {
+    #[tokio::test]
+    async fn test_no_more_elements() {
         let parties = 5;
         let threshold = 1;
 
@@ -755,7 +757,8 @@ mod tests {
             _,
             ResiduePolyF4Z128,
             { ResiduePolyF4Z128::EXTENSION_DEGREE },
-        >(parties, threshold, None, NetworkMode::Sync, None, &mut task);
+        >(parties, threshold, None, NetworkMode::Sync, None, &mut task)
+        .await;
 
         for (_session, res_trip, res_rand) in result.iter() {
             assert_eq!(res_trip.len(), TRIPLE_BATCH_SIZE);
@@ -765,7 +768,7 @@ mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest]
-    fn test_large_offline_malicious_subprotocols_caught_9p<
+    async fn test_large_offline_malicious_subprotocols_caught_9p<
         V: Vss,
         C: Coinflip,
         S: ShareDispute,
@@ -824,7 +827,8 @@ mod tests {
         test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
-        );
+        )
+        .await;
 
         let malicious_offline = RealLargePreprocessing::new(
             RealSingleSharing::new(lsl_strategy.clone()),
@@ -834,12 +838,13 @@ mod tests {
         test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
-        );
+        )
+        .await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[rstest]
-    fn test_large_offline_malicious_subprotocols_caught_bis_9p<
+    async fn test_large_offline_malicious_subprotocols_caught_bis_9p<
         V: Vss,
         C: Coinflip,
         S: ShareDispute,
@@ -894,7 +899,8 @@ mod tests {
         test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
-        );
+        )
+        .await;
 
         let malicious_offline = RealLargePreprocessing::new(
             RealSingleSharing::new(lsl_strategy.clone()),
@@ -904,12 +910,13 @@ mod tests {
         test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
-        );
+        )
+        .await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[rstest]
-    fn test_large_offline_malicious_subprotocols_not_caught_9p<
+    async fn test_large_offline_malicious_subprotocols_not_caught_9p<
         V: Vss,
         C: Coinflip,
         S: ShareDispute,
@@ -975,7 +982,8 @@ mod tests {
         test_offline_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
-        );
+        )
+        .await;
 
         let malicious_offline = CheatingLargePreprocessing::new(
             RealSingleSharing::new(lsl_strategy.clone()),
@@ -985,6 +993,7 @@ mod tests {
         test_offline_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_offline,
-        );
+        )
+        .await;
     }
 }

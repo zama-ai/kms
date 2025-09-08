@@ -121,7 +121,7 @@ pub async fn setup_threshold_no_client<
                 preproc_redis: None,
                 num_sessions_preproc: None,
                 tls: None,
-                peers: mpc_conf,
+                peers: Some(mpc_conf),
                 core_to_core_net: None,
                 decryption_mode,
             };
@@ -136,6 +136,7 @@ pub async fn setup_threshold_no_client<
                 mpc_listener,
                 sk,
                 None,
+                false,
                 run_prss,
                 rl_conf,
                 mpc_core_rx.map(drop),

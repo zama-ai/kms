@@ -52,6 +52,7 @@ impl Client {
             domain: Some(alloy_to_protobuf_domain(&eip712_domain)?),
             keyset_config,
             keyset_added_info,
+            context_id: None,
         })
     }
 
@@ -74,6 +75,7 @@ impl Client {
             params: param.unwrap_or_default().into(),
             keyset_config,
             request_id: Some((*request_id).into()),
+            context_id: None,
             domain: Some(domain),
         })
     }

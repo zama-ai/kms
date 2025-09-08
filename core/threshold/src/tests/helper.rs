@@ -8,7 +8,7 @@ pub mod tests_and_benches {
 
     use crate::{
         algebra::structure_traits::{ErrorCorrect, Invert, Ring},
-        execution::{runtime::party::Role, small_execution::prf::PRSSConversions},
+        execution::small_execution::prf::PRSSConversions,
         networking::NetworkMode,
     };
     use aes_prng::AesRng;
@@ -20,7 +20,7 @@ pub mod tests_and_benches {
     use crate::{
         execution::runtime::{
             session::{LargeSession, SmallSession},
-            test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+            test_runtime::{generate_fixed_roles, DistributedTestRuntime},
         },
         networking::Networking,
         session_id::SessionId,
@@ -31,7 +31,7 @@ pub mod tests_and_benches {
     /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
     /// interactive computation.
     /// `expected_rounds` can be used to test that the protocol needs the specified amount of comm rounds, or be set to None to allow any number of rounds
-    pub fn execute_protocol_small<
+    pub async fn execute_protocol_small<
         TaskOutputT,
         OutputT,
         Z: ErrorCorrect + Invert + PRSSConversions,
@@ -50,53 +50,47 @@ pub mod tests_and_benches {
         TaskOutputT: Send + 'static,
         OutputT: Send + 'static,
     {
-        let identities = generate_fixed_identities(parties);
+        let roles = generate_fixed_roles(parties);
         let delay_map = delay_vec.map(|delay_vec| {
-            identities
+            roles
                 .iter()
-                .enumerate()
-                .filter_map(|(idx, identity)| {
-                    delay_vec.get(idx).map(|delay| (identity.clone(), *delay))
-                })
+                .cloned()
+                .zip(delay_vec.iter().cloned())
                 .collect()
         });
         let test_runtime: DistributedTestRuntime<Z, EXTENSION_DEGREE> =
-            DistributedTestRuntime::new(identities.clone(), threshold, network_mode, delay_map);
+            DistributedTestRuntime::new(roles.clone(), threshold, network_mode, delay_map);
         let session_id = SessionId::from(1);
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
         let mut tasks = JoinSet::new();
-        for party_id in 0..parties {
-            let session = test_runtime.small_session_for_party(
-                session_id,
-                party_id,
-                Some(AesRng::seed_from_u64(party_id as u64)),
-            );
+        for party in roles {
+            let session = test_runtime
+                .small_session_for_party(
+                    session_id,
+                    party,
+                    Some(AesRng::seed_from_u64(party.one_based() as u64)),
+                )
+                .await;
             tasks.spawn(task_added_info(session, added_info.clone()));
         }
 
         // Here only 'Ok(v)' is appended to 'results' in order to avoid task crashes. We might want
         // to instead append 'v' as a 'Result<T,E>' in the future and let the tests that uses this
         // helper handle the errors themselves
-        let res = rt.block_on(async {
-            let mut results = Vec::with_capacity(tasks.len());
-            while let Some(v) = tasks.join_next().await {
-                match v {
-                    Ok(result) => results.push(result),
-                    Err(e) => {
-                        warn!("FAILED {:?}", e);
-                    }
+        let mut results = Vec::with_capacity(tasks.len());
+        while let Some(v) = tasks.join_next().await {
+            match v {
+                Ok(result) => results.push(result),
+                Err(e) => {
+                    warn!("FAILED {:?}", e);
                 }
             }
-            results
-        });
+        }
 
         // test that the number of rounds is as expected
         if let Some(e_r) = expected_rounds {
-            for n in test_runtime.user_nets {
-                let rounds = std::sync::Arc::clone(&n).get_current_round().unwrap();
+            for n in test_runtime.user_nets.values() {
+                let rounds = n.get_current_round().await;
                 assert_eq!(
                     rounds, e_r,
                     "incorrect number of expected communication rounds"
@@ -104,7 +98,7 @@ pub mod tests_and_benches {
             }
         }
 
-        res
+        results
     }
 
     /// Helper method for executing networked tests with multiple parties for LargeSession.
@@ -112,7 +106,12 @@ pub mod tests_and_benches {
     /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
     /// interactive computation.
     /// `expected_rounds` can be used to test that the protocol needs the specified amount of comm rounds, or be set to None to allow any number of rounds
-    pub fn execute_protocol_large<TaskOutputT, OutputT, Z: Ring, const EXTENSION_DEGREE: usize>(
+    pub async fn execute_protocol_large<
+        TaskOutputT,
+        OutputT,
+        Z: Ring,
+        const EXTENSION_DEGREE: usize,
+    >(
         parties: usize,
         threshold: usize,
         expected_rounds: Option<usize>,
@@ -125,57 +124,40 @@ pub mod tests_and_benches {
         TaskOutputT: Send + 'static,
         OutputT: Send + 'static,
     {
-        let identities = generate_fixed_identities(parties);
+        let roles = generate_fixed_roles(parties);
         let delay_map = delay_vec.map(|delay_vec| {
-            identities
+            roles
                 .iter()
-                .enumerate()
-                .filter_map(|(idx, identity)| {
-                    delay_vec.get(idx).map(|delay| (identity.clone(), *delay))
-                })
+                .cloned()
+                .zip(delay_vec.iter().cloned())
                 .collect()
         });
         let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
-            identities.clone(),
+            roles.clone(),
             threshold as u8,
             network_mode,
             delay_map,
         );
         let session_id = SessionId::from(1);
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
         let mut tasks = JoinSet::new();
-        for party_id in 0..parties {
-            let session = test_runtime.large_session_for_party(session_id, party_id);
+        for party in roles.iter() {
+            let session = test_runtime.large_session_for_party(session_id, *party);
             tasks.spawn(task(session));
         }
-        let res = rt.block_on(async {
-            let mut results = Vec::with_capacity(tasks.len());
-            while let Some(v) = tasks.join_next().await {
-                results.push(v.unwrap());
-            }
-            results
-        });
+        let mut results = Vec::with_capacity(tasks.len());
+        while let Some(v) = tasks.join_next().await {
+            results.push(v.unwrap());
+        }
 
         // test that the number of rounds is as expected
         if let Some(e_r) = expected_rounds {
-            for n in test_runtime.user_nets {
-                let rounds = std::sync::Arc::clone(&n).get_current_round().unwrap();
+            for n in test_runtime.user_nets.values() {
+                let rounds = n.get_current_round().await;
                 assert_eq!(rounds, e_r);
             }
         }
-
-        res
-    }
-
-    ///Generate a vector of roles from zero indexed vector of id
-    pub fn roles_from_idxs(idx_roles: &[usize]) -> Vec<Role> {
-        idx_roles
-            .iter()
-            .map(|idx_role| Role::indexed_from_zero(*idx_role))
-            .collect()
+        results
     }
 }
 
@@ -185,8 +167,9 @@ pub mod testing {
         algebra::structure_traits::{ErrorCorrect, Invert},
         execution::{
             runtime::{
-                party::{Identity, Role},
-                session::{BaseSession, ParameterHandles, SessionParameters},
+                party::Role,
+                session::{BaseSession, SessionParameters},
+                test_runtime::generate_fixed_roles,
             },
             small_execution::{
                 agree_random::DummyAgreeRandom,
@@ -199,10 +182,7 @@ pub mod testing {
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;
-    use std::{
-        collections::{HashMap, HashSet},
-        sync::Arc,
-    };
+    use std::{collections::HashSet, sync::Arc};
     use tokio::runtime::Runtime;
 
     /// Generates dummy parameters for unit tests with session ID = 1
@@ -212,18 +192,11 @@ pub mod testing {
         role: Role,
     ) -> SessionParameters {
         assert!(amount > 0);
-        let mut role_assignment = HashMap::new();
-        for i in 0..amount {
-            role_assignment.insert(
-                Role::indexed_from_zero(i),
-                Identity("localhost".to_string(), 5000 + i as u16),
-            );
-        }
         SessionParameters::new(
             threshold,
             SessionId::from(1),
-            role_assignment.get(&role).unwrap().clone(),
-            role_assignment,
+            role,
+            generate_fixed_roles(amount),
         )
         .unwrap()
     }
@@ -235,11 +208,10 @@ pub mod testing {
         role: Role,
     ) -> BaseSession {
         let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
-        let id = parameters.own_identity();
-        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity()]);
+        let net_producer = LocalNetworkingProducer::from_roles(&HashSet::from([role]));
         BaseSession {
             parameters,
-            network: Arc::new(net_producer.user_net(id, NetworkMode::Sync, None)),
+            network: Arc::new(net_producer.user_net(role, NetworkMode::Sync, None)),
             rng: AesRng::seed_from_u64(role.one_based() as u64),
             corrupt_roles: HashSet::new(),
         }
@@ -262,18 +234,17 @@ pub mod testing {
 #[cfg(test)]
 pub mod tests {
     use super::testing::get_networkless_base_session_for_parties;
-    use super::tests_and_benches::roles_from_idxs;
     use crate::{
         algebra::structure_traits::{ErrorCorrect, Invert, Ring},
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             runtime::{
-                party::{Identity, Role},
+                party::Role,
                 session::{
                     BaseSession, LargeSession, LargeSessionHandles, ParameterHandles,
                     SessionParameters, SmallSession,
                 },
-                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+                test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
             small_execution::prf::PRSSConversions,
             tfhe_internals::{
@@ -290,7 +261,7 @@ pub mod tests {
         tests::test_data_setup::tests::{ensure_keys_exist, REAL_PARAMETERS, TEST_PARAMETERS},
     };
     use aes_prng::AesRng;
-    use futures::Future;
+    use futures_util::future::{join_all, Future, FutureExt};
     use itertools::Itertools;
     use rand::SeedableRng;
     use std::fs;
@@ -298,14 +269,14 @@ pub mod tests {
         collections::{HashMap, HashSet},
         sync::Arc,
     };
-    use tokio::task::{JoinError, JoinSet};
+    use tokio::task::JoinError;
 
     #[derive(Default, Clone)]
     pub struct TestingParameters {
         pub num_parties: usize,
         pub threshold: usize,
-        pub malicious_roles: Vec<Role>,
-        pub roles_to_lie_to: Vec<usize>,
+        pub malicious_roles: HashSet<Role>,
+        pub roles_to_lie_to: HashSet<Role>,
         pub dispute_pairs: Vec<(Role, Role)>,
         pub should_be_detected: bool,
         pub expected_rounds: Option<usize>,
@@ -322,7 +293,7 @@ pub mod tests {
         pub fn init(
             num_parties: usize,
             threshold: usize,
-            malicious_roles_idx: &[usize],
+            malicious_roles: &[usize],
             roles_to_lie_to: &[usize],
             dispute_pairs: &[(usize, usize)],
             should_be_detected: bool,
@@ -331,8 +302,14 @@ pub mod tests {
             Self {
                 num_parties,
                 threshold,
-                malicious_roles: roles_from_idxs(malicious_roles_idx),
-                roles_to_lie_to: roles_to_lie_to.to_vec(),
+                malicious_roles: malicious_roles
+                    .iter()
+                    .map(|idx| Role::indexed_from_zero(*idx))
+                    .collect(),
+                roles_to_lie_to: roles_to_lie_to
+                    .iter()
+                    .map(|idx| Role::indexed_from_zero(*idx))
+                    .collect(),
                 dispute_pairs: dispute_pairs
                     .iter()
                     .map(|(idx_a, idx_b)| {
@@ -429,17 +406,16 @@ pub mod tests {
 
     /// Generates dummy parameters for unit tests with role 1. Parameters contain a single party, session ID = 1 and threshold = 0
     pub fn get_dummy_parameters() -> SessionParameters {
-        let mut role_assignment = HashMap::new();
-        let id = Identity("localhost".to_string(), 5000);
-        role_assignment.insert(Role::indexed_from_one(1), id.clone());
-        SessionParameters::new(0, SessionId::from(1), id, role_assignment).unwrap()
+        let role = Role::indexed_from_one(1);
+        SessionParameters::new(0, SessionId::from(1), role, HashSet::from([role])).unwrap()
     }
 
     /// Returns a base session to be used with a single party, with role 1, suitable for testing with dummy constructs
     pub fn get_base_session(network_mode: NetworkMode) -> BaseSession {
         let parameters = get_dummy_parameters();
-        let id = parameters.own_identity();
-        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity()]);
+        let id = parameters.my_role();
+        let net_producer =
+            LocalNetworkingProducer::from_roles(&HashSet::from([parameters.my_role()]));
         BaseSession {
             parameters,
             network: Arc::new(net_producer.user_net(id, network_mode, None)),
@@ -473,7 +449,7 @@ pub mod tests {
     ///
     ///**NOTE: FOR ALL TESTS THE RNG SEED OF A PARTY IS ITS PARTY_ID, THIS IS ACTUALLY USED IN SOME TESTS TO CHECK CORRECTNESS.**
     #[allow(clippy::too_many_arguments)]
-    pub fn execute_protocol_small_w_malicious<
+    pub async fn execute_protocol_small_w_malicious<
         TaskOutputT,
         OutputT,
         TaskOutputM,
@@ -483,13 +459,16 @@ pub mod tests {
         const EXTENSION_DEGREE: usize,
     >(
         params: &TestingParameters,
-        malicious_roles: &[Role],
+        malicious_roles: &HashSet<Role>,
         malicious_strategy: P,
         network_mode: NetworkMode,
         delay_vec: Option<Vec<tokio::time::Duration>>,
         task_honest: &mut dyn FnMut(SmallSession<Z>) -> TaskOutputT,
         task_malicious: &mut dyn FnMut(SmallSession<Z>, P) -> TaskOutputM,
-    ) -> (Vec<OutputT>, Vec<Result<OutputM, JoinError>>)
+    ) -> (
+        HashMap<Role, OutputT>,
+        HashMap<Role, Result<OutputM, JoinError>>,
+    )
     where
         TaskOutputT: Future<Output = OutputT>,
         TaskOutputT: Send + 'static,
@@ -501,64 +480,71 @@ pub mod tests {
         let parties = params.num_parties;
         let threshold = params.threshold as u8;
 
-        let identities = generate_fixed_identities(parties);
+        let roles = generate_fixed_roles(parties);
         let delay_map = delay_vec.map(|delay_vec| {
-            identities
+            roles
                 .iter()
-                .enumerate()
-                .filter_map(|(idx, identity)| {
-                    delay_vec.get(idx).map(|delay| (identity.clone(), *delay))
-                })
+                .cloned()
+                .zip(delay_vec.iter().cloned())
                 .collect()
         });
+
         let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
-            identities.clone(),
+            roles.clone(),
             threshold,
             network_mode,
             delay_map,
         );
         let session_id = SessionId::from(1);
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
+        let honest_sessions = join_all(roles.difference(malicious_roles).map(|party| {
+            test_runtime
+                .small_session_for_party(session_id, *party, None)
+                .map(|s| (*party, s))
+        }))
+        .await;
+        let honest_tasks = honest_sessions
+            .into_iter()
+            .map(|(party, session)| task_honest(session).map(move |output| (party, output)));
 
-        let mut honest_tasks = JoinSet::new();
-        let mut malicious_tasks = JoinSet::new();
-        let mut malicious_identities = Vec::new();
-        for party_id in 0..parties {
-            let session = test_runtime.small_session_for_party(session_id, party_id, None);
+        let malicious_sessions = join_all(malicious_roles.iter().map(|party| {
+            test_runtime
+                .small_session_for_party(session_id, *party, None)
+                .map(|s| (*party, s))
+        }))
+        .await;
 
-            if malicious_roles.contains(&Role::indexed_from_zero(party_id)) {
-                malicious_identities.push(session.own_identity());
-                let malicious_strategy_cloned = malicious_strategy.clone();
-                malicious_tasks.spawn(task_malicious(session, malicious_strategy_cloned));
-            } else {
-                honest_tasks.spawn(task_honest(session));
-            }
+        // Spawn the malicious task in its own tokio task as it may panic
+        let mut malicious_task = Vec::new();
+
+        for (party, session) in malicious_sessions.into_iter() {
+            malicious_task.push((
+                party,
+                tokio::spawn(task_malicious(session, malicious_strategy.clone())),
+            ));
         }
-        let res = rt.block_on(async {
-            let mut results_honest = Vec::with_capacity(honest_tasks.len());
-            let mut results_malicious = Vec::with_capacity(honest_tasks.len());
-            while let Some(v) = honest_tasks.join_next().await {
-                results_honest.push(v.unwrap());
-            }
-            while let Some(v) = malicious_tasks.join_next().await {
-                results_malicious.push(v);
-            }
-            (results_honest, results_malicious)
-        });
+
+        let results_honest = join_all(honest_tasks).await;
+
+        let mut results_malicious = Vec::new();
+        for (role, task) in malicious_task.into_iter() {
+            results_malicious.push((role, task.await));
+        }
 
         // test that the number of rounds is as expected
         if let Some(e_r) = params.expected_rounds {
-            for n in test_runtime.user_nets {
-                if !malicious_identities.contains(&n.owner) {
-                    let rounds = std::sync::Arc::clone(&n).get_current_round().unwrap();
+            for n in test_runtime.user_nets.values() {
+                if !malicious_roles.contains(&n.owner) {
+                    let rounds = n.get_current_round().await;
                     assert_eq!(rounds, e_r);
                 }
             }
         }
 
-        res
+        (
+            results_honest.into_iter().collect(),
+            results_malicious.into_iter().collect(),
+        )
     }
 
     /// Helper method for executing networked tests with multiple parties some honest some dishonest.
@@ -570,7 +556,7 @@ pub mod tests {
     ///
     ///**NOTE: FOR ALL TESTS THE RNG SEED OF A PARTY IS ITS PARTY_ID, THIS IS ACTUALLY USED IN SOME TESTS TO CHECK CORRECTNESS.**
     #[allow(clippy::too_many_arguments)]
-    pub fn execute_protocol_large_w_disputes_and_malicious<
+    pub async fn execute_protocol_large_w_disputes_and_malicious<
         TaskOutputT,
         OutputT,
         TaskOutputM,
@@ -581,13 +567,16 @@ pub mod tests {
     >(
         params: &TestingParameters,
         dispute_pairs: &[(Role, Role)],
-        malicious_roles: &[Role],
+        malicious_roles: &HashSet<Role>,
         malicious_strategy: P,
         network_mode: NetworkMode,
         delay_vec: Option<Vec<tokio::time::Duration>>,
         task_honest: &mut dyn FnMut(LargeSession) -> TaskOutputT,
         task_malicious: &mut dyn FnMut(LargeSession, P) -> TaskOutputM,
-    ) -> (Vec<OutputT>, Vec<Result<OutputM, JoinError>>)
+    ) -> (
+        HashMap<Role, OutputT>,
+        HashMap<Role, Result<OutputM, JoinError>>,
+    )
     where
         TaskOutputT: Future<Output = OutputT>,
         TaskOutputT: Send + 'static,
@@ -599,67 +588,67 @@ pub mod tests {
         let parties = params.num_parties;
         let threshold = params.threshold as u8;
 
-        let identities = generate_fixed_identities(parties);
+        let roles = generate_fixed_roles(parties);
         let delay_map = delay_vec.map(|delay_vec| {
-            identities
+            roles
                 .iter()
-                .enumerate()
-                .filter_map(|(idx, identity)| {
-                    delay_vec.get(idx).map(|delay| (identity.clone(), *delay))
-                })
+                .cloned()
+                .zip(delay_vec.iter().cloned())
                 .collect()
         });
+
         let test_runtime = DistributedTestRuntime::<Z, EXTENSION_DEGREE>::new(
-            identities.clone(),
+            roles.clone(),
             threshold,
             network_mode,
             delay_map,
         );
         let session_id = SessionId::from(1);
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
+        let honest_sessions = roles.difference(malicious_roles).map(|party| {
+            let mut session = test_runtime.large_session_for_party(session_id, *party);
+            for (role_a, role_b) in dispute_pairs.iter() {
+                session.add_dispute(role_a, role_b);
+            }
+            (*party, session)
+        });
+        let honest_tasks = honest_sessions
+            .map(|(party, session)| task_honest(session).map(move |output| (party, output)));
 
-        let mut honest_tasks = JoinSet::new();
-        let mut malicious_tasks = JoinSet::new();
-        let mut malicious_identities = Vec::new();
-        for party_id in 0..parties {
-            let mut session = test_runtime.large_session_for_party(session_id, party_id);
-
-            if malicious_roles.contains(&Role::indexed_from_zero(party_id)) {
-                malicious_identities.push(session.own_identity());
-                let malicious_strategy_cloned = malicious_strategy.clone();
-                malicious_tasks.spawn(task_malicious(session, malicious_strategy_cloned));
-            } else {
-                for (role_a, role_b) in dispute_pairs.iter() {
-                    session.add_dispute(role_a, role_b);
-                }
-                honest_tasks.spawn(task_honest(session));
-            }
-        }
-        let res = rt.block_on(async {
-            let mut results_honest = Vec::with_capacity(honest_tasks.len());
-            let mut results_malicious = Vec::with_capacity(honest_tasks.len());
-            while let Some(v) = honest_tasks.join_next().await {
-                results_honest.push(v.unwrap());
-            }
-            while let Some(v) = malicious_tasks.join_next().await {
-                results_malicious.push(v);
-            }
-            (results_honest, results_malicious)
+        let malicious_sessions = malicious_roles.iter().map(|party| {
+            let session = test_runtime.large_session_for_party(session_id, *party);
+            (*party, session)
         });
 
+        // Spawn the malicious task in its own tokio task as it may panic
+        let mut malicious_task = Vec::new();
+
+        for (party, session) in malicious_sessions.into_iter() {
+            malicious_task.push((
+                party,
+                tokio::spawn(task_malicious(session, malicious_strategy.clone())),
+            ));
+        }
+
+        let results_honest = join_all(honest_tasks).await;
+        let mut results_malicious = Vec::new();
+        for (role, task) in malicious_task.into_iter() {
+            results_malicious.push((role, task.await));
+        }
         // test that the number of rounds is as expected
         if let Some(e_r) = params.expected_rounds {
-            for n in test_runtime.user_nets {
-                if !malicious_identities.contains(&n.owner) {
-                    let rounds = std::sync::Arc::clone(&n).get_current_round().unwrap();
+            for n in test_runtime.user_nets.values() {
+                if !malicious_roles.contains(&n.owner) {
+                    let rounds = n.get_current_round().await;
                     assert_eq!(rounds, e_r);
                 }
             }
         }
 
-        res
+        (
+            results_honest.into_iter().collect(),
+            results_malicious.into_iter().collect(),
+        )
     }
 
     #[ctor::ctor]
