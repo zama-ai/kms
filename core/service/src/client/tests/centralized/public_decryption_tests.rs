@@ -70,7 +70,7 @@ async fn test_decryption_central_precompute_sns() {
             TestingPlaintext::U32(9876),
             TestingPlaintext::U16(420),
             TestingPlaintext::Bool(true),
-            TestingPlaintext::U80((1u128 << 80) - 1),
+            TestingPlaintext::U128((1u128 << 80) - 1),
         ],
         EncryptionConfig {
             compression: false,
