@@ -286,18 +286,18 @@ impl fmt::Display for BackupDataType {
 fn unchecked_fhe_types_to_string(value: FheTypes) -> String {
     match value {
         FheTypes::Bool => "Ebool".to_string(),
-        FheTypes::Uint4 => "Euint4".to_string(),
+        // FheTypes::Uint4 => "Euint4".to_string(),
         FheTypes::Uint8 => "Euint8".to_string(),
         FheTypes::Uint16 => "Euint16".to_string(),
         FheTypes::Uint32 => "Euint32".to_string(),
         FheTypes::Uint64 => "Euint64".to_string(),
-        FheTypes::Uint80 => "Euint80".to_string(),
+        // FheTypes::Uint80 => "Euint80".to_string(),
         FheTypes::Uint128 => "Euint128".to_string(),
         FheTypes::Uint160 => "Euint160".to_string(),
         FheTypes::Uint256 => "Euint256".to_string(),
-        FheTypes::Uint512 => "Euint512".to_string(),
-        FheTypes::Uint1024 => "Euint1024".to_string(),
-        FheTypes::Uint2048 => "Euint2048".to_string(),
+        // FheTypes::Uint512 => "Euint512".to_string(),
+        // FheTypes::Uint1024 => "Euint1024".to_string(),
+        // FheTypes::Uint2048 => "Euint2048".to_string(),
         _ => UNSUPPORTED_FHE_TYPE_STR.to_string(),
     }
 }
@@ -305,18 +305,18 @@ fn unchecked_fhe_types_to_string(value: FheTypes) -> String {
 fn string_to_fhe_types(value: &str) -> anyhow::Result<FheTypes> {
     match value {
         "Ebool" => Ok(FheTypes::Bool),
-        "Euint4" => Ok(FheTypes::Uint4),
+        // "Euint4" => Ok(FheTypes::Uint4),
         "Euint8" => Ok(FheTypes::Uint8),
         "Euint16" => Ok(FheTypes::Uint16),
         "Euint32" => Ok(FheTypes::Uint32),
-        "Euint80" => Ok(FheTypes::Uint80),
+        // "Euint80" => Ok(FheTypes::Uint80),
         "Euint64" => Ok(FheTypes::Uint64),
         "Euint128" => Ok(FheTypes::Uint128),
         "Euint160" => Ok(FheTypes::Uint160),
         "Euint256" => Ok(FheTypes::Uint256),
-        "Euint512" => Ok(FheTypes::Uint512),
-        "Euint1024" => Ok(FheTypes::Uint1024),
-        "Euint2048" => Ok(FheTypes::Uint2048),
+        // "Euint512" => Ok(FheTypes::Uint512),
+        // "Euint1024" => Ok(FheTypes::Uint1024),
+        // "Euint2048" => Ok(FheTypes::Uint2048),
         _ => Err(anyhow::anyhow!(
             "Trying to import FheType from unsupported value"
         )),
@@ -326,18 +326,18 @@ fn string_to_fhe_types(value: &str) -> anyhow::Result<FheTypes> {
 pub fn fhe_type_to_num_bits(fhe_type: FheTypes) -> anyhow::Result<usize> {
     match fhe_type {
         FheTypes::Bool => Ok(1_usize),
-        FheTypes::Uint4 => Ok(4_usize),
+        // FheTypes::Uint4 => Ok(4_usize),
         FheTypes::Uint8 => Ok(8_usize),
         FheTypes::Uint16 => Ok(16_usize),
         FheTypes::Uint32 => Ok(32_usize),
         FheTypes::Uint64 => Ok(64_usize),
-        FheTypes::Uint80 => Ok(80_usize),
+        // FheTypes::Uint80 => Ok(80_usize),
         FheTypes::Uint128 => Ok(128_usize),
         FheTypes::Uint160 => Ok(160_usize),
         FheTypes::Uint256 => Ok(256_usize),
-        FheTypes::Uint512 => Ok(512_usize),
-        FheTypes::Uint1024 => Ok(1024_usize),
-        FheTypes::Uint2048 => Ok(2048_usize),
+        // FheTypes::Uint512 => Ok(512_usize),
+        // FheTypes::Uint1024 => Ok(1024_usize),
+        // FheTypes::Uint2048 => Ok(2048_usize),
         _ => anyhow::bail!("Unsupported fhe_type: {:?}", fhe_type),
     }
 }
