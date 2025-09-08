@@ -255,11 +255,6 @@ pub(crate) mod tests {
         let mut compact_list_builder = ProvenCompactCiphertextList::builder(&pk);
         for msg in msgs {
             compact_list_builder.push(msg);
-            // .push_with_num_bits(
-            //     msg,
-            //     dkg_params_handle.get_message_modulus().0.ilog2() as usize,
-            // )
-            // .unwrap();
         }
         let proven_ct = compact_list_builder
             .build_with_proof_packed(pp, &metadata, tfhe::zk::ZkComputeLoad::Proof)
@@ -269,6 +264,8 @@ pub(crate) mod tests {
 
     #[test]
     fn verify_pp_with_tfhers() {
+        // We're using test parameters because they're unique to KMS
+        // and have more constraints. The normal parameters should always be tested by tfhe-rs.
         let dkg_params = TEST_PARAM;
         let params_h = dkg_params.get_params_basics_handle();
 

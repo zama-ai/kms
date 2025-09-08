@@ -7105,9 +7105,9 @@ dependencies = [
 
 [[package]]
 name = "tfhe-zk-pok"
-version = "0.7.1"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "869be339aa0b2a67a66eaf58905127fc0456eb1cb824427d3248f915d9e41c70"
+checksum = "e73edceedf380f2c28a42f5f6e25ca5cce7721fcf18cc17a3e248ea490ec03ec"
 dependencies = [
  "ark-bls12-381",
  "ark-ec",
