@@ -147,7 +147,7 @@ async fn default_sns_compression_key_gen_centralized() {
     .await;
 }
 
-async fn key_gen_centralized(
+pub(crate) async fn key_gen_centralized(
     request_id: &RequestId,
     params: FheParameter,
     keyset_config: Option<KeySetConfig>,

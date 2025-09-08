@@ -2,7 +2,7 @@
 
 [service]
 listen_address = "0.0.0.0"
-listen_port = 50200
+listen_port = 50100
 timeout_secs = 360
 grpc_max_message_size = 104857600 # 100 MiB
 
@@ -23,11 +23,13 @@ path = "./keys"
 [backup_vault.storage.file]
 path = "./backup_vault"
 
-[threshold]
-listen_address = "dev-kms-core-2"
-listen_port = 50002
+[backup_vault.keychain.secret_sharing]
 
-my_id = 2
+[threshold]
+listen_address = "dev-kms-core-1"
+listen_port = 50001
+
+my_id = 1
 
 threshold = 1
 dec_capacity = 10000
@@ -37,8 +39,8 @@ num_sessions_preproc = 2
 decryption_mode = "NoiseFloodSmall"
 
 [threshold.tls.manual]
-cert.path = "certs/cert_dev-kms-core-2.pem"
-key.path = "certs/key_dev-kms-core-2.pem"
+cert.path = "certs/cert_dev-kms-core-1.pem"
+key.path = "certs/key_dev-kms-core-1.pem"
 
 [[threshold.peers]]
 party_id = 1
@@ -80,11 +82,13 @@ discard_inactive_sessions_interval = 900
 max_waiting_time_for_message_queue = 60
 max_opened_inactive_sessions_per_party = 100
 
+
 # [threshold.preproc_redis]
 # host = "redis://127.0.0.1"
+#
 
 [telemetry]
-tracing_service_name = "kms-threshold-2"
+tracing_service_name = "kms-threshold-1"
 # tracing_endpoint = "http://otelcol:4317"
 tracing_otlp_timeout_ms = 10000
 metrics_bind_address = "0.0.0.0:9646"
@@ -94,6 +98,7 @@ enable_sys_metrics = true
 max_queue_size = 8192
 max_export_batch_size = 2048
 scheduled_delay_ms = 500
+
 
 [rate_limiter_conf]
 bucket_size = 50000

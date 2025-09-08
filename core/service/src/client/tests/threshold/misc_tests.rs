@@ -337,7 +337,7 @@ async fn test_ratelimiter() {
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn default_insecure_dkg_backup() {
+async fn default_insecure_threshold_dkg_backup() {
     // NOTE: amount_parties must not be too high
     // because every party will load all the keys and each ServerKey is 1.5 GB
     // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
@@ -411,7 +411,7 @@ async fn default_insecure_dkg_backup() {
         match res {
             Ok(res) => match res {
                 Ok(resp) => {
-                    tracing::info!("Custodian backup restore response: {resp:?}");
+                    tracing::info!("Backup restore response: {resp:?}");
                 }
                 Err(e) => {
                     panic!("Error while restoring: {e}");
@@ -447,7 +447,7 @@ async fn default_insecure_dkg_backup() {
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn default_insecure_autobackup_after_deletion() {
+async fn default_insecure_threshold_autobackup_after_deletion() {
     // NOTE: amount_parties must not be too high
     // because every party will load all the keys and each ServerKey is 1.5 GB
     // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
@@ -520,7 +520,7 @@ async fn default_insecure_autobackup_after_deletion() {
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
-async fn default_insecure_crs_backup() {
+async fn default_insecure_threshold_crs_backup() {
     let amount_parties = 4;
     let param = FheParameter::Default;
     let dkg_param: WrappedDKGParams = param.into();
@@ -571,7 +571,7 @@ async fn default_insecure_crs_backup() {
         match res {
             Ok(res) => match res {
                 Ok(resp) => {
-                    tracing::info!("Custodian backup restore response: {resp:?}");
+                    tracing::info!("Backup restore response: {resp:?}");
                 }
                 Err(e) => {
                     panic!("Error while restoring: {e}");

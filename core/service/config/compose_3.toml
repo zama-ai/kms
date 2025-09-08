@@ -23,8 +23,6 @@ path = "./keys"
 [backup_vault.storage.file]
 path = "./backup_vault"
 
-[backup_vault.keychain.secret_sharing]
-
 [threshold]
 listen_address = "dev-kms-core-3"
 listen_port = 50003

@@ -351,6 +351,7 @@ where
                 let mut guarded_ephemeral_dec_key = self.ephemeral_dec_key.lock().await;
                 // Remove any decryption key (if it is there) now that restoration is done.
                 *guarded_ephemeral_dec_key = None;
+                tracing::warn!("Successfully restored private data from backup vault");
                 Ok(Response::new(Empty {}))
             }
             None => Err(Status::new(

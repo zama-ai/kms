@@ -31,7 +31,9 @@ use threshold_fhe::execution::runtime::party::Role;
 // You can build the images by running the following commands from the root of the repo:
 // ```
 // docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml build
+// docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml build
 // docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build
+// docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized-custodian.yml build
 // ```
 // Any issue might be related to the fact that some obsolete Docker images exist.
 
@@ -58,6 +60,32 @@ impl AsyncTestContext for DockerComposeCentralizedContext {
     async fn setup() -> Self {
         DockerComposeCentralizedContext {
             cmd: DockerCompose::new(KMSMode::Centralized),
+        }
+    }
+
+    async fn teardown(self) {
+        drop(self.cmd);
+    }
+}
+
+struct DockerComposeCentralizedCustodianContext {
+    pub cmd: DockerCompose,
+}
+
+impl DockerComposeContext for DockerComposeCentralizedCustodianContext {
+    fn root_path(&self) -> PathBuf {
+        self.cmd.cmd.root_path.clone()
+    }
+
+    fn config_path(&self) -> &str {
+        "core-client/config/client_local_centralized.toml"
+    }
+}
+
+impl AsyncTestContext for DockerComposeCentralizedCustodianContext {
+    async fn setup() -> Self {
+        DockerComposeCentralizedCustodianContext {
+            cmd: DockerCompose::new(KMSMode::CentralizedCustodian),
         }
     }
 
@@ -110,6 +138,31 @@ impl AsyncTestContext for DockerComposeThresholdContextTest {
     async fn setup() -> Self {
         Self {
             cmd: DockerCompose::new(KMSMode::ThresholdTestParameter),
+        }
+    }
+
+    async fn teardown(self) {
+        drop(self.cmd);
+    }
+}
+struct DockerComposeThresholdCustodianContextTest {
+    pub cmd: DockerCompose,
+}
+
+impl DockerComposeContext for DockerComposeThresholdCustodianContextTest {
+    fn root_path(&self) -> PathBuf {
+        self.cmd.cmd.root_path.clone()
+    }
+
+    fn config_path(&self) -> &str {
+        "core-client/config/client_local_threshold.toml"
+    }
+}
+
+impl AsyncTestContext for DockerComposeThresholdCustodianContextTest {
+    async fn setup() -> Self {
+        Self {
+            cmd: DockerCompose::new(KMSMode::ThresholdCustodianTestParameter),
         }
     }
 
@@ -222,7 +275,29 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
     key_id.to_string()
 }
 
-#[allow(dead_code)]
+async fn backup_restore<T: DockerComposeContext>(ctx: &T) -> String {
+    let path_to_config = ctx.root_path().join(ctx.config_path());
+
+    let keys_folder: &Path = Path::new("tests/data/keys");
+
+    let init_command = CCCommand::BackupRestore(NoParameters {});
+    let init_config = CmdConfig {
+        file_conf: Some(String::from(path_to_config.to_str().unwrap())),
+        command: init_command,
+        logs: true,
+        max_iter: 200,
+        expect_all_responses: true,
+    };
+
+    println!("Doing backup restore");
+    let backup_restore_results = execute_cmd(&init_config, keys_folder).await.unwrap();
+    println!("Backup restore done");
+    assert_eq!(backup_restore_results.len(), 1);
+    // No backup ID is returned since backup_restore can also be used without custodians
+    assert_eq!(backup_restore_results.first().unwrap().0, None);
+    "".to_string()
+}
+
 async fn new_custodian_context<T: DockerComposeContext>(
     ctx: &T,
     custodian_threshold: u32,
@@ -255,8 +330,7 @@ async fn new_custodian_context<T: DockerComposeContext>(
     res_id.to_string()
 }
 
-#[allow(dead_code)]
-async fn backup_init<T: DockerComposeContext>(ctx: &T) -> String {
+async fn custodian_backup_init<T: DockerComposeContext>(ctx: &T) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
 
     let keys_folder: &Path = Path::new("tests/data/keys");
@@ -282,8 +356,7 @@ async fn backup_init<T: DockerComposeContext>(ctx: &T) -> String {
     res_id.to_string()
 }
 
-#[allow(dead_code)]
-async fn backup_recovery<T: DockerComposeContext>(
+async fn custodian_backup_recovery<T: DockerComposeContext>(
     ctx: &T,
     rng: &mut AesRng,
     amount_operators: usize,
@@ -462,6 +535,54 @@ async fn test_centralized_insecure(ctx: &mut DockerComposeCentralizedContext) {
     init_testing();
     let (key_id, _crs_id) = key_and_crs_gen(ctx, true).await;
     integration_test_commands(ctx, key_id).await;
+}
+
+// Test restore without custodians
+#[test_context(DockerComposeCentralizedCustodianContext)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_centralized_backup_restore(ctx: &DockerComposeCentralizedCustodianContext) {
+    init_testing();
+    let _crs_id = crs_gen(ctx, true).await;
+    let _ = backup_restore(ctx).await;
+    // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
+    // However we are testing this in the service/client. Hence this tests is mainly to ensure that the outer
+    // end points and content returned from the KMS to the custodians work as expected.
+}
+
+#[test_context(DockerComposeCentralizedCustodianContext)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_centrals_custodian_backup(ctx: &DockerComposeCentralizedCustodianContext) {
+    init_testing();
+    // We don't have endpoints that allow us to purge the generate material within the docker images
+    // so we can here only test that the end points are alive and acting as expected, rather than validating that
+    // data gets restored. Instead test in the client within core have tests for validating this
+    // First setup context, then back up init, use the result with the custodian client and then call recovery
+    // Start by setting up the custodians
+    let amount_custodians = 5;
+    let custodian_threshold = 2;
+    let amount_operators = 4; // TODO should not be hardcoded but not sure how I can get it easily
+    let mut rng = AesRng::seed_from_u64(41);
+    let keys_folder: &Path = Path::new("tests/data/keys");
+    let (seeds, setup_msg_paths) =
+        generate_custodian_keys_to_file(&mut rng, keys_folder, amount_custodians).await;
+    let cus_backup_id = new_custodian_context(ctx, custodian_threshold, setup_msg_paths).await;
+    let init_backup_id = custodian_backup_init(ctx).await;
+    assert_eq!(cus_backup_id, init_backup_id);
+    let recovery_backup_id = custodian_backup_recovery(
+        ctx,
+        &mut rng,
+        amount_operators,
+        RequestId::from_str(&cus_backup_id).unwrap(),
+        seeds,
+    )
+    .await;
+    assert_eq!(cus_backup_id, recovery_backup_id);
+    let _ = backup_restore(ctx).await;
+    // Observe that we cannot modify the state of the servers, so we cannot really validate recovery.
+    // However we are testing this in the service/client. Hence this tests is mainly to ensure that the outer
+    // end points and content returned from the KMS to the custodians work as expected.
 }
 
 #[ignore]
@@ -739,12 +860,23 @@ async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdContextDefaul
     assert_ne!(res[0], res[1]);
 }
 
-// TODO Add normal backup recovery test
-
+// Test restore without custodians
 #[test_context(DockerComposeThresholdContextTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdContextTest) {
+async fn test_threshold_backup_restore(ctx: &DockerComposeThresholdContextTest) {
+    init_testing();
+    let _crs_id = crs_gen(ctx, true).await;
+    let _ = backup_restore(ctx).await;
+    // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
+    // However we are testing this in the service/client. Hence this tests is mainly to ensure that the outer
+    // end points and content returned from the KMS to the custodians work as expected.
+}
+
+#[test_context(DockerComposeThresholdCustodianContextTest)]
+#[tokio::test]
+#[serial(docker)]
+async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianContextTest) {
     init_testing();
     // We don't have endpoints that allow us to purge the generate material within the docker images
     // so we can here only test that the end points are alive and acting as expected, rather than validating that
@@ -756,21 +888,21 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdContextTest
     let amount_operators = 4; // TODO should not be hardcoded but not sure how I can get it easily
     let mut rng = AesRng::seed_from_u64(41);
     let keys_folder: &Path = Path::new("tests/data/keys");
-    // let root = keys_folder.join("CUSTODIAN");
-    // TODO HERE I think we need to import kms core here, the alternative to refactor all the crypto and backup stuff out of the core
-    // alternatively we stick with tests in core
     let (seeds, setup_msg_paths) =
         generate_custodian_keys_to_file(&mut rng, keys_folder, amount_custodians).await;
-    let backup_id = new_custodian_context(ctx, custodian_threshold, setup_msg_paths).await;
-    let _backup_id = backup_init(ctx).await;
-    let _backup_id = backup_recovery(
+    let cus_backup_id = new_custodian_context(ctx, custodian_threshold, setup_msg_paths).await;
+    let init_backup_id = custodian_backup_init(ctx).await;
+    assert_eq!(cus_backup_id, init_backup_id);
+    let recovery_backup_id = custodian_backup_recovery(
         ctx,
         &mut rng,
         amount_operators,
-        RequestId::from_str(&backup_id).unwrap(),
+        RequestId::from_str(&cus_backup_id).unwrap(),
         seeds,
     )
     .await;
+    assert_eq!(cus_backup_id, recovery_backup_id);
+    let _ = backup_restore(ctx).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate recovery.
     // However we are testing this in the service/client. Hence this tests is mainly to ensure that the outer
     // end points and content returned from the KMS to the custodians work as expected.

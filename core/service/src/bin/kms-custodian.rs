@@ -96,7 +96,7 @@ pub enum CustodianCommand {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let telemetry = TelemetryConfig::builder()
-        .tracing_service_name("kms_core".to_string())
+        .tracing_service_name("kms_custodian".to_string())
         .build();
     init_tracing(&telemetry).await?;
 
@@ -304,7 +304,7 @@ mod tests {
     #[tracing_test::traced_test]
     #[tokio::test]
     #[serial_test::serial]
-    async fn sunshine_decrypt() {
+    async fn sunshine_decrypt_custodian() {
         let threshold = 1;
         let amount_custodians = 2 * threshold + 1; // Minimum amount of custodians is 2 * threshold + 1
         let amount_operators = 4;
@@ -360,7 +360,7 @@ mod tests {
                     seed_phrases[custodian_index - 1].to_string(),
                     "--custodian-role".to_string(),
                     custodian_index.to_string(),
-                    "--operator_verf_key".to_string(),
+                    "--operator-verf-key".to_string(),
                     operator_verf_path.to_str().unwrap().to_string(),
                     "-b".to_string(),
                     request_path.to_str().unwrap().to_string(),
@@ -384,10 +384,10 @@ mod tests {
                 dec_key,
             )
             .await;
-            let expected_res = format!("super secret data{}", operator.role().one_based());
+            println!("data: {}", String::from_utf8_lossy(&cur_res));
             assert_eq!(
                 cur_res,
-                expected_res.as_bytes(),
+                bc2wrap::serialize(&backup_dec_keys[&operator.role()]).unwrap(),
                 "Decryption did not match expected data for operator {}",
                 operator.role().one_based()
             );

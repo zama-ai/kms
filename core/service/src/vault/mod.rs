@@ -80,7 +80,7 @@ impl StorageReader for Vault {
                     return self.storage.all_data_ids(&coerced_backup_type).await;
                 }
                 Err(_) => {
-                    tracing::warn!(
+                    tracing::info!(
                         "No custodian context has been set yet! Returning empty set of data ids."
                     );
                     return Ok(HashSet::new());
