@@ -67,8 +67,7 @@ use tfhe::shortint::PBSOrder;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
 use tokio::time::{Duration, Instant};
-use tracing::info_span;
-use tracing::{instrument, Instrument};
+use tracing::instrument;
 
 #[cfg(any(test, feature = "testing"))]
 use super::decryption::DecryptionMode;
@@ -136,13 +135,11 @@ where
         let mut sns_preprocessing = InMemoryNoiseFloodPreprocessing::default();
         let own_role = session.my_role();
 
-        let prss_span = info_span!("PRSS-MASK.Next", batch_size = num_ctxt);
         let masks = self
             .session
             .get_mut()
             .prss_as_mut()
             .mask_next_vec(own_role, B_SWITCH_SQUASH, num_ctxt)
-            .instrument(prss_span)
             .await?;
         sns_preprocessing.append_masks(masks);
         Ok(sns_preprocessing)

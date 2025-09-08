@@ -609,16 +609,19 @@ impl<
             let external_sig = match {
                 let extra_data = extra_data.clone();
                 let pts = pts.clone();
-                compute_external_pt_signature(
-                    &sigkey,
-                    ext_handles_bytes,
-                    &pts,
-                    extra_data.clone(),
-                    eip712_domain,
-                )
+                spawn_compute_bound(move || {
+                    compute_external_pt_signature(
+                        &sigkey,
+                        ext_handles_bytes,
+                        &pts,
+                        extra_data.clone(),
+                        eip712_domain,
+                    )
+                })
+                .await
             } {
-                Ok(sig) => sig,
-                Err(e) => {
+                Ok(Ok(sig)) => sig,
+                Err(e) | Ok(Err(e)) => {
                     let msg = format!(
                         "Failed to compute external signature for decryption request {req_id}: {e:?}"
                     );

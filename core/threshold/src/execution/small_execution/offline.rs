@@ -152,9 +152,10 @@ async fn next_triple_batch<Z: ErrorCorrect, Ses: SmallSessionHandles<Z>, BCast: 
 
     let (vec_x_single, vec_y_single, vec_v_single, vec_d_double) = spawn_compute_bound( move ||{
     let mut all_prss = all_prss.into_iter();
-    let vec_x_single: Vec<_> = all_prss.by_ref().take(amount).collect();
-    let vec_y_single: Vec<_> = all_prss.by_ref().take(amount).collect();
-    let vec_v_single: Vec<_> = all_prss.by_ref().take(amount).collect();
+    let all_prss_ref = all_prss.by_ref();
+    let vec_x_single: Vec<_> = all_prss_ref.take(amount).collect();
+    let vec_y_single: Vec<_> = all_prss_ref.take(amount).collect();
+    let vec_v_single: Vec<_> = all_prss_ref.take(amount).collect();
 
     if vec_x_single.len() != amount
         || vec_y_single.len() != amount
@@ -341,35 +342,6 @@ fn parse_d_shares<Z: Ring, Ses: BaseSessionHandles>(
         res.push(cur_map);
     }
     Ok(res)
-}
-
-/// Output amount of PRSS.Next() calls
-#[instrument(name="PRSS.Next",skip(session,amount),fields(sid=?session.session_id(),my_role=?session.my_role(),batch_size=?amount))]
-fn prss_list<Z: Ring, Ses: SmallSessionHandles<Z>>(
-    session: &mut Ses,
-    amount: usize,
-) -> anyhow::Result<Vec<Z>> {
-    let my_id = session.my_role();
-    let mut vec_prss = Vec::with_capacity(amount);
-    for _i in 0..amount {
-        vec_prss.push(session.prss_as_mut().prss_next(my_id)?);
-    }
-    Ok(vec_prss)
-}
-
-/// Output amount of PRZS.Next() calls
-#[instrument(name="PRZS.Next",skip(session,amount),fields(sid=?session.session_id(),my_role=?session.my_role(),batch_size=?amount))]
-fn przs_list<Z: Ring, Ses: SmallSessionHandles<Z>>(
-    session: &mut Ses,
-    amount: usize,
-) -> anyhow::Result<Vec<Z>> {
-    let my_id = session.my_role();
-    let threshold = session.threshold();
-    let mut vec_przs = Vec::with_capacity(amount);
-    for _i in 0..amount {
-        vec_przs.push(session.prss_as_mut().przs_next(my_id, threshold)?);
-    }
-    Ok(vec_przs)
 }
 
 /// Helper method for validating results when corruption has happened (by the reconstruction not being successful).
