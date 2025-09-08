@@ -212,7 +212,7 @@ enum HealthStatus {
   HEALTH_STATUS_UNSPECIFIED = 0;
   HEALTH_STATUS_OPTIMAL = 1;     // All nodes online and reachable
   HEALTH_STATUS_HEALTHY = 2;     // Sufficient 2/3 majority but not all nodes
-  HEALTH_STATUS_DEGRADED = 3;    // Above minimum threshold but below 2/3
+  HEALTH_STATUS_DEGRADED = 3;    // At least threshold + 1 but below 2/3
   HEALTH_STATUS_UNHEALTHY = 4;   // Insufficient nodes for operations
 }
 
