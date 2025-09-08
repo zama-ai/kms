@@ -146,19 +146,19 @@ pub async fn run_config_validation(config_path: &str) -> Result<HealthCheckResul
                         return Ok(result);
                     }
 
-                    let min_nodes_required = 2 * (threshold as usize) + 1; // Basic MPC requirement
-                    let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority + 1
+                    let min_nodes_required = threshold as usize + 1; // Need t+1 nodes for threshold operations
+                    let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority for Byzantine fault tolerance
 
                     if total_nodes < min_nodes_required {
                         result.overall_health = HealthStatus::Unhealthy;
                         result.recommendations.push(format!(
-                            "Config error: {} nodes defined but threshold={} requires at least {} nodes (2t+1)",
+                            "Config error: {} nodes defined but threshold={} requires at least {} nodes (t+1)",
                             total_nodes, threshold, min_nodes_required
                         ));
                     } else {
                         println!("  [OK] Threshold: {} - Node requirements:", threshold);
                         println!(
-                            "      - {} of {} nodes minimum for MPC operations",
+                            "      - {} of {} nodes minimum for threshold operations (t+1)",
                             min_nodes_required, total_nodes
                         );
                         println!(
