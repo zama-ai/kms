@@ -512,12 +512,8 @@ impl_endpoint! {
 
             // Calculate threshold requirements
             let threshold_required = self.config.threshold as u32;
-            let total_nodes = self.config.peers.as_ref().map_or(1, |p| p.len() as u32 + 1); // peers + self
-
-            // Ensure we have positive node count
-            if total_nodes == 0 {
-                return Err(Status::internal("Invalid configuration: no nodes defined"));
-            }
+            // peers list includes self, so we use len() directly
+            let total_nodes = self.config.peers.as_ref().map_or(1, |p| p.len() as u32);
 
             let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority + 1
 

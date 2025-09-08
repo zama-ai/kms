@@ -321,16 +321,7 @@ async fn process_health_status(
         // Check threshold requirements if applicable
         if health_status.node_type == 2 && health_status.threshold_required > 0 {
             // NODE_TYPE_THRESHOLD - match the four-tier system from endpoint.rs
-            let total_nodes = health_status.peers.len() as u32 + 1; // peers + self
-
-            // Ensure we have positive node count (should never happen in practice)
-            if total_nodes == 0 {
-                result.overall_health = HealthStatus::Unhealthy;
-                result
-                    .recommendations
-                    .push("Critical error: No nodes found in health status".to_string());
-                return;
-            }
+            let total_nodes = health_status.peers.len() as u32 + 1; // peers + self (response excludes self)
 
             let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority + 1
 
