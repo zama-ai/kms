@@ -1,4 +1,5 @@
 use super::traits::BaseKms;
+use crate::anyhow_error_and_log;
 use crate::compute_user_decrypt_message_hash;
 use crate::consts::ID_LENGTH;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
@@ -771,7 +772,7 @@ pub fn abi_encode_plaintexts_ebytes(ptxts: &[TypedPlaintext]) -> Bytes {
 
 /// ABI encodes a list of typed plaintexts into a single byte vector for Ethereum compatibility.
 /// This follows the encoding pattern used in the JavaScript version for decrypted results and is limited to the currently supported fhevm v0.9.0 types.
-pub fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> Bytes {
+pub fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> anyhow::Result<Bytes> {
     let mut results: Vec<DynSolValue> = Vec::with_capacity(ptxts.len());
 
     for pt in ptxts.iter() {
@@ -788,11 +789,10 @@ pub fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> Bytes {
                 | FheTypes::Uint256 => {
                     // Convert to U256
                     if pt.bytes.len() > 32 {
-                        error!(
-                            "Byte length too large for U256: got {}, max is 32. Using 0 instead.",
+                        return Err(anyhow_error_and_log(format!(
+                            "Byte length too large for U256: got {}, max is 32.",
                             pt.bytes.len()
-                        );
-                        results.push(DynSolValue::Uint(U256::from(0), 256));
+                        )));
                     } else {
                         // Pad the bytes to 32 bytes for U256 (assuming little-endian input)
                         let mut padded = [0u8; 32];
@@ -803,18 +803,17 @@ pub fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> Bytes {
                 }
                 t => {
                     // (currently) unsupported type for ABI encoding
-                    error!(
-                        "Received unsupported FHE type for ABI encoding: {:?}. Using 0 instead.",
+                    return Err(anyhow_error_and_log(format!(
+                        "Received unsupported FHE type for ABI encoding: {:?}.",
                         t
-                    );
-                    results.push(DynSolValue::Uint(U256::from(0), 256));
+                    )));
                 }
             }
         }
     }
 
     let data = DynSolValue::Tuple(results).abi_encode_params();
-    Bytes::from(data)
+    Ok(Bytes::from(data))
 }
 
 pub fn compute_pt_message_hash(
@@ -838,7 +837,7 @@ pub fn compute_pt_message_hash(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
-    let pt_bytes = abi_encode_plaintexts(pts);
+    let pt_bytes = abi_encode_plaintexts(pts)?;
 
     // the solidity structure to sign with EIP-712
     let message = PublicDecryptVerification {
@@ -1093,7 +1092,7 @@ pub(crate) mod tests {
         let pts_16: Vec<TypedPlaintext> = vec![TypedPlaintext::from_u16(16)];
 
         // encode plaintexts into a list of solidity bytes using `alloy`
-        let bytes_16 = super::abi_encode_plaintexts(&pts_16);
+        let bytes_16 = super::abi_encode_plaintexts(&pts_16).unwrap();
         let hexbytes_16 = hex::encode(bytes_16);
 
         // this is the encoding of the same list of plaintexts (pts_16) using the outdated `ethers` crate.
@@ -1106,7 +1105,7 @@ pub(crate) mod tests {
             vec![TypedPlaintext::from_u16(16), TypedPlaintext::from_u16(17)];
 
         // encode plaintexts into a list of solidity bytes using `alloy`
-        let bytes_16_2 = super::abi_encode_plaintexts(&pts_16_2);
+        let bytes_16_2 = super::abi_encode_plaintexts(&pts_16_2).unwrap();
         let hexbytes_16_2 = hex::encode(bytes_16_2);
 
         // this is the encoding of the same list of plaintexts (pts_16_2) using the outdated `ethers` crate.
@@ -1144,7 +1143,19 @@ pub(crate) mod tests {
             TypedPlaintext::from_u64(0),
         ];
 
-        // test that unsupported types are encoded as zero, while supported types are encoded correctly
+        // encode plaintexts into a list of solidity bytes using `alloy`
+        let hexbytes_mix1 = hex::encode(super::abi_encode_plaintexts(&pts_mix1).unwrap());
+        // reference encoding of the same list of plaintexts (pts_mix1).
+        let reference_mix1 = "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000ff000000000000000000000000000000ea000000000000000000000000000001000000000000000000000000000000000100000000000000000000000000000100000000000000000000000000000000de";
+        assert_eq!(reference_mix1, hexbytes_mix1.as_str());
+
+        // encode plaintexts into a list of solidity bytes using `alloy`
+        let hexbytes_mix2 = hex::encode(super::abi_encode_plaintexts(&pts_mix2).unwrap());
+        // reference encoding of the same list of plaintexts (pts_mix2).
+        let reference_mix2 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de000000000000000000000000000000000000000000000000000000000000ea6000000000000000000000000000000000000000000000000000000000000003e7000000000000000000000000000000000000000000000000000000000009fbf10000000000000000000000000000004500000000000000000000000000000007000000000000000000000000000001000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        assert_eq!(reference_mix2, hexbytes_mix2.as_str());
+
+        // test that unsupported cause an encoding error
         let pts_mix3: Vec<TypedPlaintext> = vec![
             TypedPlaintext::from_u2048(u2048_val),
             TypedPlaintext::from_u512(u512_val),
@@ -1152,26 +1163,13 @@ pub(crate) mod tests {
             TypedPlaintext::from_u512(u512_val),
         ];
 
-        // encode plaintexts into a list of solidity bytes using `alloy`
-        let hexbytes_mix1 = hex::encode(super::abi_encode_plaintexts(&pts_mix1));
-        // reference encoding of the same list of plaintexts (pts_mix1).
-        let reference_mix1 = "00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000ff000000000000000000000000000000ea000000000000000000000000000001000000000000000000000000000000000100000000000000000000000000000100000000000000000000000000000000de";
-        assert_eq!(reference_mix1, hexbytes_mix1.as_str());
-
-        // encode plaintexts into a list of solidity bytes using `alloy`
-        let hexbytes_mix2 = hex::encode(super::abi_encode_plaintexts(&pts_mix2));
-        // reference encoding of the same list of plaintexts (pts_mix2).
-        let reference_mix2 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000de000000000000000000000000000000000000000000000000000000000000ea6000000000000000000000000000000000000000000000000000000000000003e7000000000000000000000000000000000000000000000000000000000009fbf10000000000000000000000000000004500000000000000000000000000000007000000000000000000000000000001000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
-        assert_eq!(reference_mix2, hexbytes_mix2.as_str());
-
-        // encode plaintexts into a list of solidity bytes using `alloy`
-        let hexbytes_mix3 = hex::encode(super::abi_encode_plaintexts(&pts_mix3));
-        // reference encoding of the same list of plaintexts (pts_mix3).
-        let reference_mix3 = "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000";
-        assert_eq!(hexbytes_mix3.len(), 256); // 4 U256 values = 128 bytes = 256 hex chars
-        assert_eq!(reference_mix3, hexbytes_mix3.as_str());
-
-        // check that we log an error when trying to encode unsupported types in pts_mix3
+        // encode plaintexts into a list of solidity bytes using `alloy`, this should fail and return an error due to unsupported types
+        let res = super::abi_encode_plaintexts(&pts_mix3);
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("Received unsupported FHE type for ABI encoding"));
+        // check that we also log an error when trying to encode unsupported types in pts_mix3
         assert!(
             logs_contain("Received unsupported FHE type for ABI encoding"),
             "Expected log for unsupported FHE type not found"
