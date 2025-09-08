@@ -12,6 +12,7 @@ use kms_grpc::{
         self, Empty, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
         UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
     },
+    utils::tonic_result::BoxedStatus,
     RequestId,
 };
 use observability::{
@@ -482,17 +483,16 @@ impl<
 
         let permit = self.rate_limiter.start_user_decrypt().await?;
 
-        tracing::info!(
-            "Party {:?} received a new user decryption request with request_id {:?}",
-            self.session_preparer.own_identity(),
-            inner.request_id
-        );
         let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) = {
             let inner = inner.clone();
-            tonic_handle_potential_err(
-                spawn_compute_bound(move || validate_user_decrypt_req(inner.as_ref())).await,
-                "Error delegating validate_user_decrypt_req to rayon".to_string(),
-            )?
+            spawn_compute_bound(move || validate_user_decrypt_req(inner.as_ref()))
+                .await
+                .map_err(|_| {
+                    BoxedStatus::from(tonic::Status::new(
+                        tonic::Code::Internal,
+                        "Error delegating validate_user_decrypt_req to rayon".to_string(),
+                    ))
+                })?
         }
         .inspect_err(|e| {
             tracing::error!(
