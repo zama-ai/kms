@@ -3,7 +3,7 @@ use crate::backup::operator::{BackupCommitments, InnerRecoveryRequest, Operator}
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::backup_pke::{self, BackupPrivateKey, BackupPublicKey};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::engine::base::CrsGenMetadata;
+use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
@@ -27,7 +27,6 @@ use kms_grpc::{kms::v1::Empty, utils::tonic_result::ok_or_tonic_abort};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::safe_serialize;
-use tfhe::ClientKey;
 use threshold_fhe::execution::runtime::party::Role;
 use tokio::sync::RwLock;
 use tonic::{Response, Status};
@@ -251,7 +250,7 @@ where
                         .await?;
                     }
                     PrivDataType::FhePrivateKey => {
-                        backup_priv_data::<PrivS, ClientKey>(
+                        backup_priv_data::<PrivS, KmsFheKeyHandles>(
                             &guarded_priv_storage,
                             &mut guarded_backup_vault,
                             cur_type,

@@ -11,14 +11,12 @@ use crate::{
         signcryption::internal_verify_sig,
     },
     engine::{
-        base::BaseKmsStruct,
-        base::CrsGenMetadata,
+        base::{BaseKmsStruct, CrsGenMetadata, KmsFheKeyHandles},
         context::ContextInfo,
         threshold::service::ThresholdFheKeys,
         traits::BackupOperator,
         validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
-    util::key_setup::FhePrivateKey,
     vault::{
         keychain::KeychainProxy,
         storage::{
@@ -472,7 +470,7 @@ where
                     .await?;
             }
             PrivDataType::FhePrivateKey => {
-                restore_data_type::<PrivS, FhePrivateKey>(priv_storage, backup_vault, cur_type)
+                restore_data_type::<PrivS, KmsFheKeyHandles>(priv_storage, backup_vault, cur_type)
                     .await?;
             }
             PrivDataType::PrssSetup => {
@@ -571,7 +569,7 @@ where
                             .await?;
                         }
                         PrivDataType::FhePrivateKey => {
-                            update_specific_backup_vault::<PrivS, FhePrivateKey>(
+                            update_specific_backup_vault::<PrivS, KmsFheKeyHandles>(
                                 &private_storage,
                                 &mut backup_vault,
                                 cur_type,
