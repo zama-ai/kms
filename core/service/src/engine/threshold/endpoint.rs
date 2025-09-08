@@ -407,14 +407,15 @@ impl_endpoint! {
             let mut peer_health_infos = Vec::new();
             let mut nodes_reachable = 1; // Count self as reachable
 
-            for peer in &self.config.peers {
-                // Skip self-check - we already know we're healthy
-                if peer.party_id == self.config.my_id {
-                    continue;
-                }
+            if let Some(peers) = &self.config.peers {
+                for peer in peers {
+                    // Skip self-check - we already know we're healthy
+                    if peer.party_id == self.config.my_id {
+                        continue;
+                    }
 
-                // Determine gRPC port: use explicit config or apply convention
-                let grpc_port = match peer.grpc_port {
+                    // Determine gRPC port: use explicit config or apply convention
+                    let grpc_port = match peer.grpc_port {
                     Some(port) => port,
                     None => {
                         // Convention: P2P port 5000X maps to gRPC port 50X00
@@ -505,21 +506,30 @@ impl_endpoint! {
                     },
                 };
 
-        peer_health_infos.push(peer_info);
+                    peer_health_infos.push(peer_info);
+                }
             }
 
             // Calculate threshold requirements
             let threshold_required = self.config.threshold as u32;
-            let total_nodes = self.config.peers.len() as u32; // includes self
-            let min_nodes_for_healthy = (2 * total_nodes).div_ceil(3); // 2/3 majority + 1
+            let total_nodes = self.config.peers.as_ref().map_or(1, |p| p.len() as u32 + 1); // peers + self
+
+            // Ensure we have positive node count
+            if total_nodes == 0 {
+                return Err(Status::internal("Invalid configuration: no nodes defined"));
+            }
+
+            let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority + 1
 
             // Determine overall health status
-            let status = if nodes_reachable >= min_nodes_for_healthy {
-                1 // HEALTH_STATUS_HEALTHY - sufficient majority available (includes all nodes)
+            let status = if nodes_reachable >= total_nodes {
+                1 // HEALTH_STATUS_OPTIMAL - all nodes online and reachable
+            } else if nodes_reachable >= min_nodes_for_healthy {
+                2 // HEALTH_STATUS_HEALTHY - sufficient 2/3 majority but not all nodes
             } else if nodes_reachable > threshold_required {
-                2 // HEALTH_STATUS_DEGRADED - above minimum threshold but below 2/3
+                3 // HEALTH_STATUS_DEGRADED - above minimum threshold but below 2/3
             } else {
-                3 // HEALTH_STATUS_UNHEALTHY - insufficient nodes for operations
+                4 // HEALTH_STATUS_UNHEALTHY - insufficient nodes for operations
             };
 
             let response = HealthStatusResponse {

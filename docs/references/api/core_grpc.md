@@ -725,9 +725,10 @@ message Empty {}
 // Health status levels
 enum HealthStatus {
   HEALTH_STATUS_UNSPECIFIED = 0;
-  HEALTH_STATUS_HEALTHY = 1;
-  HEALTH_STATUS_DEGRADED = 2;
-  HEALTH_STATUS_UNHEALTHY = 3;
+  HEALTH_STATUS_OPTIMAL = 1;     // All nodes online and reachable
+  HEALTH_STATUS_HEALTHY = 2;     // Sufficient 2/3 majority but not all nodes
+  HEALTH_STATUS_DEGRADED = 3;    // Above minimum threshold but below 2/3
+  HEALTH_STATUS_UNHEALTHY = 4;   // Insufficient nodes for operations
 }
 
 // Node type for KMS deployment
@@ -794,7 +795,7 @@ This RPC provides comprehensive health status information for the KMS instance, 
 
 The response contains:
 
-- `status`: Overall health assessment using HealthStatus enum (HEALTH_STATUS_HEALTHY, HEALTH_STATUS_DEGRADED, or HEALTH_STATUS_UNHEALTHY)
+- `status`: Overall health assessment using HealthStatus enum (HEALTH_STATUS_OPTIMAL, HEALTH_STATUS_HEALTHY, HEALTH_STATUS_DEGRADED, or HEALTH_STATUS_UNHEALTHY)
 - `peers`: Detailed health information for each peer in threshold mode, including:
   - Connectivity status and latency
   - Actual key IDs for FHE keys, CRS keys, and preprocessing material (when available)
@@ -804,9 +805,10 @@ The response contains:
 - Configuration details: node type (NodeType enum), party ID, threshold requirements, and reachable node count
 
 Health status levels:
-- **Healthy**: All checks passed, keys present, all required peers reachable
-- **Degraded**: Service operational but with issues (missing keys, some peers unreachable, warnings)
-- **Unhealthy**: Critical issues (cannot connect, invalid config, insufficient nodes for threshold)
+- **Optimal**: All nodes online and reachable, perfect operational state
+- **Healthy**: Sufficient 2/3 majority but not all nodes online, functional but should investigate offline nodes
+- **Degraded**: Above minimum threshold but below 2/3 majority, operational with reduced fault tolerance
+- **Unhealthy**: Insufficient nodes for operations, critical issues requiring immediate attention
 
 This endpoint is useful for:
 - Health monitoring and alerting

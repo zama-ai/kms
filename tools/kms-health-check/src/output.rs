@@ -17,9 +17,22 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
 
     // Overall status
     match result.overall_health {
-        HealthStatus::Healthy => writeln!(output, "\n[OK] Overall Status: Healthy")?,
-        HealthStatus::Degraded => writeln!(output, "\n[WARN] Overall Status: Degraded")?,
-        HealthStatus::Unhealthy => writeln!(output, "\n[ERROR] Overall Status: Unhealthy")?,
+        HealthStatus::Optimal => writeln!(
+            output,
+            "\n[EXCELLENT] Overall Status: Optimal - All nodes online"
+        )?,
+        HealthStatus::Healthy => writeln!(
+            output,
+            "\n[OK] Overall Status: Healthy - Sufficient majority"
+        )?,
+        HealthStatus::Degraded => writeln!(
+            output,
+            "\n[WARN] Overall Status: Degraded - Reduced fault tolerance"
+        )?,
+        HealthStatus::Unhealthy => writeln!(
+            output,
+            "\n[ERROR] Overall Status: Unhealthy - Critical issues"
+        )?,
     }
 
     // Node info

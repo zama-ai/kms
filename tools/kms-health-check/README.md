@@ -164,9 +164,10 @@ Configuration values are applied in the following order (highest precedence firs
 
 ## Health Status Levels
 
-- **Healthy**: All checks passed, keys present, all peers reachable
-- **Degraded**: Service operational but with issues (missing keys, operator key unavailable, or protocol/configuration warnings)
-- **Unhealthy**: Critical issues (cannot connect, invalid config, insufficient nodes for threshold)
+- **Optimal**: All nodes online and reachable, perfect operational state
+- **Healthy**: Sufficient 2/3 majority but not all nodes online, functional but should investigate offline nodes  
+- **Degraded**: Above minimum threshold but below 2/3 majority, operational with reduced fault tolerance
+- **Unhealthy**: Insufficient nodes for operations, critical issues requiring immediate attention
 
 ## Output Format
 
@@ -209,9 +210,10 @@ graph TD
 // Health status levels
 enum HealthStatus {
   HEALTH_STATUS_UNSPECIFIED = 0;
-  HEALTH_STATUS_HEALTHY = 1;
-  HEALTH_STATUS_DEGRADED = 2;
-  HEALTH_STATUS_UNHEALTHY = 3;
+  HEALTH_STATUS_OPTIMAL = 1;     // All nodes online and reachable
+  HEALTH_STATUS_HEALTHY = 2;     // Sufficient 2/3 majority but not all nodes
+  HEALTH_STATUS_DEGRADED = 3;    // Above minimum threshold but below 2/3
+  HEALTH_STATUS_UNHEALTHY = 4;   // Insufficient nodes for operations
 }
 
 // Node type for KMS deployment
@@ -295,7 +297,7 @@ kms-health-check config --file config.toml || exit 1
 
 ## Exit Codes
 
-- `0` - Healthy status
+- `0` - Optimal or Healthy status
 - `1` - Degraded or Unhealthy status
 - `2` - Tool execution error
 

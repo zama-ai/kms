@@ -364,9 +364,9 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             .await?;
         let own_material = own_material.into_inner();
 
-        // Centralized mode has no peers, always healthy if reachable
+        // Centralized mode has no peers, always optimal if reachable
         let response = HealthStatusResponse {
-            status: 1,         // HEALTH_STATUS_HEALTHY
+            status: 1,         // HEALTH_STATUS_OPTIMAL
             peers: Vec::new(), // No peers in centralized mode
             my_fhe_key_ids: own_material.fhe_key_ids,
             my_crs_ids: own_material.crs_ids,

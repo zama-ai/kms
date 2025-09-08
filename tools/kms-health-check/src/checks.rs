@@ -73,9 +73,10 @@ pub struct OperatorKeyCheck {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum HealthStatus {
-    Healthy,
-    Degraded,
-    Unhealthy,
+    Optimal,   // All nodes online and reachable
+    Healthy,   // Sufficient 2/3 majority but not all nodes
+    Degraded,  // Above minimum threshold but below 2/3
+    Unhealthy, // Insufficient nodes for operations
 }
 
 /// Validate configuration file only
@@ -87,7 +88,7 @@ pub async fn run_config_validation(config_path: &str) -> Result<HealthCheckResul
         operator_key: None,
         peer_status: None,
         node_info: None,
-        overall_health: HealthStatus::Healthy,
+        overall_health: HealthStatus::Optimal,
         recommendations: Vec::new(),
     };
 
@@ -134,9 +135,19 @@ pub async fn run_config_validation(config_path: &str) -> Result<HealthCheckResul
                     // threshold = max number of malicious/offline nodes tolerated
                     // For Byzantine fault tolerance, need 2/3 majority for healthy status
                     let threshold = threshold_conf.threshold;
-                    let total_nodes = threshold_conf.peers.len(); // peers list includes self
+                    let total_nodes = threshold_conf.peers.as_ref().map_or(0, |p| p.len()); // peers list includes self
+
+                    // Ensure we have positive node count
+                    if total_nodes == 0 {
+                        result.overall_health = HealthStatus::Unhealthy;
+                        result
+                            .recommendations
+                            .push("Config error: No nodes defined in peers list".to_string());
+                        return Ok(result);
+                    }
+
                     let min_nodes_required = 2 * (threshold as usize) + 1; // Basic MPC requirement
-                    let min_nodes_for_healthy = (2 * total_nodes).div_ceil(3); // 2/3 majority + 1
+                    let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority + 1
 
                     if total_nodes < min_nodes_required {
                         result.overall_health = HealthStatus::Unhealthy;
@@ -145,26 +156,49 @@ pub async fn run_config_validation(config_path: &str) -> Result<HealthCheckResul
                             total_nodes, threshold, min_nodes_required
                         ));
                     } else {
+                        println!("  [OK] Threshold: {} - Node requirements:", threshold);
                         println!(
-                            "  [OK] Threshold: {} (requires {} of {} nodes for MPC, {} for healthy status)",
-                            threshold, min_nodes_required, total_nodes, min_nodes_for_healthy
+                            "      - {} of {} nodes minimum for MPC operations",
+                            min_nodes_required, total_nodes
                         );
+                        println!(
+                            "      - {} of {} nodes for healthy status (2/3 majority)",
+                            min_nodes_for_healthy, total_nodes
+                        );
+                        println!(
+                            "      - {} of {} nodes for optimal status (all nodes online)",
+                            total_nodes, total_nodes
+                        );
+                        println!("      ⚠️  Operational recommendation: All {} nodes should be online for best performance", total_nodes);
                     }
 
                     // Validate peer addresses
-                    println!("  [OK] {} peers configured:", threshold_conf.peers.len());
-                    for peer in &threshold_conf.peers {
-                        println!(
-                            "      - Peer {} at {}:{}",
-                            peer.party_id, peer.address, peer.port
-                        );
+                    if let Some(peers) = &threshold_conf.peers {
+                        println!("  [OK] {} peers configured:", peers.len());
+                        for peer in peers {
+                            println!(
+                                "      - Peer {} at {}:{}",
+                                peer.party_id, peer.address, peer.port
+                            );
+                        }
+
+                        result.recommendations.push(format!(
+                            "Config defines {} peers for threshold KMS at {}:{}",
+                            peers.len(),
+                            threshold_conf.listen_address,
+                            threshold_conf.listen_port
+                        ));
+                    } else {
+                        println!("  [WARN] No peers configured in peers list");
+                        result.recommendations.push(format!(
+                            "Config defines 0 peers for threshold KMS at {}:{}",
+                            threshold_conf.listen_address, threshold_conf.listen_port
+                        ));
                     }
 
                     result.recommendations.push(format!(
-                        "Config defines {} peers for threshold KMS at {}:{}",
-                        threshold_conf.peers.len(),
-                        threshold_conf.listen_address,
-                        threshold_conf.listen_port
+                        "OPERATIONAL: Monitor that all {} nodes remain online. While {} nodes provide healthy status, having all nodes online ensures optimal performance and fault tolerance",
+                        total_nodes, min_nodes_for_healthy
                     ));
                 }
             }
@@ -286,35 +320,88 @@ async fn process_health_status(
 
         // Check threshold requirements if applicable
         if health_status.node_type == 2 && health_status.threshold_required > 0 {
-            // NODE_TYPE_THRESHOLD
-            if health_status.nodes_reachable < health_status.threshold_required {
+            // NODE_TYPE_THRESHOLD - match the four-tier system from endpoint.rs
+            let total_nodes = health_status.peers.len() as u32 + 1; // peers + self
+
+            // Ensure we have positive node count (should never happen in practice)
+            if total_nodes == 0 {
+                result.overall_health = HealthStatus::Unhealthy;
+                result
+                    .recommendations
+                    .push("Critical error: No nodes found in health status".to_string());
+                return;
+            }
+
+            let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority + 1
+
+            if health_status.nodes_reachable >= total_nodes {
+                // All nodes online - optimal status
+                result.recommendations.push(format!(
+                    "Optimal: All {} nodes online and reachable",
+                    total_nodes
+                ));
+            } else if health_status.nodes_reachable >= min_nodes_for_healthy {
+                // Sufficient 2/3 majority but not all nodes - healthy but should investigate
+                result.overall_health = HealthStatus::Degraded;
+                result.recommendations.push(format!(
+                    "Healthy but not optimal: {}/{} nodes reachable (sufficient majority but {} nodes offline)",
+                    health_status.nodes_reachable, total_nodes, total_nodes - health_status.nodes_reachable
+                ));
+                result.recommendations.push(format!(
+                    "⚠️  INVESTIGATE: Even with healthy status, explore why {} nodes are offline. Check peer connectivity, network issues, or node failures to restore optimal fault tolerance.",
+                    total_nodes - health_status.nodes_reachable
+                ));
+            } else if health_status.nodes_reachable > health_status.threshold_required {
+                // Above minimum threshold but below 2/3 - degraded
+                result.overall_health = HealthStatus::Degraded;
+                result.recommendations.push(format!(
+                    "Degraded: {}/{} nodes reachable (above threshold {} but below healthy majority {})",
+                    health_status.nodes_reachable, total_nodes, health_status.threshold_required, min_nodes_for_healthy
+                ));
+            } else {
+                // Below threshold - unhealthy
                 result.overall_health = HealthStatus::Unhealthy;
                 result.recommendations.push(format!(
                     "Critical: Only {} nodes reachable, but {} required for threshold operations",
                     health_status.nodes_reachable, health_status.threshold_required
                 ));
-            } else if health_status.nodes_reachable < health_status.peers.len() as u32 + 1 {
-                result.overall_health = HealthStatus::Degraded;
-                result.recommendations.push(format!(
-                    "Some peers unreachable: {}/{} peers responding",
-                    health_status.nodes_reachable - 1,
-                    health_status.peers.len()
-                ));
             }
         }
     }
 
-    // Set overall health based on server's assessment
-    match health_status.status {
-        3 => result.overall_health = HealthStatus::Unhealthy, // HEALTH_STATUS_UNHEALTHY
-        2 => {
-            // HEALTH_STATUS_DEGRADED
-            if result.overall_health != HealthStatus::Unhealthy {
-                result.overall_health = HealthStatus::Degraded;
-            }
-        }
-        _ => {} // Keep current status (1 = HEALTH_STATUS_HEALTHY)
+    // Set overall health based on server's assessment using direct 4-tier mapping
+    // Only override if server status is worse than what we determined locally
+    let server_status = match health_status.status {
+        1 => HealthStatus::Optimal,   // HEALTH_STATUS_OPTIMAL
+        2 => HealthStatus::Healthy,   // HEALTH_STATUS_HEALTHY
+        3 => HealthStatus::Degraded,  // HEALTH_STATUS_DEGRADED
+        4 => HealthStatus::Unhealthy, // HEALTH_STATUS_UNHEALTHY
+        _ => return,                  // Keep current status for unspecified values
+    };
+
+    // Use the worse of local assessment vs server assessment
+    if is_worse_status(&server_status, &result.overall_health) {
+        result.overall_health = server_status;
     }
+}
+
+// Helper function to determine if one status is worse than another
+fn is_worse_status(status1: &HealthStatus, status2: &HealthStatus) -> bool {
+    let status1_rank = match status1 {
+        HealthStatus::Optimal => 0,
+        HealthStatus::Healthy => 1,
+        HealthStatus::Degraded => 2,
+        HealthStatus::Unhealthy => 3,
+    };
+
+    let status2_rank = match status2 {
+        HealthStatus::Optimal => 0,
+        HealthStatus::Healthy => 1,
+        HealthStatus::Degraded => 2,
+        HealthStatus::Unhealthy => 3,
+    };
+
+    status1_rank > status2_rank
 }
 
 // Helper function to check key material (fallback when health status not available)
@@ -419,7 +506,7 @@ pub async fn check_live(endpoint: &str, _config_path: Option<&Path>) -> Result<H
     // Check operator public key
     check_operator_key(&client, &mut result).await;
 
-    if result.recommendations.is_empty() && result.overall_health == HealthStatus::Healthy {
+    if result.recommendations.is_empty() && result.overall_health == HealthStatus::Optimal {
         result
             .recommendations
             .push("All health checks passed".to_string());
