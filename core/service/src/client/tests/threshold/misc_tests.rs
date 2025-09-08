@@ -33,8 +33,6 @@ use kms_grpc::kms::v1::FheParameter;
 use kms_grpc::kms::v1::InitRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 #[cfg(feature = "insecure")]
-use kms_grpc::rpc_types::BackupDataType;
-#[cfg(feature = "insecure")]
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::RequestId;
 use serial_test::serial;
@@ -513,10 +511,7 @@ async fn default_insecure_threshold_autobackup_after_deletion() {
         .unwrap();
         // Validate that the backup is constructed again
         assert!(backup_storage
-            .data_exists(
-                &key_id,
-                &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string()
-            )
+            .data_exists(&key_id, &PrivDataType::FheKeyInfo.to_string())
             .await
             .unwrap());
     }
@@ -597,10 +592,7 @@ async fn default_insecure_threshold_crs_backup() {
         .unwrap();
         // Check the back up is still there
         assert!(backup_storage
-            .data_exists(
-                &req_id,
-                &BackupDataType::PrivData(PrivDataType::CrsInfo).to_string()
-            )
+            .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
             .await
             .unwrap());
         // Check that the file has been restored

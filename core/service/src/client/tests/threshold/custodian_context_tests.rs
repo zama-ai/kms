@@ -1,7 +1,7 @@
 use crate::client::client_wasm::Client;
 #[cfg(feature = "insecure")]
 use crate::client::tests::threshold::common::threshold_handles;
-use crate::client::tests::threshold::common::threshold_handles_secretsharing_backup;
+use crate::client::tests::threshold::common::threshold_handles_custodian_backup;
 use crate::consts::KEY_PATH_PREFIX;
 use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::backup_pke::BackupCiphertext;
@@ -48,7 +48,7 @@ pub(crate) async fn new_custodian_context(
 
     // The threshold handle should only be started after the storage is purged
     // since the threshold parties will load the CRS from private storage
-    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_secretsharing_backup(
+    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
         true,
@@ -115,7 +115,7 @@ pub(crate) async fn new_custodian_context(
     drop(internal_client);
     // Sleep to ensure the servers are properly shut down
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-    let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_secretsharing_backup(
+    let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
         true,

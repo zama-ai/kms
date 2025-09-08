@@ -94,6 +94,8 @@ async fn threshold_handles_w_vaults(
 /// is the client endpoints needed to talk with each of the servers, finally the internal
 /// client is returned (which is responsible for constructing requests and validating
 /// responses).
+/// This provides a setup _without_ custodian backup. Instead the backup vaults are just realized using
+/// an unencrytped file storage.
 pub(crate) async fn threshold_handles(
     params: DKGParams,
     amount_parties: usize,
@@ -105,7 +107,12 @@ pub(crate) async fn threshold_handles(
     HashMap<u32, CoreServiceEndpointClient<Channel>>,
     Client,
 ) {
-    let vaults = (1..=amount_parties).map(|_i| None).collect::<Vec<_>>();
+    let mut vaults = Vec::new();
+    for i in 1..=amount_parties {
+        let cur_role = Role::indexed_from_one(i);
+        let cur_vault = file_system_vault(cur_role, None).await;
+        vaults.push(Some(cur_vault));
+    }
     threshold_handles_w_vaults(
         params,
         amount_parties,
@@ -122,7 +129,7 @@ pub(crate) async fn threshold_handles(
 /// Setup servers for backup tests
 /// This means that secret sharing based custodian backup gets setup and
 /// that test material does NOT get automatically generated
-pub(crate) async fn threshold_handles_secretsharing_backup(
+pub(crate) async fn threshold_handles_custodian_backup(
     params: DKGParams,
     amount_parties: usize,
     run_prss: bool,
@@ -138,7 +145,7 @@ pub(crate) async fn threshold_handles_secretsharing_backup(
     let mut vaults = Vec::new();
     for i in 1..=amount_parties {
         let cur_role = Role::indexed_from_one(i);
-        let cur_vault = secretsharing_backup_vault(cur_role, test_data_path).await;
+        let cur_vault = custodian_backup_vault(cur_role, test_data_path).await;
         vaults.push(Some(cur_vault));
     }
     threshold_handles_w_vaults(
@@ -154,7 +161,7 @@ pub(crate) async fn threshold_handles_secretsharing_backup(
     .await
 }
 
-pub(crate) async fn secretsharing_backup_vault(role: Role, test_data_path: Option<&Path>) -> Vault {
+pub(crate) async fn custodian_backup_vault(role: Role, test_data_path: Option<&Path>) -> Vault {
     let store_path = test_data_path.map(|p| {
         conf::Storage::File(conf::FileStorage {
             path: p.to_path_buf(),
@@ -177,5 +184,19 @@ pub(crate) async fn secretsharing_backup_vault(role: Role, test_data_path: Optio
     Vault {
         storage: backup_proxy_storage,
         keychain,
+    }
+}
+
+pub(crate) async fn file_system_vault(role: Role, test_data_path: Option<&Path>) -> Vault {
+    let store_path = test_data_path.map(|p| {
+        conf::Storage::File(conf::FileStorage {
+            path: p.to_path_buf(),
+        })
+    });
+    let backup_proxy_storage =
+        make_storage(store_path, StorageType::BACKUP, Some(role), None, None).unwrap();
+    Vault {
+        storage: backup_proxy_storage,
+        keychain: None,
     }
 }

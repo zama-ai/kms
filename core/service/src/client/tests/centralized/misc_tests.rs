@@ -38,7 +38,7 @@ cfg_if::cfg_if! {
             util::key_setup::test_tools::TestingPlaintext,
             vault::storage::{delete_all_at_request_id, StorageType},
         };
-        use kms_grpc::rpc_types::{BackupDataType, PrivDataType};
+        use kms_grpc::rpc_types::{PrivDataType};
         use crate::{vault::storage::make_storage};
         use crate::{client::tests::centralized::crs_gen_tests::crs_gen_centralized, vault::storage::StorageReader};
    }
@@ -162,6 +162,7 @@ async fn test_largecipher() {
         new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
             .await
             .unwrap(),
+        None,
         Some(rate_limiter_conf),
     )
     .await;
@@ -292,10 +293,7 @@ async fn default_insecure_central_autobackup_after_deletion() {
     let backup_storage = make_storage(None, StorageType::BACKUP, None, None, None).unwrap();
     // Validate that the backup is constructed again
     assert!(backup_storage
-        .data_exists(
-            &key_id,
-            &BackupDataType::PrivData(PrivDataType::FheKeyInfo).to_string()
-        )
+        .data_exists(&key_id, &PrivDataType::FheKeyInfo.to_string())
         .await
         .unwrap());
     panic!("check that insecure gets executed by CI!")
@@ -342,10 +340,7 @@ async fn default_insecure_central_crs_backup() {
     let backup_storage: FileStorage = FileStorage::new(None, StorageType::BACKUP, None).unwrap();
     // Check the back up is still there
     assert!(backup_storage
-        .data_exists(
-            &req_id,
-            &BackupDataType::PrivData(PrivDataType::CrsInfo).to_string()
-        )
+        .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
         .await
         .unwrap());
     // Check that the file has been restored

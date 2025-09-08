@@ -14,7 +14,7 @@ use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
-    client::tests::threshold::common::threshold_handles_secretsharing_backup,
+    client::tests::threshold::common::threshold_handles_custodian_backup,
     cryptography::{backup_pke::BackupCiphertext, internal_crypto_types::WrappedDKGParams},
     engine::base::derive_request_id,
     util::key_setup::test_tools::{purge_priv, setup::ensure_testing_material_exists},
@@ -61,7 +61,7 @@ pub(crate) async fn auto_update_backup(amount_custodians: usize, threshold: u32)
     purge_recovery_info(test_path, amount_parties).await;
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
-    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_secretsharing_backup(
+    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
         true,
@@ -99,7 +99,7 @@ pub(crate) async fn auto_update_backup(amount_custodians: usize, threshold: u32)
     purge_backup(test_path, amount_parties).await;
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Check that the backup is still there an unmodified
-    let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_secretsharing_backup(
+    let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
         true,
@@ -156,7 +156,7 @@ pub(crate) async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     // The threshold handle should only be started after the storage is purged
     // since the threshold parties will load the CRS from private storage
-    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_secretsharing_backup(
+    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
         true,
@@ -212,7 +212,7 @@ pub(crate) async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // Check that the backup is still there an unmodified
-    let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_secretsharing_backup(
+    let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
         true,
@@ -279,7 +279,7 @@ pub(crate) async fn decrypt_after_recovery(amount_custodians: usize, threshold: 
     // Clean up backups to not interfere with test
     purge_backup(test_path, amount_parties).await;
     purge_recovery_info(test_path, amount_parties).await;
-    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_secretsharing_backup(
+    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
         true,
@@ -308,7 +308,7 @@ pub(crate) async fn decrypt_after_recovery(amount_custodians: usize, threshold: 
 
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Reboot the servers
-    let (_kms_servers, kms_clients, _internal_client) = threshold_handles_secretsharing_backup(
+    let (_kms_servers, kms_clients, _internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
         true,

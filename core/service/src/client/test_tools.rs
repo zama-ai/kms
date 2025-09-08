@@ -5,6 +5,7 @@ use crate::engine::threshold::service::new_real_threshold_kms;
 use crate::engine::{run_server, Shutdown};
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
+use crate::vault::storage::make_storage;
 use crate::vault::storage::{
     crypto_material::get_core_signing_key, file::FileStorage, Storage, StorageType,
 };
@@ -391,6 +392,7 @@ pub async fn setup_centralized_no_client<
 >(
     pub_storage: PubS,
     priv_storage: PrivS,
+    backup_vault: Option<Vault>,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> ServerHandle {
     let ip_addr = DEFAULT_URL.parse().unwrap();
@@ -403,10 +405,16 @@ pub async fn setup_centralized_no_client<
         .unwrap();
     let (tx, rx) = tokio::sync::oneshot::channel();
     let sk = get_core_signing_key(&priv_storage).await.unwrap();
-    let (kms, health_service) =
-        RealCentralizedKms::new(pub_storage, priv_storage, None, None, sk, rate_limiter_conf)
-            .await
-            .expect("Could not create KMS");
+    let (kms, health_service) = RealCentralizedKms::new(
+        pub_storage,
+        priv_storage,
+        backup_vault,
+        None,
+        sk,
+        rate_limiter_conf,
+    )
+    .await
+    .expect("Could not create KMS");
     let arc_kms = Arc::new(kms);
     let arc_kms_clone = Arc::clone(&arc_kms);
     tokio::spawn(async move {
@@ -443,13 +451,15 @@ pub(crate) async fn setup_centralized<
 >(
     pub_storage: PubS,
     priv_storage: PrivS,
+    backup_vault: Option<Vault>,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> (
     ServerHandle,
     CoreServiceEndpointClient<tonic::transport::Channel>,
 ) {
     let server_handle =
-        setup_centralized_no_client(pub_storage, priv_storage, rate_limiter_conf).await;
+        setup_centralized_no_client(pub_storage, priv_storage, backup_vault, rate_limiter_conf)
+            .await;
     let url = format!(
         "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{}",
         server_handle.service_port
@@ -469,13 +479,23 @@ pub async fn centralized_handles(
 ) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
     let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
     let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
+    let backup_proxy_storage = make_storage(None, StorageType::BACKUP, None, None, None).unwrap();
+    let backup_vault = Vault {
+        storage: backup_proxy_storage,
+        keychain: None,
+    };
 
     ensure_testing_material_exists(None).await;
     #[cfg(feature = "slow_tests")]
     ensure_default_material_exists().await;
 
-    let (kms_server, kms_client) =
-        setup_centralized(pub_storage, priv_storage, rate_limiter_conf).await;
+    let (kms_server, kms_client) = setup_centralized(
+        pub_storage,
+        priv_storage,
+        Some(backup_vault),
+        rate_limiter_conf,
+    )
+    .await;
     let pub_storage =
         HashMap::from_iter([(1, FileStorage::new(None, StorageType::PUB, None).unwrap())]);
     let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
