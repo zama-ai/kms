@@ -38,10 +38,10 @@ async fn test_auto_update_backups_threshold() {
     auto_update_backup(5, 2).await;
 }
 
-pub(crate) async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
+async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
     let req_new_cus: RequestId = derive_request_id(&format!(
-        "auto_update_backup_{amount_parties}_{amount_custodians}_{threshold}"
+        "test_auto_update_backups_threshold_{amount_parties}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
     let test_path = None;
@@ -125,7 +125,7 @@ async fn test_backup_after_crs_threshold() {
 }
 
 #[cfg(feature = "insecure")]
-pub(crate) async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
+async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
     let req_new_cus: RequestId = derive_request_id(&format!(
         "new_custodian_backup_after_crs_{amount_parties}_{amount_custodians}_{threshold}"
@@ -233,14 +233,13 @@ pub(crate) async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     }
 }
 
-#[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_decrypt_after_recovery_threshold() {
     decrypt_after_recovery(5, 2).await;
 }
 
-pub(crate) async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
+async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
     let req_new_cus: RequestId = derive_request_id(&format!(
         "new_custodian_decrypt_after_recovery_{amount_parties}"
@@ -316,7 +315,6 @@ pub(crate) async fn decrypt_after_recovery(amount_custodians: usize, threshold: 
     )
     .await;
     // Purge the private storage again to delete the signing key
-    // TODO this will get handled more gracefully with contexts
     purge_priv(test_path, amount_parties).await;
 
     // Execute the backup restoring

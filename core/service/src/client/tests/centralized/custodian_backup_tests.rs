@@ -28,14 +28,13 @@ use serial_test::serial;
 use tfhe::safe_serialization::safe_deserialize;
 use threshold_fhe::execution::runtime::party::Role;
 
-#[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_auto_update_backups_central() {
     auto_update_backup(5, 2).await;
 }
 
-pub(crate) async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
+async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     let req_new_cus: RequestId = derive_request_id(&format!(
         "auto_update_backup_central_{amount_custodians}_{threshold}"
     ))
@@ -135,7 +134,7 @@ async fn test_decrypt_after_recovery_central() {
     decrypt_after_recovery(5, 2).await;
 }
 
-pub(crate) async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
+async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let req_new_cus: RequestId = derive_request_id("test_decrypt_after_recovery_central").unwrap();
     ensure_testing_material_exists(None).await;
     // Read the private signing key for reference
@@ -177,7 +176,6 @@ pub(crate) async fn decrypt_after_recovery(amount_custodians: usize, threshold: 
     let (_kms_server, mut kms_client, _internal_client) =
         crate::client::test_tools::centralized_handles(&dkg_param, None).await;
     // Purge the private storage again to delete the signing key
-    // TODO this will get handled more gracefully with contexts
     purge_priv(None, 1).await;
 
     // Execute the backup restoring

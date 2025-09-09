@@ -298,7 +298,6 @@ async fn default_insecure_central_autobackup_after_deletion() {
         .unwrap());
 }
 
-#[tracing_test::traced_test]
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]

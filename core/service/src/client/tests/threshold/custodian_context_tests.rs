@@ -36,10 +36,14 @@ async fn new_custodian_context(
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = Some(temp_dir.path());
     ensure_testing_material_exists(test_path).await;
-    let req_new_cus: RequestId =
-        derive_request_id(&format!("new_custodian_{amount_parties}")).unwrap();
-    let req_new_cus2: RequestId =
-        derive_request_id(&format!("new_custodian_2_{amount_parties}")).unwrap();
+    let req_new_cus: RequestId = derive_request_id(&format!(
+        "test_new_custodian_context_threshold_{amount_parties}"
+    ))
+    .unwrap();
+    let req_new_cus2: RequestId = derive_request_id(&format!(
+        "test_new_custodian_context_threshold_2_{amount_parties}"
+    ))
+    .unwrap();
     purge(
         test_path,
         test_path,

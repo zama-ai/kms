@@ -108,7 +108,7 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
     pub fn set_dec_key(&mut self, dec_key: Option<BackupPrivateKey>) {
         self.dec_key = dec_key;
     }
-    // continue making optional to allow booting
+
     pub fn get_current_backup_id(&self) -> anyhow::Result<RequestId> {
         match self.custodian_context_id {
             Some(backup_id) => Ok(backup_id),

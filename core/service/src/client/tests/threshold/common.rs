@@ -53,7 +53,7 @@ async fn threshold_handles_w_vaults(
         ensure_default_material_exists().await;
     } else {
         // Only ensure that the signing key is there s.t. the KMS can start
-        // TODO this will be handled better when we add contexts s.t. we have different signing keys
+        // TODO(#2491) this will be handled better when we add contexts s.t. we have different signing keys
         let _ = ensure_threshold_server_signing_keys_exist(
             &mut pub_storage,
             &mut priv_storage,
@@ -95,7 +95,7 @@ async fn threshold_handles_w_vaults(
 /// client is returned (which is responsible for constructing requests and validating
 /// responses).
 /// This provides a setup _without_ custodian backup. Instead the backup vaults are just realized using
-/// an unencrytped file storage.
+/// an uncrypted file storage.
 pub(crate) async fn threshold_handles(
     params: DKGParams,
     amount_parties: usize,
@@ -127,8 +127,8 @@ pub(crate) async fn threshold_handles(
 }
 
 /// Setup servers for backup tests
-/// This means that secret sharing based custodian backup gets setup and
-/// that test material does NOT get automatically generated
+/// This means that secret sharing based custodian backup gets setup
+/// with testing material _optionally_ being generated
 pub(crate) async fn threshold_handles_custodian_backup(
     params: DKGParams,
     amount_parties: usize,

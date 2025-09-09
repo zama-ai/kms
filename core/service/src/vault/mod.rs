@@ -35,8 +35,6 @@ impl StorageReader for Vault {
                     }
                     KeychainProxy::SecretSharing(secret_share_keychain) => {
                         // We only use the coerced backup type for secret sharing
-                        // TODO is this what we actually want to do? Is it really needed? Should it be forced to only be private data?
-                        // And more crucially does it make sense to change the file structure? Would it be better to always just have the most recent back up in the root and if others are present to them into a folder called old backup?
                         let inner_type =
                             BackupDataType::PrivData(data_type.try_into()?).to_string();
                         let coerced_backup_type = format!(

@@ -179,11 +179,6 @@ where
         store_versioned_at_request_id(backup_vault, data_id, &data, &data_type_enum.to_string())
             .await?;
     }
-    println!(
-        "Backed up {} items of type {}",
-        data_ids.len(),
-        data_type_enum
-    );
     Ok(())
 }
 
@@ -228,7 +223,6 @@ where
             } else {
                 return Err(anyhow_error_and_log("A secret sharing keychain is not configured! It is not possible to use custodian contexts"));
             }
-            println!("Doing backup of private data");
             for cur_type in PrivDataType::iter() {
                 // We need to match on each type to manually specify the data type and to ensure that we do not forget anything in case the enum is extended
                 match cur_type {

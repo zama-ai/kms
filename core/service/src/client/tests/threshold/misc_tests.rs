@@ -582,7 +582,6 @@ async fn default_insecure_threshold_crs_backup() {
             }
         }
     }
-    println!("req id is {req_id}");
     for i in 1..=amount_parties {
         let backup_storage: FileStorage = FileStorage::new(
             test_path,

@@ -199,9 +199,9 @@ pub enum PubDataType {
     VerfKey,     // Type for the servers public verification keys
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
     DecompressionKey,
-    CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO validation needs to be added, see https://github.com/zama-ai/kms-internal/issues/2723
-    RecoveryRequest, // Recovery request for backup vault TODO should it be stored in backup or public vault, issue with private is that it can get locked in case of aws issue!
-    Commitments, // Commitments for the backup vault TODO rename since it also contains custodian context. it could also be combined with the recovery request. We should consider this to be stored in the backup vault instead
+    CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
+    RecoveryRequest, // Recovery request for backup vault TODO(#2748) ensure that data gets validated at read, since we cannot fully trust the public storage
+    Commitments, // Commitments for the backup vault TODO(#2748) rename since it also contains custodian context. it could also be combined with the recovery request. We should consider this to be stored in the backup vault instead
 }
 
 impl fmt::Display for PubDataType {

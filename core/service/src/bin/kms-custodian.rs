@@ -384,7 +384,6 @@ mod tests {
                 dec_key,
             )
             .await;
-            println!("data: {}", String::from_utf8_lossy(&cur_res));
             assert_eq!(
                 cur_res,
                 bc2wrap::serialize(&backup_dec_keys[&operator.role()]).unwrap(),

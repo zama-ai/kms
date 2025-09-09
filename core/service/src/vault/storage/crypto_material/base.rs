@@ -328,7 +328,7 @@ where
         let f2 = async {
             let result = match kms_type {
                 KMSType::Centralized => {
-                    // In centralized KMS there is no FHE key info to delete
+                    // In centralized KMS there is no FHE key info to delete, instead delete the FhePrivateKey
                     delete_at_request_id(
                         &mut (*priv_storage),
                         req_id,
@@ -337,13 +337,13 @@ where
                     .await
                 }
                 KMSType::Threshold => {
+                    // In threshold KMS we need to delete the FHE key info
                     delete_at_request_id(
                         &mut (*priv_storage),
                         req_id,
                         &PrivDataType::FheKeyInfo.to_string(),
                     )
                     .await
-                    // In threshold KMS we need to delete the FHE key info
                 }
             };
             if let Err(e) = &result {

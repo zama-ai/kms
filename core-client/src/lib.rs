@@ -527,7 +527,7 @@ pub struct RecoveryParameters {
     #[clap(long, short = 'i')]
     pub custodian_context_id: RequestId,
     #[clap(long, short = 'r')]
-    pub custodian_recovery_outputs: Vec<PathBuf>, // TODO should this just be a root directory with everything in?
+    pub custodian_recovery_outputs: Vec<PathBuf>, // TODO(#2748) should this just be a root directory with everything in?
 }
 
 #[derive(Debug, Subcommand, Clone)]
@@ -1385,7 +1385,7 @@ async fn do_new_custodian_context(
     let new_context = CustodianContext {
         custodian_nodes,
         context_id: Some(context_id.into()),
-        previous_context_id: None, // TODO not really used now
+        previous_context_id: None, // TODO(#2748) not really used now, should be refactored
         threshold,
     };
     for ce in core_endpoints.iter_mut() {
@@ -1394,7 +1394,7 @@ async fn do_new_custodian_context(
         req_tasks.spawn(async move {
             cur_client
                 .new_custodian_context(tonic::Request::new(NewCustodianContextRequest {
-                    active_context: None, // TODO not really used now
+                    active_context: None, // TODO(#2748) not really used now, should be refactored
                     new_context: Some(new_context_cloned),
                 }))
                 .await
@@ -2130,7 +2130,7 @@ pub async fn execute_cmd(
             pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
         }
         CCCommand::CustodianRecoveryInit(NoParameters {}) => {
-            // todo should have path as param
+            // TODO(#2748) should have path as a parameter
             let res = do_custodian_recovery_init(&mut core_endpoints_req).await?;
             for cur_rec_req in &res {
                 let path = destination_prefix

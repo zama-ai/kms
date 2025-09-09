@@ -185,6 +185,7 @@ async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T) -> String {
         max_iter: 200,
         expect_all_responses: true,
     };
+
     println!("Doing insecure key-gen");
     let key_gen_results = execute_cmd(&config, keys_folder).await.unwrap();
     println!("Insecure key-gen done");
@@ -335,7 +336,7 @@ async fn custodian_backup_init<T: DockerComposeContext>(ctx: &T) -> String {
 
     let keys_folder: &Path = Path::new("tests/data/keys");
 
-    let init_command = CCCommand::CustodianRecoveryInit(NoParameters {}); //todo path should be given as arugment
+    let init_command = CCCommand::CustodianRecoveryInit(NoParameters {}); // TODO(#2748) not really used now, should be refactored
     let init_config = CmdConfig {
         file_conf: Some(String::from(path_to_config.to_str().unwrap())),
         command: init_command,
@@ -546,20 +547,15 @@ async fn test_centralized_backup_restore(ctx: &DockerComposeCentralizedContext) 
     let _crs_id = crs_gen(ctx, true).await;
     let _ = backup_restore(ctx).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
-    // However we are testing this in the service/client. Hence this tests is mainly to ensure that the outer
-    // end points and content returned from the KMS to the custodians work as expected.
+    // However we are testing this in the service/client tests. Hence this tests is mainly to ensure that the outer
+    // end points, and content returned from the KMS to the custodians, work as expected.
 }
 
 #[test_context(DockerComposeCentralizedCustodianContext)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centrals_custodian_backup(ctx: &DockerComposeCentralizedCustodianContext) {
+async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodianContext) {
     init_testing();
-    // We don't have endpoints that allow us to purge the generate material within the docker images
-    // so we can here only test that the end points are alive and acting as expected, rather than validating that
-    // data gets restored. Instead test in the client within core have tests for validating this
-    // First setup context, then back up init, use the result with the custodian client and then call recovery
-    // Start by setting up the custodians
     let amount_custodians = 5;
     let custodian_threshold = 2;
     let amount_operators = 4; // TODO should not be hardcoded but not sure how I can get it easily
@@ -580,9 +576,9 @@ async fn test_centrals_custodian_backup(ctx: &DockerComposeCentralizedCustodianC
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
     let _ = backup_restore(ctx).await;
-    // Observe that we cannot modify the state of the servers, so we cannot really validate recovery.
-    // However we are testing this in the service/client. Hence this tests is mainly to ensure that the outer
-    // end points and content returned from the KMS to the custodians work as expected.
+    // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
+    // However we are testing this in the service/client tests. Hence this tests is mainly to ensure that the outer
+    // end points, and content returned from the KMS to the custodians, work as expected.
 }
 
 #[ignore]
@@ -868,9 +864,9 @@ async fn test_threshold_backup_restore(ctx: &DockerComposeThresholdContextTest) 
     init_testing();
     let _crs_id = crs_gen(ctx, true).await;
     let _ = backup_restore(ctx).await;
-    // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
-    // However we are testing this in the service/client. Hence this tests is mainly to ensure that the outer
-    // end points and content returned from the KMS to the custodians work as expected.
+    // We don't have endpoints that allow us to purge the generate material within the docker images
+    // so we can here only test that the end points are alive and acting as expected, rather than validating that
+    // data gets restored. Instead tests in the client within core have tests for validating this
 }
 
 #[test_context(DockerComposeThresholdCustodianContextTest)]
@@ -878,11 +874,6 @@ async fn test_threshold_backup_restore(ctx: &DockerComposeThresholdContextTest) 
 #[serial(docker)]
 async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianContextTest) {
     init_testing();
-    // We don't have endpoints that allow us to purge the generate material within the docker images
-    // so we can here only test that the end points are alive and acting as expected, rather than validating that
-    // data gets restored. Instead test in the client within core have tests for validating this
-    // First setup context, then back up init, use the result with the custodian client and then call recovery
-    // Start by setting up the custodians
     let amount_custodians = 5;
     let custodian_threshold = 2;
     let amount_operators = 4; // TODO should not be hardcoded but not sure how I can get it easily
@@ -923,11 +914,10 @@ async fn generate_custodian_keys_to_file(
         let setup_msg = custodian
             .generate_setup_message(rng, format!("CUSTODIAN_{cur_idx}"))
             .unwrap();
-        let path = root_path.join("CUSTODIAN").join("setup-msg").join(format!(
-            "setup-{}", //{MAIN_SEPARATOR}{}",
-            // cur_rec_req.backup_id(),
-            cur_idx
-        ));
+        let path = root_path
+            .join("CUSTODIAN")
+            .join("setup-msg")
+            .join(format!("setup-{}", cur_idx));
         safe_write_element_versioned(&path, &setup_msg)
             .await
             .unwrap();

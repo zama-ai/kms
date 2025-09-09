@@ -59,9 +59,9 @@ impl Named for InternalRecoveryRequest {
 
 /// The backup data returned to the custodians during recovery.
 /// WARNING: It is crucial that this is transported safely as it does not
-/// contain any authentication feature on the ephemeral encryption key [`enc_key`]
-/// since the we must assume the operator has no access to the private storage when
-/// creating this object.
+/// contain any authentication on the ephemeral encryption key [`enc_key`].
+/// This is because we have to assume that the operator has no access to the private storage
+/// when creating this object.
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(InternalRecoveryRequestVersioned)]
 pub struct InternalRecoveryRequest {
