@@ -189,7 +189,7 @@ impl<
 
                 Dec::decrypt(
                     &mut noiseflood_session,
-                    keys.integer_server_key.clone(),
+                    Arc::clone(&keys.integer_server_key),
                     keys.sns_key
                         .as_ref()
                         .ok_or_else(|| anyhow::anyhow!("missing sns key"))?
@@ -305,7 +305,7 @@ impl<
         let permit = self.rate_limiter.start_pub_decrypt().await?;
 
         let (ciphertexts, key_id, req_id, eip712_domain) = {
-            let inner_compute = inner.clone();
+            let inner_compute = Arc::clone(&inner);
             spawn_compute_bound(move || validate_public_decrypt_req(&inner_compute))
                 .await
                 .map_err(|_| {
