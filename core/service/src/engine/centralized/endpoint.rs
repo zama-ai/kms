@@ -2,8 +2,8 @@ use crate::engine::centralized::central_kms::CentralizedKms;
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
-    self, CustodianRecoveryRequest, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
-    KeyMaterialAvailabilityResponse, OperatorPublicKey,
+    self, CustodianRecoveryRequest, Empty, HealthStatusResponse, InitRequest, KeyGenPreprocRequest,
+    KeyGenPreprocResult, KeyMaterialAvailabilityResponse, OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::utils::tonic_result::some_or_tonic_abort;
@@ -379,6 +379,34 @@ impl<
             Vec::new(), // Centralized KMS doesn't support preprocessing material
         )
         .await?;
+
+        Ok(Response::new(response))
+    }
+
+    #[tracing::instrument(skip(self, _request))]
+    async fn get_health_status(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<kms_grpc::kms::v1::HealthStatusResponse>, Status> {
+        // Get own key material
+        let own_material = self
+            .get_key_material_availability(Request::new(Empty {}))
+            .await?;
+        let own_material = own_material.into_inner();
+
+        // Centralized mode has no peers, always optimal if reachable
+        let response = HealthStatusResponse {
+            status: 1,         // HEALTH_STATUS_OPTIMAL
+            peers: Vec::new(), // No peers in centralized mode
+            my_fhe_key_ids: own_material.fhe_key_ids,
+            my_crs_ids: own_material.crs_ids,
+            my_preprocessing_key_ids: Vec::new(), // Centralized doesn't use preprocessing
+            my_storage_info: own_material.storage_info,
+            node_type: 1,          // NODE_TYPE_CENTRALIZED
+            my_party_id: 1,        // Not applicable for centralized
+            threshold_required: 0, // Not applicable for centralized
+            nodes_reachable: 1,    // Only self
+        };
 
         Ok(Response::new(response))
     }

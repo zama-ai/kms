@@ -60,4 +60,6 @@ service CoreServiceEndpoint {
   rpc CustodianBackupRecovery(kms.v1.CustodianRecoveryRequest) returns (kms.v1.Empty);
 
   rpc GetKeyMaterialAvailability(kms.v1.Empty) returns (kms.v1.KeyMaterialAvailabilityResponse);
+
+  rpc GetHealthStatus(kms.v1.Empty) returns (kms.v1.HealthStatusResponse);
 }
