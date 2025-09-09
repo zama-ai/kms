@@ -1222,6 +1222,7 @@ mod tests {
     }
 
     #[rstest]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     #[serial_test::serial]
@@ -1237,6 +1238,7 @@ mod tests {
     }
 
     #[rstest]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     #[serial_test::serial]
@@ -1256,6 +1258,7 @@ mod tests {
     }
 
     #[rstest]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
     #[serial_test::serial]
