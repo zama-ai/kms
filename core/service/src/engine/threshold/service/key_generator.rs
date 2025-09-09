@@ -1575,6 +1575,7 @@ mod tests {
                 keyset_config: None,
                 keyset_added_info: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
 
             assert_eq!(
@@ -1603,6 +1604,7 @@ mod tests {
                 keyset_config: None,
                 keyset_added_info: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
 
             assert_eq!(
@@ -1627,6 +1629,7 @@ mod tests {
                 keyset_config: Some(keyset_config),
                 keyset_added_info: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
 
             assert_eq!(
@@ -1658,6 +1661,7 @@ mod tests {
             keyset_config: None,
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         });
 
         assert_eq!(
@@ -1686,6 +1690,7 @@ mod tests {
                 keyset_config: None,
                 keyset_added_info: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
 
             assert_eq!(
@@ -1725,6 +1730,7 @@ mod tests {
             keyset_config: None,
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         });
 
         // keygen should pass because the failure occurs in background process
@@ -1760,6 +1766,7 @@ mod tests {
             keyset_config: None,
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         };
 
         kg.key_gen(tonic::Request::new(request0)).await.unwrap();
@@ -1774,6 +1781,7 @@ mod tests {
             keyset_config: None,
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         };
         assert_eq!(
             kg.key_gen(tonic::Request::new(request1))
@@ -1811,6 +1819,7 @@ mod tests {
             keyset_config: None,
             keyset_added_info: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         });
 
         kg.key_gen(tonic_req).await.unwrap();

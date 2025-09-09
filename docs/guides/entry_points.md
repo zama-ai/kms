@@ -45,7 +45,7 @@ While ZWS offers a setup of the Zama KMS, it is also possible to host this yours
 Still, observe that even hosting your own setup of the Zama KMS requires not only running $$n$$ instances of the KMS Core, but also the $$n$$ instances of the KMS Connector, Redis database, along with $$n$$ S3 buckets (although a local filesystem can be used instead of S3).
 
 ## Zama KMS abstract commands
-Below we go through the commands that can be executed at the Zama KMS gRPC endpoint. To access these using the gRPC endpoints we refer to the [API](../references/api/README.md) specification and for information on how try to run the server see [here on-perm installation](./on_prem_installation.md) and [here for SaaS usage](./saas_usage.md) and consult the [CLI Core Client README](../../core-client/README.md) for information on how to try to issue these commands locally.
+Below we go through the commands that can be executed at the Zama KMS gRPC endpoint. To access these using the gRPC endpoints we refer to the [API](../references/api/core_grpc.md) specification and for information on how try to run the server see [here on-perm installation](./on_prem_installation.md) and [here for SaaS usage](./saas_usage.md) and consult the [CLI Core Client README](../../core-client/README.md) for information on how to try to issue these commands locally.
 
 ### Preprocessing
 Preprocessing is needed to generate correlated randomness which is used later, when you generate a FHE key set, or a Key Switching Key (KSK). Preprocessed material can only be used _once_ and hence needs to be generated every time you wish to generate an FHE key set.
