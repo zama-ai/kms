@@ -819,6 +819,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -841,6 +842,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -868,6 +870,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -895,6 +898,7 @@ mod tests {
                 client_address: "bad client address".to_string(),
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -938,6 +942,7 @@ mod tests {
                 client_address: client_address.to_checksum(None),
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
             assert_eq!(
                 user_decryptor
@@ -975,6 +980,7 @@ mod tests {
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         });
         assert_eq!(
             user_decryptor
@@ -1012,6 +1018,7 @@ mod tests {
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         });
         assert_eq!(
             user_decryptor
@@ -1055,6 +1062,7 @@ mod tests {
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         };
         user_decryptor
             .user_decrypt(Request::new(request.clone()))
@@ -1097,6 +1105,7 @@ mod tests {
             client_address: client_address.to_checksum(None),
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         });
         user_decryptor.user_decrypt(request).await.unwrap();
         user_decryptor

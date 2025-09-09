@@ -1165,6 +1165,7 @@ mod tests {
                 domain: None,
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
+                epoch_id: None,
             };
             assert!(req
                 .compute_link_checked()
@@ -1184,6 +1185,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
+                epoch_id: None,
             };
             assert!(req
                 .compute_link_checked()
@@ -1206,6 +1208,7 @@ mod tests {
                 domain: Some(bad_domain),
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
+                epoch_id: None,
             };
 
             assert!(req
@@ -1226,6 +1229,7 @@ mod tests {
                 domain: Some(domain.clone()),
                 extra_data: vec![],
                 context_id: Some(context_id.into()),
+                epoch_id: None,
             };
             assert!(req.compute_link_checked().is_ok());
         }
