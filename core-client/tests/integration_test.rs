@@ -368,12 +368,13 @@ async fn custodian_backup_recovery<T: DockerComposeContext>(
     let keys_folder: &Path = Path::new("tests/data/keys");
     let mut custodian_recovery_outputs = Vec::new();
     for op_idx in 1..=amount_operators {
-        let pub_store = FileStorage::new(
-            Some(keys_folder),
-            StorageType::PUB,
-            Some(Role::indexed_from_one(op_idx)),
-        )
-        .unwrap();
+        // Handle the central case elegantly
+        let cur_role = if amount_operators > 1 {
+            Some(Role::indexed_from_one(op_idx))
+        } else {
+            None
+        };
+        let pub_store = FileStorage::new(Some(keys_folder), StorageType::PUB, cur_role).unwrap();
         let verf_key = pub_store
             .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
             .await
@@ -558,7 +559,6 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
     init_testing();
     let amount_custodians = 5;
     let custodian_threshold = 2;
-    let amount_operators = 4; // TODO should not be hardcoded but not sure how I can get it easily
     let mut rng = AesRng::seed_from_u64(41);
     let keys_folder: &Path = Path::new("tests/data/keys");
     let (seeds, setup_msg_paths) =
@@ -569,7 +569,7 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
     let recovery_backup_id = custodian_backup_recovery(
         ctx,
         &mut rng,
-        amount_operators,
+        1,
         RequestId::from_str(&cus_backup_id).unwrap(),
         seeds,
     )
