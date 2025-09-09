@@ -68,7 +68,7 @@ pub struct KeySet {
 
 impl KeySet {
     pub fn get_raw_lwe_client_key(&self) -> LweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (inner_client_key, _, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
         match inner_client_key.into_raw_parts().atomic_pattern {
             shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
                 standard_atomic_pattern_client_key,
@@ -88,7 +88,7 @@ impl KeySet {
         // In the normal DKG the shares that correspond to the lwe private key
         // is copied to the encryption private key if the compact PKE parameters
         // don't exist.
-        let (_, compact_private_key, _, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, compact_private_key, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
         if let Some(inner) = compact_private_key {
             let raw_parts = inner.0.into_raw_parts();
             raw_parts.into_raw_parts().0
@@ -98,7 +98,7 @@ impl KeySet {
     }
 
     pub fn get_raw_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u64>>> {
-        let (_, _, compression_sk, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, _, compression_sk, _, _, _, _) = self.client_key.clone().into_raw_parts();
         if let Some(inner) = compression_sk {
             let raw_parts = inner.into_raw_parts();
             Some(raw_parts.post_packing_ks_key)
@@ -108,7 +108,7 @@ impl KeySet {
     }
 
     pub fn get_raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
+        let (inner_client_key, _, _, _, _, _, _) = self.client_key.clone().into_raw_parts();
         match inner_client_key.into_raw_parts().atomic_pattern {
             shortint::client_key::atomic_pattern::AtomicPatternClientKey::Standard(
                 standard_atomic_pattern_client_key,
@@ -123,7 +123,7 @@ impl KeySet {
     }
 
     pub fn get_raw_glwe_client_sns_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
-        let (_, _, _, noise_squashing_key, _, _) = self.client_key.clone().into_raw_parts();
+        let (_, _, _, noise_squashing_key, _, _, _) = self.client_key.clone().into_raw_parts();
         noise_squashing_key.map(|sns_key| sns_key.into_raw_parts().into_raw_parts().0)
     }
 
@@ -133,7 +133,7 @@ impl KeySet {
     }
 
     pub fn get_raw_sns_compression_client_key(&self) -> Option<GlweSecretKey<Vec<u128>>> {
-        let (_, _, _, _, sns_compression_key, _) = self.client_key.clone().into_raw_parts();
+        let (_, _, _, _, sns_compression_key, _, _) = self.client_key.clone().into_raw_parts();
         sns_compression_key
             .map(|sns_compression_key| sns_compression_key.into_raw_parts().into_raw_parts().0)
     }
@@ -808,6 +808,7 @@ pub fn to_hl_client_key(
         compression_key,
         noise_squashing_key,
         sns_compression_key,
+        None, //TODO: Parameters for the Rerand key
         tfhe::Tag::default(),
     ))
 }
@@ -974,10 +975,18 @@ impl PartialEq for FhePubKeySet {
             pk.into_raw_parts() == other_pk.into_raw_parts() && tag == other_tag
         };
 
-        let (sks, ksk, comp, decomp, sns, _sns_comp, tag) =
+        let (sks, ksk, comp, decomp, sns, _sns_comp, _rerand_key, tag) =
             self.server_key.clone().into_raw_parts();
-        let (other_sks, other_ksk, other_comp, other_decomp, other_sns, _other_sns_comp, other_tag) =
-            other.server_key.clone().into_raw_parts();
+        let (
+            other_sks,
+            other_ksk,
+            other_comp,
+            other_decomp,
+            other_sns,
+            _other_sns_comp,
+            _other_rerand_key,
+            other_tag,
+        ) = other.server_key.clone().into_raw_parts();
 
         // TODO: Can't compare the sns compression keys, and can't call into_raw_parts on them either.
         let ok2 = sks.into_raw_parts() == other_sks.into_raw_parts()
@@ -1011,7 +1020,7 @@ pub fn run_decompression_test(
         Some(inner) => inner,
         None => &keyset1_client_key.generate_server_key(),
     };
-    let (_, _, _, decompression_key1, _, _, _) = server_key1.clone().into_raw_parts();
+    let (_, _, _, decompression_key1, _, _, _, _) = server_key1.clone().into_raw_parts();
     let decompression_key1 = decompression_key1.unwrap().into_raw_parts();
     assert_eq!(
         decompression_key1.blind_rotate_key.glwe_size(),
@@ -1043,7 +1052,7 @@ pub fn run_decompression_test(
 
     // then decompression it into keyset 2
     println!("Decompression ct under keyset1 to keyset2");
-    let (radix_ciphertext, _) = compressed_ct.into_raw_parts();
+    let (radix_ciphertext, _, _) = compressed_ct.into_raw_parts();
     let ct2: tfhe::FheUint32 = radix_ciphertext
         .get(0, &decompression_key)
         .unwrap()
@@ -1093,6 +1102,7 @@ pub fn combine_and_run_sns_compression_test(
         client_key_parts.3,
         Some(int_sns_compression_private_key),
         client_key_parts.5,
+        client_key_parts.6,
     );
 
     let server_key = match server_key {
@@ -1121,6 +1131,7 @@ pub fn combine_and_run_sns_compression_test(
         server_key_parts.4,
         Some(int_sns_compression_key),
         server_key_parts.6,
+        server_key_parts.7,
     );
 
     run_sns_compression_test(new_client_key, new_server_key);

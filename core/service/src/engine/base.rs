@@ -314,13 +314,13 @@ macro_rules! deserialize_to_low_level_helper {
                             .ok_or_else(|| anyhow::anyhow!("missing decompression key"))?,
                         $serialized_high_level,
                     )?;
-                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                let (radix_ct, _id, _tag, _rerand_metadata) = hl_ct.into_raw_parts();
                 LowLevelCiphertext::Small(RadixOrBoolCiphertext::Radix(radix_ct))
             }
             CiphertextFormat::SmallExpanded => {
                 let hl_ct: $rust_type =
                     decompression::tfhe_safe_deserialize::<$rust_type>($serialized_high_level)?;
-                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
+                let (radix_ct, _id, _tag, _rerand_metadata) = hl_ct.into_raw_parts();
                 LowLevelCiphertext::Small(RadixOrBoolCiphertext::Radix(radix_ct))
             }
             CiphertextFormat::BigCompressed => {
@@ -1314,6 +1314,7 @@ pub(crate) mod tests {
             decompression_key,
             _noise_squashing_key,
             _noise_squashing_compression_key,
+            _rerand_key,
             _tag,
         ) = pubkeyset.server_key.clone().into_raw_parts();
         assert!(compression_key.is_some());
