@@ -1,12 +1,9 @@
 use crate::client::client_wasm::Client;
-#[cfg(feature = "insecure")]
-use crate::client::tests::threshold::common::threshold_handles;
 use crate::client::tests::threshold::common::threshold_handles_custodian_backup;
 use crate::consts::KEY_PATH_PREFIX;
 use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::backup_pke::BackupCiphertext;
 use crate::util::file_handling::safe_read_element_versioned;
-#[cfg(feature = "insecure")]
 use crate::util::key_setup::test_tools::purge;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::{
@@ -24,7 +21,6 @@ use std::path::PathBuf;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
-#[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_new_custodian_context_threshold() {
@@ -150,7 +146,7 @@ async fn new_custodian_context(
     )
     .await;
     for cur_idx in 0..reboot_sig_keys.len() {
-        // Check that the backups are the same as the onces loaded before the reboot
+        // Check that the backups are the same as the ones loaded before the reboot
         assert!(reboot_sig_keys[cur_idx] == second_sig_keys[cur_idx]);
     }
 }
@@ -196,38 +192,6 @@ async fn launch_new_cus(
     }
     assert_eq!(responses_gen.len(), amount_parties);
     responses_gen
-}
-
-#[cfg(feature = "insecure")]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn threshold_new_custodian() {
-    let amount_parties = 4;
-    let param = FheParameter::Test;
-    let dkg_param: WrappedDKGParams = param.into();
-
-    let key_id: RequestId = derive_request_id(&format!(
-        "threshold_new_custodian_{amount_parties}_{param:?}",
-    ))
-    .unwrap();
-    let test_path = None;
-
-    purge(test_path, test_path, test_path, &key_id, amount_parties).await;
-    let (_kms_servers, kms_clients, internal_client) =
-        threshold_handles(*dkg_param, amount_parties, true, None, None).await;
-
-    // Setup a custodian context before generating keys
-    let _keys = crate::client::tests::threshold::key_gen_tests::run_threshold_keygen(
-        param,
-        &kms_clients,
-        &internal_client,
-        None,
-        &key_id,
-        None,
-        None,
-        true,
-    )
-    .await;
 }
 
 async fn backup_exists(amount_parties: usize, test_path: Option<&Path>) -> bool {

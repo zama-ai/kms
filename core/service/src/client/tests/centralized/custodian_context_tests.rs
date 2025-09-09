@@ -1,11 +1,8 @@
 use crate::client::client_wasm::Client;
-#[cfg(feature = "insecure")]
-use crate::client::tests::centralized::key_gen_tests::key_gen_centralized;
 use crate::consts::KEY_PATH_PREFIX;
 use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::backup_pke::BackupCiphertext;
 use crate::util::file_handling::safe_read_element_versioned;
-#[cfg(feature = "insecure")]
 use crate::util::key_setup::test_tools::purge;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::{
@@ -116,23 +113,6 @@ pub(crate) async fn run_new_cus_context(
         .await;
     assert!(response.is_ok());
     mnemonics
-}
-
-#[cfg(feature = "insecure")]
-#[tokio::test(flavor = "multi_thread")]
-#[serial]
-async fn central_new_custodian() {
-    let param = FheParameter::Test;
-    let dkg_param: WrappedDKGParams = param.into();
-
-    let key_id: RequestId =
-        derive_request_id(&format!("central_new_custodian_{param:?}",)).unwrap();
-    purge(None, None, None, &key_id, 1).await;
-    let (_kms_server, _kms_client, _internal_client) =
-        crate::client::test_tools::centralized_handles(&dkg_param, None).await;
-
-    // Setup a custodian context before generating keys
-    key_gen_centralized(&key_id, param, None, None).await;
 }
 
 async fn backup_exists() -> bool {
