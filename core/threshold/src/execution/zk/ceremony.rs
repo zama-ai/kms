@@ -1222,9 +1222,9 @@ mod tests {
     }
 
     #[rstest]
-    #[serial_test::serial]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
+    #[serial_test::serial]
     async fn test_dropping_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         use crate::malicious_execution::zk::ceremony::DroppingCeremony;
 
@@ -1237,9 +1237,9 @@ mod tests {
     }
 
     #[rstest]
-    #[serial_test::serial]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
+    #[serial_test::serial]
     async fn test_bad_proof_ceremony<BCast: Broadcast + Default + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
@@ -1256,9 +1256,9 @@ mod tests {
     }
 
     #[rstest]
-    #[serial_test::serial]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
+    #[serial_test::serial]
     async fn test_rushing_ceremony<BCast: Broadcast + Default + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
