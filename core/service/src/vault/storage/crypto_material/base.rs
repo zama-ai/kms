@@ -241,7 +241,7 @@ where
     // =========================
     // Storage Primitives
     // =========================
-
+    // TODO(#2748) seems to be dead code
     // Simplified storage methods without metadata
     pub async fn store_private_serializable_data<T>(
         &self,
@@ -266,6 +266,7 @@ where
         Ok(())
     }
 
+    // TODO(#2748) seems to be dead code
     pub async fn store_public_serializable_data<T>(
         &self,
         req_id: &RequestId,
