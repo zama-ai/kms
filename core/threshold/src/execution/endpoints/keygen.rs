@@ -1081,7 +1081,7 @@ pub mod tests {
         set_server_key,
         shortint::{
             client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
-            noise_squashing::NoiseSquashingKey,
+            noise_squashing::{NoiseSquashingKey, Shortint128BootstrappingKey},
             parameters::CoreCiphertextModulus,
             PBSParameters,
         },
@@ -1920,7 +1920,7 @@ pub mod tests {
             let mut tmp = gen_key_set(params, &mut rng);
             let ck_parts = tmp.client_key.into_raw_parts();
             tmp.client_key = tfhe::ClientKey::from_raw_parts(
-                ck_parts.0, ck_parts.1, ck_parts.2, ck_parts.3, None, ck_parts.5,
+                ck_parts.0, ck_parts.1, ck_parts.2, ck_parts.3, None, ck_parts.5, ck_parts.6,
             );
             tmp
         };
@@ -2259,11 +2259,11 @@ pub mod tests {
 
         let sns_raw_private_key = GlweSecretKey::from_container(
             big_sk_glwe.clone().unwrap().into_container(),
-            params.sns_params.polynomial_size,
+            params.sns_params.polynomial_size(),
         );
 
         let pk: FhePubKeySet = read_element(prefix_path.join("pk.der")).unwrap();
-        let (integer_server_key, _, _, _, ck, _, _) = pk.server_key.clone().into_raw_parts();
+        let (integer_server_key, _, _, _, ck, _, _, _) = pk.server_key.clone().into_raw_parts();
         let ck = ck.unwrap();
 
         set_server_key(pk.server_key);
@@ -2330,17 +2330,35 @@ pub mod tests {
         drop(bsk_out);
 
         let ck_bis = {
-            let (_, mod_switch, pt_modulus, pt_carry, ct_modulus) =
+            let (key, pt_modulus, pt_carry, ct_modulus) =
                 ck.clone().into_raw_parts().into_raw_parts();
+            let mod_switch = match key {
+                Shortint128BootstrappingKey::Classic {
+                    bsk: _bsk,
+                    modulus_switch_noise_reduction_key,
+                } => modulus_switch_noise_reduction_key,
+                Shortint128BootstrappingKey::MultiBit {
+                    bsk: _bsk,
+                    thread_count: _thread_count,
+                    deterministic_execution: _deterministic_execution,
+                } => panic!("Do not support multibit for now"),
+            };
+
             tfhe::integer::noise_squashing::NoiseSquashingKey::from_raw_parts(
                 NoiseSquashingKey::from_raw_parts(
-                    fbsk_out, mod_switch, pt_modulus, pt_carry, ct_modulus,
+                    Shortint128BootstrappingKey::Classic {
+                        bsk: fbsk_out,
+                        modulus_switch_noise_reduction_key: mod_switch,
+                    },
+                    pt_modulus,
+                    pt_carry,
+                    ct_modulus,
                 ),
             )
         };
 
         let small_ct: FheUint64 = expanded_encrypt(&ddec_pk, message as u64, 64).unwrap();
-        let (raw_ct, _id, _tag) = small_ct.clone().into_raw_parts();
+        let (raw_ct, _id, _tag, _rerand_metadata) = small_ct.clone().into_raw_parts();
         let large_ct = ck
             .squash_radix_ciphertext_noise(&integer_server_key, &raw_ct)
             .unwrap();
@@ -2389,6 +2407,7 @@ pub mod tests {
                 None,
                 None,
                 None,
+                None,
                 tfhe::Tag::default(),
             );
             try_tfhe_pk_compactlist_computation(&tfhe_sk, &pk.server_key, &pk.public_key);
@@ -2424,6 +2443,7 @@ pub mod tests {
         // encrypt/decrypt. We only compress and decompress which doesn't require this key.
         let tfhe_sk = tfhe::ClientKey::from_raw_parts(
             shortint_sk.into(),
+            None,
             None,
             None,
             None,
