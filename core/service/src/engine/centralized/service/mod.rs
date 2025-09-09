@@ -11,9 +11,11 @@ mod context;
 mod crs_gen;
 mod decryption;
 mod key_gen;
+mod preprocessing;
 
 // Re-export all the service components
 pub use context::*;
 pub use crs_gen::*;
 pub use decryption::*;
 pub use key_gen::*;
+pub use preprocessing::*;

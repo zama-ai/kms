@@ -471,6 +471,7 @@ pub struct RealCentralizedKms<
 > {
     pub(crate) base_kms: BaseKmsStruct,
     pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
+    pub(crate) prepreocessing_ids: Arc<RwLock<MetaStore<Vec<u8>>>>,
     // Map storing ongoing key generation requests.
     pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     // Map storing ongoing public decryption requests.
@@ -957,6 +958,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             RealCentralizedKms {
                 base_kms: BaseKmsStruct::new(sk)?,
                 crypto_storage,
+                prepreocessing_ids: Arc::new(RwLock::new(MetaStore::new_from_map(HashMap::new()))),
                 key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info))),
                 pub_dec_meta_store: Arc::new(RwLock::new(MetaStore::new(
                     DEC_CAPACITY,
