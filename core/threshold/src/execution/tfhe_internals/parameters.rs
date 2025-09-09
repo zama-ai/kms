@@ -229,6 +229,7 @@ pub struct DKGParamsRegular {
         ShortintKeySwitchingParameters,
     )>,
     pub compression_decompression_parameters: Option<CompressionParameters>,
+    pub cpk_re_randomization_ksk_params: Option<ShortintKeySwitchingParameters>,
 }
 
 impl From<DKGParamsRegular> for PBSParameters {
@@ -289,9 +290,11 @@ pub trait DKGParamsBasics: Sync {
     fn compression_sk_num_bits(&self) -> usize;
     fn decomposition_base_log_ksk(&self) -> DecompositionBaseLog;
     fn decomposition_base_log_pksk(&self) -> DecompositionBaseLog;
+    fn decomposition_base_log_rerand_ksk(&self) -> DecompositionBaseLog;
     fn decomposition_base_log_bk(&self) -> DecompositionBaseLog;
     fn decomposition_level_count_ksk(&self) -> DecompositionLevelCount;
     fn decomposition_level_count_pksk(&self) -> DecompositionLevelCount;
+    fn decomposition_level_count_rerand_ksk(&self) -> DecompositionLevelCount;
     fn decomposition_level_count_bk(&self) -> DecompositionLevelCount;
 
     // `num_needed_noise_` functions do not consider take KeySetConfig into consideration
@@ -301,6 +304,7 @@ pub trait DKGParamsBasics: Sync {
     fn num_needed_noise_bk(&self) -> NoiseInfo;
     fn num_needed_noise_compression_key(&self) -> NoiseInfo;
     fn num_needed_noise_decompression_key(&self) -> NoiseInfo;
+    fn num_needed_noise_rerand_ksk(&self) -> NoiseInfo;
     // msnrk: modulus switch noise reduction key
     fn num_needed_noise_msnrk(&self) -> NoiseInfo;
 
@@ -319,6 +323,7 @@ pub trait DKGParamsBasics: Sync {
     fn has_dedicated_compact_pk_params(&self) -> bool;
     fn get_ksk_params(&self) -> KSKParams;
     fn get_pksk_params(&self) -> Option<KSKParams>;
+    fn get_rerand_ksk_params(&self) -> Option<KSKParams>;
     fn get_bk_params(&self) -> BKParams;
     // msnrk: modulus switch noise reduction key
     fn get_msnrk_configuration(&self) -> MSNRKConfiguration;
@@ -439,6 +444,9 @@ impl DKGParamsBasics for DKGParamsRegular {
 
                 //For decompression keys
                 num_bits_needed += self.num_needed_noise_decompression_key().num_bits_needed();
+
+                //For ReRand keys
+                num_bits_needed += self.num_needed_noise_rerand_ksk().num_bits_needed();
             }
             KeySetConfig::DecompressionOnly => {
                 //For decompression keys
@@ -551,12 +559,22 @@ impl DKGParamsBasics for DKGParamsRegular {
             .map_or(DecompositionBaseLog(0), |(_, p)| p.ks_base_log)
     }
 
+    fn decomposition_base_log_rerand_ksk(&self) -> DecompositionBaseLog {
+        self.cpk_re_randomization_ksk_params
+            .map_or(DecompositionBaseLog(0), |p| p.ks_base_log)
+    }
+
     fn decomposition_base_log_bk(&self) -> DecompositionBaseLog {
         self.ciphertext_parameters.pbs_base_log
     }
 
     fn decomposition_level_count_ksk(&self) -> DecompositionLevelCount {
         self.ciphertext_parameters.ks_level
+    }
+
+    fn decomposition_level_count_rerand_ksk(&self) -> DecompositionLevelCount {
+        self.cpk_re_randomization_ksk_params
+            .map_or(DecompositionLevelCount(0), |p| p.ks_level)
     }
 
     fn decomposition_level_count_pksk(&self) -> DecompositionLevelCount {
@@ -598,6 +616,20 @@ impl DKGParamsBasics for DKGParamsRegular {
             * self.polynomial_size().0
             * self.decomposition_level_count_ksk().0;
         let bound = NoiseBounds::LweNoise(self.lwe_tuniform_bound());
+        NoiseInfo { amount, bound }
+    }
+
+    fn num_needed_noise_rerand_ksk(&self) -> NoiseInfo {
+        // If there's a dedicated compact key with same parameter ,
+        // we won't need to generate a new rerand key.
+        let amount = if self.cpk_re_randomization_ksk_params
+            == self.dedicated_compact_public_key_parameters.map(|(_, p)| p)
+        {
+            0
+        } else {
+            self.lwe_hat_dimension().0 * self.decomposition_level_count_rerand_ksk().0
+        };
+        let bound = NoiseBounds::LweNoise(self.glwe_tuniform_bound());
         NoiseInfo { amount, bound }
     }
 
@@ -682,6 +714,33 @@ impl DKGParamsBasics for DKGParamsRegular {
             decomposition_base_log: self.decomposition_base_log_pksk(),
             decomposition_level_count: self.decomposition_level_count_pksk(),
         })
+    }
+
+    fn get_rerand_ksk_params(&self) -> Option<KSKParams> {
+        let NoiseInfo { amount, bound } = self.num_needed_noise_rerand_ksk();
+        match (
+            self.cpk_re_randomization_ksk_params,
+            self.dedicated_compact_public_key_parameters,
+        ) {
+            (Some(cpk_re_randomization_ksk_params), Some(_)) => {
+                assert!(
+                    matches!(
+                        cpk_re_randomization_ksk_params.destination_key,
+                        EncryptionKeyChoice::Big
+                    ),
+                    "CompactPublicKey re-randomization can only be enabled \
+                    targeting the large secret key."
+                );
+                Some(KSKParams {
+                    num_needed_noise: amount,
+                    noise_bound: bound,
+                    decomposition_base_log: self.decomposition_base_log_rerand_ksk(),
+                    decomposition_level_count: self.decomposition_level_count_rerand_ksk(),
+                })
+            }
+            (_, None) => None,
+            _ => panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization."),
+        }
     }
 
     fn get_bk_params(&self) -> BKParams {
@@ -852,6 +911,7 @@ impl DKGParamsBasics for DKGParamsRegular {
                     self.num_needed_noise_bk(),
                     self.num_needed_noise_pksk(),
                     self.num_needed_noise_decompression_key(),
+                    self.num_needed_noise_rerand_ksk(),
                 ];
 
                 #[cfg(test)]
@@ -1111,6 +1171,10 @@ impl DKGParamsBasics for DKGParamsSnS {
         self.regular_params.decomposition_base_log_pksk()
     }
 
+    fn decomposition_base_log_rerand_ksk(&self) -> DecompositionBaseLog {
+        self.regular_params.decomposition_base_log_rerand_ksk()
+    }
+
     fn decomposition_base_log_bk(&self) -> DecompositionBaseLog {
         self.regular_params.decomposition_base_log_bk()
     }
@@ -1121,6 +1185,10 @@ impl DKGParamsBasics for DKGParamsSnS {
 
     fn decomposition_level_count_pksk(&self) -> DecompositionLevelCount {
         self.regular_params.decomposition_level_count_pksk()
+    }
+
+    fn decomposition_level_count_rerand_ksk(&self) -> DecompositionLevelCount {
+        self.regular_params.decomposition_level_count_rerand_ksk()
     }
 
     fn decomposition_level_count_bk(&self) -> DecompositionLevelCount {
@@ -1137,6 +1205,10 @@ impl DKGParamsBasics for DKGParamsSnS {
 
     fn num_needed_noise_pksk(&self) -> NoiseInfo {
         self.regular_params.num_needed_noise_pksk()
+    }
+
+    fn num_needed_noise_rerand_ksk(&self) -> NoiseInfo {
+        self.regular_params.num_needed_noise_rerand_ksk()
     }
 
     fn num_needed_noise_bk(&self) -> NoiseInfo {
@@ -1177,6 +1249,10 @@ impl DKGParamsBasics for DKGParamsSnS {
 
     fn get_pksk_params(&self) -> Option<KSKParams> {
         self.regular_params.get_pksk_params()
+    }
+
+    fn get_rerand_ksk_params(&self) -> Option<KSKParams> {
+        self.regular_params.get_rerand_ksk_params()
     }
 
     fn get_bk_params(&self) -> BKParams {
@@ -1474,6 +1550,7 @@ pub const BC_PARAMS: DKGParamsRegular = DKGParamsRegular {
     compression_decompression_parameters: Some(
         tfhe::shortint::parameters::v1_0::V1_0_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128
     ),
+    cpk_re_randomization_ksk_params: None,
 };
 
 /// Blokchain Parameters without SnS (with pfail `2^-128`), using parameters in tfhe-rs codebase
@@ -1527,6 +1604,7 @@ const BC_PARAMS_NIGEL: DKGParamsRegular = DKGParamsRegular {
         },
     )),
     compression_decompression_parameters: None,
+    cpk_re_randomization_ksk_params: None,
 };
 
 /// Blokchain Parameters without SnS (with pfail `2^-64`), using parameters generated by Nigel's script
@@ -1614,6 +1692,7 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
                 destination_key: EncryptionKeyChoice::Small,
             },
         )),
+        cpk_re_randomization_ksk_params: None,
     },
     sns_params: NoiseSquashingParameters::Classic(NoiseSquashingClassicParameters {
         glwe_dimension: GlweDimension(1),
@@ -1673,6 +1752,7 @@ pub const OLD_PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParams
         },
         compression_decompression_parameters: None,
         dedicated_compact_public_key_parameters: None,
+        cpk_re_randomization_ksk_params: None,
     },
     sns_params: NoiseSquashingParameters::Classic(NoiseSquashingClassicParameters {
         glwe_dimension: GlweDimension(2),
@@ -1697,6 +1777,7 @@ pub const NIST_PARAMS_P8_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128,
     )),
     compression_decompression_parameters: None,
+    cpk_re_randomization_ksk_params: None
 };
 
 pub const NIST_PARAMS_P8_NO_SNS_LWE: DKGParams = DKGParams::WithoutSnS(NIST_PARAMS_P8_INTERNAL_LWE);
@@ -1717,6 +1798,7 @@ pub const NIST_PARAMS_P32_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128,
     )),
     compression_decompression_parameters: None,
+    cpk_re_randomization_ksk_params: None
 };
 
 pub const NIST_PARAMS_P32_NO_SNS_LWE: DKGParams =
@@ -1738,6 +1820,7 @@ pub const NIST_PARAMS_P8_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128,
     )),
     compression_decompression_parameters: None,
+    cpk_re_randomization_ksk_params: None
 };
 
 pub const NIST_PARAMS_P8_NO_SNS_FGLWE: DKGParams =
@@ -1760,6 +1843,7 @@ pub const NIST_PARAMS_P32_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
         super::raw_parameters::NIST_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
     )),
     compression_decompression_parameters: None,
+    cpk_re_randomization_ksk_params: None
 };
 
 pub const NIST_PARAMS_P32_NO_SNS_FGLWE: DKGParams =
