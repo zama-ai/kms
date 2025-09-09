@@ -135,7 +135,6 @@ pub(crate) mod tests {
         networking::NetworkMode,
     };
     use aes_prng::AesRng;
-    use futures_util::future::join;
     use rand::SeedableRng;
     use rstest::rstest;
     use tokio::task::JoinSet;
@@ -263,14 +262,16 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_honest(10, 3, Some(8)))]
     async fn test_coinflip_honest_z128(#[case] params: TestingParameters) {
         let malicious_coinflip = SecureCoinflip::default();
-        join(test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+        test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip.clone(),
-        ),
+        )
+        .await;
         test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip.clone(),
-        )).await;
+        )
+        .await;
     }
 
     //Test when coinflip aborts after the VSS for all kinds of VSS
@@ -292,14 +293,16 @@ pub(crate) mod tests {
         use crate::malicious_execution::large_execution::malicious_coinflip::DroppingCoinflipAfterVss;
 
         let dropping_coinflip = DroppingCoinflipAfterVss::new(malicious_vss.clone());
-        join(test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+        test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             dropping_coinflip.clone(),
-        ),
+        )
+        .await;
         test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             dropping_coinflip.clone(),
-        )).await;
+        )
+        .await;
     }
 
     //Test honest coinflip with all kinds of malicious strategies for VSS
@@ -324,14 +327,15 @@ pub(crate) mod tests {
             robust_open: malicious_robust_open.clone(),
         };
 
-        join(test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+        test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             real_coinflip_with_malicious_sub_protocols.clone(),
-        ),
+        )
+        .await;
         test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             real_coinflip_with_malicious_sub_protocols.clone(),
-        ))
+        )
         .await;
     }
 
@@ -356,13 +360,15 @@ pub(crate) mod tests {
         let malicious_coinflip_recons =
             MaliciousCoinflipRecons::new(malicious_vss.clone(), malicious_robust_open.clone());
 
-        join(test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
+        test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip_recons.clone(),
-        ),
+        )
+        .await;
         test_coinflip_strategies::<ResiduePolyF4Z128, { ResiduePolyF4Z128::EXTENSION_DEGREE }, _>(
             params.clone(),
             malicious_coinflip_recons.clone(),
-        )).await;
+        )
+        .await;
     }
 }
