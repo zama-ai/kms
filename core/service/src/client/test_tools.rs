@@ -84,6 +84,7 @@ pub async fn setup_threshold_no_client<
             party_id: i + 1,
             address: ip_addr.to_string(),
             port,
+            service_port: None, // Test environments don't need separate gRPC ports
             tls_cert: None,
         })
         .collect_vec();

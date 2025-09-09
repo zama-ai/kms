@@ -8,6 +8,7 @@ members = [
     "core/threshold",
     "core-client",
     "observability",
+    "tools/kms-health-check",
 ]
 
 # The backward-compatibility module is excluded from the workspace in order to avoid dependency
@@ -39,8 +40,9 @@ base64 = "=0.22.1"
 bincode = { version = "=2.0.1", features = ["serde"] }
 bc2wrap = { path = "./bc2wrap" }
 bytes = "=1.10.1"
-clap = { version = "=4.5.41", features = ["derive"] }
-cfg-if = "=1.0.1"
+cfg-if = "=1.0.3"
+clap = { version = "=4.5.47", features = ["derive"] }
+config = "=0.15.15"
 observability = { path = "./observability" }
 threshold-fhe = { path = "./core/threshold/", default-features = false }
 enum_dispatch = "0.3.13"
