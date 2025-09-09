@@ -4028,6 +4028,7 @@ dependencies = [
 name = "kms-grpc"
 version = "0.11.0-26"
 dependencies = [
+ "alloy-dyn-abi",
  "alloy-primitives",
  "alloy-sol-types",
  "anyhow",
@@ -4045,6 +4046,7 @@ dependencies = [
  "tonic 0.13.1",
  "tonic-build",
  "tracing",
+ "tracing-test",
  "wasm-bindgen",
 ]
 
