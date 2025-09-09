@@ -46,6 +46,9 @@ pub struct KeyId([u8; ID_LENGTH]);
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
 pub struct RequestId([u8; ID_LENGTH]);
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
+pub struct ContextId([u8; ID_LENGTH]);
+
 /// Compared the request ID as if it is an integer
 impl PartialOrd for RequestId {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
@@ -85,7 +88,7 @@ impl NotVersioned for RequestId {}
 
 // Common implementation for identifier types
 macro_rules! impl_identifiers {
-    ($type1:ident, $type2:ident) => {
+    ($type1:ident, $type2:ident, $type3:ident) => {
         // Implement common methods for each type
         macro_rules! impl_identifier_common {
             ($type:ident) => {
@@ -403,6 +406,7 @@ macro_rules! impl_identifiers {
         // Implement common methods for both types
         impl_identifier_common!($type1);
         impl_identifier_common!($type2);
+        impl_identifier_common!($type3);
 
         // Implement conversions between the types
         // Both types have the same internal representation, so we can just copy the bytes
@@ -421,7 +425,7 @@ macro_rules! impl_identifiers {
 }
 
 // Implement common methods for both identifier types with a single macro call
-impl_identifiers!(KeyId, RequestId);
+impl_identifiers!(KeyId, RequestId, ContextId);
 
 // Add tests
 #[cfg(test)]

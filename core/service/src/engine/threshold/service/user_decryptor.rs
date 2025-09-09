@@ -4,11 +4,12 @@ use std::{collections::HashMap, sync::Arc};
 // === External Crates ===
 use anyhow::anyhow;
 use kms_grpc::{
+    identifiers::ContextId,
     kms::v1::{
         self, Empty, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
         UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
     },
-    RequestId,
+    IdentifierError, RequestId,
 };
 use observability::{
     metrics,
@@ -166,6 +167,7 @@ impl<
     async fn inner_user_decrypt(
         req_id: &RequestId,
         session_prep: Arc<SessionPreparer>,
+        context_id: ContextId,
         rng: &mut (impl CryptoRng + RngCore),
         typed_ciphertexts: &[TypedCiphertext],
         link: Vec<u8>,
@@ -204,7 +206,7 @@ impl<
             tracing::info!(
                 request_id = hex_req_id,
                 request_id_decimal = decimal_req_id,
-                "User Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {session_id}. Handle: {}",
+                "User Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {session_id} and context ID: {context_id}. Handle: {}",
                 hex::encode(&typed_ciphertext.external_handle)
             );
 
@@ -215,7 +217,7 @@ impl<
                 DecryptionMode::NoiseFloodSmall => {
                     let session = ok_or_tonic_abort(
                         session_prep
-                            .prepare_ddec_data_from_sessionid_z128(session_id)
+                            .prepare_ddec_data_from_sessionid_z128(session_id, context_id)
                             .await,
                         "Could not prepare ddec data for noiseflood decryption".to_string(),
                     )?;
@@ -259,7 +261,7 @@ impl<
                 DecryptionMode::BitDecSmall => {
                     let mut session = ok_or_tonic_abort(
                         session_prep
-                            .prepare_ddec_data_from_sessionid_z64(session_id)
+                            .prepare_ddec_data_from_sessionid_z64(session_id, context_id)
                             .await,
                         "Could not prepare ddec data for bitdec decryption".to_string(),
                     )?;
@@ -427,19 +429,15 @@ impl<
             request_id = ?inner.request_id,
             "Received a new user decryption request",
         );
-        let context_id = inner
-            .context_id
-            .clone()
-            .unwrap_or((*DEFAULT_MPC_CONTEXT).into());
+        let context_id: ContextId = match &inner.context_id {
+            Some(c) => c
+                .try_into()
+                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
+            None => *DEFAULT_MPC_CONTEXT,
+        };
         let session_preparer = Arc::new(
             self.session_preparer_getter
-                .get(
-                    &context_id
-                        .try_into()
-                        .map_err(|e: kms_grpc::IdentifierError| {
-                            tonic::Status::new(tonic::Code::Internal, e.to_string())
-                        })?,
-                )
+                .get(&context_id)
                 .await
                 .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?,
         );
@@ -545,6 +543,7 @@ impl<
                         Self::inner_user_decrypt(
                             &req_id,
                             prep,
+                            context_id,
                             &mut rng,
                             &typed_ciphertexts,
                             link.clone(),

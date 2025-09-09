@@ -4,6 +4,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 // === External Crates ===
 use itertools::Itertools;
 use kms_grpc::{
+    identifiers::ContextId,
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
     rpc_types::optional_protobuf_to_alloy_domain,
     RequestId,
@@ -82,14 +83,12 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         dkg_params: DKGParams,
         keyset_config: ddec_keyset_config::KeySetConfig,
         request_id: RequestId,
-        context_id: Option<RequestId>,
+        context_id: Option<ContextId>,
         domain: &alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
-        let session_preparer = self
-            .session_preparer_getter
-            .get(&context_id.unwrap_or(*DEFAULT_MPC_CONTEXT))
-            .await?;
+        let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
+        let session_preparer = self.session_preparer_getter.get(&context_id).await?;
 
         // Prepare the timer before giving it to the tokio task
         // that runs the computation
@@ -111,7 +110,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             let mut res = Vec::with_capacity(sids.len());
             for sid in sids {
                 let base_session = session_preparer
-                    .make_base_session(sid, NetworkMode::Sync)
+                    .make_base_session(sid, context_id, NetworkMode::Sync)
                     .await?;
                 res.push(base_session)
             }
