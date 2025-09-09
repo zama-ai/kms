@@ -122,7 +122,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Check that the backup is still there an unmodified
     let (_kms_server, _kms_client, _internal_client) =
-        crate::client::test_tools::centralized_handles(&dkg_param, None).await;
+        crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
     let reread_crss =
         backup_files(&req_new_cus, &crs_req, &PrivDataType::CrsInfo.to_string()).await;
     assert_eq!(reread_crss, crss);
@@ -174,7 +174,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Reboot the servers
     let (_kms_server, mut kms_client, _internal_client) =
-        crate::client::test_tools::centralized_handles(&dkg_param, None).await;
+        crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
     // Purge the private storage again to delete the signing key
     purge_priv(None, 1).await;
 
