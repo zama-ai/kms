@@ -43,7 +43,7 @@ async fn main() {
     // Encrypt a message and extract the raw ciphertexts.
     let message = rng.gen::<u8>();
     let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
-    let (raw_ct, _id, _tag) = ct.into_raw_parts();
+    let (raw_ct, _id, _tag, _rerand_metadata) = ct.into_raw_parts();
     let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
     // Setup the test runtime.

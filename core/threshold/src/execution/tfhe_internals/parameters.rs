@@ -10,6 +10,7 @@ use tfhe::{
     integer::parameters::DynamicDistribution,
     shortint::{
         parameters::{
+            noise_squashing::NoiseSquashingClassicParameters,
             v1_3::V1_3_NOISE_SQUASHING_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
             CompactCiphertextListExpansionKind, CompactPublicKeyEncryptionParameters,
             CompressionParameters, DecompositionBaseLog, DecompositionLevelCount, GlweDimension,
@@ -1277,7 +1278,7 @@ impl DKGParamsBasics for DKGParamsSnS {
 
 impl DKGParamsSnS {
     pub fn glwe_tuniform_bound_sns(&self) -> TUniformBound {
-        match self.sns_params.glwe_noise_distribution {
+        match self.sns_params.glwe_noise_distribution() {
             DynamicDistribution::Gaussian(_) => panic!("we only support tuniform!"),
             DynamicDistribution::TUniform(tuniform) => {
                 TUniformBound(tuniform.bound_log2() as usize)
@@ -1286,11 +1287,11 @@ impl DKGParamsSnS {
     }
 
     pub fn polynomial_size_sns(&self) -> PolynomialSize {
-        self.sns_params.polynomial_size
+        self.sns_params.polynomial_size()
     }
 
     pub fn glwe_dimension_sns(&self) -> GlweDimension {
-        self.sns_params.glwe_dimension
+        self.sns_params.glwe_dimension()
     }
 
     pub fn glwe_sk_num_bits_sns(&self) -> usize {
@@ -1298,11 +1299,11 @@ impl DKGParamsSnS {
     }
 
     pub fn decomposition_base_log_bk_sns(&self) -> DecompositionBaseLog {
-        self.sns_params.decomp_base_log
+        self.sns_params.decomp_base_log()
     }
 
     pub fn decomposition_level_count_bk_sns(&self) -> DecompositionLevelCount {
-        self.sns_params.decomp_level_count
+        self.sns_params.decomp_level_count()
     }
 
     pub fn all_bk_sns_noise(&self) -> NoiseInfo {
@@ -1356,8 +1357,8 @@ impl DKGParamsSnS {
             self.sns_compression_key_tuniform_bound(),
         ) {
             (Some(comp_params), Some(compression_key_tuniform_bound)) => {
-                let amount = self.sns_params.glwe_dimension.0
-                    * self.sns_params.polynomial_size.0
+                let amount = self.sns_params.glwe_dimension().0
+                    * self.sns_params.polynomial_size().0
                     * comp_params.packing_ks_level.0
                     * comp_params.packing_ks_polynomial_size.0;
                 NoiseInfo {
@@ -1375,8 +1376,20 @@ impl DKGParamsSnS {
         }
     }
 
+    fn get_classic_sns_params(&self) -> NoiseSquashingClassicParameters {
+        match self.sns_params {
+            NoiseSquashingParameters::Classic(noise_squashing_classic_parameters) => {
+                noise_squashing_classic_parameters
+            }
+            NoiseSquashingParameters::MultiBit(_) => {
+                panic!("We do not support multi bit SnS params yet")
+            }
+        }
+    }
+
     fn num_needed_noise_msnrk_sns(&self) -> NoiseInfo {
-        let amount = match self.sns_params.modulus_switch_noise_reduction_params {
+        let classic_sns_params = self.get_classic_sns_params();
+        let amount = match classic_sns_params.modulus_switch_noise_reduction_params {
             ModulusSwitchType::Standard => 0,
             ModulusSwitchType::DriftTechniqueNoiseReduction(
                 modulus_switch_noise_reduction_params,
@@ -1392,8 +1405,9 @@ impl DKGParamsSnS {
     }
 
     pub fn get_msnrk_configuration_sns(&self) -> MSNRKConfiguration {
+        let classic_sns_params = self.get_classic_sns_params();
         let NoiseInfo { amount, bound } = self.num_needed_noise_msnrk_sns();
-        match self.sns_params.modulus_switch_noise_reduction_params {
+        match classic_sns_params.modulus_switch_noise_reduction_params {
             ModulusSwitchType::Standard => MSNRKConfiguration::Standard,
             ModulusSwitchType::DriftTechniqueNoiseReduction(
                 modulus_switch_noise_reduction_params,
@@ -1522,7 +1536,7 @@ pub const BC_PARAMS_NIGEL_NO_SNS: DKGParams = DKGParams::WithoutSnS(BC_PARAMS_NI
 /// and SnS params taken from Nigel's script (PARAMS_P32_SNS_LWE)
 pub const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: BC_PARAMS_NIGEL,
-    sns_params: NoiseSquashingParameters {
+    sns_params: NoiseSquashingParameters::Classic(NoiseSquashingClassicParameters {
         glwe_dimension: GlweDimension(2),
         glwe_noise_distribution: DynamicDistribution::new_t_uniform(27),
         polynomial_size: PolynomialSize(2048),
@@ -1533,7 +1547,7 @@ pub const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
         // we keep the same message and carry modulus
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
-    },
+    }),
     sns_compression_params: None,
 });
 
@@ -1601,7 +1615,7 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
             },
         )),
     },
-    sns_params: NoiseSquashingParameters {
+    sns_params: NoiseSquashingParameters::Classic(NoiseSquashingClassicParameters {
         glwe_dimension: GlweDimension(1),
         glwe_noise_distribution: DynamicDistribution::new_t_uniform(0),
         polynomial_size: PolynomialSize(256),
@@ -1618,7 +1632,7 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
         ),
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
-    },
+    }),
     sns_compression_params: Some(NoiseSquashingCompressionParameters {
         packing_ks_level: DecompositionLevelCount(1),
         packing_ks_base_log: DecompositionBaseLog(61),
@@ -1660,7 +1674,7 @@ pub const OLD_PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParams
         compression_decompression_parameters: None,
         dedicated_compact_public_key_parameters: None,
     },
-    sns_params: NoiseSquashingParameters {
+    sns_params: NoiseSquashingParameters::Classic(NoiseSquashingClassicParameters {
         glwe_dimension: GlweDimension(2),
         glwe_noise_distribution: DynamicDistribution::new_t_uniform(24),
         polynomial_size: PolynomialSize(2048),
@@ -1670,7 +1684,7 @@ pub const OLD_PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParams
         modulus_switch_noise_reduction_params: ModulusSwitchType::CenteredMeanNoiseReduction,
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
-    },
+    }),
     sns_compression_params: None,
 });
 

@@ -879,9 +879,24 @@ mod tests {
             raw_sns_private_key.into_container()[..sns_private_key_len].to_vec(),
             sns_poly_size,
         );
-        let mut new_sns_params = sns_params;
-        new_sns_params.polynomial_size = sns_poly_size;
-        new_sns_params.glwe_dimension = GlweDimension(sns_private_key_len);
+        let new_sns_params = sns_params;
+
+        match new_sns_params {
+            tfhe::shortint::parameters::NoiseSquashingParameters::Classic(
+                mut noise_squashing_classic_parameters,
+            ) => {
+                noise_squashing_classic_parameters.polynomial_size = sns_poly_size;
+                noise_squashing_classic_parameters.glwe_dimension =
+                    GlweDimension(sns_private_key_len);
+            }
+            tfhe::shortint::parameters::NoiseSquashingParameters::MultiBit(
+                mut noise_squashing_multi_bit_parameters,
+            ) => {
+                noise_squashing_multi_bit_parameters.polynomial_size = sns_poly_size;
+                noise_squashing_multi_bit_parameters.glwe_dimension =
+                    GlweDimension(sns_private_key_len);
+            }
+        }
         let new_sns_private_key =
             tfhe::integer::noise_squashing::NoiseSquashingPrivateKey::from_raw_parts(
                 NoiseSquashingPrivateKey::from_raw_parts(new_raw_sns_private_key, new_sns_params),
@@ -957,7 +972,8 @@ mod tests {
             None,
             None,
             Some(new_sns_private_key),
-            None, //TODO: Fill when we have compression keys for big ctxt
+            None,
+            None,
             tfhe::Tag::default(),
         );
         keyset.client_key = ck;
