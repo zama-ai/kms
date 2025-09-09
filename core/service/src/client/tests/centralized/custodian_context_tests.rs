@@ -152,9 +152,9 @@ pub(crate) async fn backup_files(
         .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
         .join(file_req.to_string());
     // Attempt to read the file
-    if let Ok(file) = safe_read_element_versioned(coerced_path).await {
+    if let Ok(file) = safe_read_element_versioned(coerced_path.clone()).await {
         file
     } else {
-        panic!("Failed to read backup file");
+        panic!("Failed to read backup file {:?}", coerced_path);
     }
 }

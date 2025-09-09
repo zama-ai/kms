@@ -293,7 +293,7 @@ async fn default_insecure_central_autobackup_after_deletion() {
     let backup_storage = make_storage(None, StorageType::BACKUP, None, None, None).unwrap();
     // Validate that the backup is constructed again
     assert!(backup_storage
-        .data_exists(&key_id, &PrivDataType::FheKeyInfo.to_string())
+        .data_exists(&key_id, &PrivDataType::FhePrivateKey.to_string())
         .await
         .unwrap());
 }

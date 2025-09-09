@@ -39,6 +39,20 @@ pub static USER_DECRYPT_REQUEST_NAME: &str = "user_decrypt_request";
 
 static UNSUPPORTED_FHE_TYPE_STR: &str = "UnsupportedFheType";
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Copy)]
+pub enum KMSType {
+    Centralized,
+    Threshold,
+}
+impl fmt::Display for KMSType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            KMSType::Centralized => write!(f, "Centralized KMS"),
+            KMSType::Threshold => write!(f, "Threshold KMS"),
+        }
+    }
+}
+
 /// The format of what will be stored, and returned in gRPC, as a result of CRS generation in the KMS
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
 pub enum SignedPubDataHandleInternalVersioned {
@@ -227,7 +241,7 @@ pub enum PrivDataTypeVersioned {
 #[versionize(PrivDataTypeVersioned)]
 pub enum PrivDataType {
     SigningKey,
-    FheKeyInfo,
+    FheKeyInfo, // Only for the threshold case
     CrsInfo,
     FhePrivateKey, // Only used for the centralized case
     PrssSetup,

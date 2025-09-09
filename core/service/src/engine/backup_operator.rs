@@ -1,5 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
-
+use crate::engine::utils::query_key_material_availability;
 use crate::{
     anyhow_error_and_log,
     backup::operator::{BackupCommitments, InnerRecoveryRequest, Operator, DSEP_BACKUP_RECOVERY},
@@ -36,6 +35,7 @@ use kms_grpc::{
     kms::v1::{Empty, KeyMaterialAvailabilityResponse, OperatorPublicKey},
     rpc_types::PrivDataType,
 };
+use std::{collections::HashMap, sync::Arc};
 use strum::IntoEnumIterator;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use threshold_fhe::execution::runtime::party::Role;
@@ -363,8 +363,6 @@ where
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status> {
-        use crate::engine::utils::query_key_material_availability;
-
         let priv_storage = self.crypto_storage.get_private_storage();
         let priv_guard = priv_storage.lock().await;
 
@@ -372,7 +370,7 @@ where
         // from the preprocessor service which has access to the metastore
         let response = query_key_material_availability(
             &*priv_guard,
-            "Threshold KMS",
+            self.base_kms.kms_type,
             Vec::new(), // Will be populated by the endpoint from preprocessor
         )
         .await?;

@@ -220,7 +220,7 @@ pub(crate) async fn key_gen_centralized(
         let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
             .read_data(
                 &req_id.try_into().unwrap(),
-                &PrivDataType::FheKeyInfo.to_string(),
+                &PrivDataType::FhePrivateKey.to_string(),
             )
             .await
             .unwrap();
@@ -276,11 +276,11 @@ pub(crate) async fn key_gen_centralized(
             )
             .unwrap();
             let handles_1: crate::engine::base::KmsFheKeyHandles = priv_storage
-                .read_data(&keyid_1, &PrivDataType::FheKeyInfo.to_string())
+                .read_data(&keyid_1, &PrivDataType::FhePrivateKey.to_string())
                 .await
                 .unwrap();
             let handles_2: crate::engine::base::KmsFheKeyHandles = priv_storage
-                .read_data(&keyid_2, &PrivDataType::FheKeyInfo.to_string())
+                .read_data(&keyid_2, &PrivDataType::FhePrivateKey.to_string())
                 .await
                 .unwrap();
 

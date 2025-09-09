@@ -1,11 +1,13 @@
 use crate::engine::centralized::central_kms::CentralizedKms;
 use crate::engine::traits::{BackupOperator, ContextManager};
+use crate::engine::utils::query_key_material_availability;
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
     self, CustodianRecoveryRequest, Empty, HealthStatusResponse, InitRequest, KeyGenPreprocRequest,
     KeyGenPreprocResult, KeyMaterialAvailabilityResponse, OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
+use kms_grpc::rpc_types::KMSType;
 use kms_grpc::utils::tonic_result::some_or_tonic_abort;
 use tonic::{Request, Response, Status};
 
@@ -367,15 +369,13 @@ impl<
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<KeyMaterialAvailabilityResponse>, Status> {
-        use crate::engine::utils::query_key_material_availability;
-
         // Get storage references
         let priv_storage = self.crypto_storage.inner.get_private_storage();
         let priv_guard = priv_storage.lock().await;
 
         let response = query_key_material_availability(
             &*priv_guard,
-            "Centralized KMS",
+            KMSType::Centralized,
             Vec::new(), // Centralized KMS doesn't support preprocessing material
         )
         .await?;

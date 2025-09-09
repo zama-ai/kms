@@ -24,7 +24,7 @@ use crate::{
     },
 };
 use kms_grpc::{
-    rpc_types::{PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
+    rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
     RequestId,
 };
 use serde::Serialize;
@@ -165,7 +165,7 @@ where
         self.data_exists(
             key_id,
             &PubDataType::PublicKey.to_string(),
-            &PrivDataType::FheKeyInfo.to_string(),
+            &PrivDataType::FhePrivateKey.to_string(),
         )
         .await
     }
@@ -298,6 +298,7 @@ where
     pub async fn purge_key_material(
         &self,
         req_id: &RequestId,
+        kms_type: KMSType,
         mut guarded_meta_store: RwLockWriteGuard<'_, MetaStore<KeyGenMetadata>>,
     ) {
         // Lock all stores here as storing will be executed concurrently and hence we can otherwise not enforce the locking order
@@ -325,12 +326,26 @@ where
             pk_result.is_err() || server_key_result.is_err()
         };
         let f2 = async {
-            let result = delete_at_request_id(
-                &mut (*priv_storage),
-                req_id,
-                &PrivDataType::FheKeyInfo.to_string(),
-            )
-            .await;
+            let result = match kms_type {
+                KMSType::Centralized => {
+                    // In centralized KMS there is no FHE key info to delete
+                    delete_at_request_id(
+                        &mut (*priv_storage),
+                        req_id,
+                        &PrivDataType::FhePrivateKey.to_string(),
+                    )
+                    .await
+                }
+                KMSType::Threshold => {
+                    delete_at_request_id(
+                        &mut (*priv_storage),
+                        req_id,
+                        &PrivDataType::FheKeyInfo.to_string(),
+                    )
+                    .await
+                    // In threshold KMS we need to delete the FHE key info
+                }
+            };
             if let Err(e) = &result {
                 tracing::warn!(
                     "Failed to delete FHE key info from private storage for request {}: {}",

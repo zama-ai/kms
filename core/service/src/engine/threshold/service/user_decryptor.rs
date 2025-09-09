@@ -626,7 +626,10 @@ impl<
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
-    use kms_grpc::{kms::v1::CiphertextFormat, rpc_types::alloy_to_protobuf_domain};
+    use kms_grpc::{
+        kms::v1::CiphertextFormat,
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
+    };
     use rand::SeedableRng;
     use tfhe::FheTypes;
     use threshold_fhe::execution::{
@@ -710,7 +713,7 @@ mod tests {
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
-        let base_kms = BaseKmsStruct::new(sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
         let session_preparer_manager = SessionPreparerManager::new_test_session();
 
         let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(

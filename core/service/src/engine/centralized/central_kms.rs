@@ -42,6 +42,8 @@ use kms_grpc::kms::v1::UserDecryptionResponsePayload;
 use kms_grpc::kms::v1::{CiphertextFormat, TypedCiphertext, TypedPlaintext};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+#[cfg(feature = "non-wasm")]
+use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PrivDataType;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::PubDataType;
@@ -953,7 +955,7 @@ impl<
         rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> anyhow::Result<(RealCentralizedKms<PubS, PrivS>, HealthServer<impl Health>)> {
         let key_info: HashMap<RequestId, KmsFheKeyHandles> =
-            read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string())
+            read_all_data_versioned(&private_storage, &PrivDataType::FhePrivateKey.to_string())
                 .await?;
         let mut pk_map = HashMap::new();
         for id in key_info.keys() {
@@ -987,7 +989,7 @@ impl<
             pk_map,
             key_info,
         );
-        let base_kms = BaseKmsStruct::new(sk)?;
+        let base_kms = BaseKmsStruct::new(KMSType::Centralized, sk)?;
         let context_manager: RealContextManager<PubS, PrivS> = RealContextManager {
             base_kms: base_kms.new_instance().await,
             crypto_storage: crypto_storage.inner.clone(),
@@ -1000,6 +1002,11 @@ impl<
             crypto_storage.inner.clone(),
             security_module,
         );
+        // Update backup vault if it exists
+        // This ensures that all files in the private storage are also in the backup vault
+        // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
+        // Note however that the data in the vault is not checked for corruption.
+        backup_operator.update_backup_vault().await?;
         let (health_reporter, health_service) = tonic_health::server::health_reporter();
         // We will serve as soon as the server is started
         health_reporter
@@ -1174,7 +1181,7 @@ pub(crate) mod tests {
                 &mut ram_storage,
                 cur_req_id,
                 cur_keys,
-                &PrivDataType::FheKeyInfo.to_string(),
+                &PrivDataType::FhePrivateKey.to_string(),
             )
             .await?;
         }

@@ -399,7 +399,7 @@ where
         priv_storage,
         key_id,
         &PubDataType::PublicKey.to_string(),
-        &PrivDataType::FheKeyInfo.to_string(),
+        &PrivDataType::FhePrivateKey.to_string(),
     )
     .await
     {
@@ -477,7 +477,7 @@ where
             priv_storage,
             req_id,
             key_info,
-            &PrivDataType::FheKeyInfo.to_string(),
+            &PrivDataType::FhePrivateKey.to_string(),
         )
         .await
         {

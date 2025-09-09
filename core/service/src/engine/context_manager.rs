@@ -368,7 +368,11 @@ mod tests {
             store_versioned_at_request_id,
         },
     };
-    use kms_grpc::{kms::v1::DestroyKmsContextRequest, rpc_types::PrivDataType, RequestId};
+    use kms_grpc::{
+        kms::v1::DestroyKmsContextRequest,
+        rpc_types::{KMSType, PrivDataType},
+        RequestId,
+    };
     use rand::{rngs::OsRng, SeedableRng};
     use tokio::sync::Mutex;
     use tonic::Request;
@@ -412,7 +416,7 @@ mod tests {
     async fn test_kms_context() {
         let (backup_encryption_public_key, _) = ephemeral_encryption_key_generation(&mut OsRng);
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
-        let base_kms = BaseKmsStruct::new(sig_key).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
         let req_id = RequestId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
             kms_nodes: vec![NodeInfo {

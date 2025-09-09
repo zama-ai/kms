@@ -4,7 +4,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 // === External Crates ===
 use kms_grpc::{
     kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer,
-    rpc_types::{PrivDataType, PubDataType, SignedPubDataHandleInternal},
+    rpc_types::{KMSType, PrivDataType, PubDataType, SignedPubDataHandleInternal},
     RequestId,
 };
 use serde::{Deserialize, Serialize};
@@ -352,7 +352,7 @@ where
         .map_or(MINIMUM_SESSIONS_PREPROC, |x| {
             std::cmp::max(x, MINIMUM_SESSIONS_PREPROC)
         });
-    let base_kms = BaseKmsStruct::new(sk)?;
+    let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk)?;
 
     let prss_setup_z128 = Arc::new(RwLock::new(None));
     let prss_setup_z64 = Arc::new(RwLock::new(None));
