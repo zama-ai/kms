@@ -640,7 +640,6 @@ mod test {
             reconstructed_x_y.push(y);
         }
 
-        println!("{:?}", reconstructed_x_y);
         let randomness_test = execute_all_randomness_tests_loose(&reconstructed_x_y);
         assert!(
             randomness_test.is_ok(),
