@@ -45,6 +45,7 @@ party_id = 1
 address = "abcd.dev-kms-core-1.com"
 mpc_identity = "dev-kms-core-1.com"
 port = 50001
+service_port = 50100
 tls_cert.path = "certs/cert_dev-kms-core-1.com.pem"
 
 [[threshold.peers]]
@@ -52,6 +53,7 @@ party_id = 2
 address = "abcd.dev-kms-core-2.com"
 mpc_identity = "dev-kms-core-2.com"
 port = 50002
+service_port = 50200
 tls_cert.path = "certs/cert_dev-kms-core-2.com.pem"
 
 [[threshold.peers]]
@@ -59,6 +61,7 @@ party_id = 3
 address = "abcd.dev-kms-core-3.com"
 mpc_identity = "dev-kms-core-3.com"
 port = 50003
+service_port = 50300
 tls_cert.path = "certs/cert_dev-kms-core-3.com.pem"
 
 [[threshold.peers]]
@@ -66,6 +69,7 @@ party_id = 4
 address = "abcd.dev-kms-core-4.com"
 mpc_identity = "dev-kms-core-4.com"
 port = 50004
+service_port = 50400
 tls_cert.path = "certs/cert_dev-kms-core-4.com.pem"
 
 [threshold.core_to_core_net]

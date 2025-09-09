@@ -342,7 +342,7 @@ where
                 panic!("Redis configuration must be provided")
             }
         }
-        Some(conf) => create_redis_factory(format!("PARTY_{}", config.my_id), conf),
+        Some(ref conf) => create_redis_factory(format!("PARTY_{}", config.my_id), conf),
     };
     let num_sessions_preproc = config
         .num_sessions_preproc
@@ -564,6 +564,7 @@ where
         insecure_crs_generator,
         context_manager,
         backup_operator,
+        Arc::new(config.clone()),
         Arc::clone(&tracker),
         thread_core_health_reporter,
         abort_handle,
