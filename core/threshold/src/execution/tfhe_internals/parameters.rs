@@ -40,10 +40,10 @@ impl EncryptionType {
     }
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug, Default)]
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug, Default)]
 pub struct TUniformBound(pub usize);
 
-#[derive(Debug, Clone, Copy, strum_macros::EnumIter)]
+#[derive(Debug, Clone, Copy, strum_macros::EnumIter, PartialEq, Eq)]
 pub enum NoiseBounds {
     LweNoise(TUniformBound),
     LweHatNoise(TUniformBound),
@@ -66,7 +66,7 @@ impl NoiseBounds {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct KSKParams {
     pub num_needed_noise: usize,
     pub noise_bound: NoiseBounds,
