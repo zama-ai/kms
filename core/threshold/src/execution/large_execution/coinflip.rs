@@ -257,7 +257,7 @@ pub(crate) mod tests {
 
     // Rounds: We expect 3+1+t+1 rounds on the happy path
     #[rstest]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init_honest(4, 1, Some(6)))]
     #[case(TestingParameters::init_honest(7, 2, Some(7)))]
     #[case(TestingParameters::init_honest(10, 3, Some(8)))]
@@ -279,7 +279,7 @@ pub(crate) mod tests {
     //No matter the strategy we expect all honest parties to output the same thing
     //We also specify whether we expect the cheating strategy to be detected, if so we check we do detect the cheaters
     #[rstest]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), SecureVss::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::new(&SyncReliableBroadcast::default()))]
@@ -311,7 +311,7 @@ pub(crate) mod tests {
     //No matter the strategy, we expect all honest parties to end up with the same output
     //We also specify whether we expect the cheating strategy to be detected, if so we check we do detect the cheaters
     #[rstest]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssFromStart::default(),SecureRobustOpen::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default(),SecureRobustOpen::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::new(&SyncReliableBroadcast::default()),SecureRobustOpen::default())]
@@ -345,7 +345,7 @@ pub(crate) mod tests {
     //Test malicious coinflip with all kinds of strategies for VSS (honest and malicious)
     //Again, we always expect the honest parties to agree on the output
     #[rstest]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), SecureVss::default(),SecureRobustOpen::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default(),SecureRobustOpen::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::new(&SyncReliableBroadcast::default()),SecureRobustOpen::default())]
