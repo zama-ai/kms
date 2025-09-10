@@ -1,53 +1,46 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::time::Duration;
 
-use crate::execution::runtime::party::Identity;
-use crate::execution::runtime::party::Role;
-use crate::networking::local::LocalNetworkingProducer;
-use crate::networking::NetworkMode;
-use crate::{execution::runtime::party::RoleAssignment, networking::local::LocalNetworking};
+use crate::{
+    execution::runtime::party::Role,
+    networking::{
+        local::{LocalNetworking, LocalNetworkingProducer},
+        NetworkMode,
+    },
+};
 
 pub struct BGVTestRuntime {
-    pub identities: Vec<Identity>,
     pub threshold: u8,
     pub user_nets: Vec<Arc<LocalNetworking>>,
-    pub role_assignments: RoleAssignment,
+    pub roles: HashSet<Role>,
 }
 
 impl BGVTestRuntime {
     pub fn new(
-        identities: Vec<Identity>,
+        roles: HashSet<Role>,
         threshold: u8,
         network_mode: NetworkMode,
-        delayed_map: Option<HashMap<Identity, Duration>>,
+        delayed_map: Option<HashMap<Role, Duration>>,
     ) -> Self {
-        let role_assignments: RoleAssignment = identities
-            .clone()
-            .into_iter()
-            .enumerate()
-            .map(|(role_id, identity)| (Role::indexed_from_zero(role_id), identity))
-            .collect();
-
-        let net_producer = LocalNetworkingProducer::from_ids(&identities);
-        let user_nets: Vec<Arc<LocalNetworking>> = identities
+        let net_producer = LocalNetworkingProducer::from_roles(&roles);
+        let user_nets: Vec<Arc<LocalNetworking>> = roles
             .iter()
-            .map(|user_identity| {
+            .map(|role| {
                 let delay = if let Some(delayed_map) = &delayed_map {
-                    delayed_map.get(user_identity).copied()
+                    delayed_map.get(role).copied()
                 } else {
                     None
                 };
-                let net = net_producer.user_net(user_identity.clone(), network_mode, delay);
+                let net = net_producer.user_net(*role, network_mode, delay);
                 Arc::new(net)
             })
             .collect();
 
         BGVTestRuntime {
-            identities,
             threshold,
             user_nets,
-            role_assignments,
+            roles,
         }
     }
 }

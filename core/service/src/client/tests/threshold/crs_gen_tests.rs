@@ -40,14 +40,14 @@ async fn test_insecure_crs_gen_threshold() {
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn secure_threshold_crs() {
-    crs_gen(4, FheParameter::Default, Some(16), false, 1, false).await;
+    crs_gen(4, FheParameter::Default, Some(2048), false, 1, false).await;
 }
 
 #[cfg(feature = "slow_tests")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_crs_gen_threshold() {
-    crs_gen(4, FheParameter::Test, Some(1), false, 1, false).await;
+    crs_gen(4, FheParameter::Test, Some(2048), false, 1, false).await;
 }
 
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
@@ -140,7 +140,7 @@ pub(crate) async fn run_crs(
 
     let responses = launch_crs(&vec![crs_req.clone()], kms_clients, insecure).await;
     for response in responses {
-        assert!(response.is_ok());
+        response.unwrap();
     }
     wait_for_crsgen_result(&vec![crs_req], kms_clients, internal_client, &dkg_param).await;
 }

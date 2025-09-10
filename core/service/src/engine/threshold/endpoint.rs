@@ -5,13 +5,17 @@ use crate::engine::threshold::traits::{
 };
 #[cfg(feature = "insecure")]
 use crate::engine::threshold::traits::{InsecureCrsGenerator, InsecureKeyGenerator};
+use kms_grpc::kms::v1::{health_status_response::PeerHealth, HealthStatusResponse};
 use kms_grpc::kms::v1::{
     CrsGenRequest, CrsGenResult, DestroyKmsContextRequest, Empty, InitRequest,
     KeyGenPreprocRequest, KeyGenPreprocResult, KeyGenRequest, KeyGenResult,
     KeyMaterialAvailabilityResponse, NewKmsContextRequest, PublicDecryptionRequest,
     PublicDecryptionResponse, RequestId, UserDecryptionRequest, UserDecryptionResponse,
 };
-use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
+use kms_grpc::kms_service::v1::{
+    core_service_endpoint_client::CoreServiceEndpointClient,
+    core_service_endpoint_server::CoreServiceEndpoint,
+};
 use observability::{
     metrics::METRICS,
     metrics_names::{
@@ -23,7 +27,8 @@ use observability::{
         OP_USER_DECRYPT_RESULT,
     },
 };
-use tonic::{Request, Response, Status};
+use std::time::Instant;
+use tonic::{transport::Channel, Request, Response, Status};
 
 macro_rules! impl_endpoint {
     { impl CoreServiceEndpoint $implementations:tt } => {
@@ -383,6 +388,160 @@ impl_endpoint! {
             Err(Status::unimplemented(
                 "custodian_recovery_init is not implemented",
             ))
+        }
+
+        #[tracing::instrument(skip(self, _request))]
+        async fn get_health_status(
+            &self,
+            _request: Request<Empty>,
+        ) -> Result<Response<kms_grpc::kms::v1::HealthStatusResponse>, Status> {
+
+            // Get own key material directly from backup_operator (avoid redundant gRPC call to self)
+            let backup_response = self.backup_operator.get_key_material_availability(Request::new(Empty {})).await?;
+            let mut own_material = backup_response.into_inner();
+
+            // Add preprocessing IDs from the preprocessor
+            own_material.preprocessing_ids = self.keygen_preprocessor.get_all_preprocessing_ids().await?;
+
+            // Check peer health
+            let mut peer_health_infos = Vec::new();
+            let mut nodes_reachable = 1; // Count self as reachable
+
+            if let Some(peers) = &self.config.peers {
+                for peer in peers {
+                    // Skip self-check - we already know we're healthy
+                    if peer.party_id == self.config.my_id {
+                        continue;
+                    }
+
+                    // Determine gRPC port: use explicit config or apply convention
+                    let service_port = match peer.service_port {
+                    Some(port) => port,
+                    None => {
+                        // Convention: P2P port 5000X maps to gRPC port 50X00
+                        // e.g., 50001 -> 50100, 50002 -> 50200, etc.
+                        if peer.port >= 50000 && peer.port < 50100 {
+                            let offset = peer.port - 50000;
+                            50000 + (offset * 100)
+                        } else {
+                            // For non-standard ports, assume gRPC = P2P + 99
+                            peer.port + 99
+                        }
+                    }
+                };
+                // gRPC health check endpoints are always HTTP (TLS is for P2P, not gRPC)
+                let protocol = "http";
+
+                // TODO: Determine protocol based on TLS configuration if/when needed
+                // let protocol = if peer.tls_cert.is_some() {
+                //     "https"
+                // } else {
+                //     "http"
+                // };
+
+                let endpoint = format!("{}://{}:{}", protocol, peer.address, service_port);
+                let start = Instant::now();
+
+                let peer_info = match Channel::from_shared(endpoint.clone()) {
+                    Ok(channel_builder) => {
+                        match channel_builder
+                            .timeout(std::time::Duration::from_secs(5))
+                            .connect()
+                            .await
+                        {
+                            Ok(channel) => {
+                                let mut client = CoreServiceEndpointClient::new(channel);
+                                match client.get_key_material_availability(Empty {}).await {
+                                    Ok(response) => {
+                                        let resp = response.into_inner();
+                                        nodes_reachable += 1;
+                                        PeerHealth {
+                                            peer_id: peer.party_id as u32,
+                                            endpoint: endpoint.clone(),
+                                            reachable: true,
+                                            latency_ms: start.elapsed().as_millis() as u32,
+                                            storage_info: resp.storage_info,
+                                            error: String::new(),
+                                            fhe_key_ids: resp.fhe_key_ids,
+                                            crs_ids: resp.crs_ids,
+                                            preprocessing_key_ids: resp.preprocessing_ids,
+                                        }
+                                    }
+                                    Err(e) => PeerHealth {
+                                        peer_id: peer.party_id as u32,
+                                        endpoint: endpoint.clone(),
+                                        reachable: false,
+                                        latency_ms: start.elapsed().as_millis() as u32,
+                                        storage_info: String::new(),
+                                        error: e.to_string(),
+                                        fhe_key_ids: Vec::new(),
+                                        crs_ids: Vec::new(),
+                                        preprocessing_key_ids: Vec::new(),
+                                    },
+                                }
+                            }
+                            Err(e) => PeerHealth {
+                                peer_id: peer.party_id as u32,
+                                endpoint: endpoint.clone(),
+                                reachable: false,
+                                latency_ms: 0,
+                                storage_info: String::new(),
+                                error: format!("Connection failed: {}", e),
+                                fhe_key_ids: Vec::new(),
+                                crs_ids: Vec::new(),
+                                preprocessing_key_ids: Vec::new(),
+                            },
+                        }
+                    }
+                    Err(e) => PeerHealth {
+                        peer_id: peer.party_id as u32,
+                        endpoint: endpoint.clone(),
+                        reachable: false,
+                        latency_ms: 0,
+                        storage_info: String::new(),
+                        error: format!("Invalid endpoint: {}", e),
+                        fhe_key_ids: Vec::new(),
+                        crs_ids: Vec::new(),
+                        preprocessing_key_ids: Vec::new(),
+                    },
+                };
+
+                    peer_health_infos.push(peer_info);
+                }
+            }
+
+            // Calculate threshold requirements
+            let threshold_required = self.config.threshold as u32;
+            // peers list includes self, so we use len() directly
+            let total_nodes = self.config.peers.as_ref().map_or(1, |p| p.len() as u32);
+
+            let min_nodes_for_healthy = (2 * total_nodes) / 3 + 1; // 2/3 majority + 1
+
+            // Determine overall health status
+            let status = if nodes_reachable >= total_nodes {
+                1 // HEALTH_STATUS_OPTIMAL - all nodes online and reachable
+            } else if nodes_reachable >= min_nodes_for_healthy {
+                2 // HEALTH_STATUS_HEALTHY - sufficient 2/3 majority but not all nodes
+            } else if nodes_reachable > threshold_required {
+                3 // HEALTH_STATUS_DEGRADED - above minimum threshold but below 2/3
+            } else {
+                4 // HEALTH_STATUS_UNHEALTHY - insufficient nodes for operations
+            };
+
+            let response = HealthStatusResponse {
+                status,
+                peers: peer_health_infos,
+                my_fhe_key_ids: own_material.fhe_key_ids,
+                my_crs_ids: own_material.crs_ids,
+                my_preprocessing_key_ids: own_material.preprocessing_ids,
+                my_storage_info: own_material.storage_info,
+                node_type: 2, // NODE_TYPE_THRESHOLD
+                my_party_id: self.config.my_id as u32,
+                threshold_required,
+                nodes_reachable,
+            };
+
+            Ok(Response::new(response))
         }
     }
 }

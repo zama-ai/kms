@@ -129,7 +129,13 @@ async fn test_threshold_health_endpoint_availability() {
         });
     }
     while let Some(inner) = req_tasks.join_next().await {
-        assert!(inner.unwrap().is_ok());
+        match inner {
+            Ok(resp) => match resp {
+                Ok(resp) => tracing::info!("Init response: {resp:?}"),
+                Err(e) => panic!("Init request failed: {e}"),
+            },
+            Err(e) => panic!("Init request failed: {e}"),
+        }
     }
     let status = get_status(&mut main_health_client, core_service_name)
         .await
@@ -546,7 +552,6 @@ async fn default_insecure_autobackup_after_deletion() {
     }
 }
 
-#[tracing_test::traced_test]
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]

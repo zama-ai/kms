@@ -58,7 +58,7 @@ pub async fn mult<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
 ///     [rho]       =[y]+[triple.b]
 ///     Open        [epsilon], [rho]
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
-#[instrument(name="MPC.Mult", skip(session,x_vec,y_vec,triples), fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?x_vec.len()))]
+#[instrument(name="MPC.Mult", skip(session,x_vec,y_vec,triples), fields(sid = ?session.session_id(),my_role=?session.my_role(),batch_size=?x_vec.len()))]
 pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     x_vec: &[Share<Z>],
     y_vec: &[Share<Z>],
@@ -142,7 +142,7 @@ pub async fn open<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
 }
 
 /// Opens a list of secrets to all parties
-#[instrument(name="MPC.Open",skip(to_open, session),fields(sid=?session.session_id(),own_identity=?session.own_identity(),batch_size=?to_open.len()))]
+#[instrument(name="MPC.Open",skip(to_open, session),fields(sid=?session.session_id(),my_role=?session.my_role(),batch_size=?to_open.len()))]
 pub async fn open_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
     to_open: &[Share<Z>],
     session: &Ses,
@@ -199,8 +199,8 @@ mod tests {
         ($z:ty, $u:ty) => {
             paste! {
                 // Multiply random values and open the random values and the result
-                #[test]
-                fn [<mult_sunshine_ $z:lower>]() {
+                #[tokio::test]
+                async fn [<mult_sunshine_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
                     async fn task(session: SmallSession<$z>, _bot: Option<String>) -> Vec<$z> {
@@ -216,7 +216,7 @@ mod tests {
                     // Online phase so Async
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, Some(2), NetworkMode::Async, Some(delay_vec), &mut task, None);
+                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, Some(2), NetworkMode::Async, Some(delay_vec), &mut task, None).await;
                     assert_eq!(results.len(), parties);
 
                     for cur_res in results {
@@ -228,8 +228,8 @@ mod tests {
                 }
 
                 // Multiply lists of random values and use repeated openings to open the random values and the result
-                #[test]
-                fn [<mult_list_sunshine_ $z:lower>]() {
+                #[tokio::test]
+                async fn [<mult_list_sunshine_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
                     const AMOUNT: usize = 3;
@@ -261,7 +261,7 @@ mod tests {
                     // Online phase so Async
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, Some(4), NetworkMode::Async,Some(delay_vec), &mut task, None);
+                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, Some(4), NetworkMode::Async,Some(delay_vec), &mut task, None).await;
                     assert_eq!(results.len(), parties);
                     for (a_vec, b_vec, c_vec) in &results {
                         for i in 0..AMOUNT {
@@ -274,8 +274,8 @@ mod tests {
                 }
 
                 // Multiply random values and open the random values and the result when a party drops out
-                #[test]
-                fn [<mult_party_drop_ $z:lower>]() {
+                #[tokio::test]
+                async fn [<mult_party_drop_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
                     let bad_role: Role = Role::indexed_from_one(4);
@@ -298,7 +298,7 @@ mod tests {
                     // Online phase so Async
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task, None);
+                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task, None).await;
                     assert_eq!(results.len(), parties);
 
                     for (cur_role, cur_res) in results {
@@ -314,8 +314,8 @@ mod tests {
                 }
 
                 // Multiply random values and open the random values and the result when a party uses a wrong value
-                #[test]
-                fn [<mult_wrong_value_ $z:lower>]() {
+                #[tokio::test]
+                async fn [<mult_wrong_value_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
                     let bad_role: Role = Role::indexed_from_one(4);
@@ -334,7 +334,7 @@ mod tests {
                     // Online phase so Async
                     //Delay P1 by 1s every round
                     let delay_vec = vec![tokio::time::Duration::from_secs(1)];
-                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task, None);
+                    let results = execute_protocol_small::<_,_,$z,{$z::EXTENSION_DEGREE}>(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task, None).await;
                     assert_eq!(results.len(), parties);
 
                     for cur_res in results {

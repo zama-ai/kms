@@ -174,7 +174,7 @@ where
 
 /// Generates a Bootstrapping Key given a Glwe key in Glwe format
 /// , a Lwe key and the params for the BK generation
-#[instrument(name="Gen BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_bootstrap_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -213,7 +213,7 @@ where
 
 /// Generates a compressed Bootstrapping Key given a Glwe key in Glwe format
 /// , a Lwe key and the params for the BK generation
-#[instrument(name="Gen compressed BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="Gen compressed BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub(crate) async fn generate_compressed_bootstrap_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
@@ -314,9 +314,9 @@ mod tests {
 
     use super::allocate_and_generate_lwe_bootstrap_key;
 
-    #[test]
+    #[tokio::test]
     #[ignore] //Ignore for now, might be able to run on CI with bigger timeout though
-    fn test_lwe_bootstrap_key() {
+    async fn test_lwe_bootstrap_key() {
         //Testing with small parameters, as NIST params take too long
         let lwe_dimension = 32_usize;
         let polynomial_size = 128_usize;
@@ -428,7 +428,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         let mut lwe_key_shares = HashMap::new();
         let mut glwe_key_shares = HashMap::new();

@@ -2,6 +2,7 @@ syntax = "proto3";
 package kms.v1;
 
 // Initialization request for bootstrapping the threshold KMS.
+// This request will be removed in favor of NewKmsContextRequest.
 message InitRequest {
     // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
     RequestId request_id = 1;
@@ -79,12 +80,24 @@ message KeySetConfig {
 message KeyGenPreprocRequest {
   // The 32 Byte / 256 Bit request ID of this request, without `0x` prefix.
   RequestId request_id = 1;
+
   // The FHE parameters for key generation.
   FheParameter params = 2;
+
   // The keyset configuration that controls what kind of key to generate.
   KeySetConfig keyset_config = 3;
+
   // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 5;
+
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  RequestId epoch_id = 6;
 }
 
 enum KeySetCompressionConfig {
@@ -137,6 +150,15 @@ message KeyGenRequest {
   // For certain keyset_config, additional information is needed,
   // this is given by the documentation of KeySetAddedInfo.
   KeySetAddedInfo keyset_added_info = 6;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 7;
+
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  RequestId epoch_id = 8;
 }
 
 message KeyGenResult {
@@ -200,6 +222,12 @@ message CrsGenRequest {
 
   // The EIP712 domain used for signing the response.
   Eip712DomainMsg domain = 4;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 5;
 }
 
 message CrsGenResult {
@@ -274,6 +302,15 @@ message PublicDecryptionRequest {
 
   // Extra data from the gateway.
   bytes extra_data = 5;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 6;
+
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  RequestId epoch_id = 7;
 }
 
 // KMS-internal Public Decryption Response Payload, containing meta data, plaintexts
@@ -345,6 +382,15 @@ message UserDecryptionRequest {
 
   // Extra data from the gateway.
   bytes extra_data = 7;
+
+  // MPC context ID which is used to identify the context to use for this request.
+  //
+  // NOTE: at the moment this can be None since we do not fully support multiple contexts.
+  // See https://github.com/zama-ai/kms-internal/issues/2530
+  RequestId context_id = 8;
+
+  // The epoch number placeholder (zama-ai/kms-internal#2743).
+  RequestId epoch_id = 9;
 }
 
 message UserDecryptionResponse {
@@ -582,4 +628,71 @@ message KeyMaterialAvailabilityResponse {
 
   // Storage backend information
   string storage_info = 4;
+}
+
+// Health status levels
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_OPTIMAL = 1;     // All nodes online and reachable
+  HEALTH_STATUS_HEALTHY = 2;     // Sufficient 2/3 majority but not all nodes
+  HEALTH_STATUS_DEGRADED = 3;    // Above minimum threshold but below 2/3
+  HEALTH_STATUS_UNHEALTHY = 4;   // Insufficient nodes for operations
+}
+
+// Node type for KMS deployment
+enum NodeType {
+  NODE_TYPE_UNSPECIFIED = 0;
+  NODE_TYPE_CENTRALIZED = 1;
+  NODE_TYPE_THRESHOLD = 2;
+}
+
+// Response containing comprehensive health status
+message HealthStatusResponse {
+  // Overall health status
+  HealthStatus status = 1;
+  
+  // Health information for a peer node
+  message PeerHealth {
+    // Peer party ID (for threshold mode)
+    uint32 peer_id = 1;
+    
+    // Peer endpoint address
+    string endpoint = 2;
+    
+    // Whether the peer is reachable
+    bool reachable = 3;
+    
+    // Connection latency in milliseconds
+    uint32 latency_ms = 4;
+    
+    // Storage info from peer
+    string storage_info = 5;
+    
+    // Error message if peer is unreachable
+    string error = 6;
+    
+    // Key IDs for FHE keys on peer (when available)
+    repeated string fhe_key_ids = 7;
+    
+    // Key IDs for CRS keys on peer (when available)
+    repeated string crs_ids = 8;
+    
+    // Key IDs for preprocessing keys on peer (when available)
+    repeated string preprocessing_key_ids = 9;
+  }
+  
+  // Health status of all peers
+  repeated PeerHealth peers = 2;
+  
+  // Self key material IDs and storage info
+  repeated string my_fhe_key_ids = 3;
+  repeated string my_crs_ids = 4;
+  repeated string my_preprocessing_key_ids = 5;
+  string my_storage_info = 6;
+  
+  // Runtime configuration info
+  NodeType node_type = 7;
+  uint32 my_party_id = 8; // Only for threshold mode
+  uint32 threshold_required = 9; // Minimum nodes needed
+  uint32 nodes_reachable = 10; // Currently reachable nodes
 }

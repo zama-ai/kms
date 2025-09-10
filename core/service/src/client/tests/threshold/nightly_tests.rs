@@ -10,6 +10,7 @@ use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::TestingPlaintext;
 use kms_grpc::{kms::v1::FheParameter, RequestId};
 use serial_test::serial;
+use threshold_fhe::execution::runtime::party::Role;
 
 #[rstest::rstest]
 #[case(vec![TestingPlaintext::Bool(true)], 2, DEFAULT_AMOUNT_PARTIES, &DEFAULT_THRESHOLD_KEY_ID)]
@@ -199,7 +200,12 @@ async fn default_user_decryption_threshold_with_crash(
         parallelism,
         secure,
         amount_parties,
-        party_ids_to_crash,
+        party_ids_to_crash.map(|party_ids| {
+            party_ids
+                .iter()
+                .map(|id| Role::indexed_from_zero(*id))
+                .collect()
+        }),
         None,
         None,
     )

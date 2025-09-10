@@ -38,6 +38,7 @@ impl Client {
             max_num_bits,
             request_id: Some((*request_id).into()),
             domain: Some(alloy_to_protobuf_domain(eip712_domain)?),
+            context_id: None,
         })
     }
 
@@ -221,6 +222,8 @@ pub(crate) mod tests {
     use tfhe::Tag;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 
+    use crate::consts::TEST_PARAM;
+
     pub(crate) fn verify_pp(dkg_params: &DKGParams, pp: &CompactPkeCrs) {
         let dkg_params_handle = dkg_params.get_params_basics_handle();
 
@@ -252,11 +255,29 @@ pub(crate) mod tests {
         let metadata = vec![23_u8, 42];
         let mut compact_list_builder = ProvenCompactCiphertextList::builder(&pk);
         for msg in msgs {
-            compact_list_builder.push_with_num_bits(msg, 64).unwrap();
+            compact_list_builder.push(msg);
         }
         let proven_ct = compact_list_builder
             .build_with_proof_packed(pp, &metadata, tfhe::zk::ZkComputeLoad::Proof)
             .unwrap();
         assert!(proven_ct.verify(pp, &pk, &metadata).is_valid());
+    }
+
+    #[test]
+    fn verify_pp_with_tfhers() {
+        // We're using test parameters because they're unique to KMS
+        // and have more constraints. The normal parameters should always be tested by tfhe-rs.
+        let dkg_params = TEST_PARAM;
+        let params_h = dkg_params.get_params_basics_handle();
+
+        let config =
+            tfhe::ConfigBuilder::with_custom_parameters(params_h.to_classic_pbs_parameters())
+                .use_dedicated_compact_public_key_parameters(
+                    params_h.get_dedicated_pk_params().unwrap(),
+                )
+                .build();
+
+        let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
+        verify_pp(&dkg_params, &crs);
     }
 }

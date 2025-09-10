@@ -141,7 +141,7 @@ where
 #[instrument(
     name = "ReShare (same sets)",
     skip(preproc128, preproc64, session, input_share)
-    fields(sid=?session.session_id(),own_identity=?session.own_identity())
+    fields(sid=?session.session_id(),my_role=?session.my_role())
 )]
 pub async fn reshare_sk_same_sets<
     Ses: BaseSessionHandles,
@@ -274,7 +274,7 @@ where
     // we need share_count shares for every party in the initial set of size n1
     let n1 = session.num_parties();
     let share_count = input_share.len(); // this is the lwe dimension if input is sk
-    let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
+    let mut all_roles_sorted = session.roles().iter().cloned().collect_vec();
     all_roles_sorted.sort();
 
     // setup r_{i,j} shares
@@ -464,7 +464,7 @@ mod tests {
             online::preprocessing::dummy::DummyPreprocessing,
             runtime::{
                 session::ParameterHandles,
-                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+                test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
             sharing::shamir::InputOp,
         },
@@ -676,12 +676,12 @@ mod tests {
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, num_parties, threshold)
                 .unwrap();
 
-        let identities = generate_fixed_identities(num_parties);
+        let roles = generate_fixed_roles(num_parties);
         //Reshare assumes Sync network
         let mut runtime: DistributedTestRuntime<
             ResiduePoly<Z128, EXTENSION_DEGREE>,
             EXTENSION_DEGREE,
-        > = DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
+        > = DistributedTestRuntime::new(roles, threshold as u8, NetworkMode::Sync, None);
         if add_error {
             key_shares[0] = PrivateKeySet {
                 lwe_compute_secret_key_share: LweSecretKeyShare {
@@ -778,15 +778,15 @@ mod tests {
         let _guard = rt.enter();
 
         let mut set = JoinSet::new();
-        for (index_id, _identity) in runtime.identities.clone().into_iter().enumerate() {
+        for role in &runtime.roles {
             let mut party_keyshare = runtime
                 .keyshares
                 .clone()
-                .map(|ks| ks[index_id].clone())
+                .map(|ks| ks[role.one_based() - 1].clone())
                 .ok_or_else(|| {
                     anyhow_error_and_log("key share not set during decryption".to_string())
                 })?;
-            let mut session = runtime.large_session_for_party(session_id, index_id);
+            let mut session = runtime.large_session_for_party(session_id, *role);
 
             set.spawn(async move {
                 let mut preproc128 =

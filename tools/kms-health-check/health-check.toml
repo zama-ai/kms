@@ -1,0 +1,11 @@
+# Health Check Tool Configuration
+# This file configures timeout settings for the KMS health check tool
+# All settings can be overridden with environment variables
+
+# Connection timeout in seconds
+# Environment variable: HEALTH_CHECK_CONNECTION_TIMEOUT_SECS
+connection_timeout_secs = 5
+
+# Request timeout in seconds  
+# Environment variable: HEALTH_CHECK_REQUEST_TIMEOUT_SECS
+request_timeout_secs = 10
