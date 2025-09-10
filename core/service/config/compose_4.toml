@@ -24,7 +24,7 @@ path = "./keys"
 path = "./backup_vault"
 
 [threshold]
-listen_address = "dev-kms-core-4"
+listen_address = "0.0.0.0"
 listen_port = 50004
 
 my_id = 4
@@ -37,36 +37,40 @@ num_sessions_preproc = 2
 decryption_mode = "NoiseFloodSmall"
 
 [threshold.tls.manual]
-cert.path = "certs/cert_dev-kms-core-4.pem"
-key.path = "certs/key_dev-kms-core-4.pem"
+cert.path = "certs/cert_dev-kms-core-4.com.pem"
+key.path = "certs/key_dev-kms-core-4.com.pem"
 
 [[threshold.peers]]
 party_id = 1
-address = "dev-kms-core-1"
+address = "abcd.dev-kms-core-1.com"
+mpc_identity = "dev-kms-core-1.com"
 port = 50001
 service_port = 50100
-tls_cert.path = "certs/cert_dev-kms-core-1.pem"
+tls_cert.path = "certs/cert_dev-kms-core-1.com.pem"
 
 [[threshold.peers]]
 party_id = 2
-address = "dev-kms-core-2"
+address = "abcd.dev-kms-core-2.com"
+mpc_identity = "dev-kms-core-2.com"
 port = 50002
 service_port = 50200
-tls_cert.path = "certs/cert_dev-kms-core-2.pem"
+tls_cert.path = "certs/cert_dev-kms-core-2.com.pem"
 
 [[threshold.peers]]
 party_id = 3
-address = "dev-kms-core-3"
+address = "abcd.dev-kms-core-3.com"
+mpc_identity = "dev-kms-core-3.com"
 port = 50003
 service_port = 50300
-tls_cert.path = "certs/cert_dev-kms-core-3.pem"
+tls_cert.path = "certs/cert_dev-kms-core-3.com.pem"
 
 [[threshold.peers]]
 party_id = 4
-address = "dev-kms-core-4"
+address = "abcd.dev-kms-core-4.com"
+mpc_identity = "dev-kms-core-4.com"
 port = 50004
 service_port = 50400
-tls_cert.path = "certs/cert_dev-kms-core-4.pem"
+tls_cert.path = "certs/cert_dev-kms-core-4.com.pem"
 
 [threshold.core_to_core_net]
 message_limit = 70

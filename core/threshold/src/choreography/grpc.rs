@@ -564,7 +564,7 @@ where
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
-        let role_assignment = Arc::new(RwLock::new(role_assignment));
+        let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let prss_params: PrssInitParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
@@ -679,7 +679,7 @@ where
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
-        let role_assignment = Arc::new(RwLock::new(role_assignment));
+        let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let preproc_params: PreprocKeyGenParams =
             bc2wrap::deserialize(&request.params).map_err(|e| {
@@ -897,7 +897,7 @@ where
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
-        let role_assignment = Arc::new(RwLock::new(role_assignment));
+        let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let kg_params: ThresholdKeyGenParams =
             bc2wrap::deserialize(&request.params).map_err(|e| {
@@ -1077,7 +1077,7 @@ where
                         format!("Failed to parse role assignment: {e:?}"),
                     )
                 })?;
-            let role_assignment = Arc::new(RwLock::new(role_assignment));
+            let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
             let mut base_session = self
                 .create_base_session(
@@ -1162,7 +1162,7 @@ where
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
-        let role_assignment = Arc::new(RwLock::new(role_assignment));
+        let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let preproc_params: PreprocDecryptParams =
             bc2wrap::deserialize(&request.params).map_err(|e| {
@@ -1501,7 +1501,7 @@ where
             })?;
 
         let roles = role_assignment.keys().cloned().collect();
-        let role_assignment = Arc::new(RwLock::new(role_assignment));
+        let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let decrypt_params: ThresholdDecryptParams = bc2wrap::deserialize(&request.params)
             .map_err(|e| {
@@ -2245,7 +2245,7 @@ where
                     format!("Failed to parse role assignment: {e:?}"),
                 )
             })?;
-        let role_assignment = Arc::new(RwLock::new(role_assignment));
+        let role_assignment = Arc::new(RwLock::new(RoleAssignment::from(role_assignment)));
 
         let crs_params: CrsGenParams = bc2wrap::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
@@ -2423,7 +2423,7 @@ where
                 session_id,
                 3,
                 threshold,
-                Arc::new(RwLock::new(role_assignment)),
+                Arc::new(RwLock::new(RoleAssignment::from(role_assignment))),
                 NetworkMode::Sync,
                 request.seed,
             )

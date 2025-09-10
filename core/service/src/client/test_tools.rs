@@ -83,6 +83,7 @@ pub async fn setup_threshold_no_client<
         .map(|(i, port)| PeerConf {
             party_id: i + 1,
             address: ip_addr.to_string(),
+            mpc_identity: None,
             port,
             service_port: None, // Test environments don't need separate gRPC ports
             tls_cert: None,

@@ -5,7 +5,7 @@ use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve, Synd
 use crate::choreography::grpc::GrpcChoreography;
 use crate::conf::party::PartyConf;
 use crate::execution::online::preprocessing::{create_memory_factory, create_redis_factory};
-use crate::execution::runtime::party::{Role, RoleAssignment};
+use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
 #[cfg(feature = "experimental")]
 use crate::experimental::choreography::grpc::ExperimentalGrpcChoreography;
 #[cfg(not(feature = "experimental"))]
@@ -13,6 +13,7 @@ use crate::malicious_execution::malicious_moby::add_strategy_to_router;
 use crate::networking::constants::NETWORK_TIMEOUT_LONG;
 use crate::networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
 use observability::telemetry::make_span;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::transport::{Server, ServerTlsConfig};
@@ -28,7 +29,7 @@ where
     // TODO: This part is under discussion. We need to figure out how to handle the networking topology configuration
     // For the moment we are using a provided configuration on `threshold_decrypt` gRPC endpoint,
     // but it is not discarded to use a more dynamic approach.
-    let docker_static_endpoints: RoleAssignment = settings
+    let docker_static_endpoints: HashMap<Role, Identity> = settings
         .protocol()
         .peers()
         .as_ref()
@@ -51,7 +52,7 @@ where
         tls_conf,
         settings.net_conf,
         false,
-        Arc::new(RwLock::new(docker_static_endpoints)),
+        Arc::new(RwLock::new(RoleAssignment::from(docker_static_endpoints))),
     )?);
     let networking_server = networking.new_server(TlsExtensionGetter::TlsConnectInfo);
 
