@@ -1,6 +1,7 @@
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::centralized::service::{
-    delete_kms_context_impl, get_reprocessing_res_impl, new_kms_context_impl, preprocessing_impl,
+    delete_kms_context_impl, get_reprocessing_res_impl, init_impl, new_kms_context_impl,
+    preprocessing_impl,
 };
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
@@ -32,11 +33,12 @@ use observability::{
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
     CoreServiceEndpoint for RealCentralizedKms<PubS, PrivS>
 {
-    async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+    async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_INIT);
-        // todo implement needed logic
-        tracing::warn!("Init called on centralized KMS - no action taken");
-        Ok(Response::new(Empty {}))
+        init_impl(self, request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(observability::metrics_names::OP_INIT, tag);
+        })
     }
 
     #[tracing::instrument(skip(self, request))]

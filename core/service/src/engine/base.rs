@@ -1341,7 +1341,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn recover_address(
+    pub(crate) fn recover_address(
         data: impl SolStruct,
         domain: &Eip712Domain,
         external_sig: &[u8],
