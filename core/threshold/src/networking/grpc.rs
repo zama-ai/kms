@@ -728,22 +728,21 @@ impl Gnetworking for NetworkingImpl {
         }
 
         if let Some(sender) = valid_tls_sender {
-            // tag.sender is an Identity(hostname, port) struct, so we can directly access the hostname
-            // We only need the hostname component since the tls_sender does not include the port
+            // tag.sender is an the MPC identity, this should match the CN in the certificate
             let role_assignment = self.role_assignment.read().await;
-            let Some(host) = role_assignment.get(&tag.sender) else {
+            let Some(mpc_identity) = (*role_assignment)
+                .get(&tag.sender)
+                .map(|inner| inner.mpc_identity())
+            else {
                 return Err(tonic::Status::new(
                     tonic::Code::Unauthenticated,
                     format!("wrong sender: hostname unknown for party {}", tag.sender),
                 ));
             };
-            if sender != *host.hostname() {
+            if sender != *mpc_identity {
                 return Err(tonic::Status::new(
                     tonic::Code::Unauthenticated,
-                    format!(
-                        "wrong sender: expected {} to be in {sender:?}",
-                        host.hostname()
-                    ),
+                    format!("wrong sender: expected {mpc_identity:?} to be in {sender:?}"),
                 ));
             }
             tracing::debug!("TLS Check went fine for sender: {:?}", sender);

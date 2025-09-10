@@ -74,6 +74,13 @@ pub struct Cli {
 
     #[clap(long, value_enum, default_value_t = CertFileType::Pem, help = "the output file type, select between pem and der")]
     output_file_type: CertFileType,
+
+    #[clap(
+        long,
+        default_value_t = false,
+        help = "whether to include a wildcard SAN entry for the CA certificates"
+    )]
+    wildcard: bool,
 }
 
 /// Validates if a user-specified CA name is valid.
@@ -108,17 +115,37 @@ async fn write_bytes<S: AsRef<std::ffi::OsStr> + ?Sized, B: AsRef<[u8]>>(
 fn create_ca_cert(
     ca_name: &str,
     is_ca: &IsCa,
+    wildcard: bool,
 ) -> anyhow::Result<(KeyPair, Certificate, CertificateParams)> {
-    validate_ca_name(ca_name)?;
     let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
-    let mut cp = CertificateParams::new(vec![
-        ca_name.to_string(),
-        "127.0.0.1".to_string(),
-        "localhost".to_string(),
-        "192.168.0.1".to_string(),
-        "0:0:0:0:0:0:0:1".to_string(),
-        "::1".to_string(),
-    ])?;
+    create_ca_cert_from_keypair(&keypair, ca_name, is_ca, wildcard)
+        .map(|(cert, params)| (keypair, cert, params))
+}
+
+fn create_ca_cert_from_keypair(
+    keypair: &KeyPair,
+    ca_name: &str,
+    is_ca: &IsCa,
+    wildcard: bool,
+) -> anyhow::Result<(Certificate, CertificateParams)> {
+    validate_ca_name(ca_name)?;
+    let sans_vec = [
+        if wildcard {
+            vec![format!("*.{ca_name}")]
+        } else {
+            vec![]
+        },
+        vec![
+            ca_name.to_string(),
+            "127.0.0.1".to_string(),
+            "localhost".to_string(),
+            "192.168.0.1".to_string(),
+            "0:0:0:0:0:0:0:1".to_string(),
+            "::1".to_string(),
+        ],
+    ]
+    .concat();
+    let mut cp = CertificateParams::new(sans_vec)?;
 
     // set distinguished name of CA cert
     let mut distinguished_name = DistinguishedName::new();
@@ -150,8 +177,8 @@ fn create_ca_cert(
 
     // self-sign cert with CA key
     tracing::info!("Generating keys and cert for {:?}", cp.subject_alt_names[0]);
-    let cert = cp.self_signed(&keypair)?;
-    Ok((keypair, cert, cp))
+    let cert = cp.self_signed(keypair)?;
+    Ok((cert, cp))
 }
 
 /// create a keypair and certificate for each of the `num_cores`, signed by the given CA
@@ -160,19 +187,28 @@ fn create_core_certs(
     num_cores: usize,
     ca_keypair: &KeyPair,
     ca_cert_params: &CertificateParams,
+    wildcard: bool,
 ) -> anyhow::Result<HashMap<usize, (KeyPair, Certificate)>> {
     let core_cert_bundle: HashMap<usize, (KeyPair, Certificate)> = (1..=num_cores)
         .map(|i: usize| {
             let core_name = format!("core{i}.{ca_name}");
             let core_keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
-            let mut cp = CertificateParams::new(vec![
-                core_name.clone(),
-                "localhost".to_string(),
-                "192.168.0.1".to_string(),
-                "127.0.0.1".to_string(),
-                "0:0:0:0:0:0:0:1".to_string(),
-            ])
-            .unwrap();
+            let sans_vec = [
+                if wildcard {
+                    vec![format!("*.{}", core_name.clone())]
+                } else {
+                    vec![]
+                },
+                vec![
+                    core_name.clone(),
+                    "localhost".to_string(),
+                    "192.168.0.1".to_string(),
+                    "127.0.0.1".to_string(),
+                    "0:0:0:0:0:0:0:1".to_string(),
+                ],
+            ]
+            .concat();
+            let mut cp = CertificateParams::new(sans_vec).unwrap();
 
             // set core cert CA flag to false
             cp.is_ca = IsCa::ExplicitNoCa;
@@ -263,7 +299,8 @@ pub async fn entry_point() -> anyhow::Result<()> {
 
     let mut all_certs = vec![];
     for ca_name in ca_set {
-        let (ca_keypair, ca_cert, ca_cert_params) = create_ca_cert(&ca_name, &is_ca)?;
+        let (ca_keypair, ca_cert, ca_cert_params) =
+            create_ca_cert(&ca_name, &is_ca, args.wildcard)?;
 
         write_certs_and_keys(
             &args.output_dir,
@@ -276,8 +313,13 @@ pub async fn entry_point() -> anyhow::Result<()> {
 
         // only generate core certs, if specifically desired (currently not the default)
         if args.num_cores > 0 {
-            let core_certs =
-                create_core_certs(&ca_name, args.num_cores, &ca_keypair, &ca_cert_params)?;
+            let core_certs = create_core_certs(
+                &ca_name,
+                args.num_cores,
+                &ca_keypair,
+                &ca_cert_params,
+                args.wildcard,
+            )?;
 
             // write all core keypairs and certificates to disk
             for (core_id, (core_keypair, core_cert)) in core_certs.iter() {
@@ -337,9 +379,10 @@ mod tests {
     fn test_cert_chain() {
         let ca_name = "party.kms.zama.ai";
         let is_ca = IsCa::Ca(Constrained(1));
-        let (ca_keypair, ca_cert, ca_cert_params) = create_ca_cert(ca_name, &is_ca).unwrap();
+        let (ca_keypair, ca_cert, ca_cert_params) = create_ca_cert(ca_name, &is_ca, false).unwrap();
 
-        let core_certs = create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params).unwrap();
+        let core_certs =
+            create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params, false).unwrap();
 
         // check that we can import the CA cert into the trust store
         let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
@@ -348,7 +391,7 @@ mod tests {
 
         // create another CA cert, that did not sign the core certs for negative testing
         let (_ca_keypair_wrong, ca_cert_wrong, _ca_cert_params_wrong) =
-            create_ca_cert(ca_name, &is_ca).unwrap();
+            create_ca_cert(ca_name, &is_ca, false).unwrap();
 
         // check all core certs
         for c in core_certs {
@@ -370,7 +413,8 @@ mod tests {
         let ca_name = "p1.kms.zama.ai";
         let is_ca = IsCa::NoCa;
 
-        let (_ca_keypair, ca_cert, _ca_cert_params) = create_ca_cert(ca_name, &is_ca).unwrap();
+        let (_ca_keypair, ca_cert, _ca_cert_params) =
+            create_ca_cert(ca_name, &is_ca, false).unwrap();
 
         // check that we can import the CA cert into the trust store
         let mut root_store = tokio_rustls::rustls::RootCertStore::empty();
@@ -379,7 +423,7 @@ mod tests {
 
         // create another CA cert, that did not sign the core certs for negative testing
         let (_ca_keypair_wrong, ca_cert_wrong, _ca_cert_params_wrong) =
-            create_ca_cert(ca_name, &is_ca).unwrap();
+            create_ca_cert(ca_name, &is_ca, false).unwrap();
 
         let verif = signed_verify(&ca_cert, &ca_cert);
 
@@ -411,7 +455,8 @@ mod tests {
         let ca_name = "p1.kms.zama.ai";
         let is_ca = IsCa::NoCa;
 
-        let (_ca_keypair, ca_cert, _ca_cert_params) = create_ca_cert(ca_name, &is_ca).unwrap();
+        let (_ca_keypair, ca_cert, _ca_cert_params) =
+            create_ca_cert(ca_name, &is_ca, false).unwrap();
         let (_, cert) = x509_parser::parse_x509_certificate(ca_cert.der().as_ref()).unwrap();
         let sid = u128::from_be_bytes(cert.serial.to_bytes_be().try_into().unwrap());
         assert_eq!(sid, super::DEFAULT_SESSION_ID_FROM_CONTEXT);

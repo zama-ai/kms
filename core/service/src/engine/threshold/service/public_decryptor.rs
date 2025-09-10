@@ -927,6 +927,7 @@ mod tests {
             domain: Some(domain),
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         });
         assert_eq!(
             public_decryptor
@@ -959,6 +960,7 @@ mod tests {
             domain: Some(domain),
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         };
         public_decryptor
             .public_decrypt(Request::new(request.clone()))
@@ -993,6 +995,7 @@ mod tests {
             domain: Some(domain),
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         });
         assert_eq!(
             public_decryptor
@@ -1037,6 +1040,7 @@ mod tests {
                 domain: Some(domain),
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
             assert_eq!(
                 public_decryptor
@@ -1058,6 +1062,7 @@ mod tests {
                 domain: Some(domain),
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
             assert_eq!(
                 public_decryptor
@@ -1087,6 +1092,7 @@ mod tests {
                 domain: Some(domain),
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
             assert_eq!(
                 public_decryptor
@@ -1112,6 +1118,7 @@ mod tests {
                 domain: None,
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
             assert_eq!(
                 public_decryptor
@@ -1139,6 +1146,7 @@ mod tests {
                 domain: Some(domain),
                 extra_data: vec![],
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+                epoch_id: None,
             });
             assert_eq!(
                 public_decryptor
@@ -1184,6 +1192,7 @@ mod tests {
             domain: Some(domain),
             extra_data: vec![],
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
+            epoch_id: None,
         });
         public_decryptor.public_decrypt(request).await.unwrap();
         // there's no need to check the decryption result since it's a dummy protocol

@@ -449,6 +449,7 @@ mod tests {
                 keyset_config: None,
                 context_id: None,
                 domain: Some(domain.clone()),
+                epoch_id: None,
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -475,6 +476,7 @@ mod tests {
                 keyset_config: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 domain: Some(domain.clone()),
+                epoch_id: None,
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -494,6 +496,7 @@ mod tests {
                 keyset_config: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 domain: Some(domain.clone()),
+                epoch_id: None,
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -513,6 +516,7 @@ mod tests {
                 keyset_config: None,
                 context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
                 domain: None,
+                epoch_id: None,
             };
             assert_eq!(
                 prep.key_gen_preproc(tonic::Request::new(request))
@@ -540,6 +544,7 @@ mod tests {
             keyset_config: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain),
+            epoch_id: None,
         };
         assert_eq!(
             prep.key_gen_preproc(tonic::Request::new(request))
@@ -565,6 +570,7 @@ mod tests {
             keyset_config: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain),
+            epoch_id: None,
         };
 
         // even though we use a failing preprocessor, the request should be ok
@@ -612,6 +618,7 @@ mod tests {
             keyset_config: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain),
+            epoch_id: None,
         };
         prep.key_gen_preproc(tonic::Request::new(request.clone()))
             .await
@@ -641,6 +648,7 @@ mod tests {
             keyset_config: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain),
+            epoch_id: None,
         };
         assert_eq!(
             prep.key_gen_preproc(tonic::Request::new(request))
@@ -665,6 +673,7 @@ mod tests {
             keyset_config: None,
             context_id: Some((*DEFAULT_MPC_CONTEXT).into()),
             domain: Some(domain.clone()),
+            epoch_id: None,
         };
         prep.key_gen_preproc(tonic::Request::new(request))
             .await

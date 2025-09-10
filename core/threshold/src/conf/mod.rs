@@ -39,7 +39,7 @@ impl From<&Party> for Role {
 
 impl From<&Party> for Identity {
     fn from(party_conf: &Party) -> Self {
-        Identity(party_conf.address.clone(), party_conf.port)
+        Identity::new(party_conf.address.clone(), party_conf.port, None)
     }
 }
 

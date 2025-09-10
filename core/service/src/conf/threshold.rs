@@ -121,17 +121,22 @@ impl TlsCert {
         let x509_cert = cert_pem.parse_x509()?;
         // sanity check: peerlist needs to have an entry for the
         // current party
-        let my_hostname = &peers
+        let peer = &peers
             .iter()
             .find(|peer| peer.party_id == my_id)
             .ok_or_else(|| {
                 anyhow::anyhow!("Peer list {peers:?} does not have an entry for my id {my_id}")
-            })?
-            .address;
+            })?;
+        let mpc_identity = peer
+            .mpc_identity
+            .as_ref()
+            .unwrap_or(&peer.address)
+            .to_string();
+
         let subject = extract_subject_from_cert(&x509_cert).map_err(|e| anyhow::anyhow!(e))?;
         anyhow::ensure!(
-            subject == *my_hostname,
-            "Certificate subject {subject} does not match hostname {my_hostname}"
+            subject == mpc_identity,
+            "Certificate subject {subject} does not match mpc_identity {mpc_identity}"
         );
         Ok(cert_pem)
     }
@@ -172,6 +177,7 @@ pub struct PeerConf {
     pub party_id: usize,
     #[validate(length(min = 1))]
     pub address: String,
+    pub mpc_identity: Option<String>,
     #[validate(range(min = 1, max = 65535))]
     pub port: u16,
     /// Optional gRPC port for peer health checks and service discovery.
@@ -205,7 +211,7 @@ impl PeerConf {
     pub fn into_role_identity(&self) -> (Role, Identity) {
         (
             Role::indexed_from_one(self.party_id),
-            Identity(self.address.clone(), self.port),
+            Identity::new(self.address.clone(), self.port, self.mpc_identity.clone()),
         )
     }
 }
