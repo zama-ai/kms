@@ -252,7 +252,7 @@ where
         config.core_to_core_net,
         peer_tcp_proxy,
         // The mapping from roles to network addresses is dependent on contexts set dynamically, so we put it in a mutable map
-        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(RoleAssignment::empty())),
     )?));
 
     // the initial MPC node might not accept any peers because initially there's no context
@@ -381,10 +381,12 @@ where
     // Optionally add a testing session preparer.
     let _ = match config.peers {
         Some(ref peers) => {
-            let role_assignment: RoleAssignment = peers
-                .iter()
-                .map(|peer_config| peer_config.into_role_identity())
-                .collect();
+            let role_assignment = RoleAssignment {
+                inner: peers
+                    .iter()
+                    .map(|peer_config| peer_config.into_role_identity())
+                    .collect(),
+            };
             let session_preparer = SessionPreparer::new(
                 base_kms.new_instance().await,
                 config.threshold,

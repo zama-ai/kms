@@ -132,24 +132,24 @@ impl GrpcSendingService {
                 // This is because we could run the parties with the
                 // same IP address for all parties but using different ports,
                 // but we cannot map the port number to certificates.
-                if IpAddr::from_str(&network_address.0).is_ok() {
+                if IpAddr::from_str(network_address.hostname()).is_ok() {
                     return Err(anyhow_error_and_log(format!(
                         "{} is an IP address, which is not supported for TLS",
-                        network_address.0
+                        network_address.hostname()
                     )));
                 }
-                let domain_name = ServerName::try_from(network_address.0.clone())?.to_owned();
+                let domain_name = ServerName::try_from(network_address.hostname())?.to_owned();
 
                 // If we have a list of trusted software hashes, we're running
                 // within the AWS Nitro enclave and we have to use vsock proxies
                 // to make TCP connections to peers.
                 let endpoint = if self.peer_tcp_proxy {
-                    format!("https://localhost:{}", network_address.1)
+                    format!("https://localhost:{}", network_address.port())
                         .parse::<Uri>()
                         .map_err(|_e| {
                             anyhow_error_and_log(format!(
                                 "failed to parse proxy identity with port: {}",
-                                network_address.1
+                                network_address.port()
                             ))
                         })?
                 } else {
@@ -571,11 +571,11 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_network_stack() {
         let sid = SessionId::from(0);
-        let mut role_assignment = RoleAssignment::new();
+        let mut role_assignment = RoleAssignment::default();
         let role_1 = Role::indexed_from_one(1);
-        let id_1 = Identity("127.0.0.1".to_string(), 6001);
+        let id_1 = Identity::new("127.0.0.1".to_string(), 6001, None);
         let role_2 = Role::indexed_from_one(2);
-        let id_2 = Identity("127.0.0.1".to_string(), 6002);
+        let id_2 = Identity::new("127.0.0.1".to_string(), 6002, None);
         role_assignment.insert(role_1, id_1.clone());
         role_assignment.insert(role_2, id_2.clone());
 
@@ -585,7 +585,7 @@ mod tests {
             //Wait a little while to make sure retry works fine
             std::thread::sleep(Duration::from_secs(5));
             let role = *role;
-            let my_port = id.1;
+            let my_port = id.port();
             let id = id.clone();
 
             let networking_1 = GrpcNetworkingManager::new(
@@ -633,7 +633,7 @@ mod tests {
                     let core_future =
                         core_router.serve(format!("127.0.0.1:{my_port}").parse().unwrap());
                     tokio::spawn(async move {
-                        println!("Spinning up server on {id}");
+                        println!("Spinning up server on {id:?}");
                         let _res = futures::join!(core_future);
                     });
                     tokio::spawn(async move {
@@ -662,7 +662,7 @@ mod tests {
             .await
             .unwrap();
 
-        let port_p2 = id_2.1;
+        let port_p2 = id_2.port();
         handles.add(std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(5));
             let runtime = tokio::runtime::Runtime::new().unwrap();

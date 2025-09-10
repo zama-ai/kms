@@ -379,12 +379,14 @@ impl InnerSessionPreparer {
     ) -> Self {
         use threshold_fhe::networking::grpc::GrpcNetworkingManager;
 
-        let role_assignment = RoleAssignment::from_iter((1..=4).map(|i| {
-            (
-                Role::indexed_from_one(i),
-                Identity("localhost".to_string(), 8080 + i as u16),
-            )
-        }));
+        let role_assignment = RoleAssignment {
+            inner: HashMap::from_iter((1..=4).map(|i| {
+                (
+                    Role::indexed_from_one(i),
+                    Identity::new("localhost".to_string(), 8080 + i as u16, None),
+                )
+            })),
+        };
         let networking_manager = Arc::new(RwLock::new(
             GrpcNetworkingManager::new(
                 Role::indexed_from_one(1),

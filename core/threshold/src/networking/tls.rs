@@ -506,6 +506,11 @@ pub fn extract_context_id_from_cert(cert: &X509Certificate) -> anyhow::Result<Se
 ///
 /// Each party should have its own self-signed certificate.
 /// Each self-signed certificate is loaded into the trust store of all the parties.
+///
+/// We support wildcards so the certificate may have
+/// CN: example.com
+/// SAN: *.example.com, example.com
+/// The identity is the one in the CN field and it should exist in the SAN too.
 pub fn extract_subject_from_cert(cert: &X509Certificate) -> anyhow::Result<String> {
     let Some(sans) = cert
         .subject_alternative_name()
