@@ -263,6 +263,8 @@ impl<
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     use crate::{
@@ -316,6 +318,7 @@ mod tests {
                     peers: Some(vec![PeerConf {
                         party_id: 1,
                         address: "dummy".to_string(),
+                        mpc_identity: None,
                         port: 1,
                         service_port: None,
                         tls_cert: None,
@@ -418,15 +421,16 @@ mod tests {
     }
 
     fn test_network_manager() -> Arc<RwLock<GrpcNetworkingManager>> {
-        let role_assignment = RoleAssignment::from_iter((1..=4).map(|i| {
-            (
-                Role::indexed_from_one(i),
-                threshold_fhe::execution::runtime::party::Identity(
+        let role_assignment = RoleAssignment {
+            inner: HashMap::from_iter((1..=4).map(|i| {
+                let identity = threshold_fhe::execution::runtime::party::Identity::new(
                     "localhost".to_string(),
                     8080 + i as u16,
-                ),
-            )
-        }));
+                    None,
+                );
+                (Role::indexed_from_one(i), identity)
+            })),
+        };
         let role_assignment = Arc::new(RwLock::new(role_assignment));
 
         Arc::new(RwLock::new(
