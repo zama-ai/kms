@@ -1548,7 +1548,7 @@ pub const BC_PARAMS: DKGParamsRegular = DKGParamsRegular {
     compression_decompression_parameters: Some(
         tfhe::shortint::parameters::current_params::V1_4_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128
     ),
-    cpk_re_randomization_ksk_params: None,
+    cpk_re_randomization_ksk_params: Some(tfhe::shortint::parameters::current_params::V1_4_PARAM_KEYSWITCH_PKE_TO_BIG_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128),
 };
 
 /// Blokchain Parameters without SnS (with pfail `2^-128`), using parameters in tfhe-rs codebase
