@@ -129,10 +129,10 @@ impl<Z: Eq + Zero> AsRef<NetworkValue<Z>> for NetworkValue<Z> {
     }
 }
 
-// Note we do not offload the serialization to rayon as
-// benchmark show serialization is faster than deserialization
-// and sending to rayon implies a clone which makes it significantly slower
 impl<Z: Ring> NetworkValue<Z> {
+    // Note we do not offload the serialization to rayon as
+    // benchmark show serialization is fast
+    // and sending to rayon implies a clone which makes it significantly slower
     pub fn to_network(&self) -> Vec<u8> {
         bc2wrap::serialize(self).unwrap()
     }
