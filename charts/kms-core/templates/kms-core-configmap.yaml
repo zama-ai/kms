@@ -195,14 +195,15 @@ data:
       {{- end }}
     {{- end }}
 
-    {{- if .Values.tracing.enabled }}
     [telemetry]
     tracing_service_name = {{ include "kmsCoreName" . | quote }}
+    {{- if .Values.tracing.enabled }}
       {{- if .Values.kmsCore.nitroEnclave.enabled }}
     tracing_endpoint = "http://localhost:{{ .Values.kmsCore.nitroEnclave.ports.tracing }}"
       {{- else }}
     tracing_endpoint = {{ .Values.tracing.endpoint | quote }}
       {{- end }}
+    {{- end }}
 
     tracing_otlp_timeout_ms = 10000
     metrics_bind_address = "0.0.0.0:{{ .Values.kmsCore.ports.metrics }}"
@@ -215,7 +216,6 @@ data:
     max_concurrent_exports = 4
     scheduled_delay_ms = 500
     export_timeout_ms = 5000
-    {{- end }}
 
     [rate_limiter_conf]
     bucket_size = {{ .Values.kmsCore.rateLimiter.bucketSize }}
