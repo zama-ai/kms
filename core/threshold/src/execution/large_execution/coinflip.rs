@@ -261,7 +261,6 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_honest(4, 1, Some(6)))]
     #[case(TestingParameters::init_honest(7, 2, Some(7)))]
     #[case(TestingParameters::init_honest(10, 3, Some(8)))]
-    #[serial_test::serial(coinflip_1)]
     async fn test_coinflip_honest_z128(#[case] params: TestingParameters) {
         let malicious_coinflip = SecureCoinflip::default();
         test_coinflip_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
@@ -289,7 +288,6 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to))]
     #[cfg(feature = "slow_tests")]
-    #[serial_test::serial(coinflip_2)]
     async fn test_coinflip_dropout<V: Vss + 'static>(
         #[case] params: TestingParameters,
         #[case] malicious_vss: V,
@@ -321,7 +319,6 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
-    #[serial_test::serial(coinflip_3)]
     #[cfg(feature = "slow_tests")]
     async fn test_coinflip_malicious_vss<V: Vss + 'static, RO: RobustOpen + 'static>(
         #[case] params: TestingParameters,
@@ -356,7 +353,6 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
     #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
-    #[serial_test::serial(coinflip_4)]
     #[cfg(feature = "slow_tests")]
     async fn test_malicious_coinflip_malicious_vss<V: Vss + 'static, RO: RobustOpen + 'static>(
         #[case] params: TestingParameters,
