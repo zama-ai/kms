@@ -26,7 +26,7 @@ kms-health-check live --endpoint localhost:50100
 kms-health-check full --config /path/to/config.toml --endpoint localhost:50100
 
 # JSON output for monitoring
-kms-health-check full --config /path/to/config.toml --endpoint localhost:50100 --format json
+kms-health-check --format json full --config /path/to/config.toml --endpoint localhost:50100
 
 # Using custom timeout configuration
 kms-health-check live --endpoint localhost:50100 --health-config health-check.toml
@@ -282,17 +282,52 @@ kms-health-check live --endpoint localhost:50100
 
 ## Integration
 
+### Docker
+
+The health check tool is included in the `kms-core-client` Docker image:
+
+```bash
+# Run health check from Docker
+docker run ghcr.io/zama-ai/kms/core-client:latest \
+  kms-health-check live --endpoint host.docker.internal:50100
+
+# With config validation
+docker run -v $(pwd)/config:/config \
+  ghcr.io/zama-ai/kms/core-client:latest \
+  kms-health-check full --config /config/kms.toml --endpoint kms-server:50100
+
+# JSON output from Docker
+docker run ghcr.io/zama-ai/kms/core-client:latest \
+  kms-health-check --format json live --endpoint host.docker.internal:50100
+
+# As Docker Compose health check
+services:
+  kms-server:
+    image: ghcr.io/zama-ai/kms/core-service:latest
+    healthcheck:
+      test: ["CMD", "kms-health-check", "live", "--endpoint", "localhost:50100"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+```
+
 ### Kubernetes
 ```yaml
 readinessProbe:
   exec:
-    command: ["/usr/local/bin/kms-health-check", "live", "--endpoint", "localhost:50100"]
+    command: ["/app/kms-core-client/bin/kms-health-check", "live", "--endpoint", "localhost:50100"]
   periodSeconds: 30
 ```
 
 ### CI/CD
 ```bash
+# Native execution
 kms-health-check config --file config.toml || exit 1
+
+# Docker execution
+docker run -v $(pwd):/workspace \
+  ghcr.io/zama-ai/kms/core-client:latest \
+  kms-health-check config --file /workspace/config.toml || exit 1
 ```
 
 ## Exit Codes
