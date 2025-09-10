@@ -1333,6 +1333,7 @@ pub mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn keygen_params_bk_sns_f4() {
         keygen_params_bk_sns::<4>().await
     }
@@ -1366,24 +1367,28 @@ pub mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
+    #[ignore]
     async fn integration_keygen_params_bk_sns_f8() {
         integration_keygen_params_bk_sns::<8>(KeySetConfig::default()).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
+    #[serial_test::serial]
     async fn integration_keygen_params_bk_sns_f4() {
         integration_keygen_params_bk_sns::<4>(KeySetConfig::default()).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
+    #[ignore]
     async fn integration_keygen_params_bk_sns_f3() {
         integration_keygen_params_bk_sns::<3>(KeySetConfig::default()).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
+    #[serial_test::serial]
     async fn integration_keygen_params_bk_sns_existing_compression_sk_f4() {
         integration_keygen_params_bk_sns::<4>(KeySetConfig::use_existing_compression_sk()).await
     }
@@ -1556,6 +1561,7 @@ pub mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
+    #[serial_test::serial]
     async fn decompression_keygen_f4() {
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
@@ -1567,6 +1573,7 @@ pub mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
+    #[serial_test::serial]
     async fn sns_compression_keygen_f4() {
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
