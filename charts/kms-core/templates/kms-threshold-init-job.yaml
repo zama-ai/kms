@@ -34,7 +34,7 @@ spec:
               for peerAddress in "${peerAddresses[@]}"; do
                 while true
                   do
-                  /bin/grpc_health_probe -addr="${peerAddress}"
+                  /app/grpc_health_probe -addr="${peerAddress}"
                   healthStatus=$?
                   if [ ${healthStatus} -eq 0 ]; then
                     echo "kms-core #${peerAddress} is already initialized"
@@ -54,7 +54,7 @@ spec:
               for peerID in "${peersIDList[@]}"; do
                 while true
                   do
-                  /bin/grpc_health_probe -addr={{ printf "%s-${peerID}:%d" $kmsCoreName (int .Values.kmsCore.ports.client) | quote }}
+                  /app/grpc_health_probe -addr={{ printf "%s-${peerID}:%d" $kmsCoreName (int .Values.kmsCore.ports.client) | quote }}
                   healthStatus=$?
                   {{- /* Checking grpc-health-probe response codes, see https://github.com/grpc-ecosystem/grpc-health-probe?tab=readme-ov-file#exit-codes*/}}
                   if [ ${healthStatus} -eq 0 ]; then
