@@ -57,7 +57,7 @@ RUN git clone https://github.com/grpc-ecosystem/grpc-health-probe && \
 ## Fourth stage: Build and install grpc-health-probe -- For development only with extra tools
 FROM --platform=$BUILDPLATFORM prod AS dev
 
-ARG YQ_VERSION=v4.45.1
+ARG YQ_VERSION=v4.47.2
 ARG TARGETARCH=amd64
 
 USER root
