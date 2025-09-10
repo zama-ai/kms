@@ -1139,7 +1139,7 @@ pub mod tests {
             entities::{Fourier128LweBootstrapKey, GlweSecretKey, LweBootstrapKey, LweSecretKey},
         },
         integer::parameters::DynamicDistribution,
-        prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt},
+        prelude::{CiphertextList, FheDecrypt, FheMin, FheTryEncrypt, ReRandomize},
         set_server_key,
         shortint::{
             client_key::atomic_pattern::{AtomicPatternClientKey, StandardAtomicPatternClientKey},
@@ -1147,7 +1147,7 @@ pub mod tests {
             parameters::CoreCiphertextModulus,
             PBSParameters,
         },
-        CompressedCiphertextListBuilder, FheUint32, FheUint64, FheUint8,
+        CompressedCiphertextListBuilder, FheUint32, FheUint64, FheUint8, ReRandomizationContext,
     };
     use tfhe_csprng::seeders::Seeder;
 
@@ -1194,6 +1194,8 @@ pub mod tests {
         let public_key = tfhe::CompactPublicKey::try_new(&client_key).unwrap();
 
         try_tfhe_pk_compactlist_computation(&client_key, &server_key, &public_key);
+        set_server_key(server_key);
+        try_tfhe_rerand(&client_key, &public_key);
     }
 
     #[cfg(feature = "extension_degree_8")]
@@ -1230,6 +1232,7 @@ pub mod tests {
                 run_shortint_with_compact: false,
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
             },
         )
         .await
@@ -1270,6 +1273,7 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
             },
         )
         .await
@@ -1310,6 +1314,7 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: false,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
             },
         )
         .await
@@ -1350,6 +1355,7 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
             },
         )
         .await
@@ -1390,6 +1396,7 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: false,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
             },
         )
         .await
@@ -1430,6 +1437,7 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: true,
                 run_fheuint_with_compression: true,
+                run_rerand: false,
             },
         )
         .await
@@ -1507,6 +1515,7 @@ pub mod tests {
             num_parties,
             threshold,
             true,
+            false,
         );
     }
 
@@ -1545,6 +1554,7 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: true,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
             },
         )
         .await
@@ -1585,6 +1595,7 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: false,
                 run_fheuint_with_compression: false,
+                run_rerand: false,
             },
         )
         .await
@@ -1597,14 +1608,14 @@ pub mod tests {
         keygen_params_blockchain_without_sns::<8>().await
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     #[ignore]
     async fn keygen_params_blockchain_without_sns_f4() {
         keygen_params_blockchain_without_sns::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     #[ignore]
     async fn keygen_params_blockchain_without_sns_f3() {
         keygen_params_blockchain_without_sns::<3>().await
@@ -1625,6 +1636,7 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: true,
                 run_fheuint_with_compression: true,
+                run_rerand: true,
             },
         )
         .await
@@ -1659,6 +1671,7 @@ pub mod tests {
         run_shortint_with_compact: bool,
         run_fheuint: bool,
         run_fheuint_with_compression: bool,
+        run_rerand: bool,
     }
 
     async fn run_keygen_test<const EXTENSION_DEGREE: usize>(
@@ -1712,6 +1725,7 @@ pub mod tests {
                 num_parties,
                 threshold,
                 config.run_fheuint_with_compression,
+                config.run_rerand,
             );
         }
     }
@@ -2483,6 +2497,7 @@ pub mod tests {
         num_parties: usize,
         threshold: usize,
         do_compression_test: bool,
+        with_rerand: bool,
     ) where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
@@ -2516,6 +2531,9 @@ pub mod tests {
         try_tfhe_fheuint_computation(&tfhe_sk);
         if do_compression_test {
             try_tfhe_compression_computation(&tfhe_sk);
+        }
+        if with_rerand {
+            try_tfhe_rerand(&tfhe_sk, &pk.public_key);
         }
     }
 
@@ -2692,5 +2710,66 @@ pub mod tests {
         let decompressed: FheUint8 = compressed.get(2).unwrap().unwrap();
         let decrypted: u8 = decompressed.decrypt(client_key);
         assert_eq!(decrypted, clear_c);
+    }
+
+    fn try_tfhe_rerand(cks: &tfhe::ClientKey, cpk: &tfhe::CompactPublicKey) {
+        let compact_public_encryption_domain_separator = *b"TFHE.Enc";
+        let rerand_domain_separator = *b"TFHE.Rrd";
+
+        // Case where we want to compute FheUint64 + FheUint64 and re-randomize those inputs
+        {
+            let clear_a = rand::random::<u64>();
+            let clear_b = rand::random::<u64>();
+            let compact_ctxt_list = tfhe::CompactCiphertextList::builder(cpk)
+                .push(clear_a)
+                .push(clear_b)
+                .build_packed();
+            let expander = compact_ctxt_list.expand().unwrap();
+            let mut a: tfhe::FheUint64 = expander.get(0).unwrap().unwrap();
+            let mut b: tfhe::FheUint64 = expander.get(1).unwrap().unwrap();
+
+            // Simulate a 256 bits hash added as metadata
+            let rand_a: [u8; 256 / 8] = core::array::from_fn(|_| rand::random());
+            let rand_b: [u8; 256 / 8] = core::array::from_fn(|_| rand::random());
+            a.re_randomization_metadata_mut().set_data(&rand_a);
+            b.re_randomization_metadata_mut().set_data(&rand_b);
+
+            let mut builder = CompressedCiphertextListBuilder::new();
+            builder.push(a);
+            builder.push(b);
+            let list = builder.build().unwrap();
+
+            let a: FheUint64 = list.get(0).unwrap().unwrap();
+            let b: FheUint64 = list.get(1).unwrap().unwrap();
+
+            assert_eq!(a.re_randomization_metadata().data(), &rand_a);
+            assert_eq!(b.re_randomization_metadata().data(), &rand_b);
+
+            // Simulate a 256 bits nonce
+            let nonce: [u8; 256 / 8] = core::array::from_fn(|_| rand::random());
+
+            let mut re_rand_context = ReRandomizationContext::new(
+                rerand_domain_separator,
+                // First is the function description, second is a nonce
+                [b"FheUint64+FheUint64".as_slice(), nonce.as_slice()],
+                compact_public_encryption_domain_separator,
+            );
+
+            // Add ciphertexts to the context
+
+            re_rand_context.add_to_context(&a);
+            re_rand_context.add_to_context(&b);
+
+            let mut seed_gen = re_rand_context.finalize();
+
+            let a_re_rand = a.re_randomize(cpk, seed_gen.next_seed()).unwrap();
+
+            let b_re_rand = b.re_randomize(cpk, seed_gen.next_seed()).unwrap();
+
+            let c = a_re_rand + b_re_rand;
+            let dec: u64 = c.decrypt(cks);
+
+            assert_eq!(clear_a.wrapping_add(clear_b), dec);
+        }
     }
 }
