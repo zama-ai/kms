@@ -32,12 +32,6 @@ use tonic::{Request, Response, Status};
 ///
 /// # Tracing
 /// Logs a warning when initialization is called on a centralized KMS, indicating no action is taken.
-///
-/// # Example
-/// ```rust
-/// let result = init_impl(&kms, Request::new(init_request)).await;
-/// assert!(result.is_ok());
-/// ```
 pub async fn init_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
