@@ -154,6 +154,8 @@ def fetch_mean_memory(line):
 
 def parse_memory_keygen(line):
     params = find_params_from_line(line)
+    if params == None:
+        return
     (mean_memory,unit) = fetch_mean_memory(line)
 
     memory = float(mean_memory) * UNIT_CONV_TO_KB[unit]
@@ -162,6 +164,8 @@ def parse_memory_keygen(line):
 
 def parse_memory_erc20(line):
     params = find_params_from_line(line)
+    if params == None:
+        return
 
     (mean_memory,unit) = fetch_mean_memory(line)
 
@@ -171,6 +175,8 @@ def parse_memory_erc20(line):
 
 def parse_memory_basic_ops(line):
     params = find_params_from_line(line)
+    if params == None:
+        return
 
     (mean_memory,unit) = fetch_mean_memory(line)
 
