@@ -1,11 +1,9 @@
-use crate::anyhow_error_and_log;
 use crate::kms::v1::UserDecryptionResponsePayload;
 use crate::kms::v1::{
     BackupRecoveryRequest, CustodianRecoveryOutput, Eip712DomainMsg, TypedCiphertext,
     TypedPlaintext, TypedSigncryptedCiphertext,
 };
-use alloy_dyn_abi::DynSolValue;
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use serde::{Deserialize, Serialize};
 use std::fmt::{self};
@@ -22,7 +20,10 @@ pub use crate::identifiers::{KeyId, RequestId, ID_LENGTH};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
+        use crate::anyhow_error_and_log;
         use alloy_sol_types::SolStruct;
+        use alloy_primitives::{Bytes};
+        use alloy_dyn_abi::DynSolValue;
 
         const ERR_CLIENT_ADDR_EQ_CONTRACT_ADDR: &str =
             "client address is the same as verifying contract address";
@@ -362,6 +363,7 @@ pub fn fhe_types_to_num_blocks(
 
 /// ABI encodes a list of typed plaintexts into a single byte vector for Ethereum compatibility.
 /// This follows the encoding pattern used in the JavaScript version for decrypted results and is limited to the currently supported fhevm v0.9.0 types.
+#[cfg(feature = "non-wasm")]
 pub fn abi_encode_plaintexts(ptxts: &[TypedPlaintext]) -> anyhow::Result<Bytes> {
     let mut results: Vec<DynSolValue> = Vec::with_capacity(ptxts.len());
 
