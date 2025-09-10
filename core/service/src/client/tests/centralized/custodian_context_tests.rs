@@ -3,7 +3,8 @@ use crate::consts::KEY_PATH_PREFIX;
 use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::backup_pke::BackupCiphertext;
 use crate::util::file_handling::safe_read_element_versioned;
-use crate::util::key_setup::test_tools::purge;
+use crate::util::key_setup::test_tools::purge_backup;
+use crate::util::key_setup::test_tools::purge_recovery_info;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
@@ -32,15 +33,14 @@ pub(crate) async fn new_custodian_context(
     let req_new_cus: RequestId = derive_request_id("test_new_custodian_context_central").unwrap();
     let req_new_cus2: RequestId =
         derive_request_id("test_new_custodian_context_central_2").unwrap();
-    purge(None, None, None, &req_new_cus, 1).await;
-    purge(None, None, None, &req_new_cus2, 1).await;
+    purge_backup(None, 1).await;
+    purge_recovery_info(None, 1).await;
 
     let dkg_param: WrappedDKGParams = parameter.into();
-
     // The threshold handle should only be started after the storage is purged
     // since the threshold parties will load the CRS from private storage
     let (kms_server, mut kms_client, mut internal_client) =
-        crate::client::test_tools::centralized_handles(&dkg_param, None).await;
+        crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
     // Check there is currently no backup
     assert!(!backup_exists().await);
     run_new_cus_context(
@@ -74,7 +74,7 @@ pub(crate) async fn new_custodian_context(
         &PrivDataType::SigningKey.to_string(),
     )
     .await;
-    // Check that the backup is changed
+    // Check that the backup is changed since we use randomized encryption
     assert!(second_sig_keys != first_sig_keys);
 
     // Check that we can shut down and start again without updates changing
@@ -85,7 +85,7 @@ pub(crate) async fn new_custodian_context(
     // Sleep to ensure the servers are properly shut down
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let (_kms_server, _kms_client, _internal_client) =
-        crate::client::test_tools::centralized_handles(&dkg_param, None).await;
+        crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
     let reboot_sig_keys = backup_files(
         &req_new_cus2,
         &SIGNING_KEY_ID,

@@ -8,7 +8,6 @@ use crate::client::tests::threshold::custodian_context_tests::run_new_cus_contex
 use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::backup_pke::BackupPrivateKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::util::key_setup::test_tools::purge;
 use crate::util::key_setup::test_tools::{purge_backup, purge_recovery_info};
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
@@ -46,14 +45,6 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     .unwrap();
     let test_path = None;
     ensure_testing_material_exists(test_path).await;
-    purge(
-        test_path,
-        test_path,
-        test_path,
-        &req_new_cus,
-        amount_parties,
-    )
-    .await;
     // Clean up backups to not interfere with test
     purge_backup(test_path, amount_parties).await;
     purge_recovery_info(test_path, amount_parties).await;
@@ -128,24 +119,16 @@ async fn test_backup_after_crs_threshold() {
 async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
     let req_new_cus: RequestId = derive_request_id(&format!(
-        "new_custodian_backup_after_crs_{amount_parties}_{amount_custodians}_{threshold}"
+        "test_backup_after_crs_threshold_{amount_parties}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
     let test_path = None;
     ensure_testing_material_exists(test_path).await;
     let crs_req: RequestId = derive_request_id(&format!(
-        "backup_crs_{amount_parties}_{amount_custodians}_{threshold}"
+        "test_backup_after_crs_threshold_{amount_parties}_{amount_custodians}_{threshold}"
     ))
     .unwrap();
-    purge(test_path, test_path, test_path, &crs_req, amount_parties).await;
-    purge(
-        test_path,
-        test_path,
-        test_path,
-        &req_new_cus,
-        amount_parties,
-    )
-    .await;
+
     // Clean up backups to not interfere with test
     purge_backup(test_path, amount_parties).await;
     purge_recovery_info(test_path, amount_parties).await;
@@ -241,12 +224,17 @@ async fn test_decrypt_after_recovery_threshold() {
 
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     let req_new_cus: RequestId = derive_request_id(&format!(
-        "new_custodian_decrypt_after_recovery_{amount_parties}"
+        "test_decrypt_after_recovery_threshold_{amount_parties}"
     ))
     .unwrap();
     let test_path = None;
     ensure_testing_material_exists(test_path).await;
+    // Clean up backups to not interfere with test
+    purge_backup(test_path, amount_parties).await;
+    purge_recovery_info(test_path, amount_parties).await;
+
     let mut sig_keys = Vec::new();
     // Read the private signing key for reference
     for i in 1..=amount_parties {
@@ -263,18 +251,6 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         sig_keys.push(cur_sk);
     }
 
-    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
-    purge(
-        test_path,
-        test_path,
-        test_path,
-        &req_new_cus,
-        amount_parties,
-    )
-    .await;
-    // Clean up backups to not interfere with test
-    purge_backup(test_path, amount_parties).await;
-    purge_recovery_info(test_path, amount_parties).await;
     let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,

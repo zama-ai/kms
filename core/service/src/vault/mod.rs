@@ -126,12 +126,6 @@ impl Storage for Vault {
                         } else {
                             data_type
                         };
-                        println!(
-                            "Storing data type {}, req {} name {}",
-                            coerced_backup_type,
-                            data_id,
-                            T::NAME
-                        );
                         self.storage
                             .store_data(&ct, data_id, coerced_backup_type)
                             .await?;

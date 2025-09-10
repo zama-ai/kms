@@ -135,6 +135,7 @@ async fn test_decrypt_after_recovery_central() {
 }
 
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     let req_new_cus: RequestId = derive_request_id("test_decrypt_after_recovery_central").unwrap();
     ensure_testing_material_exists(None).await;
     // Read the private signing key for reference
@@ -147,8 +148,6 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await
     .unwrap();
 
-    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
-    purge(None, None, None, &req_new_cus, 1).await;
     // Clean up backups to not interfere with test
     purge_backup(None, 1).await;
     purge_recovery_info(None, 1).await;

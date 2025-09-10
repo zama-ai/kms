@@ -498,113 +498,144 @@ pub async fn purge(
     id: &RequestId,
     amount_parties: usize,
 ) {
-    let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-    delete_all_at_request_id(&mut pub_storage, id).await;
-    let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
-    delete_all_at_request_id(&mut priv_storage, id).await;
     let vault_storage_option = backup_path.map(|path| {
         StorageConf::File(FileStorageConf {
             path: path.to_path_buf(),
         })
     });
-    for i in 1..=amount_parties {
-        let mut threshold_pub =
-            FileStorage::new(pub_path, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap();
-        let mut threshold_priv = FileStorage::new(
-            priv_path,
-            StorageType::PRIV,
-            Some(Role::indexed_from_one(i)),
-        )
-        .unwrap();
+    if amount_parties == 1 {
+        let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
+        delete_all_at_request_id(&mut pub_storage, id).await;
+        let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
+        delete_all_at_request_id(&mut priv_storage, id).await;
         let mut backup_storage = make_storage(
             vault_storage_option.clone(),
             StorageType::BACKUP,
-            Some(Role::indexed_from_one(i)),
+            None,
             None,
             None,
         )
         .unwrap();
+        // TODO(#2748) backups should probably be handled separately since this does not delete the all the custodian based backups
+        // but only the non-custodian ones.
         delete_all_at_request_id(&mut backup_storage, id).await;
-        delete_all_at_request_id(&mut threshold_pub, id).await;
-        delete_all_at_request_id(&mut threshold_priv, id).await;
+    } else {
+        for i in 1..=amount_parties {
+            let mut threshold_pub =
+                FileStorage::new(pub_path, StorageType::PUB, Some(Role::indexed_from_one(i)))
+                    .unwrap();
+            let mut threshold_priv = FileStorage::new(
+                priv_path,
+                StorageType::PRIV,
+                Some(Role::indexed_from_one(i)),
+            )
+            .unwrap();
+            let mut backup_storage = make_storage(
+                vault_storage_option.clone(),
+                StorageType::BACKUP,
+                Some(Role::indexed_from_one(i)),
+                None,
+                None,
+            )
+            .unwrap();
+            delete_all_at_request_id(&mut backup_storage, id).await;
+            delete_all_at_request_id(&mut threshold_pub, id).await;
+            delete_all_at_request_id(&mut threshold_priv, id).await;
+        }
     }
 }
 
 /// Purge the entire content of the private storage.
 /// This is useful for testing backup
 pub async fn purge_priv(priv_path: Option<&Path>, amount_parties: usize) {
-    let final_central_path = match priv_path {
-        Some(path) => path.to_path_buf(),
-        None => FileStorage::default_path(StorageType::PRIV, None).unwrap(),
-    };
-    // Ignore if the dir does not exist
-    let _ = tokio::fs::remove_dir_all(&final_central_path).await;
-    for cur_party in 1..=amount_parties {
-        let final_threshold_path = match priv_path {
+    if amount_parties == 1 {
+        let final_central_path = match priv_path {
             Some(path) => path.to_path_buf(),
-            None => FileStorage::default_path(
-                StorageType::PRIV,
-                Some(Role::indexed_from_one(cur_party)),
-            )
-            .unwrap(),
+            None => FileStorage::default_path(StorageType::PRIV, None).unwrap(),
         };
         // Ignore if the dir does not exist
-        let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
+        let _ = tokio::fs::remove_dir_all(&final_central_path).await;
+    } else {
+        for cur_party in 1..=amount_parties {
+            let final_threshold_path = match priv_path {
+                Some(path) => path.to_path_buf(),
+                None => FileStorage::default_path(
+                    StorageType::PRIV,
+                    Some(Role::indexed_from_one(cur_party)),
+                )
+                .unwrap(),
+            };
+            // Ignore if the dir does not exist
+            let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
+        }
     }
 }
 
+/// Purge _all_ backed up data. Both custodian and non-custodian based backups.
+/// Note however that this method does _not_ purge anything in the private or public storage.
+/// Thus, if you want to avoid new custodian backups being constructed at boot ensure that `purge_recovery_info`
+/// is also called, as it deletes all the custodian recovery info.
 pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
-    let final_backup_central_path = match backup_path {
-        Some(path) => path.to_path_buf(),
-        None => FileStorage::default_path(StorageType::BACKUP, None).unwrap(),
-    };
-    // Ignore if the dir does not exist
-    let _ = tokio::fs::remove_dir_all(&final_backup_central_path).await;
-
-    for cur_party in 1..=amount_parties {
-        let final_backup_threshold_path = match backup_path {
+    if amount_parties == 1 {
+        let final_backup_central_path = match backup_path {
             Some(path) => path.to_path_buf(),
-            None => FileStorage::default_path(
-                StorageType::BACKUP,
-                Some(Role::indexed_from_one(cur_party)),
-            )
-            .unwrap(),
+            None => FileStorage::default_path(StorageType::BACKUP, None).unwrap(),
         };
         // Ignore if the dir does not exist
-        let _ = tokio::fs::remove_dir_all(&final_backup_threshold_path).await;
+        let _ = tokio::fs::remove_dir_all(&final_backup_central_path).await;
+    } else {
+        for cur_party in 1..=amount_parties {
+            let final_backup_threshold_path = match backup_path {
+                Some(path) => path.to_path_buf(),
+                None => FileStorage::default_path(
+                    StorageType::BACKUP,
+                    Some(Role::indexed_from_one(cur_party)),
+                )
+                .unwrap(),
+            };
+            // Ignore if the dir does not exist
+            let _ = tokio::fs::remove_dir_all(&final_backup_threshold_path).await;
+        }
     }
 }
 
+/// Remove all the data needed to perform custodian backups.
+/// This then allows your to prevent the automatic backup being done at boot
+/// when the system is configured with custodian backups.
 pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
-    let final_backup_central_path = match path {
-        Some(path) => path.to_path_buf(),
-        None => FileStorage::default_path(StorageType::BACKUP, None).unwrap(),
-    };
-    let _ = tokio::fs::remove_dir_all(
-        &final_backup_central_path.join(PubDataType::RecoveryRequest.to_string()),
-    )
-    .await;
-    let _ = tokio::fs::remove_dir_all(
-        &final_backup_central_path.join(PubDataType::Commitments.to_string()),
-    )
-    .await;
-    for cur_party in 1..=amount_parties {
-        // Next purge recovery info
-        let final_backup_threshold_path = match path {
+    if amount_parties == 1 {
+        let final_central_path = match path {
             Some(path) => path.to_path_buf(),
-            None => {
-                FileStorage::default_path(StorageType::PUB, Some(Role::indexed_from_one(cur_party)))
-                    .unwrap()
-            }
+            None => FileStorage::default_path(StorageType::PUB, None).unwrap(),
         };
         let _ = tokio::fs::remove_dir_all(
-            &final_backup_threshold_path.join(PubDataType::RecoveryRequest.to_string()),
+            &final_central_path.join(PubDataType::RecoveryRequest.to_string()),
         )
         .await;
         let _ = tokio::fs::remove_dir_all(
-            &final_backup_threshold_path.join(PubDataType::Commitments.to_string()),
+            &final_central_path.join(PubDataType::Commitments.to_string()),
         )
         .await;
+    } else {
+        for cur_party in 1..=amount_parties {
+            // Next purge recovery info
+            let final_threshold_path = match path {
+                Some(path) => path.to_path_buf(),
+                None => FileStorage::default_path(
+                    StorageType::PUB,
+                    Some(Role::indexed_from_one(cur_party)),
+                )
+                .unwrap(),
+            };
+            let _ = tokio::fs::remove_dir_all(
+                &final_threshold_path.join(PubDataType::RecoveryRequest.to_string()),
+            )
+            .await;
+            let _ = tokio::fs::remove_dir_all(
+                &final_threshold_path.join(PubDataType::Commitments.to_string()),
+            )
+            .await;
+        }
     }
 }
 

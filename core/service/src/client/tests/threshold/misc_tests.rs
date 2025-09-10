@@ -16,6 +16,10 @@ use crate::engine::base::derive_request_id;
 use crate::engine::threshold::service::RealThresholdKms;
 use crate::util::key_setup::test_tools::purge;
 #[cfg(feature = "insecure")]
+use crate::util::key_setup::test_tools::purge_backup;
+#[cfg(feature = "insecure")]
+use crate::util::key_setup::test_tools::purge_priv;
+#[cfg(feature = "insecure")]
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 #[cfg(feature = "slow_tests")]
 use crate::util::rate_limiter::RateLimiterConfig;
@@ -345,7 +349,6 @@ async fn default_insecure_threshold_dkg_backup() {
     // NOTE: amount_parties must not be too high
     // because every party will load all the keys and each ServerKey is 1.5 GB
     // and each private key share is 1 GB. Using 7 parties fails on a 32 GB machine.
-
     let amount_parties = 4;
     let param = FheParameter::Default;
     let dkg_param: WrappedDKGParams = param.into();
@@ -360,8 +363,11 @@ async fn default_insecure_threshold_dkg_backup() {
     .unwrap();
 
     let test_path = None;
+    // Purge private to make the test run faster since there will be less data to back up.
+    purge_priv(test_path, amount_parties).await;
     purge(test_path, test_path, test_path, &key_id_1, amount_parties).await;
     purge(test_path, test_path, test_path, &key_id_2, amount_parties).await;
+    purge_backup(test_path, amount_parties).await;
     let (kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
@@ -467,8 +473,10 @@ async fn default_insecure_threshold_autobackup_after_deletion() {
     ))
     .unwrap();
     let test_path = None;
-
+    // Purge private to make the test run faster since there will be less data to back up.
+    purge_priv(test_path, amount_parties).await;
     purge(test_path, test_path, test_path, &key_id, amount_parties).await;
+    purge_backup(test_path, amount_parties).await;
     let (kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
 
@@ -526,11 +534,12 @@ async fn default_insecure_threshold_crs_backup() {
     let dkg_param: WrappedDKGParams = param.into();
 
     let req_id: RequestId = derive_request_id(&format!(
-        "default_insecure_crs_backup{amount_parties}_{param:?}",
+        "default_insecure_threshold_crs_backup_{amount_parties}_{param:?}",
     ))
     .unwrap();
     let test_path = None;
     purge(test_path, test_path, test_path, &req_id, amount_parties).await;
+    purge_backup(test_path, amount_parties).await;
     let (_kms_servers, kms_clients, internal_client) =
         threshold_handles(*dkg_param, amount_parties, true, None, None).await;
     run_crs(

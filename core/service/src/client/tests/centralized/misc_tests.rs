@@ -40,6 +40,7 @@ cfg_if::cfg_if! {
         };
         use kms_grpc::rpc_types::{PrivDataType};
         use crate::{vault::storage::make_storage};
+        use crate::util::key_setup::test_tools::purge_backup;
         use crate::{client::tests::centralized::crs_gen_tests::crs_gen_centralized, vault::storage::StorageReader};
    }
 }
@@ -235,7 +236,7 @@ async fn default_insecure_central_dkg_backup() {
     // Delete potentially old data
     purge(None, None, None, &key_id_1, 1).await;
     purge(None, None, None, &key_id_2, 1).await;
-
+    purge_backup(None, 1).await;
     key_gen_centralized(&key_id_1, param, None, None).await;
     key_gen_centralized(&key_id_2, param, None, None).await;
     // Generated key, delete private storage
@@ -283,6 +284,7 @@ async fn default_insecure_central_autobackup_after_deletion() {
     let key_id = derive_request_id("default_insecure_autobackup_after_deletion").unwrap();
     // Delete potentially old data
     purge(None, None, None, &key_id, 1).await;
+    purge_backup(None, 1).await;
     key_gen_centralized(&key_id, param, None, None).await;
     // Sleep to ensure the servers are properly shut down
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -310,7 +312,6 @@ async fn default_insecure_central_crs_backup() {
     crs_gen_centralized(&req_id, param, true).await;
 
     // Generated crs, delete it from private storage
-
     let mut priv_storage: FileStorage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
     delete_all_at_request_id(&mut priv_storage, &req_id).await;
     // Check that is has been removed
@@ -319,12 +320,12 @@ async fn default_insecure_central_crs_backup() {
         .await
         .unwrap());
 
-    // Now try to restore
+    // It will get auto-backed up at boot
     let (_kms_server, mut kms_client, _internal_client) =
         crate::client::test_tools::centralized_handles(&dkg_param, None).await;
 
     let req = Empty {};
-    // send query
+    // Now try to restore the crs
     let query_res = kms_client.backup_restore(tonic::Request::new(req)).await;
     match query_res {
         Ok(resp) => {
