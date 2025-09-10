@@ -1,10 +1,3 @@
-use kms_grpc::{
-    kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
-    rpc_types::optional_protobuf_to_alloy_domain,
-    utils::tonic_result::ok_or_tonic_abort,
-};
-use tonic::{Request, Response, Status};
-
 use crate::{
     engine::{
         base::compute_external_signature_preprocessing,
@@ -16,8 +9,35 @@ use crate::{
     util::meta_store::handle_res_mapping,
     vault::storage::Storage,
 };
+use kms_grpc::{
+    kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
+    rpc_types::optional_protobuf_to_alloy_domain,
+    utils::tonic_result::ok_or_tonic_abort,
+};
+use tonic::{Request, Response, Status};
 
-/// Dummy method only here to ensure consistency with the threshold KMS interface
+/// Handles preprocessing requests for centralized KMS key generation.
+///
+/// This is purely a dummy implementation since no initialization is needed for the centralized KMS.
+/// Still, the logic here follows the same pattern as the threshold KMS for consistency.
+/// That is, it checks if a preprocessing entry for the given request ID already exists. If not, it inserts the request ID and
+/// computes the external signature preprocessing, updating the meta store accordingly. If the entry already exists, it returns an
+/// `AlreadyExists` error.
+///
+/// # Arguments
+/// * `service` - Reference to the centralized KMS service.
+/// * `request` - gRPC request containing the `KeyGenPreprocRequest`.
+///
+/// # Returns
+/// * `Ok(Response<Empty>)` if preprocessing is handled successfully.
+/// * `Err(Status)` if the request is invalid or preprocessing already exists.
+///
+/// # Errors
+/// Returns a gRPC `Status::InvalidArgument` if the domain or request ID is missing.
+/// Returns a gRPC `Status::AlreadyExists` if preprocessing for the request ID already exists.
+///
+/// # Note
+/// This is a dummy method for interface consistency; no actual preprocessing is performed.
 pub async fn preprocessing_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
@@ -67,7 +87,25 @@ pub async fn preprocessing_impl<
     }
 }
 
-/// Dummy method only here to ensure consistency with the threshold KMS interface
+/// Retrieves the result of key generation preprocessing for centralized KMS.
+///
+/// This function ensures consistency with the threshold KMS interface, but does not perform any actual retrieval.
+/// It fetches the preprocessing result from the meta store using the provided request ID and returns a valid external signature.
+///
+/// # Arguments
+/// * `service` - Reference to the centralized KMS service.
+/// * `request` - gRPC request containing the `RequestId`.
+///
+/// # Returns
+/// * `Ok(Response<KeyGenPreprocResult>)` with the preprocessing result if found.
+/// * `Err(Status)` if the request is invalid or the result is not found.
+///
+/// # Errors
+/// Returns a gRPC `Status::InvalidArgument` if the request ID is missing or invalid.
+/// Returns a gRPC error if the preprocessing result cannot be retrieved.
+///
+/// # Note
+/// This is a dummy method for interface consistency; no actual retrieval is performed.
 pub async fn get_reprocessing_res_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,

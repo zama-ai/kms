@@ -1,9 +1,3 @@
-use kms_grpc::{
-    kms::v1::{Empty, InitRequest},
-    utils::tonic_result::ok_or_tonic_abort,
-};
-use tonic::{Request, Response, Status};
-
 use crate::{
     engine::{
         centralized::central_kms::RealCentralizedKms,
@@ -11,7 +5,39 @@ use crate::{
     },
     vault::storage::Storage,
 };
+use kms_grpc::{
+    kms::v1::{Empty, InitRequest},
+    utils::tonic_result::ok_or_tonic_abort,
+};
+use tonic::{Request, Response, Status};
 
+/// Initializes the centralized KMS service.
+///
+/// This is purely a dummy implementation since no initialization is needed for the centralized KMS.
+/// Still, the logic here follows the same pattern as the threshold KMS for consistency.
+/// Thus initialization is only allowed once and the request ID supplied in [`InitRequest`] must be valid.
+///
+/// # Arguments
+/// - `service`: Reference to the `RealCentralizedKms` instance.
+/// - `request`: The gRPC request containing an `InitRequest`.
+///
+/// # Returns
+/// Returns a `Result` containing a gRPC `Response` with an empty payload on success,
+/// or a gRPC `Status` error on failure.
+///
+/// # Errors
+/// - Returns `Status::AlreadyExists` if the system is already initialized.
+/// - Returns `Status::InvalidArgument` if the request ID is missing or invalid.
+/// - Returns other `Status` errors if insertion or update of the init ID fails.
+///
+/// # Tracing
+/// Logs a warning when initialization is called on a centralized KMS, indicating no action is taken.
+///
+/// # Example
+/// ```rust
+/// let result = init_impl(&kms, Request::new(init_request)).await;
+/// assert!(result.is_ok());
+/// ```
 pub async fn init_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
@@ -43,6 +69,7 @@ pub async fn init_impl<
     );
     Ok(Response::new(Empty {}))
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
