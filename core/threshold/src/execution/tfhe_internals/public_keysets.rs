@@ -23,6 +23,7 @@ use tfhe::shortint::server_key::{
     CompressedModulusSwitchConfiguration, ModulusSwitchConfiguration,
     ShortintCompressedBootstrappingKey,
 };
+use tfhe::shortint::EncryptionKeyChoice;
 use tfhe::{
     core_crypto::{
         algorithms::par_convert_standard_lwe_bootstrap_key_to_fourier,
@@ -41,6 +42,12 @@ pub struct FhePubKeySet {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) enum ReRandomizationRawKeySwitchingKey {
+    UseCPKEncryptionKSK,
+    DedicatedKSK(LweKeyswitchKey<Vec<u64>>),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RawPubKeySet {
     pub lwe_public_key: LweCompactPublicKey<Vec<u64>>,
     pub ksk: LweKeyswitchKey<Vec<u64>>,
@@ -51,6 +58,7 @@ pub(crate) struct RawPubKeySet {
     pub msnrk: ModulusSwitchConfiguration<u64>,
     pub msnrk_sns: Option<ModulusSwitchConfiguration<u64>>,
     pub sns_compression_key: Option<NoiseSquashingCompressionKey>,
+    pub cpk_re_randomization_ksk: Option<ReRandomizationRawKeySwitchingKey>,
     pub seed: u128,
 }
 
@@ -160,7 +168,7 @@ impl RawPubKeySet {
                 _ => (None, None),
             };
 
-        if let Some(pksk) = &self.pksk {
+        let integer_pksk = self.pksk.as_ref().map(|pksk| {
             let shortint_pksk =
                 tfhe::shortint::key_switching_key::KeySwitchingKeyMaterial::from_raw_parts(
                     pksk.clone(),
@@ -170,33 +178,43 @@ impl RawPubKeySet {
                         .get_pksk_destination()
                         .unwrap(),
                 );
-            let integer_pksk =
-                tfhe::integer::key_switching_key::KeySwitchingKeyMaterial::from_raw_parts(
-                    shortint_pksk,
-                );
 
-            tfhe::ServerKey::from_raw_parts(
-                integer_key,
-                Some(integer_pksk),
-                compression_key,
-                decompression_key,
-                noise_squashing_key,
-                noise_squashing_compression_key,
-                None, //TODO: Rerandomization key
-                tfhe::Tag::default(),
-            )
-        } else {
-            tfhe::ServerKey::from_raw_parts(
-                integer_key,
-                None,
-                compression_key,
-                decompression_key,
-                noise_squashing_key,
-                noise_squashing_compression_key,
-                None, //TODO: Rerandomization key
-                tfhe::Tag::default(),
-            )
-        }
+            tfhe::integer::key_switching_key::KeySwitchingKeyMaterial::from_raw_parts(shortint_pksk)
+        });
+
+        let rerand_ksk =
+            self.cpk_re_randomization_ksk
+                .as_ref()
+                .map(|rerand_ksk| match rerand_ksk {
+                    ReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK => {
+                        tfhe::ReRandomizationKeySwitchingKey::UseCPKEncryptionKSK
+                    }
+                    ReRandomizationRawKeySwitchingKey::DedicatedKSK(dedicated_rerand_ksk) => {
+                        let shortint_rerand_ksk =
+                        tfhe::shortint::key_switching_key::KeySwitchingKeyMaterial::from_raw_parts(
+                            dedicated_rerand_ksk.clone(),
+                            0,
+                            EncryptionKeyChoice::Big,
+                        );
+
+                        let rerand_ksk =
+                        tfhe::integer::key_switching_key::KeySwitchingKeyMaterial::from_raw_parts(
+                            shortint_rerand_ksk,
+                        );
+                        tfhe::ReRandomizationKeySwitchingKey::DedicatedKSK(rerand_ksk)
+                    }
+                });
+
+        tfhe::ServerKey::from_raw_parts(
+            integer_key,
+            integer_pksk,
+            compression_key,
+            decompression_key,
+            noise_squashing_key,
+            noise_squashing_compression_key,
+            rerand_ksk,
+            tfhe::Tag::default(),
+        )
     }
 
     pub fn compute_tfhe_hl_api_compact_public_key(
@@ -227,6 +245,12 @@ pub struct CompressedFhePubKeySet {
     pub seed: u128,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) enum CompressedReRandomizationRawKeySwitchingKey {
+    UseCPKEncryptionKSK,
+    DedicatedKSK(SeededLweKeyswitchKey<Vec<u64>>),
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct RawCompressedPubKeySet {
     pub lwe_public_key: SeededLweCompactPublicKey<Vec<u64>>,
@@ -238,6 +262,7 @@ pub(crate) struct RawCompressedPubKeySet {
     pub msnrk: CompressedModulusSwitchConfiguration<u64>,
     pub msnrk_sns: Option<CompressedModulusSwitchConfiguration<u64>>,
     pub sns_compression_key: Option<CompressedNoiseSquashingCompressionKey>,
+    pub cpk_re_randomization_ksk: Option<CompressedReRandomizationRawKeySwitchingKey>,
     pub seed: u128,
 }
 
@@ -340,6 +365,29 @@ impl RawCompressedPubKeySet {
             _ => (None, None),
         };
 
+        let rerand_ksk =
+            self.cpk_re_randomization_ksk
+                .as_ref()
+                .map(|rerand_ksk| match rerand_ksk {
+                    CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK => {
+                        tfhe::CompressedReRandomizationKeySwitchingKey::UseCPKEncryptionKSK
+                    }
+                    CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(dedicated_rerand_ksk) => {
+                        let shortint_rerand_ksk =
+                        tfhe::shortint::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
+                            dedicated_rerand_ksk.clone(),
+                            0,
+                            EncryptionKeyChoice::Big,
+                        );
+
+                        let rerand_ksk =
+                        tfhe::integer::key_switching_key::CompressedKeySwitchingKeyMaterial::from_raw_parts(
+                            shortint_rerand_ksk,
+                        );
+                        tfhe::CompressedReRandomizationKeySwitchingKey::DedicatedKSK(rerand_ksk)
+                    }
+                });
+
         tfhe::CompressedServerKey::from_raw_parts(
             tfhe::integer::CompressedServerKey::from_raw_parts(shortint_key),
             cpk_key_switching_key_material,
@@ -355,7 +403,7 @@ impl RawCompressedPubKeySet {
             }),
             noise_squashing_key,
             noise_squashing_compression_key,
-            None, // TODO: Rerandomization key
+            rerand_ksk, // TODO: Rerandomization key
             tfhe::Tag::default(),
         )
     }
