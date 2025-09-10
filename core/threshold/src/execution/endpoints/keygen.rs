@@ -37,7 +37,8 @@ use crate::{
             parameters::{DKGParams, MSNRKConfiguration},
             private_keysets::{GenericPrivateKeySet, PrivateKeySet},
             public_keysets::{
-                CompressedFhePubKeySet, FhePubKeySet, RawCompressedPubKeySet, RawPubKeySet,
+                CompressedFhePubKeySet, CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet,
+                RawCompressedPubKeySet, RawPubKeySet, ReRandomizationRawKeySwitchingKey,
             },
             randomness::MPCEncryptionRandomGenerator,
             sns_compression_key::SnsCompressionPrivateKeyShares,
@@ -555,6 +556,35 @@ where
             None => (None, None),
         };
 
+    let cpk_re_randomization_ksk = match (
+        params_basics_handle.get_pksk_params(),
+        params_basics_handle.get_rerand_ksk_params(),
+    ) {
+        (Some(pksk_params), Some(cpk_re_randomization_ksk_params)) => {
+            // If these are equal, we already have the KSK from the LWE sk of the PK
+            // and the glwe sk that's necessary for rerand
+            if pksk_params == cpk_re_randomization_ksk_params {
+                Some(ReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK)
+            } else {
+                Some(ReRandomizationRawKeySwitchingKey::DedicatedKSK(
+                    generate_key_switch_key(
+                        &lwe_hat_secret_key_share,
+                        &glwe_sk_share_as_lwe,
+                        &cpk_re_randomization_ksk_params,
+                        &mut mpc_encryption_rng,
+                        session,
+                        preprocessing,
+                    )
+                    .await?,
+                ))
+            }
+        }
+        (_, None) => None,
+        _ => {
+            panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization.")
+        }
+    };
+
     let pub_key_set = RawPubKeySet {
         lwe_public_key,
         ksk,
@@ -565,6 +595,7 @@ where
         msnrk,
         msnrk_sns,
         seed,
+        cpk_re_randomization_ksk,
         sns_compression_key,
     };
 
@@ -854,6 +885,36 @@ where
             None => (None, None),
         };
 
+    let cpk_re_randomization_ksk = match (
+        params_basics_handle.get_pksk_params(),
+        params_basics_handle.get_rerand_ksk_params(),
+    ) {
+        (Some(pksk_params), Some(cpk_re_randomization_ksk_params)) => {
+            // If these are equal, we already have the KSK from the LWE sk of the PK
+            // and the glwe sk that's necessary for rerand
+            if pksk_params == cpk_re_randomization_ksk_params {
+                Some(CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK)
+            } else {
+                Some(CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(
+                    generate_compressed_key_switch_key(
+                        &lwe_hat_secret_key_share,
+                        &glwe_sk_share_as_lwe,
+                        &cpk_re_randomization_ksk_params,
+                        &mut mpc_encryption_rng,
+                        session,
+                        preprocessing,
+                        seed,
+                    )
+                    .await?,
+                ))
+            }
+        }
+        (_, None) => None,
+        _ => {
+            panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization.")
+        }
+    };
+
     let pub_key_set = RawCompressedPubKeySet {
         lwe_public_key,
         ksk,
@@ -863,8 +924,9 @@ where
         compression_keys,
         msnrk,
         msnrk_sns,
-        seed,
         sns_compression_key,
+        cpk_re_randomization_ksk,
+        seed,
     };
 
     let priv_key_set = GenericPrivateKeySet {
