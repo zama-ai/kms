@@ -826,15 +826,15 @@ where
     // Compute threshold < amount_parties/3
     let threshold = max_threshold(amount_parties);
 
-    // For simplicity just test if the first party has the keys
+    // For simplicity just test if the last party has the keys
     let last_pub = pub_storages
-        .first()
+        .last()
         .ok_or("No public storage available")
         .unwrap_or_else(|e| {
             panic!("Failed to access public storage: {e}");
         });
     let last_priv = priv_storages
-        .first()
+        .last()
         .ok_or("No private storage available")
         .unwrap_or_else(|e| {
             panic!("Failed to access private storage: {e}");
@@ -1026,11 +1026,11 @@ where
 
     let amount_parties = pub_storages.len();
 
-    // Check if the first party has the CRS. If so, we can stop, otherwise we need to generate it.
+    // Check if the last party has the CRS. If so, we can stop, otherwise we need to generate it.
     // PANICS: If storage access fails or if no storage is available
     match check_data_exists(
-        pub_storages.first().expect("No public storage available"),
-        priv_storages.first().expect("No private storage available"),
+        pub_storages.last().expect("No public storage available"),
+        priv_storages.last().expect("No private storage available"),
         crs_id,
         &PubDataType::CRS.to_string(),
         &PrivDataType::CrsInfo.to_string(),
@@ -1040,12 +1040,12 @@ where
         Ok(true) => {
             log_data_exists(
                 priv_storages
-                    .first()
+                    .last()
                     .expect("No private storage available")
                     .info(),
                 Some(
                     pub_storages
-                        .first()
+                        .last()
                         .expect("No public storage available")
                         .info(),
                 ),
