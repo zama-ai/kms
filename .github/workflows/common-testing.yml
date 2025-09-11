@@ -369,6 +369,8 @@ jobs:
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_TEST_THREADS: 1
+          CARGO_INCREMENTAL: 0
+          RUSTFLAGS: -Cinstrument-coverage
         run: |
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
@@ -378,8 +380,6 @@ jobs:
           echo "output=json" >> ~/.aws/config &&
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
-          export CARGO_INCREMENTAL=0
-          export RUSTFLAGS='-Cinstrument-coverage'
           cargo llvm-cov nextest run --codecov --output-path codecov.json --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
           echo "codecov.json" >> $GITHUB_STEP_SUMMARY
 
