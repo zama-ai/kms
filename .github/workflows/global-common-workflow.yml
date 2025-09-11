@@ -549,6 +549,10 @@ jobs:
   # Helps validate dependency updates quickly
   build-dependabot:
     name: global-common-workflow/build-dependabot
+    permissions:
+      packages: read
+      issues: write
+      pull-requests: write
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
