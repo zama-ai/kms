@@ -109,14 +109,6 @@ jobs:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: true
 
-      - name: debug
-        run: |
-          ls -al
-          ls -al ..
-          ls -al ${HOME}
-          ls -al ~
-          ls -al ${GITHUB_WORKSPACE}
-
       - name: Get Rust version
         env:
           GH_WORKSPACE: ${{ github.workspace }}
@@ -323,10 +315,10 @@ jobs:
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
           RUST_BACKTRACE=full cargo nextest run --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
-          ls -al
-          ls -al ./target/debug/deps/
-          ~/.cargo/bin/grcov . --binary-path ./target/debug/deps/ -s . --branch --ignore-not-existing -o coverage/ -t markdown
-          ~/.cargo/bin/grcov . --binary-path ./target/debug/deps/ -s . --branch --ignore-not-existing -o ./ -t lcov
+          ls -al ${GITHUB_WORKSPACE}/target/debug/deps/
+          ls -al ${GITHUB_WORKSPACE}/target
+          ~/.cargo/bin/grcov . --binary-path ${GITHUB_WORKSPACE}/target/debug/deps/ -s . --branch --ignore-not-existing -o coverage/ -t markdown
+          ~/.cargo/bin/grcov . --binary-path ${GITHUB_WORKSPACE}/target/debug/deps/ -s . --branch --ignore-not-existing -o ./ -t lcov
           cat coverage/markdown.md
           cat coverage/markdown.md >> "$GITHUB_STEP_SUMMARY"
 
