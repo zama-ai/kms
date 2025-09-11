@@ -75,6 +75,7 @@ jobs:
     name: common-docker-big-instance/run-docker
     permissions:
       contents: read
+      checks: write
       packages: write
       actions: read
       attestations: write

@@ -159,6 +159,7 @@ jobs:
   test-backward-compatibility:
     name: global-common-workflow/test-backward-compatibility
     permissions:
+      checks: write
       packages: read
       issues: write
       pull-requests: write
@@ -224,6 +225,7 @@ jobs:
   test-core-client:
     name: global-common-workflow/test-core-client
     permissions:
+      checks: write
       packages: read
       issues: write
       pull-requests: write
@@ -297,6 +299,7 @@ jobs:
   test-grpc:
     name: global-common-workflow/test-grpc
     permissions:
+      checks: write
       packages: read
       issues: write
       pull-requests: write
@@ -374,6 +377,7 @@ jobs:
   test-core-service:
     name: global-common-workflow/test-core-service
     permissions:
+      checks: write
       packages: read
       issues: write
       pull-requests: write
@@ -486,6 +490,7 @@ jobs:
   test-core-threshold-pr:
     name: global-common-workflow/test-core-threshold-pr
     permissions:
+      checks: write
       packages: read
       issues: write
       pull-requests: write
@@ -518,6 +523,7 @@ jobs:
   test-core-threshold-main:
     name: global-common-workflow/test-core-threshold-main
     permissions:
+      checks: write
       packages: read
       issues: write
       pull-requests: write
@@ -550,6 +556,7 @@ jobs:
   build-dependabot:
     name: global-common-workflow/build-dependabot
     permissions:
+      checks: write
       packages: read
       issues: write
       pull-requests: write
