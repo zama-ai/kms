@@ -1,8 +1,6 @@
 name: docker-scan
 on:
   pull_request:
-    types:
-      - opened
   workflow_dispatch: # For manual execution
 
 jobs:
