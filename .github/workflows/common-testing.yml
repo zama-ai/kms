@@ -276,10 +276,16 @@ jobs:
       - name: Linting dylint
         run: cargo dylint --all
 
+      - name: Install cargo-llvm-cov & nextest
+        if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
+        uses: taiki-e/install-action@1dd4d60a583436c5738af3d204f159f44d92f704  # v2.61.0
+        with:
+          tool: cargo-llvm-cov,nextest
+
       # Test execution
       - name: Run Tests
         id: tests
-        if: ${{ ! inputs.test-coverage || !contains(github.event.pull_request.labels.*.name, 'coverage') }}
+        # if: ${{ ! inputs.test-coverage || !contains(github.event.pull_request.labels.*.name, 'coverage') }}
         env:
           # some integration tests run docker compose
           # which builds images which need git access
@@ -290,6 +296,8 @@ jobs:
           AWS_ENDPOINT: "http://127.0.0.1:9000"
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
+          NEXTEST_RETRIES: 2
+          NEXTEST_TEST_THREADS: 6
         run: |
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
@@ -301,7 +309,7 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo test ${ARGS_TESTS:+$ARGS_TESTS}
+          RUST_BACKTRACE=full cargo nextest run ${ARGS_TESTS:+$ARGS_TESTS}
 
       - name: Set Slack color
         id: slack_color
@@ -342,12 +350,6 @@ jobs:
           if-no-files-found: ignore
 
       # Coverage reporting
-      - name: Install cargo-llvm-cov
-        if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-        uses: taiki-e/install-action@1dd4d60a583436c5738af3d204f159f44d92f704  # v2.61.0
-        with:
-          tool: cargo-llvm-cov
-
       - name: Generate code coverage
         if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
         env:
@@ -360,6 +362,7 @@ jobs:
           AWS_ENDPOINT: "http://127.0.0.1:9000"
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
+          NEXTEST_TEST_THREADS: 6
         run: |
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
@@ -371,7 +374,7 @@ jobs:
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           export CARGO_INCREMENTAL=0
           export RUSTFLAGS='-Cinstrument-coverage'
-          cargo llvm-cov test --codecov --output-path codecov.json ${ARGS_TESTS:+$ARGS_TESTS}
+          cargo llvm-cov nextest run --codecov --output-path codecov.json ${ARGS_TESTS:+$ARGS_TESTS}
           echo "codecov.json" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload coverage to Codecov
