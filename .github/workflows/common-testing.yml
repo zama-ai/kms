@@ -109,6 +109,14 @@ jobs:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: true
 
+      - name: debug
+        run: |
+          ls -al
+          ls -al ..
+          ls -al ${HOME}
+          ls -al ~
+          ls -al ${GITHUB_WORKSPACE}
+
       - name: Get Rust version
         env:
           GH_WORKSPACE: ${{ github.workspace }}
