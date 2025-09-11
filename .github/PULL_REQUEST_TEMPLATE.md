@@ -9,9 +9,7 @@
 I attest that all checked items are satisfied. Any deviation is clearly justified above.
 - [ ] Title follows conventional commits (e.g. `chore: ...`).
 - [ ] Tests added for every new pub item and test coverage has not decreased.
-- [ ] Public APIs and non-obvious code are documented.
-- [ ] Self-review completed.
-- [ ] TODO(#issue) comments added for any deferred work.
+- [ ] Public APIs and non-obvious logic documented; unfinished work marked as `TODO(#issue)`.
 - [ ] `unwrap`/`expect`/`panic` only in tests or for invariant bugs (documented if present).
 - [ ] No dependency version changes OR (if changed) only minimal required fixes.
 - [ ] No architectural protocol changes OR linked spec PR/issue provided.
@@ -21,6 +19,9 @@ I attest that all checked items are satisfied. Any deviation is clearly justifie
 - [ ] No critical business logic / crypto changes OR ≥2 reviewers assigned.
 - [ ] No new sensitive data fields added OR `Zeroize` + `ZeroizeOnDrop` implemented.
 - [ ] No new public storage data OR data is verifiable (signature / digest).
+- [ ] No `unsafe`; if unavoidable: minimal, justified, documented, and test/fuzz covered.
+- [ ] Strongly typed boundaries: typed inputs validated at the edge; no untyped values or errors cross modules.
+- [ ] Self-review completed.
 
 ### Dependency Update Questionnaire (only if deps changed or added)
 Answer in the `Cargo.toml` next to the dependency (or here if updating):
@@ -32,4 +33,4 @@ Answer in the `Cargo.toml` next to the dependency (or here if updating):
 6. No security / disclosure policy?
 7. Significant size increase?
 
-Details and more explanations for the checklist and dependency updates can be found in [CONTRIBUTING.md](../CONTRIBUTING.md#6-pr-checklist)
+More details and explanations for the checklist and dependency updates can be found in [CONTRIBUTING.md](../CONTRIBUTING.md#6-pr-checklist)
