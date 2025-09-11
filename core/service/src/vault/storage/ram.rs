@@ -161,6 +161,14 @@ impl StorageForBytes for RamStorage {
         data_id: &RequestId,
         data_type: &str,
     ) -> anyhow::Result<()> {
+        if self.data_exists(data_id, data_type).await? {
+            tracing::warn!(
+                "The data {}-{} already exists. Keeping the data without overwriting",
+                data_id,
+                data_type
+            );
+            return Ok(());
+        }
         self.internal_storage
             .insert((*data_id, data_type.to_string()), bytes.to_vec());
         Ok(())
@@ -191,6 +199,14 @@ impl Storage for RamStorage {
         data_id: &RequestId,
         data_type: &str,
     ) -> anyhow::Result<()> {
+        if self.data_exists(data_id, data_type).await? {
+            tracing::warn!(
+                "The data {}-{} already exists. Keeping the data without overwriting",
+                data_id,
+                data_type
+            );
+            return Ok(());
+        }
         let mut serialized = Vec::new();
         safe_serialize(data, &mut serialized, SAFE_SER_SIZE_LIMIT)?;
         self.internal_storage
