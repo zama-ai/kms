@@ -103,6 +103,9 @@ jobs:
 
   run-build:
     name: common-testing-big-instance/run-build
+    permissions:
+      issues: write
+      pull-requests: write
     needs: start-runner
     uses: ./.github/workflows/common-testing.yml
     secrets:
