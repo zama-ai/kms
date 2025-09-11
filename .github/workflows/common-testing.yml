@@ -346,13 +346,25 @@ jobs:
           # some integration tests run docker compose
           # which builds images which need private git access
           # building images in every integration test run is bad
+          AWS_ACCESS_KEY_ID: "minioadmin"
+          AWS_SECRET_ACCESS_KEY: "minioadmin"
+          AWS_DEFAULT_REGION: "eu-north-1"
+          AWS_ENDPOINT: "http://127.0.0.1:9000"
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
         run: |
+          mkdir -p ~/.aws/ &&
+          echo "[default]" > ~/.aws/credentials &&
+          echo "aws_access_key_id = ${AWS_ACCESS_KEY_ID}" >> ~/.aws/credentials &&
+          echo "aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}" >> ~/.aws/credentials &&
+          echo "[default]" > ~/.aws/config &&
+          echo "output=json" >> ~/.aws/config &&
+          echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
+          echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           export CARGO_INCREMENTAL=0
           export RUSTFLAGS='-Cinstrument-coverage'
           export LLVM_PROFILE_FILE='cargo-test-%p-%m.profraw'
-          cargo test "${ARGS_TESTS}"
+          cargo test ${ARGS_TESTS:+$ARGS_TESTS}
           cargo install grcov
           mkdir coverage
           ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage/ -t markdown
