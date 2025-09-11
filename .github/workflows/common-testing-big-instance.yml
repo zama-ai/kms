@@ -101,12 +101,8 @@ jobs:
   run-build:
     name: common-testing-big-instance/run-build
     permissions:
-      contents: read
       checks: write
-      packages: write
-      actions: read
-      attestations: write
-      id-token: write
+      packages: read
       pull-requests: write
       issues: write
     needs: start-runner
