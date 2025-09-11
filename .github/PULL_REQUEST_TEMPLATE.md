@@ -15,9 +15,9 @@ I attest that all checked items are satisfied. Any deviation is clearly justifie
 - [ ] `unwrap`/`expect`/`panic` only in tests or for invariant bugs (documented if present).
 - [ ] No dependency version changes OR (if changed) only minimal required fixes.
 - [ ] No architectural protocol changes OR linked spec PR/issue provided.
-- [ ] No breaking deployment config changes OR `devops` label + infra notified + reviewer assigned.
+- [ ] No breaking deployment config changes OR `devops` label + infra notified + infra-team reviewer assigned.
 - [ ] No breaking gRPC / serialized data changes OR commit marked with `!` and affected teams notified.
-- [ ] No modifications to existing versionized structs OR backward compat tests updated.
+- [ ] No modifications to existing versionized structs OR backward compatibility tests updated.
 - [ ] No critical business logic / crypto changes OR ≥2 reviewers assigned.
 - [ ] No new sensitive data fields added OR `Zeroize` + `ZeroizeOnDrop` implemented.
 - [ ] No new public storage data OR data is verifiable (signature / digest).

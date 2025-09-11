@@ -1,4 +1,4 @@
-# Contributing to TFHE-rs
+# Contributing to the Zama KMS
 
 This document provides guidance on how to contribute to the Zama KMS.
 
@@ -21,13 +21,13 @@ Start by [forking](https://docs.github.com/en/pull-requests/collaborating-with-p
 When creating your branch, make sure to use the following format :
 
 ```
-git checkout -b {feat|fix|docs|chore…}/short_description
+git checkout -b user-name{feat|fix|docs|chore…}/[optional issue number]/short_description
 ```
 
 For example:
 
 ```
-git checkout -b feat/new_feature_X
+git checkout -b linus/feat/223/new_feature_X
 ```
 
 ## 3. Before committing
@@ -45,11 +45,11 @@ cargo fmt && cargo clippy --all-targets -- -D warnings && cargo clippy --all-tar
 
 ### 3.2 Testing
 
-Your contributions must include comprehensive documentation and tests without breaking existing tests. Use `cargo test` to verify your contribution locally.
+Your contributions must include comprehensive documentation and tests without breaking existing tests. Use `cargo test --lib` to verify your contribution locally.
 
 ## 4. Committing
 
-**TFHE-rs** follows the conventional commit specification to maintain a consistent commit history, essential for Semantic Versioning ([semver.org](https://semver.org/)).
+**Zama KMS** follows the conventional commit specification to maintain a consistent commit history, essential for Semantic Versioning ([semver.org](https://semver.org/)).
 Make sure that you follow the commit conventions detailed on [this page](https://www.conventionalcommits.org/en/v1.0.0/).
 
 ## 5. Rebasing
