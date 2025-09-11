@@ -80,11 +80,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-permissions:
-  packages: read
-  pull-requests: write
-  issues: write
-
 jobs:
   start-runner:
     name: common-testing-big-instance/start-runner
@@ -105,6 +100,11 @@ jobs:
 
   run-build:
     name: common-testing-big-instance/run-build
+    permissions:
+      checks: write
+      packages: read
+      pull-requests: write
+      issues: write
     needs: start-runner
     uses: ./.github/workflows/common-testing.yml
     secrets:

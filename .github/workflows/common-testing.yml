@@ -79,6 +79,8 @@ env:
   DOCKER_BUILDKIT: 1
   NPM_TAG: ""
 
+permissions: {}
+
 jobs:
   compile-rust-unit-tests:
     name: common-testing/compile-rust-unit-tests
