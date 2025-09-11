@@ -223,6 +223,14 @@ impl Storage for S3Storage {
         data_id: &RequestId,
         data_type: &str,
     ) -> anyhow::Result<()> {
+        if self.data_exists(data_id, data_type).await? {
+            tracing::warn!(
+                "The data {}-{} already exists. Keeping the data without overwriting",
+                data_id,
+                data_type
+            );
+            return Ok(());
+        }
         let key = &self.item_key(data_id, data_type);
 
         tracing::info!(
@@ -277,6 +285,14 @@ impl StorageForBytes for S3Storage {
         data_id: &RequestId,
         data_type: &str,
     ) -> anyhow::Result<()> {
+        if self.data_exists(data_id, data_type).await? {
+            tracing::warn!(
+                "The data {}-{} already exists. Keeping the data without overwriting",
+                data_id,
+                data_type
+            );
+            return Ok(());
+        }
         let key = &self.item_key(data_id, data_type);
 
         tracing::info!("Storing text in bucket {} under key {}", &self.bucket, key);
@@ -416,7 +432,9 @@ pub(crate) async fn s3_put_blob(
         Ok(_) => Ok(()),
         Err(err) => {
             tracing::error!("{:?} {:?}", err.meta(), err.code());
-            Err(anyhow::anyhow!("AWS error, please refer to other logs."))
+            Err(anyhow::anyhow!(
+                "AWS error, please refer to other logs.: {err}"
+            ))
         }
     }
 }
@@ -427,64 +445,113 @@ cfg_if::cfg_if! {
         pub const AWS_REGION: &str = "eu-north-1";
         // this points to a locally running Minio
         pub const AWS_S3_ENDPOINT: &str = "http://127.0.0.1:9000";
-    }
-}
-/// Observe that certain tests require an S3 instance setup.
-/// There are run with the extra arguent `-F s3_tests`.
-/// Note that we pay for each of these tests, in the order of single digit cents per tests.
-///
-/// To setup a test environment for S3 proceed as follows:
-///
-/// 1. Creating access keys:
-///    a. Log into aws.amazon.com
-///    b. In the top right corner of the page there'll be your AWS account name. Click on it, and in the drop-down menu go to "security credentials".
-///    c. Select “Create access keys”
-///    d. Make sure to locally store the AWS access key ID and secret access key.
-/// 2. Create S3 bucket
-///    a. Search for “S3 console” in the search bar after logging into aws.amazon.com
-///    b. Click “Create a bucket”
-///    c. Make a “general bucket” and remember the name you gave it
-///    d. Download the AWS CLI tool
-///    e. Run `aws configure` to set it up with the correct information for your bucket
-///    f. Validate it works with `aws s3 ls`
-/// 3. Test S3 storage
-///    a. Update the const's BUCKET_NAME and AWS_REGION below to reflect what you created.
-///    b. Now you can run the tests :)
-///    cargo test --lib -F s3_tests s3_
-#[cfg(test)]
-pub mod tests {
-    #[cfg(feature = "s3_tests")]
-    use super::*;
 
-    #[cfg(feature = "s3_tests")]
-    use crate::vault::storage::tests::*;
+        /// Observe that certain tests require an S3 instance setup.
+        /// There are run with the extra argument `-F s3_tests`.
+        /// Note that we pay for each of these tests, in the order of single digit cents per tests.
+        ///
+        /// To setup the testing environment locally with Minio, proceed as follows:
+        /// 1. Install and run Minio in Docker
+        ///    a. Simplest way is to just run `docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml up` as this ensure Minio is configured and started correctly.
+        /// 2. Setup the bucket. With in the `dev-s3-mock-1` container in Docker execute the following commands:
+        ///   a. First open Docker desktop and navitage to `Volumes` and find `zama-core-threshold_minio_secrets` and cope the content of `access_key` and the content of `secret_key`.
+        ///   b. Run `mc alias set testminio http://127.0.0.1:9000 <access_key> <secret_key>` (and replace `<access_key>` respectively `<secret_key>` with the values copied above and ssuming no change to [`AWS_S3_ENDPOINT`])
+        ///   c. Run `mc mb testminio/ci-kms-key-test` (Assuming no change to [`BUCKET_NAME`])
+        ///   d. Run `mc anonymous set public testminio/ci-kms-key-test`
+        /// 3. Update the environment variables in the shell where you run the tests:
+        ///   a. Execute the following:
+        ///   ```bash
+        ///      AWS_ACCESS_KEY_ID=<access_key> &&
+        ///      export AWS_ACCESS_KEY_ID &&
+        ///      AWS_SECRET_ACCESS_KEY=<secret_key> &&
+        ///      export AWS_SECRET_ACCESS_KEY
+        ///   ```
+        ///   where `<access_key>` and `<secret_key>` are the values copied above.
+        /// 4. Now you can execute the tests: `cargo test --lib -F s3_tests s3_`
+        ///
+        /// To instead setup a test environment for a real S3 proceed as follows:
+        ///
+        /// 1. Creating access keys:
+        ///    a. Log into aws.amazon.com
+        ///    b. In the top right corner of the page there'll be your AWS account name. Click on it, and in the drop-down menu go to "security credentials".
+        ///    c. Select “Create access keys”
+        ///    d. Make sure to locally store the AWS access key ID and secret access key.
+        /// 2. Create S3 bucket
+        ///    a. Search for “S3 console” in the search bar after logging into aws.amazon.com
+        ///    b. Click “Create a bucket”
+        ///    c. Make a “general bucket” and remember the name you gave it
+        ///    d. Download the AWS CLI tool
+        ///    e. Run `aws configure` to set it up with the correct information for your bucket
+        ///    f. Validate it works with `aws s3 ls`
+        /// 3. Test S3 storage
+        ///    a. Update the const's BUCKET_NAME and AWS_REGION below to reflect what you created.
+        ///    b. Now you can run the tests :)
+        ///    cargo test --lib -F s3_tests s3_
+        #[cfg(test)]
+        pub mod tests {
+            use super::*;
+            use crate::vault::storage::tests::*;
 
-    #[cfg(feature = "s3_tests")]
-    #[tokio::test]
-    async fn s3_storage_helper_methods() {
-        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-        let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
-            .await
-            .unwrap();
-        let temp_dir = tempfile::tempdir().unwrap();
-        let mut pub_storage = S3Storage::new(
-            s3_client,
-            BUCKET_NAME.to_string(),
-            Some(
-                temp_dir
-                    .path()
-                    .to_str()
-                    .unwrap()
-                    .trim_start_matches('/')
-                    .trim_end_matches('/')
-                    .to_string(),
-            ),
-            StorageType::PUB,
-            None,
-            None,
-        )
-        .unwrap();
-        test_storage_read_store_methods(&mut pub_storage).await;
-        test_batch_helper_methods(&mut pub_storage).await;
+            #[tokio::test]
+            async fn s3_storage_helper_methods() {
+                let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+                let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
+                    .await
+                    .unwrap();
+                let temp_dir = tempfile::tempdir().unwrap();
+                let mut pub_storage = S3Storage::new(
+                    s3_client,
+                    BUCKET_NAME.to_string(),
+                    Some(
+                        temp_dir
+                            .path()
+                            .to_str()
+                            .unwrap()
+                            .trim_start_matches('/')
+                            .trim_end_matches('/')
+                            .to_string(),
+                    ),
+                    StorageType::PUB,
+                    None,
+                    None,
+                )
+                .unwrap();
+                test_storage_read_store_methods(&mut pub_storage).await;
+                test_batch_helper_methods(&mut pub_storage).await;
+            }
+
+            /// Test that files don't get silently overwritten
+            #[tracing_test::traced_test]
+            #[tokio::test]
+            async fn test_overwrite_logic_files() {
+                let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+                let s3_client = build_s3_client(&config, Some(Url::parse(AWS_S3_ENDPOINT).unwrap()))
+                    .await
+                    .unwrap();
+                let temp_dir = tempfile::tempdir().unwrap();
+                let mut pub_storage = S3Storage::new(
+                    s3_client,
+                    BUCKET_NAME.to_string(),
+                    Some(
+                        temp_dir
+                            .path()
+                            .to_str()
+                            .unwrap()
+                            .trim_start_matches('/')
+                            .trim_end_matches('/')
+                            .to_string(),
+                    ),
+                    StorageType::PUB,
+                    None,
+                    None,
+                )
+                .unwrap();
+                test_store_bytes_does_not_overwrite_existing_bytes(&mut pub_storage).await;
+                test_store_data_does_not_overwrite_existing_data(&mut pub_storage).await;
+                assert!(logs_contain(
+                    "already exists. Keeping the data without overwriting"
+                ));
+            }
+        }
     }
 }

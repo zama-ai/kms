@@ -220,4 +220,16 @@ pub mod tests {
         test_storage_read_store_methods(&mut storage).await;
         test_batch_helper_methods(&mut storage).await;
     }
+
+    /// Test that files don't get silently overwritten
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_overwrite_logic_ram() {
+        let mut storage = RamStorage::new();
+        test_store_bytes_does_not_overwrite_existing_bytes(&mut storage).await;
+        test_store_data_does_not_overwrite_existing_data(&mut storage).await;
+        assert!(logs_contain(
+            "already exists. Keeping the data without overwriting"
+        ));
+    }
 }

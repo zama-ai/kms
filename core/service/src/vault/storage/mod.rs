@@ -57,6 +57,8 @@ pub trait StorageReader {
 pub trait Storage: StorageReader {
     /// Store the given `data` with the given `data_id` of the given `data_type`
     /// Under the hood, the versioned data is stored.
+    /// If the object with `data_id` and `data_type` already exists, it will not be overwritten and
+    /// instead a warning is logged, nut the call will succeed.
     async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
@@ -76,6 +78,8 @@ pub trait Storage: StorageReader {
 #[trait_variant::make(Send)]
 pub trait StorageForBytes: Storage {
     /// Store the given `bytes` with the given `data_id` and `data_type`.
+    /// If the object with `data_id` and `data_type` already exists, it will not be overwritten and
+    /// instead a warning is logged, nut the call will succeed.
     async fn store_bytes(
         &mut self,
         bytes: &[u8],
@@ -552,6 +556,58 @@ pub mod tests {
         assert!(pks.is_empty());
     }
 
+    pub(crate) async fn test_store_bytes_does_not_overwrite_existing_bytes<
+        S: Storage + StorageForBytes,
+    >(
+        storage: &mut S,
+    ) {
+        let data_id = derive_request_id("BYTES_OVERWRITE").unwrap();
+        let data_type = PubDataType::CRS.to_string();
+
+        // First bytes to store
+        let original_bytes = vec![1, 2, 3, 4, 5];
+        storage
+            .store_bytes(&original_bytes, &data_id, &data_type)
+            .await
+            .unwrap();
+
+        // Attempt to overwrite with different bytes
+        let new_bytes = vec![9, 8, 7, 6, 5];
+        storage
+            .store_bytes(&new_bytes, &data_id, &data_type)
+            .await
+            .unwrap();
+
+        // Read back and verify it is still the original bytes
+        let loaded = storage.load_bytes(&data_id, &data_type).await.unwrap();
+        assert_eq!(loaded, original_bytes, "Bytes should not be overwritten");
+    }
+
+    pub(crate) async fn test_store_data_does_not_overwrite_existing_data<S: Storage>(
+        storage: &mut S,
+    ) {
+        let data_id = derive_request_id("ID_OVERWRITE").unwrap();
+        let data_type = PubDataType::CRS.to_string();
+
+        // First data to store
+        let original_data = TestType { i: 42 };
+        storage
+            .store_data(&original_data, &data_id, &data_type)
+            .await
+            .unwrap();
+
+        // Attempt to overwrite with different data
+        let new_data = TestType { i: 99 };
+        storage
+            .store_data(&new_data, &data_id, &data_type)
+            .await
+            .unwrap();
+
+        // Read back and verify it is still the original data
+        let loaded: TestType = storage.read_data(&data_id, &data_type).await.unwrap();
+        assert_eq!(loaded.i, original_data.i, "Data should not be overwritten");
+    }
+
     #[test]
     fn ordered_map() {
         let mut om = StorageCache::new(2).unwrap();
@@ -580,5 +636,57 @@ pub mod tests {
         assert_eq!(om.get(&bucket, &key), None);
         assert_eq!(*om.get(&bucket, &key2).as_ref().unwrap(), &data);
         assert_eq!(*om.get(&bucket, &key3).as_ref().unwrap(), &data);
+    }
+
+    #[tokio::test]
+    async fn test_store_data_does_not_overwrite_existing() {
+        let mut storage = ram::RamStorage::new();
+        let req_id = derive_request_id("overwrite_test").unwrap();
+        let data_type = "TestType";
+        let first = TestType { i: 100 };
+        let second = TestType { i: 200 };
+
+        // Store first value
+        storage
+            .store_data(&first, &req_id, data_type)
+            .await
+            .unwrap();
+
+        // Attempt to store second value with same id/type
+        storage
+            .store_data(&second, &req_id, data_type)
+            .await
+            .unwrap();
+
+        // Read back and ensure it's still the first value
+        let retrieved: TestType = read_versioned_at_request_id(&storage, &req_id, data_type)
+            .await
+            .unwrap();
+        assert_eq!(retrieved, first);
+    }
+
+    #[tokio::test]
+    async fn test_store_bytes_does_not_overwrite_existing() {
+        let mut storage = ram::RamStorage::new();
+        let req_id = derive_request_id("bytes_overwrite_test").unwrap();
+        let data_type = "BytesType";
+        let first = b"first".to_vec();
+        let second = b"second".to_vec();
+
+        // Store first bytes
+        storage
+            .store_bytes(&first, &req_id, data_type)
+            .await
+            .unwrap();
+
+        // Attempt to store second bytes with same id/type
+        storage
+            .store_bytes(&second, &req_id, data_type)
+            .await
+            .unwrap();
+
+        // Read back and ensure it's still the first bytes
+        let retrieved = storage.load_bytes(&req_id, data_type).await.unwrap();
+        assert_eq!(retrieved, first);
     }
 }
