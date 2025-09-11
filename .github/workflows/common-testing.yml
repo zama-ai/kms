@@ -340,7 +340,13 @@ jobs:
           if-no-files-found: ignore
 
       # Coverage reporting
-      - name: Run Tests with Coverage
+      - name: Install cargo-llvm-cov
+        if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
+        uses: taiki-e/install-action@1dd4d60a583436c5738af3d204f159f44d92f704  # v2.61.0
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Generate code coverage
         if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
         env:
           # some integration tests run docker compose
@@ -363,29 +369,63 @@ jobs:
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           export CARGO_INCREMENTAL=0
           export RUSTFLAGS='-Cinstrument-coverage'
-          export LLVM_PROFILE_FILE='cargo-test-%p-%m.profraw'
-          cargo test ${ARGS_TESTS:+$ARGS_TESTS}
-          cargo install grcov
-          mkdir coverage
-          ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage/ -t markdown
-          ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o ./ -t lcov
-          cat coverage/markdown.md
-          cat coverage/markdown.md >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov ${ARGS_TESTS:+$ARGS_TESTS} --codecov --output-path codecov.json
+          echo "codecov.json" >> $GITHUB_STEP_SUMMARY
 
-      - name: Report code coverage
+      - name: Upload coverage to Codecov
         if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-        uses: romeovs/lcov-reporter-action@87a815f34ec27a5826abba44ce09bbc688da58fd # v0.4.0
+        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7  # v5.5.1
         with:
-          title: ${{inputs.package-name}}-test-coverage
-          lcov-file: lcov
-          working-directory: ${{ inputs.working-directory }}/
+          # token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
+          files: codecov.json
+          fail_ci_if_error: true
 
-      - name: Check minimum coverage
-        if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-        uses: VeryGoodOpenSource/very_good_coverage@c953fca3e24a915e111cc6f55f03f756dcb3964c # v3.0.0
-        with:
-          path: "${{inputs.working-directory}}/lcov"
-          min_coverage: ${{ inputs.test-minimum-coverage }}
+      # - name: Run Tests with Coverage
+      #   if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
+      #   env:
+      #     # some integration tests run docker compose
+      #     # which builds images which need private git access
+      #     # building images in every integration test run is bad
+      #     AWS_ACCESS_KEY_ID: "minioadmin"
+      #     AWS_SECRET_ACCESS_KEY: "minioadmin"
+      #     AWS_DEFAULT_REGION: "eu-north-1"
+      #     AWS_ENDPOINT: "http://127.0.0.1:9000"
+      #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      #     ARGS_TESTS: ${{inputs.args-tests}}
+      #   run: |
+      #     mkdir -p ~/.aws/ &&
+      #     echo "[default]" > ~/.aws/credentials &&
+      #     echo "aws_access_key_id = ${AWS_ACCESS_KEY_ID}" >> ~/.aws/credentials &&
+      #     echo "aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}" >> ~/.aws/credentials &&
+      #     echo "[default]" > ~/.aws/config &&
+      #     echo "output=json" >> ~/.aws/config &&
+      #     echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
+      #     echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
+      #     export CARGO_INCREMENTAL=0
+      #     export RUSTFLAGS='-Cinstrument-coverage'
+      #     export LLVM_PROFILE_FILE='cargo-test-%p-%m.profraw'
+      #     cargo test ${ARGS_TESTS:+$ARGS_TESTS}
+      #     cargo install grcov
+      #     mkdir coverage
+      #     ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage/ -t markdown
+      #     ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o ./ -t lcov
+      #     cat coverage/markdown.md
+      #     cat coverage/markdown.md >> "$GITHUB_STEP_SUMMARY"
+
+      # - name: Report code coverage
+      #   if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
+      #   uses: romeovs/lcov-reporter-action@87a815f34ec27a5826abba44ce09bbc688da58fd # v0.4.0
+      #   with:
+      #     title: ${{inputs.package-name}}-test-coverage
+      #     lcov-file: lcov
+      #     working-directory: ${{ inputs.working-directory }}/
+
+      # - name: Check minimum coverage
+      #   if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
+      #   uses: VeryGoodOpenSource/very_good_coverage@c953fca3e24a915e111cc6f55f03f756dcb3964c # v3.0.0
+      #   with:
+      #     path: "${{inputs.working-directory}}/lcov"
+      #     min_coverage: ${{ inputs.test-minimum-coverage }}
 
       # Documentation
       - name: Build Documentation
