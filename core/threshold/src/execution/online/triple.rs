@@ -110,7 +110,7 @@ pub async fn mult_list<Z: Ring + ErrorCorrect, Ses: BaseSessionHandles>(
 
     if 2 * amount != epsilonrho.len() {
         return Err(anyhow_error_and_log(format!(
-            "Inconsistent share lengths: epsilonrho_vec: {:?}. Expected {:?}",
+            "Inconsistent share lengths: epsilonrho: {:?}. Expected {:?}",
             epsilonrho.len(),
             2 * amount
         )));

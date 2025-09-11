@@ -356,8 +356,8 @@ async fn try_reconstruct_from_shares<Z: ErrorCorrect, B: BaseSessionHandles>(
             .await??;
 
             //Only prematurely shutdown the jobs if we have managed to reconstruct everything
-            // NOTE: This shutdown can cause an error log from the spawn_compute_bound,
-            // because the job may die whilst a rayon task was spawn for deserializing the
+            // NOTE: This shutdown can cause a warn log from the spawn_compute_bound,
+            // because the job may die whilst a rayon task was spawned for deserializing the
             // incoming message.
             if res.is_some() {
                 jobs.shutdown().await;

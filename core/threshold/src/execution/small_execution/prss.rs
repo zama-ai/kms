@@ -46,21 +46,24 @@ pub trait PRSSPrimitives<Z>: ProtocolDescription + Send + Sync {
     async fn prss_next(&mut self, party_id: Role) -> anyhow::Result<Z> {
         self.prss_next_vec(party_id, 1)
             .await?
-            .pop()
+            .into_iter()
+            .next()
             .ok_or_else(|| anyhow_error_and_log("No PRSS value returned!"))
     }
 
     async fn przs_next(&mut self, party_id: Role, threshold: u8) -> anyhow::Result<Z> {
         self.przs_next_vec(party_id, threshold, 1)
             .await?
-            .pop()
+            .into_iter()
+            .next()
             .ok_or_else(|| anyhow_error_and_log("No PRZS value returned!"))
     }
 
     async fn mask_next(&mut self, party_id: Role, bd: u128) -> anyhow::Result<Z> {
         self.mask_next_vec(party_id, bd, 1)
             .await?
-            .pop()
+            .into_iter()
+            .next()
             .ok_or_else(|| anyhow_error_and_log("No mask value returned!"))
     }
 

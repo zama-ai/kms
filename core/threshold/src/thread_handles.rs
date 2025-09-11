@@ -159,7 +159,7 @@ pub async fn spawn_compute_bound<R: Send + 'static, F: FnOnce() -> R + Send + 's
         let _ = tx
             .send(res)
             .map_err(|_| ())
-            .inspect_err(|_| tracing::error!("compute task receiver dropped"));
+            .inspect_err(|_| tracing::warn!("compute task receiver dropped"));
     });
 
     rx.await
