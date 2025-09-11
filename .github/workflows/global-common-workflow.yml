@@ -23,7 +23,8 @@ concurrency:
 permissions:
   actions: read
   contents: read
-  pull-requests: read
+  pull-requests: write
+  issues: write
   packages: read
 
 jobs:
