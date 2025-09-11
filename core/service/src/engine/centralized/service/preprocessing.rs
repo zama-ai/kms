@@ -106,7 +106,7 @@ pub async fn preprocessing_impl<
 ///
 /// # Note
 /// This is a dummy method for interface consistency; no actual retrieval is performed.
-pub async fn get_reprocessing_res_impl<
+pub async fn get_preprocessing_res_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 >(
@@ -163,7 +163,8 @@ mod tests {
         };
         let result = preprocessing_impl(&kms, Request::new(preproc_req)).await;
         assert!(result.is_ok());
-        let get_result = get_reprocessing_res_impl(&kms, Request::new(preproc_req_id.into())).await;
+        let get_result =
+            get_preprocessing_res_impl(&kms, Request::new(preproc_req_id.into())).await;
         assert!(get_result.is_ok());
         let actual_address = alloy_signer::utils::public_key_to_address(verf_key.pk());
         let inner_res = get_result.unwrap().into_inner();

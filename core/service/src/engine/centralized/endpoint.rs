@@ -1,6 +1,6 @@
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::centralized::service::{
-    delete_kms_context_impl, get_reprocessing_res_impl, init_impl, new_kms_context_impl,
+    delete_kms_context_impl, get_preprocessing_res_impl, init_impl, new_kms_context_impl,
     preprocessing_impl,
 };
 use crate::vault::storage::Storage;
@@ -62,7 +62,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_RESULT);
-        get_reprocessing_res_impl(self, request)
+        get_preprocessing_res_impl(self, request)
             .await
             .inspect_err(|err| {
                 let tag = map_tonic_code_to_metric_tag(err.code());
