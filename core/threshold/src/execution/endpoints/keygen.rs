@@ -1182,12 +1182,16 @@ pub mod tests {
     #[cfg(not(target_arch = "aarch64"))]
     #[test]
     fn pure_tfhers_test() {
-        let params = crate::execution::tfhe_internals::parameters::NIST_PARAMS_P32_INTERNAL_FGLWE;
+        let params = crate::execution::tfhe_internals::parameters::BC_PARAMS;
         let classic_pbs = params.ciphertext_parameters;
         let dedicated_cpk_params = params.dedicated_compact_public_key_parameters.unwrap();
+        let compression_params = params.compression_decompression_parameters.unwrap();
+        let re_rand_ks_params = params.cpk_re_randomization_ksk_params.unwrap();
 
         let config = tfhe::ConfigBuilder::with_custom_parameters(classic_pbs)
-            .use_dedicated_compact_public_key_parameters(dedicated_cpk_params);
+            .use_dedicated_compact_public_key_parameters(dedicated_cpk_params)
+            .enable_compression(compression_params)
+            .enable_ciphertext_re_randomization(re_rand_ks_params);
 
         let client_key = tfhe::ClientKey::generate(config.clone());
         let server_key = tfhe::ServerKey::new(&client_key);
