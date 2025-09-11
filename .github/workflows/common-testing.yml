@@ -369,7 +369,7 @@ jobs:
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           export CARGO_INCREMENTAL=0
           export RUSTFLAGS='-Cinstrument-coverage'
-          cargo llvm-cov ${ARGS_TESTS:+$ARGS_TESTS} --codecov --output-path codecov.json
+          cargo llvm-cov test ${ARGS_TESTS:+$ARGS_TESTS} --codecov --output-path codecov.json
           echo "codecov.json" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload coverage to Codecov
