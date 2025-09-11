@@ -315,10 +315,10 @@ jobs:
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
           RUST_BACKTRACE=full cargo nextest run --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
-          ls -al ~
-          ls -al ~/target/debug/deps/
-          ~/.cargo/bin/grcov . --binary-path ~/target/debug/deps/ -s . --branch --ignore-not-existing -o coverage/ -t markdown
-          ~/.cargo/bin/grcov . --binary-path ~/target/debug/deps/ -s . --branch --ignore-not-existing -o ./ -t lcov
+          ls -al
+          ls -al ./target/debug/deps/
+          ~/.cargo/bin/grcov . --binary-path ./target/debug/deps/ -s . --branch --ignore-not-existing -o coverage/ -t markdown
+          ~/.cargo/bin/grcov . --binary-path ./target/debug/deps/ -s . --branch --ignore-not-existing -o ./ -t lcov
           cat coverage/markdown.md
           cat coverage/markdown.md >> "$GITHUB_STEP_SUMMARY"
 
