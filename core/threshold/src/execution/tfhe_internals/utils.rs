@@ -10,6 +10,8 @@ use tfhe::{
     HlExpandable,
 };
 
+use crate::execution::online::triple::open;
+use crate::execution::runtime::session::BaseSessionHandles;
 use crate::execution::sharing::shamir::RevealOp;
 use crate::{
     algebra::{
@@ -128,7 +130,7 @@ pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing, const EXTENSION_DEGR
     output_mask: &[Z],
     glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
 ) where
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let pol_dimension = glwe_secret_key_share.polynomial_size.0;
     let mut pol_output_body = Poly::from_coefs(output_body.to_vec());
@@ -251,6 +253,22 @@ where
         output_body_vec.push(body);
     }
     output_body_vec
+}
+
+/// Computes the Hamming weight of a vector of secret shared values.
+/// Assuming the input vector is indeed shares of bits !
+pub async fn compute_hamming_weight_secret_vector<
+    Z: Ring + ErrorCorrect,
+    Ses: BaseSessionHandles,
+>(
+    secret_vector: &[Share<Z>],
+    session: &mut Ses,
+) -> anyhow::Result<Z> {
+    let secret_hw = secret_vector
+        .iter()
+        .fold(Z::ZERO, |acc, share| acc + share.value());
+    let secret_hw = Share::new(session.my_role(), secret_hw);
+    open(secret_hw, session).await
 }
 
 #[cfg(test)]
