@@ -3,6 +3,10 @@ on:
   pull_request:
   workflow_dispatch: # For manual execution
 
+permissions:
+  issues: 'write'
+  pull-requests: 'write'
+
 jobs:
   scan-and-comment:
     name: docker-scan/scan-and-comment
