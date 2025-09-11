@@ -80,6 +80,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions: {}
+
 jobs:
   start-runner:
     name: common-testing-big-instance/start-runner

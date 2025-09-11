@@ -314,12 +314,6 @@ jobs:
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
           RUST_BACKTRACE=full cargo nextest run --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
-          ls -al
-          ls -al ../
-          ls -al ../../
-          ls -al ../../target/
-          ls -al ../../target/debug/
-          ls -al ../../target/debug/deps/
           ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage/ -t markdown
           ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o ./ -t lcov
           cat coverage/markdown.md
@@ -330,6 +324,7 @@ jobs:
         if: success() || failure() # always run even if the previous step fails
         with:
           report_paths: './target/nextest/ci/junit.xml'
+          include_passed: 'true'
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7  # v5.5.1
