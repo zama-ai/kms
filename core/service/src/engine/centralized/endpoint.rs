@@ -1,4 +1,7 @@
 use crate::engine::centralized::central_kms::CentralizedKms;
+use crate::engine::centralized::service::{
+    get_preprocessing_res_impl, init_impl, preprocessing_impl,
+};
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::utils::query_key_material_availability;
 use crate::vault::storage::Storage;
@@ -8,7 +11,6 @@ use kms_grpc::kms::v1::{
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::KMSType;
-use kms_grpc::utils::tonic_result::some_or_tonic_abort;
 use tonic::{Request, Response, Status};
 
 use crate::engine::centralized::service::{crs_gen_impl, get_crs_gen_result_impl};
@@ -20,12 +22,12 @@ use crate::engine::centralized::service::{
 use observability::{
     metrics::METRICS,
     metrics_names::{
-        map_tonic_code_to_metric_tag, ERR_INVALID_REQUEST, OP_BACKUP_RESTORE, OP_CRS_GEN_REQUEST,
-        OP_CRS_GEN_RESULT, OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT,
-        OP_DESTROY_CUSTODIAN_CONTEXT, OP_DESTROY_KMS_CONTEXT, OP_FETCH_PK, OP_INIT,
-        OP_KEYGEN_PREPROC_REQUEST, OP_KEYGEN_PREPROC_RESULT, OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT,
-        OP_NEW_CUSTODIAN_CONTEXT, OP_NEW_KMS_CONTEXT, OP_PUBLIC_DECRYPT_REQUEST,
-        OP_PUBLIC_DECRYPT_RESULT, OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
+        map_tonic_code_to_metric_tag, OP_BACKUP_RESTORE, OP_CRS_GEN_REQUEST, OP_CRS_GEN_RESULT,
+        OP_CUSTODIAN_BACKUP_RECOVERY, OP_CUSTODIAN_RECOVERY_INIT, OP_DESTROY_CUSTODIAN_CONTEXT,
+        OP_DESTROY_KMS_CONTEXT, OP_FETCH_PK, OP_INIT, OP_KEYGEN_PREPROC_REQUEST,
+        OP_KEYGEN_PREPROC_RESULT, OP_KEYGEN_REQUEST, OP_KEYGEN_RESULT, OP_NEW_CUSTODIAN_CONTEXT,
+        OP_NEW_KMS_CONTEXT, OP_PUBLIC_DECRYPT_REQUEST, OP_PUBLIC_DECRYPT_RESULT,
+        OP_USER_DECRYPT_REQUEST, OP_USER_DECRYPT_RESULT,
     },
 };
 
@@ -37,42 +39,44 @@ impl<
         BO: BackupOperator + Sync + Send + 'static,
     > CoreServiceEndpoint for CentralizedKms<PubS, PrivS, CM, BO>
 {
-    async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+    async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_INIT);
-        METRICS.increment_error_counter(OP_INIT, ERR_INVALID_REQUEST);
-        some_or_tonic_abort(
-            None,
-            "Requesting init on centralized kms is not suported".to_string(),
-        )
-        .map_err(Status::from)
+        init_impl(self, request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(observability::metrics_names::OP_INIT, tag);
+        })
     }
 
-    #[tracing::instrument(skip(self, _request))]
+    #[tracing::instrument(skip(self, request))]
     async fn key_gen_preproc(
         &self,
-        _request: Request<KeyGenPreprocRequest>,
+        request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
-        METRICS.increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, ERR_INVALID_REQUEST);
-        some_or_tonic_abort(
-            None,
-            "Requesting preproc on centralized kms is not suported".to_string(),
-        )
-        .map_err(Status::from)
+        preprocessing_impl(self, request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(
+                observability::metrics_names::OP_KEYGEN_PREPROC_REQUEST,
+                tag,
+            );
+        })
     }
 
-    #[tracing::instrument(skip(self, _request))]
+    #[tracing::instrument(skip(self, request))]
     async fn get_key_gen_preproc_result(
         &self,
-        _request: Request<v1::RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_RESULT);
-        METRICS.increment_error_counter(OP_KEYGEN_PREPROC_RESULT, ERR_INVALID_REQUEST);
-        some_or_tonic_abort(
-            None,
-            "Requesting preproc status on centralized kms is not suported".to_string(),
-        )
-        .map_err(Status::from)
+        get_preprocessing_res_impl(self, request)
+            .await
+            .inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS.increment_error_counter(
+                    observability::metrics_names::OP_KEYGEN_PREPROC_RESULT,
+                    tag,
+                );
+            })
     }
 
     #[cfg(feature = "insecure")]

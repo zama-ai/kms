@@ -13,7 +13,8 @@ COPY . .
 # Build using cargo install with caching
 RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
     mkdir -p /app/kms-core-client/bin && \
-    cargo install --path core-client --root core-client --bins
+    cargo install --path core-client --root core-client --bins && \
+    cargo install --path tools/kms-health-check --root tools/kms-health-check --bins
 
 
 ################################################################
@@ -35,6 +36,7 @@ WORKDIR /app/kms-core-client
 
 # Copy binaries
 COPY --from=builder /app/kms-core-client/core-client/bin/ /app/kms-core-client/bin/
+COPY --from=builder /app/kms-core-client/tools/kms-health-check/bin/ /app/kms-core-client/bin/
 
 # Change user to limit root access
 RUN addgroup -S kms --gid 10002 && \
