@@ -53,6 +53,8 @@ on:
         type: string
         required: true
     secrets:
+      CODECOV_TOKEN:
+        required: false
       GHCR_READ_TOKEN:
         required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
