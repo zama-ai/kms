@@ -173,6 +173,7 @@ jobs:
       package-name: 'kms'
       slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
+      test-coverage: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -236,6 +237,7 @@ jobs:
       package-name: 'kms-core-client'
       args-tests: ${{ matrix.args-tests }}
       app-cache-dir: 'kms-core-client'
+      test-coverage: true
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -294,6 +296,7 @@ jobs:
       args-tests: '--all-features'
       package-name: 'kms-grpc'
       app-cache-dir: 'kms-grpc'
+      test-coverage: true
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -376,6 +379,7 @@ jobs:
       package-name: 'kms'
       slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
+      test-coverage: true
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -475,6 +479,7 @@ jobs:
       args-tests: '-F slow_tests --lib -- --test-threads=4'
       package-name: 'threshold-fhe'
       app-cache-dir: 'threshold-fhe'
+      test-coverage: true
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
