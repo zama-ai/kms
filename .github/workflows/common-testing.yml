@@ -297,7 +297,7 @@ jobs:
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_RETRIES: 2
-          NEXTEST_TEST_THREADS: 6
+          NEXTEST_TEST_THREADS: 1
         run: |
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
@@ -309,7 +309,25 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo nextest run ${ARGS_TESTS:+$ARGS_TESTS}
+          RUST_BACKTRACE=full cargo nextest run --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
+
+      - name: Publish Test Report
+        if: always()
+        uses: ctrf-io/github-test-reporter@646f98cfc16c6f7a0e1f6100cabe2deb95dd2eef  # v1.0.22
+        with:
+          report-path: './target/nextest/ci/junit.xml'
+          integrations-config: |
+            {
+                "junit-to-ctrf": {
+                  "enabled": true,
+                  "action": "convert",
+                  "options": {
+                    "output": "./ctrf-reports/ctrf-report.json",
+                    "toolname": "junit-to-ctrf",
+                    "useSuiteName": false,
+                  }
+                }
+              }
 
       - name: Set Slack color
         id: slack_color
@@ -362,7 +380,7 @@ jobs:
           AWS_ENDPOINT: "http://127.0.0.1:9000"
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
-          NEXTEST_TEST_THREADS: 6
+          NEXTEST_TEST_THREADS: 1
         run: |
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
@@ -374,7 +392,7 @@ jobs:
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           export CARGO_INCREMENTAL=0
           export RUSTFLAGS='-Cinstrument-coverage'
-          cargo llvm-cov nextest run --codecov --output-path codecov.json ${ARGS_TESTS:+$ARGS_TESTS}
+          cargo llvm-cov nextest run --codecov --output-path codecov.json --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
           echo "codecov.json" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload coverage to Codecov
