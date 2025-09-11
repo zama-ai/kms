@@ -5,7 +5,6 @@ use crate::cryptography::backup_pke::BackupCiphertext;
 use crate::util::file_handling::safe_read_element_versioned;
 use crate::util::key_setup::test_tools::purge_backup;
 use crate::util::key_setup::test_tools::purge_recovery_info;
-use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
 };
@@ -29,7 +28,6 @@ pub(crate) async fn new_custodian_context(
     amount_custodians: usize,
     threshold: u32,
 ) {
-    ensure_testing_material_exists(None).await;
     let req_new_cus: RequestId = derive_request_id("test_new_custodian_context_central").unwrap();
     let req_new_cus2: RequestId =
         derive_request_id("test_new_custodian_context_central_2").unwrap();

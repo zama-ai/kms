@@ -17,7 +17,7 @@ use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
     cryptography::{backup_pke::BackupCiphertext, internal_crypto_types::WrappedDKGParams},
     engine::base::derive_request_id,
-    util::key_setup::test_tools::{purge_priv, setup::ensure_testing_material_exists},
+    util::key_setup::test_tools::purge_priv,
 };
 use aes_prng::AesRng;
 use kms_grpc::kms::v1::{CustodianRecoveryRequest, Empty, RecoveryRequest};
@@ -39,12 +39,10 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
         "auto_update_backup_central_{amount_custodians}_{threshold}"
     ))
     .unwrap();
-    let test_path = None;
-    ensure_testing_material_exists(test_path).await;
-    purge(test_path, test_path, test_path, &req_new_cus, 1).await;
+    purge(None, None, None, &req_new_cus, 1).await;
     // Clean up backups to not interfere with test
-    purge_backup(test_path, 1).await;
-    purge_recovery_info(test_path, 1).await;
+    purge_backup(None, 1).await;
+    purge_recovery_info(None, 1).await;
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client, mut internal_client) =
@@ -71,7 +69,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     drop(internal_client);
 
     // Purge backup
-    purge_backup(test_path, 1).await;
+    purge_backup(None, 1).await;
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Check that the backup is still there
     let (_kms_server, _kms_client, _internal_client) =
@@ -99,7 +97,6 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         "test_backup_after_crs_central_cus_{amount_custodians}_{threshold}"
     ))
     .unwrap();
-    ensure_testing_material_exists(None).await;
     let crs_req: RequestId = derive_request_id(&format!(
         "test_backup_after_crs_central_crs_{amount_custodians}_{threshold}"
     ))
@@ -111,8 +108,16 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     purge_recovery_info(None, 1).await;
 
     // Generate a new crs
-    let (_kms_server, mut kms_client, internal_client) =
+    let (_kms_server, mut kms_client, mut internal_client) =
         crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
+    let _mnemnonics = run_new_cus_context(
+        &mut kms_client,
+        &mut internal_client,
+        &req_new_cus,
+        amount_custodians,
+        threshold,
+    )
+    .await;
     run_crs_centralized(&mut kms_client, &internal_client, &crs_req, param, true).await;
     // Check that the new CRS was backed up
     let crss = backup_files(&req_new_cus, &crs_req, &PrivDataType::CrsInfo.to_string()).await;
@@ -137,16 +142,6 @@ async fn test_decrypt_after_recovery_central() {
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     let req_new_cus: RequestId = derive_request_id("test_decrypt_after_recovery_central").unwrap();
-    ensure_testing_material_exists(None).await;
-    // Read the private signing key for reference
-    let priv_store = FileStorage::new(None, StorageType::PRIV, None).unwrap();
-    let sig_key: PrivateSigKey = read_versioned_at_request_id(
-        &priv_store,
-        &SIGNING_KEY_ID,
-        &PrivDataType::SigningKey.to_string(),
-    )
-    .await
-    .unwrap();
 
     // Clean up backups to not interfere with test
     purge_backup(None, 1).await;
@@ -166,6 +161,16 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     drop(kms_server);
     drop(kms_client);
     drop(internal_client);
+
+    // Read the private signing key for reference
+    let priv_store = FileStorage::new(None, StorageType::PRIV, None).unwrap();
+    let sig_key: PrivateSigKey = read_versioned_at_request_id(
+        &priv_store,
+        &SIGNING_KEY_ID,
+        &PrivDataType::SigningKey.to_string(),
+    )
+    .await
+    .unwrap();
 
     // Purge the private storage to tests the backup
     purge_priv(None, 1).await;
@@ -204,6 +209,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .unwrap();
     // Check the data is correctly recovered
     assert_eq!(sk, sig_key);
+    purge_priv(None, 1).await;
 }
 
 async fn emulate_custodian(

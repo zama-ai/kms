@@ -1,8 +1,5 @@
-use crate::conf::FileStorage as FileStorageConf;
-use crate::conf::Storage as StorageConf;
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::storage::file::FileStorage;
-use crate::vault::storage::make_storage;
 use crate::vault::storage::{
     delete_all_at_request_id, read_versioned_at_request_id, StorageReader,
 };
@@ -494,31 +491,31 @@ pub async fn compute_cipher_from_stored_key(
 pub async fn purge(
     pub_path: Option<&Path>,
     priv_path: Option<&Path>,
-    backup_path: Option<&Path>,
+    _backup_path: Option<&Path>,
     id: &RequestId,
     amount_parties: usize,
 ) {
-    let vault_storage_option = backup_path.map(|path| {
-        StorageConf::File(FileStorageConf {
-            path: path.to_path_buf(),
-        })
-    });
+    // TODO(#2748) backups should probably be handled separately since this does not delete the all the custodian based backups
+    // but only the non-custodian ones. Hence the following lines are commented out for now.
+    // let vault_storage_option = backup_path.map(|path| {
+    //     StorageConf::File(FileStorageConf {
+    //         path: path.to_path_buf(),
+    //     })
+    // });
     if amount_parties == 1 {
         let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
         delete_all_at_request_id(&mut pub_storage, id).await;
         let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
         delete_all_at_request_id(&mut priv_storage, id).await;
-        let mut backup_storage = make_storage(
-            vault_storage_option.clone(),
-            StorageType::BACKUP,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-        // TODO(#2748) backups should probably be handled separately since this does not delete the all the custodian based backups
-        // but only the non-custodian ones.
-        delete_all_at_request_id(&mut backup_storage, id).await;
+        // let mut backup_storage = make_storage(
+        //     vault_storage_option.clone(),
+        //     StorageType::BACKUP,
+        //     None,
+        //     None,
+        //     None,
+        // )
+        // .unwrap();
+        // delete_all_at_request_id(&mut backup_storage, id).await;
     } else {
         for i in 1..=amount_parties {
             let mut threshold_pub =
@@ -530,17 +527,17 @@ pub async fn purge(
                 Some(Role::indexed_from_one(i)),
             )
             .unwrap();
-            let mut backup_storage = make_storage(
-                vault_storage_option.clone(),
-                StorageType::BACKUP,
-                Some(Role::indexed_from_one(i)),
-                None,
-                None,
-            )
-            .unwrap();
-            delete_all_at_request_id(&mut backup_storage, id).await;
             delete_all_at_request_id(&mut threshold_pub, id).await;
             delete_all_at_request_id(&mut threshold_priv, id).await;
+            // let mut backup_storage = make_storage(
+            //     vault_storage_option.clone(),
+            //     StorageType::BACKUP,
+            //     Some(Role::indexed_from_one(i)),
+            //     None,
+            //     None,
+            // )
+            // .unwrap();
+            // delete_all_at_request_id(&mut backup_storage, id).await;
         }
     }
 }

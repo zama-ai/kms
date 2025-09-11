@@ -306,9 +306,10 @@ async fn default_insecure_central_autobackup_after_deletion() {
 async fn default_insecure_central_crs_backup() {
     let param = FheParameter::Default;
     let dkg_param: WrappedDKGParams = param.into();
-
     let req_id: RequestId =
         derive_request_id(&format!("default_insecure_central_crs_backup_{param:?}",)).unwrap();
+    purge(None, None, None, &req_id, 1).await;
+    purge_backup(None, 1).await;
     crs_gen_centralized(&req_id, param, true).await;
 
     // Generated crs, delete it from private storage
