@@ -159,8 +159,8 @@ jobs:
   test-backward-compatibility:
     name: global-common-workflow/test-backward-compatibility
     permissions:
-      issues: write
-      pull-requests: write
+      issues: 'write'
+      pull-requests: 'write'
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-backward-compatibility == 'true' ||
@@ -223,8 +223,8 @@ jobs:
   test-core-client:
     name: global-common-workflow/test-core-client
     permissions:
-      issues: write
-      pull-requests: write
+      issues: 'write'
+      pull-requests: 'write'
     needs:
       - prepare-core-client-matrix
       - check-changes
@@ -295,8 +295,8 @@ jobs:
   test-grpc:
     name: global-common-workflow/test-grpc
     permissions:
-      issues: write
-      pull-requests: write
+      issues: 'write'
+      pull-requests: 'write'
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -371,8 +371,8 @@ jobs:
   test-core-service:
     name: global-common-workflow/test-core-service
     permissions:
-      issues: write
-      pull-requests: write
+      issues: 'write'
+      pull-requests: 'write'
     needs:
       - check-changes
       - prepare-matrix
@@ -482,8 +482,8 @@ jobs:
   test-core-threshold-pr:
     name: global-common-workflow/test-core-threshold-pr
     permissions:
-      issues: write
-      pull-requests: write
+      issues: 'write'
+      pull-requests: 'write'
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -512,6 +512,9 @@ jobs:
   # Only runs when threshold-related changes are detected
   test-core-threshold-main:
     name: global-common-workflow/test-core-threshold-main
+    permissions:
+      issues: 'write'
+      pull-requests: 'write'
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml

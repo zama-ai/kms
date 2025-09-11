@@ -82,6 +82,8 @@ env:
 
 permissions:
   packages: read
+  pull-requests: write
+  issues: write
 
 jobs:
   start-runner:
@@ -103,10 +105,6 @@ jobs:
 
   run-build:
     name: common-testing-big-instance/run-build
-    permissions:
-      packages: read
-      issues: write
-      pull-requests: write
     needs: start-runner
     uses: ./.github/workflows/common-testing.yml
     secrets:
