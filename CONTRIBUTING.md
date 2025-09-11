@@ -5,7 +5,7 @@ This document provides guidance on how to contribute to the Zama KMS.
 There are two ways to contribute:
 
 - **Report issues:** Open issues on GitHub to report bugs, suggest improvements, or note typos.
-- **Submit codes**: To become an official contributor, you must sign our Contributor License Agreement (CLA). Our CLA-bot will guide you through this process when you open your first pull request.
+- **Submit code**: To become an official contributor, you must sign our Contributor License Agreement (CLA). Our CLA-bot will guide you through this process when you open your first pull request.
 
 ## 1. Setting up the project
 
@@ -34,7 +34,7 @@ git checkout -b linus/feat/223/new_feature_X
 
 ### 3.1 Linting
 
-Each commit to **KMS** should conform to the standards of the project. In particular, every source code, docker or workflows files should be linted to prevent programmatic and stylistic errors.
+Each commit to **KMS** should conform to the standards of the project. In particular, every source code, Docker or workflows files should be linted to prevent programmatic and stylistic errors.
 
 To apply automatic code formatting and lint checking, run:
 
@@ -61,15 +61,14 @@ Before a PR is created and a PR review is requested, the PR author should go ove
 
 ### Checklist before requesting a review
 - [ ] The PR title follows [conventional commits](https://www.conventionalcommits.org/en/v1.0.0/), e.g. "chore: did something".
-- [ ] Tests exist for all new `pub` methods.
+- [ ] Tests exist for all new `pub` methods and I checked that test coverage is at least as good as before this PR
 - [ ] Code comments are in place for public methods and non-obvious code segments.
-- [ ] I have performed a self-review of my code
-- [ ] Any unfinished business is documented with a `TODO(#issue_number)` comment and brief description what needs to be fixed.
+- [ ] Any unfinished business is documented with a `TODO(#issue_number)` comment and brief description of what needs to be fixed.
 - [ ] `unwrap`, `expect` or `panic!` is only used in tests or in situations where it would imply that there is a bug in the code, and I have documented this.
 - [ ] The PR is _not_ updating _any_ dependencies (i.e. no changes to `Cargo.toml` or `Cargo.toml`), or if it does:
     - [ ] I confirm there are _only_ changes needed to fix compilation and tests (see [here](#Checklist-for-dependency-updates) for details.), or changes that happened due to bumping an internal version number.
 - [ ] Changes in the PR do not affect the architecture of the protocol. Or if they do these steps must be taken:
-    - [ ] A parallel PR or issue has been open in the [tech-spec repo](https://github.com/zama-ai/tech-spec) (add the link here).
+    - [ ] A parallel PR or issue has been opened in the [tech-spec repo](https://github.com/zama-ai/tech-spec) (add the link here).
 - [ ] The PR does not contain any breaking changes to the configuration and deployment files.
       (A change is _only_ considered breaking if a deployment configuration must be changed as part of an update. Adding new fields, with default values is _not_ considered breaking). Or if it does then these steps must be taken:
     - [ ] The PR is labeled with `devops`.
@@ -86,12 +85,15 @@ Before a PR is created and a PR review is requested, the PR author should go ove
     - [ ] The `Zeroize` and `ZeroizeOnDrop` traits have been implemented to clean up private data.
 - [ ] I have not added data to the public storage. Or if I have, then these steps must be taken:
     - [ ] I have ensured that the data does _not_ need to be trusted, i.e. it can be validated through a signature or the existence of a digest in the private storage.
-- [ ] I checked that test coverage is at least as good as before this PR
+- [ ] No untyped/loosely-typed input crosses module/service boundaries. Strong types (e.g. enums, `Duration`, `Url`, `PathBuf`, `IpAddr`, etc.) must be used and validate/parse at the edge.
+- [ ] Public errors are typed (e.g. using `thiserror`), user-facing messages are actionable, and no generic `anyhow::Error` leaks across crate boundaries.
+- [ ] No `unsafe` is used, unless it’s unavoidable, minimal, documented, and covered by targeted tests/fuzzing.
+- [ ] I have performed a self-review of my code
 
 ### Checklist for dependency updates
-For dependency updates the following essay questions _must_ be also answered and comments where the import of the dependency happens must be updated if there is any changes in the answers since the last update.
-If this is the first time a new dependency is added, then the questions must be answered in the `toml` where the new dependency is imported:
-1. Did ownership change change significantly since last update. Is the owner suspicious? I.e. is it limited to one or a few people or small companies in "dangerous territories"?
+For dependency updates the following essay questions _must_ also be answered and comments where the import of the dependency happens must be updated if there are any changes in the answers since the last update.
+If this is the first time a new dependency is added, then the questions must be answered in the `Cargo.toml` where the new dependency is imported:
+1. Did ownership change significantly since last update. Is the owner suspicious? I.e. is it limited to one or a few people or small companies in "dangerous territories"?
 2. Is the crate not particularly popular?
 3. Is there an unusual jump in package versions?
 4. Is documentation lacking?
@@ -114,6 +116,7 @@ For instructions on creating a PR from a fork, refer to GitHub's [official docum
 
 Before a pull request can be merged, several test suites run automatically.
 
+{% hint style="info" %}
 ## Useful details:
 
 - pipeline is triggered by humans
@@ -124,7 +127,7 @@ Before a pull request can be merged, several test suites run automatically.
 
 ## 9. Details on data versioning
 
-Data serialized with TFHE-rs must remain backward compatible. This is done using the [tfhe-versionable](https://crates.io/crates/tfhe-versionable) crate.
+Data serialized inside the KMS must remain backward compatible. This is done using the [tfhe-versionable](https://crates.io/crates/tfhe-versionable) crate.
 
 If you modify a type that derives `Versionize` in a backward-incompatible way, an upgrade implementation must be provided.
 
@@ -132,13 +135,13 @@ For example, these changes are data breaking:
  * Adding a field to a struct.
  * Changing the order of the fields within a struct or the variants within an enum.
  * Renaming a field of a struct or a variant of an enum.
- * Changing the type of field in a struct or a variant in an enum.
+ * Changing the type of a field in a struct or a variant in an enum.
 
 On the contrary, these changes are *not* data breaking:
  * Renaming a type (unless it implements the `Named` trait).
  * Adding a variant to the end of an enum.
 
-Historical data from previous TFHE-rs versions are stored inside `utils/tfhe-backward-compat-data`. They are used to check on every PR that backward compatibility has been preserved.
+Historical data from previous KMS versions is stored inside `backward-compatibility`. They are used to check on every PR that backward compatibility has been preserved.
 
 ## Example: adding a field
 
