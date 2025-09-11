@@ -369,14 +369,14 @@ jobs:
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           export CARGO_INCREMENTAL=0
           export RUSTFLAGS='-Cinstrument-coverage'
-          cargo llvm-cov test ${ARGS_TESTS:+$ARGS_TESTS} --codecov --output-path codecov.json
+          cargo llvm-cov test --codecov --output-path codecov.json ${ARGS_TESTS:+$ARGS_TESTS}
           echo "codecov.json" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload coverage to Codecov
         if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
         uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7  # v5.5.1
         with:
-          # token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
+          token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
           files: codecov.json
           fail_ci_if_error: true
 
