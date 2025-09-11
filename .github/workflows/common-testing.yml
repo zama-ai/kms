@@ -301,6 +301,7 @@ jobs:
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_RETRIES: 2
           NEXTEST_TEST_THREADS: 1
+          RUSTFLAGS: -Cinstrument-coverage
           LLVM_PROFILE_FILE: 'cargo-test-%p-%m.profraw'
         run: |
           mkdir -p ~/.aws/ &&
@@ -314,6 +315,8 @@ jobs:
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
           RUST_BACKTRACE=full cargo nextest run --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
+          ls -al ~
+          ls -al ~/target/debug/deps/
           ~/.cargo/bin/grcov . --binary-path ~/target/debug/deps/ -s . --branch --ignore-not-existing -o coverage/ -t markdown
           ~/.cargo/bin/grcov . --binary-path ~/target/debug/deps/ -s . --branch --ignore-not-existing -o ./ -t lcov
           cat coverage/markdown.md
