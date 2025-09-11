@@ -23,8 +23,7 @@ concurrency:
 permissions:
   actions: read
   contents: read
-  pull-requests: write
-  issues: write
+  pull-requests: read
   packages: read
 
 jobs:
@@ -159,6 +158,9 @@ jobs:
   ############################################################################
   test-backward-compatibility:
     name: global-common-workflow/test-backward-compatibility
+    permissions:
+      issues: write
+      pull-requests: write
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-backward-compatibility == 'true' ||
@@ -174,7 +176,6 @@ jobs:
       package-name: 'kms'
       slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
-      test-coverage: true
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -221,6 +222,9 @@ jobs:
 
   test-core-client:
     name: global-common-workflow/test-core-client
+    permissions:
+      issues: write
+      pull-requests: write
     needs:
       - prepare-core-client-matrix
       - check-changes
@@ -239,7 +243,6 @@ jobs:
       package-name: 'kms-core-client'
       args-tests: ${{ matrix.args-tests }}
       app-cache-dir: 'kms-core-client'
-      test-coverage: true
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -291,6 +294,9 @@ jobs:
   ############################################################################
   test-grpc:
     name: global-common-workflow/test-grpc
+    permissions:
+      issues: write
+      pull-requests: write
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -299,7 +305,6 @@ jobs:
       args-tests: '--all-features'
       package-name: 'kms-grpc'
       app-cache-dir: 'kms-grpc'
-      test-coverage: true
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -365,6 +370,9 @@ jobs:
   # - WASM runtime for WebAssembly tests
   test-core-service:
     name: global-common-workflow/test-core-service
+    permissions:
+      issues: write
+      pull-requests: write
     needs:
       - check-changes
       - prepare-matrix
@@ -383,7 +391,6 @@ jobs:
       package-name: 'kms'
       slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
-      test-coverage: true
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -474,6 +481,9 @@ jobs:
   # Includes slow tests but runs only library tests
   test-core-threshold-pr:
     name: global-common-workflow/test-core-threshold-pr
+    permissions:
+      issues: write
+      pull-requests: write
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -484,7 +494,6 @@ jobs:
       args-tests: '-F slow_tests --lib -- --test-threads=4'
       package-name: 'threshold-fhe'
       app-cache-dir: 'threshold-fhe'
-      test-coverage: true
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
