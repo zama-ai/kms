@@ -153,7 +153,7 @@ pub async fn spawn_compute_bound<R: Send + 'static, F: FnOnce() -> R + Send + 's
 ) -> anyhow::Result<R> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let current_span = tracing::Span::current();
-    rayon::spawn(move || {
+    rayon::spawn_fifo(move || {
         let _guard = current_span.enter();
         let res = compute_fn();
         let _ = tx
