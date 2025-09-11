@@ -79,14 +79,14 @@ env:
   DOCKER_BUILDKIT: 1
   NPM_TAG: ""
 
-permissions:
-  packages: read
-  issues: write
-  pull-requests: write
-
 jobs:
   compile-rust-unit-tests:
     name: common-testing/compile-rust-unit-tests
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
     timeout-minutes: 500
     runs-on: ${{ inputs.runs-on }}
     services:
