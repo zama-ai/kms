@@ -31,6 +31,7 @@ use threshold_fhe::execution::runtime::party::Role;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
+#[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_auto_update_backups_threshold() {

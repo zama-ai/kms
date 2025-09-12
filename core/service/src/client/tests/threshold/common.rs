@@ -4,9 +4,10 @@ use crate::conf::{self, Keychain, SecretSharingKeychain};
 use crate::consts::SIGNING_KEY_ID;
 #[cfg(feature = "slow_tests")]
 use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
-use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
+use crate::util::key_setup::test_tools::setup::{ensure_dir_exist, ensure_testing_material_exists};
 use crate::util::key_setup::{
-    ensure_threshold_server_signing_keys_exist, max_threshold, ThresholdSigningKeyConfig,
+    ensure_client_keys_exist, ensure_threshold_server_signing_keys_exist, max_threshold,
+    ThresholdSigningKeyConfig,
 };
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::keychain::make_keychain_proxy;
@@ -54,6 +55,8 @@ async fn threshold_handles_w_vaults(
     } else {
         // Only ensure that the signing key is there s.t. the KMS can start
         // TODO(#2491) this will be handled better when we add contexts s.t. we have different signing keys
+        ensure_dir_exist(test_data_path).await;
+        ensure_client_keys_exist(test_data_path, &SIGNING_KEY_ID, true).await;
         let _ = ensure_threshold_server_signing_keys_exist(
             &mut pub_storage,
             &mut priv_storage,

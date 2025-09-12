@@ -133,6 +133,7 @@ impl<R: Rng + CryptoRng> Keychain for SecretShareKeychain<R> {
         let ct = BackupCiphertext {
             ciphertext: raw_ct,
             priv_data_type,
+            backup_id: self.get_current_backup_id()?,
         };
         Ok(EnvelopeStore::OperatorBackupOutput(ct))
     }
