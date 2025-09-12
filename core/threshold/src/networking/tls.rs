@@ -243,6 +243,7 @@ impl ServerCertVerifier for AttestedVerifier {
         let (context, _, server_verifier) = self.get_context_and_verifiers_for_x509_cert(&cert)?;
         // check the enclave-generated certificate used for the TLS session as
         // usual (however, we expect it to be self-signed)
+        tracing::debug!("Verifying certificate for server {:?}", server_name);
         server_verifier
             .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
             .inspect_err(|e| {
@@ -537,9 +538,9 @@ pub fn extract_context_id_from_cert(cert: &X509Certificate) -> anyhow::Result<Se
     // bytes and then convert it to u128. As such, it does not matter
     // what endianess we use for the conversion, as long as we are
     // consistent on both sides. Here we use little-endian.
-    let context_id = SessionId::from(u128::from_le_bytes(
+    let context_id = SessionId::from(u128::from_be_bytes(
         cert.serial
-            .to_bytes_le()
+            .to_bytes_be()
             .try_into()
             .or(Err(anyhow!("Invalid context ID length")))?,
     ));
