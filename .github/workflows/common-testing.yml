@@ -322,12 +322,18 @@ jobs:
       - name: debug
         run: |
           cat "${GITHUB_WORKSPACE}/target/nextest/ci/junit.xml"
+      - name: Copy Test Results
+        if: (!cancelled())
+        run: |
+          cp -Lpr ${GITHUB_WORKSPACE}/target/nextest/ci test-results
+        shell: bash
 
       - name: Publish Test Report
-        uses: EnricoMi/publish-unit-test-result-action/linux@3a74b2957438d0b6e2e61d67b05318aa25c9e6c6  # v2.20.0
+        uses: EnricoMi/publish-unit-test-result-action@3a74b2957438d0b6e2e61d67b05318aa25c9e6c6  # v2.20.0
         if: github.event_name == 'pull_request' && (success() || failure()) # always run even if the previous step fails
         with:
-          files: '${GITHUB_WORKSPACE}/target/nextest/ci/junit.xml'
+          files: |
+            test-results/**/*.xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7  # v5.5.1
