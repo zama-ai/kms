@@ -174,8 +174,10 @@ impl Identity {
     }
 
     /// Get the MPC identity part of the identity, defaults to hostname if not set
-    pub fn mpc_identity(&self) -> &str {
-        self.mpc_identity.as_deref().unwrap_or(&self.hostname)
+    pub fn mpc_identity(&self) -> String {
+        self.mpc_identity
+            .clone()
+            .unwrap_or(format!("{}:{}", &self.hostname, self.port))
     }
 }
 

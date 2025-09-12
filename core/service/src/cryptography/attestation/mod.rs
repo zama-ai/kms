@@ -2,7 +2,7 @@ use super::internal_crypto_types::PrivateSigKey;
 use anyhow::{bail, ensure};
 use enum_dispatch::enum_dispatch;
 use k256::pkcs8::EncodePrivateKey;
-use kms_grpc::RequestId;
+use kms_grpc::identifiers::ContextId;
 use rcgen::{
     CertificateParams, CustomExtension, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose, PublicKeyData, SerialNumber, PKCS_ECDSA_P256K1_SHA256,
@@ -33,7 +33,7 @@ pub trait SecurityModule {
     /// versions.
     async fn wrap_x509_cert(
         &self,
-        context_id: RequestId,
+        context_id: ContextId,
         cert_pem: Pem,
     ) -> anyhow::Result<(Pem, Pem)> {
         let cert = cert_pem.parse_x509()?;
@@ -123,7 +123,7 @@ pub trait SecurityModule {
     /// certificates with the party EIP712 signing keys managed in the enclave.
     async fn issue_x509_cert(
         &self,
-        context_id: RequestId,
+        context_id: ContextId,
         ca_cert_pem: Pem,
         ca_key: &PrivateSigKey,
     ) -> anyhow::Result<(Pem, Pem)> {

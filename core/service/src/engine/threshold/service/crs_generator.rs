@@ -4,6 +4,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 // === External Crates ===
 use aes_prng::AesRng;
 use kms_grpc::{
+    identifiers::ContextId,
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
     rpc_types::optional_protobuf_to_alloy_domain,
     utils::tonic_result::ok_or_tonic_abort,
@@ -178,13 +179,11 @@ impl<
         dkg_params: DKGParams,
         eip712_domain: &alloy_sol_types::Eip712Domain,
         permit: OwnedSemaphorePermit,
-        context_id: Option<RequestId>,
+        context_id: Option<ContextId>,
         insecure: bool,
     ) -> anyhow::Result<()> {
-        let session_preparer = self
-            .session_preparer_getter
-            .get(context_id.as_ref().unwrap_or(&DEFAULT_MPC_CONTEXT))
-            .await?;
+        let context_id = context_id.as_ref().unwrap_or(&DEFAULT_MPC_CONTEXT);
+        let session_preparer = self.session_preparer_getter.get(context_id).await?;
 
         // Retrieve the correct tag
         let op_tag = if insecure {
@@ -206,7 +205,7 @@ impl<
         let session_id = req_id.derive_session_id()?;
         // CRS ceremony requires a sync network
         let session = session_preparer
-            .make_base_session(session_id, NetworkMode::Sync)
+            .make_base_session(session_id, *context_id, NetworkMode::Sync)
             .await?;
 
         let meta_store = Arc::clone(&self.crs_meta_store);

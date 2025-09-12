@@ -12,7 +12,6 @@ use backoff::SystemClock;
 use gen::gnetworking_client::GnetworkingClient;
 use hyper_rustls::{FixedServerNameResolver, HttpsConnectorBuilder};
 use observability::telemetry::ContextPropagator;
-use serde::{Deserialize, Serialize};
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -25,7 +24,7 @@ use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Uri;
 use tonic::{async_trait, transport::Channel};
 
-use crate::error::error_handler::anyhow_error_and_log;
+use crate::{error::error_handler::anyhow_error_and_log, execution::runtime::party::Identity};
 use crate::{
     execution::runtime::party::{Role, RoleAssignment},
     session_id::SessionId,
@@ -33,7 +32,7 @@ use crate::{
 
 #[cfg(feature = "choreographer")]
 use super::grpc::NETWORK_RECEIVED_MEASUREMENT;
-use super::grpc::{MessageQueueStore, OptionConfigWrapper};
+use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
 use super::{NetworkMode, Networking};
 use crate::thread_handles::ThreadHandleGroup;
 
@@ -43,15 +42,6 @@ mod gen {
 }
 use self::gen::SendValueRequest;
 
-//Note if this struct was defined inside the protobuf we wouldnt have
-//to (de)serialize it at every network call
-#[derive(Serialize, Deserialize, Debug)]
-struct Tag {
-    session_id: SessionId,
-    sender: Role,
-    round_counter: usize,
-}
-
 #[async_trait]
 pub trait SendingService: Send + Sync {
     /// Init and start the sending service
@@ -59,7 +49,6 @@ pub trait SendingService: Send + Sync {
         tls_certs: Option<ClientConfig>,
         conf: OptionConfigWrapper,
         peer_tcp_proxy: bool,
-        role_assignment: Arc<RwLock<RoleAssignment>>,
     ) -> anyhow::Result<Self>
     where
         Self: std::marker::Sized;
@@ -67,13 +56,13 @@ pub trait SendingService: Send + Sync {
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
     async fn add_connection(
         &self,
-        other: Role,
+        other: Identity,
     ) -> anyhow::Result<UnboundedSender<SendValueRequest>>;
 
     ///Adds multiple connections at once
     async fn add_connections(
         &self,
-        others: Vec<Role>,
+        others: &RoleAssignment,
     ) -> anyhow::Result<HashMap<Role, UnboundedSender<SendValueRequest>>>;
 }
 
@@ -85,10 +74,9 @@ pub struct GrpcSendingService {
     pub(crate) tls_config: Option<ClientConfig>,
     /// Whether to use TCP proxies on localhost to access peers
     peer_tcp_proxy: bool,
-    /// Resolves role numbers to network addresses
-    role_assignment: Arc<RwLock<RoleAssignment>>,
     /// Keep in memory channels we already have available
-    channel_map: DashMap<Role, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>,
+    channel_map:
+        DashMap<Identity, GnetworkingClient<InterceptedService<Channel, ContextPropagator>>>,
     /// Network task threads
     thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
@@ -98,31 +86,21 @@ impl GrpcSendingService {
     /// or retrieve it if one already exists
     async fn connect_to_party(
         &self,
-        receiver: Role,
+        receiver: Identity,
     ) -> anyhow::Result<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>> {
         if let Some(channel) = self.channel_map.get(&receiver) {
             tracing::debug!("Channel to {:?} already existed, retrieving it.", receiver);
             return Ok(channel.clone());
         }
 
-        let role_assignment = self.role_assignment.read().await;
-
-        let network_address = role_assignment.get(&receiver).ok_or_else(|| {
-            anyhow_error_and_log(format!("No network address known for role {receiver:?}"))
-        })?;
-
         let proto = match self.tls_config {
             Some(_) => "https",
             None => "http",
         };
         tracing::debug!("Creating {} channel to '{}'", proto, receiver);
-        let endpoint: Uri = format!("{proto}://{network_address}")
-            .parse()
-            .map_err(|_e| {
-                anyhow_error_and_log(format!(
-                    "failed to parse identity as endpoint: {network_address}"
-                ))
-            })?;
+        let endpoint: Uri = format!("{proto}://{receiver}").parse().map_err(|_e| {
+            anyhow_error_and_log(format!("failed to parse identity as endpoint: {receiver}"))
+        })?;
 
         let channel = match &self.tls_config {
             Some(client_config) => {
@@ -132,24 +110,24 @@ impl GrpcSendingService {
                 // This is because we could run the parties with the
                 // same IP address for all parties but using different ports,
                 // but we cannot map the port number to certificates.
-                if IpAddr::from_str(network_address.hostname()).is_ok() {
+                if IpAddr::from_str(receiver.hostname()).is_ok() {
                     return Err(anyhow_error_and_log(format!(
                         "{} is an IP address, which is not supported for TLS",
-                        network_address.hostname()
+                        receiver.hostname()
                     )));
                 }
-                let domain_name = ServerName::try_from(network_address.hostname())?.to_owned();
+                let domain_name = ServerName::try_from(receiver.hostname())?.to_owned();
 
                 // If we have a list of trusted software hashes, we're running
                 // within the AWS Nitro enclave and we have to use vsock proxies
                 // to make TCP connections to peers.
                 let endpoint = if self.peer_tcp_proxy {
-                    format!("https://localhost:{}", network_address.port())
+                    format!("https://localhost:{}", receiver.port())
                         .parse::<Uri>()
                         .map_err(|_e| {
                             anyhow_error_and_log(format!(
                                 "failed to parse proxy identity with port: {}",
-                                network_address.port()
+                                receiver.port()
                             ))
                         })?
                 } else {
@@ -271,13 +249,11 @@ impl SendingService for GrpcSendingService {
         tls_config: Option<ClientConfig>,
         config: OptionConfigWrapper,
         peer_tcp_proxy: bool,
-        role_assignment: Arc<RwLock<RoleAssignment>>,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             config,
             tls_config,
             peer_tcp_proxy,
-            role_assignment,
             thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
             channel_map: DashMap::new(),
         })
@@ -286,7 +262,7 @@ impl SendingService for GrpcSendingService {
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
     async fn add_connection(
         &self,
-        other: Role,
+        other: Identity,
     ) -> anyhow::Result<UnboundedSender<SendValueRequest>> {
         // 1. Create channel first (no allocation issues)
         let (sender, receiver) = unbounded_channel::<SendValueRequest>();
@@ -319,17 +295,22 @@ impl SendingService for GrpcSendingService {
     ///Adds multiple connections at once
     async fn add_connections(
         &self,
-        others: Vec<Role>,
+        others: &RoleAssignment,
     ) -> anyhow::Result<HashMap<Role, UnboundedSender<SendValueRequest>>> {
         let mut result = HashMap::with_capacity(others.len());
 
-        for other in others {
-            match self.add_connection(other).await {
+        for (other_role, other_id) in others.iter() {
+            match self.add_connection(other_id.clone()).await {
                 Ok(sender) => {
-                    result.insert(other, sender);
+                    result.insert(*other_role, sender);
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to establish connection to {}: {}", other, e);
+                    tracing::warn!(
+                        "Failed to establish connection to {} with role {}: {}",
+                        other_id,
+                        other_role,
+                        e
+                    );
                     return Err(e);
                 }
             }
@@ -344,15 +325,17 @@ impl Drop for GrpcSendingService {
     }
 }
 
-///This acts as an interface with the real networking processes.
-///It communicates with the SendingService via the mpsc Sender channel (sending_channels)
-///And retrieves messages via the Grpc Server mpsc Receiver channel (receiving_channels)
-///It also deals with the network round and timeouts
+/// This acts as an interface with the real networking processes.
+/// It communicates with the SendingService via the mpsc Sender channel (sending_channels)
+/// And retrieves messages via the Grpc Server mpsc Receiver channel (receiving_channels)
+/// It also deals with the network round and timeouts
 #[derive(Debug)]
 pub struct NetworkSession {
     pub owner: Role,
     /// Sessin id of this Network session
     pub session_id: SessionId,
+    pub context_id: SessionId,
+    pub role_assignment: RoleAssignment,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`]
     /// Sending channels for this session
     pub sending_channels: HashMap<Role, UnboundedSender<SendValueRequest>>,
@@ -390,8 +373,19 @@ impl Networking for NetworkSession {
         // however, this would imply incorrect use of the networking API and thus we want to fail fast.
         let round_counter = *self.round_counter.read().await;
         let tagged_value = Tag {
-            sender: self.owner,
             session_id: self.session_id,
+            context_id: self.context_id,
+            sender: self
+                .role_assignment
+                .get(&self.owner)
+                .ok_or_else(|| {
+                    anyhow_error_and_log(format!(
+                        "Couldn't retrieve identity for owner: {:?}",
+                        self.owner
+                    ))
+                })?
+                .mpc_identity()
+                .to_string(),
             round_counter,
         };
 
@@ -412,7 +406,7 @@ impl Networking for NetworkSession {
         match self.sending_channels.get(receiver) {
             Some(channel) => Ok(channel.send(request)?),
             None => Err(anyhow_error_and_log(format!(
-                "Missing local channel for P{receiver:?}"
+                "Missing local channel for {receiver:?}"
             ))),
         }?;
         Ok(())
@@ -427,12 +421,12 @@ impl Networking for NetworkSession {
         // This may cause an error if someone tries to increase the round counter at the same time
         // however, this would imply incorrect use of the networking API and thus we want to fail fast.
         let counter_lock = self.round_counter.read().await;
-        let rx = self.receiving_channels.get(sender).ok_or_else(|| {
+        let rx = self.receiving_channels.get_rx(sender)?.ok_or_else(|| {
             anyhow_error_and_log(format!(
                 "couldn't retrieve receiving channel for P:{sender:?}"
             ))
         })?;
-        let mut rx = rx.value().1.lock().await;
+        let mut rx = rx.lock().await;
 
         tracing::debug!("Waiting to receive from {:?}", sender);
 
@@ -441,13 +435,22 @@ impl Networking for NetworkSession {
             .await
             .ok_or_else(|| anyhow_error_and_log("Trying to receive from a closed channel."))?;
 
+        // check that the message has the correct context and ID
+        if self.context_id != local_packet.context_id {
+            return Err(anyhow_error_and_log(format!(
+                "Received message with incorrect context. Expected {}, got {}",
+                self.context_id, local_packet.context_id
+            )));
+        }
+
         // drop old messages
         let network_round = *counter_lock;
         while local_packet.round_counter < network_round {
+            let val_len = local_packet.value.len();
             tracing::debug!(
                 "@ round {} - dropped value {:?} from round {}",
                 network_round,
-                local_packet.value[..16].to_vec(),
+                local_packet.value[..if val_len < 16 { val_len } else { 16 }].to_vec(),
                 local_packet.round_counter
             );
             local_packet = rx
@@ -558,17 +561,25 @@ impl Networking for NetworkSession {
 
 #[cfg(test)]
 mod tests {
-    use crate::networking::grpc::TlsExtensionGetter;
+    use dashmap::DashMap;
+    use tokio::sync::{Mutex, RwLock};
+
+    use crate::networking::grpc::{
+        MessageQueueStore, NetworkRoundValue, OptionConfigWrapper, TlsExtensionGetter,
+    };
+    use crate::networking::sending_service::NetworkSession;
     use crate::thread_handles::OsThreadGroup;
     use crate::{
         execution::runtime::party::{Identity, Role, RoleAssignment},
         networking::{grpc::GrpcNetworkingManager, Networking},
         session_id::SessionId,
     };
-    use std::{sync::Arc, time::Duration};
-    use tokio::sync::RwLock;
+    use std::collections::HashMap;
+    use std::sync::{Arc, OnceLock};
+    use std::time::Duration;
 
     #[tokio::test(flavor = "multi_thread")]
+    #[tracing_test::traced_test]
     async fn test_network_stack() {
         let sid = SessionId::from(0);
         let mut role_assignment = RoleAssignment::default();
@@ -579,26 +590,27 @@ mod tests {
         role_assignment.insert(role_1, id_1.clone());
         role_assignment.insert(role_2, id_2.clone());
 
+        let context_id = SessionId::from(42);
+
         // Keep a Vec for collecting results
         let mut handles = OsThreadGroup::new();
         for (role, id) in role_assignment.iter() {
-            //Wait a little while to make sure retry works fine
+            // Wait a little while to make sure retry works fine
             std::thread::sleep(Duration::from_secs(5));
             let role = *role;
             let my_port = id.port();
             let id = id.clone();
 
-            let networking_1 = GrpcNetworkingManager::new(
-                role,
-                None,
-                None,
-                false,
-                Arc::new(RwLock::new(role_assignment.clone())),
-            )
-            .unwrap();
+            let networking_1 = GrpcNetworkingManager::new(None, None, false).unwrap();
 
-            let network_stack_1 = networking_1
-                .make_session(sid, &role_assignment, crate::networking::NetworkMode::Sync)
+            let network_session_1 = networking_1
+                .make_session(
+                    sid,
+                    context_id,
+                    &role_assignment,
+                    role,
+                    crate::networking::NetworkMode::Sync,
+                )
                 .await
                 .unwrap();
 
@@ -611,10 +623,10 @@ mod tests {
                     tokio::spawn(async move {
                         let msg = vec![1u8; 10];
                         println!("Sending ONCE");
-                        network_stack_1.send(msg.clone(), &role_2).await.unwrap();
+                        network_session_1.send(msg.clone(), &role_2).await.unwrap();
                         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                         println!("Sending TWICE");
-                        network_stack_1.send(msg.clone(), &role_2).await.unwrap();
+                        network_session_1.send(msg.clone(), &role_2).await.unwrap();
                         send.send(msg).unwrap();
                     });
                     //Keep this std thread alive for a while
@@ -638,7 +650,7 @@ mod tests {
                     });
                     tokio::spawn(async move {
                         println!("Trying to receive");
-                        let msg = network_stack_1.receive(&role_1).await.unwrap();
+                        let msg = network_session_1.receive(&role_1).await.unwrap();
                         println!("Received ONCE {msg:?}");
                         send.send(msg).unwrap();
                     });
@@ -648,17 +660,16 @@ mod tests {
             }));
         }
 
-        let networking_2 = GrpcNetworkingManager::new(
-            role_2,
-            None,
-            None,
-            false,
-            Arc::new(RwLock::new(role_assignment.clone())),
-        )
-        .unwrap();
+        let networking_2 = GrpcNetworkingManager::new(None, None, false).unwrap();
         let networking_server_2 = networking_2.new_server(TlsExtensionGetter::default());
-        let network_stack_2 = networking_2
-            .make_session(sid, &role_assignment, crate::networking::NetworkMode::Sync)
+        let network_session_2 = networking_2
+            .make_session(
+                sid,
+                context_id,
+                &role_assignment,
+                role_2,
+                crate::networking::NetworkMode::Sync,
+            )
             .await
             .unwrap();
 
@@ -685,7 +696,7 @@ mod tests {
             let (send, recv) = tokio::sync::oneshot::channel();
             tokio::spawn(async move {
                 println!("Ready to receive");
-                let msg = network_stack_2.receive(&role_1).await.unwrap();
+                let msg = network_session_2.receive(&role_1).await.unwrap();
                 println!("Received TWICE {msg:?}");
                 send.send(msg).unwrap();
             });
@@ -700,6 +711,140 @@ mod tests {
         let ref_res = results.first().unwrap();
         for res in results.iter() {
             assert_eq!(res, ref_res);
+        }
+    }
+
+    #[tokio::test()]
+    async fn test_network_session() {
+        let role_1 = Role::indexed_from_one(1);
+        let id_1 = Identity::new("127.0.0.1".to_string(), 6001, None);
+        let role_2 = Role::indexed_from_one(2);
+        let id_2 = Identity::new("127.0.0.1".to_string(), 6002, None);
+
+        let role_assignment = {
+            let mut role_assignment = RoleAssignment::default();
+            role_assignment.insert(role_1, id_1.clone());
+            role_assignment.insert(role_2, id_2.clone());
+            role_assignment
+        };
+
+        // this is the message store of party 1, so party 2 is the other one
+        let message_store = {
+            let message_map = DashMap::new();
+
+            let (tx, rx) = crate::tokio::sync::mpsc::channel::<NetworkRoundValue>(1000);
+            message_map.insert(
+                id_2.mpc_identity().to_string(),
+                (Arc::new(tx), Arc::new(Mutex::new(rx))),
+            );
+
+            MessageQueueStore::new_initialized(&role_assignment, message_map)
+        };
+        let tx_2 = message_store.get_tx(&id_2.mpc_identity()).unwrap().unwrap();
+        let context_id = SessionId::from(42);
+
+        let session = NetworkSession {
+            owner: Role::indexed_from_one(1),
+            session_id: SessionId::from(0),
+            context_id,
+            role_assignment,
+            // no need to fill this channel because we're not forwading
+            // messages to the networking service in this test
+            sending_channels: HashMap::new(),
+            receiving_channels: message_store,
+            round_counter: tokio::sync::RwLock::new(0),
+            #[cfg(feature = "choreographer")]
+            num_byte_sent: RwLock::new(0),
+            network_mode: crate::networking::NetworkMode::Async,
+            conf: OptionConfigWrapper { conf: None },
+            init_time: OnceLock::new(),
+            current_network_timeout: RwLock::new(Duration::from_secs(10)),
+            next_network_timeout: RwLock::new(Duration::from_secs(10)),
+            max_elapsed_time: RwLock::new(Duration::from_secs(0)),
+        };
+
+        // the test is role 2, the session is role 1
+        // so we let role 2 send a message and role 1 should receive it
+        {
+            let expected = vec![1, 2, 3, 4, 5];
+            let expected_clone = expected.clone();
+            let tx_2 = tx_2.clone();
+            tokio::spawn(async move {
+                tx_2.send(NetworkRoundValue {
+                    context_id,
+                    round_counter: 0,
+                    value: expected_clone,
+                })
+                .await
+                .unwrap();
+            });
+
+            let actual = session.receive(&role_2).await.unwrap();
+            assert_eq!(actual, expected);
+        }
+
+        // try to send again but use the wrong context ID
+        // it should be rejected
+        {
+            let tx_2 = tx_2.clone();
+            tokio::spawn(async move {
+                tx_2.send(NetworkRoundValue {
+                    context_id: SessionId::from(123),
+                    round_counter: 1,
+                    value: vec![],
+                })
+                .await
+                .unwrap();
+            });
+
+            let _ = session.receive(&role_2).await.unwrap_err();
+        }
+
+        // try to send to a role that is not in the role assignment should fail
+        {
+            let e = session
+                .send(vec![1, 2, 3], &Role::indexed_from_one(3))
+                .await
+                .unwrap_err();
+            assert!(e.to_string().contains("Missing local channel for"));
+        }
+
+        // set the round to be 5 and send messages with lower round counters
+        // only the final message at round 5 should be received
+        {
+            for _ in 0..5 {
+                session.increase_round_counter().await;
+            }
+            let tx_2 = tx_2.clone();
+
+            let expected = vec![1, 2, 3, 4, 5];
+            let expected_clone = expected.clone();
+            tokio::spawn(async move {
+                tx_2.send(NetworkRoundValue {
+                    context_id,
+                    round_counter: 3,
+                    value: vec![],
+                })
+                .await
+                .unwrap();
+                tx_2.send(NetworkRoundValue {
+                    context_id,
+                    round_counter: 4,
+                    value: vec![],
+                })
+                .await
+                .unwrap();
+                tx_2.send(NetworkRoundValue {
+                    context_id,
+                    round_counter: 5,
+                    value: expected_clone,
+                })
+                .await
+                .unwrap();
+            });
+
+            let actual = session.receive(&role_2).await.unwrap();
+            assert_eq!(actual, expected);
         }
     }
 }

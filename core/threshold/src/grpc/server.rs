@@ -5,7 +5,7 @@ use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve, Synd
 use crate::choreography::grpc::GrpcChoreography;
 use crate::conf::party::PartyConf;
 use crate::execution::online::preprocessing::{create_memory_factory, create_redis_factory};
-use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
+use crate::execution::runtime::party::{Identity, Role};
 #[cfg(feature = "experimental")]
 use crate::experimental::choreography::grpc::ExperimentalGrpcChoreography;
 #[cfg(not(feature = "experimental"))]
@@ -15,7 +15,6 @@ use crate::networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGet
 use observability::telemetry::make_span;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tonic::transport::{Server, ServerTlsConfig};
 use tower_http::trace::TraceLayer;
 
@@ -29,7 +28,7 @@ where
     // TODO: This part is under discussion. We need to figure out how to handle the networking topology configuration
     // For the moment we are using a provided configuration on `threshold_decrypt` gRPC endpoint,
     // but it is not discarded to use a more dynamic approach.
-    let docker_static_endpoints: HashMap<Role, Identity> = settings
+    let _docker_static_endpoints: HashMap<Role, Identity> = settings
         .protocol()
         .peers()
         .as_ref()
@@ -48,11 +47,9 @@ where
 
     // the networking manager is shared between the two services
     let networking = Arc::new(GrpcNetworkingManager::new(
-        my_role,
         tls_conf,
         settings.net_conf,
         false,
-        Arc::new(RwLock::new(RoleAssignment::from(docker_static_endpoints))),
     )?);
     let networking_server = networking.new_server(TlsExtensionGetter::TlsConnectInfo);
 
