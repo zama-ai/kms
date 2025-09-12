@@ -301,9 +301,7 @@ jobs:
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_RETRIES: 3
-          NEXTEST_TEST_THREADS: 2
-          RUSTFLAGS: -Cinstrument-coverage
-          LLVM_PROFILE_FILE: 'cargo-test-%p-%m.profraw'
+          NEXTEST_TEST_THREADS: 1
         run: |
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
@@ -315,13 +313,17 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo nextest run --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
-          ls -al "${GITHUB_WORKSPACE}/target/nextest/ci/junit.xml"
-          ~/.cargo/bin/grcov . --binary-path "${GITHUB_WORKSPACE}/target/debug/deps/" -s . --branch --ignore-not-existing -o "${{ runner.temp }}/lcov" -t lcov
+          if [[ github.event_name == 'schedule' ]]; then
+            export RUSTFLAGS="-Cinstrument-coverage"
+            export LLVM_PROFILE_FILE="cargo-test-%p-%m.profraw"
+            RUST_BACKTRACE=full cargo nextest run --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
+          else
+            RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          fi
+          if [[ github.event_name == 'schedule' ]]; then
+            ~/.cargo/bin/grcov . --binary-path "${GITHUB_WORKSPACE}/target/debug/deps/" -s . --branch --ignore-not-existing -o "${{ runner.temp }}/lcov" -t lcov
+          fi
 
-      - name: debug
-        run: |
-          cat "${GITHUB_WORKSPACE}/target/nextest/ci/junit.xml"
       - name: Copy Test Results
         if: (!cancelled())
         run: |
@@ -331,6 +333,7 @@ jobs:
         shell: bash
 
       - name: Publish Test Report
+        if: github.event_name == 'pull_request' && (success() || failure()) # always run even if the previous step fails
         uses: ctrf-io/github-test-reporter@646f98cfc16c6f7a0e1f6100cabe2deb95dd2eef  # v1.0.22
         with:
           report-path: "/tmp/*.xml"
@@ -356,17 +359,9 @@ jobs:
                 }
               }
             }
-        if: github.event_name == 'pull_request' && (success() || failure()) # always run even if the previous step fails
-
-      # - name: Publish Test Report
-      #   uses: EnricoMi/publish-unit-test-result-action@3a74b2957438d0b6e2e61d67b05318aa25c9e6c6  # v2.20.0
-      #   if: github.event_name == 'pull_request' && (success() || failure()) # always run even if the previous step fails
-      #   with:
-      #     check_name: ${{inputs.package-name}}-test-report
-      #     files: |
-      #       /github/workspace/target/nextest/ci/*.xml
 
       - name: Upload coverage to Codecov
+        if: github.event_name == 'schedule'
         uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7  # v5.5.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
