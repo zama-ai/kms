@@ -113,6 +113,13 @@ where
 
     let mut res = Poly::<ResiduePoly<Z, EXTENSION_DEGREE>>::zero();
 
+    // Track consecutive iterations with no change to detect infinite loops.
+    // This is necessary to handle edge cases where parties drop out after VSS round 2
+    // with zero error tolerance, creating an unrecoverable state that would otherwise
+    // cause the error correction to loop indefinitely trying to recover invalid shares.
+    let mut consecutive_no_change = 0;
+    let mut last_valid_count = shares_with_validity.iter().filter(|(_, v)| *v).count();
+
     for bit_idx in 0..ring_size {
         //Compute z = pi(y/2^i), where Bots are filtered out
         let binary_shares: Vec<
@@ -160,6 +167,27 @@ where
         }
 
         accumulate_and_lift_bitwise_poly(&mut res, &fi_mod2, bit_idx);
+
+        // Check if we're making progress to avoid infinite loops
+        let current_valid_count = shares_with_validity.iter().filter(|(_, v)| *v).count();
+        if current_valid_count == last_valid_count {
+            consecutive_no_change += 1;
+            // If we have zero tolerance and haven't made progress for many iterations, we're stuck
+            if max_errs == 0 && consecutive_no_change > 100 {
+                tracing::debug!(
+                    "Error correction appears stuck after {} iterations with {} invalid shares and zero tolerance",
+                    bit_idx, initial_length - current_valid_count
+                );
+                // Return an error to prevent infinite loop
+                return Err(anyhow_error_and_log(format!(
+                    "Error correction failed: unable to make progress with {} invalid shares and zero error tolerance",
+                    initial_length - current_valid_count
+                )));
+            }
+        } else {
+            consecutive_no_change = 0;
+            last_valid_count = current_valid_count;
+        }
     }
 
     Ok(res)
