@@ -17,12 +17,16 @@ impl CryptoMaterialReader for KmsFheKeyHandles {
     where
         S: Storage + Send + Sync + 'static,
     {
-        read_versioned_at_request_id(storage, request_id, &PrivDataType::FheKeyInfo.to_string())
-            .await
-            .map_err(|e| {
-                anyhow_error_and_warn_log(format!(
-                    "Failed to read KmsFheKeyHandles from storage for request ID {request_id}: {e}"
-                ))
-            })
+        read_versioned_at_request_id(
+            storage,
+            request_id,
+            &PrivDataType::FhePrivateKey.to_string(),
+        )
+        .await
+        .map_err(|e| {
+            anyhow_error_and_warn_log(format!(
+                "Failed to read KmsFheKeyHandles from storage for request ID {request_id}: {e}"
+            ))
+        })
     }
 }

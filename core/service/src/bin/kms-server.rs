@@ -361,7 +361,16 @@ async fn main() -> anyhow::Result<()> {
             .private_vault
             .as_ref()
             .and_then(|v| v.keychain.as_ref())
-            .map(|k| make_keychain_proxy(k, awskms_client.clone(), security_module.clone(), None)),
+            .map(|k| {
+                // Observe that the public storage is used to load a backup_id and backup key
+                // in the case where the custodian based secret sharing is used
+                make_keychain_proxy(
+                    k,
+                    awskms_client.clone(),
+                    security_module.clone(),
+                    Some(&public_vault.storage),
+                )
+            }),
     )
     .await
     .transpose()
@@ -408,7 +417,7 @@ async fn main() -> anyhow::Result<()> {
                     k,
                     awskms_client.clone(),
                     security_module.clone(),
-                    Some(&private_vault),
+                    Some(&public_vault),
                 )
             }),
     )
@@ -511,6 +520,7 @@ async fn main() -> anyhow::Result<()> {
                 public_vault,
                 private_vault,
                 backup_vault,
+                security_module,
                 sk,
                 core_config.rate_limiter_conf,
             )

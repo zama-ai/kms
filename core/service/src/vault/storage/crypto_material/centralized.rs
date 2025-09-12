@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
 use kms_grpc::{
-    rpc_types::{PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
+    rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
     RequestId,
 };
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
@@ -120,7 +120,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 &mut (*priv_storage),
                 key_id,
                 &key_info,
-                &PrivDataType::FheKeyInfo.to_string(),
+                &PrivDataType::FhePrivateKey.to_string(),
             )
             .await;
             if let Err(e) = &store_result_1 {
@@ -138,7 +138,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                         &mut (*x),
                         key_id,
                         &key_info,
-                        &PrivDataType::FheKeyInfo.to_string(),
+                        &PrivDataType::FhePrivateKey.to_string(),
                     )
                     .await;
                     if let Err(e) = &result {
@@ -229,7 +229,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // it might be because the data did not get created
             // In any case, we can't do much.
             self.inner
-                .purge_key_material(key_id, guarded_meta_store)
+                .purge_key_material(key_id, KMSType::Centralized, guarded_meta_store)
                 .await;
         }
     }

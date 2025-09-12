@@ -277,7 +277,7 @@ mod tests {
         vault::storage::{file::FileStorage, ram, StorageType},
     };
     use aes_prng::AesRng;
-    use kms_grpc::kms::v1::InitRequest;
+    use kms_grpc::{kms::v1::InitRequest, rpc_types::KMSType};
     use rand::SeedableRng;
     use threshold_fhe::{
         execution::{
@@ -452,7 +452,7 @@ mod tests {
         rng: &mut AesRng,
     ) -> RealInitiator<ram::RamStorage, I> {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let session_preparer_manager = SessionPreparerManager::new_test_session();
         let session_preparer = SessionPreparer::new_test_session(
             base_kms.new_instance().await,

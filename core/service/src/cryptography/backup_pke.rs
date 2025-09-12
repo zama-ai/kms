@@ -1,4 +1,5 @@
 use kms_grpc::rpc_types::PrivDataType;
+use kms_grpc::RequestId;
 use ml_kem::array::typenum::Unsigned;
 use ml_kem::array::Array;
 use ml_kem::EncodedSizeUser;
@@ -212,6 +213,7 @@ pub enum BackupCiphertextVersioned {
 pub struct BackupCiphertext {
     pub ciphertext: Vec<u8>,
     pub priv_data_type: PrivDataType,
+    pub backup_id: RequestId,
 }
 
 impl Named for BackupCiphertext {

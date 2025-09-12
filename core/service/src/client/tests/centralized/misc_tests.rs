@@ -1,26 +1,24 @@
-#[cfg(feature = "slow_tests")]
-use crate::client::client_wasm::Client;
 use crate::client::test_tools::{get_health_client, get_status};
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::consts::TEST_PARAM;
-#[cfg(feature = "slow_tests")]
-use crate::dummy_domain;
-#[cfg(feature = "slow_tests")]
-use crate::engine::base::derive_request_id;
-#[cfg(feature = "slow_tests")]
-use crate::engine::centralized::central_kms::tests::get_default_keys;
 use crate::engine::centralized::central_kms::RealCentralizedKms;
-#[cfg(feature = "slow_tests")]
-use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::file::FileStorage;
-#[cfg(feature = "slow_tests")]
-use kms_grpc::kms::v1::{Empty, TypedCiphertext};
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use serial_test::serial;
 use std::collections::HashMap;
-#[cfg(feature = "slow_tests")]
-use tfhe::FheTypes;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "slow_tests")] {
+        use tfhe::FheTypes;
+        use kms_grpc::kms::v1::TypedCiphertext;
+        use crate::engine::base::derive_request_id;
+        use crate::util::rate_limiter::RateLimiterConfig;
+        use crate::engine::centralized::central_kms::tests::get_default_keys;
+        use crate::dummy_domain;
+        use crate::client::client_wasm::Client;
+        use kms_grpc::kms::v1::Empty;
+    }
+}
 use tonic::server::NamedService;
 use tonic_health::pb::health_check_response::ServingStatus;
 use tonic_health::pb::HealthCheckRequest;
@@ -144,6 +142,7 @@ async fn test_largecipher() {
         new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
             .await
             .unwrap(),
+        None,
         Some(rate_limiter_conf),
     )
     .await;

@@ -44,8 +44,16 @@ pub struct KeyId([u8; ID_LENGTH]);
 /// This type provides a strongly-typed wrapper around a fixed-size byte array
 /// with consistent conversion methods to/from various representations.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
-pub struct RequestId([u8; ID_LENGTH]);
+pub struct RequestId([u8; ID_LENGTH]); // TODO(#2748) rename to InternalRequestId
 
+/// The default is 1 in most significant byte and the rest 0.
+impl Default for RequestId {
+    fn default() -> Self {
+        let mut res = [0; ID_LENGTH];
+        res[0] = 1;
+        RequestId(res)
+    }
+}
 /// Compared the request ID as if it is an integer
 impl PartialOrd for RequestId {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {

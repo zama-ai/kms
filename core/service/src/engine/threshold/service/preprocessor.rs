@@ -352,7 +352,10 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>> + Se
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
-    use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};
+    use kms_grpc::{
+        kms::v1::FheParameter,
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
+    };
     use rand::SeedableRng;
     use threshold_fhe::{
         execution::online::preprocessing::create_memory_factory,
@@ -406,7 +409,7 @@ mod tests {
         use_prss: bool,
     ) -> RealPreprocessor<P> {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
         let prss_setup_z128 = Arc::new(RwLock::new(if use_prss {
             Some(PRSSSetup::new_testing_prss(vec![], vec![]))
         } else {
