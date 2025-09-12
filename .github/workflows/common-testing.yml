@@ -326,6 +326,7 @@ jobs:
         if: (!cancelled())
         run: |
           cp -Lpr ${GITHUB_WORKSPACE}/target/nextest/ci test-results
+          ls -al test-results
         shell: bash
 
       - name: Publish Test Report
@@ -333,7 +334,7 @@ jobs:
         if: github.event_name == 'pull_request' && (success() || failure()) # always run even if the previous step fails
         with:
           files: |
-            test-results/**/*.xml
+            /github/workspace/target/nextest/ci/*.xml
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7  # v5.5.1
