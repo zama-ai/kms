@@ -89,6 +89,8 @@ jobs:
       packages: read
       issues: write
       pull-requests: write
+      actions: read
+      contents: read
     timeout-minutes: 500
     runs-on: ${{ inputs.runs-on }}
     services:

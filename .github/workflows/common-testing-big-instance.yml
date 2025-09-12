@@ -107,6 +107,8 @@ jobs:
       packages: read
       pull-requests: write
       issues: write
+      actions: read
+      contents: read
     needs: start-runner
     uses: ./.github/workflows/common-testing.yml
     secrets:

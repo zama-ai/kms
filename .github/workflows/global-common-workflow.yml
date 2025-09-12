@@ -163,6 +163,8 @@ jobs:
       packages: read
       issues: write
       pull-requests: write
+      actions: read
+      contents: read
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-backward-compatibility == 'true' ||
@@ -229,6 +231,8 @@ jobs:
       packages: read
       issues: write
       pull-requests: write
+      actions: read
+      contents: read
     needs:
       - prepare-core-client-matrix
       - check-changes
@@ -303,6 +307,8 @@ jobs:
       packages: read
       issues: write
       pull-requests: write
+      actions: read
+      contents: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -381,6 +387,8 @@ jobs:
       packages: read
       issues: write
       pull-requests: write
+      actions: read
+      contents: read
     needs:
       - check-changes
       - prepare-matrix
@@ -494,6 +502,8 @@ jobs:
       packages: read
       issues: write
       pull-requests: write
+      actions: read
+      contents: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -527,6 +537,8 @@ jobs:
       packages: read
       issues: write
       pull-requests: write
+      actions: read
+      contents: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -560,6 +572,8 @@ jobs:
       packages: read
       issues: write
       pull-requests: write
+      actions: read
+      contents: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
