@@ -58,7 +58,7 @@ pub trait Storage: StorageReader {
     /// Store the given `data` with the given `data_id` of the given `data_type`
     /// Under the hood, the versioned data is stored.
     /// If the object with `data_id` and `data_type` already exists, it will not be overwritten and
-    /// instead a warning is logged, nut the call will succeed.
+    /// instead a warning is logged, but the call will succeed.
     async fn store_data<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
         data: &T,
