@@ -331,7 +331,7 @@ jobs:
       - name: Copy Test Results
         if: (!cancelled())
         run: |
-          cp -Lpr ${GITHUB_WORKSPACE}/target/nextest/ci/*.xml /tmp
+          cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/*.xml /tmp
           ls -al /tmp
           cat /tmp/junit.xml
         shell: bash
@@ -343,13 +343,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
         with:
           report-path: "/tmp/*.xml"
-          summary-report: true
+          title: "Test results for ${{inputs.args-tests}}"
+          update-comment: true
+          summary-report: false
           github-report: true
           pull-request-report: true
           pull-request: true
           test-report: true
+          slowest-report: true
           flaky-report: true
           flaky-rate-report: true
+          collapse-large-reports: true
+          report-order: 'test-report,pull-request-report,flaky-report,slowest-report'
           integrations-config: |
             {
               "junit-to-ctrf": {
