@@ -20,13 +20,14 @@ use crate::{
         keychain::KeychainProxy,
         storage::{
             delete_all_at_request_id, delete_at_request_id, delete_pk_at_request_id,
-            read_all_data_versioned, store_context_at_request_id, store_pk_at_request_id,
+            read_all_data_versioned, store_context_at_id, store_pk_at_request_id,
             store_versioned_at_request_id, Storage,
         },
         Vault,
     },
 };
 use kms_grpc::{
+    identifiers::ContextId,
     rpc_types::{
         BackupDataType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned,
     },
@@ -1019,14 +1020,14 @@ where
 
     pub async fn write_context_info(
         &self,
-        req_id: &RequestId,
+        context_id: &ContextId,
         context_info: &ContextInfo,
         is_threshold: bool,
     ) -> anyhow::Result<()> {
         let mut priv_storage = self.private_storage.lock().await;
-        store_context_at_request_id(&mut *priv_storage, req_id, context_info).await?;
+        store_context_at_id(&mut *priv_storage, context_id, context_info).await?;
         log_storage_success(
-            req_id,
+            context_id,
             priv_storage.info(),
             "context info",
             false,

@@ -1,5 +1,5 @@
 use crate::engine::context::ContextInfo;
-use crate::vault::storage::{read_context_at_request_id, Storage};
+use crate::vault::storage::{read_context_at_id, Storage};
 use crate::{
     anyhow_error_and_warn_log, vault::storage::crypto_material::traits::CryptoMaterialReader,
 };
@@ -11,7 +11,7 @@ impl CryptoMaterialReader for ContextInfo {
     where
         S: Storage + Send + Sync + 'static,
     {
-        read_context_at_request_id(storage, request_id)
+        read_context_at_id(storage, &(*request_id).into())
             .await
             .map_err(|e| {
                 anyhow_error_and_warn_log(format!(

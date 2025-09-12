@@ -61,30 +61,6 @@ impl Ord for RequestId {
         self.0.cmp(&other.0)
     }
 }
-impl Versionize for RequestId {
-    type Versioned<'vers> = &'vers RequestId;
-
-    fn versionize(&self) -> Self::Versioned<'_> {
-        self
-    }
-}
-
-impl VersionizeOwned for RequestId {
-    type VersionedOwned = RequestId;
-    fn versionize_owned(self) -> Self::VersionedOwned {
-        self
-    }
-}
-
-impl Unversionize for RequestId {
-    fn unversionize(
-        versioned: Self::VersionedOwned,
-    ) -> Result<Self, tfhe_versionable::UnversionizeError> {
-        Ok(versioned)
-    }
-}
-
-impl NotVersioned for RequestId {}
 
 // Common implementation for identifier types
 macro_rules! impl_identifiers {
@@ -92,6 +68,31 @@ macro_rules! impl_identifiers {
         // Implement common methods for each type
         macro_rules! impl_identifier_common {
             ($type:ident) => {
+                impl Versionize for $type {
+                    type Versioned<'vers> = &'vers $type;
+
+                    fn versionize(&self) -> Self::Versioned<'_> {
+                        self
+                    }
+                }
+
+                impl VersionizeOwned for $type {
+                    type VersionedOwned = $type;
+                    fn versionize_owned(self) -> Self::VersionedOwned {
+                        self
+                    }
+                }
+
+                impl Unversionize for $type {
+                    fn unversionize(
+                        versioned: Self::VersionedOwned,
+                    ) -> Result<Self, tfhe_versionable::UnversionizeError> {
+                        Ok(versioned)
+                    }
+                }
+
+                impl NotVersioned for $type {}
+
                 impl $type {
                     /// Creates a new identifier from raw bytes
                     pub fn from_bytes(bytes: [u8; ID_LENGTH]) -> Self {
@@ -408,16 +409,28 @@ macro_rules! impl_identifiers {
         impl_identifier_common!($type2);
         impl_identifier_common!($type3);
 
-        // Implement conversions between the types
+        // Implement conversions between type1 and the rest
         // Both types have the same internal representation, so we can just copy the bytes
+        impl From<$type1> for $type2 {
+            fn from(other: $type1) -> Self {
+                Self(other.into_bytes())
+            }
+        }
+
         impl From<$type2> for $type1 {
             fn from(other: $type2) -> Self {
                 Self(other.into_bytes())
             }
         }
 
-        impl From<$type1> for $type2 {
+        impl From<$type1> for $type3 {
             fn from(other: $type1) -> Self {
+                Self(other.into_bytes())
+            }
+        }
+
+        impl From<$type3> for $type1 {
+            fn from(other: $type3) -> Self {
                 Self(other.into_bytes())
             }
         }
@@ -425,7 +438,7 @@ macro_rules! impl_identifiers {
 }
 
 // Implement common methods for both identifier types with a single macro call
-impl_identifiers!(KeyId, RequestId, ContextId);
+impl_identifiers!(RequestId, KeyId, ContextId);
 
 // Add tests
 #[cfg(test)]

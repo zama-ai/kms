@@ -93,7 +93,7 @@ pub async fn delete_kms_context_impl<
 mod tests {
     use std::collections::HashMap;
 
-    use kms_grpc::{rpc_types::PrivDataType, RequestId};
+    use kms_grpc::{identifiers::ContextId, rpc_types::PrivDataType, RequestId};
     use rand::rngs::OsRng;
 
     use crate::{
@@ -103,7 +103,7 @@ mod tests {
         },
         engine::context::{NodeInfo, SoftwareVersion},
         vault::storage::{
-            crypto_material::get_core_signing_key, ram::RamStorage, read_context_at_request_id,
+            crypto_material::get_core_signing_key, ram::RamStorage, read_context_at_id,
             store_versioned_at_request_id,
         },
     };
@@ -154,7 +154,7 @@ mod tests {
         let (backup_encryption_public_key, _) = ephemeral_encryption_key_generation(&mut OsRng);
         let (verification_key, crypto_storage) = setup_crypto_storage().await;
 
-        let req_id = RequestId::from_bytes([4u8; 32]);
+        let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
             kms_nodes: vec![NodeInfo {
                 name: "Node1".to_string(),
@@ -166,7 +166,7 @@ mod tests {
                 public_storage_url: "http://storage".to_string(),
                 extra_verification_keys: vec![],
             }],
-            context_id: req_id,
+            context_id,
             previous_context_id: None,
             software_version: SoftwareVersion {
                 major: 0,
@@ -189,11 +189,11 @@ mod tests {
         {
             let storage_ref = crypto_storage.inner.private_storage.clone();
             let guarded_priv_storage = storage_ref.lock().await;
-            let stored_context = read_context_at_request_id(&*guarded_priv_storage, &req_id)
+            let stored_context = read_context_at_id(&*guarded_priv_storage, &context_id)
                 .await
                 .unwrap();
 
-            assert_eq!(*stored_context.context_id(), req_id);
+            assert_eq!(*stored_context.context_id(), context_id);
             assert_eq!(stored_context.kms_nodes.len(), 1);
             assert_eq!(stored_context.kms_nodes[0].party_id, 1);
             assert_eq!(
@@ -204,7 +204,7 @@ mod tests {
 
         // now that it is stored, we try to delete it
         let request = Request::new(DestroyKmsContextRequest {
-            context_id: Some(req_id.into()),
+            context_id: Some(context_id.into()),
         });
 
         let response = delete_kms_context_impl(&crypto_storage, request).await;
@@ -214,7 +214,7 @@ mod tests {
         {
             let storage_ref = crypto_storage.inner.private_storage.clone();
             let guarded_priv_storage = storage_ref.lock().await;
-            let _ = read_context_at_request_id(&*guarded_priv_storage, &req_id)
+            let _ = read_context_at_id(&*guarded_priv_storage, &context_id)
                 .await
                 .unwrap_err();
         }
