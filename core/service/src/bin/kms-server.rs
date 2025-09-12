@@ -39,6 +39,7 @@ use tokio_rustls::rustls::{
     crypto::aws_lc_rs::default_provider as aws_lc_rs_default_provider,
     pki_types::{CertificateDer, PrivateKeyDer},
     server::ServerConfig,
+    version::TLS13,
 };
 
 #[derive(Parser)]
@@ -120,9 +121,10 @@ async fn build_tls_config(
     my_id: usize,
     peers: &[PeerConf],
     tls_config: &TlsConf,
-    security_module: Option<SecurityModuleProxy>,
+    security_module: Option<Arc<SecurityModuleProxy>>,
     public_vault: &Vault,
     sk: &PrivateSigKey,
+    #[cfg(feature = "insecure")] mock_enclave: bool,
 ) -> anyhow::Result<(ServerConfig, ClientConfig)> {
     let context_id = *DEFAULT_MPC_CONTEXT;
     aws_lc_rs_default_provider()
@@ -168,7 +170,7 @@ async fn build_tls_config(
             tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
             let eif_signing_cert_pem = cert.into_pem(my_id, peers)?;
             let (cert, key) = security_module
-                .wrap_x509_cert(context_id, eif_signing_cert_pem)
+                .wrap_x509_cert(context_id, eif_signing_cert_pem, true)
                 .await?;
             (cert, key, Some(Arc::new(trusted_releases.clone())), true)
         }
@@ -190,7 +192,7 @@ async fn build_tls_config(
             let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
 
             let (cert, key) = security_module
-                .issue_x509_cert(context_id, ca_cert, sk)
+                .issue_x509_cert(context_id, ca_cert, sk, true)
                 .await?;
             (cert, key, Some(Arc::new(trusted_releases.clone())), false)
         }
@@ -200,17 +202,21 @@ async fn build_tls_config(
     let key_der = PrivateKeyDer::try_from(key.contents.as_slice())
         .unwrap_or_else(|e| panic!("Could not read TLS private key: {e}"))
         .clone_key();
-    let verifier = Arc::new(AttestedVerifier::new(pcr8_expected)?);
+    let verifier = Arc::new(AttestedVerifier::new(
+        pcr8_expected,
+        #[cfg(feature = "insecure")]
+        mock_enclave,
+    )?);
     // Adding a context to the verifier is optional at this point and
     // can be done at any point of the application lifecycle, for
     // example, when a new context is set through a GRPC call.
     verifier.add_context(context_id.derive_session_id()?, ca_certs, trusted_releases)?;
 
-    let server_config = ServerConfig::builder()
+    let server_config = ServerConfig::builder_with_protocol_versions(&[&TLS13])
         .with_client_cert_verifier(verifier.clone())
         .with_single_cert(cert_chain.clone(), key_der.clone_key())?;
     let client_config = DangerousClientConfigBuilder {
-        cfg: ClientConfig::builder(),
+        cfg: ClientConfig::builder_with_protocol_versions(&[&TLS13]),
     }
     .with_custom_certificate_verifier(verifier)
     .with_client_auth_cert(cert_chain, key_der)?;
@@ -328,7 +334,8 @@ async fn main() -> anyhow::Result<()> {
     let security_module = need_security_module
         .then(make_security_module)
         .transpose()
-        .inspect_err(|e| tracing::warn!("Could not initialize security module: {e}"))?;
+        .inspect_err(|e| tracing::warn!("Could not initialize security module: {e}"))?
+        .map(Arc::new);
 
     // public vault
     let public_storage = make_storage(
@@ -361,7 +368,14 @@ async fn main() -> anyhow::Result<()> {
             .private_vault
             .as_ref()
             .and_then(|v| v.keychain.as_ref())
-            .map(|k| make_keychain_proxy(k, awskms_client.clone(), security_module.clone(), None)),
+            .map(|k| {
+                make_keychain_proxy(
+                    k,
+                    awskms_client.clone(),
+                    security_module.as_ref().map(Arc::clone),
+                    None,
+                )
+            }),
     )
     .await
     .transpose()
@@ -407,7 +421,7 @@ async fn main() -> anyhow::Result<()> {
                 make_keychain_proxy(
                     k,
                     awskms_client.clone(),
-                    security_module.clone(),
+                    security_module.as_ref().map(Arc::clone),
                     Some(&private_vault),
                 )
             }),
@@ -451,6 +465,7 @@ async fn main() -> anyhow::Result<()> {
     match core_config.threshold {
         Some(threshold_config) => {
             let mpc_listener = make_mpc_listener(&threshold_config).await;
+
             let tls_identity = match &threshold_config.tls {
                 Some(tls_config) => Some(match &threshold_config.peers {
                     Some(peers) => {
@@ -461,6 +476,8 @@ async fn main() -> anyhow::Result<()> {
                             security_module.clone(),
                             &public_vault,
                             &sk,
+                            #[cfg(feature = "insecure")]
+                            core_config.mock_enclave.is_some_and(|m| m),
                         )
                         .await?
                     }
@@ -476,6 +493,12 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
+            #[cfg(not(feature = "insecure"))]
+            let need_peer_tcp_proxy = need_security_module;
+            #[cfg(feature = "insecure")]
+            let need_peer_tcp_proxy =
+                need_security_module && core_config.mock_enclave.is_some_and(|m| !m);
+
             let (kms, health_service, metastore_status_service) = new_real_threshold_kms(
                 threshold_config,
                 public_vault,
@@ -485,7 +508,7 @@ async fn main() -> anyhow::Result<()> {
                 mpc_listener,
                 sk,
                 tls_identity,
-                need_security_module,
+                need_peer_tcp_proxy,
                 false,
                 core_config.rate_limiter_conf,
                 std::future::pending(),
