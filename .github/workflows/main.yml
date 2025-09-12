@@ -184,6 +184,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
 
   ############################################################################
   # Core Client Pipeline
@@ -247,6 +250,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
 
   # Builds Docker image for core-client
   # Only runs on main/release branches after successful tests
@@ -266,17 +272,20 @@ jobs:
     if: >-
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@e666182756172bc747d2be6e4eb9b4ed80a00a0e
     with:
       docker-file: "./docker/core-client/Dockerfile"
       working-directory: "./core-client"
       push_image: true
       image-name: 'kms/core-client'
       app-cache-dir: 'kms-core-client'
+      use-cgr-secrets: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
   # GRPC Testing
@@ -305,6 +314,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
 
   ############################################################################
   # Core Service Pipeline
@@ -387,6 +399,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
 
   # Builds the core service Docker image
   # Only runs on main/release branches after successful tests
@@ -420,6 +435,8 @@ jobs:
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   # Builds AWS Nitro Enclave image for secure execution
   # Only runs on main/release branches after core service image is built
@@ -447,6 +464,8 @@ jobs:
       image-enclave-name: 'kms/core-service-enclave'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
   # Core Threshold Pipeline
@@ -486,6 +505,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
 
   # Runs extended threshold tests on main/release branches
   # Includes Redis integration and all test suites
@@ -514,6 +536,8 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   # Simplified build process for Dependabot PRs
   # Only runs library tests without integration components
@@ -536,6 +560,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
 
 
   ############################################################################
@@ -555,17 +582,20 @@ jobs:
     if: >-
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@e666182756172bc747d2be6e4eb9b4ed80a00a0e
     with:
       docker-file: "./docker/base/Dockerfile"
       working-directory: "./base"
       push_image: true
       image-name: 'kms/rust-golden-image'
       app-cache-dir: 'kms-base'
+      use-cgr-secrets: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
 
   ############################################################################

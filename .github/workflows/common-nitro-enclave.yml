@@ -5,6 +5,10 @@ on:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
+        required: true
     inputs:
       ref:
         type: string
@@ -74,13 +78,14 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
+          COMMIT_HASH: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           if [[ "${EVENT_NAME}" == "release" ]]; then
             echo "tag=${REF_NAME}" >> "$GITHUB_OUTPUT"
           elif [[ "${EVENT_NAME}" == "schedule" ]]; then
-            echo "tag=nightly-$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+            echo "tag=nightly-$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+            echo "tag=$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_OUTPUT"
           fi
 
   build-and-push-enclave:
@@ -133,12 +138,12 @@ jobs:
         if: github.event_name != 'release'
         env:
           EVENT_NAME: ${{ github.event_name }}
-          GITHUB_SHA: ${{ github.sha }}
+          COMMIT_HASH: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
-            echo "DOCKER_TAG_IMAGE=nightly-$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_ENV"
+            echo "DOCKER_TAG_IMAGE=nightly-$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_ENV"
           else
-            echo "DOCKER_TAG_IMAGE=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_ENV"
+            echo "DOCKER_TAG_IMAGE=$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_ENV"
           fi
 
       - name: Current Tag
