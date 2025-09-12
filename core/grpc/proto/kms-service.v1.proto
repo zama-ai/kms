@@ -360,7 +360,7 @@ service CoreServiceEndpoint {
   // # Conditions
   // ## Pre-condition:  -
   // ## Post-condition: -
-  rpc BackupRestore(kms.v1.Empty) returns (kms.v1.Empty);
+  rpc RestoreFromBackup(kms.v1.Empty) returns (kms.v1.Empty);
 
   // Initialize custodian-based recovery by making a backup recovery request towards the custodians
   //

@@ -340,7 +340,7 @@ async fn main() -> anyhow::Result<()> {
     )
     .inspect_err(|e| tracing::warn!("Could not initialize public storage: {e}"))?;
     let public_vault = Vault {
-        storage: public_storage.clone(),
+        storage: public_storage,
         keychain: None,
     };
 
@@ -368,7 +368,7 @@ async fn main() -> anyhow::Result<()> {
                     k,
                     awskms_client.clone(),
                     security_module.clone(),
-                    Some(&public_storage),
+                    Some(&public_vault.storage),
                 )
             }),
     )

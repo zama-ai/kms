@@ -275,7 +275,7 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
     key_id.to_string()
 }
 
-async fn backup_restore<T: DockerComposeContext>(ctx: &T) -> String {
+async fn restore_from_backup<T: DockerComposeContext>(ctx: &T) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
 
     let keys_folder: &Path = Path::new("tests/data/keys");
@@ -289,12 +289,12 @@ async fn backup_restore<T: DockerComposeContext>(ctx: &T) -> String {
         expect_all_responses: true,
     };
 
-    println!("Doing backup restore");
-    let backup_restore_results = execute_cmd(&init_config, keys_folder).await.unwrap();
-    println!("Backup restore done");
-    assert_eq!(backup_restore_results.len(), 1);
-    // No backup ID is returned since backup_restore can also be used without custodians
-    assert_eq!(backup_restore_results.first().unwrap().0, None);
+    println!("Doing restore from backup");
+    let restore_from_backup_results = execute_cmd(&init_config, keys_folder).await.unwrap();
+    println!("Restore from backup done");
+    assert_eq!(restore_from_backup_results.len(), 1);
+    // No backup ID is returned since restore_from_backup can also be used without custodians
+    assert_eq!(restore_from_backup_results.first().unwrap().0, None);
     "".to_string()
 }
 
@@ -308,7 +308,7 @@ async fn new_custodian_context<T: DockerComposeContext>(
     let keys_folder: &Path = Path::new("tests/data/keys");
     let command = CCCommand::NewCustodianContext(NewCustodianContextParameters {
         threshold: custodian_threshold,
-        setup_msg_path: setup_msg_paths,
+        setup_msg_paths,
     });
     let init_config = CmdConfig {
         file_conf: Some(String::from(path_to_config.to_str().unwrap())),
@@ -543,10 +543,10 @@ async fn test_centralized_insecure(ctx: &mut DockerComposeCentralizedContext) {
 #[test_context(DockerComposeCentralizedContext)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_centralized_backup_restore(ctx: &DockerComposeCentralizedContext) {
+async fn test_centralized_restore_from_backup(ctx: &DockerComposeCentralizedContext) {
     init_testing();
     let _crs_id = crs_gen(ctx, true).await;
-    let _ = backup_restore(ctx).await;
+    let _ = restore_from_backup(ctx).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
     // However we are testing this in the service/client tests. Hence this tests is mainly to ensure that the outer
     // end points, and content returned from the KMS to the custodians, work as expected.
@@ -575,7 +575,7 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
     )
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
-    let _ = backup_restore(ctx).await;
+    let _ = restore_from_backup(ctx).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
     // However we are testing this in the service/client tests. Hence this tests is mainly to ensure that the outer
     // end points, and content returned from the KMS to the custodians, work as expected.
@@ -860,10 +860,10 @@ async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdContextDefaul
 #[test_context(DockerComposeThresholdContextTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_backup_restore(ctx: &DockerComposeThresholdContextTest) {
+async fn test_threshold_restore_from_backup(ctx: &DockerComposeThresholdContextTest) {
     init_testing();
     let _crs_id = crs_gen(ctx, true).await;
-    let _ = backup_restore(ctx).await;
+    let _ = restore_from_backup(ctx).await;
     // We don't have endpoints that allow us to purge the generate material within the docker images
     // so we can here only test that the end points are alive and acting as expected, rather than validating that
     // data gets restored. Instead tests in the client within core have tests for validating this
@@ -893,7 +893,7 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianCo
     )
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
-    let _ = backup_restore(ctx).await;
+    let _ = restore_from_backup(ctx).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate recovery.
     // However we are testing this in the service/client. Hence this tests is mainly to ensure that the outer
     // end points and content returned from the KMS to the custodians work as expected.

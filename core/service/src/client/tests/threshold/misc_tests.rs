@@ -414,7 +414,9 @@ async fn default_insecure_threshold_dkg_backup() {
         resp_tasks.spawn(async move {
             let req = Empty {};
             // send query
-            cur_client.backup_restore(tonic::Request::new(req)).await
+            cur_client
+                .restore_from_backup(tonic::Request::new(req))
+                .await
         });
     }
     while let Some(res) = resp_tasks.join_next().await {
@@ -573,7 +575,9 @@ async fn default_insecure_threshold_crs_backup() {
         resp_tasks.spawn(async move {
             let req = Empty {};
             // send query
-            cur_client.backup_restore(tonic::Request::new(req)).await
+            cur_client
+                .restore_from_backup(tonic::Request::new(req))
+                .await
         });
     }
     while let Some(res) = resp_tasks.join_next().await {

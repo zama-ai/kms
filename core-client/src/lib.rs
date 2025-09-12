@@ -512,7 +512,7 @@ pub struct NewCustodianContextParameters {
     #[clap(long, short = 't')]
     pub threshold: u32,
     #[clap(long, short = 'm')]
-    pub setup_msg_path: Vec<PathBuf>,
+    pub setup_msg_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Parser, Clone)]
@@ -1470,7 +1470,7 @@ async fn do_custodian_backup_recovery(
     Ok(())
 }
 
-async fn do_backup_restore(
+async fn do_restore_from_backup(
     core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
@@ -1478,7 +1478,7 @@ async fn do_backup_restore(
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
-                .backup_restore(tonic::Request::new(Empty {}))
+                .restore_from_backup(tonic::Request::new(Empty {}))
                 .await
         });
     }
@@ -2107,7 +2107,7 @@ pub async fn execute_cmd(
         }
         CCCommand::NewCustodianContext(new_custodian_context_parameters) => {
             let mut setup_msgs = Vec::new();
-            for cur_path in &new_custodian_context_parameters.setup_msg_path {
+            for cur_path in &new_custodian_context_parameters.setup_msg_paths {
                 let cur_setup: InternalCustodianSetupMessage =
                     safe_read_element_versioned(cur_path).await?;
                 setup_msgs.push(cur_setup);
@@ -2166,7 +2166,7 @@ pub async fn execute_cmd(
             )]
         }
         CCCommand::BackupRestore(NoParameters {}) => {
-            do_backup_restore(&mut core_endpoints_req).await?;
+            do_restore_from_backup(&mut core_endpoints_req).await?;
             vec![(None, "backup restore complete".to_string())]
         }
     };

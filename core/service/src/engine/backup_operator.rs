@@ -220,7 +220,7 @@ where
     /// That is, the method can only be used if custodian based backup is used and the backup recovery has
     /// been initialized on the KMS using `custodian_recovery_init`.
     ///
-    /// Observe that the decryption key is NOT persisted on disc and in fact removed immediately after a call to `backup_restore`
+    /// Observe that the decryption key is NOT persisted on disc and in fact removed immediately after a call to `restore_from_backup`
     /// in order to minimize the possibility of leakage.
     async fn custodian_backup_recovery(
         &self,
@@ -329,7 +329,10 @@ where
     /// Observe that if secret sharing is used for backup (i.e. with a master key being shared with a set of custodians)
     /// then [`custodian_recovery`] _must_ be called first in order to ensure that the master key is restored,
     /// which is needed to allow decryption of the backup data.
-    async fn backup_restore(&self, _request: Request<Empty>) -> Result<Response<Empty>, Status> {
+    async fn restore_from_backup(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<Empty>, Status> {
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let private_storage = self.crypto_storage.get_private_storage().clone();

@@ -42,7 +42,7 @@ pub const OP_NEW_CUSTODIAN_CONTEXT: &str = "new_custodian_context";
 pub const OP_DESTROY_CUSTODIAN_CONTEXT: &str = "destroy_custodian_context";
 pub const OP_CUSTODIAN_BACKUP_RECOVERY: &str = "custodian_backup_recovery";
 pub const OP_CUSTODIAN_RECOVERY_INIT: &str = "custodian_recovery_init";
-pub const OP_BACKUP_RESTORE: &str = "backup_restore";
+pub const OP_RESTORE_FROM_BACKUP: &str = "restore_from_backup";
 
 // PK fetch
 pub const OP_FETCH_PK: &str = "fetch_pk";

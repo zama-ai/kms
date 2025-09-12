@@ -105,7 +105,8 @@ pub trait BackupOperator {
         request: Request<CustodianRecoveryRequest>,
     ) -> Result<Response<Empty>, Status>;
 
-    async fn backup_restore(&self, request: Request<Empty>) -> Result<Response<Empty>, Status>;
+    async fn restore_from_backup(&self, request: Request<Empty>)
+        -> Result<Response<Empty>, Status>;
 
     async fn get_key_material_availability(
         &self,

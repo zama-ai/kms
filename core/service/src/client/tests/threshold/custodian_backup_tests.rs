@@ -296,7 +296,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let cus_out = emulate_custodian(&mut rng, test_path, recovery_req_resp, mnemnonics).await;
     let recovery_output = run_custodian_backup_recovery(&kms_clients, &cus_out).await;
     assert_eq!(recovery_output.len(), amount_parties);
-    let res = run_backup_restore(&kms_clients).await;
+    let res = run_restore_from_backup(&kms_clients).await;
     assert_eq!(res.len(), amount_parties);
 
     // Check that the key material is back
@@ -373,7 +373,7 @@ async fn run_custodian_backup_recovery(
     res
 }
 
-async fn run_backup_restore(
+async fn run_restore_from_backup(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) -> Vec<Empty> {
     let amount_parties = kms_clients.len();
@@ -382,7 +382,7 @@ async fn run_backup_restore(
         let mut cur_client = kms_clients.get(&i).unwrap().clone();
         tasks_gen.spawn(async move {
             cur_client
-                .backup_restore(tonic::Request::new(Empty {}))
+                .restore_from_backup(tonic::Request::new(Empty {}))
                 .await
         });
     }

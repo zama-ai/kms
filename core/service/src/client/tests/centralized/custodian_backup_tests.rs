@@ -195,7 +195,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         .await
         .unwrap();
     let _restore_output = kms_client
-        .backup_restore(tonic::Request::new(Empty {}))
+        .restore_from_backup(tonic::Request::new(Empty {}))
         .await
         .unwrap();
 

@@ -250,7 +250,10 @@ async fn default_insecure_central_dkg_backup() {
 
     let req = Empty {};
     // send query
-    match kms_client.backup_restore(tonic::Request::new(req)).await {
+    match kms_client
+        .restore_from_backup(tonic::Request::new(req))
+        .await
+    {
         Ok(res) => tracing::info!("Backup restore response: {res:?}"),
         Err(e) => {
             panic!("Error while restoring: {e}");
@@ -327,7 +330,9 @@ async fn default_insecure_central_crs_backup() {
 
     let req = Empty {};
     // Now try to restore the crs
-    let query_res = kms_client.backup_restore(tonic::Request::new(req)).await;
+    let query_res = kms_client
+        .restore_from_backup(tonic::Request::new(req))
+        .await;
     match query_res {
         Ok(resp) => {
             tracing::info!("Backup restore response: {resp:?}");
