@@ -319,10 +319,10 @@ jobs:
           ls -al "${GITHUB_WORKSPACE}/target"
           ls -al "${GITHUB_WORKSPACE}/target/debug"
           ls -al "${GITHUB_WORKSPACE}/target/release"
-          ~/.cargo/bin/grcov . --binary-path "${GITHUB_WORKSPACE}/target/debug/deps/" -s . --branch --ignore-not-existing -o "${{ runner.temp }}/coverage/" -t markdown
-          ~/.cargo/bin/grcov . --binary-path "${GITHUB_WORKSPACE}/target/debug/deps/" -s . --branch --ignore-not-existing -o "${{ runner.temp }}/" -t lcov
-          cat "${{ runner.temp }}/coverage/markdown.md"
-          cat "${{ runner.temp }}/coverage/markdown.md" >> "$GITHUB_STEP_SUMMARY"
+          ~/.cargo/bin/grcov . --binary-path "${GITHUB_WORKSPACE}/target/debug/deps/" -s . --branch --ignore-not-existing -o "${{ runner.temp }}/markdown.md" -t markdown
+          ~/.cargo/bin/grcov . --binary-path "${GITHUB_WORKSPACE}/target/debug/deps/" -s . --branch --ignore-not-existing -o "${{ runner.temp }}/lcov" -t lcov
+          cat "${{ runner.temp }}/markdown.md"
+          cat "${{ runner.temp }}/markdown.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@3585e9575db828022551b4231f165eb59a0e74e3  # v5.6.2
