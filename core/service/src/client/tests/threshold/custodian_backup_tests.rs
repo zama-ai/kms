@@ -79,7 +79,9 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     assert_eq!(initial_backup.len(), amount_parties); // exactly one per party
 
     // Shut down the servers
-    drop(kms_servers);
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
     drop(kms_clients);
     drop(internal_client);
 
@@ -182,7 +184,9 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     assert!(crss[crss.len() - 1].priv_data_type == PrivDataType::CrsInfo);
 
     // Shut down the servers
-    drop(kms_servers);
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
     drop(kms_clients);
     drop(internal_client);
 
@@ -249,7 +253,9 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await;
 
     // Shut down the servers
-    drop(kms_servers);
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
     drop(kms_clients);
     drop(internal_client);
 

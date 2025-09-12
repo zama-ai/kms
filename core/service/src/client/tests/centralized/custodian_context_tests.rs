@@ -77,7 +77,7 @@ pub(crate) async fn new_custodian_context(
 
     // Check that we can shut down and start again without updates changing
     // Shut down the servers
-    drop(kms_server);
+    kms_server.assert_shutdown().await;
     drop(kms_client);
     drop(internal_client);
     let (_kms_server, _kms_client, _internal_client) =

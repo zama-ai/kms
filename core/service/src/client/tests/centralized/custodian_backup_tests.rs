@@ -64,12 +64,13 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     .await;
 
     // Shut down the servers
-    drop(kms_server);
+    kms_server.assert_shutdown().await;
     drop(kms_client);
     drop(internal_client);
 
     // Purge backup
     purge_backup(None, 1).await;
+
     // Check that the backup is still there
     let (_kms_server, _kms_client, _internal_client) =
         crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
@@ -157,7 +158,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await;
 
     // Shut down the servers
-    drop(kms_server);
+    kms_server.assert_shutdown().await;
     drop(kms_client);
     drop(internal_client);
 

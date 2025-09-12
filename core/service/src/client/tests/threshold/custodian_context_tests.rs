@@ -113,7 +113,9 @@ async fn new_custodian_context(
 
     // Check that we can shut down and start again without updates changing
     // Shut down the servers
-    drop(kms_servers);
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
     drop(kms_clients);
     drop(internal_client);
     let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_custodian_backup(

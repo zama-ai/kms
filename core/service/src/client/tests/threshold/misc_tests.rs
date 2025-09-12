@@ -11,11 +11,11 @@ use crate::vault::storage::file::FileStorage;
 cfg_if::cfg_if! {
     if #[cfg(feature = "slow_tests")] {
         use kms_grpc::kms::v1::FheParameter;
-        use kms_grpc::kms::v1::InitRequest;
         use crate::util::rate_limiter::RateLimiterConfig;
         use crate::dummy_domain;
     }
 }
+use kms_grpc::kms::v1::InitRequest;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use kms_grpc::RequestId;
 use serial_test::serial;
@@ -29,7 +29,7 @@ use tonic_health::pb::health_check_response::ServingStatus;
 /// Also check that shutdown of the servers triggers the health endpoint to stop serving as expected.
 /// This tests validates the availability of both the core service but also the internal service between the MPC parties.
 ///
-/// The crux of the test is based on the fact that the MPC servers serve immidiately but the core server only serves after
+/// The crux of the test is based on the fact that the MPC servers serve immediately but the core server only serves after
 /// the PRSS initialization has been completed.
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
