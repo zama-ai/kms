@@ -329,7 +329,7 @@ jobs:
       - name: Copy Test Results
         if: (!cancelled())
         run: |
-          cp -Lpr ${GITHUB_WORKSPACE}/target/nextest/ci/*.xml /tmp
+          cp -Lpr "${GITHUB_WORKSPACE}/target/nextest/ci/*.xml" /tmp
           ls -al /tmp
           cat /tmp/junit.xml
         shell: bash
@@ -337,6 +337,8 @@ jobs:
       - name: Publish Test Report
         if: github.event_name == 'pull_request' && (success() || failure()) # always run even if the previous step fails
         uses: ctrf-io/github-test-reporter@646f98cfc16c6f7a0e1f6100cabe2deb95dd2eef  # v1.0.22
+        env:
+          GITHUB_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
         with:
           report-path: "/tmp/*.xml"
           summary-report: true
