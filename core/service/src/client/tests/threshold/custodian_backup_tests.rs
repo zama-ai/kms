@@ -85,7 +85,6 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 
     // Purge backup
     purge_backup(test_path, amount_parties).await;
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Check that the backup is still there an unmodified
     let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
@@ -186,8 +185,6 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     drop(kms_servers);
     drop(kms_clients);
     drop(internal_client);
-    // Sleep to ensure the servers are properly shut down
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // Check that the backup is still there an unmodified
     let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_custodian_backup(

@@ -116,8 +116,6 @@ async fn new_custodian_context(
     drop(kms_servers);
     drop(kms_clients);
     drop(internal_client);
-    // Sleep to ensure the servers are properly shut down
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let (_kms_servers, _kms_clients, _internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,

@@ -70,7 +70,6 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 
     // Purge backup
     purge_backup(None, 1).await;
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Check that the backup is still there
     let (_kms_server, _kms_client, _internal_client) =
         crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
@@ -175,7 +174,6 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     // Purge the private storage to tests the backup
     purge_priv(None, 1).await;
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Reboot the servers
     let (_kms_server, mut kms_client, _internal_client) =
         crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;

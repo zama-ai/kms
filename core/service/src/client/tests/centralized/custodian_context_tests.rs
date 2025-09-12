@@ -80,8 +80,6 @@ pub(crate) async fn new_custodian_context(
     drop(kms_server);
     drop(kms_client);
     drop(internal_client);
-    // Sleep to ensure the servers are properly shut down
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     let (_kms_server, _kms_client, _internal_client) =
         crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
     let reboot_sig_keys = backup_files(
