@@ -20,7 +20,6 @@ use rand::SeedableRng;
 use serial_test::serial;
 use std::path::Path;
 use std::path::PathBuf;
-use std::path::MAIN_SEPARATOR;
 use std::str::FromStr;
 use std::string::String;
 use test_context::futures::future::join_all;
@@ -383,7 +382,8 @@ async fn custodian_backup_recovery<T: DockerComposeContext>(
         let path = keys_folder
             .join("CUSTODIAN")
             .join("recovery")
-            .join(format!("{}{MAIN_SEPARATOR}{}", backup_id, op_idx));
+            .join(backup_id.to_string())
+            .join(op_idx.to_string());
         let cur_rec_req: InternalRecoveryRequest = safe_read_element_versioned(path).await.unwrap();
         assert_eq!(cur_rec_req.operator_role(), Role::indexed_from_one(op_idx));
         for cus_idx in 1..=seeds.len() {

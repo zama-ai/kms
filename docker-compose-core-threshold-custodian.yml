@@ -1,4 +1,4 @@
-name: zama-core-threshold
+name: zama-core-threshold-custodian
 # TODO: proper networking between nodes
 # add keygen, tls, and pushing keys to s3 mock
 

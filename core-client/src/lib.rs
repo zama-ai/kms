@@ -1,3 +1,7 @@
+/// Core Client library
+///
+/// This library implements most functionalities to interact with deployed KMS cores.
+/// This library also includes an associated CLI.
 use aes_prng::AesRng;
 use alloy_primitives::Signature;
 use alloy_sol_types::{Eip712Domain, SolStruct};
@@ -37,11 +41,6 @@ use observability::conf::Settings;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-/// Core Client library
-///
-/// This library implements most functionalities to interact with deployed KMS cores.
-/// This library also includes an associated CLI.
-use std::path::MAIN_SEPARATOR;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Once};
@@ -2136,11 +2135,8 @@ pub async fn execute_cmd(
                 let path = destination_prefix
                     .join("CUSTODIAN")
                     .join("recovery")
-                    .join(format!(
-                        "{}{MAIN_SEPARATOR}{}",
-                        cur_rec_req.backup_id(),
-                        cur_rec_req.operator_role()
-                    ));
+                    .join(cur_rec_req.backup_id().to_string())
+                    .join(cur_rec_req.operator_role().to_string());
                 safe_write_element_versioned(path, cur_rec_req).await?;
             }
             vec![(
