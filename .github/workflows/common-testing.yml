@@ -336,7 +336,10 @@ jobs:
           report-path: "/tmp/*.xml"
           summary-report: true
           github-report: true
+          pull-request-report: true
+          pull-request: true
           test-report: true
+          flaky-report: true
           flaky-rate-report: true
           integrations-config: |
             {
