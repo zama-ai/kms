@@ -170,7 +170,7 @@ async fn build_tls_config(
             tracing::info!("Using wrapped TLS certificate with Nitro remote attestation");
             let eif_signing_cert_pem = cert.into_pem(my_id, peers)?;
             let (cert, key) = security_module
-                .wrap_x509_cert(context_id, eif_signing_cert_pem)
+                .wrap_x509_cert(context_id, eif_signing_cert_pem, true)
                 .await?;
             (cert, key, Some(Arc::new(trusted_releases.clone())), true)
         }
@@ -192,7 +192,7 @@ async fn build_tls_config(
             let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
 
             let (cert, key) = security_module
-                .issue_x509_cert(context_id, ca_cert, sk)
+                .issue_x509_cert(context_id, ca_cert, sk, true)
                 .await?;
             (cert, key, Some(Arc::new(trusted_releases.clone())), false)
         }
@@ -504,6 +504,12 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
+            #[cfg(not(feature = "insecure"))]
+            let need_peer_tcp_proxy = need_security_module;
+            #[cfg(feature = "insecure")]
+            let need_peer_tcp_proxy =
+                need_security_module && core_config.mock_enclave.is_some_and(|m| !m);
+
             let (kms, health_service, metastore_status_service) = new_real_threshold_kms(
                 threshold_config,
                 public_vault,
@@ -513,7 +519,7 @@ async fn main() -> anyhow::Result<()> {
                 mpc_listener,
                 sk,
                 tls_identity,
-                need_security_module,
+                need_peer_tcp_proxy,
                 false,
                 core_config.rate_limiter_conf,
                 std::future::pending(),
