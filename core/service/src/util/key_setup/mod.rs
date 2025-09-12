@@ -594,6 +594,7 @@ pub async fn ensure_threshold_server_signing_keys_exist<PubS, PrivS>(
     request_id: &RequestId,
     deterministic: bool,
     config: ThresholdSigningKeyConfig,
+    tls_wildcard: bool,
 ) -> anyhow::Result<bool>
 where
     PubS: StorageForBytes,
@@ -669,7 +670,23 @@ where
         // self-sign a CA certificate with the private signing key
         let subject = subject_str.as_str();
 
-        let mut ca_cp = CertificateParams::new(vec![subject.to_string()])?;
+        let sans_vec = [
+            if tls_wildcard {
+                vec![format!("*.{}", subject)]
+            } else {
+                vec![]
+            },
+            vec![
+                subject.to_string(),
+                "localhost".to_string(),
+                "192.168.0.1".to_string(),
+                "127.0.0.1".to_string(),
+                "0:0:0:0:0:0:0:1".to_string(),
+            ],
+        ]
+        .concat();
+
+        let mut ca_cp = CertificateParams::new(sans_vec)?;
         ca_cp.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
 
         let mut distinguished_name = DistinguishedName::new();
