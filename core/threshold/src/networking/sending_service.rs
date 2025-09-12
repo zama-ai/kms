@@ -98,6 +98,7 @@ pub struct GrpcSendingService {
 impl GrpcSendingService {
     /// Create the network channel between self and the grpc server of the other party
     /// or retrieve it if one already exists
+    #[tracing::instrument]
     async fn connect_to_party(
         &self,
         receiver: Identity,
@@ -130,7 +131,7 @@ impl GrpcSendingService {
                         receiver.hostname()
                     )));
                 }
-                let domain_name = ServerName::try_from(receiver.hostname())?.to_owned();
+                let domain_name = ServerName::try_from(network_address.mpc_identity())?.to_owned();
 
                 // If we have a list of trusted software hashes, we're running
                 // within the AWS Nitro enclave and we have to use vsock proxies
@@ -147,6 +148,12 @@ impl GrpcSendingService {
                 } else {
                     endpoint
                 };
+
+                tracing::debug!(
+                    "Attempting TLS connection to address {:?} with MPC identity {:?}",
+                    endpoint,
+                    domain_name
+                );
 
                 let endpoint = Channel::builder(endpoint).http2_adaptive_window(true);
                 // we have to pass a custom TLS connector to

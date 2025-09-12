@@ -41,6 +41,7 @@ pub trait SecurityModule {
         &self,
         context_id: ContextId,
         cert_pem: Pem,
+        wildcard: bool,
     ) -> anyhow::Result<(Pem, Pem)> {
         let cert = cert_pem.parse_x509()?;
 
@@ -51,7 +52,23 @@ pub trait SecurityModule {
         // addresses.
         let subject = extract_subject_from_cert(&cert)?;
 
-        let mut cp = CertificateParams::new(vec![subject.clone()])?;
+        let sans_vec = [
+            if wildcard {
+                vec![format!("*.{}", subject.clone())]
+            } else {
+                vec![]
+            },
+            vec![
+                subject.clone(),
+                "localhost".to_string(),
+                "192.168.0.1".to_string(),
+                "127.0.0.1".to_string(),
+                "0:0:0:0:0:0:0:1".to_string(),
+            ],
+        ]
+        .concat();
+
+        let mut cp = CertificateParams::new(sans_vec)?;
 
         cp.is_ca = IsCa::ExplicitNoCa;
 
@@ -132,6 +149,7 @@ pub trait SecurityModule {
         context_id: ContextId,
         ca_cert_pem: Pem,
         ca_key: &PrivateSigKey,
+        wildcard: bool,
     ) -> anyhow::Result<(Pem, Pem)> {
         let ca_cert_x509 = ca_cert_pem.parse_x509()?;
         let Some(key_usage) = ca_cert_x509.key_usage()? else {
@@ -149,6 +167,22 @@ pub trait SecurityModule {
         // addresses.
         let subject = extract_subject_from_cert(&ca_cert_x509)?;
 
+        let sans_vec = [
+            if wildcard {
+                vec![format!("*.{}", subject.clone())]
+            } else {
+                vec![]
+            },
+            vec![
+                subject.clone(),
+                "localhost".to_string(),
+                "192.168.0.1".to_string(),
+                "127.0.0.1".to_string(),
+                "0:0:0:0:0:0:0:1".to_string(),
+            ],
+        ]
+        .concat();
+
         let sk_der = ca_key.sk().to_pkcs8_der()?;
         let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
             &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
@@ -156,7 +190,7 @@ pub trait SecurityModule {
         )?;
         let ca_cert_params = CertificateParams::from_ca_cert_der(&ca_cert_pem.contents.into())?;
 
-        let mut tls_cp = CertificateParams::new(vec![subject.clone()])?;
+        let mut tls_cp = CertificateParams::new(sans_vec)?;
         tls_cp.is_ca = IsCa::ExplicitNoCa;
         let mut distinguished_name = DistinguishedName::new();
         distinguished_name.push(DnType::CommonName, subject);
