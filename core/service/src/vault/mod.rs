@@ -139,7 +139,6 @@ impl Storage for Vault {
                 "{}{MAIN_SEPARATOR}{inner_type}",
                 secret_share_keychain.get_current_backup_id()?
             );
-            println!("path {}", coerced_backup_type);
             return self
                 .storage
                 .delete_data(data_id, &coerced_backup_type)
