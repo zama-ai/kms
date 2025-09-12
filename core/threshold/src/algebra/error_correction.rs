@@ -170,18 +170,21 @@ where
 
         // Check if we're making progress to avoid infinite loops
         let current_valid_count = shares_with_validity.iter().filter(|(_, v)| *v).count();
-        if current_valid_count == last_valid_count {
+        let invalid_count = initial_length - current_valid_count;
+
+        // Only check for stuck state if we have invalid shares that can't be corrected
+        if invalid_count > 0 && current_valid_count == last_valid_count {
             consecutive_no_change += 1;
             // If we have zero tolerance and haven't made progress for many iterations, we're stuck
             if max_errs == 0 && consecutive_no_change > 100 {
                 tracing::debug!(
                     "Error correction appears stuck after {} iterations with {} invalid shares and zero tolerance",
-                    bit_idx, initial_length - current_valid_count
+                    bit_idx, invalid_count
                 );
                 // Return an error to prevent infinite loop
                 return Err(anyhow_error_and_log(format!(
                     "Error correction failed: unable to make progress with {} invalid shares and zero error tolerance",
-                    initial_length - current_valid_count
+                    invalid_count
                 )));
             }
         } else {
