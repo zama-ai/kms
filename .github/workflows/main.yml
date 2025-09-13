@@ -274,33 +274,33 @@ jobs:
   # Builds Docker image for core-client
   # Only runs on main/release branches after successful tests
   # Also runs on pull requests targeting main/release branches with the docker label
-  docker-core-client:
-    name: main/docker-core-client
-    # job permissions
-    permissions:
-      actions: write # Required to write workflow run information
-      attestations: write # Required to create build attestations
-      contents: write # Required to modify repository code
-      id-token: write # Required for OIDC token generation
-      pull-requests: write # Required to create comments on pull requests
-      packages: write # Required to publish packages
-    needs:
-      - test-core-client
-      - docker-golden-image
-    if: >-
-      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
-    with:
-      docker-file: "./docker/core-client/Dockerfile"
-      working-directory: "./core-client"
-      push_image: true
-      image-name: 'kms/core-client'
-      app-cache-dir: 'kms-core-client'
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+  # docker-core-client:
+  #   name: main/docker-core-client
+  #   # job permissions
+  #   permissions:
+  #     actions: write # Required to write workflow run information
+  #     attestations: write # Required to create build attestations
+  #     contents: write # Required to modify repository code
+  #     id-token: write # Required for OIDC token generation
+  #     pull-requests: write # Required to create comments on pull requests
+  #     packages: write # Required to publish packages
+  #   needs:
+  #     - test-core-client
+  #     - docker-golden-image
+  #   if: >-
+  #     (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
+  #     (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+  #   uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
+  #   with:
+  #     docker-file: "./docker/core-client/Dockerfile"
+  #     working-directory: "./core-client"
+  #     push_image: true
+  #     image-name: 'kms/core-client'
+  #     app-cache-dir: 'kms-core-client'
+  #   secrets:
+  #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+  #     AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+  #     AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
 
   ############################################################################
   # GRPC Testing
