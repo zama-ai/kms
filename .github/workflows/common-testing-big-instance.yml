@@ -104,18 +104,12 @@ jobs:
   run-build:
     name: common-testing-big-instance/run-build
     permissions:
-      # Required to create GitHub checks for test results
-      checks: write
-      # Required to read GitHub packages/container registry
-      packages: read
-      # Required to create comments on pull requests
-      pull-requests: write
-      # Required to create comments on issues
-      issues: write
-      # Required to read workflow run information and download artifacts
-      actions: read
-      # Required to checkout repository code
-      contents: read
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      pull-requests: write # Required to create comments on pull requests
+      issues: write # Required to create comments on issues
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs: start-runner
     uses: ./.github/workflows/common-testing.yml
     secrets:

@@ -22,29 +22,22 @@ concurrency:
 
 # Top-level permissions for workflow-level operations
 permissions:
-  # Required to read workflow run information
-  actions: read
-  # Required to checkout repository code
-  contents: read
-  # Required to read pull request information
-  pull-requests: read
-  # Required to read GitHub packages/container registry
-  packages: read
+  actions: read # Required to read workflow run information
+  contents: read # Required to checkout repository code
+  pull-requests: read # Required to read pull request information
+  packages: read # Required to read GitHub packages/container registry
 
 jobs:
   # Initial job that determines which components have changed
   # Used by subsequent jobs to decide whether they need to run
   check-changes:
     name: main/check-changes
+    # job permissions
     permissions:
-      # Required to read workflow run information
-      actions: read
-      # Required to checkout repository code
-      contents: read
-      # Required for OIDC token generation
-      id-token: write
-      # Required to read pull request information
-      pull-requests: read
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
+      pull-requests: read # Required to read pull request information
     runs-on: ubuntu-latest
     outputs:
       # Each output indicates if files in a specific component were modified
@@ -100,30 +93,26 @@ jobs:
   ############################################################################
   # Helm chart pipeline
   # Triggered by:
-  # - Changes to charts/**'
+  # - Changes to charts/**
   ############################################################################
   test-helm-chart:
     name: main/test-helm-chart
+     # job permissions
     permissions:
-      # Required to read workflow run information
-      actions: read
-      # Required to checkout repository code
-      contents: read
-      # Required for OIDC token generation
-      id-token: write
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
     needs: check-changes
     if: needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-test.yml
 
   lint-helm-chart:
     name: main/lint-helm-chart
+     # job permissions
     permissions:
-      # Required to read workflow run information
-      actions: read
-      # Required to checkout repository code
-      contents: read
-      # Required for OIDC token generation
-      id-token: write
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
     needs: check-changes
     if: needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-lint.yml
@@ -131,14 +120,10 @@ jobs:
   release-helm-chart:
     name: main/release-helm-chart
     permissions:
-      # Required to read workflow run information
-      actions: read
-      # Required to checkout repository code
-      contents: read
-      # Required for OIDC token generation
-      id-token: write
-      # Required to publish packages
-      packages: write
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
+      packages: write # Required to publish packages
     needs: check-changes
     if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart == 'true' && github.event_name != 'schedule'
     uses: ./.github/workflows/helm-release.yml
@@ -151,15 +136,12 @@ jobs:
   ############################################################################
   check-docs:
     name: main/check-docs
+    # job permissions
     permissions:
-      # Required to read workflow run information
-      actions: read
-      # Required to checkout repository code
-      contents: read
-      # Required for OIDC token generation
-      id-token: write
-      # Required to read pull request information
-      pull-requests: read
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
+      pull-requests: read # Required to read pull request information
     needs: check-changes
     if: needs.check-changes.outputs.changes-docs == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -181,19 +163,14 @@ jobs:
   ############################################################################
   test-backward-compatibility:
     name: main/test-backward-compatibility
+    # job permissions
     permissions:
-      # Required to create GitHub checks for test results
-      checks: write
-      # Required to read GitHub packages/container registry
-      packages: read
-      # Required to create comments on issues
-      issues: write
-      # Required to create comments on pull requests
-      pull-requests: write
-      # Required to read workflow run information and download artifacts
-      actions: read
-      # Required to checkout repository code
-      contents: read
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-backward-compatibility == 'true' ||
@@ -255,19 +232,14 @@ jobs:
 
   test-core-client:
     name: main/test-core-client
+    # job permissions
     permissions:
-      # Required to create GitHub checks for test results
-      checks: write
-      # Required to read GitHub packages/container registry
-      packages: read
-      # Required to create comments on issues
-      issues: write
-      # Required to create comments on pull requests
-      pull-requests: write
-      # Required to read workflow run information and download artifacts
-      actions: read
-      # Required to checkout repository code
-      contents: read
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs:
       - prepare-core-client-matrix
       - check-changes
@@ -304,19 +276,14 @@ jobs:
   # Also runs on pull requests targeting main/release branches with the docker label
   docker-core-client:
     name: main/docker-core-client
+    # job permissions
     permissions:
-      # Required to write workflow run information
-      actions: write
-      # Required to create build attestations
-      attestations: write
-      # Required to modify repository code
-      contents: write
-      # Required for OIDC token generation
-      id-token: write
-      # Required to create comments on pull requests
-      pull-requests: write
-      # Required to publish packages
-      packages: write
+      actions: write # Required to write workflow run information
+      attestations: write # Required to create build attestations
+      contents: write # Required to modify repository code
+      id-token: write # Required for OIDC token generation
+      pull-requests: write # Required to create comments on pull requests
+      packages: write # Required to publish packages
     needs:
       - test-core-client
       - docker-golden-image
@@ -343,19 +310,14 @@ jobs:
   ############################################################################
   test-grpc:
     name: main/test-grpc
+    # job permissions
     permissions:
-      # Required to create GitHub checks for test results
-      checks: write
-      # Required to read GitHub packages/container registry
-      packages: read
-      # Required to create comments on issues
-      issues: write
-      # Required to create comments on pull requests
-      pull-requests: write
-      # Required to read workflow run information and download artifacts
-      actions: read
-      # Required to checkout repository code
-      contents: read
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -429,19 +391,14 @@ jobs:
   # - WASM runtime for WebAssembly tests
   test-core-service:
     name: main/test-core-service
+    # job permissions
     permissions:
-      # Required to create GitHub checks for test results
-      checks: write
-      # Required to read GitHub packages/container registry
-      packages: read
-      # Required to create comments on issues
-      issues: write
-      # Required to create comments on pull requests
-      pull-requests: write
-      # Required to read workflow run information and download artifacts
-      actions: read
-      # Required to checkout repository code
-      contents: read
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs:
       - check-changes
       - prepare-matrix
@@ -478,19 +435,14 @@ jobs:
   # Uses a custom Dockerfile optimized for production
   docker-core-service:
     name: main/docker-core-service
+    # job permissions
     permissions:
-      # Required to read workflow run information
-      actions: read
-      # Required to checkout repository code
-      contents: read
-      # Required for OIDC token generation
-      id-token: write
-      # Required to read pull request information
-      pull-requests: read
-      # Required to publish packages
-      packages: write
-      # Required to create build attestations
-      attestations: write
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
+      pull-requests: read # Required to read pull request information
+      packages: write # Required to publish packages
+      attestations: write # Required to create build attestations
     needs:
       - test-core-service
       - docker-golden-image
@@ -517,19 +469,14 @@ jobs:
   # Creates both regular container and enclave-specific images
   docker-nitro-enclave:
     name: main/docker-nitro-enclave
+    # job permissions
     permissions:
-      # Required to read workflow run information
-      actions: read
-      # Required to modify repository code
-      contents: write
-      # Required for OIDC token generation
-      id-token: write
-      # Required to read pull request information
-      pull-requests: read
-      # Required to publish packages
-      packages: write
-      # Required to create build attestations
-      attestations: write
+      actions: read # Required to read workflow run information
+      contents: write # Required to modify repository code
+      id-token: write # Required for OIDC token generation
+      pull-requests: read # Required to read pull request information
+      packages: write # Required to publish packages
+      attestations: write # Required to create build attestations
     needs:
       - docker-core-service
     if: >-
@@ -562,19 +509,14 @@ jobs:
   # Includes slow tests but runs only library tests
   test-core-threshold-pr:
     name: main/test-core-threshold-pr
+    # job permissions
     permissions:
-      # Required to create GitHub checks for test results
-      checks: write
-      # Required to read GitHub packages/container registry
-      packages: read
-      # Required to create comments on issues
-      issues: write
-      # Required to create comments on pull requests
-      pull-requests: write
-      # Required to read workflow run information and download artifacts
-      actions: read
-      # Required to checkout repository code
-      contents: read
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -603,19 +545,14 @@ jobs:
   # Only runs when threshold-related changes are detected
   test-core-threshold-main:
     name: main/test-core-threshold-main
+    # job permissions
     permissions:
-      # Required to create GitHub checks for test results
-      checks: write
-      # Required to read GitHub packages/container registry
-      packages: read
-      # Required to create comments on issues
-      issues: write
-      # Required to create comments on pull requests
-      pull-requests: write
-      # Required to read workflow run information and download artifacts
-      actions: read
-      # Required to checkout repository code
-      contents: read
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -644,19 +581,14 @@ jobs:
   # Helps validate dependency updates quickly
   build-dependabot:
     name: main/build-dependabot
+    # job permissions
     permissions:
-      # Required to create GitHub checks for test results
-      checks: write
-      # Required to read GitHub packages/container registry
-      packages: read
-      # Required to create comments on issues
-      issues: write
-      # Required to create comments on pull requests
-      pull-requests: write
-      # Required to read workflow run information and download artifacts
-      actions: read
-      # Required to checkout repository code
-      contents: read
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
@@ -682,19 +614,14 @@ jobs:
   ############################################################################
   docker-golden-image:
     name: main/docker-golden-image
+    # job permissions
     permissions:
-      # Required to read workflow run information
-      actions: read
-      # Required to checkout repository code
-      contents: read
-      # Required for OIDC token generation
-      id-token: write
-      # Required to read pull request information
-      pull-requests: read
-      # Required to publish packages
-      packages: write
-      # Required to create build attestations
-      attestations: write
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
+      pull-requests: read # Required to read pull request information
+      packages: write # Required to publish packages
+      attestations: write # Required to create build attestations
     if: >-
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')

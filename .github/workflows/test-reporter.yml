@@ -22,18 +22,12 @@ jobs:
   test-reporter:
     name: test-reporter/test-reporter
     permissions:
-      # Required to create GitHub checks for test results
-      checks: write
-      # Required to read GitHub packages/container registry
-      packages: read
-      # Required to create comments on issues
-      issues: write
-      # Required to create comments on pull requests
-      pull-requests: write
-      # Required to read workflow run information and download artifacts
-      actions: read
-      # Required to checkout repository code
-      contents: read
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion != 'cancelled' }}
 

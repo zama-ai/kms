@@ -12,8 +12,7 @@ concurrency:
 permissions:
   # Required to checkout repository code
   contents: read
-  # Required to read workflow run information
-  actions: read
+  actions: read # Required to read workflow run information
 
 env:
   ACTIONLINT_VERSION: 1.6.27
@@ -38,6 +37,7 @@ jobs:
             slsa-framework/slsa-github-generator
 
   sast-check:
+    # job permissions
     permissions:
       # Required to write security events for SAST results
       security-events: write
