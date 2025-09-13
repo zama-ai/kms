@@ -1,10 +1,12 @@
 use crate::engine::centralized::central_kms::RealCentralizedKms;
-use crate::engine::centralized::service::{delete_kms_context_impl, new_kms_context_impl};
-use crate::some_or_tonic_abort;
+use crate::engine::centralized::service::{
+    delete_kms_context_impl, get_preprocessing_res_impl, init_impl, new_kms_context_impl,
+    preprocessing_impl,
+};
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
-    self, BackupRecoveryRequest, Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocResult,
-    KeyMaterialAvailabilityResponse, OperatorPublicKey,
+    self, BackupRecoveryRequest, Empty, HealthStatusResponse, InitRequest, KeyGenPreprocRequest,
+    KeyGenPreprocResult, KeyMaterialAvailabilityResponse, OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use tonic::{Request, Response, Status};
@@ -31,42 +33,44 @@ use observability::{
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
     CoreServiceEndpoint for RealCentralizedKms<PubS, PrivS>
 {
-    async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+    async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_INIT);
-        METRICS.increment_error_counter(OP_INIT, ERR_INVALID_REQUEST);
-        some_or_tonic_abort(
-            None,
-            "Requesting init on centralized kms is not suported".to_string(),
-        )
-        .map_err(Status::from)
+        init_impl(self, request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(observability::metrics_names::OP_INIT, tag);
+        })
     }
 
-    #[tracing::instrument(skip(self, _request))]
+    #[tracing::instrument(skip(self, request))]
     async fn key_gen_preproc(
         &self,
-        _request: Request<KeyGenPreprocRequest>,
+        request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
-        METRICS.increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, ERR_INVALID_REQUEST);
-        some_or_tonic_abort(
-            None,
-            "Requesting preproc on centralized kms is not suported".to_string(),
-        )
-        .map_err(Status::from)
+        preprocessing_impl(self, request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(
+                observability::metrics_names::OP_KEYGEN_PREPROC_REQUEST,
+                tag,
+            );
+        })
     }
 
-    #[tracing::instrument(skip(self, _request))]
+    #[tracing::instrument(skip(self, request))]
     async fn get_key_gen_preproc_result(
         &self,
-        _request: Request<v1::RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_RESULT);
-        METRICS.increment_error_counter(OP_KEYGEN_PREPROC_RESULT, ERR_INVALID_REQUEST);
-        some_or_tonic_abort(
-            None,
-            "Requesting preproc status on centralized kms is not suported".to_string(),
-        )
-        .map_err(Status::from)
+        get_preprocessing_res_impl(self, request)
+            .await
+            .inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS.increment_error_counter(
+                    observability::metrics_names::OP_KEYGEN_PREPROC_RESULT,
+                    tag,
+                );
+            })
     }
 
     #[cfg(feature = "insecure")]
@@ -349,6 +353,34 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             Vec::new(), // Centralized KMS doesn't support preprocessing material
         )
         .await?;
+
+        Ok(Response::new(response))
+    }
+
+    #[tracing::instrument(skip(self, _request))]
+    async fn get_health_status(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<kms_grpc::kms::v1::HealthStatusResponse>, Status> {
+        // Get own key material
+        let own_material = self
+            .get_key_material_availability(Request::new(Empty {}))
+            .await?;
+        let own_material = own_material.into_inner();
+
+        // Centralized mode has no peers, always optimal if reachable
+        let response = HealthStatusResponse {
+            status: 1,         // HEALTH_STATUS_OPTIMAL
+            peers: Vec::new(), // No peers in centralized mode
+            my_fhe_key_ids: own_material.fhe_key_ids,
+            my_crs_ids: own_material.crs_ids,
+            my_preprocessing_key_ids: Vec::new(), // Centralized doesn't use preprocessing
+            my_storage_info: own_material.storage_info,
+            node_type: 1,          // NODE_TYPE_CENTRALIZED
+            my_party_id: 1,        // Not applicable for centralized
+            threshold_required: 0, // Not applicable for centralized
+            nodes_reachable: 1,    // Only self
+        };
 
         Ok(Response::new(response))
     }

@@ -1,6 +1,6 @@
 [package]
 name = "backward-compatibility"
-version = "0.11.0-26"
+version = "0.11.0"
 publish = false
 authors = ["Zama"]
 edition = "2021"
@@ -32,7 +32,7 @@ bincode = "=1.3.3"
 aes-prng = "=0.2.1"
 rand = "=0.8.5"
 tokio = { version = "1.44.2", features = ["full"] }
-cfg-if = "=1.0.1"
+cfg-if = "=1.0.3"
 
 [[bin]]
 name = "backward-compatibility"

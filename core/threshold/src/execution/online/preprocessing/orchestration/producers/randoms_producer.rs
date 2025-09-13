@@ -109,7 +109,7 @@ pub type SecureLargeSessionRandomProducer<Z> =
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use itertools::Itertools;
 
@@ -128,7 +128,7 @@ mod tests {
                 },
                 RandomPreprocessing,
             },
-            runtime::party::Identity,
+            runtime::party::Role,
             sharing::shamir::{RevealOp, ShamirSharings},
         },
     };
@@ -137,7 +137,7 @@ mod tests {
         all_parties_channels: Vec<
             ReceiverChannelCollectionWithTracker<ResiduePoly<Z64, EXTENSION_DEGREE>>,
         >,
-        identities: &[Identity],
+        roles: &HashSet<Role>,
         num_randomness: usize,
         threshold: usize,
     ) where
@@ -164,17 +164,13 @@ mod tests {
 
         //Retrieve bits and try reconstruct them
         let mut randomness_map = HashMap::new();
-        for ((party_idx, _party_id), random_preproc) in identities
-            .iter()
-            .enumerate()
-            .zip_eq(random_preprocs.iter_mut())
-        {
+        for (party, random_preproc) in roles.iter().zip(random_preprocs.iter_mut()) {
             let randomness_len = random_preproc.randoms_len();
             assert_eq!(randomness_len, num_randomness);
 
             let randomness_shares = random_preproc.next_random_vec(num_randomness).unwrap();
 
-            randomness_map.insert(party_idx + 1, randomness_shares);
+            randomness_map.insert(party, randomness_shares);
         }
 
         let mut vec_sharings = vec![ShamirSharings::default(); num_randomness];
@@ -239,7 +235,7 @@ mod tests {
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
         let num_randomness = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, all_parties_channels) = test_production_large::<EXTENSION_DEGREE>(
+        let (roles, all_parties_channels) = test_production_large::<EXTENSION_DEGREE>(
             num_sessions as u128,
             num_randomness,
             batch_size,
@@ -250,7 +246,7 @@ mod tests {
 
         check_randomness_reconstruction(
             all_parties_channels,
-            &identities,
+            &roles,
             num_randomness,
             threshold as usize,
         );
@@ -306,7 +302,7 @@ mod tests {
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
         let num_randomness = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, all_parties_channels) = test_production_small::<EXTENSION_DEGREE>(
+        let (roles, all_parties_channels) = test_production_small::<EXTENSION_DEGREE>(
             num_sessions as u128,
             num_randomness,
             batch_size,
@@ -317,7 +313,7 @@ mod tests {
 
         check_randomness_reconstruction(
             all_parties_channels,
-            &identities,
+            &roles,
             num_randomness,
             threshold as usize,
         );

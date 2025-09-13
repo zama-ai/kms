@@ -8,7 +8,7 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 
 ## 🔄 Main Workflow File
 
-[`.github/workflows/global-common-workflow.yml`](global-common-workflow.yml)
+[`.github/workflows/main.yml`](main.yml)
 
 ### Trigger Types
 
@@ -27,19 +27,19 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 <details>
 <summary><b>View Component Details</b></summary>
 
-#### 🧪 Test Job [`test-helm-chart`](global-common-workflow.yml)
+#### 🧪 Test Job [`test-helm-chart`](main.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🔍 PR | ✅ | On chart changes |
 | 🎯 Main | ✅ | On chart changes |
 
-#### 🔍 Lint Job [`lint-helm-chart`](global-common-workflow.yml)
+#### 🔍 Lint Job [`lint-helm-chart`](main.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🔍 PR | ✅ | On chart changes |
 | 🎯 Main | ✅ | On chart changes |
 
-#### 📦 Release Job [`release-helm-chart`](global-common-workflow.yml)
+#### 📦 Release Job [`release-helm-chart`](main.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🎯 Main | ✅ | On chart changes |
@@ -49,7 +49,7 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 <details>
 <summary><b>View Component Details</b></summary>
 
-#### 🔍 Check Job [`check-docs`](global-common-workflow.yml)
+#### 🔍 Check Job [`check-docs`](main.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🔍 PR | ✅ | On docs changes |
@@ -62,13 +62,13 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 <details>
 <summary><b>View Component Details</b></summary>
 
-#### 🧪 Test Job [`test-core-client`](global-common-workflow.yml)
+#### 🧪 Test Job [`test-core-client`](main.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🔍 PR | ✅ | On core-client/service/threshold/grpc changes |
 | 🎯 Main | ✅ | Always |
 
-#### 🐳 Docker Job [`docker-core-client`](global-common-workflow.yml)
+#### 🐳 Docker Job [`docker-core-client`](main.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🌙 Nightly | ✅ | On main/release branch |
@@ -80,7 +80,7 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 <details>
 <summary><b>View Component Details</b></summary>
 
-#### 🧪 Test Job [`test-grpc`](global-common-workflow.yml)
+#### 🧪 Test Job [`test-grpc`](main.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🌙 Nightly | ✅ | Always runs |
@@ -92,7 +92,7 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 <details>
 <summary><b>View Component Details</b></summary>
 
-#### 🧪 Test Job [`test-core-service`](global-common-workflow.yml)
+#### 🧪 Test Job [`test-core-service`](main.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🌙 Nightly | ✅ | Comprehensive suite |
@@ -115,14 +115,14 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
      - Features: `slow_tests`, `s3_tests`, `insecure`
      - Excludes: Threshold tests
 
-#### 🐳 Docker Job [`docker-core-service`](global-common-workflow.yml)
+#### 🐳 Docker Job [`docker-core-service`](main.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🌙 Nightly | ✅ | On main/release branch |
 | 🔍 PR | ✅ | When labeled with "docker" |
 | 🎯 Main | ✅ | After successful tests |
 
-#### 🛡️ Nitro Enclave [`docker-nitro-enclave`](global-common-workflow.yml)
+#### 🛡️ Nitro Enclave [`docker-nitro-enclave`](main.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🌙 Nightly | ✅ | On main/release branch |
@@ -134,7 +134,7 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 <details>
 <summary><b>View Component Details</b></summary>
 
-#### 🧪 Test Job [`test-core-threshold-main`](global-common-workflow.yml)
+#### 🧪 Test Job [`test-core-threshold-main`](main.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🌙 Nightly | ✅ | On main/release branch |
@@ -148,7 +148,7 @@ This document describes the CI/CD workflow structure for the KMS Core project. O
 <details>
 <summary><b>View Component Details</b></summary>
 
-#### 📦 Deploy Job [`update-argocd-staging`](global-common-workflow.yml)
+#### 📦 Deploy Job [`update-argocd-staging`](main.yml)
 | Trigger | Status | Condition |
 |---------|--------|-----------|
 | 🌙 Nightly | ✅ | Always runs |

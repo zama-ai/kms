@@ -59,15 +59,18 @@ pub(crate) fn check_ext_user_decryption_signature(
     let sig =
         alloy_signer::Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
 
-    // NOTE: we need to support legacy user_pk, so try to deserialize MlKem1024 first
+    // NOTE: we need to support legacy user_pk, so try to deserialize MlKem1024 encoded with bincode first
     let unified_pk =
         match bc2wrap::deserialize::<PublicEncKey<ml_kem::MlKem1024>>(request.enc_key()) {
             Ok(pk) => UnifiedPublicEncKey::MlKem1024(pk),
+            // in case the old deserialization fails, try the new format
             Err(_) => tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
                 request.enc_key(),
                 crate::consts::SAFE_SER_SIZE_LIMIT,
             )
-            .map_err(|e| anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"))?,
+            .map_err(|e| {
+                anyhow_error_and_log(format!("Error deserializing UnifiedPublicEncKey: {e}"))
+            })?,
         };
     let hash =
         crate::compute_user_decrypt_message_hash(payload, eip712_domain, &unified_pk, vec![])?;
@@ -129,7 +132,7 @@ fn validate_user_decrypt_meta_data_and_signature(
     let resp_verf_key: PublicSigKey = bc2wrap::deserialize(&other_resp.verification_key)?;
     let resp_addr = alloy_signer::utils::public_key_to_address(resp_verf_key.pk());
 
-    let expected_addr = if let Some(expected_addr) = server_addreses.get(&other_resp.party_id) {
+    let expected_addr = if let Some(expected_addr) = server_addreses.get(&(other_resp.party_id)) {
         if *expected_addr != resp_addr {
             anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
         }

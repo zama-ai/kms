@@ -83,7 +83,9 @@ pub async fn setup_threshold_no_client<
         .map(|(i, port)| PeerConf {
             party_id: i + 1,
             address: ip_addr.to_string(),
+            mpc_identity: None,
             port,
+            service_port: None, // Test environments don't need separate gRPC ports
             tls_cert: None,
         })
         .collect_vec();
@@ -125,7 +127,7 @@ pub async fn setup_threshold_no_client<
                 preproc_redis: None,
                 num_sessions_preproc: None,
                 tls: None,
-                peers: mpc_conf,
+                peers: Some(mpc_conf),
                 core_to_core_net: None,
                 decryption_mode,
             };
@@ -140,6 +142,7 @@ pub async fn setup_threshold_no_client<
                 mpc_listener,
                 sk,
                 None,
+                false,
                 run_prss,
                 rl_conf,
                 mpc_core_rx.map(drop),
