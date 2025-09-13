@@ -18,9 +18,9 @@ jobs:
       npm-release: true
       app-cache-dir: 'kms'
     permissions:
-      packages: read
-      contents: read
-      id-token: write
+      packages: read     # Read package dependencies from registry
+      contents: read     # Read repository contents
+      id-token: write    # Authenticate with cloud providers via OIDC
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
