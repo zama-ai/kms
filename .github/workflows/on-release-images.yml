@@ -90,12 +90,12 @@ jobs:
       - docker-kms-service
     uses: ./.github/workflows/common-nitro-enclave.yml
     permissions:
-      actions: read
-      contents: write
-      id-token: write
-      pull-requests: read
-      packages: write
-      attestations: write
+      actions: read # Required to read workflow run information
+      contents: write # Required to publish packages
+      id-token: write # Required for OIDC token generation
+      pull-requests: read # Required to read pull request information
+      packages: write # Required to publish packages
+      attestations: write # Required to write attestations
     with:
       docker-file-enclave: "./docker/core/service/enclave.dockerfile"
       working-directory: "./core/service"

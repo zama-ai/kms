@@ -10,8 +10,8 @@ concurrency:
   cancel-in-progress: ${{ !contains(fromJSON('["release/", "main"]'),github.ref) }}
 
 permissions:
-  contents: read
-  packages: read
+  contents: read # Required to checkout repository code
+  packages: read # Required to read GitHub packages/container registry
 
 jobs:
     prepare-batch:

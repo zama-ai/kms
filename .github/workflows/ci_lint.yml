@@ -11,7 +11,7 @@ concurrency:
 # Top-level permissions for workflow-level operations
 permissions:
   # Required to checkout repository code
-  contents: read
+  contents: read # Required to checkout repository code
   actions: read # Required to read workflow run information
 
 env:

@@ -57,8 +57,8 @@ permissions: {}
 jobs:
   determine-tag:
     permissions:
-      actions: read
-      contents: read
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
     name: common-nitro-enclave/determine-tag
     runs-on: ubuntu-latest
     outputs:
@@ -85,11 +85,11 @@ jobs:
 
   build-and-push-enclave:
     permissions:
-      actions: read
-      contents: write
-      attestations: write
-      packages: write
-      id-token: write
+      actions: read # Required to read workflow run information
+      contents: write # Required to publish packages
+      attestations: write # Required to write attestations
+      packages: write # Required to publish packages
+      id-token: write # Required for OIDC token generation
     needs: determine-tag
     outputs:
       image: ${{ steps.push.outputs.image }}
