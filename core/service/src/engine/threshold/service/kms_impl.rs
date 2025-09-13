@@ -94,10 +94,10 @@ pub enum ThresholdFheKeysVersioned {
 #[derive(Clone, Serialize, Deserialize, Versionize)]
 #[versionize(ThresholdFheKeysVersioned)]
 pub struct ThresholdFheKeys {
-    pub private_keys: PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    pub integer_server_key: tfhe::integer::ServerKey,
-    pub sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-    pub decompression_key: Option<DecompressionKey>,
+    pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
+    pub integer_server_key: Arc<tfhe::integer::ServerKey>,
+    pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
+    pub decompression_key: Option<Arc<DecompressionKey>>,
     pub meta_data: KeyGenMetadata,
 }
 
@@ -105,10 +105,10 @@ pub struct ThresholdFheKeys {
 /// that's needed for decryption, user decryption and verifying a proven input.
 #[derive(Clone, Serialize, Deserialize, Version)]
 pub struct ThresholdFheKeysV0 {
-    pub private_keys: PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
-    pub integer_server_key: tfhe::integer::ServerKey,
-    pub sns_key: Option<tfhe::integer::noise_squashing::NoiseSquashingKey>,
-    pub decompression_key: Option<DecompressionKey>,
+    pub private_keys: Arc<PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>,
+    pub integer_server_key: Arc<tfhe::integer::ServerKey>,
+    pub sns_key: Option<Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>>,
+    pub decompression_key: Option<Arc<DecompressionKey>>,
     pub pk_meta_data: HashMap<PubDataType, SignedPubDataHandleInternal>,
 }
 
@@ -117,10 +117,12 @@ impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV0 {
 
     fn upgrade(self) -> Result<ThresholdFheKeys, Self::Error> {
         Ok(ThresholdFheKeys {
-            private_keys: self.private_keys,
-            integer_server_key: self.integer_server_key,
-            sns_key: self.sns_key,
-            decompression_key: self.decompression_key,
+            private_keys: Arc::clone(&self.private_keys),
+            integer_server_key: Arc::clone(&self.integer_server_key),
+            sns_key: self.sns_key.map(|sns_key| Arc::clone(&sns_key)),
+            decompression_key: self
+                .decompression_key
+                .map(|decompression_key| Arc::clone(&decompression_key)),
             meta_data: KeyGenMetadata::LegacyV0(self.pk_meta_data),
         })
     }
@@ -128,7 +130,7 @@ impl Upgrade<ThresholdFheKeys> for ThresholdFheKeysV0 {
 
 impl ThresholdFheKeys {
     pub fn get_key_switching_key(&self) -> anyhow::Result<&LweKeyswitchKey<Vec<u64>>> {
-        match &self.integer_server_key.as_ref().atomic_pattern {
+        match &self.integer_server_key.as_ref().as_ref().atomic_pattern {
             tfhe::shortint::atomic_pattern::AtomicPatternServerKey::Standard(
                 standard_atomic_pattern_server_key,
             ) => Ok(&standard_atomic_pattern_server_key.key_switching_key),
@@ -609,10 +611,10 @@ mod tests {
             let priv_key_set = PrivateKeySet::init_dummy(param);
 
             let priv_key_set = Self {
-                private_keys: priv_key_set,
-                integer_server_key,
-                sns_key,
-                decompression_key,
+                private_keys: Arc::new(priv_key_set),
+                integer_server_key: Arc::new(integer_server_key),
+                sns_key: sns_key.map(Arc::new),
+                decompression_key: decompression_key.map(Arc::new),
                 meta_data: KeyGenMetadata::new(
                     RequestId::zeros(),
                     RequestId::zeros(),

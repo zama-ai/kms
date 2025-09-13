@@ -116,7 +116,7 @@ type SimulatedPairwiseChannels = Arc<
 
 #[async_trait]
 impl Networking for LocalNetworking {
-    async fn send(&self, val: Vec<u8>, receiver: &Role) -> anyhow::Result<(), anyhow::Error> {
+    async fn send(&self, val: Arc<Vec<u8>>, receiver: &Role) -> anyhow::Result<(), anyhow::Error> {
         let (tx, _) = self
             .pairwise_channels
             .get(&(self.owner, *receiver))
@@ -133,7 +133,7 @@ impl Networking for LocalNetworking {
 
         let tagged_value = LocalTaggedValue {
             send_counter: *net_round,
-            value: val,
+            value: val.as_ref().clone(),
         };
 
         let mut already_sent = self.already_sent.lock().await;
@@ -278,8 +278,11 @@ struct LocalTaggedValue {
 
 #[cfg(test)]
 mod tests {
-    use crate::execution::runtime::party::Role;
-    use crate::networking::value::NetworkValue;
+
+    use crate::{
+        execution::runtime::{party::Role, session::DeSerializationRunTime},
+        networking::value::NetworkValue,
+    };
 
     use super::*;
     use std::num::Wrapping;
@@ -297,15 +300,22 @@ mod tests {
         let task1 = tokio::spawn(async move {
             let recv = net_bob.receive(&alice).await;
             assert_eq!(
-                bc2wrap::serialize(&NetworkValue::<Wrapping::<u64>>::from_network(recv).unwrap())
-                    .unwrap(),
+                bc2wrap::serialize(
+                    &NetworkValue::<Wrapping::<u64>>::from_network(
+                        recv,
+                        DeSerializationRunTime::Tokio
+                    )
+                    .await
+                    .unwrap()
+                )
+                .unwrap(),
                 bc2wrap::serialize(&NetworkValue::RingValue(Wrapping::<u64>(1234))).unwrap()
             );
         });
 
         let task2 = tokio::spawn(async move {
             let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
-            net_alice.send(value.to_network(), &bob).await
+            net_alice.send(Arc::new(value.to_network()), &bob).await
         });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
@@ -320,13 +330,13 @@ mod tests {
 
         let net_alice = net_producer.user_net(alice, NetworkMode::Sync, None);
 
-        let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
+        let value = Arc::new(NetworkValue::RingValue(Wrapping::<u64>(1234)).to_network());
         // First send should succeed
-        let result1 = net_alice.send(value.clone().to_network(), &bob).await;
+        let result1 = net_alice.send(value.clone(), &bob).await;
         assert!(result1.is_ok());
 
         // Second send to same receiver in same round should fail
-        let result2 = net_alice.send(value.to_network(), &bob).await;
+        let result2 = net_alice.send(value.clone(), &bob).await;
         assert!(result2.is_err());
         let error_msg = result2.unwrap_err().to_string();
         assert!(error_msg

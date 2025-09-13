@@ -78,7 +78,7 @@ impl SecretDistributions for RealSecretDistributions {
             //(could do j in [0,bound], but we keep it closer to NIST doc notation)
             for j in 1..=bound + 1 {
                 let next_bit = b.pop().expect("validated sufficient bits");
-                ei += next_bit * Z::from_u128(1 << (j - 1));
+                ei += next_bit * (1 << (j - 1));
             }
             res.push(ei);
         }

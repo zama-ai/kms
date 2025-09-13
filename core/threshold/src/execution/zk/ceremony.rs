@@ -10,6 +10,7 @@ use crate::{
     },
     networking::value::BroadcastValue,
     session_id::SessionId,
+    thread_handles::spawn_compute_bound,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -881,13 +882,11 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                 // like creating the CRS. This is recommended over tokio::task::spawn_blocking
                 // since the tokio threadpool has a very high default upper limit.
                 // More info: https://ryhl.io/blog/async-what-is-blocking/
-                let (send, recv) = tokio::sync::oneshot::channel();
-                rayon::spawn_fifo(move || {
-                    let partial_proof = make_partial_proof_deterministic(&pp, &tau, round, &r, sid);
-                    let _ = send.send(partial_proof);
-                });
+                let proof = spawn_compute_bound(move || {
+                    make_partial_proof_deterministic(&pp, &tau, round, &r, sid)
+                })
+                .await?;
 
-                let proof = recv.await?;
                 let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
 
                 // nobody else should be broadcasting so we do not process results
@@ -921,12 +920,11 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                                     // We move pp and then let the blocking thread return it to pp_tmp
                                     // this will avoid cloning the whole pp which is just two vectors.
                                     // The rayon threadpool is used again (see comment above).
-                                    let (send, recv) = tokio::sync::oneshot::channel();
-                                    rayon::spawn_fifo(move || {
+                                    let (ver, pp_tmp) = spawn_compute_bound(move || {
                                         let res = verify_proof(&pp, &proof, round, sid);
-                                        let _ = send.send((res, pp));
-                                    });
-                                    let (ver, pp_tmp) = recv.await?;
+                                        (res, pp)
+                                    })
+                                    .await?;
                                     pp = pp_tmp;
 
                                     // Step 5 of CRS-Gen.Update from the NIST spec

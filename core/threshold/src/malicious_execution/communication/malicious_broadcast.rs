@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use aes_prng::AesRng;
+use std::sync::Arc;
 use tonic::async_trait;
 
 use crate::{
@@ -16,7 +17,7 @@ use crate::{
         },
         runtime::{party::Role, session::BaseSessionHandles},
     },
-    networking::value::{BcastHash, BroadcastValue, NetworkValue},
+    networking::value::{BroadcastValue, NetworkValue},
     ProtocolDescription,
 };
 
@@ -36,7 +37,7 @@ impl ProtocolDescription for MaliciousBroadcastDrop {
 impl Broadcast for MaliciousBroadcastDrop {
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
-        _session: &B,
+        _session: &mut B,
         _senders: &HashSet<Role>,
         _my_message: Option<BroadcastValue<Z>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
@@ -61,7 +62,7 @@ impl ProtocolDescription for MaliciousBroadcastSender {
 impl Broadcast for MaliciousBroadcastSender {
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
-        session: &B,
+        session: &mut B,
         senders: &HashSet<Role>,
         my_message: Option<BroadcastValue<Z>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
@@ -98,7 +99,7 @@ impl Broadcast for MaliciousBroadcastSender {
                     if my_role != *other_role {
                         session
                             .network()
-                            .send(malicious_msg.to_network(), other_role)
+                            .send(Arc::new(malicious_msg.to_network()), other_role)
                             .await?;
                     }
                 }
@@ -127,26 +128,16 @@ impl Broadcast for MaliciousBroadcastSender {
         let msg = round1_data;
         send_to_all(session, &my_role, NetworkValue::EchoBatch(msg.clone())).await?;
         // adding own echo to the map
-        let mut echos_count: HashMap<(Role, BroadcastValue<Z>), u32> =
+        let echos_count: HashMap<(Role, BroadcastValue<Z>), u32> =
             msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
         // retrieve echos from all parties
-        let mut registered_votes = receive_echos_from_all_batched(
+        let (mut registered_votes, mut map_hash_to_value) = receive_echos_from_all_batched(
             session,
             &my_role,
             &mut non_answering_parties,
-            &mut echos_count,
+            echos_count,
         )
         .await?;
-
-        let mut map_hash_to_value: HashMap<(Role, BcastHash), BroadcastValue<Z>> = echos_count
-            .into_iter()
-            .map(|((role, value), _)| {
-                let hash = value.to_bcast_hash().map_err(|e| {
-                    anyhow::anyhow!("Failed to compute broadcast hash for role {}: {}", role, e)
-                })?;
-                Ok(((role, hash), value))
-            })
-            .collect::<anyhow::Result<HashMap<_, _>>>()?;
 
         // Communication round 3
         // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
@@ -214,7 +205,7 @@ impl ProtocolDescription for MaliciousBroadcastSenderEcho {
 impl Broadcast for MaliciousBroadcastSenderEcho {
     async fn execute<Z: Ring, B: BaseSessionHandles>(
         &self,
-        session: &B,
+        session: &mut B,
         senders: &HashSet<Role>,
         my_message: Option<BroadcastValue<Z>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
@@ -249,10 +240,16 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
                 for other_role in session.roles().iter() {
                     if my_role != *other_role && *other_role != role_to_lie_to {
                         let msg = NetworkValue::Send(message.clone());
-                        session.network().send(msg.to_network(), other_role).await?;
+                        session
+                            .network()
+                            .send(Arc::new(msg.to_network()), other_role)
+                            .await?;
                     } else if *other_role == role_to_lie_to {
                         let msg = NetworkValue::Send(random_message.clone());
-                        session.network().send(msg.to_network(), other_role).await?;
+                        session
+                            .network()
+                            .send(Arc::new(msg.to_network()), other_role)
+                            .await?;
                     }
                 }
             }
@@ -283,24 +280,26 @@ impl Broadcast for MaliciousBroadcastSenderEcho {
         for other_role in session.roles().iter() {
             if my_role != *other_role && *other_role != role_to_lie_to {
                 let msg = NetworkValue::EchoBatch(msg_to_others.clone());
-                session.network().send(msg.to_network(), other_role).await?;
+                session
+                    .network()
+                    .send(Arc::new(msg.to_network()), other_role)
+                    .await?;
             } else if *other_role == role_to_lie_to {
                 let msg = NetworkValue::EchoBatch(msg_to_victim.clone());
-                session.network().send(msg.to_network(), other_role).await?;
+                session
+                    .network()
+                    .send(Arc::new(msg.to_network()), other_role)
+                    .await?;
             }
         }
         let msg = msg_to_others;
         // adding own echo to the map
-        let mut echos: HashMap<(Role, BroadcastValue<Z>), u32> =
+        let echos: HashMap<(Role, BroadcastValue<Z>), u32> =
             msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
         // retrieve echos from all parties
-        let _ = receive_echos_from_all_batched(
-            session,
-            &my_role,
-            &mut non_answering_parties,
-            &mut echos,
-        )
-        .await?;
+        let _ =
+            receive_echos_from_all_batched(session, &my_role, &mut non_answering_parties, echos)
+                .await?;
 
         //Stop voting now
         Ok(round1_data)

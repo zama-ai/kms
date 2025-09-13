@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{
     preprocessing::BasePreprocessing,
     triple::{mult_list, open_list},
@@ -5,6 +7,7 @@ use super::{
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Solve},
     execution::{runtime::session::BaseSessionHandles, sharing::share::Share},
+    thread_handles::spawn_compute_bound,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -44,26 +47,36 @@ impl BitGenEven for SecureBitGenEven {
         preproc: &mut P,
         session: &mut Ses,
     ) -> anyhow::Result<Vec<Share<Z>>> {
-        let a = preproc.next_random_vec(amount)?;
+        let a = Arc::new(preproc.next_random_vec(amount)?);
+
         let triples = preproc.next_triple_vec(amount)?;
-        let s = mult_list(&a, &a, triples, session).await?;
-        let v = a
-            .iter()
-            .zip_eq(s) // May panic but would imply a bug in `mult_list`
-            .map(|(cur_a, cur_s)| (*cur_a) + cur_s)
-            .collect_vec();
+        let s = mult_list(Arc::clone(&a), Arc::clone(&a), triples, session).await?;
+
+        let compute_a = Arc::clone(&a);
+        let v = spawn_compute_bound(move || {
+            compute_a
+                .iter()
+                .zip_eq(s) // May panic but would imply a bug in `mult_list`
+                .map(|(cur_a, cur_s)| cur_s + cur_a)
+                .collect_vec()
+        })
+        .await?;
         let opened_v_vec = open_list(&v, session).await?;
 
-        opened_v_vec
-            .iter()
-            .zip_eq(a) // May panic but would imply a bug in `open_list`
-            .map(|(cur_v, cur_a)| {
-                let cur_r = Z::solve(cur_v)?;
-                let cur_d = Z::ZERO - (Z::ONE + Z::TWO * cur_r);
-                let cur_b = (cur_a - cur_r) * Z::invert(cur_d)?;
-                Ok(cur_b)
-            })
-            .collect()
+        //let a = Arc::into_inner(a).ok_or_else(|| anyhow_error_and_log("Failed to unarc a"))?;
+        spawn_compute_bound(move || {
+            opened_v_vec
+                .iter()
+                .zip_eq(a.iter()) // May panic but would imply a bug in `open_list`
+                .map(|(cur_v, cur_a)| {
+                    let cur_r = Z::solve(cur_v)?;
+                    let cur_d = Z::ZERO - (Z::ONE + cur_r.mul_by_u128(2));
+                    let cur_b = (cur_a - cur_r) * Z::invert(cur_d)?;
+                    Ok(cur_b)
+                })
+                .try_collect()
+        })
+        .await?
     }
 }
 

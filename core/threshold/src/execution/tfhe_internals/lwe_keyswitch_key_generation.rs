@@ -19,7 +19,7 @@ use itertools::Itertools;
 use tfhe::{
     core_crypto::{
         commons::math::decomposition::DecompositionLevel,
-        prelude::{ByteRandomGenerator, LweKeyswitchKey, SeededLweKeyswitchKey},
+        prelude::{LweKeyswitchKey, ParallelByteRandomGenerator, SeededLweKeyswitchKey},
     },
     shortint::parameters::{DecompositionBaseLog, DecompositionLevelCount, LweDimension},
 };
@@ -39,7 +39,7 @@ pub fn generate_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
 where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
 {
     let decomp_base_log = lwe_keyswitch_key.decomposition_base_log();
     let decomp_level_count = lwe_keyswitch_key.decomposition_level_count();
@@ -93,7 +93,7 @@ pub fn allocate_and_generate_new_lwe_keyswitch_key<Z, Gen, const EXTENSION_DEGRE
 where
     Z: BaseRing,
     ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
 {
     let mut new_lwe_keyswitch_key = LweKeySwitchKeyShare::new(
         decomp_base_log,
@@ -128,7 +128,7 @@ fn generate_ksk_share<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -168,7 +168,7 @@ pub(crate) async fn generate_key_switch_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
@@ -201,7 +201,7 @@ pub(crate) async fn generate_compressed_key_switch_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     S: BaseSessionHandles,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
     input_lwe_sk: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,

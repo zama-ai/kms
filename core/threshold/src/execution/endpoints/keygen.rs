@@ -10,7 +10,7 @@ use crate::{
             preprocessing::{DKGPreprocessing, RandomPreprocessing},
             triple::open_list,
         },
-        runtime::session::BaseSessionHandles,
+        runtime::session::{BaseSessionHandles, DeSerializationRunTime},
         tfhe_internals::{
             compression_decompression_key::CompressionPrivateKeyShares,
             compression_decompression_key_generation::{
@@ -226,6 +226,8 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
     {
+        // Messages exchanged are big so we deserialize them on Rayon
+        session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
         if Z::BIT_LENGTH == 64 {
             if let DKGParams::WithSnS(_) = params {
                 return Err(anyhow_error_and_log(
@@ -266,6 +268,8 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
     {
+        // Messages exchanged are big so we deserialize them on Rayon
+        session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
         if Z::BIT_LENGTH == 64 {
             if let DKGParams::WithSnS(_) = params {
                 return Err(anyhow_error_and_log(
@@ -1103,6 +1107,14 @@ pub mod tests {
         tests::helper::tests_and_benches::execute_protocol_small,
     };
 
+    // NOTE: Most tests below are ignored because they are very slow and mostly redundant.
+    // We only run:
+    // - keygen_params_test_bk_sns_f4 which runs DKG for the test params on a degree 4 extension
+    //   with a completely dummy preprocessing
+    // - integration_keygen_params_test_bk_sns_existing_compression_sk_f4 which runs DKG for the test
+    //   params on a degree 4 extension, using a less dummy preprocessing
+    //   (i.e. dummy preprocessing is used to fill DKGPreprocessing instead of directly used)
+
     const DUMMY_PREPROC_SEED: u64 = 42;
 
     #[cfg(not(target_arch = "aarch64"))]
@@ -1324,24 +1336,25 @@ pub mod tests {
     #[cfg(feature = "extension_degree_8")]
     #[tokio::test]
     #[ignore]
-    async fn keygen_params_bk_sns_f8() {
-        keygen_params_bk_sns::<8>().await
+    async fn keygen_params_test_bk_sns_f8() {
+        keygen_params_test_bk_sns::<8>().await
     }
 
     #[tokio::test]
-    async fn keygen_params_bk_sns_f4() {
-        keygen_params_bk_sns::<4>().await
+    #[serial_test::serial]
+    async fn keygen_params_test_bk_sns_f4() {
+        keygen_params_test_bk_sns::<4>().await
     }
 
     #[cfg(feature = "extension_degree_3")]
     #[tokio::test]
     #[ignore]
-    async fn keygen_params_bk_sns_f3() {
-        keygen_params_bk_sns::<3>().await
+    async fn keygen_params_test_bk_sns_f3() {
+        keygen_params_test_bk_sns::<3>().await
     }
 
     ///Tests related to [`PARAMS_TEST_BK_SNS`]
-    async fn keygen_params_bk_sns<const EXTENSION_DEGREE: usize>()
+    async fn keygen_params_test_bk_sns<const EXTENSION_DEGREE: usize>()
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1362,31 +1375,36 @@ pub mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    async fn integration_keygen_params_bk_sns_f8() {
-        integration_keygen_params_bk_sns::<8>(KeySetConfig::default()).await
+    #[ignore] // Ignored because we run the same test for degree 4 extension
+    async fn integration_keygen_params_test_bk_sns_f8() {
+        integration_keygen_params_test_bk_sns::<8>(KeySetConfig::default()).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    async fn integration_keygen_params_bk_sns_f4() {
-        integration_keygen_params_bk_sns::<4>(KeySetConfig::default()).await
+    #[serial_test::serial]
+    async fn integration_keygen_params_test_bk_sns_f4() {
+        integration_keygen_params_test_bk_sns::<4>(KeySetConfig::default()).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    async fn integration_keygen_params_bk_sns_f3() {
-        integration_keygen_params_bk_sns::<3>(KeySetConfig::default()).await
+    #[ignore] // Ignored because we run the same test for degree 4 extension
+    async fn integration_keygen_params_test_bk_sns_f3() {
+        integration_keygen_params_test_bk_sns::<3>(KeySetConfig::default()).await
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
-    async fn integration_keygen_params_bk_sns_existing_compression_sk_f4() {
-        integration_keygen_params_bk_sns::<4>(KeySetConfig::use_existing_compression_sk()).await
+    #[serial_test::serial]
+    async fn integration_keygen_params_test_bk_sns_existing_compression_sk_f4() {
+        integration_keygen_params_test_bk_sns::<4>(KeySetConfig::use_existing_compression_sk())
+            .await
     }
 
     #[cfg(feature = "slow_tests")]
     ///Tests related to [`PARAMS_TEST_BK_SNS`] using _less fake_ preprocessing
-    async fn integration_keygen_params_bk_sns<const EXTENSION_DEGREE: usize>(
+    async fn integration_keygen_params_test_bk_sns<const EXTENSION_DEGREE: usize>(
         keyset_config: KeySetConfig,
     ) where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Solve + Invert,
@@ -1552,6 +1570,7 @@ pub mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
+    #[serial_test::serial]
     async fn decompression_keygen_f4() {
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;
@@ -1563,6 +1582,7 @@ pub mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
+    #[serial_test::serial]
     async fn sns_compression_keygen_f4() {
         let params = PARAMS_TEST_BK_SNS;
         let num_parties = 4;

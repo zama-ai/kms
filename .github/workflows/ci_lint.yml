@@ -9,8 +9,8 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
-  contents: read
-  actions: read
+  contents: read  # Read repository contents for linting
+  actions: read   # Read workflow files for actionlint validation
 
 env:
   ACTIONLINT_VERSION: 1.6.27
@@ -36,8 +36,8 @@ jobs:
 
   sast-check:
     permissions:
-      security-events: write
-      actions: read
-      contents: read
+      security-events: write  # Write security findings to GitHub Security tab
+      actions: read          # Read workflow files for SAST analysis
+      contents: read         # Read repository contents for security scanning
     name: ci_lint/sast-check (bpr)
     uses: zama-ai/ci-templates/.github/workflows/sast-zizmor.yml@7dafeba7efe0df52da9fb9dc0e8a84277a7dd34a

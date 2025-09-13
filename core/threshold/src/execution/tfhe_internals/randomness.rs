@@ -1,11 +1,12 @@
 use crate::algebra::{galois_rings::common::ResiduePoly, structure_traits::BaseRing};
 
 use itertools::Itertools;
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use tfhe::{
     core_crypto::commons::{
         math::random::{RandomGenerable, RandomGenerator, Uniform},
         parameters::{GlweSize, LweCiphertextCount, LweSize},
-        traits::ByteRandomGenerator,
+        traits::ParallelByteRandomGenerator,
     },
     shortint::parameters::{DecompositionLevelCount, GlweDimension, LweDimension, PolynomialSize},
 };
@@ -25,7 +26,7 @@ use super::parameters::EncryptionType;
 ///for now the noise part is put into a vector in advance and poped when needed
 pub struct MPCEncryptionRandomGenerator<
     Z: BaseRing,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 > {
     pub mask: MPCMaskRandomGenerator<Gen>,
@@ -37,7 +38,7 @@ pub struct MPCNoiseRandomGenerator<Z: BaseRing, const EXTENSION_DEGREE: usize> {
     pub vec: Vec<ResiduePoly<Z, EXTENSION_DEGREE>>,
 }
 
-pub struct MPCMaskRandomGenerator<Gen: ByteRandomGenerator> {
+pub struct MPCMaskRandomGenerator<Gen: ParallelByteRandomGenerator> {
     pub gen: RandomGenerator<Gen>,
 }
 
@@ -52,7 +53,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
         level: DecompositionLevelCount,
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
-    ) -> impl Iterator<Item = Self> {
+    ) -> impl IndexedParallelIterator<Item = Self> {
         let noise_elements = noise_elements_per_ggsw(level, glwe_size, polynomial_size);
         self.fork(lwe_dimension.0, noise_elements)
     }
@@ -60,7 +61,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
     pub(crate) fn fork_lwe_list_to_lwe(
         &mut self,
         lwe_count: LweCiphertextCount,
-    ) -> impl Iterator<Item = Self> {
+    ) -> impl IndexedParallelIterator<Item = Self> {
         let noise_elements = 1_usize;
         self.fork(lwe_count.0, noise_elements)
     }
@@ -69,7 +70,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
         &mut self,
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
-    ) -> impl Iterator<Item = Self> {
+    ) -> impl IndexedParallelIterator<Item = Self> {
         let noise_elements = noise_elements_per_glwe(polynomial_size);
         self.fork(glwe_size.0, noise_elements)
     }
@@ -79,7 +80,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
         level: DecompositionLevelCount,
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
-    ) -> impl Iterator<Item = Self> {
+    ) -> impl IndexedParallelIterator<Item = Self> {
         let noise_elements = noise_elements_per_ggsw_level(glwe_size, polynomial_size);
         self.fork(level.0, noise_elements)
     }
@@ -88,7 +89,11 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
     ///so to fork we simply split the vector into chunks of correct size.
     ///
     /// This panics if [`self`] contains less than n_child * size_child elements
-    pub(crate) fn fork(&mut self, n_child: usize, size_child: usize) -> impl Iterator<Item = Self> {
+    pub(crate) fn fork(
+        &mut self,
+        n_child: usize,
+        size_child: usize,
+    ) -> impl IndexedParallelIterator<Item = Self> {
         // This can panic if the vector is not large enough
         let noise_vec = self.vec.drain(0..n_child * size_child).collect_vec();
 
@@ -99,11 +104,11 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> MPCNoiseRandomGenerator<Z, EXTE
             .map(|chunk| chunk.collect())
             .collect_vec();
 
-        noise_iter.into_iter().map(|vec| Self { vec })
+        noise_iter.into_par_iter().map(|vec| Self { vec })
     }
 }
 
-impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
+impl<Gen: ParallelByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
     pub fn new_from_seed(seed: XofSeed) -> Self {
         Self {
             gen: RandomGenerator::<Gen>::new(seed),
@@ -130,7 +135,7 @@ impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
         encryption_type: EncryptionType,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ) -> Result<impl IndexedParallelIterator<Item = Self>, ForkError> {
         let mask_bytes = mask_bytes_per_ggsw(level, glwe_size, polynomial_size, encryption_type);
         self.try_fork(lwe_dimension.0, mask_bytes)
     }
@@ -140,7 +145,7 @@ impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
         lwe_count: LweCiphertextCount,
         lwe_size: LweSize,
         encryption_type: EncryptionType,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ) -> Result<impl IndexedParallelIterator<Item = Self>, ForkError> {
         let mask_bytes = mask_bytes_per_lwe(lwe_size.to_lwe_dimension(), encryption_type);
         self.try_fork(lwe_count.0, mask_bytes)
     }
@@ -150,7 +155,7 @@ impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
         encryption_type: EncryptionType,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ) -> Result<impl IndexedParallelIterator<Item = Self>, ForkError> {
         let mask_bytes = mask_bytes_per_glwe(
             glwe_size.to_glwe_dimension(),
             polynomial_size,
@@ -165,7 +170,7 @@ impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
         encryption_type: EncryptionType,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ) -> Result<impl IndexedParallelIterator<Item = Self>, ForkError> {
         let mask_bytes = mask_bytes_per_ggsw_level(glwe_size, polynomial_size, encryption_type);
         self.try_fork(level.0, mask_bytes)
     }
@@ -174,15 +179,15 @@ impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
         &mut self,
         n_child: usize,
         mask_bytes: usize,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ) -> Result<impl IndexedParallelIterator<Item = Self>, ForkError> {
         // We try to fork the generators
-        let mask_iter = self.gen.try_fork(n_child, mask_bytes)?;
+        let mask_iter = self.gen.par_try_fork(n_child, mask_bytes)?;
         // We return a proper iterator.
         Ok(mask_iter.map(|gen| Self { gen }))
     }
 }
 
-impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
+impl<Z: BaseRing, Gen: ParallelByteRandomGenerator, const EXTENSION_DEGREE: usize>
     MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>
 {
     pub(crate) fn new_from_seed(seed: XofSeed) -> Self {
@@ -230,7 +235,7 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
         encryption_type: EncryptionType,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ) -> Result<impl IndexedParallelIterator<Item = Self>, ForkError> {
         let mask_iter = self.mask.fork_bsk_to_ggsw(
             lwe_dimension,
             level,
@@ -249,7 +254,7 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
         lwe_count: LweCiphertextCount,
         lwe_size: LweSize,
         encryption_type: EncryptionType,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ) -> Result<impl IndexedParallelIterator<Item = Self>, ForkError> {
         let mask_iter = self
             .mask
             .fork_lwe_list_to_lwe(lwe_count, lwe_size, encryption_type)?;
@@ -262,7 +267,7 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
         encryption_type: EncryptionType,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ) -> Result<impl IndexedParallelIterator<Item = Self>, ForkError> {
         let mask_iter =
             self.mask
                 .fork_ggsw_level_to_glwe(glwe_size, polynomial_size, encryption_type)?;
@@ -279,7 +284,7 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
         glwe_size: GlweSize,
         polynomial_size: PolynomialSize,
         encryption_type: EncryptionType,
-    ) -> Result<impl Iterator<Item = Self>, ForkError> {
+    ) -> Result<impl IndexedParallelIterator<Item = Self>, ForkError> {
         let mask_iter = self.mask.fork_ggsw_to_ggsw_levels(
             level,
             glwe_size,
@@ -298,12 +303,12 @@ impl<Z: BaseRing, Gen: ByteRandomGenerator, const EXTENSION_DEGREE: usize>
 /// `mask_iter` and `noise_iter` MUST have the same length
 fn map_to_encryption_generator<
     Z: BaseRing,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     const EXTENSION_DEGREE: usize,
 >(
-    mask_iter: impl Iterator<Item = MPCMaskRandomGenerator<Gen>>,
-    noise_iter: impl Iterator<Item = MPCNoiseRandomGenerator<Z, EXTENSION_DEGREE>>,
-) -> impl Iterator<Item = MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>> {
+    mask_iter: impl IndexedParallelIterator<Item = MPCMaskRandomGenerator<Gen>>,
+    noise_iter: impl IndexedParallelIterator<Item = MPCNoiseRandomGenerator<Z, EXTENSION_DEGREE>>,
+) -> impl IndexedParallelIterator<Item = MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>> {
     // `zip_eq` may panic but this only occurs if preconditions are not met, which would be a bug in this file
     mask_iter
         .zip_eq(noise_iter)

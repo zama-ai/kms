@@ -26,25 +26,60 @@ use crate::{
     },
     networking::value::BroadcastValue,
     session_id::SessionId,
+    thread_handles::spawn_compute_bound,
     ProtocolDescription,
 };
 use anyhow::Context;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use serde::{Deserialize, Serialize};
-use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
+use std::{clone::Clone, sync::Arc};
 use tfhe::named::Named;
 use tfhe_versionable::{Upgrade, Version, Versionize, VersionsDispatch};
 use tonic::async_trait;
-use tracing::instrument;
+use tracing::{instrument, Instrument};
 
 /// Trait to capture the primitives of the PRSS/PRZS after init.
 #[async_trait]
 pub trait PRSSPrimitives<Z>: ProtocolDescription + Send + Sync {
-    fn prss_next(&mut self, party_id: Role) -> anyhow::Result<Z>;
-    fn przs_next(&mut self, party_id: Role, threshold: u8) -> anyhow::Result<Z>;
-    fn mask_next(&mut self, party_id: Role, bd: u128) -> anyhow::Result<Z>;
+    async fn prss_next(&mut self, party_id: Role) -> anyhow::Result<Z> {
+        self.prss_next_vec(party_id, 1)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow_error_and_log("No PRSS value returned!"))
+    }
+
+    async fn przs_next(&mut self, party_id: Role, threshold: u8) -> anyhow::Result<Z> {
+        self.przs_next_vec(party_id, threshold, 1)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow_error_and_log("No PRZS value returned!"))
+    }
+
+    async fn mask_next(&mut self, party_id: Role, bd: u128) -> anyhow::Result<Z> {
+        self.mask_next_vec(party_id, bd, 1)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow_error_and_log("No mask value returned!"))
+    }
+
+    async fn prss_next_vec(&mut self, party_id: Role, amount: usize) -> anyhow::Result<Vec<Z>>;
+    async fn przs_next_vec(
+        &mut self,
+        party_id: Role,
+        threshold: u8,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>>;
+    async fn mask_next_vec(
+        &mut self,
+        party_id: Role,
+        bd: u128,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>>;
 
     async fn prss_check<S: BaseSessionHandles>(
         &self,
@@ -218,8 +253,8 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandom> PRSSInit<Z>
         }
 
         Ok(PRSSSetup {
-            sets: party_prss_sets,
-            alpha_powers,
+            sets: Arc::new(party_prss_sets),
+            alpha_powers: Arc::new(alpha_powers),
         })
     }
 }
@@ -297,8 +332,11 @@ impl<Z: ErrorCorrect + Invert + PRSSConversions, A: AgreeRandomFromShare, V: Vss
         }
 
         Ok(PRSSSetup {
-            sets: party_prss_sets,
-            alpha_powers: embed_parties_and_compute_alpha_powers(n, session.threshold() as usize)?,
+            sets: Arc::new(party_prss_sets),
+            alpha_powers: Arc::new(embed_parties_and_compute_alpha_powers(
+                n,
+                session.threshold() as usize,
+            )?),
         })
     }
 }
@@ -368,12 +406,14 @@ pub enum PRSSSetupVersioned<Z: Default + Clone + Serialize> {
     V0(PRSSSetup<Z>),
 }
 
+/// This struct is cheap to clone as it's made of Arc
+/// This is because it's cloned for every new session
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(PRSSSetupVersioned)]
 pub struct PRSSSetup<Z: Default + Clone + Serialize> {
     // all possible subsets of n-t parties (A) that contain Pi and their shared PRF keys
-    pub(crate) sets: Vec<PrssSet<Z>>,
-    pub(crate) alpha_powers: Vec<Vec<Z>>,
+    pub(crate) sets: Arc<Vec<PrssSet<Z>>>,
+    pub(crate) alpha_powers: Arc<Vec<Vec<Z>>>,
 }
 
 impl<Z: Default + Clone + Serialize> ProtocolDescription for PRSSSetup<Z> {
@@ -396,7 +436,10 @@ impl<Z: Default + Clone + Serialize> Named for PRSSSetup<Z> {
 #[cfg(feature = "testing")]
 impl<Z: Default + Clone + Serialize> PRSSSetup<Z> {
     pub fn new_testing_prss(sets: Vec<PrssSet<Z>>, alpha_powers: Vec<Vec<Z>>) -> Self {
-        Self { sets, alpha_powers }
+        Self {
+            sets: Arc::new(sets),
+            alpha_powers: Arc::new(alpha_powers),
+        }
     }
 }
 
@@ -416,7 +459,7 @@ pub struct PRSSState<Z: Default + Clone + Serialize, B: Broadcast> {
     /// PRSSSetup
     pub(crate) prss_setup: PRSSSetup<Z>,
     /// the initialized PRFs for each set
-    pub(crate) prfs: Vec<PrfAes>,
+    pub(crate) prfs: Arc<Vec<PrfAes>>,
     pub(crate) broadcast: B,
 }
 
@@ -494,15 +537,28 @@ where
     ///
     /// __NOTE__ : The output share is not uniformly random,
     /// and this method will panic if executed for Z an extension of Z64.
-    fn mask_next(&mut self, party_role: Role, bd: u128) -> anyhow::Result<Z> {
+    #[instrument(name="Mask.Next",skip_all,fields(batch_size=?amount))]
+    async fn mask_next_vec(
+        &mut self,
+        party_role: Role,
+        bd: u128,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
         let bd1 = bd << STATSEC;
-        let mut res = Z::ZERO;
 
-        for (i, set) in self.prss_setup.sets.iter().enumerate() {
+        //Cheap to clone as everything is an Arc or atomic types
+        let prfs = self.prfs.clone();
+        let prss_setup = self.prss_setup.clone();
+        let mask_ctr = self.counters.mask_ctr;
+
+        let res = spawn_compute_bound(move || {
+        (mask_ctr..mask_ctr + (amount as u128)).map(|ctr| {
+        let mut res = Z::ZERO;
+        for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
-                if let Some(aes_prf) = &self.prfs.get(i) {
-                    let phi0 = phi(&aes_prf.phi_aes, self.counters.mask_ctr, bd1)?;
-                    let phi1 = phi(&aes_prf.phi_aes, self.counters.mask_ctr + 1, bd1)?;
+                if let Some(aes_prf) = prfs.get(i) {
+                    let phi0 = phi(&aes_prf.phi_aes, ctr , bd1)?;
+                    let phi1 = phi(&aes_prf.phi_aes, ctr + 1, bd1)?;
                     let phi = phi0 + phi1;
 
                     // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
@@ -519,9 +575,11 @@ where
                 return Err(anyhow_error_and_log(format!("Called prss.mask_next() with party role {party_role} that is not in a precomputed set of parties!")));
             }
         }
+            Ok(res)}).try_collect()
+    }).instrument(tracing::Span::current()).await??;
 
-        // increase counter by two, since we have two phi calls above
-        self.counters.mask_ctr += 2;
+        // increase counter by two for each element generated, since we have two phi calls above
+        self.counters.mask_ctr += 2 * (amount as u128);
 
         Ok(res)
     }
@@ -530,13 +588,20 @@ where
     ///
     /// __NOTE__: telemetry is done at the caller because this function isn't batched
     /// and we want to avoid creating too many telemetry spans
-    fn prss_next(&mut self, party_role: Role) -> anyhow::Result<Z> {
-        let mut res = Z::ZERO;
+    #[instrument(name="PRSS.Next",skip_all,fields(batch_size=?amount))]
+    async fn prss_next_vec(&mut self, party_role: Role, amount: usize) -> anyhow::Result<Vec<Z>> {
+        //Cheap to clone as everything is an Arc or atomic types
+        let prfs = self.prfs.clone();
+        let prss_setup = self.prss_setup.clone();
+        let prss_ctr = self.counters.prss_ctr;
 
-        for (i, set) in self.prss_setup.sets.iter().enumerate() {
+        let res = spawn_compute_bound(move ||{
+            (prss_ctr..prss_ctr + (amount as u128)).map(|ctr| {
+        let mut res = Z::ZERO;
+        for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
-                if let Some(aes_prf) = &self.prfs.get(i) {
-                    let psi = psi(&aes_prf.psi_aes, self.counters.prss_ctr)?;
+                if let Some(aes_prf) = prfs.get(i) {
+                    let psi = psi(&aes_prf.psi_aes, ctr)?;
 
                     // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the precomputed f_a_points (indexed from zero)
                     let f_a = set.f_a_points[&party_role];
@@ -551,8 +616,10 @@ where
                 return Err(anyhow_error_and_log(format!("Called prss.next() with party role {party_role} that is not in a precomputed set of parties!")));
             }
         }
+        Ok(res)}).try_collect()
+    }).instrument(tracing::Span::current()).await??;
 
-        self.counters.prss_ctr += 1;
+        self.counters.prss_ctr += amount as u128;
 
         Ok(res)
     }
@@ -563,18 +630,30 @@ where
     ///
     /// __NOTE__: telemetry is done at the caller because this function isn't batched
     /// and we want to avoid creating too many telemetry spans
-    fn przs_next(&mut self, party_role: Role, threshold: u8) -> anyhow::Result<Z> {
-        let mut res = Z::ZERO;
+    #[instrument(name="PRZS.Next",skip_all,fields(batch_size=?amount))]
+    async fn przs_next_vec(
+        &mut self,
+        party_role: Role,
+        threshold: u8,
+        amount: usize,
+    ) -> anyhow::Result<Vec<Z>> {
+        //Cheap to clone as everything is an Arc or atomic types
+        let prfs = self.prfs.clone();
+        let prss_setup = self.prss_setup.clone();
+        let przs_ctr = self.counters.przs_ctr;
 
-        for (i, set) in self.prss_setup.sets.iter().enumerate() {
+        let res = spawn_compute_bound(move ||{
+            (przs_ctr..przs_ctr + (amount as u128)).map(|ctr| {
+        let mut res = Z::ZERO;
+        for (i, set) in prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_role) {
-                if let Some(aes_prf) = &self.prfs.get(i) {
+                if let Some(aes_prf) = prfs.get(i) {
                     for j in 1..=threshold {
-                        let chi = chi(&aes_prf.chi_aes, self.counters.przs_ctr, j)?;
+                        let chi = chi(&aes_prf.chi_aes, ctr, j)?;
                         // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
                         let f_a = set.f_a_points[&party_role];
                         // power of alpha_i^j
-                        let alpha_j = self.prss_setup.alpha_powers[&party_role][j as usize];
+                        let alpha_j = prss_setup.alpha_powers[&party_role][j as usize];
                         res += f_a * alpha_j * chi;
                     }
                 } else {
@@ -586,8 +665,10 @@ where
                 return Err(anyhow_error_and_log(format!("Called przs.next() with party role {party_role} that is not in a precomputed set of parties!")));
             }
         }
+        Ok(res)}).try_collect()
+}).instrument(tracing::Span::current()).await??;
 
-        self.counters.przs_ctr += 1;
+        self.counters.przs_ctr += amount as u128;
 
         Ok(res)
     }
@@ -899,7 +980,7 @@ impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions> DerivePRSSState<
         let mut prfs = Vec::new();
 
         // initialize AES PRFs once with random agreed keys and sid
-        for set in &self.sets {
+        for set in self.sets.iter() {
             let chi_aes = ChiAes::new(&set.set_key, sid);
             let psi_aes = PsiAes::new(&set.set_key, sid);
             let phi_aes = PhiAes::new(&set.set_key, sid);
@@ -914,7 +995,7 @@ impl<Z: RingWithExceptionalSequence + Invert + PRSSConversions> DerivePRSSState<
         PRSSState {
             counters: PRSSCounters::default(),
             prss_setup: self.clone(),
-            prfs,
+            prfs: Arc::new(prfs),
             broadcast: SyncReliableBroadcast::default(),
         }
     }
@@ -1019,7 +1100,7 @@ mod tests {
     //NOTE: Need to generalize (some of) the tests to ResiduePolyF4Z64 ?
     impl<Z: RingWithExceptionalSequence + Invert> PRSSSetup<Z> {
         // initializes the epoch for a single party (without actual networking)
-        pub fn testing_party_epoch_init(
+        pub async fn testing_party_epoch_init(
             num_parties: usize,
             threshold: usize,
             party_role: Role,
@@ -1042,10 +1123,9 @@ mod tests {
 
             let mut sess =
                 get_networkless_base_session_for_parties(num_parties, threshold as u8, party_role);
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            let _guard = rt.enter();
-            let random_agreed_keys = rt
-                .block_on(async { DummyAgreeRandom::default().execute(&mut sess).await })
+            let random_agreed_keys = DummyAgreeRandom::default()
+                .execute(&mut sess)
+                .await
                 .unwrap();
 
             let f_a_points = party_compute_f_a_points(&all_roles, &party_sets)?;
@@ -1064,7 +1144,10 @@ mod tests {
 
             tracing::debug!("epoch init: {:?}", sets);
 
-            Ok(PRSSSetup { sets, alpha_powers })
+            Ok(PRSSSetup {
+                sets: Arc::new(sets),
+                alpha_powers: Arc::new(alpha_powers),
+            })
         }
     }
 
@@ -1095,8 +1178,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_prss_mask_no_network_bound() {
+    #[tokio::test]
+    async fn test_prss_mask_no_network_bound() {
         let num_parties = 7;
         let threshold = 2;
         let binom_nt: usize = num_integer::binomial(num_parties, threshold);
@@ -1107,28 +1190,27 @@ mod tests {
 
         let sid = SessionId::from(42);
 
-        let shares = all_roles
-            .iter()
-            .map(|p| {
-                let prss_setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(
-                    num_parties,
-                    threshold,
-                    *p,
-                )
-                .unwrap();
+        let shares = join_all(all_roles.iter().map(|p| async {
+            let prss_setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(
+                num_parties,
+                threshold,
+                *p,
+            )
+            .await
+            .unwrap();
 
-                let mut state = prss_setup.new_prss_session_state(sid);
+            let mut state = prss_setup.new_prss_session_state(sid);
 
-                assert_eq!(state.counters.mask_ctr, 0);
+            assert_eq!(state.counters.mask_ctr, 0);
 
-                let nextval = state.mask_next(*p, B_SWITCH_SQUASH).unwrap();
+            let nextval = state.mask_next(*p, B_SWITCH_SQUASH).await.unwrap();
 
-                // prss state counter must have increased after call to next
-                assert_eq!(state.counters.mask_ctr, 2);
+            // prss state counter must have increased after call to next
+            assert_eq!(state.counters.mask_ctr, 2);
 
-                Share::new(*p, nextval)
-            })
-            .collect();
+            Share::new(*p, nextval)
+        }))
+        .await;
 
         let e_shares = ShamirSharings::create(shares);
 
@@ -1251,14 +1333,16 @@ mod tests {
     #[case(1)]
     #[case(2)]
     #[case(23)]
-    fn test_prss_mask_next_ctr(#[case] rounds: u128) {
+    async fn test_prss_mask_next_ctr(#[case] rounds: u128) {
         let num_parties = 4;
         let threshold = 1;
 
         let sid = SessionId::from(23425);
 
         let role_one = Role::indexed_from_one(1);
-        let prss = PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one).unwrap();
+        let prss = PRSSSetup::testing_party_epoch_init(num_parties, threshold, role_one)
+            .await
+            .unwrap();
 
         let mut state = prss.new_prss_session_state(sid);
 
@@ -1266,7 +1350,7 @@ mod tests {
 
         let mut prev = ResiduePolyF4Z128::ZERO;
         for _ in 0..rounds {
-            let cur = state.mask_next(role_one, B_SWITCH_SQUASH).unwrap();
+            let cur = state.mask_next(role_one, B_SWITCH_SQUASH).await.unwrap();
             // check that values change on each call.
             assert_ne!(prev, cur);
             prev = cur;
@@ -1284,7 +1368,7 @@ mod tests {
     #[case(4, 1)]
     #[case(10, 3)]
     /// check that points computed on f_A are well-formed
-    fn test_prss_fa_poly(#[case] num_parties: usize, #[case] threshold: usize) {
+    async fn test_prss_fa_poly(#[case] num_parties: usize, #[case] threshold: usize) {
         let all_roles = (1..=num_parties)
             .map(Role::indexed_from_one)
             .collect::<Vec<_>>();
@@ -1294,6 +1378,7 @@ mod tests {
             threshold,
             Role::indexed_from_one(1),
         )
+        .await
         .unwrap();
 
         for set in prss.sets.iter() {
@@ -1308,14 +1393,15 @@ mod tests {
         }
     }
 
-    #[test]
+    #[tokio::test]
     #[should_panic(expected = "PRSS set size is too large!")]
-    fn test_prss_too_large() {
+    async fn test_prss_too_large() {
         let _prss = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(
             22,
             7,
             Role::indexed_from_one(1),
         )
+        .await
         .unwrap();
     }
 
@@ -1351,8 +1437,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_przs() {
+    #[tokio::test]
+    async fn test_przs() {
         let num_parties = 7;
         let threshold = 2;
 
@@ -1361,28 +1447,24 @@ mod tests {
             .map(Role::indexed_from_one)
             .collect::<Vec<_>>();
 
-        let shares = all_roles
-            .into_iter()
-            .map(|p| {
-                let prss_setup = PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(
-                    num_parties,
-                    threshold,
-                    p,
-                )
-                .unwrap();
+        let shares = join_all(all_roles.into_iter().map(|p| async move {
+            let prss_setup =
+                PRSSSetup::<ResiduePolyF4Z128>::testing_party_epoch_init(num_parties, threshold, p)
+                    .await
+                    .unwrap();
 
-                let mut state = prss_setup.new_prss_session_state(sid);
+            let mut state = prss_setup.new_prss_session_state(sid);
 
-                assert_eq!(state.counters.przs_ctr, 0);
+            assert_eq!(state.counters.przs_ctr, 0);
 
-                let nextval = state.przs_next(p, threshold as u8).unwrap();
+            let nextval = state.przs_next(p, threshold as u8).await.unwrap();
 
-                // przs state counter must have increased after call to next
-                assert_eq!(state.counters.przs_ctr, 1);
+            // przs state counter must have increased after call to next
+            assert_eq!(state.counters.przs_ctr, 1);
 
-                Share::new(p, nextval)
-            })
-            .collect();
+            Share::new(p, nextval)
+        }))
+        .await;
 
         let e_shares = ShamirSharings::create(shares);
         let recon = e_shares.reconstruct(2 * threshold).unwrap();
@@ -1390,8 +1472,8 @@ mod tests {
         assert!(recon.is_zero());
     }
 
-    #[test]
-    fn test_prss_next() {
+    #[tokio::test]
+    async fn test_prss_next() {
         let num_parties = 7;
         let threshold = 2;
 
@@ -1401,27 +1483,25 @@ mod tests {
             .collect::<Vec<_>>();
 
         // create shares for each party using PRSS.next()
-        let shares = all_roles
-            .clone()
-            .into_iter()
-            .map(|p| {
-                // initialize PRSSSetup for this epoch
-                let prss_setup =
-                    PRSSSetup::testing_party_epoch_init(num_parties, threshold, p).unwrap();
+        let shares = join_all(all_roles.clone().into_iter().map(|p| async move {
+            // initialize PRSSSetup for this epoch
+            let prss_setup = PRSSSetup::testing_party_epoch_init(num_parties, threshold, p)
+                .await
+                .unwrap();
 
-                let mut state = prss_setup.new_prss_session_state(sid);
+            let mut state = prss_setup.new_prss_session_state(sid);
 
-                // check that counters are initialized with sid
-                assert_eq!(state.counters.prss_ctr, 0);
+            // check that counters are initialized with sid
+            assert_eq!(state.counters.prss_ctr, 0);
 
-                let nextval = state.prss_next(p).unwrap();
+            let nextval = state.prss_next(p).await.unwrap();
 
-                // przs state counter must have increased after call to next
-                assert_eq!(state.counters.prss_ctr, 1);
+            // przs state counter must have increased after call to next
+            assert_eq!(state.counters.prss_ctr, 1);
 
-                Share::new(p, nextval)
-            })
-            .collect();
+            Share::new(p, nextval)
+        }))
+        .await;
 
         // reconstruct the party shares
         let e_shares = ShamirSharings::create(shares);
@@ -1485,7 +1565,7 @@ mod tests {
                 .await;
             let state = session.prss();
             // Compute reference value based on check (we clone to ensure that they are evaluated for the same counter)
-            reference_values.insert(party, state.clone().prss_next(party).unwrap());
+            reference_values.insert(party, state.clone().prss_next(party).await.unwrap());
             // Do the actual computation
             set.spawn(async move {
                 let res = state
@@ -1548,7 +1628,11 @@ mod tests {
             // Compute reference value based on check (we clone to ensure that they are evaluated for the same counter)
             reference_values.insert(
                 party,
-                state.clone().przs_next(party, session.threshold()).unwrap(),
+                state
+                    .clone()
+                    .przs_next(party, session.threshold())
+                    .await
+                    .unwrap(),
             );
             // Do the actual computation
             set.spawn(async move {
@@ -1768,22 +1852,18 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn sunshine_compute_party_shares() {
+    #[tokio::test]
+    async fn sunshine_compute_party_shares() {
         let parties = 1;
         let role = Role::indexed_from_one(1);
         let mut session =
             get_networkless_base_session_for_parties(parties, 0, Role::indexed_from_one(1));
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-        let prss_setup: PRSSSetup<ResiduePolyF4Z128> = rt
-            .block_on(async {
-                AbortRealPrssInit::<DummyAgreeRandom>::default()
-                    .init(&mut session)
-                    .await
-            })
-            .unwrap();
+        let prss_setup: PRSSSetup<ResiduePolyF4Z128> =
+            AbortRealPrssInit::<DummyAgreeRandom>::default()
+                .init(&mut session)
+                .await
+                .unwrap();
         let state = prss_setup.new_prss_session_state(session.session_id());
 
         // clone state so we can iterate over the PRFs and call next/compute at the same time.
@@ -1791,7 +1871,7 @@ mod tests {
 
         for (i, set) in state.prss_setup.sets.iter().enumerate() {
             // Compute the reference value and use clone to ensure that the same counter is used for all parties
-            let psi_next = cloned_state.prss_next(role).unwrap();
+            let psi_next = cloned_state.prss_next(role).await.unwrap();
 
             let local_psi = psi(&state.prfs[i].psi_aes, state.counters.prss_ctr).unwrap();
             let local_psi_value = vec![local_psi];
@@ -2033,15 +2113,28 @@ mod tests {
             let setup = secure_prss_init.init(&mut session).await.unwrap();
             let mut state = setup.new_prss_session_state(session.session_id());
             let role = session.my_role();
-            let prss_output_shares = (0..num_secrets)
-                .map(|_| Share::<Z>::new(role, state.prss_next(role).unwrap()))
+            let threshold = session.threshold();
+            let prss_output_shares = state
+                .prss_next_vec(role, num_secrets)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|v| Share::<Z>::new(role, v))
                 .collect::<Vec<_>>();
-            let przs_output_shares = (0..num_secrets)
-                .map(|_| Share::<Z>::new(role, state.przs_next(role, session.threshold()).unwrap()))
+            let przs_output_shares = state
+                .przs_next_vec(role, threshold, num_secrets)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|v| Share::<Z>::new(role, v))
                 .collect::<Vec<_>>();
             let mask_output_shares = if generate_masks {
-                (0..num_secrets)
-                    .map(|_| Share::<Z>::new(role, state.mask_next(role, B_SWITCH_SQUASH).unwrap()))
+                state
+                    .mask_next_vec(role, B_SWITCH_SQUASH, num_secrets)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|v| Share::<Z>::new(role, v))
                     .collect::<Vec<_>>()
             } else {
                 vec![Share::<Z>::new(role, Z::ZERO)]
@@ -2063,31 +2156,29 @@ mod tests {
                 let setup = malicious_prss_init.init(&mut session).await.unwrap();
                 let mut state = setup.new_prss_session_state(session.session_id());
                 let role = session.my_role();
-                let prss_output_shares = (0..num_secrets)
-                    .map(|_| {
-                        Ok::<Share<Z>, anyhow::Error>(Share::<Z>::new(role, state.prss_next(role)?))
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .unwrap();
-                let przs_output_shares = (0..num_secrets)
-                    .map(|_| {
-                        Ok::<Share<Z>, anyhow::Error>(Share::<Z>::new(
-                            role,
-                            state.przs_next(role, session.threshold())?,
-                        ))
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .unwrap();
+                let threshold = session.threshold();
+                let prss_output_shares = state
+                    .prss_next_vec(role, num_secrets)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|v| Share::<Z>::new(role, v))
+                    .collect::<Vec<_>>();
+                let przs_output_shares = state
+                    .przs_next_vec(role, threshold, num_secrets)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|v| Share::<Z>::new(role, v))
+                    .collect::<Vec<_>>();
                 let mask_output_shares = if generate_masks {
-                    (0..num_secrets)
-                        .map(|_| {
-                            Ok::<Share<Z>, anyhow::Error>(Share::<Z>::new(
-                                role,
-                                state.mask_next(role, B_SWITCH_SQUASH)?,
-                            ))
-                        })
-                        .collect::<Result<Vec<_>, _>>()
+                    state
+                        .mask_next_vec(role, B_SWITCH_SQUASH, num_secrets)
+                        .await
                         .unwrap()
+                        .into_iter()
+                        .map(|v| Share::<Z>::new(role, v))
+                        .collect::<Vec<_>>()
                 } else {
                     vec![Share::<Z>::new(role, Z::ZERO)]
                 };

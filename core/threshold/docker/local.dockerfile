@@ -2,7 +2,7 @@
 
 ################################################################
 ## Second stage builds the kms-core binaries
-FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms-golden-image:latest AS kms-threshold
+FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS kms-threshold
 
 WORKDIR /app/ddec
 

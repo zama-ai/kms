@@ -103,10 +103,8 @@ async fn internal_send_to_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
             // Ensure the party we want to send to passes the check we specified
             if check_fn(cur_receiver, session)? {
                 let networking = Arc::clone(session.network());
-                let value_to_send = cur_value.clone();
-                networking
-                    .send(value_to_send.to_network(), cur_receiver)
-                    .await?;
+                let value_to_send = Arc::new(cur_value.to_network());
+                networking.send(value_to_send, cur_receiver).await?;
             } else {
                 tracing::warn!(
                     "I am {:?} trying to send to receiver {:?}, who doesn't pass check",
@@ -115,23 +113,6 @@ async fn internal_send_to_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
                 );
                 continue;
             }
-        }
-    }
-    Ok(())
-}
-
-/// Send specific values to specific parties.
-/// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
-pub async fn send_distinct_to_parties<Z: Ring, B: BaseSessionHandles>(
-    session: &B,
-    sender: &Role,
-    values_to_send: HashMap<&Role, NetworkValue<Z>>,
-) -> anyhow::Result<()> {
-    for other_role in session.roles() {
-        let networking = Arc::clone(session.network());
-        let msg = values_to_send[other_role].clone();
-        if *sender != *other_role {
-            networking.send(msg.to_network(), other_role).await?;
         }
     }
     Ok(())
@@ -182,6 +163,7 @@ async fn internal_receive_from_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
     session: &'a B,
     check_fn: &'a (dyn Fn(&Role, &'a B) -> anyhow::Result<bool> + Sync + Send + 'a),
 ) -> anyhow::Result<()> {
+    let deserialization_runtime = session.get_deserialization_runtime();
     for cur_sender in senders {
         // Ensure we want to receive from that sender (e.g. not from ourself or a malicious party)
         if check_fn(cur_sender, session)? {
@@ -197,7 +179,7 @@ async fn internal_receive_from_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
                             "Timed out with deadline {deadline:?} from {role_to_receive_from:?} : {e:?}"
                         )))
                     });
-                match NetworkValue::<Z>::from_network(received) {
+                match NetworkValue::<Z>::from_network(received,deserialization_runtime).await {
                     Ok(val) => (role_to_receive_from, val),
                     // We got an unexpected type of value from the network.
                     _ => (role_to_receive_from, NetworkValue::Bot),
@@ -224,14 +206,15 @@ pub async fn send_to_all<T, Z: Ring, B: BaseSessionHandles>(
 where
     T: AsRef<NetworkValue<Z>>,
 {
-    let serialized_message = msg.as_ref().to_network();
+    let serialized_message = Arc::new(msg.as_ref().to_network());
 
     session.network().increase_round_counter().await;
     for other_role in session.roles() {
         let networking = Arc::clone(session.network());
-        let serialized_message = serialized_message.clone();
         if *sender != *other_role {
-            networking.send(serialized_message, other_role).await?;
+            networking
+                .send(Arc::clone(&serialized_message), other_role)
+                .await?;
         }
     }
     Ok(())
@@ -255,6 +238,7 @@ pub async fn generic_receive_from_all_senders<V, Z: Ring, B: BaseSessionHandles>
 ) where
     V: std::marker::Send + 'static,
 {
+    let deserialization_runtime = session.get_deserialization_runtime();
     let binding = HashSet::new();
     let non_answering_parties = non_answering_parties.unwrap_or(&binding);
     for sender in senders {
@@ -267,11 +251,15 @@ pub async fn generic_receive_from_all_senders<V, Z: Ring, B: BaseSessionHandles>
                 let stripped_message = timeout_at(timeout, networking.receive(&sender)).await;
                 match stripped_message {
                     Ok(stripped_message) => {
-                        let stripped_message =
-                            match NetworkValue::<Z>::from_network(stripped_message) {
-                                Ok(x) => match_network_value_fn(x, &my_role),
-                                Err(e) => Err(e),
-                            };
+                        let stripped_message = match NetworkValue::<Z>::from_network(
+                            stripped_message,
+                            deserialization_runtime,
+                        )
+                        .await
+                        {
+                            Ok(x) => match_network_value_fn(x, &my_role),
+                            Err(e) => Err(e),
+                        };
                         Ok((sender, stripped_message))
                     }
                     Err(e) => {
