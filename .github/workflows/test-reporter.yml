@@ -1,0 +1,77 @@
+name: test-reporter
+
+on:
+  workflow_run:
+    workflows: ["common-testing", "common-testing-big-instance"]
+    types:
+      - completed
+
+env:
+  CARGO_TERM_COLOR: always
+  DOCKER_BUILD_TEST_CORE_CLIENT: 1
+  CARGO_INCREMENTAL: 0
+  DOCKER_BUILDKIT: 1
+  NPM_TAG: ""
+
+permissions: {}
+
+jobs:
+  test-reporter:
+    name: test-reporter/test-reporter
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion != 'cancelled' }}
+
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: true
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: true
+
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5
+        with:
+          path: /tmp/junit
+      - name: Display structure of downloaded files
+        run: ls -R /tmp/junit
+
+      - name: Publish Test Report
+        uses: ctrf-io/github-test-reporter@646f98cfc16c6f7a0e1f6100cabe2deb95dd2eef  # v1.0.22
+        env:
+          GITHUB_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+        with:
+          report-path: "/tmp/junit/**/*.xml"
+          title: "Test results"
+          update-comment: true
+          summary-report: false
+          github-report: true
+          pull-request-report: true
+          pull-request: true
+          test-report: true
+          slowest-report: true
+          flaky-report: true
+          flaky-rate-report: true
+          collapse-large-reports: true
+          report-order: 'github-report,pull-request-report,test-report,flaky-report,slowest-report'
+          integrations-config: |
+            {
+              "junit-to-ctrf": {
+                "enabled": true,
+                "action": "convert",
+                "options": {
+                  "output": "./ctrf-reports/ctrf-report.json",
+                  "toolname": "junit-to-ctrf",
+                  "useSuiteName": false,
+                  "env": {
+                    "appName": "kms"
+                  }
+                }
+              }
+            }
