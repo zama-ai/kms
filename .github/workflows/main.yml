@@ -20,10 +20,15 @@ concurrency:
   group: ${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+# Top-level permissions for workflow-level operations
 permissions:
+  # Required to read workflow run information
   actions: read
+  # Required to checkout repository code
   contents: read
+  # Required to read pull request information
   pull-requests: read
+  # Required to read GitHub packages/container registry
   packages: read
 
 jobs:
@@ -32,9 +37,13 @@ jobs:
   check-changes:
     name: main/check-changes
     permissions:
+      # Required to read workflow run information
       actions: read
+      # Required to checkout repository code
       contents: read
+      # Required for OIDC token generation
       id-token: write
+      # Required to read pull request information
       pull-requests: read
     runs-on: ubuntu-latest
     outputs:
@@ -96,8 +105,11 @@ jobs:
   test-helm-chart:
     name: main/test-helm-chart
     permissions:
+      # Required to read workflow run information
       actions: read
+      # Required to checkout repository code
       contents: read
+      # Required for OIDC token generation
       id-token: write
     needs: check-changes
     if: needs.check-changes.outputs.changes-helm-chart == 'true'
@@ -106,8 +118,11 @@ jobs:
   lint-helm-chart:
     name: main/lint-helm-chart
     permissions:
+      # Required to read workflow run information
       actions: read
+      # Required to checkout repository code
       contents: read
+      # Required for OIDC token generation
       id-token: write
     needs: check-changes
     if: needs.check-changes.outputs.changes-helm-chart == 'true'
@@ -116,9 +131,13 @@ jobs:
   release-helm-chart:
     name: main/release-helm-chart
     permissions:
+      # Required to read workflow run information
       actions: read
+      # Required to checkout repository code
       contents: read
+      # Required for OIDC token generation
       id-token: write
+      # Required to publish packages
       packages: write
     needs: check-changes
     if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart == 'true' && github.event_name != 'schedule'
@@ -133,9 +152,13 @@ jobs:
   check-docs:
     name: main/check-docs
     permissions:
+      # Required to read workflow run information
       actions: read
+      # Required to checkout repository code
       contents: read
+      # Required for OIDC token generation
       id-token: write
+      # Required to read pull request information
       pull-requests: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-docs == 'true' || github.ref == 'refs/heads/main'
@@ -159,11 +182,17 @@ jobs:
   test-backward-compatibility:
     name: main/test-backward-compatibility
     permissions:
+      # Required to create GitHub checks for test results
       checks: write
+      # Required to read GitHub packages/container registry
       packages: read
+      # Required to create comments on issues
       issues: write
+      # Required to create comments on pull requests
       pull-requests: write
+      # Required to read workflow run information and download artifacts
       actions: read
+      # Required to checkout repository code
       contents: read
     needs: check-changes
     if: >-
@@ -227,11 +256,17 @@ jobs:
   test-core-client:
     name: main/test-core-client
     permissions:
+      # Required to create GitHub checks for test results
       checks: write
+      # Required to read GitHub packages/container registry
       packages: read
+      # Required to create comments on issues
       issues: write
+      # Required to create comments on pull requests
       pull-requests: write
+      # Required to read workflow run information and download artifacts
       actions: read
+      # Required to checkout repository code
       contents: read
     needs:
       - prepare-core-client-matrix
@@ -270,11 +305,17 @@ jobs:
   docker-core-client:
     name: main/docker-core-client
     permissions:
+      # Required to write workflow run information
       actions: write
+      # Required to create build attestations
       attestations: write
+      # Required to modify repository code
       contents: write
+      # Required for OIDC token generation
       id-token: write
+      # Required to create comments on pull requests
       pull-requests: write
+      # Required to publish packages
       packages: write
     needs:
       - test-core-client
@@ -303,11 +344,17 @@ jobs:
   test-grpc:
     name: main/test-grpc
     permissions:
+      # Required to create GitHub checks for test results
       checks: write
+      # Required to read GitHub packages/container registry
       packages: read
+      # Required to create comments on issues
       issues: write
+      # Required to create comments on pull requests
       pull-requests: write
+      # Required to read workflow run information and download artifacts
       actions: read
+      # Required to checkout repository code
       contents: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
@@ -383,11 +430,17 @@ jobs:
   test-core-service:
     name: main/test-core-service
     permissions:
+      # Required to create GitHub checks for test results
       checks: write
+      # Required to read GitHub packages/container registry
       packages: read
+      # Required to create comments on issues
       issues: write
+      # Required to create comments on pull requests
       pull-requests: write
+      # Required to read workflow run information and download artifacts
       actions: read
+      # Required to checkout repository code
       contents: read
     needs:
       - check-changes
@@ -426,11 +479,17 @@ jobs:
   docker-core-service:
     name: main/docker-core-service
     permissions:
+      # Required to read workflow run information
       actions: read
+      # Required to checkout repository code
       contents: read
+      # Required for OIDC token generation
       id-token: write
+      # Required to read pull request information
       pull-requests: read
+      # Required to publish packages
       packages: write
+      # Required to create build attestations
       attestations: write
     needs:
       - test-core-service
@@ -459,11 +518,17 @@ jobs:
   docker-nitro-enclave:
     name: main/docker-nitro-enclave
     permissions:
+      # Required to read workflow run information
       actions: read
+      # Required to modify repository code
       contents: write
+      # Required for OIDC token generation
       id-token: write
+      # Required to read pull request information
       pull-requests: read
+      # Required to publish packages
       packages: write
+      # Required to create build attestations
       attestations: write
     needs:
       - docker-core-service
@@ -498,11 +563,17 @@ jobs:
   test-core-threshold-pr:
     name: main/test-core-threshold-pr
     permissions:
+      # Required to create GitHub checks for test results
       checks: write
+      # Required to read GitHub packages/container registry
       packages: read
+      # Required to create comments on issues
       issues: write
+      # Required to create comments on pull requests
       pull-requests: write
+      # Required to read workflow run information and download artifacts
       actions: read
+      # Required to checkout repository code
       contents: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true'
@@ -533,11 +604,17 @@ jobs:
   test-core-threshold-main:
     name: main/test-core-threshold-main
     permissions:
+      # Required to create GitHub checks for test results
       checks: write
+      # Required to read GitHub packages/container registry
       packages: read
+      # Required to create comments on issues
       issues: write
+      # Required to create comments on pull requests
       pull-requests: write
+      # Required to read workflow run information and download artifacts
       actions: read
+      # Required to checkout repository code
       contents: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
@@ -568,11 +645,17 @@ jobs:
   build-dependabot:
     name: main/build-dependabot
     permissions:
+      # Required to create GitHub checks for test results
       checks: write
+      # Required to read GitHub packages/container registry
       packages: read
+      # Required to create comments on issues
       issues: write
+      # Required to create comments on pull requests
       pull-requests: write
+      # Required to read workflow run information and download artifacts
       actions: read
+      # Required to checkout repository code
       contents: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
@@ -600,11 +683,17 @@ jobs:
   docker-golden-image:
     name: main/docker-golden-image
     permissions:
+      # Required to read workflow run information
       actions: read
+      # Required to checkout repository code
       contents: read
+      # Required for OIDC token generation
       id-token: write
+      # Required to read pull request information
       pull-requests: read
+      # Required to publish packages
       packages: write
+      # Required to create build attestations
       attestations: write
     if: >-
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||

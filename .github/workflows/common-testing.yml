@@ -79,17 +79,24 @@ env:
   DOCKER_BUILDKIT: 1
   NPM_TAG: ""
 
+# No top-level permissions needed - job-level permissions are more specific
 permissions: {}
 
 jobs:
   compile-rust-unit-tests:
     name: common-testing/compile-rust-unit-tests
     permissions:
+      # Required to create GitHub checks for test results
       checks: write
+      # Required to read GitHub packages/container registry
       packages: read
+      # Required to create comments on issues
       issues: write
+      # Required to create comments on pull requests
       pull-requests: write
+      # Required to read workflow run information and download artifacts
       actions: read
+      # Required to checkout repository code
       contents: read
     timeout-minutes: 500
     runs-on: ${{ inputs.runs-on }}
@@ -333,7 +340,7 @@ jobs:
         run: |
           cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit-"$(date +"%Y%m%d%H%M%S")".xml
           ls -al /tmp
-          shell: bash
+        shell: bash
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:

@@ -5,6 +5,8 @@ on:
     workflows: ["main"]
     types:
       - completed
+    # Security: This workflow only runs on completed workflows from the same repository
+    # and uses GITHUB_TOKEN with minimal permissions for artifact access
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,17 +15,24 @@ env:
   DOCKER_BUILDKIT: 1
   NPM_TAG: ""
 
+# No top-level permissions needed - job-level permissions are more specific
 permissions: {}
 
 jobs:
   test-reporter:
     name: test-reporter/test-reporter
     permissions:
+      # Required to create GitHub checks for test results
       checks: write
+      # Required to read GitHub packages/container registry
       packages: read
+      # Required to create comments on issues
       issues: write
+      # Required to create comments on pull requests
       pull-requests: write
+      # Required to read workflow run information and download artifacts
       actions: read
+      # Required to checkout repository code
       contents: read
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion != 'cancelled' }}

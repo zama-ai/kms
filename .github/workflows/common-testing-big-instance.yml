@@ -80,6 +80,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# No top-level permissions needed - job-level permissions are more specific
 permissions: {}
 
 jobs:
@@ -103,11 +104,17 @@ jobs:
   run-build:
     name: common-testing-big-instance/run-build
     permissions:
+      # Required to create GitHub checks for test results
       checks: write
+      # Required to read GitHub packages/container registry
       packages: read
+      # Required to create comments on pull requests
       pull-requests: write
+      # Required to create comments on issues
       issues: write
+      # Required to read workflow run information and download artifacts
       actions: read
+      # Required to checkout repository code
       contents: read
     needs: start-runner
     uses: ./.github/workflows/common-testing.yml
