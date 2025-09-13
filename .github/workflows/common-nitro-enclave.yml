@@ -235,10 +235,10 @@ jobs:
   provenance-prod:
     name: common-nitro-enclave/provenance-prod
     permissions:
-      actions: 'read'
-      attestations: 'write'
-      packages: 'write'
-      id-token: write
+      actions: 'read' # Required to read workflow run information
+      attestations: 'write' # Required to write attestations
+      packages: 'write' # Required to publish packages
+      id-token: write # Required for OIDC token generation
     needs: [build-and-push-enclave]
     if: github.event_name == 'release'
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
