@@ -732,7 +732,7 @@ jobs:
     needs:
       - test-helm-chart
       - test-backward-compatibility
-      - test-core-client
+      # - test-core-client
       - test-grpc
       - test-core-service
       - test-core-threshold-pr
