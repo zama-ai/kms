@@ -2,7 +2,7 @@ name: test-reporter
 
 on:
   workflow_run:
-    workflows: ["common-testing", "common-testing-big-instance"]
+    workflows: ["main"]
     types:
       - completed
 
@@ -39,6 +39,9 @@ jobs:
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5
         with:
           path: /tmp/junit
+          run-id: ${{ github.event.workflow_run.id }}
+          pattern: junit-test-report*
+          merge-multiple: true
       - name: Display structure of downloaded files
         run: ls -R /tmp/junit
 
