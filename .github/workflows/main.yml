@@ -21,10 +21,10 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  actions: read
-  contents: read
-  pull-requests: read
-  packages: read
+  actions: read        # Read workflow runs and artifacts
+  contents: read       # Read repository contents
+  pull-requests: read  # Read pull request information
+  packages: read       # Read package dependencies from registry
 
 jobs:
   # Initial job that determines which components have changed
@@ -32,10 +32,10 @@ jobs:
   check-changes:
     name: main/check-changes
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
-      pull-requests: 'read'
+      actions: 'read'     # Read workflow runs and artifacts
+      contents: 'read'    # Read repository contents
+      id-token: 'write'   # Authenticate with cloud providers via OIDC
+      pull-requests: 'read' # Read pull request information for change detection
     runs-on: ubuntu-latest
     outputs:
       # Each output indicates if files in a specific component were modified
@@ -96,9 +96,9 @@ jobs:
   test-helm-chart:
     name: main/test-helm-chart
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
+      actions: 'read'     # Read workflow runs and artifacts
+      contents: 'read'    # Read repository contents
+      id-token: 'write'   # Authenticate with cloud providers via OIDC
     needs: check-changes
     if: needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-test.yml
@@ -106,9 +106,9 @@ jobs:
   lint-helm-chart:
     name: main/lint-helm-chart
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
+      actions: 'read'     # Read workflow runs and artifacts
+      contents: 'read'    # Read repository contents
+      id-token: 'write'   # Authenticate with cloud providers via OIDC
     needs: check-changes
     if: needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-lint.yml
@@ -116,10 +116,10 @@ jobs:
   release-helm-chart:
     name: main/release-helm-chart
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
+      actions: read        # Read workflow runs and artifacts
+      contents: read       # Read repository contents
+      id-token: write      # Authenticate with cloud providers via OIDC
+      packages: write      # Push container images to registry
     needs: check-changes
     if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart == 'true' && github.event_name != 'schedule'
     uses: ./.github/workflows/helm-release.yml
@@ -133,10 +133,10 @@ jobs:
   check-docs:
     name: main/check-docs
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
-      pull-requests: 'read'
+      actions: 'read'     # Read workflow runs and artifacts
+      contents: 'read'    # Read repository contents
+      id-token: 'write'   # Authenticate with cloud providers via OIDC
+      pull-requests: 'read' # Read pull request information for change detection
     needs: check-changes
     if: needs.check-changes.outputs.changes-docs == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -254,12 +254,12 @@ jobs:
   docker-core-client:
     name: main/docker-core-client
     permissions:
-      actions: 'write'
-      attestations: 'write'
-      contents: 'write'
-      id-token: 'write'
-      pull-requests: 'write'
-      packages: 'write'
+      actions: 'write'       # Create workflow artifacts
+      attestations: 'write'  # Create container attestations
+      contents: 'write'      # Push tags and releases
+      id-token: 'write'      # Authenticate with cloud providers via OIDC
+      pull-requests: 'write' # Read PR information
+      packages: 'write'      # Push container images to registry
     needs:
       - test-core-client
       - docker-golden-image
@@ -394,12 +394,12 @@ jobs:
   docker-core-service:
     name: main/docker-core-service
     permissions:
-      actions: read
-      contents: read
-      id-token: write
-      pull-requests: read
-      packages: write
-      attestations: write
+      actions: read        # Read workflow runs and artifacts
+      contents: read       # Read repository contents
+      id-token: write      # Authenticate with cloud providers via OIDC
+      pull-requests: read  # Read pull request information
+      packages: write      # Push Docker images to registry
+      attestations: write  # Create container attestations
     needs:
       - test-core-service
       - docker-golden-image
@@ -427,12 +427,12 @@ jobs:
   docker-nitro-enclave:
     name: main/docker-nitro-enclave
     permissions:
-      actions: read
-      contents: write
-      id-token: write
-      pull-requests: read
-      packages: write
-      attestations: write
+      actions: read        # Read workflow runs and artifacts
+      contents: write      # Push tags and releases
+      id-token: write      # Authenticate with cloud providers via OIDC
+      pull-requests: read  # Read PR information for enclave builds
+      packages: write      # Push container images to registry
+      attestations: write  # Create container attestations
     needs:
       - docker-core-service
     if: >-
@@ -546,12 +546,12 @@ jobs:
   docker-golden-image:
     name: main/docker-golden-image
     permissions:
-      actions: read
-      contents: read
-      id-token: write
-      pull-requests: read
-      packages: write
-      attestations: write
+      actions: read        # Read workflow runs and artifacts
+      contents: read       # Read repository contents
+      id-token: write      # Authenticate with cloud providers via OIDC
+      pull-requests: read  # Read pull request information
+      packages: write      # Push Docker images to registry
+      attestations: write  # Create container attestations
     if: >-
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')

@@ -57,8 +57,8 @@ permissions: {}
 jobs:
   determine-tag:
     permissions:
-      actions: read
-      contents: read
+      actions: read     # Read workflow runs and artifacts
+      contents: read    # Read repository contents
     name: common-nitro-enclave/determine-tag
     runs-on: ubuntu-latest
     outputs:
@@ -85,11 +85,11 @@ jobs:
 
   build-and-push-enclave:
     permissions:
-      actions: read
-      contents: write
-      attestations: write
-      packages: write
-      id-token: write
+      actions: read        # Read workflow runs and artifacts
+      contents: write      # Push tags and releases
+      attestations: write  # Create container attestations
+      packages: write      # Push container images to registry
+      id-token: write      # Authenticate with cloud providers via OIDC
     needs: determine-tag
     outputs:
       image: ${{ steps.push.outputs.image }}
@@ -235,10 +235,10 @@ jobs:
   provenance-prod:
     name: common-nitro-enclave/provenance-prod
     permissions:
-      actions: 'read'
-      attestations: 'write'
-      packages: 'write'
-      id-token: write
+      actions: 'read'       # Read workflow runs and artifacts
+      attestations: 'write' # Create SLSA attestations
+      packages: 'write'     # Push attestations to registry
+      id-token: write       # Authenticate for SLSA generation
     needs: [build-and-push-enclave]
     if: github.event_name == 'release'
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0

@@ -79,7 +79,7 @@ env:
   CARGO_TERM_COLOR: always
 
 permissions:
-  packages: read
+  packages: read  # Read package dependencies
 
 jobs:
   start-runner:

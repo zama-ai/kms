@@ -8,16 +8,16 @@ env:
   HELM_VERSION: v3.16.4
 
 permissions:
-  contents: read
+  contents: read  # Read repository contents
 
 jobs:
   helm-release:
     name: helm-release/helm-release
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
+      actions: 'read'     # Read workflow runs and artifacts
+      contents: 'read'    # Read repository contents
+      id-token: 'write'   # Authenticate with cloud providers via OIDC
+      packages: 'write'   # Push Helm charts to registry
     runs-on: ubuntu-latest
     environment: main
     steps:

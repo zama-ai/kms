@@ -37,9 +37,9 @@ jobs:
     needs:
       - release
     permissions:
-      contents: write
-      id-token: write
-      packages: write
+      contents: write    # Push version updates to repository
+      id-token: write    # Authenticate with cloud providers via OIDC
+      packages: write    # Publish packages to registry
     with:
       version: ${{ needs.release.outputs.version }}
     secrets:

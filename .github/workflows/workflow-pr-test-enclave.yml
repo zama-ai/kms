@@ -14,12 +14,12 @@ jobs:
     name: workflow-pr-test-enclave/docker (bpr)
     uses: ./.github/workflows/common-docker-big-instance.yml
     permissions:
-      actions: read
-      contents: read
-      id-token: write
-      pull-requests: read
-      packages: write
-      attestations: write
+      actions: read        # Read workflow runs and artifacts
+      contents: read       # Read repository contents
+      id-token: write      # Authenticate with cloud providers via OIDC
+      pull-requests: read  # Read pull request information
+      packages: write      # Push Docker images to registry
+      attestations: write  # Create container attestations
     with:
       docker-file: "./docker/core/service/Dockerfile"
       working-directory: "./core/service"
@@ -39,13 +39,13 @@ jobs:
     needs:
       - docker
     uses: ./.github/workflows/common-nitro-enclave.yml
-    permissions:
-      actions: read
-      contents: write
-      id-token: write
-      pull-requests: read
-      packages: write
-      attestations: write
+    permissions:  # Permissions for enclave test workflow
+      actions: read       # Read workflow runs and artifacts
+      contents: write     # Read repository contents
+      id-token: write     # Authenticate with cloud providers via OIDC
+      pull-requests: read # Read pull request information
+      packages: write     # Push Docker images to registry
+      attestations: write # Create container attestations
     with:
       docker-file-enclave: "./docker/core/service/enclave.dockerfile"
       working-directory: "./core/service"

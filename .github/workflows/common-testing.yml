@@ -78,7 +78,7 @@ env:
   NPM_TAG: ""
 
 permissions:
-  packages: read
+  packages: read  # Read package dependencies from registry
 
 jobs:
   compile-rust-unit-tests:

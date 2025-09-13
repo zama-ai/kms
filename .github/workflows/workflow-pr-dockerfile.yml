@@ -7,11 +7,11 @@ on:
 
 concurrency:
   group: workflow-pr-dockerfile-${{ github.ref }}
-  cancel-in-progress: ${{ !contains(fromJSON('["release/", "main"]'),github.ref) }}
+  cancel-in-progress: ${{ github.base_ref != 'main' && !startsWith(github.base_ref, 'release/') }}
 
 permissions:
-  contents: read
-  packages: read
+  contents: read   # Read repository contents to check Dockerfiles
+  packages: read   # Read package dependencies from registry
 
 jobs:
     prepare-batch:
