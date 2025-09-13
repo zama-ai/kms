@@ -52,6 +52,8 @@ on:
         type: string
         required: true
     secrets:
+      CODECOV_TOKEN:
+        required: false
       SLAB_ACTION_TOKEN:
         required: true
       SLAB_BASE_URL:
@@ -78,8 +80,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-permissions:
-  packages: read
+permissions: {}
 
 jobs:
   start-runner:
@@ -101,6 +102,13 @@ jobs:
 
   run-build:
     name: common-testing-big-instance/run-build
+    permissions:
+      checks: write
+      packages: read
+      pull-requests: write
+      issues: write
+      actions: read
+      contents: read
     needs: start-runner
     uses: ./.github/workflows/common-testing.yml
     secrets:
@@ -112,6 +120,7 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     with:
       runs-on: ${{ needs.start-runner.outputs.label }}
       build-publish-docs: ${{ inputs.build-publish-docs }}

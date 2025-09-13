@@ -32,10 +32,10 @@ jobs:
   check-changes:
     name: main/check-changes
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
-      pull-requests: 'read'
+      actions: read
+      contents: read
+      id-token: write
+      pull-requests: read
     runs-on: ubuntu-latest
     outputs:
       # Each output indicates if files in a specific component were modified
@@ -96,9 +96,9 @@ jobs:
   test-helm-chart:
     name: main/test-helm-chart
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
+      actions: read
+      contents: read
+      id-token: write
     needs: check-changes
     if: needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-test.yml
@@ -106,9 +106,9 @@ jobs:
   lint-helm-chart:
     name: main/lint-helm-chart
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
+      actions: read
+      contents: read
+      id-token: write
     needs: check-changes
     if: needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-lint.yml
@@ -116,10 +116,10 @@ jobs:
   release-helm-chart:
     name: main/release-helm-chart
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
+      actions: read
+      contents: read
+      id-token: write
+      packages: write
     needs: check-changes
     if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart == 'true' && github.event_name != 'schedule'
     uses: ./.github/workflows/helm-release.yml
@@ -133,10 +133,10 @@ jobs:
   check-docs:
     name: main/check-docs
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
-      pull-requests: 'read'
+      actions: read
+      contents: read
+      id-token: write
+      pull-requests: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-docs == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -158,6 +158,13 @@ jobs:
   ############################################################################
   test-backward-compatibility:
     name: main/test-backward-compatibility
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-backward-compatibility == 'true' ||
@@ -174,6 +181,7 @@ jobs:
       slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
     secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
@@ -210,7 +218,7 @@ jobs:
       run: |
         MATRIX="matrix={\"include\":["
         # Regular tests: Run different test suites in parallel with specific features
-        MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --test-threads=1\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests --test-threads=1\"}"
+        MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests\"}"
         MATRIX="${MATRIX%,}]}"
         echo "$MATRIX" >> "$GITHUB_OUTPUT"
         echo "$MATRIX"
@@ -218,6 +226,13 @@ jobs:
 
   test-core-client:
     name: main/test-core-client
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
     needs:
       - prepare-core-client-matrix
       - check-changes
@@ -237,6 +252,7 @@ jobs:
       args-tests: ${{ matrix.args-tests }}
       app-cache-dir: 'kms-core-client'
     secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
@@ -254,12 +270,12 @@ jobs:
   docker-core-client:
     name: main/docker-core-client
     permissions:
-      actions: 'write'
-      attestations: 'write'
-      contents: 'write'
-      id-token: 'write'
-      pull-requests: 'write'
-      packages: 'write'
+      actions: write
+      attestations: write
+      contents: write
+      id-token: write
+      pull-requests: write
+      packages: write
     needs:
       - test-core-client
       - docker-golden-image
@@ -286,6 +302,13 @@ jobs:
   ############################################################################
   test-grpc:
     name: main/test-grpc
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -295,6 +318,7 @@ jobs:
       package-name: 'kms-grpc'
       app-cache-dir: 'kms-grpc'
     secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
@@ -346,7 +370,7 @@ jobs:
           MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly_tests\"}"
         else
           # Regular tests: Run different test suites in parallel with specific features
-          MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib -- --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly_tests --test-threads=1 --nocapture\"}"
+          MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly_tests\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly_tests\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly_tests\"}"
         fi
         MATRIX="${MATRIX%,}]}"
         echo "$MATRIX" >> "$GITHUB_OUTPUT"
@@ -358,6 +382,13 @@ jobs:
   # - WASM runtime for WebAssembly tests
   test-core-service:
     name: main/test-core-service
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
     needs:
       - check-changes
       - prepare-matrix
@@ -377,6 +408,7 @@ jobs:
       slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
     secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
@@ -465,6 +497,13 @@ jobs:
   # Includes slow tests but runs only library tests
   test-core-threshold-pr:
     name: main/test-core-threshold-pr
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -476,6 +515,7 @@ jobs:
       package-name: 'threshold-fhe'
       app-cache-dir: 'threshold-fhe'
     secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
@@ -492,6 +532,13 @@ jobs:
   # Only runs when threshold-related changes are detected
   test-core-threshold-main:
     name: main/test-core-threshold-main
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -520,6 +567,13 @@ jobs:
   # Helps validate dependency updates quickly
   build-dependabot:
     name: main/build-dependabot
+    permissions:
+      checks: write
+      packages: read
+      issues: write
+      pull-requests: write
+      actions: read
+      contents: read
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
