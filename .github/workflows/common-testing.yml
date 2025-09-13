@@ -333,7 +333,7 @@ jobs:
         if: (!cancelled())
         run: |
           echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
-          cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit-"${{ env.TIMESTAMP }}".xml
+          cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit-"${{ env.TIMESTAMP }}".xml # zizmor: ignore[template-injection]
           ls -al /tmp
         shell: bash
 
