@@ -332,7 +332,7 @@ jobs:
       - name: Copy Test Results
         if: (!cancelled())
         run: |
-          echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> $GITHUB_ENV
+          echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
           cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit-"${{ env.TIMESTAMP }}".xml
           ls -al /tmp
         shell: bash
