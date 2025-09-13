@@ -313,7 +313,7 @@ pub(crate) mod tests {
     #[rstest]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssFromStart::default(),SecureRobustOpen::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default(),SecureRobustOpen::default())]
+    #[case(TestingParameters::init(7, 2, &[1], &[], &[], true, None), DroppingVssAfterR1::default(),SecureRobustOpen::default())]
     #[case(TestingParameters::init(7, 2, &[1], &[], &[], false, None), DroppingVssAfterR2::new(&SyncReliableBroadcast::default()),SecureRobustOpen::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::new(&SyncReliableBroadcast::default(),&params.roles_to_lie_to),SecureRobustOpen::default())]
