@@ -345,6 +345,7 @@ jobs:
           report-path: "/tmp/*.xml"
           title: "Test results for ${{inputs.args-tests}}"
           update-comment: true
+          overwrite-comment: true
           summary-report: false
           github-report: true
           pull-request-report: true
@@ -354,7 +355,7 @@ jobs:
           flaky-report: true
           flaky-rate-report: true
           collapse-large-reports: true
-          report-order: 'test-report,pull-request-report,flaky-report,slowest-report'
+          report-order: 'pull-request-report,test-report,flaky-report,slowest-report'
           integrations-config: |
             {
               "junit-to-ctrf": {
