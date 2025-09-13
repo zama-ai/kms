@@ -70,10 +70,6 @@ spec:
               value: {{ .Values.runMode }}
             - name: RUST_LOG
               value: {{ .Values.rustLog }}
-            - name: TOKIO_WORKER_THREADS
-              value: "6"
-            - name: RAYON_NUM_THREADS
-              value: "43"
           {{- if .Values.kmsCore.envFrom.configmap.name }}
             - name: CORE_CLIENT__S3_ENDPOINT
               valueFrom:
