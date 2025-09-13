@@ -43,9 +43,9 @@ jobs:
         with:
           path: /tmp/junit
           pattern: junit-test-report-*
-          merge-multiple: true
+
       - name: Display structure of downloaded files
-        run: ls -R /tmp/junit
+        run: ls -R /tmp/junit/*
 
       - name: Publish Test Report
         uses: ctrf-io/github-test-reporter@646f98cfc16c6f7a0e1f6100cabe2deb95dd2eef  # v1.0.22
@@ -55,6 +55,7 @@ jobs:
           report-path: "/tmp/junit/**/*.xml"
           title: "Test results"
           update-comment: true
+          override-comment: true
           summary-report: false
           github-report: true
           pull-request-report: true
