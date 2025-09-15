@@ -79,7 +79,7 @@ pub trait Storage: StorageReader {
 pub trait StorageForBytes: Storage {
     /// Store the given `bytes` with the given `data_id` and `data_type`.
     /// If the object with `data_id` and `data_type` already exists, it will not be overwritten and
-    /// instead a warning is logged, nut the call will succeed.
+    /// instead a warning is logged, but the call will succeed.
     async fn store_bytes(
         &mut self,
         bytes: &[u8],
