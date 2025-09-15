@@ -235,9 +235,9 @@ jobs:
   provenance-prod:
     name: common-nitro-enclave/provenance-prod
     permissions:
-      actions: 'read' # Required to read workflow run information
-      attestations: 'write' # Required to write attestations
-      packages: 'write' # Required to publish packages
+      actions: read # Required to read workflow run information
+      attestations: write # Required to write attestations
+      packages: write # Required to publish packages
       id-token: write # Required for OIDC token generation
     needs: [build-and-push-enclave]
     if: github.event_name == 'release'
