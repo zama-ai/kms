@@ -233,83 +233,83 @@ jobs:
         echo "$MATRIX"
 
 
-  # test-core-client:
-  #   name: main/test-core-client
-  #   # job permissions
-  #   permissions:
-  #     checks: write # Required to create GitHub checks for test results
-  #     packages: read # Required to read GitHub packages/container registry
-  #     issues: write # Required to create comments on issues
-  #     pull-requests: write # Required to create comments on pull requests
-  #     actions: read # Required to read workflow run information and download artifacts
-  #     contents: read # Required to checkout repository code
-  #   needs:
-  #     - prepare-core-client-matrix
-  #     - check-changes
-  #   if: >-
-  #     needs.check-changes.outputs.changes-core-client == 'true' ||
-  #     needs.check-changes.outputs.changes-core-service == 'true' ||
-  #     needs.check-changes.outputs.changes-core-threshold == 'true' ||
-  #     needs.check-changes.outputs.changes-core-grpc == 'true' ||
-  #     needs.check-changes.outputs.changes-ci == 'true' ||
-  #     github.ref == 'refs/heads/main'
-  #   strategy:
-  #     matrix: ${{fromJson(needs.prepare-core-client-matrix.outputs.matrix)}}
-  #   uses: ./.github/workflows/common-testing-big-instance.yml
-  #   with:
-  #     working-directory: './core-client'
-  #     package-name: 'kms-core-client'
-  #     args-tests: ${{ matrix.args-tests }}
-  #     app-cache-dir: 'kms-core-client'
-  #   secrets:
-  #     CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-  #     GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-  #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-  #     SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #     SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-  #     JOB_SECRET: ${{ secrets.JOB_SECRET }}
-  #     AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-  #     AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-  #     SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-  #     BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-  #     SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-  #     CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-  #     CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+  test-core-client:
+    name: main/test-core-client
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs:
+      - prepare-core-client-matrix
+      - check-changes
+    if: >-
+      needs.check-changes.outputs.changes-core-client == 'true' ||
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      needs.check-changes.outputs.changes-core-threshold == 'true' ||
+      needs.check-changes.outputs.changes-core-grpc == 'true' ||
+      needs.check-changes.outputs.changes-ci == 'true' ||
+      github.ref == 'refs/heads/main'
+    strategy:
+      matrix: ${{fromJson(needs.prepare-core-client-matrix.outputs.matrix)}}
+    uses: ./.github/workflows/common-testing-big-instance.yml
+    with:
+      working-directory: './core-client'
+      package-name: 'kms-core-client'
+      args-tests: ${{ matrix.args-tests }}
+      app-cache-dir: 'kms-core-client'
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
 
   # Builds Docker image for core-client
   # Only runs on main/release branches after successful tests
   # Also runs on pull requests targeting main/release branches with the docker label
-  # docker-core-client:
-    # name: main/docker-core-client
-    # # job permissions
-    # permissions:
-    #   actions: write # Required to write workflow run information
-    #   attestations: write # Required to create build attestations
-    #   contents: write # Required to modify repository code
-    #   id-token: write # Required for OIDC token generation
-    #   pull-requests: write # Required to create comments on pull requests
-    #   packages: write # Required to publish packages
-    # needs:
-    #   - test-core-client
-    #   - docker-golden-image
-    # if: >-
-    #   (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
-    #   (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    # uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@e666182756172bc747d2be6e4eb9b4ed80a00a0e
-    # with:
-    #   docker-file: "./docker/core-client/Dockerfile"
-    #   working-directory: "./core-client"
-    #   push_image: true
-    #   image-name: 'kms/core-client'
-    #   app-cache-dir: 'kms-core-client'
-    #   use-cgr-secrets: true
-    # secrets:
-    #   BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-    #   AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-    #   AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-    #   CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-    #   CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+  docker-core-client:
+    name: main/docker-core-client
+    # job permissions
+    permissions:
+      actions: write # Required to write workflow run information
+      attestations: write # Required to create build attestations
+      contents: write # Required to modify repository code
+      id-token: write # Required for OIDC token generation
+      pull-requests: write # Required to create comments on pull requests
+      packages: write # Required to publish packages
+    needs:
+      - test-core-client
+      - docker-golden-image
+    if: >-
+      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@e666182756172bc747d2be6e4eb9b4ed80a00a0e
+    with:
+      docker-file: "./docker/core-client/Dockerfile"
+      working-directory: "./core-client"
+      push_image: true
+      image-name: 'kms/core-client'
+      app-cache-dir: 'kms-core-client'
+      use-cgr-secrets: true
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
   # GRPC Testing
@@ -317,38 +317,38 @@ jobs:
   # - Changes to core/grpc/**
   # - Changes to workflow file
   ############################################################################
-  # test-grpc:
-  #   name: main/test-grpc
-  #   # job permissions
-  #   permissions:
-  #     checks: write # Required to create GitHub checks for test results
-  #     packages: read # Required to read GitHub packages/container registry
-  #     issues: write # Required to create comments on issues
-  #     pull-requests: write # Required to create comments on pull requests
-  #     actions: read # Required to read workflow run information and download artifacts
-  #     contents: read # Required to checkout repository code
-  #   needs: check-changes
-  #   if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
-  #   uses: ./.github/workflows/common-testing-big-instance.yml
-  #   with:
-  #     working-directory: './core/grpc'
-  #     args-tests: '--all-features'
-  #     package-name: 'kms-grpc'
-  #     app-cache-dir: 'kms-grpc'
-  #   secrets:
-  #     CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-  #     GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-  #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-  #     SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #     SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-  #     JOB_SECRET: ${{ secrets.JOB_SECRET }}
-  #     AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-  #     AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-  #     SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-  #     BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-  #     SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-  #     CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-  #     CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+  test-grpc:
+    name: main/test-grpc
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs: check-changes
+    if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/common-testing-big-instance.yml
+    with:
+      working-directory: './core/grpc'
+      args-tests: '--all-features'
+      package-name: 'kms-grpc'
+      app-cache-dir: 'kms-grpc'
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
 
   ############################################################################
@@ -401,48 +401,48 @@ jobs:
   # Uses big instance for better performance and includes:
   # - MinIO for object storage testing
   # - WASM runtime for WebAssembly tests
-  # test-core-service:
-  #   name: main/test-core-service
-  #   # job permissions
-  #   permissions:
-  #     checks: write # Required to create GitHub checks for test results
-  #     packages: read # Required to read GitHub packages/container registry
-  #     issues: write # Required to create comments on issues
-  #     pull-requests: write # Required to create comments on pull requests
-  #     actions: read # Required to read workflow run information and download artifacts
-  #     contents: read # Required to checkout repository code
-  #   needs:
-  #     - check-changes
-  #     - prepare-matrix
-  #   if: >-
-  #     needs.check-changes.outputs.changes-core-service == 'true' ||
-  #     github.ref == 'refs/heads/main' ||
-  #     needs.check-changes.outputs.changes-ci == 'true'
-  #   strategy:
-  #     matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
-  #   uses: ./.github/workflows/common-testing-big-instance.yml
-  #   with:
-  #     working-directory: './core/service'
-  #     args-tests: ${{ matrix.args-tests }}
-  #     run-minio: true
-  #     run-wasm: true
-  #     package-name: 'kms'
-  #     slab-backend: 'big-instance-service'
-  #     app-cache-dir: 'kms'
-  #   secrets:
-  #     CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-  #     GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-  #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-  #     SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #     SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-  #     JOB_SECRET: ${{ secrets.JOB_SECRET }}
-  #     AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-  #     AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-  #     SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-  #     BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-  #     SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-  #     CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-  #     CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+  test-core-service:
+    name: main/test-core-service
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs:
+      - check-changes
+      - prepare-matrix
+    if: >-
+      needs.check-changes.outputs.changes-core-service == 'true' ||
+      github.ref == 'refs/heads/main' ||
+      needs.check-changes.outputs.changes-ci == 'true'
+    strategy:
+      matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
+    uses: ./.github/workflows/common-testing-big-instance.yml
+    with:
+      working-directory: './core/service'
+      args-tests: ${{ matrix.args-tests }}
+      run-minio: true
+      run-wasm: true
+      package-name: 'kms'
+      slab-backend: 'big-instance-service'
+      app-cache-dir: 'kms'
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
 
   # Builds the core service Docker image
@@ -526,113 +526,113 @@ jobs:
 
   # Runs basic threshold tests for pull requests
   # Includes slow tests but runs only library tests
-  # test-core-threshold-pr:
-  #   name: main/test-core-threshold-pr
-  #   # job permissions
-  #   permissions:
-  #     checks: write # Required to create GitHub checks for test results
-  #     packages: read # Required to read GitHub packages/container registry
-  #     issues: write # Required to create comments on issues
-  #     pull-requests: write # Required to create comments on pull requests
-  #     actions: read # Required to read workflow run information and download artifacts
-  #     contents: read # Required to checkout repository code
-  #   needs: check-changes
-  #   if: needs.check-changes.outputs.changes-core-threshold == 'true'
-  #   uses: ./.github/workflows/common-testing-big-instance.yml
-  #   with:
-  #     working-directory: './core/threshold'
-  #     # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
-  #     # and limit the number of test ran in parallel to 4
-  #     args-tests: '-F slow_tests --lib'
-  #     package-name: 'threshold-fhe'
-  #     app-cache-dir: 'threshold-fhe'
-  #     nextest-test-threads: 4
-  #   secrets:
-  #     CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-  #     GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-  #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-  #     SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #     SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-  #     JOB_SECRET: ${{ secrets.JOB_SECRET }}
-  #     AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-  #     AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-  #     SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-  #     BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-  #     SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-  #     CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-  #     CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+  test-core-threshold-pr:
+    name: main/test-core-threshold-pr
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs: check-changes
+    if: needs.check-changes.outputs.changes-core-threshold == 'true'
+    uses: ./.github/workflows/common-testing-big-instance.yml
+    with:
+      working-directory: './core/threshold'
+      # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
+      # and limit the number of test ran in parallel to 4
+      args-tests: '-F slow_tests --lib'
+      package-name: 'threshold-fhe'
+      app-cache-dir: 'threshold-fhe'
+      nextest-test-threads: 4
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
 
   # Runs extended threshold tests on main/release branches
   # Includes Redis integration and all test suites
   # Only runs when threshold-related changes are detected
-  # test-core-threshold-main:
-  #   name: main/test-core-threshold-main
-  #   # job permissions
-  #   permissions:
-  #     checks: write # Required to create GitHub checks for test results
-  #     packages: read # Required to read GitHub packages/container registry
-  #     issues: write # Required to create comments on issues
-  #     pull-requests: write # Required to create comments on pull requests
-  #     actions: read # Required to read workflow run information and download artifacts
-  #     contents: read # Required to checkout repository code
-  #   needs: check-changes
-  #   if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
-  #   uses: ./.github/workflows/common-testing-big-instance.yml
-  #   with:
-  #     working-directory: './core/threshold'
-  #     # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
-  #     # and limit the number of test ran in parallel to 4
-  #     args-tests: '-F slow_tests --lib'
-  #     run-redis: true
-  #     package-name: 'threshold-fhe'
-  #     app-cache-dir: 'threshold-fhe'
-  #     nextest-test-threads: 4
-  #   secrets:
-  #     GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-  #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-  #     SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #     SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-  #     JOB_SECRET: ${{ secrets.JOB_SECRET }}
-  #     AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-  #     AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-  #     SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-  #     BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-  #     SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-  #     CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-  #     CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+  test-core-threshold-main:
+    name: main/test-core-threshold-main
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs: check-changes
+    if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/common-testing-big-instance.yml
+    with:
+      working-directory: './core/threshold'
+      # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
+      # and limit the number of test ran in parallel to 4
+      args-tests: '-F slow_tests --lib'
+      run-redis: true
+      package-name: 'threshold-fhe'
+      app-cache-dir: 'threshold-fhe'
+      nextest-test-threads: 4
+    secrets:
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   # Simplified build process for Dependabot PRs
   # Only runs library tests without integration components
   # Helps validate dependency updates quickly
-  # build-dependabot:
-  #   name: main/build-dependabot
-  #   # job permissions
-  #   permissions:
-  #     checks: write # Required to create GitHub checks for test results
-  #     packages: read # Required to read GitHub packages/container registry
-  #     issues: write # Required to create comments on issues
-  #     pull-requests: write # Required to create comments on pull requests
-  #     actions: read # Required to read workflow run information and download artifacts
-  #     contents: read # Required to checkout repository code
-  #   needs: check-changes
-  #   if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
-  #   uses: ./.github/workflows/common-testing.yml
-  #   with:
-  #     working-directory: './core/threshold'
-  #     args-tests: '--lib'
-  #     package-name: 'threshold-fhe'
-  #     app-cache-dir: 'threshold-fhe'
-  #   secrets:
-  #     GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-  #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-  #     AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-  #     AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-  #     SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
-  #     BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
-  #     SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-  #     CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-  #     CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+  build-dependabot:
+    name: main/build-dependabot
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs: check-changes
+    if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      working-directory: './core/threshold'
+      args-tests: '--lib'
+      package-name: 'threshold-fhe'
+      app-cache-dir: 'threshold-fhe'
+    secrets:
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
 
 
@@ -763,12 +763,12 @@ jobs:
     needs:
       - test-helm-chart
       - test-backward-compatibility
-      # - test-core-client
-      # - test-grpc
-      # - test-core-service
-      # - test-core-threshold-pr
-      # - test-core-threshold-main
-      # - build-dependabot
+      - test-core-client
+      - test-grpc
+      - test-core-service
+      - test-core-threshold-pr
+      - test-core-threshold-main
+      - build-dependabot
     uses: ./.github/workflows/test-reporter.yml
     permissions:
       checks: write # Required to create GitHub checks for test results
