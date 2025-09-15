@@ -1,7 +1,7 @@
 use crate::engine::utils::query_key_material_availability;
 use crate::{
     anyhow_error_and_log,
-    backup::operator::{BackupCommitments, InnerRecoveryRequest, Operator, DSEP_BACKUP_RECOVERY},
+    backup::operator::{BackupCommitments, Operator, RecoveryRequestPayload, DSEP_BACKUP_RECOVERY},
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         attestation::{SecurityModule, SecurityModuleProxy},
@@ -79,7 +79,7 @@ where
     async fn gen_outer_recovery_request(
         &self,
         backup_id: RequestId,
-        recovery_request: InnerRecoveryRequest,
+        recovery_request: RecoveryRequestPayload,
     ) -> anyhow::Result<(RecoveryRequest, BackupPrivateKey)> {
         let mut rng = self.base_kms.new_rng().await;
         // Generate asymmetric ephemeral keys for the operator to use to encrypt the backup
@@ -189,7 +189,7 @@ where
                     format!("Failed to get latest backup id: {e}"),
                 )
             })?;
-        let inner_recovery_request: InnerRecoveryRequest = {
+        let recovery_request_payload: RecoveryRequestPayload = {
             let pub_storage = self.crypto_storage.get_public_storage();
             let guarded_pub_storage = pub_storage.lock().await;
             guarded_pub_storage
@@ -203,7 +203,7 @@ where
                 })?
         };
         let (recovery_request, backup_priv_key) = self
-            .gen_outer_recovery_request(backup_id, inner_recovery_request)
+            .gen_outer_recovery_request(backup_id, recovery_request_payload)
             .await
             .map_err(|e| {
                 Status::new(

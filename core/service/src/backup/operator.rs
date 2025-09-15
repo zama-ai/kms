@@ -72,8 +72,8 @@ pub struct InternalRecoveryRequest {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum InnerRecoveryRequestVersioned {
-    V0(InnerRecoveryRequest),
+pub enum RecoveryRequestPayloadVersioned {
+    V0(RecoveryRequestPayload),
 }
 
 /// The backup data constructed whenever a new custodian context is created.
@@ -81,15 +81,15 @@ pub enum InnerRecoveryRequestVersioned {
 /// It is different from what is returned to custodians during recovery since it is then augmented with
 /// an ephemeral encryption key during that point in time.
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
-#[versionize(InnerRecoveryRequestVersioned)]
-pub struct InnerRecoveryRequest {
+#[versionize(RecoveryRequestPayloadVersioned)]
+pub struct RecoveryRequestPayload {
     /// The ciphertexts that are the backup. Indexed by the custodian role.
     pub cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     pub backup_enc_key: BackupPublicKey,
 }
 
-impl Named for InnerRecoveryRequest {
-    const NAME: &'static str = "backup::InnerRecoveryRequest";
+impl Named for RecoveryRequestPayload {
+    const NAME: &'static str = "backup::RecoveryRequestPayload";
 }
 
 impl InternalRecoveryRequest {
