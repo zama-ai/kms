@@ -5,6 +5,10 @@ on:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
+        required: true
     inputs:
       ref:
         type: string
@@ -57,8 +61,8 @@ permissions: {}
 jobs:
   determine-tag:
     permissions:
-      actions: read
-      contents: read
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
     name: common-nitro-enclave/determine-tag
     runs-on: ubuntu-latest
     outputs:
@@ -74,22 +78,23 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
+          COMMIT_HASH: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           if [[ "${EVENT_NAME}" == "release" ]]; then
             echo "tag=${REF_NAME}" >> "$GITHUB_OUTPUT"
           elif [[ "${EVENT_NAME}" == "schedule" ]]; then
-            echo "tag=nightly-$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+            echo "tag=nightly-$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+            echo "tag=$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_OUTPUT"
           fi
 
   build-and-push-enclave:
     permissions:
-      actions: read
-      contents: write
-      attestations: write
-      packages: write
-      id-token: write
+      actions: read # Required to read workflow run information
+      contents: write # Required to publish packages
+      attestations: write # Required to write attestations
+      packages: write # Required to publish packages
+      id-token: write # Required for OIDC token generation
     needs: determine-tag
     outputs:
       image: ${{ steps.push.outputs.image }}
@@ -133,12 +138,12 @@ jobs:
         if: github.event_name != 'release'
         env:
           EVENT_NAME: ${{ github.event_name }}
-          GITHUB_SHA: ${{ github.sha }}
+          COMMIT_HASH: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
-            echo "DOCKER_TAG_IMAGE=nightly-$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_ENV"
+            echo "DOCKER_TAG_IMAGE=nightly-$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_ENV"
           else
-            echo "DOCKER_TAG_IMAGE=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_ENV"
+            echo "DOCKER_TAG_IMAGE=$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_ENV"
           fi
 
       - name: Current Tag
@@ -235,10 +240,10 @@ jobs:
   provenance-prod:
     name: common-nitro-enclave/provenance-prod
     permissions:
-      actions: 'read'
-      attestations: 'write'
-      packages: 'write'
-      id-token: write
+      actions: read # Required to read workflow run information
+      attestations: write # Required to write attestations
+      packages: write # Required to publish packages
+      id-token: write # Required for OIDC token generation
     needs: [build-and-push-enclave]
     if: github.event_name == 'release'
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
