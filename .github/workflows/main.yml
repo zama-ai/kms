@@ -4,7 +4,7 @@
 # 2. Pull requests: For validation before merging
 # 3. Pushes: On main and release/* branches for building images
 # IMPORTANT NOTES: The tests are only executed for components that have been changed
-name: global-common-workflow
+name: main
 
 on:
   schedule:
@@ -20,22 +20,24 @@ concurrency:
   group: ${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+# Top-level permissions for workflow-level operations
 permissions:
-  actions: read
-  contents: read
-  pull-requests: read
-  packages: read
+  actions: read # Required to read workflow run information
+  contents: read # Required to checkout repository code
+  pull-requests: read # Required to read pull request information
+  packages: read # Required to read GitHub packages/container registry
 
 jobs:
   # Initial job that determines which components have changed
   # Used by subsequent jobs to decide whether they need to run
   check-changes:
-    name: global-common-workflow/check-changes
+    name: main/check-changes
+    # job permissions
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
-      pull-requests: 'read'
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
+      pull-requests: read # Required to read pull request information
     runs-on: ubuntu-latest
     outputs:
       # Each output indicates if files in a specific component were modified
@@ -91,35 +93,37 @@ jobs:
   ############################################################################
   # Helm chart pipeline
   # Triggered by:
-  # - Changes to charts/**'
+  # - Changes to charts/**
   ############################################################################
   test-helm-chart:
-    name: global-common-workflow/test-helm-chart
+    name: main/test-helm-chart
+     # job permissions
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
     needs: check-changes
     if: needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-test.yml
 
   lint-helm-chart:
-    name: global-common-workflow/lint-helm-chart
+    name: main/lint-helm-chart
+     # job permissions
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
     needs: check-changes
     if: needs.check-changes.outputs.changes-helm-chart == 'true'
     uses: ./.github/workflows/helm-lint.yml
 
   release-helm-chart:
-    name: global-common-workflow/release-helm-chart
+    name: main/release-helm-chart
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
+      packages: write # Required to publish packages
     needs: check-changes
     if: github.ref == 'refs/heads/main' && needs.check-changes.outputs.changes-helm-chart == 'true' && github.event_name != 'schedule'
     uses: ./.github/workflows/helm-release.yml
@@ -131,12 +135,13 @@ jobs:
   # - Changes to workflow file itself
   ############################################################################
   check-docs:
-    name: global-common-workflow/check-docs
+    name: main/check-docs
+    # job permissions
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
-      pull-requests: 'read'
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
+      pull-requests: read # Required to read pull request information
     needs: check-changes
     if: needs.check-changes.outputs.changes-docs == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -157,7 +162,15 @@ jobs:
   # - Changes to workflow file itself
   ############################################################################
   test-backward-compatibility:
-    name: global-common-workflow/test-backward-compatibility
+    name: main/test-backward-compatibility
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-backward-compatibility == 'true' ||
@@ -174,6 +187,7 @@ jobs:
       slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
     secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
@@ -193,7 +207,7 @@ jobs:
   # - Changes to workflow file
   ############################################################################
   prepare-core-client-matrix:
-    name: global-common-workflow/prepare-core-client-matrix
+    name: main/prepare-core-client-matrix
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-core-client == 'true' ||
@@ -210,14 +224,22 @@ jobs:
       run: |
         MATRIX="matrix={\"include\":["
         # Regular tests: Run different test suites in parallel with specific features
-        MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests --test-threads=1\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests --test-threads=1\"}"
+        MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests\"}"
         MATRIX="${MATRIX%,}]}"
         echo "$MATRIX" >> "$GITHUB_OUTPUT"
         echo "$MATRIX"
 
 
   test-core-client:
-    name: global-common-workflow/test-core-client
+    name: main/test-core-client
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs:
       - prepare-core-client-matrix
       - check-changes
@@ -237,6 +259,7 @@ jobs:
       args-tests: ${{ matrix.args-tests }}
       app-cache-dir: 'kms-core-client'
     secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
@@ -252,14 +275,15 @@ jobs:
   # Only runs on main/release branches after successful tests
   # Also runs on pull requests targeting main/release branches with the docker label
   docker-core-client:
-    name: global-common-workflow/docker-core-client
+    name: main/docker-core-client
+    # job permissions
     permissions:
-      actions: 'write'
-      attestations: 'write'
-      contents: 'write'
-      id-token: 'write'
-      pull-requests: 'write'
-      packages: 'write'
+      actions: write # Required to write workflow run information
+      attestations: write # Required to create build attestations
+      contents: write # Required to modify repository code
+      id-token: write # Required for OIDC token generation
+      pull-requests: write # Required to create comments on pull requests
+      packages: write # Required to publish packages
     needs:
       - test-core-client
       - docker-golden-image
@@ -285,7 +309,15 @@ jobs:
   # - Changes to workflow file
   ############################################################################
   test-grpc:
-    name: global-common-workflow/test-grpc
+    name: main/test-grpc
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -295,6 +327,7 @@ jobs:
       package-name: 'kms-grpc'
       app-cache-dir: 'kms-grpc'
     secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
@@ -326,7 +359,7 @@ jobs:
   # - For scheduled runs: Runs comprehensive nightly tests in release mode
   # - For other events: Runs multiple test suites in parallel with specific features
   prepare-matrix:
-    name: global-common-workflow/prepare-matrix
+    name: main/prepare-matrix
     needs: check-changes
     if: >-
       needs.check-changes.outputs.changes-core-service == 'true' ||
@@ -346,7 +379,7 @@ jobs:
           MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly_tests\"}"
         else
           # Regular tests: Run different test suites in parallel with specific features
-          MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib -- --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly_tests --test-threads=1\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly_tests --test-threads=1 --nocapture\"}"
+          MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly_tests\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly_tests\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly_tests\"}"
         fi
         MATRIX="${MATRIX%,}]}"
         echo "$MATRIX" >> "$GITHUB_OUTPUT"
@@ -357,7 +390,15 @@ jobs:
   # - MinIO for object storage testing
   # - WASM runtime for WebAssembly tests
   test-core-service:
-    name: global-common-workflow/test-core-service
+    name: main/test-core-service
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs:
       - check-changes
       - prepare-matrix
@@ -377,6 +418,7 @@ jobs:
       slab-backend: 'big-instance-service'
       app-cache-dir: 'kms'
     secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
@@ -392,14 +434,15 @@ jobs:
   # Only runs on main/release branches after successful tests
   # Uses a custom Dockerfile optimized for production
   docker-core-service:
-    name: global-common-workflow/docker-core-service
+    name: main/docker-core-service
+    # job permissions
     permissions:
-      actions: read
-      contents: read
-      id-token: write
-      pull-requests: read
-      packages: write
-      attestations: write
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
+      pull-requests: read # Required to read pull request information
+      packages: write # Required to publish packages
+      attestations: write # Required to create build attestations
     needs:
       - test-core-service
       - docker-golden-image
@@ -425,14 +468,15 @@ jobs:
   # Only runs on main/release branches after core service image is built
   # Creates both regular container and enclave-specific images
   docker-nitro-enclave:
-    name: global-common-workflow/docker-nitro-enclave
+    name: main/docker-nitro-enclave
+    # job permissions
     permissions:
-      actions: read
-      contents: write
-      id-token: write
-      pull-requests: read
-      packages: write
-      attestations: write
+      actions: read # Required to read workflow run information
+      contents: write # Required to modify repository code
+      id-token: write # Required for OIDC token generation
+      pull-requests: read # Required to read pull request information
+      packages: write # Required to publish packages
+      attestations: write # Required to create build attestations
     needs:
       - docker-core-service
     if: >-
@@ -464,7 +508,15 @@ jobs:
   # Runs basic threshold tests for pull requests
   # Includes slow tests but runs only library tests
   test-core-threshold-pr:
-    name: global-common-workflow/test-core-threshold-pr
+    name: main/test-core-threshold-pr
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -476,6 +528,7 @@ jobs:
       package-name: 'threshold-fhe'
       app-cache-dir: 'threshold-fhe'
     secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
@@ -491,7 +544,15 @@ jobs:
   # Includes Redis integration and all test suites
   # Only runs when threshold-related changes are detected
   test-core-threshold-main:
-    name: global-common-workflow/test-core-threshold-main
+    name: main/test-core-threshold-main
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
@@ -519,7 +580,15 @@ jobs:
   # Only runs library tests without integration components
   # Helps validate dependency updates quickly
   build-dependabot:
-    name: global-common-workflow/build-dependabot
+    name: main/build-dependabot
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs: check-changes
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
@@ -544,14 +613,15 @@ jobs:
   # Provides dependencies for building rust kms-core images
   ############################################################################
   docker-golden-image:
-    name: global-common-workflow/docker-golden-image
+    name: main/docker-golden-image
+    # job permissions
     permissions:
-      actions: read
-      contents: read
-      id-token: write
-      pull-requests: read
-      packages: write
-      attestations: write
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC token generation
+      pull-requests: read # Required to read pull request information
+      packages: write # Required to publish packages
+      attestations: write # Required to create build attestations
     if: >-
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
@@ -581,7 +651,7 @@ jobs:
   # Deploys to kms-threshold-staging namespace
   ############################################################################
   # update-kms-core-client-argocd-staging:
-  #   name: global-common-workflow/update-kms-core-client-argocd-staging
+  #   name: main/update-kms-core-client-argocd-staging
   #   if: github.event_name == 'schedule'
   #   needs:
   #     - test-core-client
@@ -597,7 +667,7 @@ jobs:
   #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
   # update-kms-core-argocd-staging:
-  #   name: global-common-workflow/update-kms-core-argocd-staging
+  #   name: main/update-kms-core-argocd-staging
   #   if: github.event_name == 'schedule'
   #   needs:
   #     - test-core-service
@@ -615,7 +685,7 @@ jobs:
   #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
   # update-kms-core-client-argocd-staging-with-enclave:
-  #   name: global-common-workflow/update-kms-core-client-argocd-staging-with-enclave
+  #   name: main/update-kms-core-client-argocd-staging-with-enclave
   #   if: github.event_name == 'schedule'
   #   needs:
   #     - test-core-client
@@ -632,7 +702,7 @@ jobs:
   #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
   # update-kms-core-argocd-staging-with-enclave:
-  #   name: global-common-workflow/update-kms-core-argocd-staging-with-enclave
+  #   name: main/update-kms-core-argocd-staging-with-enclave
   #   if: github.event_name == 'schedule'
   #   needs:
   #     - test-core-service
@@ -653,3 +723,27 @@ jobs:
   #   secrets:
   #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
 
+  # Test reporting job that runs after all tests complete
+  # Only runs on pull requests to generate test reports
+  test-reporter:
+    name: main/test-reporter
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs:
+      - test-helm-chart
+      - test-backward-compatibility
+      - test-core-client
+      - test-grpc
+      - test-core-service
+      - test-core-threshold-pr
+      - test-core-threshold-main
+      - build-dependabot
+    uses: ./.github/workflows/test-reporter.yml
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
