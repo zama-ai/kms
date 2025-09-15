@@ -336,45 +336,12 @@ jobs:
           cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit.xml # zizmor: ignore[template-injection]
         shell: bash
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+      - name: Upload Test Results
+        if: (!cancelled())
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}
           path: /tmp/junit.xml
-
-      # - name: Publish Test Report
-      #   if: github.event_name == 'pull_request' && (success() || failure()) # always run even if the previous step fails
-      #   uses: ctrf-io/github-test-reporter@646f98cfc16c6f7a0e1f6100cabe2deb95dd2eef  # v1.0.22
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      #   with:
-      #     report-path: "/tmp/*.xml"
-      #     title: "Test results for ${{inputs.args-tests}}"
-      #     update-comment: true
-      #     summary-report: false
-      #     github-report: true
-      #     pull-request-report: true
-      #     pull-request: true
-      #     test-report: true
-      #     slowest-report: true
-      #     flaky-report: true
-      #     flaky-rate-report: true
-      #     collapse-large-reports: true
-      #     report-order: 'github-report,pull-request-report,test-report,flaky-report,slowest-report'
-      #     integrations-config: |
-      #       {
-      #         "junit-to-ctrf": {
-      #           "enabled": true,
-      #           "action": "convert",
-      #           "options": {
-      #             "output": "./ctrf-reports/ctrf-report.json",
-      #             "toolname": "junit-to-ctrf",
-      #             "useSuiteName": false,
-      #             "env": {
-      #               "appName": "${{inputs.package-name}}"
-      #             }
-      #           }
-      #         }
-      #       }
 
       - name: Upload coverage to Codecov
         if: github.event_name == 'schedule'
@@ -421,96 +388,6 @@ jobs:
           path: "**/*.log"
           retention-days: 30
           if-no-files-found: ignore
-
-      # Coverage reporting
-      # - name: Generate code coverage
-      #   if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-      #   env:
-      #     # some integration tests run docker compose
-      #     # which builds images which need private git access
-      #     # building images in every integration test run is bad
-      #     AWS_ACCESS_KEY_ID: "minioadmin"
-      #     AWS_SECRET_ACCESS_KEY: "minioadmin"
-      #     AWS_DEFAULT_REGION: "eu-north-1"
-      #     AWS_ENDPOINT: "http://127.0.0.1:9000"
-      #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      #     ARGS_TESTS: ${{inputs.args-tests}}
-      #     NEXTEST_TEST_THREADS: 1
-      #     CARGO_INCREMENTAL: 0
-      #     RUSTFLAGS: -Cinstrument-coverage
-      #     LLVM_PROFILE_FILE: 'cargo-test-%p-%m.profraw'
-      #   run: |
-      #     mkdir -p ~/.aws/ &&
-      #     echo "[default]" > ~/.aws/credentials &&
-      #     echo "aws_access_key_id = ${AWS_ACCESS_KEY_ID}" >> ~/.aws/credentials &&
-      #     echo "aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}" >> ~/.aws/credentials &&
-      #     echo "[default]" > ~/.aws/config &&
-      #     echo "output=json" >> ~/.aws/config &&
-      #     echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
-      #     echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
-      #     cargo llvm-cov nextest --codecov --output-path codecov.json --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
-      #     echo "codecov.json" >> "${GITHUB_STEP_SUMMARY}"
-
-      # - name: Publish Test Report
-      #   uses: mikepenz/action-junit-report@3585e9575db828022551b4231f165eb59a0e74e3  # v5.6.2
-      #   if: success() || failure() # always run even if the previous step fails
-      #   with:
-      #     report_paths: './target/nextest/ci/junit.xml'
-
-      # - name: Upload coverage to Codecov
-      #   if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-      #   uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7  # v5.5.1
-      #   with:
-      #     token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
-      #     files: codecov.json
-      #     fail_ci_if_error: true
-
-      # - name: Run Tests with Coverage
-      #   if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-      #   env:
-      #     # some integration tests run docker compose
-      #     # which builds images which need private git access
-      #     # building images in every integration test run is bad
-      #     AWS_ACCESS_KEY_ID: "minioadmin"
-      #     AWS_SECRET_ACCESS_KEY: "minioadmin"
-      #     AWS_DEFAULT_REGION: "eu-north-1"
-      #     AWS_ENDPOINT: "http://127.0.0.1:9000"
-      #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      #     ARGS_TESTS: ${{inputs.args-tests}}
-      #   run: |
-      #     mkdir -p ~/.aws/ &&
-      #     echo "[default]" > ~/.aws/credentials &&
-      #     echo "aws_access_key_id = ${AWS_ACCESS_KEY_ID}" >> ~/.aws/credentials &&
-      #     echo "aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}" >> ~/.aws/credentials &&
-      #     echo "[default]" > ~/.aws/config &&
-      #     echo "output=json" >> ~/.aws/config &&
-      #     echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
-      #     echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
-      #     export CARGO_INCREMENTAL=0
-      #     export RUSTFLAGS='-Cinstrument-coverage'
-      #     export LLVM_PROFILE_FILE='cargo-test-%p-%m.profraw'
-      #     cargo test ${ARGS_TESTS:+$ARGS_TESTS}
-      #     cargo install grcov
-      #     mkdir coverage
-      #     ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage/ -t markdown
-      #     ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o ./ -t lcov
-      #     cat coverage/markdown.md
-      #     cat coverage/markdown.md >> "$GITHUB_STEP_SUMMARY"
-
-      # - name: Report code coverage
-      #   if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-      #   uses: romeovs/lcov-reporter-action@87a815f34ec27a5826abba44ce09bbc688da58fd # v0.4.0
-      #   with:
-      #     title: ${{inputs.package-name}}-test-coverage
-      #     lcov-file: lcov
-      #     working-directory: ${{ inputs.working-directory }}/
-
-      # - name: Check minimum coverage
-      #   if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-      #   uses: VeryGoodOpenSource/very_good_coverage@c953fca3e24a915e111cc6f55f03f756dcb3964c # v3.0.0
-      #   with:
-      #     path: "${{inputs.working-directory}}/lcov"
-      #     min_coverage: ${{ inputs.test-minimum-coverage }}
 
       # Documentation
       - name: Build Documentation
