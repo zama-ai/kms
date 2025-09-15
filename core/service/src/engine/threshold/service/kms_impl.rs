@@ -41,7 +41,7 @@ use tonic_tls::rustls::TlsIncoming;
 // === Internal Crate ===
 use crate::{
     anyhow_error_and_log,
-    backup::{custodian::InternalCustodianContext, operator::BackupCommitments},
+    backup::{custodian::InternalCustodianContext, operator::RecoveryValidationMaterial},
     conf::threshold::ThresholdPartyConf,
     consts::DEFAULT_MPC_CONTEXT,
     consts::{MINIMUM_SESSIONS_PREPROC, PRSS_INIT_REQ_ID},
@@ -233,9 +233,9 @@ where
         read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
     let mut public_key_info = HashMap::new();
     let mut pk_map = HashMap::new();
-    let backup_com: HashMap<RequestId, BackupCommitments> =
+    let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
         read_all_data_versioned(&public_storage, &PubDataType::Commitments.to_string()).await?;
-    let custodian_context: HashMap<RequestId, InternalCustodianContext> = backup_com
+    let custodian_context: HashMap<RequestId, InternalCustodianContext> = validation_material
         .into_iter()
         .map(|(r, com)| (r, com.custodian_context().to_owned()))
         .collect();

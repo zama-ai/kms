@@ -2,7 +2,7 @@ use super::{custodian, error::BackupError, operator::Operator};
 use crate::{
     backup::{
         custodian::InternalCustodianContext,
-        operator::BackupCommitments,
+        operator::RecoveryValidationMaterial,
         seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
     },
     cryptography::{backup_pke, internal_crypto_types::gen_sig_keys},
@@ -117,9 +117,12 @@ fn full_flow() {
             .zip_eq(&cts)
             .map(|((operator, sig_key), ((ct, com), cus_context))| {
                 let (ephemeral_enc_key, ephemeral_dec_key) = backup_pke::keygen(&mut rng).unwrap();
-                let backup_com =
-                    BackupCommitments::new(com.to_owned(), cus_context.to_owned(), sig_key)
-                        .unwrap();
+                let validation_material = RecoveryValidationMaterial::new(
+                    com.to_owned(),
+                    cus_context.to_owned(),
+                    sig_key,
+                )
+                .unwrap();
                 // reencrypted ciphertexts ciphertexts for one operator
                 (
                     custodians
@@ -143,7 +146,7 @@ fn full_flow() {
                                 .unwrap()
                         })
                         .collect_vec(),
-                    backup_com,
+                    validation_material,
                     ephemeral_dec_key,
                 )
             })

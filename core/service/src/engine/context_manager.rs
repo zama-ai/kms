@@ -1,6 +1,6 @@
 use crate::anyhow_error_and_log;
 use crate::backup::custodian::InternalCustodianContext;
-use crate::backup::operator::{BackupCommitments, Operator, RecoveryRequestPayload};
+use crate::backup::operator::{Operator, RecoveryRequestPayload, RecoveryValidationMaterial};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::backup_pke::{self, BackupPrivateKey, BackupPublicKey};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
@@ -307,7 +307,7 @@ async fn gen_recovery_request_payload(
     backup_priv_key: BackupPrivateKey,
     custodian_context: &InternalCustodianContext,
     my_role: Role,
-) -> anyhow::Result<(RecoveryRequestPayload, BackupCommitments)> {
+) -> anyhow::Result<(RecoveryRequestPayload, RecoveryValidationMaterial)> {
     let operator = Operator::new(
         my_role,
         custodian_context
@@ -333,13 +333,13 @@ async fn gen_recovery_request_payload(
         cts: ct_map,
         backup_enc_key,
     };
-    let backup_commitments =
-        BackupCommitments::new(commitments, custodian_context.to_owned(), sig_key)?;
+    let validation_material =
+        RecoveryValidationMaterial::new(commitments, custodian_context.to_owned(), sig_key)?;
     tracing::info!(
         "Generated inner recovery request for backup_id/context_id={}",
         custodian_context.context_id
     );
-    Ok((recovery_request, backup_commitments))
+    Ok((recovery_request, validation_material))
 }
 
 #[cfg(test)]

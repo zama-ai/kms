@@ -1,7 +1,9 @@
 use crate::engine::utils::query_key_material_availability;
 use crate::{
     anyhow_error_and_log,
-    backup::operator::{BackupCommitments, Operator, RecoveryRequestPayload, DSEP_BACKUP_RECOVERY},
+    backup::operator::{
+        Operator, RecoveryRequestPayload, RecoveryValidationMaterial, DSEP_BACKUP_RECOVERY,
+    },
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         attestation::{SecurityModule, SecurityModuleProxy},
@@ -262,7 +264,7 @@ where
                 )
             })?);
         }
-        let commitments: BackupCommitments = {
+        let commitments: RecoveryValidationMaterial = {
             let guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
             guarded_pub_storage
                 .read_data(&context_id, &PubDataType::Commitments.to_string())
