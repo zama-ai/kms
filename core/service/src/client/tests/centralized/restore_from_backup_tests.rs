@@ -51,11 +51,11 @@ async fn default_insecure_central_dkg_backup() {
         }
     }
 
-    drop(kms_server);
     drop(kms_client);
     drop(internal_client);
-    // Sleep to ensure the servers are properly shut down
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+    // Shut down the servers
+    kms_server.assert_shutdown().await;
+
     decryption_centralized(
         &dkg_param.get_params_without_sns(),
         &key_id_1,

@@ -108,7 +108,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     purge_recovery_info(None, 1).await;
 
     // Generate a new crs
-    let (_kms_server, mut kms_client, mut internal_client) =
+    let (kms_server, mut kms_client, mut internal_client) =
         crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
     let _mnemnonics = run_new_cus_context(
         &mut kms_client,
@@ -123,8 +123,11 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     let crss = backup_files(&req_new_cus, &crs_req, &PrivDataType::CrsInfo.to_string()).await;
     // Check that the format is correct
     assert!(crss.priv_data_type == PrivDataType::CrsInfo);
-    // Sleep to ensure the servers are properly shut down
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    drop(kms_client);
+    drop(internal_client);
+    // Shut down the servers
+    kms_server.assert_shutdown().await;
     // Check that the backup is still there an unmodified
     let (_kms_server, _kms_client, _internal_client) =
         crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;

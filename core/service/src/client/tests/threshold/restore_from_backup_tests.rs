@@ -110,11 +110,12 @@ async fn default_insecure_threshold_dkg_backup() {
             }
         }
     }
-    drop(kms_servers);
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
     drop(kms_clients);
     drop(internal_client);
-    // Sleep to ensure the servers are properly shut down
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
     // And validate that we can still decrypt
     crate::client::tests::threshold::public_decryption_tests::decryption_threshold(
         DEFAULT_PARAM,
@@ -170,11 +171,11 @@ async fn default_insecure_threshold_autobackup_after_deletion() {
     .await;
 
     // Reboot the servers
-    drop(kms_servers);
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
     drop(kms_clients);
     drop(internal_client);
-    // Sleep to ensure the servers are properly shut down
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // Start the servers again
     let (_kms_servers, _kms_clients, _internal_client) =
