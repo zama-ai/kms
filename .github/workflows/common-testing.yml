@@ -176,7 +176,6 @@ jobs:
           cache: false
 
       - name: Install cargo-llvm-cov & nextest
-        if: github.event_name == 'pull_request'
         uses: taiki-e/install-action@1dd4d60a583436c5738af3d204f159f44d92f704  # v2.61.0
         with:
           tool: cargo-llvm-cov,nextest,grcov
