@@ -51,6 +51,10 @@ on:
       app-cache-dir:
         type: string
         required: true
+      nextest-test-threads:
+        type: string
+        required: false
+        default: "1"
     secrets:
       CODECOV_TOKEN:
         required: false
@@ -135,6 +139,7 @@ jobs:
       test-coverage: ${{ inputs.test-coverage }}
       npm-release: ${{ inputs.npm-release }}
       app-cache-dir: ${{ inputs.app-cache-dir }}
+      nextest-test-threads: ${{ inputs.nextest-test-threads }}
 
   stop-runner:
     name: common-testing-big-instance/stop-runner
