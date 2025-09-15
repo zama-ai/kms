@@ -2,6 +2,9 @@ name: test-reporter
 
 on:
   workflow_call:
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
     # Security: This workflow only runs when called from other workflows in the same repository
     # and uses GITHUB_TOKEN with minimal permissions for artifact access
 

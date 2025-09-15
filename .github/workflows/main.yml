@@ -777,3 +777,5 @@ jobs:
       pull-requests: write # Required to create comments on pull requests
       actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
