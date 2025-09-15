@@ -74,11 +74,11 @@ jobs:
   run-docker:
     name: common-docker-big-instance/run-docker
     permissions:
-      contents: read
-      packages: write
-      actions: read
-      attestations: write
-      id-token: write
+      contents: read # Required to checkout repository code
+      packages: write # Required to publish packages
+      actions: read # Required to read workflow run information
+      attestations: write # Required to write attestations
+      id-token: write # Required for OIDC token generation
     needs: [start-amd64-runner]
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
     secrets:

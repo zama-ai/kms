@@ -53,6 +53,8 @@ on:
         type: string
         required: true
     secrets:
+      CODECOV_TOKEN:
+        required: false
       GHCR_READ_TOKEN:
         required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
@@ -77,12 +79,19 @@ env:
   DOCKER_BUILDKIT: 1
   NPM_TAG: ""
 
-permissions:
-  packages: read
+# No top-level permissions needed - job-level permissions are more specific
+permissions: {}
 
 jobs:
   compile-rust-unit-tests:
     name: common-testing/compile-rust-unit-tests
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     timeout-minutes: 500
     runs-on: ${{ inputs.runs-on }}
     services:
@@ -159,8 +168,14 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8 # v1.10.1
         with:
           toolchain: ${{ env.RUST_IMAGE_VERSION }}
-          components: rustfmt, clippy, llvm-tools-preview
+          components: rustfmt, clippy, llvm-tools-preview, llvm-tools
           cache: false
+
+      - name: Install cargo-llvm-cov & nextest
+        if: github.event_name == 'pull_request'
+        uses: taiki-e/install-action@1dd4d60a583436c5738af3d204f159f44d92f704  # v2.61.0
+        with:
+          tool: cargo-llvm-cov,nextest,grcov
 
       ############################################################################
       # Setup cache for dockerfile and inject in docker
@@ -288,6 +303,10 @@ jobs:
           AWS_ENDPOINT: "http://127.0.0.1:9000"
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
+          NEXTEST_RETRIES: 3
+          NEXTEST_TEST_THREADS: 1
+          EVENT_NAME: ${{ github.event_name }}
+          RUNNER_TEMP: ${{ runner.temp }}
         run: |
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
@@ -299,7 +318,38 @@ jobs:
           echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
-          RUST_BACKTRACE=full cargo test ${ARGS_TESTS:+$ARGS_TESTS}
+          if [[ "${EVENT_NAME}" == 'schedule' ]]; then
+            export RUSTFLAGS="-Cinstrument-coverage"
+            export LLVM_PROFILE_FILE="cargo-test-%p-%m.profraw"
+            RUST_BACKTRACE=full cargo nextest run --profile ci ${ARGS_TESTS:+$ARGS_TESTS}
+          else
+            RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          fi
+          if [[ "${EVENT_NAME}" == 'schedule' ]]; then
+            ~/.cargo/bin/grcov . --binary-path "${GITHUB_WORKSPACE}/target/debug/deps/" -s . --branch --ignore-not-existing -o "${RUNNER_TEMP}/lcov" -t lcov
+          fi
+
+      - name: Copy Test Results
+        if: (!cancelled() && github.event_name == 'pull_request')
+        run: |
+          echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
+          cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit.xml # zizmor: ignore[template-injection]
+        shell: bash
+
+      - name: Upload Test Results
+        if: (!cancelled() && github.event_name == 'pull_request')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: junit-test-report-${{ env.TIMESTAMP }}
+          path: /tmp/junit.xml
+
+      - name: Upload coverage to Codecov
+        if: github.event_name == 'schedule'
+        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7  # v5.5.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
+          files: '${{ runner.temp }}/lcov'
+          fail_ci_if_error: true
 
       - name: Set Slack color
         id: slack_color
@@ -338,42 +388,6 @@ jobs:
           path: "**/*.log"
           retention-days: 30
           if-no-files-found: ignore
-
-      # Coverage reporting
-      - name: Run Tests with Coverage
-        if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-        env:
-          # some integration tests run docker compose
-          # which builds images which need private git access
-          # building images in every integration test run is bad
-          BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-          ARGS_TESTS: ${{inputs.args-tests}}
-        run: |
-          export CARGO_INCREMENTAL=0
-          export RUSTFLAGS='-Cinstrument-coverage'
-          export LLVM_PROFILE_FILE='cargo-test-%p-%m.profraw'
-          cargo test "${ARGS_TESTS}"
-          cargo install grcov
-          mkdir coverage
-          ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o coverage/ -t markdown
-          ~/.cargo/bin/grcov . --binary-path ../../target/debug/deps/ -s . --branch --ignore-not-existing --ignore '../*' --ignore "/*" -o ./ -t lcov
-          cat coverage/markdown.md
-          cat coverage/markdown.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Report code coverage
-        if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-        uses: romeovs/lcov-reporter-action@87a815f34ec27a5826abba44ce09bbc688da58fd # v0.4.0
-        with:
-          title: ${{inputs.package-name}}-test-coverage
-          lcov-file: lcov
-          working-directory: ${{ inputs.working-directory }}/
-
-      - name: Check minimum coverage
-        if: ${{ inputs.test-coverage && contains(github.event.pull_request.labels.*.name, 'coverage') }}
-        uses: VeryGoodOpenSource/very_good_coverage@c953fca3e24a915e111cc6f55f03f756dcb3964c # v3.0.0
-        with:
-          path: "${{inputs.working-directory}}/lcov"
-          min_coverage: ${{ inputs.test-minimum-coverage }}
 
       # Documentation
       - name: Build Documentation
