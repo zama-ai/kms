@@ -52,6 +52,10 @@ on:
       app-cache-dir:
         type: string
         required: true
+      nextest-test-threads:
+        type: string
+        required: false
+        default: "1"
     secrets:
       CODECOV_TOKEN:
         required: false
@@ -304,7 +308,7 @@ jobs:
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_RETRIES: 3
-          NEXTEST_TEST_THREADS: 1
+          NEXTEST_TEST_THREADS: ${{inputs.nextest-test-threads}}
           EVENT_NAME: ${{ github.event_name }}
           RUNNER_TEMP: ${{ runner.temp }}
         run: |
@@ -330,14 +334,14 @@ jobs:
           fi
 
       - name: Copy Test Results
-        if: (!cancelled() && github.event_name == 'pull_request')
+        if: (!cancelled() || !failure() && github.event_name == 'pull_request')
         run: |
           echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
           cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit.xml # zizmor: ignore[template-injection]
         shell: bash
 
       - name: Upload Test Results
-        if: (!cancelled() && github.event_name == 'pull_request')
+        if: (!cancelled() || !failure() && github.event_name == 'pull_request')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}
