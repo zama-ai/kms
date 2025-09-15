@@ -32,6 +32,7 @@ version = "0.11.0"
 aes = "=0.8.4"
 aes-prng = "=0.2.1"
 anyhow = "=1.0.98"
+assert_cmd = "=2.0.17"
 async-trait = "=0.1.88"
 attestation-doc-validation = { version = "=0.10.0" }
 backward-compatibility = { path = "./backward-compatibility" }

@@ -48,6 +48,7 @@ tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 validator.workspace = true
 
 [dev-dependencies]
+assert_cmd.workspace = true
 test-context = "=0.4.1"
 cc-tests-utils = { path = "./tests-utils" }
 serial_test.workspace = true

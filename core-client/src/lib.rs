@@ -522,11 +522,17 @@ pub struct ResultParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct RecoveryInitParameters {
+    #[clap(long, short = 'r')]
+    pub operator_recovery_resp_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct RecoveryParameters {
     #[clap(long, short = 'i')]
     pub custodian_context_id: RequestId,
     #[clap(long, short = 'r')]
-    pub custodian_recovery_outputs: Vec<PathBuf>, // TODO(#2748) should this just be a root directory with everything in?
+    pub custodian_recovery_outputs: Vec<PathBuf>,
 }
 
 #[derive(Debug, Subcommand, Clone)]
@@ -549,7 +555,7 @@ pub enum CCCommand {
     InsecureCrsGenResult(ResultParameters),
     NewCustodianContext(NewCustodianContextParameters),
     GetOperatorPublicKey(NoParameters),
-    CustodianRecoveryInit(NoParameters),
+    CustodianRecoveryInit(RecoveryInitParameters),
     CustodianBackupRecovery(RecoveryParameters),
     BackupRestore(NoParameters),
     DoNothing(NoParameters),
@@ -2128,16 +2134,17 @@ pub async fn execute_cmd(
             let pks = do_get_operator_pub_keys(&mut core_endpoints_req).await?;
             pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
         }
-        CCCommand::CustodianRecoveryInit(NoParameters {}) => {
-            // TODO(#2748) should have path as a parameter
+        CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
+            operator_recovery_resp_paths,
+        }) => {
             let res = do_custodian_recovery_init(&mut core_endpoints_req).await?;
-            for cur_rec_req in &res {
-                let path = destination_prefix
-                    .join("CUSTODIAN")
-                    .join("recovery")
-                    .join(cur_rec_req.backup_id().to_string())
-                    .join(cur_rec_req.operator_role().to_string());
-                safe_write_element_versioned(path, cur_rec_req).await?;
+            assert_eq!(res.len(), operator_recovery_resp_paths.len());
+            for (op_zero_idx, cur_path) in operator_recovery_resp_paths.iter().enumerate() {
+                let cur_res = res
+                    .iter()
+                    .find(|&x| x.operator_role() == Role::indexed_from_zero(op_zero_idx))
+                    .unwrap();
+                safe_write_element_versioned(cur_path, cur_res).await?;
             }
             vec![(
                 Some(res[0].backup_id()),

@@ -124,7 +124,7 @@ aes-gcm = { version = "=0.10.3", features = ["std"] }
 ml-kem = "=0.2.1"
 
 [dev-dependencies]
-assert_cmd = "=2.0.17"
+assert_cmd.workspace = true
 serial_test.workspace = true
 sysinfo = "=0.35.1"
 tempfile.workspace = true

@@ -4264,6 +4264,7 @@ dependencies = [
  "alloy-signer",
  "alloy-sol-types",
  "anyhow",
+ "assert_cmd",
  "attestation-doc-validation",
  "bytes",
  "cc-tests-utils",
