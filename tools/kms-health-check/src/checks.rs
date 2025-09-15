@@ -169,7 +169,7 @@ pub async fn run_config_validation(config_path: &str) -> Result<HealthCheckResul
                             "      - {} of {} nodes for optimal status (all nodes online)",
                             total_nodes, total_nodes
                         );
-                        println!("      ⚠️  Operational recommendation: All {} nodes should be online for best performance", total_nodes);
+                        println!("      (!!!)  Operational recommendation: All {} nodes should be online for best performance", total_nodes);
                     }
 
                     // Validate peer addresses
@@ -339,7 +339,7 @@ async fn process_health_status(
                     health_status.nodes_reachable, total_nodes, total_nodes - health_status.nodes_reachable
                 ));
                 result.recommendations.push(format!(
-                    "⚠️  INVESTIGATE: Even with healthy status, explore why {} nodes are offline. Check peer connectivity, network issues, or node failures to restore optimal fault tolerance.",
+                    "(!!!)  INVESTIGATE: Even with healthy status, explore why {} nodes are offline. Check peer connectivity, network issues, or node failures to restore optimal fault tolerance.",
                     total_nodes - health_status.nodes_reachable
                 ));
             } else if health_status.nodes_reachable > health_status.threshold_required {
