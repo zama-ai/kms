@@ -20,38 +20,54 @@ bc2wrap.workspace = true
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 observability = { workspace = true, optional = true }
+# Compile-time string formatting - LOW RISK: rodrimati1992, 1M+ downloads
 const_format = "=0.2.34"
+# Big integer operations for crypto - LOW RISK: RustCrypto org, 5M+ downloads
 crypto-bigint = { version = "=0.6.1", features = [
     "serde",
     "rand_core",
     "extra-sizes",
 ], optional = true }
+# Concurrent hashmap - LOW RISK: xacrimon, 10M+ downloads, high performance
 dashmap = "=6.1.0"
+# Derive macros for common traits - LOW RISK: JelteF, 10M+ downloads
 derive_more = { version = "=2.0.1", features = ["display"] }
 futures.workspace = true
 futures-util.workspace = true
+# Grapheme to phoneme conversion - MEDIUM RISK: Individual maintainer, very low popularity, unusual for KMS
 g2p = "=1.2.2"
 hex = { version = "=0.4.3", features = ["serde"] }
+# TLS for hyper (newer version) - LOW RISK: rustls team, uses ring backend
 hyper-rustls = { version = "=0.27.7", default-features = false, features = ["http2", "ring"] , optional = true }
 itertools.workspace = true
 lazy_static.workspace = true
+# Template engine - LOW RISK: mitsuhiko (reputable, also makes rye/uv), 1M+ downloads
 minijinja = { version = "=2.11.0", features = ["loader"], optional = true }
 mockall.workspace = true
+# N-dimensional arrays - LOW RISK: rust-ndarray team, 10M+ downloads
 ndarray = { version = "=0.16.1", features = ["serde"] }
+# Integer utilities - LOW RISK: rust-num team, 50M+ downloads
 num-integer = "=0.1.46"
+# Numeric traits - LOW RISK: rust-num team, 100M+ downloads
 num-traits = "=0.2.19"
+# OID registry for ASN.1 - LOW RISK: rusticata team, 1M+ downloads
 oid-registry = "=0.8.1"
 opentelemetry = { workspace = true, optional = true }
 paste = "=1.0.15"
+# Memory allocation tracker - LOW RISK: Imberflur, useful for profiling
 peak_alloc = { version = "=0.2.1", optional = true }
 prost.workspace = true
 rand.workspace = true
 rayon.workspace = true
+# Redis client - LOW RISK: redis-rs team, 10M+ downloads
 redis = { version = "=0.29.5", optional = true }
 rcgen = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
+# SHA-2 hash functions - LOW RISK: RustCrypto org, 100M+ downloads
 sha2 = "=0.10.9"
+# SHA-3 hash functions - LOW RISK: RustCrypto org, 10M+ downloads
 sha3 = "=0.10.8"
+# Statistical functions - LOW RISK: boxtown, 500K+ downloads
 statrs = "=0.18.0"
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
@@ -80,23 +96,31 @@ zeroize.workspace = true
 tfhe-zk-pok = { workspace = true, optional = true }
 tfhe-versionable.workspace = true
 
-# we need getrandom to have the js feature so that it can target wasm
-# this is an indirect dependency
+# Random number generation for WASM - LOW RISK: rust-random team, 100M+ downloads
+# Needed for WASM compatibility with js feature
 getrandom = { version = "=0.2.15", features = ["js"] }
 
 [build-dependencies]
 tonic-build.workspace = true
 
 [dev-dependencies]
+# Async runtime for testing - LOW RISK: async-rs team, 10M+ downloads
 async-std = { version = "=1.13.1", features = ["attributes", "tokio1"] }
+# Benchmarking framework - LOW RISK: bheisler, 5M+ downloads
 criterion = { version = "=0.5.1", features = ["async_tokio"] }
+# Constructor functions - LOW RISK: mmastrac, used for test setup
 ctor = "=0.4.2"
+# Property-based testing - LOW RISK: AltSysrq, 5M+ downloads
 proptest = "=1.6.0"
+# CPU profiler - LOW RISK: tikv team, useful for performance analysis
 pprof = { version = "=0.15.0", features = ["flamegraph", "criterion"] }
+# Test framework - LOW RISK: la10736, 1M+ downloads
 rstest = "=0.25.0"
 serial_test.workspace = true
 tempfile.workspace = true
+# Tracing test utilities - LOW RISK: tokio-rs team
 tracing-test = "=0.2.5"
+# WebPKI X.509 validation - LOW RISK: rustls team, 50M+ downloads
 webpki = { version = "=0.22.4", features = ["std"] }
 # we need the experimental feature to simplify some tests
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }

@@ -7,32 +7,45 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# Web framework - LOW RISK: tokio-rs team, 10M+ downloads, actively maintained
 axum = { version = "=0.8.4", features = ["tokio"] }
 anyhow.workspace = true
 config.workspace = true
 http.workspace = true
 lazy_static.workspace = true
 opentelemetry = { workspace = true, features = ["metrics"] }
+# OpenTelemetry HTTP transport - LOW RISK: CNCF project
 opentelemetry-http = "=0.29.0"
+# OpenTelemetry OTLP exporter - LOW RISK: CNCF project, standard protocol
 opentelemetry-otlp = { version = "=0.29.0", features = ["tokio", "grpc-tonic"] }
+# Prometheus metrics exporter - LOW RISK: CNCF project
 opentelemetry-prometheus = "=0.29.1"
+# Semantic conventions - LOW RISK: CNCF project, standard definitions
 opentelemetry-semantic-conventions = "=0.29.0"
+# Stdout exporter for debugging - LOW RISK: CNCF project
 opentelemetry-stdout = { version = "=0.29.0", features = ["trace"] }
+# OpenTelemetry SDK - LOW RISK: CNCF project, core functionality
 opentelemetry_sdk = { version = "=0.29.0", features = ["rt-tokio", "logs", "metrics"] }
+# Prometheus metrics client - LOW RISK: tikv team, 1M+ downloads
 prometheus = { version = "=0.14.0", features = ["process"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 strum.workspace = true
 strum_macros.workspace = true
+# System information gathering - LOW RISK: GuillaumeGomez, 10M+ downloads
 sysinfo = "0.36.1"
 thiserror.workspace = true
 tonic.workspace = true
 tracing = { workspace = true, features = ["log", "async-await"] }
 tracing-opentelemetry.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
+# Log file rotation - LOW RISK: tokio-rs team
 tracing-appender = "=0.2.3"
+# Tracing test utilities - LOW RISK: tokio-rs team
 tracing-test = "0.2"
+# Builder pattern macro - LOW RISK: idanarye, 5M+ downloads
 typed-builder = "=0.21.0"
+# UUID generation - LOW RISK: uuid-rs team, 100M+ downloads
 uuid = { version = "=1.16.0", features = ["v4", "fast-rng"] }
 validator.workspace = true
 

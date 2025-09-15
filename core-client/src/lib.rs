@@ -2189,7 +2189,7 @@ fn print_timings(cmd: &str, durations: &mut [tokio::time::Duration], start: toki
     // compute latency values
     let avg = durations.iter().sum::<tokio::time::Duration>() / durations.len() as u32;
     durations.sort();
-    let median = if durations.len() % 2 == 0 {
+    let median = if durations.len().is_multiple_of(2) {
         (durations[durations.len() / 2 - 1] + durations[durations.len() / 2]) / 2
     } else {
         durations[durations.len() / 2]
