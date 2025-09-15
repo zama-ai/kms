@@ -543,7 +543,7 @@ jobs:
       working-directory: './core/threshold'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test run in parallel to 4
-      args-tests: '-F slow_tests --lib -- --test-threads=4'
+      args-tests: '-F slow_tests --lib'
       package-name: 'threshold-fhe'
       app-cache-dir: 'threshold-fhe'
       nextest-test-threads: 4
