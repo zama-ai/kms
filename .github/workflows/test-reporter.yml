@@ -51,6 +51,8 @@ jobs:
 
       - name: Publish Test Report
         uses: ctrf-io/github-test-reporter@646f98cfc16c6f7a0e1f6100cabe2deb95dd2eef  # v1.0.22
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           report-path: "/tmp/junit/**/*.xml"
           title: "Consolidated Tests Results ${{ env.TIMESTAMP }}"
