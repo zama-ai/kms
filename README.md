@@ -15,7 +15,7 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-BSD--3--Clause--Clear-%23ffb243?style=flat-square"></a>
   <a href="https://github.com/zama-ai/bounty-program"><img src="https://img.shields.io/badge/Contribute-Zama%20Bounty%20Program-%23ffd208?style=flat-square"></a>
-  <a href="https://github.com/zama-ai/kms/pkgs/container/kms-service"><img src="https://github.com/zama-ai/kms/actions/workflows/global-common-workflow.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/zama-ai/kms/pkgs/container/kms-service"><img src="https://github.com/zama-ai/kms/actions/workflows/main.yml/badge.svg?branch=main"></a>
   <!-- TODO: add release badge once we made a public release -->
 </p>
 
