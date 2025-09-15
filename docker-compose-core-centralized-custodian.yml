@@ -9,6 +9,9 @@ services:
     image: ghcr.io/zama-ai/kms/core-service:latest-dev
     environment:
       - DOCKER_BUILDKIT=1
+      # Observe there is no field called `enabled` in the SecretSharingKeychain structure,
+      # but it seems it is the only way we can set the SecretSharingKeychain structure through environment variables
+      - KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true
     build:
       context: .
       target: dev
@@ -38,7 +41,7 @@ services:
       echo 'Generating signing keys' &&
       kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys centralized &&
       echo 'Starting kms service' &&
-      kms-server --config-file config/compose_centralized_custodian.toml
+      kms-server --config-file config/compose_centralized.toml
       "
     depends_on:
       dev-s3-mock-setup:
