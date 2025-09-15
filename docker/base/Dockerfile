@@ -33,7 +33,7 @@ ENV CARGO_HOME=/root/.cargo
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain=$RUST_IMAGE_VERSION && \
     . $CARGO_HOME/env
 
-RUN cargo install sccache --version ^0.7
+RUN cargo install sccache --version ^0.10
 
 # Set environment variables for building
 ENV RUSTC_WRAPPER=sccache SCCACHE_DIR=/sccache
