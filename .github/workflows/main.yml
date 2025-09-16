@@ -296,7 +296,7 @@ jobs:
     if: >-
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c9fc2ea0d7cc5df90178ba0c050a6644fcb34afc
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@f68df38ebe09b4cba71938e5e8e55f8d72a96b66
     with:
       docker-file: "./docker/core-client/Dockerfile"
       working-directory: "./core-client"
@@ -464,7 +464,8 @@ jobs:
     if: >-
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    uses: ./.github/workflows/common-docker-big-instance.yml
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@f68df38ebe09b4cba71938e5e8e55f8d72a96b66
+    # uses: ./.github/workflows/common-docker-big-instance.yml
     with:
       docker-file: "./docker/core/service/Dockerfile"
       working-directory: "./core/service"
@@ -654,7 +655,7 @@ jobs:
     if: >-
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c9fc2ea0d7cc5df90178ba0c050a6644fcb34afc
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@f68df38ebe09b4cba71938e5e8e55f8d72a96b66
     with:
       docker-file: "./docker/base/Dockerfile"
       working-directory: "./base"

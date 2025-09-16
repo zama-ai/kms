@@ -190,6 +190,8 @@ jobs:
         run: |
           rustc --version
           cargo --version
+          echo $HOME
+          . "$HOME/.cargo/env"
           echo $CARGO_HOME
           echo $RUSTUP_HOME
 
