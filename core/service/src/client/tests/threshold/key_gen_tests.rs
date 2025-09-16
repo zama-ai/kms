@@ -83,7 +83,7 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
         FheParameter::Test,
         &kms_clients,
         &internal_client,
-        None,
+        &INSECURE_PREPROCESSING_ID,
         &key_id,
         None,
         None,
@@ -120,7 +120,7 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
         param,
         &kms_clients,
         &internal_client,
-        None,
+        &INSECURE_PREPROCESSING_ID,
         &key_id,
         None,
         None,
@@ -176,7 +176,7 @@ pub(crate) async fn run_threshold_keygen(
     parameter: FheParameter,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,
-    preproc_req_id: Option<RequestId>,
+    preproc_req_id: &RequestId,
     keygen_req_id: &RequestId,
     decompression_keygen: Option<(RequestId, RequestId)>,
     sns_compression_keygen: Option<RequestId>,
@@ -234,7 +234,7 @@ pub(crate) async fn run_threshold_keygen(
 
     wait_for_keygen_result(
         req_keygen.request_id.clone().try_into().unwrap(),
-        preproc_req_id,
+        *preproc_req_id,
         kms_clients,
         internal_client,
         insecure,
@@ -283,7 +283,7 @@ async fn launch_dkg(
 #[cfg(any(feature = "slow_tests", feature = "insecure"))]
 async fn wait_for_keygen_result(
     req_get_keygen: RequestId,
-    req_preproc: Option<RequestId>,
+    req_preproc: RequestId,
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     internal_client: &Client,
     insecure: bool,
@@ -381,11 +381,6 @@ async fn wait_for_keygen_result(
         let mut final_public_key = None;
         let mut final_server_key = None;
 
-        let preproc_id = match req_preproc {
-            Some(ref id) => id,
-            None => &INSECURE_PREPROCESSING_ID,
-        };
-
         for (idx, kg_res) in finished.into_iter() {
             let role = Role::indexed_from_one(idx as usize);
             let kg_res = kg_res.unwrap().into_inner();
@@ -393,7 +388,7 @@ async fn wait_for_keygen_result(
 
             let (server_key, public_key) = internal_client
                 .retrieve_server_key_and_public_key(
-                    preproc_id,
+                    &req_preproc,
                     &req_get_keygen,
                     &kg_res,
                     &domain,
@@ -462,7 +457,7 @@ async fn wait_for_keygen_result(
         let keygen_req_data = internal_client
             .key_gen_request(
                 &other_key_gen_id,
-                req_preproc,
+                &req_preproc,
                 Some(FheParameter::Test),
                 None,
                 None,
@@ -484,28 +479,24 @@ pub(crate) async fn run_threshold_decompression_keygen(
     insecure: bool,
 ) {
     let preproc_id_1 = if insecure {
-        None
+        *INSECURE_PREPROCESSING_ID
     } else {
-        Some(
-            derive_request_id(&format!(
-                "decom_dkg_preproc_{amount_parties}_{parameter:?}_1"
-            ))
-            .unwrap(),
-        )
+        derive_request_id(&format!(
+            "decom_dkg_preproc_{amount_parties}_{parameter:?}_1"
+        ))
+        .unwrap()
     };
     let key_id_1: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_1")).unwrap();
     purge(None, None, None, &key_id_1, amount_parties).await;
 
     let preproc_id_2 = if insecure {
-        None
+        *INSECURE_PREPROCESSING_ID
     } else {
-        Some(
-            derive_request_id(&format!(
-                "decom_dkg_preproc_{amount_parties}_{parameter:?}_2"
-            ))
-            .unwrap(),
-        )
+        derive_request_id(&format!(
+            "decom_dkg_preproc_{amount_parties}_{parameter:?}_2"
+        ))
+        .unwrap()
     };
     let key_id_2: RequestId =
         derive_request_id(&format!("decom_dkg_key_{amount_parties}_{parameter:?}_2")).unwrap();
@@ -530,7 +521,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
             parameter,
             &kms_clients,
             &internal_client,
-            &preproc_id_1.unwrap(),
+            &preproc_id_1,
             None,
             None,
         )
@@ -541,7 +532,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         parameter,
         &kms_clients,
         &internal_client,
-        preproc_id_1,
+        &preproc_id_1,
         &key_id_1,
         None,
         None,
@@ -556,7 +547,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
             parameter,
             &kms_clients,
             &internal_client,
-            &preproc_id_2.unwrap(),
+            &preproc_id_2,
             None,
             None,
         )
@@ -567,7 +558,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         parameter,
         &kms_clients,
         &internal_client,
-        preproc_id_2,
+        &preproc_id_2,
         &key_id_2,
         None,
         None,
@@ -593,7 +584,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         parameter,
         &kms_clients,
         &internal_client,
-        Some(preproc_id_3),
+        &preproc_id_3,
         &key_id_3,
         Some((key_id_1, key_id_2)),
         None,
@@ -628,14 +619,12 @@ async fn run_threshold_sns_compression_keygen(
     use threshold_fhe::execution::tfhe_internals::test_feature::run_sns_compression_test;
     // for generating the sns compression key
     let preproc_id = if insecure {
-        None
+        *INSECURE_PREPROCESSING_ID
     } else {
-        Some(
-            derive_request_id(&format!(
-                "sns_com_dkg_preproc_{amount_parties}_{parameter:?}"
-            ))
-            .unwrap(),
-        )
+        derive_request_id(&format!(
+            "sns_com_dkg_preproc_{amount_parties}_{parameter:?}"
+        ))
+        .unwrap()
     };
     let sns_compression_req_id: RequestId =
         derive_request_id(&format!("sns_com_dkg_key_{amount_parties}_{parameter:?}")).unwrap();
@@ -653,7 +642,7 @@ async fn run_threshold_sns_compression_keygen(
             parameter,
             &kms_clients,
             &internal_client,
-            &preproc_id.unwrap(),
+            &preproc_id,
             None,
             Some(*base_key_id),
         )
@@ -664,7 +653,7 @@ async fn run_threshold_sns_compression_keygen(
         parameter,
         &kms_clients,
         &internal_client,
-        preproc_id,
+        &preproc_id,
         &sns_compression_req_id,
         None,
         Some(*base_key_id),
@@ -779,7 +768,7 @@ pub(crate) async fn preproc_and_keygen(
                         parameter,
                         &clients_clone,
                         &internalclient_clone,
-                        Some(preproc_ids_clone),
+                        &preproc_ids_clone,
                         &key_id,
                         None,
                         None,
@@ -823,7 +812,7 @@ pub(crate) async fn preproc_and_keygen(
                 parameter,
                 &kms_clients,
                 &internal_client,
-                Some(preproc_ids.get(&i).unwrap().to_owned()),
+                preproc_ids.get(&i).unwrap(),
                 &key_id,
                 None,
                 None,

@@ -441,6 +441,7 @@ where
         StandardKeySetConfig::default(),
         None,
         key_id,
+        &INSECURE_PREPROCESSING_ID,
         seed,
         &domain,
     ) {
@@ -457,6 +458,7 @@ where
         StandardKeySetConfig::default(),
         None,
         other_key_id,
+        &INSECURE_PREPROCESSING_ID,
         seed,
         &domain,
     ) {
