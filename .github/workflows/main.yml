@@ -472,6 +472,7 @@ jobs:
       push_image: true
       image-name: 'kms/core-service'
       app-cache-dir: 'kms'
+      use-cgr-secrets: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       # SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
