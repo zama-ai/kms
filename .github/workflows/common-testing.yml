@@ -192,6 +192,8 @@ jobs:
           cargo --version
           echo $HOME
           . "$HOME/.cargo/env"
+          ls -al $HOME
+          which cargo
           echo $CARGO_HOME
           echo $RUSTUP_HOME
 
