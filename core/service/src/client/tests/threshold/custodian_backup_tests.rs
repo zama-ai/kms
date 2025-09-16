@@ -320,8 +320,8 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         assert_eq!(cur_sk, sig_keys[i - 1]);
     }
     // Purge to ensure no left over state
-    purge_priv(None, 1).await;
-    purge_pub(None, 1).await;
+    purge_priv(test_path, amount_parties).await;
+    purge_pub(test_path, amount_parties).await;
 }
 
 async fn run_custodian_recovery_init(
