@@ -186,17 +186,6 @@ jobs:
           components: rustfmt, clippy, llvm-tools-preview, llvm-tools
           cache: false
 
-      - name: debug rust install
-        run: |
-          rustc --version
-          cargo --version
-          echo $HOME
-          . "$HOME/.cargo/env"
-          ls -al $HOME
-          which cargo
-          echo $CARGO_HOME
-          echo $RUSTUP_HOME
-
       - name: Install cargo-llvm-cov & nextest
         uses: taiki-e/install-action@1dd4d60a583436c5738af3d204f159f44d92f704  # v2.61.0
         with:
@@ -213,39 +202,12 @@ jobs:
           RUNS_ON_AWS_REGION: eu-west-3
         with:
           path: |
-            var-cache-apk
-            var-lib-apk
-            usr-local-cargo-registry
-            usr-local-cargo-git
-            usr-local-cargo-bin
-            usr-local-cargo-registry-index
-            usr-local-cargo-registry-cache
-            usr-local-cargo-git-db
-            app-${{ inputs.app-cache-dir }}-target
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
+            /home/ubuntu/.cargo/bin/
+            /home/ubuntu/.cargo/registry/index/
+            /home/ubuntu/.cargo/registry/cache/
+            /home/ubuntu/.cargo/git/db/
           key: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: inject cache into docker
-        uses: reproducible-containers/buildkit-cache-dance@5b6db76d1da5c8b307d5d2e0706d266521b710de # v3.1.2
-        with:
-          cache-map: |
-            {
-              "var-cache-apk": "/var/cache/apk",
-              "var-lib-apk": "/var/lib/apk",
-              "usr-local-cargo-registry": "/usr/local/cargo/registry",
-              "usr-local-cargo-git": "/usr/local/cargo/git",
-              "usr-local-cargo-bin": "/usr/local/cargo/bin",
-              "usr-local-cargo-registry-index": "/usr/local/cargo/registry/index",
-              "usr-local-cargo-registry-cache": "/usr/local/cargo/registry/cache",
-              "usr-local-cargo-git-db": "/usr/local/cargo/git/db",
-              "app-${{ inputs.app-cache-dir }}-target": "/app/${{ inputs.app-cache-dir }}/target"
-            }
-          skip-extraction: ${{ steps.cache.outputs.cache-hit }}
 
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0

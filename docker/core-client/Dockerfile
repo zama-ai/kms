@@ -5,6 +5,8 @@
 ## First stage sets up basic Rust build environment
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS builder
 
+ARG APP_CACHE_DIR=kms-core-client
+
 WORKDIR /app/kms-core-client
 
 # Copy entire project for workspace support
