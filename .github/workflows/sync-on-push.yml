@@ -23,14 +23,6 @@ jobs:
           tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
           "./git-lfs-${GIT_LFS_VERSION}/install.sh"
 
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          lfs: true
-          fetch-depth: 0
-          persist-credentials: 'false'
-          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-
       - name: git-sync
         env:
           SOURCE_REPO: "zama-ai/kms"
