@@ -27,7 +27,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
        /app/kms/target/${LTO_RELEASE}/kms-gen-keys \
     ./core/service/bin
 
-ARG YQ_VERSION=v4.45.1
+ARG YQ_VERSION=v4.47.2
 # Overridable arg to allow building for different architectures
 ARG TARGETARCH=amd64
 RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH}
@@ -35,7 +35,7 @@ RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_V
 ################################################################
 ## Third stage: Copy the binaries from preceding stages
 # This stage will be the final image
-FROM --platform=$BUILDPLATFORM cgr.dev/chainguard/glibc-dynamic:latest-dev AS prod
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
 
 USER root
 # Install required runtime dependencies
@@ -47,7 +47,7 @@ RUN apk update && apk add --no-cache \
     libgcc \
     libstdc++
 
-ARG YQ_VERSION=v4.45.1
+ARG YQ_VERSION=v4.47.2
 # Overridable arg to allow building for different architectures
 ARG TARGETARCH=amd64
 RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH} && \
@@ -105,7 +105,7 @@ RUN apk update && apk add --no-cache git && \
 ## Fourth stage: Build and install yq-go -- For development only with extra tools
 FROM --platform=$BUILDPLATFORM prod AS dev
 
-ARG YQ_VERSION=v4.45.1
+ARG YQ_VERSION=v4.47.2
 ARG TARGETARCH=amd64
 
 USER root

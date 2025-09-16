@@ -1,20 +1,24 @@
+use crate::client::client_wasm::Client;
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 #[cfg(feature = "slow_tests")]
 use crate::consts::DEFAULT_CENTRAL_KEY_ID;
 use crate::consts::TEST_CENTRAL_KEY_ID;
 use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 use crate::dummy_domain;
-use crate::engine::base::{derive_request_id, CENTRALIZED_DUMMY_PREPROCESSING_ID};
+use crate::engine::base::derive_request_id;
 use crate::util::key_setup::test_tools::purge;
 use crate::util::rate_limiter::RateLimiterConfig;
 use crate::vault::storage::StorageReader;
 use crate::vault::storage::{file::FileStorage, StorageType};
+use alloy_dyn_abi::Eip712Domain;
 use kms_grpc::kms::v1::{Empty, FheParameter, KeySetAddedInfo, KeySetConfig, KeySetType};
+use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::RequestId;
 use serial_test::serial;
 use std::str::FromStr;
+use tonic::transport::Channel;
 
 use threshold_fhe::execution::tfhe_internals::test_feature::run_decompression_test;
 
@@ -147,6 +151,37 @@ async fn default_sns_compression_key_gen_centralized() {
     .await;
 }
 
+async fn preproc_centralized(
+    preproc_id: &RequestId,
+    params: FheParameter,
+    keyset_config: Option<KeySetConfig>,
+    domain: &Eip712Domain,
+    kms_client: &mut CoreServiceEndpointClient<Channel>,
+    internal_client: &Client,
+) {
+    let preproc_req = internal_client
+        .preproc_request(preproc_id, Some(params), keyset_config, domain)
+        .unwrap();
+    let preproc_response = kms_client
+        .key_gen_preproc(tonic::Request::new(preproc_req.clone()))
+        .await
+        .unwrap();
+    assert_eq!(preproc_response.into_inner(), Empty {});
+
+    let mut response = kms_client
+        .get_key_gen_preproc_result(tonic::Request::new((*preproc_id).into()))
+        .await;
+    while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+        // Sleep to give the server some time to complete preprocessing
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        response = kms_client
+            .get_key_gen_preproc_result(tonic::Request::new((*preproc_id).into()))
+            .await;
+    }
+    let inner_resp = response.unwrap().into_inner();
+    assert_eq!(inner_resp.preprocessing_id, Some((*preproc_id).into()));
+}
+
 async fn key_gen_centralized(
     request_id: &RequestId,
     params: FheParameter,
@@ -154,6 +189,7 @@ async fn key_gen_centralized(
     keyset_added_info: Option<KeySetAddedInfo>,
 ) {
     let dkg_params: WrappedDKGParams = params.into();
+    let preproc_id = derive_request_id(&format!("preproc-for-request{}", request_id)).unwrap();
 
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100 * 3, // Multiply by 3 to account for the decompression key generation case
@@ -168,10 +204,20 @@ async fn key_gen_centralized(
         crate::client::test_tools::centralized_handles(&dkg_params, Some(rate_limiter_conf)).await;
 
     let domain = dummy_domain();
+    preproc_centralized(
+        &preproc_id,
+        params,
+        keyset_config,
+        &domain,
+        &mut kms_client,
+        &internal_client,
+    )
+    .await;
+
     let gen_req = internal_client
         .key_gen_request(
             request_id,
-            None,
+            &preproc_id,
             Some(params),
             keyset_config,
             keyset_added_info.clone(),
@@ -203,10 +249,9 @@ async fn key_gen_centralized(
     let domain_clone = domain.clone();
     let basic_checks = async |resp: &kms_grpc::kms::v1::KeyGenResult| {
         let req_id = resp.request_id.clone().unwrap();
-        let preproc_id = &CENTRALIZED_DUMMY_PREPROCESSING_ID;
         let (server_key, _public_key) = internal_client
             .retrieve_server_key_and_public_key(
-                preproc_id,
+                &preproc_id,
                 request_id,
                 resp,
                 &domain_clone,

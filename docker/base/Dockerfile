@@ -1,4 +1,4 @@
-FROM cgr.dev/chainguard/glibc-dynamic:latest-dev AS prod
+FROM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
 
 ARG RUST_IMAGE_VERSION=stable
 # Install essential tools and dependencies

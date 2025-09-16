@@ -52,6 +52,10 @@ on:
       app-cache-dir:
         type: string
         required: true
+      nextest-test-threads:
+        type: string
+        required: false
+        default: "1"
     secrets:
       CODECOV_TOKEN:
         required: false
@@ -70,6 +74,10 @@ on:
       BOT_USERNAME:
         required: true
       SLACK_WEBHOOK:
+        required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
         required: true
 
 env:
@@ -143,6 +151,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: cgr.dev
+          username: ${{ secrets.CGR_USERNAME }}
+          password: ${{ secrets.CGR_PASSWORD }}
+
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
@@ -172,7 +187,6 @@ jobs:
           cache: false
 
       - name: Install cargo-llvm-cov & nextest
-        if: github.event_name == 'pull_request'
         uses: taiki-e/install-action@1dd4d60a583436c5738af3d204f159f44d92f704  # v2.61.0
         with:
           tool: cargo-llvm-cov,nextest,grcov
@@ -304,7 +318,7 @@ jobs:
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_RETRIES: 3
-          NEXTEST_TEST_THREADS: 1
+          NEXTEST_TEST_THREADS: ${{inputs.nextest-test-threads}}
           EVENT_NAME: ${{ github.event_name }}
           RUNNER_TEMP: ${{ runner.temp }}
         run: |
@@ -330,14 +344,14 @@ jobs:
           fi
 
       - name: Copy Test Results
-        if: (!cancelled() && github.event_name == 'pull_request')
+        if: (!cancelled() || !failure() && github.event_name == 'pull_request')
         run: |
           echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
           cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit.xml # zizmor: ignore[template-injection]
         shell: bash
 
       - name: Upload Test Results
-        if: (!cancelled() && github.event_name == 'pull_request')
+        if: (!cancelled() || !failure() && github.event_name == 'pull_request')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}

@@ -17,6 +17,8 @@ use crate::engine::centralized::service::{
     get_public_decryption_result_impl, get_user_decryption_result_impl, public_decrypt_impl,
     user_decrypt_impl,
 };
+#[cfg(feature = "insecure")]
+use observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST;
 use observability::{
     metrics::METRICS,
     metrics_names::{
@@ -79,13 +81,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<kms_grpc::kms::v1::KeyGenRequest>,
     ) -> Result<Response<Empty>, Status> {
-        METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST);
-        self.key_gen(request).await.inspect_err(|err| {
+        METRICS.increment_request_counter(OP_INSECURE_KEYGEN_REQUEST);
+        key_gen_impl(self, request, false).await.inspect_err(|err| {
             let tag = map_tonic_code_to_metric_tag(err.code());
-            let _ = METRICS.increment_error_counter(
-                observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST,
-                tag,
-            );
+            let _ = METRICS.increment_error_counter(OP_INSECURE_KEYGEN_REQUEST, tag);
         })
     }
 
@@ -111,7 +110,17 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         request: Request<kms_grpc::kms::v1::KeyGenRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_REQUEST);
-        key_gen_impl(self, request).await.inspect_err(|err| {
+        // if we're doing a "secure" keygen
+        // even if it's compiled with the "insecure" feature
+        // we still want to check the preprocessing ID
+        key_gen_impl(
+            self,
+            request,
+            #[cfg(feature = "insecure")]
+            true,
+        )
+        .await
+        .inspect_err(|err| {
             let tag = map_tonic_code_to_metric_tag(err.code());
             let _ = METRICS.increment_error_counter(OP_KEYGEN_REQUEST, tag);
         })

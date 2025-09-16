@@ -198,6 +198,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
 
   ############################################################################
   # Core Client Pipeline
@@ -270,6 +273,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
 
   # Builds Docker image for core-client
   # Only runs on main/release branches after successful tests
@@ -297,10 +303,13 @@ jobs:
       push_image: true
       image-name: 'kms/core-client'
       app-cache-dir: 'kms-core-client'
+      use-cgr-secrets: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
   # GRPC Testing
@@ -338,6 +347,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
 
   ############################################################################
   # Core Service Pipeline
@@ -429,6 +441,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
 
   # Builds the core service Docker image
   # Only runs on main/release branches after successful tests
@@ -463,6 +478,8 @@ jobs:
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   # Builds AWS Nitro Enclave image for secure execution
   # Only runs on main/release branches after core service image is built
@@ -491,6 +508,8 @@ jobs:
       image-enclave-name: 'kms/core-service-enclave'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
   # Core Threshold Pipeline
@@ -524,9 +543,10 @@ jobs:
       working-directory: './core/threshold'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test ran in parallel to 4
-      args-tests: '-F slow_tests --lib -- --test-threads=4'
+      args-tests: '-F slow_tests --lib'
       package-name: 'threshold-fhe'
       app-cache-dir: 'threshold-fhe'
+      nextest-test-threads: 4
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -539,6 +559,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
 
   # Runs extended threshold tests on main/release branches
   # Includes Redis integration and all test suites
@@ -560,10 +583,11 @@ jobs:
       working-directory: './core/threshold'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test ran in parallel to 4
-      args-tests: '-F slow_tests --lib -- --test-threads=4'
+      args-tests: '-F slow_tests --lib'
       run-redis: true
       package-name: 'threshold-fhe'
       app-cache-dir: 'threshold-fhe'
+      nextest-test-threads: 4
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -575,6 +599,8 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   # Simplified build process for Dependabot PRs
   # Only runs library tests without integration components
@@ -605,6 +631,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
 
 
   ############################################################################
@@ -632,10 +661,13 @@ jobs:
       push_image: true
       image-name: 'kms/rust-golden-image'
       app-cache-dir: 'kms-base'
+      use-cgr-secrets: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
 
   ############################################################################

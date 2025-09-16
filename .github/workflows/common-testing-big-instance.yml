@@ -51,6 +51,10 @@ on:
       app-cache-dir:
         type: string
         required: true
+      nextest-test-threads:
+        type: string
+        required: false
+        default: "1"
     secrets:
       CODECOV_TOKEN:
         required: false
@@ -75,6 +79,10 @@ on:
       BOT_USERNAME:
         required: true
       SLACK_WEBHOOK:
+        required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
         required: true
 
 env:
@@ -122,6 +130,8 @@ jobs:
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
     with:
       runs-on: ${{ needs.start-runner.outputs.label }}
       build-publish-docs: ${{ inputs.build-publish-docs }}
@@ -135,6 +145,7 @@ jobs:
       test-coverage: ${{ inputs.test-coverage }}
       npm-release: ${{ inputs.npm-release }}
       app-cache-dir: ${{ inputs.app-cache-dir }}
+      nextest-test-threads: ${{ inputs.nextest-test-threads }}
 
   stop-runner:
     name: common-testing-big-instance/stop-runner
