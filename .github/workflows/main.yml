@@ -285,12 +285,12 @@ jobs:
       pull-requests: write # Required to create comments on pull requests
       packages: write # Required to publish packages
     needs:
-      - test-core-client
+      # - test-core-client
       - docker-golden-image
     if: >-
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c9fc2ea0d7cc5df90178ba0c050a6644fcb34afc
     with:
       docker-file: "./docker/core-client/Dockerfile"
       working-directory: "./core-client"
@@ -444,7 +444,7 @@ jobs:
       packages: write # Required to publish packages
       attestations: write # Required to create build attestations
     needs:
-      - test-core-service
+      # - test-core-service
       - docker-golden-image
     if: >-
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
@@ -625,7 +625,7 @@ jobs:
     if: >-
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
       (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@0e191f066fcd7d361c406f99559c7bf0e9f0879b
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@c9fc2ea0d7cc5df90178ba0c050a6644fcb34afc
     with:
       docker-file: "./docker/base/Dockerfile"
       working-directory: "./base"

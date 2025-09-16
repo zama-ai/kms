@@ -11,7 +11,8 @@ WORKDIR /app/kms-core-client
 COPY . .
 
 # Build using cargo install with caching
-RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
     mkdir -p /app/kms-core-client/bin && \
     cargo install --path core-client --root core-client --bins && \
     cargo install --path tools/kms-health-check --root tools/kms-health-check --bins
@@ -23,14 +24,11 @@ FROM --platform=$BUILDPLATFORM cgr.dev/chainguard/glibc-dynamic:latest-dev AS pr
 
 # Install only required runtime dependencies
 USER root
-RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
-    --mount=type=cache,target=/var/lib/apk,sharing=locked \
-    apk add --no-cache \
+RUN apk add --no-cache \
         openssl \
         wget \
         libgcc \
-        libstdc++ \
-    && rm -rf /var/lib/apk/lists/*
+        libstdc++
 
 WORKDIR /app/kms-core-client
 
