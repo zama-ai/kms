@@ -476,7 +476,7 @@ jobs:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       # SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
       # SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      # JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
