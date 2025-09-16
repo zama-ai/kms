@@ -27,7 +27,7 @@ jobs:
           DEST_REPO: ${{ secrets.SYNC_DEST_REPO }}
         run: |
           echo ">>> Cloning source repo..."
-          git clone "https://github.com/${SOURCE_REPO}" ./kms --origin source && cd ./kms
+          git lfs clone "https://github.com/${SOURCE_REPO}" ./kms --origin source && cd ./kms
           git remote add destination "https://${USERNAME}:${TOKEN}@github.com/${DEST_REPO}"
 
           echo ">>> Fetching all branches references down locally so subsequent commands can see them..."
@@ -36,8 +36,8 @@ jobs:
           # Print out all branches
           git --no-pager branch -a -vv
 
-          echo ">>> Fetching all LFS items from source..."
-          git lfs fetch --all source "${SOURCE_BRANCH}"
+          # echo ">>> Fetching all LFS items from source..."
+          # git lfs fetch --all source "${SOURCE_BRANCH}"
 
           # echo ">>> Pushing git changes..."
           # git push destination "${SOURCE_BRANCH}:${DESTINATION_BRANCH}" -f
@@ -55,8 +55,7 @@ jobs:
           DEST_REPO: ${{ secrets.SYNC_DEST_REPO }}
         run: |
           echo ">>> Cloning source repo..."
-          git config lfs.dialtimeout 60
-          git clone "https://github.com/${SOURCE_REPO}" ./kms --origin source && cd ./kms
+          git lfs clone "https://github.com/${SOURCE_REPO}" ./kms --origin source && cd ./kms
           git remote add destination "https://${USERNAME}:${TOKEN}@github.com/${DEST_REPO}"
 
           echo ">>> Fetching all branches references down locally so subsequent commands can see them..."
