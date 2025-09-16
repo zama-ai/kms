@@ -156,10 +156,12 @@ fn test_kms_fhe_key_handles(
         load_and_unversionize_auxiliary(dir, test, &test.decompression_key_filename, format)?;
 
     let key_id = RequestId::zeros();
+    let preproc_id = RequestId::zeros();
     let new_versionized = KmsFheKeyHandles::new(
         &private_sig_key,
         client_key,
         &key_id,
+        &preproc_id,
         &fhe_pub_key_set,
         decompression_key,
         &dummy_domain(),

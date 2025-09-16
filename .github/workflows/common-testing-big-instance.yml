@@ -51,7 +51,13 @@ on:
       app-cache-dir:
         type: string
         required: true
+      nextest-test-threads:
+        type: string
+        required: false
+        default: "1"
     secrets:
+      CODECOV_TOKEN:
+        required: false
       SLAB_ACTION_TOKEN:
         required: true
       SLAB_BASE_URL:
@@ -74,12 +80,16 @@ on:
         required: true
       SLACK_WEBHOOK:
         required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
+        required: true
 
 env:
   CARGO_TERM_COLOR: always
 
-permissions:
-  packages: read
+# No top-level permissions needed - job-level permissions are more specific
+permissions: {}
 
 jobs:
   start-runner:
@@ -101,6 +111,13 @@ jobs:
 
   run-build:
     name: common-testing-big-instance/run-build
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      pull-requests: write # Required to create comments on pull requests
+      issues: write # Required to create comments on issues
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
     needs: start-runner
     uses: ./.github/workflows/common-testing.yml
     secrets:
@@ -112,6 +129,9 @@ jobs:
       SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
     with:
       runs-on: ${{ needs.start-runner.outputs.label }}
       build-publish-docs: ${{ inputs.build-publish-docs }}
@@ -125,6 +145,7 @@ jobs:
       test-coverage: ${{ inputs.test-coverage }}
       npm-release: ${{ inputs.npm-release }}
       app-cache-dir: ${{ inputs.app-cache-dir }}
+      nextest-test-threads: ${{ inputs.nextest-test-threads }}
 
   stop-runner:
     name: common-testing-big-instance/stop-runner
