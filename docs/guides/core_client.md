@@ -216,9 +216,9 @@ Assuming the toml file has been appropriately setup to allow custodian based bac
 4. KMS nodes recover the backup decryption key.
   The custodians' partial decryptions are transferred to the KMS with the `custodian-backup-restore` command allowing them to recover the private decryption key needed to decrypt the backup and thus restore its context. This is done with the following command:
     ```{bash}
-  $ cargo run -- -f <path-to-toml-config-file> custodian_backup_recovery -i fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98 -r ./data/keys/CUSTODIAN/response/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/recovery-response-1-3 -r ./data/keys/CUSTODIAN/response/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/recovery-response-2-3 -r ./data/keys/CUSTODIAN/response/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/recovery-response-3-3 -r ./data/keys/CUSTODIAN/response/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/recovery-response-4-3 -r ./data/keys/CUSTODIAN/response/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/recovery-response-5-3 
+  $ cargo run -- -f <path-to-toml-config-file> custodian_backup_recovery -i fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98 -r ./data/keys/CUSTODIAN/response/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/recovery-response-1-3 -r ./data/keys/CUSTODIAN/response/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/recovery-response-2-3 -r ./data/keys/CUSTODIAN/response/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/recovery-response-3-3 
   ``` TODO CHECK
-  In the example above the the backup/custodian context ID is provided with `-i`. I.e. in this example it is `fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98`. Next the paths of where the response for each of the custodians from the KMS node should be stored is given. In the example we assume the core client only communicated with KMS node 3, and that there are 5 custodians. I.e. `recovery-response-i-j` is the response to custodian `i` for KMS node `j`. Both being 1-indexed monotonically increasing IDs. 
+  In the example above the the backup/custodian context ID is provided with `-i`. I.e. in this example it is `fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98`. Next the paths of where the response for each of the custodians from the KMS node should be stored is given. In the example we assume the core client only communicated with KMS node 3, and that there are 3 custodians. I.e. `recovery-response-i-j` is the response to custodian `i` for KMS node `j`. Both being 1-indexed monotonically increasing IDs. 
 5. The backup can now be recovered.
   The KMS nodes can finally recover using the backed up data. This is done with a final `backup-restore` call, similar to the non-custodian case. More specifically with the following call:
   ```{bash}
@@ -419,6 +419,12 @@ Optional command line options for the public/user decryption command are:
  __NOTE__: If the ciphertext is provided by file, then only the optional arguments `-b`/`--batch-size <BATCH_SIZE>` and `-n`/`--num-requests <NUM_REQUESTS>` are supported.
 
 ### Custodian context
+
+In order to be able to do custodian based backup and recovery, the KMS nodes need to know the public keys of the custodians which will be able to help it recover. This is handled through custodian contexts. 
+For custodian based backup we currently only support a single active custodian context. This there will only exist one set of custodians under which a backup can be constructed. Whenever a new custodian context is made, this will replace the old context as the current backup method. 
+Note however that this does not remove the old backups (for safety reasons). Hence the backups _must_ be manually deleted once it has been validated that the new context works as intended. 
+Below we sketch how to use the core client to create a new custodian context.
+
 
 ## Example Commands
 - Generate a set of private and public FHE keys for testing in a threshold KMS using the default threshold config. This command will expect all responses (`-a`) and will output logs (`-l`).
