@@ -55,6 +55,7 @@ jobs:
           DEST_REPO: ${{ secrets.SYNC_DEST_REPO }}
         run: |
           echo ">>> Cloning source repo..."
+          git config lfs.dialtimeout 60
           git clone "https://github.com/${SOURCE_REPO}" ./kms --origin source && cd ./kms
           git remote add destination "https://${USERNAME}:${TOKEN}@github.com/${DEST_REPO}"
 
