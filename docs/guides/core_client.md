@@ -111,6 +111,127 @@ Other command line options are:
  - `-a`/`--expect-all-responses`: if set, the tool waits for a response from all KMS cores. If not set, the tool continues once it has received the minimum amount of required responses, depending on the operation.
  - `-h`/`--help`: show the CLI help
 
+## Backup and restore
+
+Before running the KMS servers it is important to ensure a proper setup of the backup system.
+Currently multiple different modes of backup are available for the KMS. However, only a single mode can be used at any given time.
+Backup modes are setup through the toml configuration files (or environment variables) which are used by Docker to boot the KMS servers. 
+The backups contain _all_ data stored in the private storage (except PRSS setup data) and will run continuously. In fact, fact operations of the KMS may fail if the backup cannot be computed and stored. 
+Furthermore, the backup system will auto-update at every boot, hence changing the mode, or the filesystem, in a configuration file will be reflected at the next reboot. Thus it is easy to update the mode of backup without having to manually move existing backups. 
+Backups are only meant to be used in case of an emergency. More specifically when a KMS node loses access to the private storage. 
+
+Briefly the different backup modes are the following:
+- Import/export based
+  Backups are stored on a separate file system, which may or may not, be encrypted by a key managed in AWS KMS.
+- Custodian based
+  Backups can be stored in public but the keys used to decrypt the backups are secret shared between a set of custodians. Thus the custodians need to participate in order to recover. However, the custodians do not need to participate to construct a backup since each KMS nodes will have a public key which they can use to encrypt the backed up data. 
+
+Of these modes the custodian-based one is preferred. 
+WARNING: If using the import/export based approach _without_ AWS KMS then the backup WILL NOT be encrypted. This option is only allowed temporarily and should _never_ be used as an actual backup solution, but instead only as a means to support import and export of keys in case they need to be moved from one operator to another.
+
+Both modes are setup under `[backup_vault]` in the configuration toml used by a KMS server.
+Below we sketch how to setup each of these modes:
+
+### Import/export based
+#### Setup
+To setup this approach (without AWS KMS) the minimum configuration may be as follows (where the local file system is used as storage):
+```{toml}
+[backup_vault.storage.file]
+path = "./backup_vault"
+```
+where `./backup_vault` is the path to the where the unencrypted backup will be stored. 
+Any other type of storage can also be used, such as `s3`.
+
+To use this with AWS KMS then a keychain must also be set as follows:
+```{toml}
+[backup_vault.keychain.aws_kms]
+root_key_id="<AWS key id>"
+root_key_spec="<Key type>"
+```
+Where `<AWS key id>` must be replaced by the key ID from AWS KMS and `<Key type>` must be replaced by either `symm` or `asymm` depending on whether the key is symmetric or asymmetric. Of these, a setup with an `asymm` key is strongly encouraged.
+
+For example:
+```{toml}
+[backup_vault.storage.s3]
+bucket = "zama_kms_backup_keys"
+[backup_vault.keychain.aws_kms]
+root_key_id = "zama_kms_backup_root_key"
+root_key_spec = "asymm"
+```
+#### Recovery
+To recover a backup the following command can be used:
+
+```{bash}
+$ cargo run -- -f <path-to-toml-config-file> backup-restore
+```
+This call will take the data in the backup, decrypt (if needed), and write this to the private storage. 
+However, this will _NOT_ overwrite anything on the private storage. Hence the restore operation is non-destructive and idempotent. If data in the private storage has been corrupted and that is why a restore is needed, then the corrupted data must be removed first. 
+See [pitfalls](#pitfalls) below for details.
+
+After `backup-restore` has been executed the KMS server must be rebooted for the restored data to be fetched into memory. 
+
+### Custodian based
+#### Setup
+To setup a custodian based approach. A backup storage must be setup similar to the import/export approach above. However, even though this is done without additional encryption, it is safe to keep this unencrypted. For example as following, using the local file system:
+```{toml}
+[backup_vault.storage.file]
+path = "./backup_vault"
+```
+
+Secondly the KMS must know that the backup has to happen with the help of a set of custodians, hence the following, empty, variable must be set:
+```{toml}
+[backup_vault.keychain.secret_sharing]
+```
+Note: since this structure is empty, it is tricky to set this with an environment variable. If needed to set this with an environment variable then this can be done with a dummy value as follows: 
+```{bash}
+KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true
+```
+
+As an example of the whole setup observe the following:
+```{toml}
+[backup_vault.storage.file]
+path = "./backup_vault"
+[backup_vault.keychain.secret_sharing]
+```
+
+#### Recovery
+Recovery with custodians is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason we here walk through all teh steps needed from beginning to end, in order to setup custodian based backup and recovering.
+
+Assuming the toml file has been appropriately setup to allow custodian based backup, as discussed above, then the steps needed are as follows:
+
+1. Setup a custodian context
+  This first involves finding a set of custodians. Each of these must then execute a setup procedure using the KMS custodian CLI tool. 
+  This tool is detailed [here](./backup.md). More specifically the setup steps are detailed [here](./backup.md#Custodian-setup).
+  After the custodians have executed the setup, then the custodian must be setup in the KMS. This will eventually happen through the gateway but can also be executed with the CLI tool as detailed in [this section](#Custodian-context).
+2. Initiate the recovery.
+  After step 1, the backups will be continuously kept up to date. Then when a recovery is needed, first the KMS must construct the correct data needed for the custodians in order to help decrypt this is done with the following command:
+  ```{bash}
+  $ cargo run -- -f <path-to-toml-config-file> custodian-recovery-init -r ./data/keys/CUSTODIAN/recovery/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/1 -r ./data/keys/CUSTODIAN/recovery/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/2 -r ./data/keys/CUSTODIAN/recovery/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/3 -r ./data/keys/CUSTODIAN/recovery/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/4 
+  ``` TODO CHECK
+  Which runs the backup recovery initialization with 4 operators and stored the result in the directory `./data/keys/CUSTODIAN/recovery/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98` in a file with a number identifying the operator. 
+  That is, each operator will package up the public data for the custodians and return this with grpc and the core-client tool will then store the result from each of the operators on the file system. 
+3. Custodians do partial decryption. 
+  Using the recovery information from the operators each custodian can use the KMS Custodian CLI tool to prepare the partially decrypted response to the KMS nodes. Detail on this can be found in the manual for the KMS custodian tool [here](./backup.md#Recovery-(decryption-of-backup)). The results from the custodians must then be consolidated at the KMS operators. 
+  WARNING: Since the KMS at this point does not have a trusted anchor the data form the custodians must be transferred in a trusted manner. E.g. in person.
+4. KMS nodes recover the backup decryption key.
+  The custodians' partial decryptions are transferred to the KMS with the `custodian-backup-restore` command allowing them to recover the private decryption key needed to decrypt the backup and thus restore its context. This is done with the following command:
+    ```{bash}
+  $ cargo run -- -f <path-to-toml-config-file> custodian_backup_recovery -i fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98 -r ./data/keys/CUSTODIAN/response/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/recovery-response-1-3 -r ./data/keys/CUSTODIAN/response/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/recovery-response-2-3 -r ./data/keys/CUSTODIAN/response/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/recovery-response-3-3 -r ./data/keys/CUSTODIAN/response/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/recovery-response-4-3 -r ./data/keys/CUSTODIAN/response/fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98/recovery-response-5-3 
+  ``` TODO CHECK
+  In the example above the the backup/custodian context ID is provided with `-i`. I.e. in this example it is `fdc71941bd9f29fa0259b1453e0c73e6e744fa05f55bda545d420bdfe8c52b98`. Next the paths of where the response for each of the custodians from the KMS node should be stored is given. In the example we assume the core client only communicated with KMS node 3, and that there are 5 custodians. I.e. `recovery-response-i-j` is the response to custodian `i` for KMS node `j`. Both being 1-indexed monotonically increasing IDs. 
+5. The backup can now be recovered.
+  The KMS nodes can finally recover using the backed up data. This is done with a final `backup-restore` call, similar to the non-custodian case. More specifically with the following call:
+  ```{bash}
+  $ cargo run -- -f <path-to-toml-config-file> backup-restore
+  ```
+  Observe that after this call, the decryption key will be purged from memory. Hence if an error occurs then the previous step must be carried out again. Also note that the old context should be considered burned after a restoring event and hence a new custodian context must be setup as described in step 1. 
+
+### Pitfalls
+One subtle problem remain in restoring, regardless of using the import/export approach of the custodian approach; the fact that a KMS server cannot boot without the existence of a signing key in the private storage. Furthermore, until contexts are fully implemented, it is the case that all signing keys with have the static name `60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee`. 
+Hence to allow booting the KMS server for restoring, it is recommended to use the KMS key generation tool to generate a temporary signing key s.t. the KMS server will boot. 
+After the KMS server has booted the signing key should manually be removed from from the private file system such that the true signing key, which is backed up, can be restored. 
+
+
 ## Supported Operations
 
 ### Key-generation
@@ -203,22 +324,6 @@ $ cargo run -- -f <path-to-toml-config-file> crs-gen-result --request-id <REQUES
 ```
 
 Upon success, both the command to request to generate a CRS _and_ the command to fetch the result, will save the CRS produced by the core in the `object_folder` given in the configuration file.
-
-#### Backup restoring
-
-If a backup vault is specified in the in the server configuration toml file, then all non-volatile private key material (i.e. what is stored in the private vault) is backed up to this location. This also means that it is possible to restore this content in case access to the private vault is lost, or that the private vault needs to be moved.
-This is done through the backup recovery command:
-
-```{bash}
-$ cargo run -- -f <path-to-toml-config-file> custodian-backup-restore
-```
-
-Note that this operation will copy the content from the backup vault to the private vault. In case any of the backed up content already exists in the private vault, then the request will fail.
-After a restoring you *must* reboot the KMS server before the restored data can be used. 
-
-This can be used to move private information from one node to another. More specifically; by constructing a temporary backup vault shared between the old and new node will ensure the relevant private information gets placed in the vault. Then we the new node wish to take over, they use the backup restoring command to move the private information into their own private storage. Afterwards they can construct a new, private, backup vault and the shared backup vault can be destroyed. 
-
-WARNING: The backup vault is NOT encrypted by default, unless a relevant AWS KMS configuration is used. 
 
 #### Arguments
 `<max-num-bits>` refers to the maximum bit length of the FHE types to be used in the KMS and is set to `2048` by default since 2048 is the largest number that is needed with the current types.
@@ -313,6 +418,7 @@ Optional command line options for the public/user decryption command are:
 
  __NOTE__: If the ciphertext is provided by file, then only the optional arguments `-b`/`--batch-size <BATCH_SIZE>` and `-n`/`--num-requests <NUM_REQUESTS>` are supported.
 
+### Custodian context
 
 ## Example Commands
 - Generate a set of private and public FHE keys for testing in a threshold KMS using the default threshold config. This command will expect all responses (`-a`) and will output logs (`-l`).
