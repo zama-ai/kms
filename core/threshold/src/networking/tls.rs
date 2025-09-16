@@ -119,14 +119,14 @@ pub struct AttestedVerifier {
     // TLS identity is based on the decryption signing key, and no traditional
     // PKI is used.
     pcr8_expected: bool,
-    #[cfg(feature = "insecure")]
+    #[cfg(feature = "testing")]
     mock_enclave: bool,
 }
 
 impl AttestedVerifier {
     pub fn new(
         pcr8_expected: bool,
-        #[cfg(feature = "insecure")] mock_enclave: bool,
+        #[cfg(feature = "testing")] mock_enclave: bool,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             root_hint_subjects: Vec::new(),
@@ -138,7 +138,7 @@ Crypto provider should exist at this point"
                 .signature_verification_algorithms,
             contexts: RwLock::new(HashMap::new()),
             pcr8_expected,
-            #[cfg(feature = "insecure")]
+            #[cfg(feature = "testing")]
             mock_enclave,
         })
     }
@@ -250,9 +250,13 @@ impl ServerCertVerifier for AttestedVerifier {
                 tracing::error!("server verifier validation error: {e}");
             })?;
         // check the bundled attestation document and EIF signing certificate
+        let do_validation = if cfg!(feature = "testing") {
+            !&self.mock_enclave
+        } else {
+            true
+        };
         if let Some(release_pcrs) = &context.release_pcrs {
-            #[cfg(feature = "insecure")]
-            if !&self.mock_enclave {
+            if do_validation {
                 validate_wrapped_cert(
                     &cert,
                     release_pcrs,
@@ -266,19 +270,6 @@ impl ServerCertVerifier for AttestedVerifier {
                     Error::General(e.to_string())
                 })?;
             }
-            #[cfg(not(feature = "insecure"))]
-            validate_wrapped_cert(
-                &cert,
-                release_pcrs,
-                self.pcr8_expected,
-                CertVerifier::Server(server_verifier.clone(), server_name, ocsp_response),
-                intermediates,
-                now,
-            )
-            .map_err(|e| {
-                tracing::error!("bundled attestation document validation error: {e}");
-                Error::General(e.to_string())
-            })?;
         }
         Ok(ServerCertVerified::assertion())
     }
@@ -351,9 +342,13 @@ impl ClientCertVerifier for AttestedVerifier {
             })?;
 
         // check the bundled attestation document and EIF signing certificate
+        let do_validation = if cfg!(feature = "testing") {
+            !&self.mock_enclave
+        } else {
+            true
+        };
         if let Some(release_pcrs) = &context.release_pcrs {
-            #[cfg(feature = "insecure")]
-            if !&self.mock_enclave {
+            if do_validation {
                 validate_wrapped_cert(
                     &cert,
                     release_pcrs,
@@ -367,19 +362,6 @@ impl ClientCertVerifier for AttestedVerifier {
                     Error::General(e.to_string())
                 })?;
             }
-            #[cfg(not(feature = "insecure"))]
-            validate_wrapped_cert(
-                &cert,
-                release_pcrs,
-                self.pcr8_expected,
-                CertVerifier::Client(client_verifier.clone()),
-                intermediates,
-                now,
-            )
-            .map_err(|e| {
-                tracing::error!("bundled attestation document validation error: {e}");
-                Error::General(e.to_string())
-            })?;
         }
 
         Ok(ClientCertVerified::assertion())
@@ -537,7 +519,7 @@ pub fn extract_context_id_from_cert(cert: &X509Certificate) -> anyhow::Result<Se
     // Note that `cert.serial` is a BigInt, so we need to convert it to
     // bytes and then convert it to u128. As such, it does not matter
     // what endianess we use for the conversion, as long as we are
-    // consistent on both sides. Here we use little-endian.
+    // consistent on both sides. Here we use big-endian.
     let context_id = SessionId::from(u128::from_be_bytes(
         cert.serial
             .to_bytes_be()

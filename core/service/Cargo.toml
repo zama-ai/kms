@@ -167,6 +167,5 @@ wasm_tests = ["testing"]
 s3_tests = ["testing"]
 insecure = [
     "kms-grpc/insecure",
-    "threshold-fhe/insecure",
     "dep:nsm-nitro-enclave-utils"
 ]
