@@ -76,9 +76,6 @@ pub const DSEP_PUBDATA_KEY: DomainSep = *b"PDAT_KEY";
 pub const DSEP_PUBDATA_CRS: DomainSep = *b"PDAT_CRS";
 
 lazy_static::lazy_static! {
-    pub static ref CENTRALIZED_DUMMY_PREPROCESSING_ID: RequestId =
-        crate::engine::base::derive_request_id("CENTRALIZED_DUMMY_PREPROCESSING_ID").unwrap();
-
     pub static ref INSECURE_PREPROCESSING_ID: RequestId =
         crate::engine::base::derive_request_id("INSECURE_PREPROCESSING_ID").unwrap();
 }
@@ -139,6 +136,7 @@ impl KmsFheKeyHandles {
         sig_key: &PrivateSigKey,
         client_key: FhePrivateKey,
         key_id: &RequestId,
+        preproc_id: &RequestId,
         keyset: &FhePubKeySet,
         decompression_key: Option<DecompressionKey>,
         eip712_domain: &alloy_sol_types::Eip712Domain,
@@ -146,7 +144,7 @@ impl KmsFheKeyHandles {
         let public_key_info = compute_info_standard_keygen(
             sig_key,
             &crate::engine::base::DSEP_PUBDATA_KEY,
-            &CENTRALIZED_DUMMY_PREPROCESSING_ID,
+            preproc_id,
             key_id,
             keyset,
             eip712_domain,
@@ -1179,12 +1177,14 @@ pub(crate) mod tests {
         let mut rng = AesRng::seed_from_u64(100);
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
+        let preproc_id = RequestId::new_random(&mut rng);
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             StandardKeySetConfig::default(),
             None,
             &key_id,
+            &preproc_id,
             None,
             &dummy_domain(),
         )
@@ -1222,12 +1222,14 @@ pub(crate) mod tests {
         let mut rng = AesRng::seed_from_u64(100);
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
+        let preproc_id = RequestId::new_random(&mut rng);
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             StandardKeySetConfig::default(),
             None,
             &key_id,
+            &preproc_id,
             None,
             &dummy_domain(),
         )
@@ -1292,12 +1294,14 @@ pub(crate) mod tests {
         let mut rng = AesRng::seed_from_u64(100);
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
+        let preproc_id = RequestId::new_random(&mut rng);
         let (pubkeyset, _sk) = generate_fhe_keys(
             &sig_sk,
             TEST_PARAM,
             StandardKeySetConfig::default(),
             None,
             &key_id,
+            &preproc_id,
             None,
             &dummy_domain(),
         )
