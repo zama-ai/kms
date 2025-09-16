@@ -972,6 +972,19 @@ pub type PubDecCallValues = (RequestId, Vec<TypedPlaintext>, Vec<u8>, Vec<u8>);
 #[cfg(feature = "non-wasm")]
 pub type UserDecryptCallValues = (UserDecryptionResponsePayload, Vec<u8>, Vec<u8>);
 
+/// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)
+pub(crate) fn verify_max_num_bits(max_num_bits: usize) -> Result<(), BoxedStatus> {
+    if max_num_bits > 0 && max_num_bits <= 2048 && (max_num_bits & (max_num_bits - 1)) == 0 {
+        Ok(())
+    } else {
+        Err(tonic::Status::invalid_argument(format!(
+            "max_num_bits must be a power of 2 between 1 and 2048, got {}",
+            max_num_bits
+        ))
+        .into())
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{deserialize_to_low_level, TypedPlaintext};
@@ -983,7 +996,7 @@ pub(crate) mod tests {
             base::{
                 compute_external_signature_preprocessing, compute_info_standard_keygen,
                 compute_pt_message_hash, hash_sol_struct, safe_serialize_hash_element_versioned,
-                DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
+                verify_max_num_bits, DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY,
             },
             centralized::central_kms::{
                 gen_centralized_crs, generate_client_fhe_key, generate_fhe_keys,
@@ -1720,5 +1733,16 @@ pub(crate) mod tests {
             let sol_struct = PrepKeygenVerification::new(&preproc_id);
             assert_ne!(recover_address(sol_struct, &domain, &sig), actual_address);
         }
+    }
+
+    #[test]
+    fn test_max_num_bits_verification() {
+        // max_num_bits should be at most 2048
+        assert!(verify_max_num_bits(2048).is_ok());
+        assert!(verify_max_num_bits(1024).is_ok());
+        assert!(verify_max_num_bits(1).is_ok());
+        assert!(verify_max_num_bits(0).is_err());
+        assert!(verify_max_num_bits(2049).is_err());
+        assert!(verify_max_num_bits(123).is_err());
     }
 }

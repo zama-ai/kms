@@ -528,7 +528,7 @@ pub fn central_public_decrypt<
     PrivS: Storage + Sync + Send + 'static,
 >(
     keys: &KmsFheKeyHandles,
-    cts: &Vec<TypedCiphertext>,
+    cts: &[TypedCiphertext],
     metric_tags: Vec<(&'static str, String)>,
 ) -> anyhow::Result<Vec<TypedPlaintext>> {
     use observability::{
@@ -1153,6 +1153,7 @@ pub(crate) mod tests {
     use crate::engine::validation::DSEP_USER_DECRYPTION;
     use crate::util::file_handling::{read_element, write_element};
     use crate::util::key_setup::test_tools::{compute_cipher, EncryptionConfig};
+    use crate::util::rate_limiter::RateLimiter;
     use crate::vault::storage::{file::FileStorage, ram::RamStorage};
     use crate::vault::storage::{store_pk_at_request_id, store_versioned_at_request_id};
     use aes_prng::AesRng;
@@ -1183,6 +1184,18 @@ pub(crate) mod tests {
         ONCE_DEFAULT_KEY
             .get_or_init(|| async { ensure_kms_default_keys().await })
             .await
+    }
+
+    impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+        RealCentralizedKms<PubS, PrivS>
+    {
+        pub(crate) fn set_bucket_size(&mut self, bucket_size: usize) {
+            let config = crate::util::rate_limiter::RateLimiterConfig {
+                bucket_size,
+                ..Default::default()
+            };
+            self.rate_limiter = RateLimiter::new(config);
+        }
     }
 
     // Construct a storage for private keys

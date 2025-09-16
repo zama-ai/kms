@@ -45,8 +45,29 @@ pub async fn crs_gen_impl<
         parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::CrsGenRequest)?;
     let params = retrieve_parameters(Some(inner.params))?;
 
+    let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
+
+    // context_id is not used in the centralized KMS, but we validate it if present
+    let _context_id = match &inner.context_id {
+        Some(ctx) => Some(parse_proto_request_id(ctx, RequestIdParsingErr::Context)?),
+        None => None,
+    };
+
+    if let Some(max_num_bits) = inner.max_num_bits {
+        crate::engine::base::verify_max_num_bits(max_num_bits as usize)?;
+    }
+
+    // check that the request ID is not used yet
+    // and then insert the request ID only if it's unused
+    // all validation must be done before inserting the request ID
     {
         let mut guarded_meta_store = service.crs_meta_map.write().await;
+        if guarded_meta_store.exists(&req_id) {
+            return Err(tonic::Status::new(
+                tonic::Code::AlreadyExists,
+                format!("CRS with ID {req_id} already exists"),
+            ));
+        };
         ok_or_tonic_abort(
             guarded_meta_store.insert(&req_id),
             "Could not insert CRS generation into meta store".to_string(),
@@ -58,7 +79,6 @@ pub async fn crs_gen_impl<
     let sk = Arc::clone(&service.base_kms.sig_key);
     let rng = service.base_kms.new_rng().await;
 
-    let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
     let handle = service.tracker.spawn(
         async move {
             let _timer = _timer;
@@ -189,4 +209,174 @@ pub(crate) async fn crs_gen_background<
 
     tracing::info!("⏱️ Core Event Time for CRS-gen: {:?}", start.elapsed());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};
+    use rand::SeedableRng;
+
+    use crate::{
+        dummy_domain,
+        engine::{base::derive_request_id, centralized::service::tests::setup_central_test_kms},
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn sunshine() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let kms = setup_central_test_kms(&mut rng).await;
+        let req_id = derive_request_id("test_crs_gen_sunshine").unwrap();
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request = CrsGenRequest {
+            request_id: Some(req_id.into()),
+            context_id: None,
+            params: FheParameter::Test.into(),
+            domain: Some(domain.clone()),
+            max_num_bits: Some(2048),
+        };
+        let _res = crs_gen_impl(&kms, Request::new(request)).await.unwrap();
+        let _ = get_crs_gen_result_impl(&kms, Request::new(req_id.into()))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn already_exists() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let kms = setup_central_test_kms(&mut rng).await;
+        let req_id = derive_request_id("test_crs_gen_already_exists").unwrap();
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request = CrsGenRequest {
+            request_id: Some(req_id.into()),
+            context_id: None,
+            params: FheParameter::Test.into(),
+            domain: Some(domain.clone()),
+            max_num_bits: Some(2048),
+        };
+        let _res = crs_gen_impl(&kms, Request::new(request.clone()))
+            .await
+            .unwrap();
+        let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::AlreadyExists);
+    }
+
+    #[tokio::test]
+    async fn invalid_argument() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let kms = setup_central_test_kms(&mut rng).await;
+        let req_id = derive_request_id("test_crs_gen_invalid_argument").unwrap();
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+        // wrong params
+        {
+            let request = CrsGenRequest {
+                request_id: Some(req_id.into()),
+                context_id: None,
+                params: 123, // invalid params
+                domain: Some(domain.clone()),
+                max_num_bits: None,
+            };
+            let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+
+        // missing request ID
+        {
+            let request = CrsGenRequest {
+                request_id: None, // missing
+                context_id: None,
+                params: FheParameter::Test.into(),
+                domain: Some(domain.clone()),
+                max_num_bits: None,
+            };
+            let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+
+        // wrong request ID format
+        {
+            let request = CrsGenRequest {
+                request_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "not_a_valid_request_id".to_string(),
+                }),
+                context_id: None,
+                params: FheParameter::Test.into(),
+                domain: Some(domain.clone()),
+                max_num_bits: None,
+            };
+            let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+
+        // missing domain
+        {
+            let request = CrsGenRequest {
+                request_id: Some(req_id.into()),
+                context_id: None,
+                params: FheParameter::Test.into(),
+                domain: None, // missing
+                max_num_bits: None,
+            };
+            let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+
+        // invalid context ID
+        {
+            let request = CrsGenRequest {
+                request_id: Some(req_id.into()),
+                context_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "not_a_valid_context_id".to_string(),
+                }),
+                params: FheParameter::Test.into(),
+                domain: Some(domain.clone()),
+                max_num_bits: None,
+            };
+            let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+
+        // invalid max_num_bits
+        {
+            let request = CrsGenRequest {
+                request_id: Some(req_id.into()),
+                context_id: None,
+                params: FheParameter::Test.into(),
+                domain: Some(domain),
+                max_num_bits: Some(123), // invalid
+            };
+            let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+    }
+
+    #[tokio::test]
+    async fn not_found() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let kms = setup_central_test_kms(&mut rng).await;
+        let bad_req_id = derive_request_id("test_crs_gen_not_found").unwrap();
+        let get_result = get_crs_gen_result_impl(&kms, Request::new(bad_req_id.into())).await;
+        assert_eq!(get_result.unwrap_err().code(), tonic::Code::NotFound);
+    }
+
+    #[tokio::test]
+    async fn resource_exhausted() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let mut kms = setup_central_test_kms(&mut rng).await;
+        kms.set_bucket_size(1); // set bucket size to 1 to trigger resource exhausted error
+        let req_id = derive_request_id("test_crs_gen_resource_exhausted").unwrap();
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+        let request = CrsGenRequest {
+            request_id: Some(req_id.into()),
+            context_id: None,
+            params: FheParameter::Test.into(),
+            domain: Some(domain),
+            max_num_bits: None,
+        };
+        let err = crs_gen_impl(&kms, Request::new(request)).await.unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+    }
 }

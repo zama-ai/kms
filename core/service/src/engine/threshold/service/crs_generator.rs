@@ -109,6 +109,13 @@ impl<
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
 
+        // This verification is more strict than the checks in [compute_witness_dim]
+        // because it only allows powers of 2. But there are no strong reasons
+        // to use max_num_bits that are not powers of 2 so we enforce it here.
+        if let Some(max_num_bits) = inner.max_num_bits {
+            crate::engine::base::verify_max_num_bits(max_num_bits as usize)?;
+        }
+
         let witness_dim = compute_witness_dim(&crs_params, inner.max_num_bits.map(|x| x as usize))
             .map_err(|e| {
                 tonic::Status::new(
