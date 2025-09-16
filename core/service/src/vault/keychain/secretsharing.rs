@@ -2,7 +2,7 @@ use super::{EnvelopeLoad, EnvelopeStore, Keychain};
 use crate::cryptography::backup_pke::{BackupPrivateKey, BackupPublicKey};
 use crate::{
     anyhow_error_and_log,
-    backup::operator::InnerRecoveryRequest,
+    backup::operator::RecoveryRequestPayload,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::backup_pke::{self, BackupCiphertext},
     vault::storage::{read_versioned_at_request_id, StorageReader},
@@ -49,7 +49,7 @@ impl<R: Rng + CryptoRng> SecretShareKeychain<R> {
                 // Get the latest context ID which should be the most recent one
                 match all_backup_ids.iter().sorted().last() {
                     Some(id) => {
-                        let rec_req: InnerRecoveryRequest = read_versioned_at_request_id(
+                        let rec_req: RecoveryRequestPayload = read_versioned_at_request_id(
                             pub_storage,
                             id,
                             &PubDataType::RecoveryRequest.to_string(),

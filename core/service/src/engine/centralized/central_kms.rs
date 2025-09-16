@@ -1,6 +1,6 @@
 use crate::anyhow_error_and_log;
 #[cfg(feature = "non-wasm")]
-use crate::backup::operator::BackupCommitments;
+use crate::backup::operator::RecoveryValidationMaterial;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 #[cfg(feature = "non-wasm")]
@@ -976,9 +976,9 @@ impl<
             .collect();
         let crs_info: HashMap<RequestId, CrsGenMetadata> =
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-        let backup_com: HashMap<RequestId, BackupCommitments> =
+        let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
             read_all_data_versioned(&public_storage, &PubDataType::Commitments.to_string()).await?;
-        let custodian_context = backup_com
+        let custodian_context = validation_material
             .into_iter()
             .map(|(r, com)| (r, com.custodian_context().to_owned()))
             .collect();

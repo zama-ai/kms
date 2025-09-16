@@ -72,8 +72,8 @@ pub struct InternalRecoveryRequest {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum InnerRecoveryRequestVersioned {
-    V0(InnerRecoveryRequest),
+pub enum RecoveryRequestPayloadVersioned {
+    V0(RecoveryRequestPayload),
 }
 
 /// The backup data constructed whenever a new custodian context is created.
@@ -81,15 +81,15 @@ pub enum InnerRecoveryRequestVersioned {
 /// It is different from what is returned to custodians during recovery since it is then augmented with
 /// an ephemeral encryption key during that point in time.
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
-#[versionize(InnerRecoveryRequestVersioned)]
-pub struct InnerRecoveryRequest {
+#[versionize(RecoveryRequestPayloadVersioned)]
+pub struct RecoveryRequestPayload {
     /// The ciphertexts that are the backup. Indexed by the custodian role.
     pub cts: BTreeMap<Role, InnerOperatorBackupOutput>,
     pub backup_enc_key: BackupPublicKey,
 }
 
-impl Named for InnerRecoveryRequest {
-    const NAME: &'static str = "backup::InnerRecoveryRequest";
+impl Named for RecoveryRequestPayload {
+    const NAME: &'static str = "backup::RecoveryRequestPayload";
 }
 
 impl InternalRecoveryRequest {
@@ -274,29 +274,28 @@ fn verify_n_t(n: usize, t: usize) -> Result<(), BackupError> {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum BackupCommitmentsVersioned {
-    V0(BackupCommitments),
+pub enum RecoveryValidationMaterialVersioned {
+    V0(RecoveryValidationMaterial),
 }
 
-// todo rename
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(BackupCommitmentsVersioned)]
-pub struct BackupCommitments {
-    payload: InnerBackupCommitments,
+#[versionize(RecoveryValidationMaterialVersioned)]
+pub struct RecoveryValidationMaterial {
+    payload: RecoveryValidationMaterialPayload,
     signature: Vec<u8>,
 }
 
-impl Named for BackupCommitments {
-    const NAME: &'static str = "backup::BackupCommitments";
+impl Named for RecoveryValidationMaterial {
+    const NAME: &'static str = "backup::RecoveryValidationMaterial";
 }
 
-impl BackupCommitments {
+impl RecoveryValidationMaterial {
     pub fn new(
         commitments: BTreeMap<Role, Vec<u8>>,
         custodian_context: InternalCustodianContext,
         sk: &PrivateSigKey,
     ) -> anyhow::Result<Self> {
-        let payload = InnerBackupCommitments {
+        let payload = RecoveryValidationMaterialPayload {
             commitments,
             custodian_context,
         };
@@ -333,17 +332,17 @@ impl BackupCommitments {
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum InnerBackupCommitmentsVersioned {
-    V0(InnerBackupCommitments),
+pub enum RecoveryValidationMaterialPayloadVersioned {
+    V0(RecoveryValidationMaterialPayload),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(InnerBackupCommitmentsVersioned)]
-pub struct InnerBackupCommitments {
+#[versionize(RecoveryValidationMaterialPayloadVersioned)]
+pub struct RecoveryValidationMaterialPayload {
     pub commitments: BTreeMap<Role, Vec<u8>>,
     pub custodian_context: InternalCustodianContext,
 }
-impl Named for InnerBackupCommitments {
-    const NAME: &'static str = "backup::InnerBackupCommitments";
+impl Named for RecoveryValidationMaterialPayload {
+    const NAME: &'static str = "backup::RecoveryValidationMaterialPayload";
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -646,7 +645,7 @@ impl Operator {
     pub fn verify_and_recover(
         &self,
         custodian_recovery_output: &[InternalCustodianRecoveryOutput],
-        commitments: &BackupCommitments,
+        commitments: &RecoveryValidationMaterial,
         backup_id: RequestId,
         dec_key: &BackupPrivateKey, // Note that this is the ephemeral decryption key, NOT the actual backup decryption key
     ) -> Result<Vec<u8>, BackupError> {

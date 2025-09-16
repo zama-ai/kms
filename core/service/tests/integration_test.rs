@@ -574,7 +574,7 @@ mod kms_custodian_binary_tests {
     use kms_lib::{
         backup::{
             custodian::{InternalCustodianContext, InternalCustodianSetupMessage},
-            operator::{BackupCommitments, InternalRecoveryRequest, Operator},
+            operator::{InternalRecoveryRequest, Operator, RecoveryValidationMaterial},
             seed_phrase::custodian_from_seed_phrase,
         },
         cryptography::{
@@ -781,7 +781,7 @@ mod kms_custodian_binary_tests {
         setup_msgs: Vec<InternalCustodianSetupMessage>,
         backup_id: RequestId,
     ) -> (
-        BackupCommitments,
+        RecoveryValidationMaterial,
         Operator,
         BackupPrivateKey,
         BackupPrivateKey,
@@ -825,8 +825,9 @@ mod kms_custodian_binary_tests {
             backup_pke,
         )
         .unwrap();
-        let backup_com =
-            BackupCommitments::new(commitments.clone(), custodian_context, &signing_key).unwrap();
+        let validation_material =
+            RecoveryValidationMaterial::new(commitments.clone(), custodian_context, &signing_key)
+                .unwrap();
         let mut ciphertexts = BTreeMap::new();
         for custodian_index in 1..=amount_custodians {
             let custodian_role = Role::indexed_from_one(custodian_index);
@@ -847,14 +848,19 @@ mod kms_custodian_binary_tests {
         safe_write_element_versioned(&Path::new(&request_path), &recovery_request)
             .await
             .unwrap();
-        (backup_com, operator, ephemeral_priv_key, backup_ske)
+        (
+            validation_material,
+            operator,
+            ephemeral_priv_key,
+            backup_ske,
+        )
     }
 
     async fn decrypt_recovery(
         root_path: &Path,
         amount_custodians: usize,
         operator: &Operator,
-        commitment: &BackupCommitments,
+        commitment: &RecoveryValidationMaterial,
         backup_id: RequestId,
         dec_key: &BackupPrivateKey,
     ) -> Vec<u8> {

@@ -4,7 +4,7 @@
 //! both centralized and threshold KMS variants.
 use crate::{
     anyhow_error_and_warn_log,
-    backup::operator::{BackupCommitments, InnerRecoveryRequest},
+    backup::operator::{RecoveryRequestPayload, RecoveryValidationMaterial},
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
         base::{CrsGenMetadata, KeyGenMetadata},
@@ -610,8 +610,8 @@ where
     #[allow(clippy::too_many_arguments)]
     pub async fn write_backup_keys_with_meta_store(
         &self,
-        recovery_request: &InnerRecoveryRequest,
-        commitments: &BackupCommitments,
+        recovery_request: &RecoveryRequestPayload,
+        commitments: &RecoveryValidationMaterial,
         meta_store: Arc<RwLock<CustodianMetaStore>>,
     ) {
         // use guarded_meta_store as the synchronization point

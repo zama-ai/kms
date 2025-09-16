@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
 
 ################################################################
 # Runtime Stage
-FROM --platform=$BUILDPLATFORM cgr.dev/chainguard/glibc-dynamic:latest-dev AS prod
+FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
 
 # Install only required runtime dependencies
 USER root

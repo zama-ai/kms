@@ -207,18 +207,23 @@ pub fn validate_user_decrypt_req(
         ))
     })?;
     // NOTE: we need to do some backward compatibility support here so
-    // first try to deserialize it using the old format
+    // first try to deserialize it using the old format (ML-KEM1024 encoded with bincode)
     let client_enc_key = match bc2wrap::deserialize::<PublicEncKey<ml_kem::MlKem1024>>(&req.enc_key)
     {
         Ok(inner) => {
+            // we got an old MlKem1024 public key, wrap it in the enum
             tracing::warn!("🔒 Using MlKem1024 public encryption key");
             UnifiedPublicEncKey::MlKem1024(inner)
         }
+        // in case the old deserialization fails, try the new format
         Err(_) => tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
             std::io::Cursor::new(&req.enc_key),
             crate::consts::SAFE_SER_SIZE_LIMIT,
         )
         .map_err(|e| {
+            tracing::error!(
+                "Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"
+            );
             BoxedStatus::from(tonic::Status::new(
                 tonic::Code::InvalidArgument,
                 format!("Error deserializing UnifiedPublicEncKey from UserDecryptionRequest: {e}"),

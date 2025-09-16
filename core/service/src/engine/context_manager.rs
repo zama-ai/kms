@@ -1,6 +1,6 @@
 use crate::anyhow_error_and_log;
 use crate::backup::custodian::InternalCustodianContext;
-use crate::backup::operator::{BackupCommitments, InnerRecoveryRequest, Operator};
+use crate::backup::operator::{Operator, RecoveryRequestPayload, RecoveryValidationMaterial};
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::backup_pke::{self, BackupPrivateKey, BackupPublicKey};
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
@@ -197,7 +197,7 @@ where
         // Generate asymmetric keys for the operator to use to encrypt the backup
         let (backup_enc_key, backup_priv_key) = backup_pke::keygen(&mut rng)?;
         let inner_context = InternalCustodianContext::new(context, backup_enc_key.clone())?;
-        let (inner_recovery_request, commitments) = gen_inner_recovery_request(
+        let (recovery_request_payload, commitments) = gen_recovery_request_payload(
             &mut rng,
             &self.base_kms.sig_key,
             backup_enc_key.clone(),
@@ -284,7 +284,7 @@ where
         // Then store the results
         self.crypto_storage
             .write_backup_keys_with_meta_store(
-                &inner_recovery_request,
+                &recovery_request_payload,
                 &commitments,
                 Arc::clone(&self.custodian_meta_store),
             )
@@ -300,14 +300,14 @@ where
 }
 
 /// Generate a recovery request to the backup vault.
-async fn gen_inner_recovery_request(
+async fn gen_recovery_request_payload(
     rng: &mut AesRng,
     sig_key: &PrivateSigKey,
     backup_enc_key: BackupPublicKey,
     backup_priv_key: BackupPrivateKey,
     custodian_context: &InternalCustodianContext,
     my_role: Role,
-) -> anyhow::Result<(InnerRecoveryRequest, BackupCommitments)> {
+) -> anyhow::Result<(RecoveryRequestPayload, RecoveryValidationMaterial)> {
     let operator = Operator::new(
         my_role,
         custodian_context
@@ -329,17 +329,17 @@ async fn gen_inner_recovery_request(
         &serialized_priv_key,
         custodian_context.context_id,
     )?;
-    let recovery_request = InnerRecoveryRequest {
+    let recovery_request = RecoveryRequestPayload {
         cts: ct_map,
         backup_enc_key,
     };
-    let backup_commitments =
-        BackupCommitments::new(commitments, custodian_context.to_owned(), sig_key)?;
+    let validation_material =
+        RecoveryValidationMaterial::new(commitments, custodian_context.to_owned(), sig_key)?;
     tracing::info!(
         "Generated inner recovery request for backup_id/context_id={}",
         custodian_context.context_id
     );
-    Ok((recovery_request, backup_commitments))
+    Ok((recovery_request, validation_material))
 }
 
 #[cfg(test)]
@@ -486,7 +486,7 @@ mod tests {
     /// Test to sanity check the overall flow of construction of material needed for backup
     #[tracing_test::traced_test]
     #[tokio::test]
-    async fn test_gen_inner_recovery_requests() {
+    async fn test_gen_recovery_request_payloads() {
         let mut rng = AesRng::seed_from_u64(40);
         let backup_id = RequestId::new_random(&mut rng);
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
@@ -519,7 +519,7 @@ mod tests {
         };
         let internal_context =
             InternalCustodianContext::new(context, ephemeral_enc_key.clone()).unwrap();
-        let (inner_recovery_request, _commitments) = gen_inner_recovery_request(
+        let (recovery_request_payload, _commitments) = gen_recovery_request_payload(
             &mut rng,
             &sig_key,
             ephemeral_enc_key.clone(),
@@ -529,14 +529,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let inner_rec_req = InternalRecoveryRequest::new(
-            inner_recovery_request.backup_enc_key,
-            inner_recovery_request.cts,
+        let internal_rec_req = InternalRecoveryRequest::new(
+            recovery_request_payload.backup_enc_key,
+            recovery_request_payload.cts,
             backup_id,
             Role::indexed_from_one(1),
             Some(&verf_key),
         )
         .unwrap();
-        assert!(inner_rec_req.is_valid(&verf_key).unwrap());
+        assert!(internal_rec_req.is_valid(&verf_key).unwrap());
     }
 }
