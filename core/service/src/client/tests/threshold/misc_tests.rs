@@ -10,6 +10,8 @@ use crate::cryptography::internal_crypto_types::WrappedDKGParams;
 #[cfg(feature = "slow_tests")]
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
+#[cfg(feature = "insecure")]
+use crate::engine::base::INSECURE_PREPROCESSING_ID;
 use crate::engine::threshold::service::RealThresholdKms;
 use crate::util::key_setup::test_tools::purge;
 #[cfg(feature = "insecure")]
@@ -387,7 +389,7 @@ async fn default_insecure_dkg_backup() {
         param,
         &kms_clients,
         &internal_client,
-        None,
+        &INSECURE_PREPROCESSING_ID,
         &key_id_1,
         None,
         None,
@@ -399,7 +401,7 @@ async fn default_insecure_dkg_backup() {
         param,
         &kms_clients,
         &internal_client,
-        None,
+        &INSECURE_PREPROCESSING_ID,
         &key_id_2,
         None,
         None,
@@ -501,7 +503,7 @@ async fn default_insecure_autobackup_after_deletion() {
         param,
         &kms_clients,
         &internal_client,
-        None,
+        &INSECURE_PREPROCESSING_ID,
         &key_id,
         None,
         None,

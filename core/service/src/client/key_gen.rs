@@ -23,12 +23,13 @@ impl Client {
     /// Generates a key gen request.
     ///
     /// The key generated will then be stored under the request_id handle.
-    /// In the threshold case, we also need to reference the preprocessing we want to consume via
-    /// its [`RequestId`] it can be set to None in the centralized case
+    /// We need to reference the preprocessing we want to consume via
+    /// its [`RequestId`]. In theory this is not needed in the centralized case
+    /// but we still require it so that it is consistent with the threshold case.
     pub fn key_gen_request(
         &self,
         request_id: &RequestId,
-        preproc_id: Option<RequestId>,
+        preproc_id: &RequestId,
         param: Option<FheParameter>,
         keyset_config: Option<KeySetConfig>,
         keyset_added_info: Option<KeySetAddedInfo>,
@@ -43,11 +44,15 @@ impl Client {
                 "The request id format is not valid {request_id}"
             )));
         }
+        if !preproc_id.is_valid() {
+            return Err(anyhow_error_and_log(format!(
+                "The preprocessing id format is not valid {preproc_id}"
+            )));
+        }
 
-        let prep_id = preproc_id.map(|res| res.into());
         Ok(KeyGenRequest {
             params: Some(parsed_param),
-            preproc_id: prep_id,
+            preproc_id: Some((*preproc_id).into()),
             request_id: Some((*request_id).into()),
             domain: Some(alloy_to_protobuf_domain(&eip712_domain)?),
             keyset_config,
