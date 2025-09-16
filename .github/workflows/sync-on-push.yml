@@ -17,64 +17,55 @@ jobs:
     if: ${{ github.repository == 'zama-ai/kms' }}
     runs-on: ubuntu-latest
     steps:
-      - run: git lfs --version
-      - name: setup gitlfs from binary
+      - name: git-sync
         env:
-          GIT_LFS_VERSION: "3.6.1"
+          SOURCE_REPO: "zama-ai/kms"
+          SOURCE_BRANCH: "main"
+          DESTINATION_BRANCH: "main"
+          USERNAME: ${{ secrets.BOT_USERNAME }}
+          TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          DEST_REPO: ${{ secrets.SYNC_DEST_REPO }}
         run: |
-          wget "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
-          tar -xzf "git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz"
-          "./git-lfs-${GIT_LFS_VERSION}/install.sh"
+          echo ">>> Cloning source repo..."
+          git clone "${SOURCE_REPO}" /root/source --origin source && cd /root/source
+          git remote add destination "https://${USERNAME}:${TOKEN}@github.com/${DEST_REPO}"
 
-      # - name: git-sync
-      #   env:
-      #     SOURCE_REPO: "zama-ai/kms"
-      #     SOURCE_BRANCH: "main"
-      #     DESTINATION_BRANCH: "main"
-      #     USERNAME: ${{ secrets.BOT_USERNAME }}
-      #     TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      #     DEST_REPO: ${{ secrets.SYNC_DEST_REPO }}
-      #   run: |
-      #     echo ">>> Cloning source repo..."
-      #     git clone "${SOURCE_REPO}" /root/source --origin source && cd /root/source
-      #     git remote add destination "https://${USERNAME}:${TOKEN}@github.com/${DEST_REPO}"
+          echo ">>> Fetching all branches references down locally so subsequent commands can see them..."
+          git fetch source '+refs/heads/*:refs/heads/*' --update-head-ok
 
-      #     echo ">>> Fetching all branches references down locally so subsequent commands can see them..."
-      #     git fetch source '+refs/heads/*:refs/heads/*' --update-head-ok
+          # Print out all branches
+          git --no-pager branch -a -vv
 
-      #     # Print out all branches
-      #     git --no-pager branch -a -vv
+          echo ">>> Fetching all LFS items from source..."
+          git lfs fetch --all source "${SOURCE_BRANCH}"
 
-      #     echo ">>> Fetching all LFS items from source..."
-      #     git lfs fetch --all source "${SOURCE_BRANCH}"
+          # echo ">>> Pushing git changes..."
+          # git push destination "${SOURCE_BRANCH}:${DESTINATION_BRANCH}" -f
 
-      #     echo ">>> Pushing git changes..."
-      #     git push destination "${SOURCE_BRANCH}:${DESTINATION_BRANCH}" -f
+          # echo ">>> Pushing all LFS items..."
+          # git lfs push --all destination "${DESTINATION_BRANCH}"
 
-      #     echo ">>> Pushing all LFS items..."
-      #     git lfs push --all destination "${DESTINATION_BRANCH}"
+      - name: git-sync-tags
+        env:
+          SOURCE_REPO: "zama-ai/kms"
+          SOURCE_BRANCH: "refs/tags/*"
+          DESTINATION_BRANCH: "refs/tags/*"
+          USERNAME: ${{ secrets.BOT_USERNAME }}
+          TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          DEST_REPO: ${{ secrets.SYNC_DEST_REPO }}
+        run: |
+          echo ">>> Cloning source repo..."
+          git clone "${SOURCE_REPO}" /root/source --origin source && cd /root/source
+          git remote add destination "https://${USERNAME}:${TOKEN}@github.com/${DEST_REPO}"
 
-      # - name: git-sync-tags
-      #   env:
-      #     SOURCE_REPO: "zama-ai/kms"
-      #     SOURCE_BRANCH: "refs/tags/*"
-      #     DESTINATION_BRANCH: "refs/tags/*"
-      #     USERNAME: ${{ secrets.BOT_USERNAME }}
-      #     TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      #     DEST_REPO: ${{ secrets.SYNC_DEST_REPO }}
-      #   run: |
-      #     echo ">>> Cloning source repo..."
-      #     git clone "${SOURCE_REPO}" /root/source --origin source && cd /root/source
-      #     git remote add destination "https://${USERNAME}:${TOKEN}@github.com/${DEST_REPO}"
+          echo ">>> Fetching all branches references down locally so subsequent commands can see them..."
+          git fetch source '+refs/heads/*:refs/heads/*' --update-head-ok
 
-      #     echo ">>> Fetching all branches references down locally so subsequent commands can see them..."
-      #     git fetch source '+refs/heads/*:refs/heads/*' --update-head-ok
+          # Print out all branches
+          git --no-pager branch -a -vv
 
-      #     # Print out all branches
-      #     git --no-pager branch -a -vv
+          # echo ">>> Pushing git changes..."
+          # git push destination "${SOURCE_BRANCH}:${DESTINATION_BRANCH}" -f
 
-      #     echo ">>> Pushing git changes..."
-      #     git push destination "${SOURCE_BRANCH}:${DESTINATION_BRANCH}" -f
-
-      #     echo ">>> Pushing all LFS items..."
-      #     git lfs push --all destination "${DESTINATION_BRANCH}"
+          # echo ">>> Pushing all LFS items..."
+          # git lfs push --all destination "${DESTINATION_BRANCH}"
