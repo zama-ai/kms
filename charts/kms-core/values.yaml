@@ -26,9 +26,10 @@ kmsCore:
   # This is used to load environment variables from a configmap
   envFrom:
     configmap:
-      name:
+      name: mpc-party
       key:
         coreClientS3Endpoint: CORE_CLIENT__S3_ENDPOINT
+        thresholdId: KMS_CORE__THRESHOLD__MY_ID
         privateVaultStorageBucket: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET
         privateVaultStoragePrefix: KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX
         privateVaultKeychainAWSKMSRootKeySpec: KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC

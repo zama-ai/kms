@@ -40,8 +40,16 @@ spec:
               cat kms-gen-keys.toml
               echo "### END - kms-gen-keys.toml ###"
           env:
+            {{- if .Values.kmsPeers.id }}
             - name: KMS_CORE__THRESHOLD__MY_ID
               value: "{{ .Values.kmsPeers.id }}"
+            {{- else }}
+            - name: KMS_CORE__THRESHOLD__MY_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.thresholdId }}
+            {{- end }}
             - name: NO_COLOR
               value: "true"
             - name: RUN_MODE
