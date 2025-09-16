@@ -36,7 +36,7 @@ jobs:
         run: |
           echo ">>> Cloning source repo..."
           git lfs install
-          git clone "https://github.com/${SOURCE_REPO}.git" ./root/source --origin source && cd ./root/source
+          git clone "https://${USERNAME}:${TOKEN}@github.com/${SOURCE_REPO}.git" ./root/source --origin source && cd ./root/source
           git remote add destination "https://${USERNAME}:${TOKEN}@github.com/${DEST_REPO}.git"
 
           echo ">>> Fetching all branches references down locally so subsequent commands can see them..."
