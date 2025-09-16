@@ -36,7 +36,7 @@ jobs:
         run: |
           echo ">>> Cloning source repo..."
           git lfs install
-          git clone "https://${USERNAME}:${TOKEN}@github.com/${SOURCE_REPO}.git" ./root/source --origin source && cd ./root/source
+          git clone "https://${USERNAME}:${TOKEN}@github.com/${SOURCE_REPO}.git" ./kms --origin source && cd ./kms
           git remote add destination "https://${USERNAME}:${TOKEN}@github.com/${DEST_REPO}.git"
 
           echo ">>> Fetching all branches references down locally so subsequent commands can see them..."
@@ -54,6 +54,10 @@ jobs:
           # echo ">>> Pushing all LFS items..."
           # git lfs push --all destination "${DESTINATION_BRANCH}"
 
+      - name: debug
+        if: always()
+        run: git lfs logs last
+
       - name: git-sync-tags
         env:
           SOURCE_REPO: "zama-ai/kms"
@@ -64,7 +68,7 @@ jobs:
           DEST_REPO: ${{ secrets.SYNC_DEST_REPO }}
         run: |
           echo ">>> Cloning source repo..."
-          git clone "https://github.com/${SOURCE_REPO}.git" ./root/source --origin source && cd ./root/source
+          git clone "https://github.com/${SOURCE_REPO}.git" ./kms --origin source && cd ./kms
           git remote add destination "https://${USERNAME}:${TOKEN}@github.com/${DEST_REPO}.git"
 
           echo ">>> Fetching all branches references down locally so subsequent commands can see them..."
