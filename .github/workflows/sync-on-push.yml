@@ -2,6 +2,8 @@
 name: sync-on-push
 
 on:
+  pull_request:
+
   push:
     branches:
       - 'main'
@@ -66,6 +68,3 @@ jobs:
 
           echo ">>> Pushing git changes..."
           git push destination "${SOURCE_BRANCH}:${DESTINATION_BRANCH}" -f
-
-          echo ">>> Pushing all LFS items..."
-          git lfs push --all destination "${DESTINATION_BRANCH}"
