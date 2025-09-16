@@ -8,6 +8,7 @@ use crate::client::tests::threshold::custodian_context_tests::run_new_cus_contex
 use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::backup_pke::BackupPrivateKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::util::key_setup::test_tools::purge_pub;
 use crate::util::key_setup::test_tools::{purge_backup, purge_recovery_info};
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
@@ -318,7 +319,9 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         // Check the data is correctly recovered
         assert_eq!(cur_sk, sig_keys[i - 1]);
     }
-    purge_priv(test_path, amount_parties).await;
+    // Purge to ensure no left over state
+    purge_priv(None, 1).await;
+    purge_pub(None, 1).await;
 }
 
 async fn run_custodian_recovery_init(

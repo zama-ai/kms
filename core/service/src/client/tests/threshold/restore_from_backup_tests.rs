@@ -30,11 +30,11 @@ async fn default_insecure_threshold_dkg_backup() {
     let dkg_param: WrappedDKGParams = param.into();
 
     let key_id_1: RequestId = derive_request_id(&format!(
-        "default_insecure_dkg_backup_1_{amount_parties}_{param:?}",
+        "default_insecure_threshold_dkg_backup_1{amount_parties}_{param:?}",
     ))
     .unwrap();
     let key_id_2: RequestId = derive_request_id(&format!(
-        "default_insecure_dkg_backup_2_{amount_parties}_{param:?}",
+        "default_insecure_threshold_dkg_backup_2{amount_parties}_{param:?}",
     ))
     .unwrap();
 
