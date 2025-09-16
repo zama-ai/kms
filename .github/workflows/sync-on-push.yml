@@ -17,6 +17,14 @@ jobs:
     if: ${{ github.repository == 'zama-ai/kms' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          lfs: true
+          fetch-depth: 0
+          persist-credentials: 'false'
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
       - name: git-sync
         env:
           SOURCE_REPO: "zama-ai/kms"
@@ -27,7 +35,8 @@ jobs:
           DEST_REPO: ${{ secrets.SYNC_DEST_REPO }}
         run: |
           echo ">>> Cloning source repo..."
-          git lfs clone "https://github.com/${SOURCE_REPO}" ./kms --origin source && cd ./kms
+          git lfs install
+          git clone "${SOURCE_REPO}" ./root/source --origin source && cd ./root/source
           git remote add destination "https://${USERNAME}:${TOKEN}@github.com/${DEST_REPO}"
 
           echo ">>> Fetching all branches references down locally so subsequent commands can see them..."
@@ -55,7 +64,7 @@ jobs:
           DEST_REPO: ${{ secrets.SYNC_DEST_REPO }}
         run: |
           echo ">>> Cloning source repo..."
-          git lfs clone "https://github.com/${SOURCE_REPO}" ./kms --origin source && cd ./kms
+          git clone "${SOURCE_REPO}" ./root/source --origin source && cd ./root/source
           git remote add destination "https://${USERNAME}:${TOKEN}@github.com/${DEST_REPO}"
 
           echo ">>> Fetching all branches references down locally so subsequent commands can see them..."
