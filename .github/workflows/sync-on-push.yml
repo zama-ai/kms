@@ -40,11 +40,11 @@ jobs:
           echo ">>> Fetching all LFS items from source..."
           git lfs fetch --all source "${SOURCE_BRANCH}"
 
-          echo ">>> Pushing git changes..."
-          git push destination "${SOURCE_BRANCH}:${DESTINATION_BRANCH}" -f
+          # echo ">>> Pushing git changes..."
+          # git push destination "${SOURCE_BRANCH}:${DESTINATION_BRANCH}" -f
 
-          echo ">>> Pushing all LFS items..."
-          git lfs push --all destination "${DESTINATION_BRANCH}"
+          # echo ">>> Pushing all LFS items..."
+          # git lfs push --all destination "${DESTINATION_BRANCH}"
 
       - name: git-sync-tags
         env:
@@ -66,8 +66,8 @@ jobs:
           echo ">>> Print out all branches
           git --no-pager branch -a -vv
 
-          echo ">>> Pushing git changes..."
-          git push destination "${SOURCE_BRANCH}:${DESTINATION_BRANCH}" -f
+          # echo ">>> Pushing git changes..."
+          # git push destination "${SOURCE_BRANCH}:${DESTINATION_BRANCH}" -f
 
-          echo ">>> Pushing all LFS items..."
-          git lfs push --all destination "${DESTINATION_BRANCH}"
+          # echo ">>> Pushing all LFS items..."
+          # git lfs push --all destination "${DESTINATION_BRANCH}"
