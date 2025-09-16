@@ -186,6 +186,13 @@ jobs:
           components: rustfmt, clippy, llvm-tools-preview, llvm-tools
           cache: false
 
+      - name: debug rust install
+        run: |
+          rustc --version
+          cargo --version
+          echo $CARGO_HOME
+          echo $RUSTUP_HOME
+
       - name: Install cargo-llvm-cov & nextest
         uses: taiki-e/install-action@1dd4d60a583436c5738af3d204f159f44d92f704  # v2.61.0
         with:
