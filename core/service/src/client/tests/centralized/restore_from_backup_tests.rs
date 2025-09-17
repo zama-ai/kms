@@ -5,7 +5,9 @@ use crate::{
     },
     cryptography::internal_crypto_types::WrappedDKGParams,
     engine::base::derive_request_id,
-    util::key_setup::test_tools::{purge, purge_backup, EncryptionConfig, TestingPlaintext},
+    util::key_setup::test_tools::{
+        purge, purge_backup, purge_priv, purge_pub, EncryptionConfig, TestingPlaintext,
+    },
     vault::storage::{
         delete_all_at_request_id, file::FileStorage, make_storage, StorageReader, StorageType,
     },
@@ -67,6 +69,8 @@ async fn default_insecure_central_dkg_backup() {
         1,
     )
     .await;
+    purge_priv(None).await;
+    purge_pub(None).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -91,6 +95,8 @@ async fn default_insecure_central_autobackup_after_deletion() {
         .data_exists(&key_id, &PrivDataType::FhePrivateKey.to_string())
         .await
         .unwrap());
+    purge_priv(None).await;
+    purge_pub(None).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -144,4 +150,6 @@ async fn default_insecure_central_crs_backup() {
         .data_exists(&req_id, &PrivDataType::CrsInfo.to_string())
         .await
         .unwrap());
+    purge_priv(None).await;
+    purge_pub(None).await;
 }
