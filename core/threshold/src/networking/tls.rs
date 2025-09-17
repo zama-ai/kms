@@ -250,11 +250,10 @@ impl ServerCertVerifier for AttestedVerifier {
                 tracing::error!("server verifier validation error: {e}");
             })?;
         // check the bundled attestation document and EIF signing certificate
-        let do_validation = if cfg!(feature = "testing") {
-            !&self.mock_enclave
-        } else {
-            true
-        };
+        #[cfg(feature = "testing")]
+        let do_validation = !&self.mock_enclave;
+        #[cfg(not(feature = "testing"))]
+        let do_validation = true;
         if let Some(release_pcrs) = &context.release_pcrs {
             if do_validation {
                 validate_wrapped_cert(
@@ -342,11 +341,10 @@ impl ClientCertVerifier for AttestedVerifier {
             })?;
 
         // check the bundled attestation document and EIF signing certificate
-        let do_validation = if cfg!(feature = "testing") {
-            !&self.mock_enclave
-        } else {
-            true
-        };
+        #[cfg(feature = "testing")]
+        let do_validation = !&self.mock_enclave;
+        #[cfg(not(feature = "testing"))]
+        let do_validation = true;
         if let Some(release_pcrs) = &context.release_pcrs {
             if do_validation {
                 validate_wrapped_cert(
