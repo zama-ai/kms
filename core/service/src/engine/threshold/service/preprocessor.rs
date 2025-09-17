@@ -2,7 +2,6 @@
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // === External Crates ===
-use itertools::Itertools;
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{self, Empty, KeyGenPreprocRequest, KeyGenPreprocResult},
@@ -25,14 +24,9 @@ use threshold_fhe::{
             },
             PreprocessorFactory,
         },
-        runtime::{
-            party::Identity,
-            session::{BaseSession, ParameterHandles, SmallSession},
-        },
-        small_execution::prss::{DerivePRSSState, PRSSSetup},
+        runtime::{party::Identity, session::SmallSession},
         tfhe_internals::parameters::DKGParams,
     },
-    networking::NetworkMode,
 };
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -51,7 +45,7 @@ use crate::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
     },
-    ok_or_tonic_abort, some_or_tonic_abort,
+    ok_or_tonic_abort,
     util::{
         meta_store::{handle_res_mapping, MetaStore},
         rate_limiter::RateLimiter,
@@ -65,7 +59,6 @@ pub struct RealPreprocessor<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<R
 {
     // TODO eventually add mode to allow for nlarge as well.
     pub(crate) sig_key: Arc<PrivateSigKey>,
-    pub prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
     pub preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     pub preproc_factory:
         Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
@@ -108,13 +101,13 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
             .map(|ctr| request_id.derive_session_id_with_counter(ctr as u64))
             .collect::<anyhow::Result<Vec<_>>>()?;
 
-        let base_sessions = {
+        let small_sessions = {
             let mut res = Vec::with_capacity(sids.len());
             for sid in sids {
-                let base_session = session_preparer
-                    .make_base_session(sid, context_id, NetworkMode::Sync)
+                let session = session_preparer
+                    .make_small_sync_session_z128(sid, context_id)
                     .await?;
-                res.push(base_session)
+                res.push(session)
             }
             res
         };
@@ -122,11 +115,6 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         let factory = Arc::clone(&self.preproc_factory);
         let bucket_store = Arc::clone(&self.preproc_buckets);
         let bucket_store_cancellation = Arc::clone(&self.preproc_buckets);
-
-        let prss_setup = some_or_tonic_abort(
-            (*self.prss_setup.read().await).clone(),
-            "No PRSS setup exists".to_string(),
-        )?;
 
         let token = CancellationToken::new();
         {
@@ -141,7 +129,7 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
                 //Start the metric timer, it will end on drop
                 let _timer = timer.start();
                  tokio::select! {
-                    res = Self::preprocessing_background(sk, &request_id, &domain_clone, base_sessions, bucket_store, prss_setup, own_identity, dkg_params, keyset_config, factory, permit) => {
+                    res = Self::preprocessing_background(sk, &request_id, &domain_clone, small_sessions, bucket_store, own_identity, dkg_params, keyset_config, factory, permit) => {
                         if res.is_err() {
                             metrics::METRICS.increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, ERR_USER_PREPROC_FAILED);
                         }
@@ -168,35 +156,17 @@ impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> Rea
         sk: Arc<PrivateSigKey>,
         req_id: &RequestId,
         domain: &alloy_sol_types::Eip712Domain,
-        base_sessions: Vec<BaseSession>,
+        sessions: Vec<SmallSession<ResiduePolyF4Z128>>,
         bucket_store: Arc<RwLock<MetaStore<BucketMetaStore>>>,
-        prss_setup: PRSSSetup<ResiduePolyF4Z128>,
         own_identity: Identity,
         params: DKGParams,
         keyset_config: ddec_keyset_config::KeySetConfig,
         factory: Arc<Mutex<Box<dyn PreprocessorFactory<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>>>>,
         permit: OwnedSemaphorePermit,
     ) -> Result<(), ()> {
-        let _permit = permit; // dropped at the end of the function
-        fn create_sessions(
-            base_sessions: Vec<BaseSession>,
-            prss_setup: PRSSSetup<ResiduePolyF4Z128>,
-        ) -> Vec<SmallSession<ResiduePolyF4Z128>> {
-            base_sessions
-                .into_iter()
-                .filter_map(|base_session| {
-                    let prss_state = prss_setup.new_prss_session_state(base_session.session_id());
-                    match SmallSession::new_from_prss_state(base_session, prss_state) {
-                        Ok(session) => Some(session),
-                        Err(err) => {
-                            tracing::error!("Failed to create small session: {}", err);
-                            None
-                        }
-                    }
-                })
-                .collect_vec()
-        }
-        let sessions = create_sessions(base_sessions, prss_setup);
+        // dropped at the end of the function
+        let _permit = permit;
+
         // Create the orchestrator
         let orchestrator_result = {
             let mut factory_guard = factory.lock().await;
@@ -356,7 +326,9 @@ mod tests {
     use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};
     use rand::SeedableRng;
     use threshold_fhe::{
-        execution::online::preprocessing::create_memory_factory,
+        execution::{
+            online::preprocessing::create_memory_factory, small_execution::prss::PRSSSetup,
+        },
         malicious_execution::online::preprocessing::orchestration::malicious_producer_traits::{
             DummyProducerFactory, FailingProducerFactory,
         },
@@ -373,7 +345,6 @@ mod tests {
     impl<P: ProducerFactory<ResiduePolyF4Z128, SmallSession<ResiduePolyF4Z128>>> RealPreprocessor<P> {
         fn init_test(
             sk: Arc<PrivateSigKey>,
-            prss_setup_z128: Arc<RwLock<Option<PRSSSetup<ResiduePolyF4Z128>>>>,
             session_preparer_getter: SessionPreparerGetter,
         ) -> Self {
             let tracker = Arc::new(TaskTracker::new());
@@ -381,7 +352,6 @@ mod tests {
             let ongoing = Arc::new(Mutex::new(HashMap::new()));
             Self {
                 sig_key: sk,
-                prss_setup: prss_setup_z128,
                 preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
                 preproc_factory: Arc::new(Mutex::new(create_memory_factory())),
                 num_sessions_preproc: 2,
@@ -424,11 +394,7 @@ mod tests {
         session_preparer_manager
             .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
             .await;
-        RealPreprocessor::<P>::init_test(
-            Arc::new(sk),
-            prss_setup_z128,
-            session_preparer_manager.make_getter(),
-        )
+        RealPreprocessor::<P>::init_test(Arc::new(sk), session_preparer_manager.make_getter())
     }
 
     #[tokio::test]

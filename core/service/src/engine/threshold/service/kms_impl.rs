@@ -500,7 +500,6 @@ where
 
     let keygen_preprocessor = RealPreprocessor {
         sig_key: Arc::clone(&base_kms.sig_key),
-        prss_setup: prss_setup_z128,
         preproc_buckets,
         preproc_factory,
         num_sessions_preproc,

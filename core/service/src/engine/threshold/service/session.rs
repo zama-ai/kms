@@ -210,7 +210,8 @@ impl SessionPreparer {
             .await
     }
 
-    pub async fn make_small_session_z128(
+    /// Make a small session with Z128 PRSS for the Async network mode.
+    pub async fn make_small_async_session_z128(
         &self,
         session_id: SessionId,
         context_id: ContextId,
@@ -218,11 +219,12 @@ impl SessionPreparer {
         self.inner
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
-            .make_small_session_z128(session_id, context_id)
+            .make_small_session_z128(session_id, context_id, NetworkMode::Async)
             .await
     }
 
-    pub async fn make_small_session_z64(
+    /// Make a small session with Z64 PRSS for the Async network mode.
+    pub async fn make_small_async_session_z64(
         &self,
         session_id: SessionId,
         context_id: ContextId,
@@ -230,7 +232,33 @@ impl SessionPreparer {
         self.inner
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
-            .make_small_session_z64(session_id, context_id)
+            .make_small_session_z64(session_id, context_id, NetworkMode::Async)
+            .await
+    }
+
+    /// Make a small session with Z128 PRSS for the Sync network mode.
+    pub async fn make_small_sync_session_z128(
+        &self,
+        session_id: SessionId,
+        context_id: ContextId,
+    ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .make_small_session_z128(session_id, context_id, NetworkMode::Sync)
+            .await
+    }
+
+    /// Make a small session with Z64 PRSS for the Sync network mode.
+    pub async fn make_small_sync_session_z64(
+        &self,
+        session_id: SessionId,
+        context_id: ContextId,
+    ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .make_small_session_z64(session_id, context_id, NetworkMode::Sync)
             .await
     }
 
@@ -302,7 +330,7 @@ impl InnerSessionPreparer {
         Ok(networking)
     }
 
-    pub async fn get_session_parameters(
+    async fn get_session_parameters(
         &self,
         session_id: SessionId,
     ) -> anyhow::Result<SessionParameters> {
@@ -315,7 +343,7 @@ impl InnerSessionPreparer {
         Ok(parameters)
     }
 
-    pub async fn make_base_session(
+    async fn make_base_session(
         &self,
         session_id: SessionId,
         context_id: ContextId,
@@ -336,14 +364,14 @@ impl InnerSessionPreparer {
         Ok(base_session)
     }
 
-    pub async fn make_small_session_z128(
+    async fn make_small_session_z128(
         &self,
         session_id: SessionId,
         context_id: ContextId,
+        network_mode: NetworkMode,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
-        //DDec for small session is only online, so requires only Async network
         let base_session = self
-            .make_base_session(session_id, context_id, NetworkMode::Async)
+            .make_base_session(session_id, context_id, network_mode)
             .await?;
         let prss_setup = some_or_tonic_abort(
             self.prss_setup_z128.read().await.clone(),
@@ -363,10 +391,10 @@ impl InnerSessionPreparer {
         &self,
         session_id: SessionId,
         context_id: ContextId,
+        network_mode: NetworkMode,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
-        //DDec for small session is only online, so requires only Async network
         let base_session = self
-            .make_base_session(session_id, context_id, NetworkMode::Async)
+            .make_base_session(session_id, context_id, network_mode)
             .await?;
         let prss_setup = some_or_tonic_abort(
             self.prss_setup_z64.read().await.clone(),
