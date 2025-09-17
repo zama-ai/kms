@@ -298,7 +298,7 @@ jobs:
           ls -al ${{ github.workspace }}/.cargo
           echo ">>> ls ${{ github.workspace }}/target"
           ls -al ${{ github.workspace }}/target
-          echo ">>> ls ${{ github.workspace }}/${{ inputs.working-directory }}
+          echo ">>> ls ${{ github.workspace }}/${{ inputs.working-directory }}"
           ls -al ${{ github.workspace }}/${{ inputs.working-directory }}
 
       # Test execution
@@ -344,8 +344,6 @@ jobs:
           ls -al ${{ github.workspace }}/target
           echo ">>> ls ${{ github.workspace }}/${{ inputs.working-directory }}"
           ls -al ${{ github.workspace }}/${{ inputs.working-directory }}
-          echo ">>> ls ${{ github.workspace }}/${{ inputs.working-directory }}/target"
-          ls -al ${{ github.workspace }}/${{ inputs.working-directory }}/target
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
