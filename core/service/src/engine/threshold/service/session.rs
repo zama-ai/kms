@@ -14,6 +14,7 @@ use threshold_fhe::{
     },
     networking::{grpc::GrpcNetworkingManager, NetworkMode},
     session_id::SessionId,
+    thread_handles::spawn_compute_bound,
 };
 use tokio::sync::RwLock;
 
@@ -328,7 +329,8 @@ impl InnerSessionPreparer {
             self.prss_setup_z128.read().await.clone(),
             "No PRSS setup Z128 exists".to_string(),
         )?;
-        let prss_state = prss_setup.new_prss_session_state(session_id);
+        let prss_state =
+            spawn_compute_bound(move || prss_setup.new_prss_session_state(session_id)).await?;
 
         let session = SmallSession {
             base_session,

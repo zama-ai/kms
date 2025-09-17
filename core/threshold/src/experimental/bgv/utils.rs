@@ -1,6 +1,7 @@
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::Role;
 use crate::execution::runtime::session::BaseSessionHandles;
+use crate::execution::runtime::session::DeSerializationRunTime;
 use crate::execution::sharing::share::Share;
 use crate::experimental::algebra::levels::LevelEll;
 use crate::experimental::algebra::levels::LevelKsw;
@@ -34,6 +35,7 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
     role: &Role,
     input_party_id: usize,
 ) -> anyhow::Result<PublicBgvKeySet> {
+    let deserialization_runtime = DeSerializationRunTime::Rayon;
     session.network().increase_round_counter().await;
     if role.one_based() == input_party_id {
         let pubkey_raw =
@@ -42,16 +44,17 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
 
         let pkval = NetworkValue::<LevelEll>::PubBgvKeySet(Box::new(pubkey_raw.clone()));
         tracing::debug!("Sending pk to all other parties");
+        let send_pk = Arc::new(pkval.to_network());
 
         let mut set = JoinSet::new();
         for to_send_role in 1..=num_parties {
             if to_send_role != input_party_id {
                 let networking = Arc::clone(session.network());
-                let send_pk = pkval.clone();
 
+                let send_pk = Arc::clone(&send_pk);
                 set.spawn(async move {
                     let _ = networking
-                        .send(send_pk.to_network(), &Role::indexed_from_one(to_send_role))
+                        .send(send_pk, &Role::indexed_from_one(to_send_role))
                         .await;
                 });
             }
@@ -72,7 +75,8 @@ pub async fn transfer_pub_key<S: BaseSessionHandles>(
         }))
         .await??;
 
-        let pk = match NetworkValue::<LevelEll>::from_network(data)? {
+        let pk = match NetworkValue::<LevelEll>::from_network(data, deserialization_runtime).await?
+        {
             NetworkValue::PubBgvKeySet(pk) => pk,
             _ => Err(anyhow_error_and_log(
                 "I have received sth different from a public key!",
@@ -89,6 +93,7 @@ pub async fn transfer_secret_key<S: BaseSessionHandles>(
     role: &Role,
     input_party_id: usize,
 ) -> anyhow::Result<PrivateBgvKeySet> {
+    let deserialization_runtime = DeSerializationRunTime::Rayon;
     let num_parties = session.num_parties();
     let threshold = session.threshold();
 
@@ -107,7 +112,10 @@ pub async fn transfer_secret_key<S: BaseSessionHandles>(
 
                 set.spawn(async move {
                     let _ = networking
-                        .send(send_sk.to_network(), &Role::indexed_from_zero(to_send_role))
+                        .send(
+                            Arc::new(send_sk.to_network()),
+                            &Role::indexed_from_zero(to_send_role),
+                        )
                         .await;
                 });
             }
@@ -129,7 +137,8 @@ pub async fn transfer_secret_key<S: BaseSessionHandles>(
         }))
         .await??;
 
-        let sk = match NetworkValue::<LevelOne>::from_network(data)? {
+        let sk = match NetworkValue::<LevelOne>::from_network(data, deserialization_runtime).await?
+        {
             NetworkValue::<LevelOne>::VecRingValue(sk) => sk,
             _ => Err(anyhow_error_and_log(
                 "I have received sth different from a secret key!",

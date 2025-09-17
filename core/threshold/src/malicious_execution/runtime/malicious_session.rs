@@ -6,8 +6,9 @@ use crate::{
         runtime::{
             party::Role,
             session::{
-                BaseSession, BaseSessionHandles, NetworkingImpl, ParameterHandles,
-                SessionParameters, SmallSession, SmallSessionHandles, ToBaseSession,
+                BaseSession, BaseSessionHandles, DeSerializationRunTime, NetworkingImpl,
+                ParameterHandles, SessionParameters, SmallSession, SmallSessionHandles,
+                ToBaseSession,
             },
         },
         small_execution::{
@@ -88,6 +89,15 @@ impl<Z: Ring, Prss: PRSSPrimitives<Z> + Clone> ParameterHandles
 
     fn get_all_sorted_roles(&self) -> &Vec<Role> {
         self.base_session.get_all_sorted_roles()
+    }
+
+    fn get_deserialization_runtime(&self) -> DeSerializationRunTime {
+        self.base_session.get_deserialization_runtime()
+    }
+
+    fn set_deserialization_runtime(&mut self, serialization_runtime: DeSerializationRunTime) {
+        self.base_session
+            .set_deserialization_runtime(serialization_runtime);
     }
 }
 
