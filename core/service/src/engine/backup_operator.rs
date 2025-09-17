@@ -178,10 +178,7 @@ where
         // Lock the ephemeral key for the entire duration of the method
         let mut guarded_priv_key = self.ephemeral_dec_key.lock().await;
         if guarded_priv_key.is_some() {
-            return Err(Status::new(
-                tonic::Code::FailedPrecondition,
-                "Ephemeral decryption key already exists. Cannot initialize recovery again before previous recovery is completed.",
-            ));
+            tracing::warn!("Ephemeral decryption key already exists. OVERWRITING the old ephemeral key, thus invalidating any previous recovery initialization!");
         }
         let backup_id = get_latest_backup_id(&self.crypto_storage.backup_vault)
             .await
