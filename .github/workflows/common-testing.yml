@@ -340,6 +340,8 @@ jobs:
           RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
           echo ">>> ls ${{ github.workspace }}"
           ls -al ${{ github.workspace }}
+          echo ">>> ls ${{ github.workspace }}/.cargo"
+          ls -al ${{ github.workspace }}/.cargo
           echo ">>> ls ${{ github.workspace }}/target"
           ls -al ${{ github.workspace }}/target
           echo ">>> ls ${{ github.workspace }}/${{ inputs.working-directory }}"
