@@ -66,7 +66,8 @@ async fn threshold_handles_w_vaults(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
             ),
         )
-        .await;
+        .await
+        .unwrap();
     }
     let (kms_servers, kms_clients) = crate::client::test_tools::setup_threshold(
         threshold as u8,
@@ -82,10 +83,15 @@ async fn threshold_handles_w_vaults(
     for i in 1..=amount_parties {
         pub_storage.insert(
             i as u32,
-            FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap(),
+            FileStorage::new(
+                test_data_path,
+                StorageType::PUB,
+                Some(Role::indexed_from_one(i)),
+            )
+            .unwrap(),
         );
     }
-    let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
+    let client_storage = FileStorage::new(test_data_path, StorageType::CLIENT, None).unwrap();
     let internal_client = Client::new_client(client_storage, pub_storage, &params, decryption_mode)
         .await
         .unwrap();

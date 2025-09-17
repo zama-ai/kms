@@ -277,7 +277,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         sig_keys.push(cur_sk);
     }
     // Purge the private storage to tests the backup
-    purge_priv(test_path, amount_parties).await;
+    purge_priv(test_path).await;
 
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Reboot the servers
@@ -292,7 +292,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Purge the private storage again to delete the signing key
-    purge_priv(test_path, amount_parties).await;
+    purge_priv(test_path).await;
 
     // Execute the backup restoring
     let mut rng = AesRng::seed_from_u64(13);
@@ -320,8 +320,8 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         assert_eq!(cur_sk, sig_keys[i - 1]);
     }
     // Purge to ensure no left over state
-    purge_priv(None, 1).await;
-    purge_pub(None, 1).await;
+    purge_priv(test_path).await;
+    purge_pub(test_path).await;
 }
 
 async fn run_custodian_recovery_init(

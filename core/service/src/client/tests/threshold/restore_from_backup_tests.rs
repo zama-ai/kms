@@ -4,7 +4,7 @@ use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams,
     engine::base::{derive_request_id, INSECURE_PREPROCESSING_ID},
     util::key_setup::test_tools::{
-        purge, purge_backup, purge_priv, EncryptionConfig, TestingPlaintext,
+        purge, purge_backup, purge_priv, purge_pub, EncryptionConfig, TestingPlaintext,
     },
     vault::storage::{
         delete_all_at_request_id, file::FileStorage, make_storage, StorageReader, StorageType,
@@ -40,7 +40,7 @@ async fn default_insecure_threshold_dkg_backup() {
 
     let test_path = None;
     // Purge private to make the test run faster since there will be less data to back up.
-    purge_priv(test_path, amount_parties).await;
+    purge_priv(test_path).await;
     purge(test_path, test_path, test_path, &key_id_1, amount_parties).await;
     purge(test_path, test_path, test_path, &key_id_2, amount_parties).await;
     purge_backup(test_path, amount_parties).await;
@@ -131,6 +131,8 @@ async fn default_insecure_threshold_dkg_backup() {
         Some(DecryptionMode::NoiseFloodSmall),
     )
     .await;
+    purge_priv(test_path).await;
+    purge_pub(test_path).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -152,7 +154,7 @@ async fn default_insecure_threshold_autobackup_after_deletion() {
     .unwrap();
     let test_path = None;
     // Purge private to make the test run faster since there will be less data to back up.
-    purge_priv(test_path, amount_parties).await;
+    purge_priv(test_path).await;
     purge(test_path, test_path, test_path, &key_id, amount_parties).await;
     purge_backup(test_path, amount_parties).await;
     let (kms_servers, kms_clients, internal_client) =
@@ -201,6 +203,8 @@ async fn default_insecure_threshold_autobackup_after_deletion() {
             .await
             .unwrap());
     }
+    purge_priv(test_path).await;
+    purge_pub(test_path).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -295,4 +299,6 @@ async fn default_insecure_threshold_crs_backup() {
             .await
             .unwrap());
     }
+    purge_priv(test_path).await;
+    purge_pub(test_path).await;
 }
