@@ -2,7 +2,7 @@ use crate::{
     client::tests::threshold::{common::threshold_handles, crs_gen_tests::run_crs},
     consts::DEFAULT_PARAM,
     cryptography::internal_crypto_types::WrappedDKGParams,
-    engine::base::derive_request_id,
+    engine::base::{derive_request_id, INSECURE_PREPROCESSING_ID},
     util::key_setup::test_tools::{
         purge, purge_backup, purge_priv, EncryptionConfig, TestingPlaintext,
     },
@@ -30,11 +30,11 @@ async fn default_insecure_threshold_dkg_backup() {
     let dkg_param: WrappedDKGParams = param.into();
 
     let key_id_1: RequestId = derive_request_id(&format!(
-        "default_insecure_dkg_backup_1_{amount_parties}_{param:?}",
+        "default_insecure_threshold_dkg_backup_1{amount_parties}_{param:?}",
     ))
     .unwrap();
     let key_id_2: RequestId = derive_request_id(&format!(
-        "default_insecure_dkg_backup_2_{amount_parties}_{param:?}",
+        "default_insecure_threshold_dkg_backup_2{amount_parties}_{param:?}",
     ))
     .unwrap();
 
@@ -51,7 +51,7 @@ async fn default_insecure_threshold_dkg_backup() {
         param,
         &kms_clients,
         &internal_client,
-        None,
+        &INSECURE_PREPROCESSING_ID,
         &key_id_1,
         None,
         None,
@@ -63,7 +63,7 @@ async fn default_insecure_threshold_dkg_backup() {
         param,
         &kms_clients,
         &internal_client,
-        None,
+        &INSECURE_PREPROCESSING_ID,
         &key_id_2,
         None,
         None,
@@ -162,7 +162,7 @@ async fn default_insecure_threshold_autobackup_after_deletion() {
         param,
         &kms_clients,
         &internal_client,
-        None,
+        &INSECURE_PREPROCESSING_ID,
         &key_id,
         None,
         None,

@@ -15,8 +15,7 @@ use tracing::Instrument;
 
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::base::{
-    compute_info_decompression_keygen, retrieve_parameters, KeyGenMetadata,
-    CENTRALIZED_DUMMY_PREPROCESSING_ID, DSEP_PUBDATA_KEY,
+    compute_info_decompression_keygen, retrieve_parameters, KeyGenMetadata, DSEP_PUBDATA_KEY,
 };
 use crate::engine::centralized::central_kms::{
     async_generate_decompression_keys, async_generate_fhe_keys,
@@ -41,6 +40,7 @@ pub async fn key_gen_impl<
 >(
     service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<KeyGenRequest>,
+    #[cfg(feature = "insecure")] check_preproc_id: bool,
 ) -> Result<Response<Empty>, Status> {
     let _timer = METRICS.time_operation(OP_KEYGEN).start();
 
@@ -52,18 +52,45 @@ pub async fn key_gen_impl<
     );
     let req_id =
         parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::KeyGenRequest)?;
+    let preproc_id =
+        parse_optional_proto_request_id(&inner.preproc_id, RequestIdParsingErr::PreprocRequest)?;
 
     // If parameter is not configured, the default one will be used
     let params = retrieve_parameters(inner.params)?;
 
-    let internal_keyset_config = ok_or_tonic_abort(
-        InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info),
-        "Invalid keyset config".to_string(),
-    )?;
+    let internal_keyset_config =
+        InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("Failed to parse KeySetConfig: {e}"),
+            )
+        })?;
+
+    // Check for existance of request preprocessing ID
+    {
+        let check_meta_store = {
+            #[cfg(feature = "insecure")]
+            {
+                check_preproc_id
+            }
+            #[cfg(not(feature = "insecure"))]
+            true
+        };
+        if check_meta_store {
+            let guarded_meta_store = service.prepreocessing_ids.read().await;
+            if !guarded_meta_store.exists(&preproc_id) {
+                return Err(tonic::Status::new(
+                    tonic::Code::NotFound,
+                    format!("Preprocessing ID {preproc_id} not found"),
+                ));
+            }
+        }
+    }
 
     {
         let mut guarded_meta_store = service.key_meta_map.write().await;
-        // Insert [HandlerStatus::Started] into the meta store. Note that this will fail if the request ID is already in the meta store
+        // Insert [HandlerStatus::Started] into the meta store.
+        // Note that this will fail if the request ID is already in the meta store
         ok_or_tonic_abort(
             guarded_meta_store.insert(&req_id),
             "Could not insert key generation into meta store".to_string(),
@@ -80,6 +107,7 @@ pub async fn key_gen_impl<
             let _timer = _timer;
             if let Err(e) = key_gen_background(
                 &req_id,
+                &preproc_id,
                 meta_store,
                 crypto_storage,
                 sk,
@@ -136,7 +164,7 @@ pub async fn get_key_gen_result_impl<
             }
             Ok(Response::new(KeyGenResult {
                 request_id: Some(request_id.into()),
-                preprocessing_id: Some((*CENTRALIZED_DUMMY_PREPROCESSING_ID).into()),
+                preprocessing_id: Some(res.preprocessing_id.into()),
                 key_digests: res
                     .key_digest_map
                     .into_iter()
@@ -173,6 +201,7 @@ pub(crate) async fn key_gen_background<
     PrivS: Storage + Send + Sync + 'static,
 >(
     req_id: &RequestId,
+    preproc_id: &RequestId,
     meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     sk: Arc<PrivateSigKey>,
@@ -210,6 +239,7 @@ pub(crate) async fn key_gen_background<
                 standard_key_set_config.to_owned(),
                 internal_keyset_config.get_compression_id()?,
                 req_id,
+                preproc_id,
                 None,
                 eip712_domain,
             )
@@ -242,7 +272,7 @@ pub(crate) async fn key_gen_background<
             let info = match compute_info_decompression_keygen(
                 &sk,
                 &DSEP_PUBDATA_KEY,
-                &CENTRALIZED_DUMMY_PREPROCESSING_ID,
+                preproc_id,
                 req_id,
                 &decompression_key,
                 &eip712_domain,
@@ -279,6 +309,7 @@ pub(crate) async fn key_gen_background<
                 params,
                 &existing_key_id,
                 req_id,
+                preproc_id,
                 eip712_domain,
             )
             .await

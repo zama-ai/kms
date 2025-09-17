@@ -98,6 +98,7 @@ pub(crate) async fn async_generate_fhe_keys<PubS, PrivS>(
     keyset_config: StandardKeySetConfig,
     compression_key_id: Option<RequestId>,
     key_id: &RequestId,
+    preproc_id: &RequestId,
     seed: Option<Seed>,
     eip712_domain: alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
@@ -108,6 +109,7 @@ where
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     let key_id_copy = key_id.to_owned();
+    let preproc_id_copy = preproc_id.to_owned();
 
     let existing_key_handle = match compression_key_id {
         Some(compression_key_id_inner) => {
@@ -129,6 +131,7 @@ where
             keyset_config,
             existing_key_handle,
             &key_id_copy,
+            &preproc_id_copy,
             seed,
             &eip712_domain,
         );
@@ -185,6 +188,7 @@ pub(crate) async fn async_generate_sns_compression_keys<PubS, PrivS>(
     params: DKGParams,
     exsiting_keyset_id: &RequestId,
     key_id: &RequestId,
+    preproc_id: &RequestId,
     eip712_domain: alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)>
 where
@@ -282,6 +286,7 @@ where
         sk,
         new_client_key,
         key_id,
+        preproc_id,
         &pks,
         decompression_key,
         &eip712_domain,
@@ -316,6 +321,7 @@ pub(crate) async fn async_generate_crs(
     recv.await?
 }
 
+#[allow(clippy::too_many_arguments)]
 #[cfg(feature = "non-wasm")]
 pub fn generate_fhe_keys(
     sk: &PrivateSigKey,
@@ -323,6 +329,7 @@ pub fn generate_fhe_keys(
     keyset_config: StandardKeySetConfig,
     existing_key_handle: Option<KmsFheKeyHandles>,
     key_id: &RequestId,
+    preproc_id: &RequestId,
     seed: Option<Seed>,
     eip712_domain: &alloy_sol_types::Eip712Domain,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
@@ -365,6 +372,7 @@ pub fn generate_fhe_keys(
             sk,
             client_key,
             key_id,
+            preproc_id,
             &pks,
             decompression_key,
             eip712_domain,
@@ -1256,6 +1264,7 @@ pub(crate) mod tests {
             return read_element(key_path).await.unwrap();
         }
 
+        let preproc_id = derive_request_id("CENTRALIZED_DUMMY_PREPROCESSING_ID").unwrap();
         let mut rng = AesRng::seed_from_u64(100);
         let seed = Some(Seed(42));
         let (sig_pk, sig_sk) = gen_sig_keys(&mut rng);
@@ -1266,6 +1275,7 @@ pub(crate) mod tests {
             StandardKeySetConfig::default(),
             None,
             &RequestId::from_str(key_id).unwrap(),
+            &preproc_id,
             seed,
             &domain,
         )
@@ -1280,6 +1290,7 @@ pub(crate) mod tests {
             StandardKeySetConfig::default(),
             None,
             &RequestId::from_str(other_key_id).unwrap(),
+            &preproc_id,
             seed,
             &domain,
         )
@@ -1325,12 +1336,14 @@ pub(crate) mod tests {
         let domain = dummy_domain();
         let (_sig_pk, sig_sk) = gen_sig_keys(&mut rng);
         let key_id = RequestId::new_random(&mut rng);
+        let preproc_id = RequestId::new_random(&mut rng);
         assert!(generate_fhe_keys(
             &sig_sk,
             DEFAULT_PARAM,
             StandardKeySetConfig::default(),
             None,
             &key_id,
+            &preproc_id,
             None,
             &domain,
         )

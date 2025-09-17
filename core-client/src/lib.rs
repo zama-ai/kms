@@ -1121,7 +1121,7 @@ async fn do_keygen(
     num_parties: usize,
     kms_addrs: &[alloy_primitives::Address],
     param: FheParameter,
-    preproc_id: Option<RequestId>,
+    preproc_id: RequestId,
     insecure: bool,
     shared_config: &SharedKeyGenParameters,
     destination_prefix: &Path,
@@ -1151,7 +1151,7 @@ async fn do_keygen(
         .map(kms_grpc::kms::v1::KeySetAddedInfo::from);
     let dkg_req = internal_client.key_gen_request(
         &req_id,
-        preproc_id,
+        &preproc_id,
         Some(param),
         keyset_config,
         keyset_added_info,
@@ -1865,7 +1865,7 @@ pub async fn execute_cmd(
                 num_parties,
                 &kms_addrs,
                 param,
-                Some(*preproc_id),
+                *preproc_id,
                 false,
                 shared_args,
                 destination_prefix,
@@ -1880,6 +1880,7 @@ pub async fn execute_cmd(
                 "Insecure key generation with parameter {}.",
                 param.as_str_name()
             );
+            let dummy_preproc_id = RequestId::new_random(&mut rng);
             let req_id = do_keygen(
                 &mut internal_client,
                 &mut core_endpoints_req,
@@ -1889,7 +1890,7 @@ pub async fn execute_cmd(
                 num_parties,
                 &kms_addrs,
                 param,
-                None,
+                dummy_preproc_id,
                 true,
                 shared_args,
                 destination_prefix,

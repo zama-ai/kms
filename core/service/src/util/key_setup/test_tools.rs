@@ -568,6 +568,32 @@ pub async fn purge_priv(priv_path: Option<&Path>, amount_parties: usize) {
     }
 }
 
+/// Purge the entire content of the public storage.
+/// This is useful for testing backup
+pub async fn purge_pub(pub_path: Option<&Path>, amount_parties: usize) {
+    if amount_parties == 1 {
+        let final_central_path = match pub_path {
+            Some(path) => path.to_path_buf(),
+            None => FileStorage::default_path(StorageType::PUB, None).unwrap(),
+        };
+        // Ignore if the dir does not exist
+        let _ = tokio::fs::remove_dir_all(&final_central_path).await;
+    } else {
+        for cur_party in 1..=amount_parties {
+            let final_threshold_path = match pub_path {
+                Some(path) => path.to_path_buf(),
+                None => FileStorage::default_path(
+                    StorageType::PUB,
+                    Some(Role::indexed_from_one(cur_party)),
+                )
+                .unwrap(),
+            };
+            // Ignore if the dir does not exist
+            let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
+        }
+    }
+}
+
 /// Purge _all_ backed up data. Both custodian and non-custodian based backups.
 /// Note however that this method does _not_ purge anything in the private or public storage.
 /// Thus, if you want to avoid new custodian backups being constructed at boot ensure that `purge_recovery_info`
