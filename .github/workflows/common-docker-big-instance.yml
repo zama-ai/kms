@@ -84,7 +84,7 @@ jobs:
       attestations: write # Required to write attestations
       id-token: write # Required for OIDC token generation
     needs: [start-amd64-runner]
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@042486f5ad1eed4671ec909548ed5aa37868bde1
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@13a97af6233b07446a4de0f9b824d801a7ae9657
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
