@@ -206,10 +206,6 @@ jobs:
             /home/ubuntu/.cargo/registry/index/
             /home/ubuntu/.cargo/registry/cache/
             /home/ubuntu/.cargo/git/db/
-            ${{ github.workspace }}/.cargo/bin/
-            ${{ github.workspace }}/.cargo/registry/index/
-            ${{ github.workspace }}/.cargo/registry/cache/
-            ${{ github.workspace }}/.cargo/git/db/
             ${{ github.workspace }}/target
           key: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
@@ -279,27 +275,7 @@ jobs:
         run: cargo clippy --all-targets --all-features --package "${PACKAGE_NAME}" -- -D warnings
 
       - name: Linting dylint
-        run: |
-          cargo dylint --all
-          which cargo
-          echo ">>> ls /home/ubuntu/.cargo/bin/"
-          ls -al /home/ubuntu/.cargo/bin/
-          echo ">>> ls /home/ubuntu/.cargo/registry/index/"
-          ls -al /home/ubuntu/.cargo/registry/index/
-          echo ">>> ls /home/ubuntu/.cargo/registry/cache/"
-          ls -al /home/ubuntu/.cargo/registry/cache/
-          echo ">>> ls /home/ubuntu/.cargo/git/db/"
-          ls -al /home/ubuntu/.cargo/git/db/
-          echo ">>> pwd ${{ github.workspace }}"
-          pwd ${{ github.workspace }}
-          echo ">>> ls ${{ github.workspace }}"
-          ls -al ${{ github.workspace }}
-          echo ">>> ls ${{ github.workspace }}/.cargo"
-          ls -al ${{ github.workspace }}/.cargo
-          echo ">>> ls ${{ github.workspace }}/target"
-          ls -al ${{ github.workspace }}/target
-          echo ">>> ls ${{ github.workspace }}/${{ inputs.working-directory }}"
-          ls -al ${{ github.workspace }}/${{ inputs.working-directory }}
+        run: cargo dylint --all
 
       # Test execution
       - name: Run Tests
@@ -338,14 +314,6 @@ jobs:
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
           RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
-          echo ">>> ls ${{ github.workspace }}"
-          ls -al ${{ github.workspace }}
-          echo ">>> ls ${{ github.workspace }}/.cargo"
-          ls -al ${{ github.workspace }}/.cargo
-          echo ">>> ls ${{ github.workspace }}/target"
-          ls -al ${{ github.workspace }}/target
-          echo ">>> ls ${{ github.workspace }}/${{ inputs.working-directory }}"
-          ls -al ${{ github.workspace }}/${{ inputs.working-directory }}
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
