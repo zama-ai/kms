@@ -801,7 +801,7 @@ mod tests {
         // try to send to a role that is not in the role assignment should fail
         {
             let e = session
-                .send(vec![1, 2, 3], &Role::indexed_from_one(3))
+                .send(Arc::new(vec![1, 2, 3]), &Role::indexed_from_one(3))
                 .await
                 .unwrap_err();
             assert!(e.to_string().contains("Missing local channel for"));
