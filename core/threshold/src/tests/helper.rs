@@ -503,6 +503,7 @@ pub mod tests {
                 .map(|s| (*party, s))
         }))
         .await;
+
         let honest_tasks = honest_sessions
             .into_iter()
             .map(|(party, session)| task_honest(session).map(move |output| (party, output)));
@@ -524,7 +525,9 @@ pub mod tests {
             ));
         }
 
-        let results_honest = join_all(honest_tasks).await;
+        let results_honest = tokio::task::JoinSet::from_iter(honest_tasks)
+            .join_all()
+            .await;
 
         let mut results_malicious = Vec::new();
         for (role, task) in malicious_task.into_iter() {
@@ -630,7 +633,9 @@ pub mod tests {
             ));
         }
 
-        let results_honest = join_all(honest_tasks).await;
+        let results_honest = tokio::task::JoinSet::from_iter(honest_tasks)
+            .join_all()
+            .await;
         let mut results_malicious = Vec::new();
         for (role, task) in malicious_task.into_iter() {
             results_malicious.push((role, task.await));

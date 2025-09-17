@@ -21,6 +21,7 @@ cfg_if::cfg_if! {
         use threshold_fhe::execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
         use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
         use threshold_fhe::session_id::SessionId;
+        use std::sync::Arc;
 
     }
 }
@@ -441,6 +442,7 @@ where
         StandardKeySetConfig::default(),
         None,
         key_id,
+        &INSECURE_PREPROCESSING_ID,
         seed,
         &domain,
     ) {
@@ -457,6 +459,7 @@ where
         StandardKeySetConfig::default(),
         None,
         other_key_id,
+        &INSECURE_PREPROCESSING_ID,
         seed,
         &domain,
     ) {
@@ -921,10 +924,10 @@ where
             }
         };
         let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: key_shares[i - 1].to_owned(),
-            integer_server_key: integer_server_key.clone(),
-            sns_key: sns_key.clone(),
-            decompression_key: decompression_key.clone(),
+            private_keys: Arc::new(key_shares[i - 1].to_owned()),
+            integer_server_key: Arc::new(integer_server_key.clone()),
+            sns_key: sns_key.clone().map(Arc::new),
+            decompression_key: decompression_key.clone().map(Arc::new),
             meta_data: info,
         };
 

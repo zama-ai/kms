@@ -1577,7 +1577,7 @@ where
             let ctxt = ctxts[0].clone();
 
             //Create one session for bcast
-            let bcast_session = self
+            let mut bcast_session = self
                 .create_base_session(
                     session_id,
                     *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
@@ -1630,7 +1630,7 @@ where
                     //Do bcast after the Sns to sync parties
                     let _ = SyncReliableBroadcast::default()
                         .broadcast_from_all(
-                            &bcast_session,
+                            &mut bcast_session,
                             BroadcastValue::from(Z128::from_u128(42)),
                         )
                         .await;
@@ -1666,18 +1666,21 @@ where
                         // May panic
                         {
                             let decrypt_span = tracing::info_span!("Online-NoiseFloodSmall");
-                            let key_ref = key_ref.clone();
                             tracing::info!(
                                 "Starting session with id {} to decrypt {} ctxts",
                                 small_session.session.borrow().session_id(),
                                 ctxts.len()
                             );
+
+                            let key_shares = Arc::new(key_ref.1.clone());
                             decryption_tasks.spawn(
                                 async move {
-                                    let mut noiseflood_preprocessing = small_session
-                                        .init_prep_noiseflooding(ctxts.len() * num_blocks)
-                                        .await
-                                        .unwrap();
+                                    let noiseflood_preprocessing = Arc::new(Mutex::new(
+                                        small_session
+                                            .init_prep_noiseflooding(ctxts.len() * num_blocks)
+                                            .await
+                                            .unwrap(),
+                                    ));
 
                                     let mut base_session =
                                         small_session.session.into_inner().base_session;
@@ -1692,9 +1695,9 @@ where
                                                 SecureOnlineNoiseFloodDecryption,
                                             >(
                                                 &mut base_session,
-                                                &mut noiseflood_preprocessing,
-                                                &key_ref.1,
-                                                &ctxt,
+                                                noiseflood_preprocessing.clone(),
+                                                key_shares.clone(),
+                                                Arc::new(ctxt),
                                                 SnsDecryptionKeyType::SnsKey,
                                             )
                                             .await
@@ -1756,7 +1759,7 @@ where
                     //Do bcast to sync parties
                     let _ = SyncReliableBroadcast::default()
                         .broadcast_from_all(
-                            &bcast_session,
+                            &mut bcast_session,
                             BroadcastValue::from(Z128::from_u128(42)),
                         )
                         .await;
@@ -2138,10 +2141,11 @@ where
                         let server_key = key_ref.0.server_key.as_ref();
                         let mut res = Vec::new();
                         let sns_key = key_ref.0.server_key.noise_squashing_key();
-                        for (ctxt, mut preprocessing) in
+                        for (ctxt, preprocessing) in
                             ctxts.into_iter().zip_eq(preprocessings.into_iter())
                         // May panic
                         {
+                            let preprocessing = Arc::new(Mutex::new(preprocessing));
                             let ct_large = if let Some(sns_key) = sns_key {
                                 match ctxt {
                                     RadixOrBoolCiphertext::Radix(ct) => {
@@ -2161,6 +2165,7 @@ where
                             } else {
                                 panic!("Missing key (it was there just before)")
                             };
+                            let key_shares = Arc::new(key_ref.1.clone());
                             res.push(
                                 run_decryption_noiseflood_64::<
                                     EXTENSION_DEGREE,
@@ -2169,9 +2174,9 @@ where
                                     SecureOnlineNoiseFloodDecryption,
                                 >(
                                     &mut base_session,
-                                    &mut preprocessing,
-                                    &key_ref.1,
-                                    &ct_large,
+                                    preprocessing,
+                                    key_shares,
+                                    Arc::new(ct_large),
                                     SnsDecryptionKeyType::SnsKey,
                                 )
                                 .await

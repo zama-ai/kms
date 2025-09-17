@@ -1,6 +1,8 @@
 use crate::engine::centralized::central_kms::RealCentralizedKms;
-use crate::engine::centralized::service::{delete_kms_context_impl, new_kms_context_impl};
-use crate::some_or_tonic_abort;
+use crate::engine::centralized::service::{
+    delete_kms_context_impl, get_preprocessing_res_impl, init_impl, new_kms_context_impl,
+    preprocessing_impl,
+};
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
     self, BackupRecoveryRequest, Empty, HealthStatusResponse, InitRequest, KeyGenPreprocRequest,
@@ -15,6 +17,8 @@ use crate::engine::centralized::service::{
     get_public_decryption_result_impl, get_user_decryption_result_impl, public_decrypt_impl,
     user_decrypt_impl,
 };
+#[cfg(feature = "insecure")]
+use observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST;
 use observability::{
     metrics::METRICS,
     metrics_names::{
@@ -31,42 +35,44 @@ use observability::{
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
     CoreServiceEndpoint for RealCentralizedKms<PubS, PrivS>
 {
-    async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+    async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_INIT);
-        METRICS.increment_error_counter(OP_INIT, ERR_INVALID_REQUEST);
-        some_or_tonic_abort(
-            None,
-            "Requesting init on centralized kms is not suported".to_string(),
-        )
-        .map_err(Status::from)
+        init_impl(self, request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(observability::metrics_names::OP_INIT, tag);
+        })
     }
 
-    #[tracing::instrument(skip(self, _request))]
+    #[tracing::instrument(skip(self, request))]
     async fn key_gen_preproc(
         &self,
-        _request: Request<KeyGenPreprocRequest>,
+        request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_REQUEST);
-        METRICS.increment_error_counter(OP_KEYGEN_PREPROC_REQUEST, ERR_INVALID_REQUEST);
-        some_or_tonic_abort(
-            None,
-            "Requesting preproc on centralized kms is not suported".to_string(),
-        )
-        .map_err(Status::from)
+        preprocessing_impl(self, request).await.inspect_err(|err| {
+            let tag = map_tonic_code_to_metric_tag(err.code());
+            let _ = METRICS.increment_error_counter(
+                observability::metrics_names::OP_KEYGEN_PREPROC_REQUEST,
+                tag,
+            );
+        })
     }
 
-    #[tracing::instrument(skip(self, _request))]
+    #[tracing::instrument(skip(self, request))]
     async fn get_key_gen_preproc_result(
         &self,
-        _request: Request<v1::RequestId>,
+        request: Request<v1::RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_PREPROC_RESULT);
-        METRICS.increment_error_counter(OP_KEYGEN_PREPROC_RESULT, ERR_INVALID_REQUEST);
-        some_or_tonic_abort(
-            None,
-            "Requesting preproc status on centralized kms is not suported".to_string(),
-        )
-        .map_err(Status::from)
+        get_preprocessing_res_impl(self, request)
+            .await
+            .inspect_err(|err| {
+                let tag = map_tonic_code_to_metric_tag(err.code());
+                let _ = METRICS.increment_error_counter(
+                    observability::metrics_names::OP_KEYGEN_PREPROC_RESULT,
+                    tag,
+                );
+            })
     }
 
     #[cfg(feature = "insecure")]
@@ -75,13 +81,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<kms_grpc::kms::v1::KeyGenRequest>,
     ) -> Result<Response<Empty>, Status> {
-        METRICS.increment_request_counter(observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST);
-        self.key_gen(request).await.inspect_err(|err| {
+        METRICS.increment_request_counter(OP_INSECURE_KEYGEN_REQUEST);
+        key_gen_impl(self, request, false).await.inspect_err(|err| {
             let tag = map_tonic_code_to_metric_tag(err.code());
-            let _ = METRICS.increment_error_counter(
-                observability::metrics_names::OP_INSECURE_KEYGEN_REQUEST,
-                tag,
-            );
+            let _ = METRICS.increment_error_counter(OP_INSECURE_KEYGEN_REQUEST, tag);
         })
     }
 
@@ -107,7 +110,17 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         request: Request<kms_grpc::kms::v1::KeyGenRequest>,
     ) -> Result<Response<Empty>, Status> {
         METRICS.increment_request_counter(OP_KEYGEN_REQUEST);
-        key_gen_impl(self, request).await.inspect_err(|err| {
+        // if we're doing a "secure" keygen
+        // even if it's compiled with the "insecure" feature
+        // we still want to check the preprocessing ID
+        key_gen_impl(
+            self,
+            request,
+            #[cfg(feature = "insecure")]
+            true,
+        )
+        .await
+        .inspect_err(|err| {
             let tag = map_tonic_code_to_metric_tag(err.code());
             let _ = METRICS.increment_error_counter(OP_KEYGEN_REQUEST, tag);
         })
