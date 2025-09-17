@@ -118,6 +118,8 @@ args:
 {{- end -}}
 
 {{- define "kmsCoreInitEnvVars" -}}
+export TOKIO_WORKER_THREADS="6"
+export RAYON_NUM_THREADS="43"
 export AWS_REGION="${AWS_REGION:={{ .Values.kmsCore.aws.region }}}"
 export AWS_ROLE_ARN="${AWS_ROLE_ARN:={{ .Values.kmsCore.aws.roleArn }}}"
 {{- if .Values.kmsCore.publicVault.s3.enabled }}
