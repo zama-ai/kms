@@ -56,7 +56,7 @@ jobs:
         env:
           GH_WORKSPACE: ${{ github.workspace }}
         run: |
-          version='$(cat "${GH_WORKSPACE}/toolchain.txt")'
+          version="$(cat "${GH_WORKSPACE}/toolchain.txt")"
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
