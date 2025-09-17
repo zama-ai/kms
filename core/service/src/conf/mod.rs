@@ -33,7 +33,7 @@ pub struct CoreConfig {
     pub rate_limiter_conf: Option<RateLimiterConfig>,
     #[validate(nested)]
     pub threshold: Option<ThresholdPartyConf>,
-    #[cfg(feature = "testing")]
+    #[cfg(feature = "insecure")]
     pub mock_enclave: Option<bool>,
 }
 
