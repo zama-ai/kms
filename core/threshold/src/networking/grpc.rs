@@ -361,26 +361,13 @@ impl GrpcNetworkingManager {
                     message_store.0.init(
                         self.conf.get_message_limit(),
                         &others,
-                        |other_role: &Role| {
-                            // NOTE: I hold the session store write lock here, so this is safe
-                            let other_mpc_id = role_assignment.get(other_role);
-                            match other_mpc_id {
-                                Some(mpc_id) => {
-                                    self.opened_sessions_tracker
-                                        .entry(mpc_id.mpc_identity())
-                                        .and_modify(|count| {
-                                            *count = count.saturating_sub(1);
-                                        })
-                                        .or_insert(0);
-                                }
-                                None => {
-                                    tracing::warn!(
-                                        "Other role {:?} not found in role assignment {:?}",
-                                        other_role,
-                                        role_assignment
-                                    );
-                                }
-                            }
+                        |other: MpcIdentity| {
+                            self.opened_sessions_tracker
+                                .entry(other)
+                                .and_modify(|count| {
+                                    *count = count.saturating_sub(1);
+                                })
+                                .or_insert(0);
                         },
                     );
                     message_store.clone()
@@ -506,7 +493,7 @@ impl MessageQueueStore {
     }
 
     #[allow(clippy::type_complexity)]
-    pub(crate) fn new_initialized<F: Fn(&Role)>(
+    pub(crate) fn new_initialized<F: Fn(MpcIdentity)>(
         my_role: &Role,
         channel_size_limit: usize,
         role_assignment: &RoleAssignment,
@@ -529,11 +516,11 @@ impl MessageQueueStore {
         out
     }
 
-    pub(crate) fn init<F: Fn(&Role)>(
+    pub(crate) fn init<F: Fn(MpcIdentity)>(
         &mut self,
         channel_size_limit: usize,
         role_assignment: &RoleAssignment,
-        f: F,
+        f_for_existing_ids: F,
     ) {
         if let MessageQueueStore::Uninitialized(channel_maps) = &self {
             let tx_map = DashMap::with_capacity(channel_maps.len());
@@ -544,8 +531,9 @@ impl MessageQueueStore {
             // If an identity is not in channel_maps but in role_assignment,
             // then we create a new channel for it.
             for (role, identity) in role_assignment.iter() {
-                if let Some(entry) = channel_maps.get(&identity.mpc_identity()) {
-                    f(role);
+                let mpc_id = identity.mpc_identity();
+                if let Some(entry) = channel_maps.get(&mpc_id) {
+                    f_for_existing_ids(mpc_id);
                     let (tx, rx) = entry.value();
                     tx_map.insert(entry.key().clone(), tx.clone());
                     rx_map.insert(*role, rx.clone());
