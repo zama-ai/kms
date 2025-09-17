@@ -21,9 +21,7 @@ RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     build-base \
     openssl-dev \
     protoc \
-    protobuf \
-    openssh
-
+    protobuf
 
 # Install Rust using rustup
 ENV PATH="/root/.cargo/bin:${PATH}"

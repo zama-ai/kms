@@ -20,7 +20,6 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     cargo install --path tools/kms-health-check --root tools/kms-health-check --bins
 
 
-
 ################################################################
 # Runtime Stage
 FROM --platform=$BUILDPLATFORM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod

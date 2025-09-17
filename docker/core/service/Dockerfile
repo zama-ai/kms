@@ -27,7 +27,6 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
        /app/kms/target/${LTO_RELEASE}/kms-gen-keys \
     ./core/service/bin
 
-
 ARG YQ_VERSION=v4.47.2
 # Overridable arg to allow building for different architectures
 ARG TARGETARCH=amd64
