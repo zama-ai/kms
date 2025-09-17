@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       # Each output indicates if files in a specific component were modified
-      changed-dockerfile: ${{ steps.filter.outputs.changes }}
+      changed-dockerfile: ${{ steps.filter.outputs.dockerfile_files }}
       changed: ${{ steps.filter.outputs.dockerfile }}
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -27,6 +27,7 @@ jobs:
       with:
         # Define paths that trigger specific component workflows
         # Changes to observability affect multiple components
+        list-files: 'json'
         filters: |
           dockerfile:
             - 'docker/**'
@@ -54,7 +55,7 @@ jobs:
         env:
           GH_WORKSPACE: ${{ github.workspace }}
         run: |
-          version="$(cat ${GH_WORKSPACE}/toolchain.txt)"
+          version='$(cat "${GH_WORKSPACE}/toolchain.txt")'
           echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
