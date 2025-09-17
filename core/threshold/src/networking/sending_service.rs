@@ -331,31 +331,31 @@ impl Drop for GrpcSendingService {
 /// It also deals with the network round and timeouts
 #[derive(Debug)]
 pub struct NetworkSession {
-    pub owner: Identity,
+    pub(crate) owner: Identity,
     /// Sessin id of this Network session
-    pub session_id: SessionId,
-    pub context_id: SessionId,
+    pub(crate) session_id: SessionId,
+    pub(crate) context_id: SessionId,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`]
     /// Sending channels for this session
-    pub sending_channels: HashMap<Role, UnboundedSender<SendValueRequest>>,
+    pub(crate) sending_channels: HashMap<Role, UnboundedSender<SendValueRequest>>,
     /// Channels which are filled by the grpc server receiving messages from the other parties
     /// owned by the session and thus automatically cleaned up on drop
-    pub receiving_channels: MessageQueueStore,
+    pub(crate) receiving_channels: MessageQueueStore,
     // Round counter for the current session, behind a lock to be able to update it without a mut ref to self
     // Observe tokio lock is needed since it must be held across an await point
-    pub round_counter: tokio::sync::RwLock<usize>,
+    pub(crate) round_counter: tokio::sync::RwLock<usize>,
     // Measure the number of bytes sent by this session
     #[cfg(feature = "choreographer")]
-    pub num_byte_sent: RwLock<usize>,
+    pub(crate) num_byte_sent: RwLock<usize>,
     // Network mode is either async or sync
-    pub network_mode: NetworkMode,
+    pub(crate) network_mode: NetworkMode,
     // If Network mode is sync, we need to keep track of the values below to make sure
     // we are within time bound
-    pub conf: OptionConfigWrapper,
-    pub init_time: OnceLock<Instant>,
-    pub current_network_timeout: RwLock<Duration>,
-    pub next_network_timeout: RwLock<Duration>,
-    pub max_elapsed_time: RwLock<Duration>,
+    pub(crate) conf: OptionConfigWrapper,
+    pub(crate) init_time: OnceLock<Instant>,
+    pub(crate) current_network_timeout: RwLock<Duration>,
+    pub(crate) next_network_timeout: RwLock<Duration>,
+    pub(crate) max_elapsed_time: RwLock<Duration>,
 }
 
 #[async_trait]

@@ -202,7 +202,7 @@ impl OptionConfigWrapper {
 #[derive(Debug, Clone)]
 pub struct GrpcNetworkingManager {
     // Session reference storage to prevent premature cleanup under high concurrency
-    pub session_store: Arc<SessionStore>,
+    pub(crate) session_store: Arc<SessionStore>,
     // Keeps tracks of how many sessions were opened by each party
     // NOTE: Always lock session_store before opened_sessions_tracker to prevent deadlocks
     pub opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
@@ -332,16 +332,6 @@ impl GrpcNetworkingManager {
         my_role: Role,
         network_mode: NetworkMode,
     ) -> anyhow::Result<Arc<impl Networking>> {
-        let my_id = match role_assignment.get(&my_role) {
-            Some(id) => id.clone(),
-            None => {
-                return Err(anyhow::anyhow!(
-                    "My role {:?} not found in role assignment {:?}",
-                    my_role,
-                    role_assignment
-                ));
-            }
-        };
         let party_count = role_assignment.len();
         let mut others = role_assignment.clone();
 
@@ -368,7 +358,9 @@ impl GrpcNetworkingManager {
 
                 let message_store = if let SessionStatus::Inactive(message_store) = mutable_status {
                     // Upgrade the message store from the uninitialized state to the initialized state
-                    message_store.0.init(role_assignment);
+                    message_store
+                        .0
+                        .init(self.conf.get_message_limit(), role_assignment);
                     message_store.clone()
                 } else {
                     return Err(anyhow::anyhow!(
@@ -412,7 +404,7 @@ impl GrpcNetworkingManager {
                 let connection_channel = self.sending_service.add_connections(&others).await?;
 
                 let session = Arc::new(NetworkSession {
-                    owner: my_id,
+                    owner: owner.clone(),
                     session_id,
                     context_id,
                     sending_channels: connection_channel,
@@ -442,7 +434,7 @@ impl GrpcNetworkingManager {
                 );
 
                 let session = Arc::new(NetworkSession {
-                    owner: my_id,
+                    owner: owner.clone(),
                     session_id,
                     context_id,
                     sending_channels: connection_channel,
@@ -485,7 +477,7 @@ pub struct NetworkRoundValue {
 }
 
 #[derive(Debug, Clone)]
-struct InitializedMessageQueueStore {
+pub(crate) struct InitializedMessageQueueStore {
     // role assignment is needed because the message store
     // needs to translate between identity and role
     tx: DashMap<MpcIdentity, Arc<Sender<NetworkRoundValue>>>,
@@ -494,7 +486,7 @@ struct InitializedMessageQueueStore {
 
 #[allow(clippy::type_complexity)]
 #[derive(Debug, Clone)]
-enum InnerMessageQueueStore {
+pub(crate) enum MessageQueueStore {
     Uninitialized(
         DashMap<
             MpcIdentity,
@@ -507,16 +499,9 @@ enum InnerMessageQueueStore {
     Initialized(InitializedMessageQueueStore),
 }
 
-#[derive(Debug, Clone)]
-pub struct MessageQueueStore {
-    channel_size_limit: usize,
-    inner: InnerMessageQueueStore,
-}
-
 impl MessageQueueStore {
     #[allow(clippy::type_complexity)]
     pub(crate) fn new_uninitialized(
-        channel_size_limit: usize,
         channel_maps: DashMap<
             MpcIdentity,
             (
@@ -525,10 +510,7 @@ impl MessageQueueStore {
             ),
         >,
     ) -> Self {
-        MessageQueueStore {
-            channel_size_limit,
-            inner: InnerMessageQueueStore::Uninitialized(channel_maps),
-        }
+        MessageQueueStore::Uninitialized(channel_maps)
     }
 
     #[allow(clippy::type_complexity)]
@@ -549,13 +531,13 @@ impl MessageQueueStore {
             );
         }
 
-        let mut out = Self::new_uninitialized(channel_size_limit, message_map);
-        out.init(role_assignment);
+        let mut out = Self::new_uninitialized(message_map);
+        out.init(channel_size_limit, role_assignment);
         out
     }
 
-    pub(crate) fn init(&mut self, role_assignment: &RoleAssignment) {
-        if let InnerMessageQueueStore::Uninitialized(channel_maps) = &self.inner {
+    pub(crate) fn init(&mut self, channel_size_limit: usize, role_assignment: &RoleAssignment) {
+        if let MessageQueueStore::Uninitialized(channel_maps) = &self {
             let tx_map = DashMap::with_capacity(channel_maps.len());
             let rx_map = DashMap::with_capacity(channel_maps.len());
 
@@ -569,13 +551,13 @@ impl MessageQueueStore {
                     tx_map.insert(entry.key().clone(), tx.clone());
                     rx_map.insert(*role, rx.clone());
                 } else {
-                    let (tx, rx) = channel::<NetworkRoundValue>(self.channel_size_limit);
+                    let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
                     tx_map.insert(identity.mpc_identity(), Arc::new(tx));
                     rx_map.insert(*role, Arc::new(Mutex::new(rx)));
                 }
             }
 
-            self.inner = InnerMessageQueueStore::Initialized(InitializedMessageQueueStore {
+            *self = MessageQueueStore::Initialized(InitializedMessageQueueStore {
                 tx: tx_map,
                 rx: rx_map,
             });
@@ -588,12 +570,12 @@ impl MessageQueueStore {
         &self,
         mpc_identity: &MpcIdentity,
     ) -> Result<Option<Arc<Sender<NetworkRoundValue>>>, Box<tonic::Status>> {
-        match &self.inner {
-            InnerMessageQueueStore::Initialized(store) => Ok(store
+        match &self {
+            MessageQueueStore::Initialized(store) => Ok(store
                 .tx
                 .get(mpc_identity)
                 .map(|entry| entry.value().clone())),
-            InnerMessageQueueStore::Uninitialized(_) => Err(Box::new(tonic::Status::internal(
+            MessageQueueStore::Uninitialized(_) => Err(Box::new(tonic::Status::internal(
                 "trying to get tx message queue on id {mpc_identity} when it is not initialized",
             ))),
         }
@@ -603,11 +585,11 @@ impl MessageQueueStore {
         &self,
         role: &Role,
     ) -> anyhow::Result<Option<Arc<Mutex<Receiver<NetworkRoundValue>>>>> {
-        match &self.inner {
-            InnerMessageQueueStore::Initialized(store) => {
+        match &self {
+            MessageQueueStore::Initialized(store) => {
                 Ok(store.rx.get(role).map(|entry| entry.value().clone()))
             }
-            InnerMessageQueueStore::Uninitialized(_) => Err(anyhow::anyhow!(
+            MessageQueueStore::Uninitialized(_) => Err(anyhow::anyhow!(
                 "trying to get rx message queue on role {role} when it is not initialized",
             )),
         }
@@ -617,11 +599,11 @@ impl MessageQueueStore {
     where
         F: FnMut(&Role),
     {
-        match &self.inner {
-            InnerMessageQueueStore::Uninitialized(_) => Err(Box::new(tonic::Status::internal(
+        match &self {
+            MessageQueueStore::Uninitialized(_) => Err(Box::new(tonic::Status::internal(
                 "trying to iterate message queue when it is not initialized",
             ))),
-            InnerMessageQueueStore::Initialized(inner) => {
+            MessageQueueStore::Initialized(inner) => {
                 inner.rx.iter().for_each(|entry| {
                     f(entry.key());
                 });
@@ -645,22 +627,20 @@ impl MessageQueueStore {
             ),
         >,
     > {
-        match &self.inner {
-            InnerMessageQueueStore::Uninitialized(inner) => Ok(inner.entry(mpc_identity)),
-            InnerMessageQueueStore::Initialized(_) => Err(anyhow::anyhow!(
+        match &self {
+            MessageQueueStore::Uninitialized(inner) => Ok(inner.entry(mpc_identity)),
+            MessageQueueStore::Initialized(_) => Err(anyhow::anyhow!(
                 "entry can only be performed on uninitialized message queue"
             )),
         }
     }
 
     pub(crate) fn iter_keys(&self) -> Result<impl Iterator<Item = Role> + '_, Box<tonic::Status>> {
-        match &self.inner {
-            InnerMessageQueueStore::Uninitialized(_) => Err(Box::new(tonic::Status::internal(
+        match &self {
+            MessageQueueStore::Uninitialized(_) => Err(Box::new(tonic::Status::internal(
                 "trying to iterate keys when message queue is not initialized",
             ))),
-            InnerMessageQueueStore::Initialized(inner) => {
-                Ok(inner.rx.iter().map(|entry| *entry.key()))
-            }
+            MessageQueueStore::Initialized(inner) => Ok(inner.rx.iter().map(|entry| *entry.key())),
         }
     }
 }
@@ -673,7 +653,7 @@ pub(crate) type SessionStore = DashMap<SessionId, SessionStatus>;
 /// - Completed: The session has been completed and the timestamp of completion is stored.
 /// - Inactive: The session is inactive (I haven't yet heard about the request) and has a message queue store for senders.
 /// - Active: The session is active (I know about the request) and holds a weak reference to the `NetworkSession`.
-pub enum SessionStatus {
+pub(crate) enum SessionStatus {
     Completed(Instant),
     Inactive((MessageQueueStore, Instant)),
     Active(Weak<NetworkSession>),
@@ -705,7 +685,7 @@ pub struct NetworkingImpl {
 
 impl NetworkingImpl {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    fn new(
         session_store: Arc<SessionStore>,
         opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
         channel_size_limit: usize,
@@ -1055,7 +1035,7 @@ impl Gnetworking for NetworkingImpl {
 
                     // Insert the new session into the store
                     vacant_entry.insert(SessionStatus::Inactive((
-                        MessageQueueStore::new_uninitialized(self.channel_size_limit, channel_maps),
+                        MessageQueueStore::new_uninitialized(channel_maps),
                         Instant::now(),
                     )));
                     *opened_session_tracker_entry += 1;
