@@ -331,11 +331,10 @@ impl Drop for GrpcSendingService {
 /// It also deals with the network round and timeouts
 #[derive(Debug)]
 pub struct NetworkSession {
-    pub owner: Role,
+    pub owner: Identity,
     /// Sessin id of this Network session
     pub session_id: SessionId,
     pub context_id: SessionId,
-    pub role_assignment: RoleAssignment,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`]
     /// Sending channels for this session
     pub sending_channels: HashMap<Role, UnboundedSender<SendValueRequest>>,
@@ -375,17 +374,7 @@ impl Networking for NetworkSession {
         let tagged_value = Tag {
             session_id: self.session_id,
             context_id: self.context_id,
-            sender: self
-                .role_assignment
-                .get(&self.owner)
-                .ok_or_else(|| {
-                    anyhow_error_and_log(format!(
-                        "Couldn't retrieve identity for owner: {:?}",
-                        self.owner
-                    ))
-                })?
-                .mpc_identity()
-                .to_string(),
+            sender: self.owner.mpc_identity(),
             round_counter,
         };
 
@@ -561,8 +550,7 @@ impl Networking for NetworkSession {
 
 #[cfg(test)]
 mod tests {
-    use dashmap::DashMap;
-    use tokio::sync::{Mutex, RwLock};
+    use tokio::sync::RwLock;
 
     use crate::networking::grpc::{
         MessageQueueStore, NetworkRoundValue, OptionConfigWrapper, TlsExtensionGetter,
@@ -575,7 +563,7 @@ mod tests {
         session_id::SessionId,
     };
     use std::collections::HashMap;
-    use std::sync::{Arc, OnceLock};
+    use std::sync::OnceLock;
     use std::time::Duration;
 
     #[tokio::test(flavor = "multi_thread")]
@@ -604,7 +592,7 @@ mod tests {
             let networking_1 = GrpcNetworkingManager::new(None, None, false).unwrap();
 
             let network_session_1 = networking_1
-                .make_session(
+                .make_network_session(
                     sid,
                     context_id,
                     &role_assignment,
@@ -663,7 +651,7 @@ mod tests {
         let networking_2 = GrpcNetworkingManager::new(None, None, false).unwrap();
         let networking_server_2 = networking_2.new_server(TlsExtensionGetter::default());
         let network_session_2 = networking_2
-            .make_session(
+            .make_network_session(
                 sid,
                 context_id,
                 &role_assignment,
@@ -728,26 +716,18 @@ mod tests {
             role_assignment
         };
 
+        let channel_size_limit = 1000;
+
         // this is the message store of party 1, so party 2 is the other one
-        let message_store = {
-            let message_map = DashMap::new();
-
-            let (tx, rx) = crate::tokio::sync::mpsc::channel::<NetworkRoundValue>(1000);
-            message_map.insert(
-                id_2.mpc_identity().to_string(),
-                (Arc::new(tx), Arc::new(Mutex::new(rx))),
-            );
-
-            MessageQueueStore::new_initialized(&role_assignment, message_map)
-        };
+        let message_store =
+            MessageQueueStore::new_initialized(&role_1, channel_size_limit, &role_assignment);
         let tx_2 = message_store.get_tx(&id_2.mpc_identity()).unwrap().unwrap();
         let context_id = SessionId::from(42);
 
         let session = NetworkSession {
-            owner: Role::indexed_from_one(1),
+            owner: id_1,
             session_id: SessionId::from(0),
             context_id,
-            role_assignment,
             // no need to fill this channel because we're not forwading
             // messages to the networking service in this test
             sending_channels: HashMap::new(),

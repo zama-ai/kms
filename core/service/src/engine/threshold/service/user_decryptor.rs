@@ -217,7 +217,7 @@ impl<
                 DecryptionMode::NoiseFloodSmall => {
                     let session = ok_or_tonic_abort(
                         session_prep
-                            .prepare_ddec_data_from_sessionid_z128(session_id, context_id)
+                            .make_small_session_z128(session_id, context_id)
                             .await,
                         "Could not prepare ddec data for noiseflood decryption".to_string(),
                     )?;
@@ -261,7 +261,7 @@ impl<
                 DecryptionMode::BitDecSmall => {
                     let mut session = ok_or_tonic_abort(
                         session_prep
-                            .prepare_ddec_data_from_sessionid_z64(session_id, context_id)
+                            .make_small_session_z64(session_id, context_id)
                             .await,
                         "Could not prepare ddec data for bitdec decryption".to_string(),
                     )?;
@@ -429,6 +429,9 @@ impl<
             request_id = ?inner.request_id,
             "Received a new user decryption request",
         );
+
+        // TODO(zama-ai/kms-internal/issues/2758)
+        // remove the default context when all of context is ready
         let context_id: ContextId = match &inner.context_id {
             Some(c) => c
                 .try_into()

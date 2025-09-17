@@ -209,7 +209,7 @@ impl SessionPreparer {
             .await
     }
 
-    pub async fn prepare_ddec_data_from_sessionid_z128(
+    pub async fn make_small_session_z128(
         &self,
         session_id: SessionId,
         context_id: ContextId,
@@ -217,11 +217,11 @@ impl SessionPreparer {
         self.inner
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
-            .prepare_ddec_data_from_sessionid_z128(session_id, context_id)
+            .make_small_session_z128(session_id, context_id)
             .await
     }
 
-    pub async fn prepare_ddec_data_from_sessionid_z64(
+    pub async fn make_small_session_z64(
         &self,
         session_id: SessionId,
         context_id: ContextId,
@@ -229,7 +229,7 @@ impl SessionPreparer {
         self.inner
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
-            .prepare_ddec_data_from_sessionid_z64(session_id, context_id)
+            .make_small_session_z64(session_id, context_id)
             .await
     }
 
@@ -283,11 +283,14 @@ impl InnerSessionPreparer {
         context_id: ContextId,
         network_mode: NetworkMode,
     ) -> anyhow::Result<threshold_fhe::execution::runtime::session::NetworkingImpl> {
+        // We need to convert [ContextId] type to [SessionId]
+        // because the core/threshold library is only aware of the [SessionId]
+        // since we cannot store something as long as ContextId in the x509 certificate.
         let context_id = context_id.derive_session_id()?;
         let nm = self.networking_manager.read().await;
 
         let networking = nm
-            .make_session(
+            .make_network_session(
                 session_id,
                 context_id,
                 &self.role_assignment,
@@ -332,7 +335,7 @@ impl InnerSessionPreparer {
         Ok(base_session)
     }
 
-    pub async fn prepare_ddec_data_from_sessionid_z128(
+    pub async fn make_small_session_z128(
         &self,
         session_id: SessionId,
         context_id: ContextId,
@@ -354,7 +357,7 @@ impl InnerSessionPreparer {
         Ok(session)
     }
 
-    async fn prepare_ddec_data_from_sessionid_z64(
+    async fn make_small_session_z64(
         &self,
         session_id: SessionId,
         context_id: ContextId,

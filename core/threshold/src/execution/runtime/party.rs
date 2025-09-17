@@ -139,12 +139,24 @@ impl<T> IndexMut<&mut Role> for Vec<T> {
     }
 }
 
+/// The identity of a MPC party.
+///
+/// When TLS is used, this must be the subject CN in the x509 certificate.
+#[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MpcIdentity(pub(crate) String);
+
+impl std::fmt::Display for MpcIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Runtime identity of party.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct Identity {
     hostname: String,
     port: u16,
-    mpc_identity: Option<String>,
+    mpc_identity: Option<MpcIdentity>,
 }
 
 impl std::fmt::Display for Identity {
@@ -159,7 +171,7 @@ impl Identity {
         Identity {
             hostname,
             port,
-            mpc_identity,
+            mpc_identity: mpc_identity.map(MpcIdentity),
         }
     }
 
@@ -174,10 +186,10 @@ impl Identity {
     }
 
     /// Get the MPC identity part of the identity, defaults to hostname if not set
-    pub fn mpc_identity(&self) -> String {
+    pub fn mpc_identity(&self) -> MpcIdentity {
         self.mpc_identity
             .clone()
-            .unwrap_or(format!("{}:{}", &self.hostname, self.port))
+            .unwrap_or(MpcIdentity(format!("{}:{}", &self.hostname, self.port)))
     }
 }
 

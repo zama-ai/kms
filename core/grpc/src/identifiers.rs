@@ -46,6 +46,9 @@ pub struct KeyId([u8; ID_LENGTH]);
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
 pub struct RequestId([u8; ID_LENGTH]);
 
+/// ContextId represents a unique identifier for a context,
+/// which is usually an operator context in the KMS,
+/// defined by [crate::engine::context::ContextInfo].
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
 pub struct ContextId([u8; ID_LENGTH]);
 

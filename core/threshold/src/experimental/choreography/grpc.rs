@@ -162,6 +162,7 @@ impl ExperimentalGrpcChoreography {
         request_sid: SessionId,
         context_id: SessionId,
         threshold: u8,
+        // TODO does not need to be Arc
         role_assignment: Arc<RwLock<RoleAssignment>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
@@ -218,7 +219,7 @@ impl ExperimentalGrpcChoreography {
             //We are executing offline phase, so requires Sync network
             let networking = self
                 .networking_manager
-                .make_session(
+                .make_network_session(
                     session_id,
                     context_id,
                     &*role_assignment.read().await,
@@ -609,7 +610,7 @@ impl Choreography for ExperimentalGrpcChoreography {
 
             let networking = self
                 .networking_manager
-                .make_session(
+                .make_network_session(
                     session_id,
                     *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                     &RoleAssignment::from(role_assignment),

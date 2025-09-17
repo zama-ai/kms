@@ -10,7 +10,7 @@ use self::gen::{SendValueRequest, SendValueResponse};
 use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
 use super::tls::extract_subject_from_cert;
 use super::NetworkMode;
-use crate::execution::runtime::party::{Role, RoleAssignment};
+use crate::execution::runtime::party::{MpcIdentity, Role, RoleAssignment};
 use crate::networking::constants::{
     DISCARD_INACTIVE_SESSION_INTERVAL_SECS, INITIAL_INTERVAL_MS, MAX_ELAPSED_TIME,
     MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL, MAX_OPENED_INACTIVE_SESSIONS_PER_PARTY,
@@ -23,7 +23,6 @@ use crate::session_id::SessionId;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, Weak};
 
 use tokio::sync::{
@@ -206,7 +205,7 @@ pub struct GrpcNetworkingManager {
     pub session_store: Arc<SessionStore>,
     // Keeps tracks of how many sessions were opened by each party
     // NOTE: Always lock session_store before opened_sessions_tracker to prevent deadlocks
-    pub opened_sessions_tracker: Arc<DashMap<String, u64>>,
+    pub opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     conf: OptionConfigWrapper,
     pub sending_service: GrpcSendingService,
     #[cfg(feature = "testing")]
@@ -325,7 +324,7 @@ impl GrpcNetworkingManager {
     /// All the communication are performed using sessions.
     /// There may be multiple session in parallel,
     /// identified by different session IDs.
-    pub async fn make_session(
+    pub async fn make_network_session(
         &self,
         session_id: SessionId,
         context_id: SessionId, // not the true context ID as it's a session ID derived from the context ID
@@ -333,23 +332,29 @@ impl GrpcNetworkingManager {
         my_role: Role,
         network_mode: NetworkMode,
     ) -> anyhow::Result<Arc<impl Networking>> {
+        let my_id = match role_assignment.get(&my_role) {
+            Some(id) => id.clone(),
+            None => {
+                return Err(anyhow::anyhow!(
+                    "My role {:?} not found in role assignment {:?}",
+                    my_role,
+                    role_assignment
+                ));
+            }
+        };
         let party_count = role_assignment.len();
         let mut others = role_assignment.clone();
-        if others.remove(&my_role).is_none() {
-            return Err(anyhow::anyhow!(
-                "My role {:?} not found in role assignment {:?}",
-                my_role,
-                role_assignment
-            ));
-        }
 
-        let owner = role_assignment.get(&my_role).ok_or_else(|| {
-            anyhow::anyhow!(
-                "My role {:?} not found in role assignment {:?}",
-                my_role,
-                role_assignment
-            )
-        })?;
+        let owner = match others.remove(&my_role) {
+            Some(owner) => owner,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "My role {:?} not found in role assignment {:?}",
+                    my_role,
+                    role_assignment
+                ));
+            }
+        };
 
         let timeout = match network_mode {
             NetworkMode::Async => *NETWORK_TIMEOUT_ASYNC,
@@ -373,25 +378,25 @@ impl GrpcNetworkingManager {
                     ));
                 };
 
-                // We need to drop the channels for parties that are no longer in the role assignment
-                message_store.0.retain(|other_role| {
+                // At the point the message store should be initiated with the
+                // correct number of parties. But we still need to update the
+                // [self.opened_sessions_tracker] for the other parties.
+                message_store.0.for_each(|other_role| {
                     if !others.contains_key(other_role) {
                         tracing::warn!(
                             "Session {:?} already has a message queue for {:?}, but it is not in the roles list.",
                             session_id,
                             other_role
                         );
-                        false
                     } else {
                         // NOTE: I hold the session store write lock here, so this is safe
                         let other_mpc_id = role_assignment.get(other_role);
                         match other_mpc_id {
                             Some(mpc_id) => {
                                 self.opened_sessions_tracker
-                                    .entry(mpc_id.mpc_identity().to_string())
+                                    .entry(mpc_id.mpc_identity())
                                     .and_modify(|count| {*count = count.saturating_sub(1);})
                                     .or_insert(0);
-                                true
                             },
                             None => {
                                 tracing::warn!(
@@ -399,31 +404,17 @@ impl GrpcNetworkingManager {
                                     other_role,
                                     role_assignment
                                 );
-                                false
                             },
                         }
                     }
                 })?;
 
-                for (role, identity) in others.iter() {
-                    if !message_store.0.contains_key(&identity.mpc_identity()) {
-                        let (tx, rx) = channel::<NetworkRoundValue>(self.conf.get_message_limit());
-                        message_store.0.insert(
-                            *role,
-                            identity.mpc_identity().to_string(),
-                            Arc::new(tx),
-                            Arc::new(Mutex::new(rx)),
-                        )?;
-                    }
-                }
-
                 let connection_channel = self.sending_service.add_connections(&others).await?;
 
                 let session = Arc::new(NetworkSession {
-                    owner: my_role,
+                    owner: my_id,
                     session_id,
                     context_id,
-                    role_assignment: role_assignment.clone(),
                     sending_channels: connection_channel,
                     receiving_channels: message_store.0,
                     round_counter: tokio::sync::RwLock::new(0),
@@ -442,25 +433,18 @@ impl GrpcNetworkingManager {
                 session
             }
             dashmap::Entry::Vacant(vacant) => {
-                let message_map = DashMap::with_capacity(party_count);
-                for (_role, identity) in others.iter() {
-                    let (tx, rx) = channel::<NetworkRoundValue>(self.conf.get_message_limit());
-                    message_map.insert(
-                        identity.mpc_identity().to_string(),
-                        (Arc::new(tx), Arc::new(Mutex::new(rx))),
-                    );
-                }
-
                 let connection_channel = self.sending_service.add_connections(&others).await?;
 
-                let message_queue =
-                    MessageQueueStore::new_initialized(role_assignment, message_map);
+                let message_queue = MessageQueueStore::new_initialized(
+                    &my_role,
+                    self.conf.get_message_limit(),
+                    role_assignment,
+                );
 
                 let session = Arc::new(NetworkSession {
-                    owner: my_role,
+                    owner: my_id,
                     session_id,
                     context_id,
-                    role_assignment: role_assignment.clone(),
                     sending_channels: connection_channel,
                     receiving_channels: message_queue,
                     round_counter: tokio::sync::RwLock::new(0),
@@ -504,8 +488,7 @@ pub struct NetworkRoundValue {
 struct InitializedMessageQueueStore {
     // role assignment is needed because the message store
     // needs to translate between identity and role
-    role_assignment: RoleAssignment,
-    tx: DashMap<String, Arc<Sender<NetworkRoundValue>>>,
+    tx: DashMap<MpcIdentity, Arc<Sender<NetworkRoundValue>>>,
     rx: DashMap<Role, Arc<Mutex<Receiver<NetworkRoundValue>>>>,
 }
 
@@ -514,7 +497,7 @@ struct InitializedMessageQueueStore {
 enum InnerMessageQueueStore {
     Uninitialized(
         DashMap<
-            String,
+            MpcIdentity,
             (
                 Arc<Sender<NetworkRoundValue>>,
                 Arc<Mutex<Receiver<NetworkRoundValue>>>,
@@ -526,14 +509,16 @@ enum InnerMessageQueueStore {
 
 #[derive(Debug, Clone)]
 pub struct MessageQueueStore {
+    channel_size_limit: usize,
     inner: InnerMessageQueueStore,
 }
 
 impl MessageQueueStore {
     #[allow(clippy::type_complexity)]
     pub(crate) fn new_uninitialized(
+        channel_size_limit: usize,
         channel_maps: DashMap<
-            String,
+            MpcIdentity,
             (
                 Arc<Sender<NetworkRoundValue>>,
                 Arc<Mutex<Receiver<NetworkRoundValue>>>,
@@ -541,56 +526,58 @@ impl MessageQueueStore {
         >,
     ) -> Self {
         MessageQueueStore {
+            channel_size_limit,
             inner: InnerMessageQueueStore::Uninitialized(channel_maps),
         }
     }
 
     #[allow(clippy::type_complexity)]
     pub(crate) fn new_initialized(
+        my_role: &Role,
+        channel_size_limit: usize,
         role_assignment: &RoleAssignment,
-        channel_maps: DashMap<
-            String,
-            (
-                Arc<Sender<NetworkRoundValue>>,
-                Arc<Mutex<Receiver<NetworkRoundValue>>>,
-            ),
-        >,
     ) -> Self {
-        let mut out = Self::new_uninitialized(channel_maps);
+        let mut others = role_assignment.clone();
+        others.remove(my_role);
+
+        let message_map = DashMap::with_capacity(others.len());
+        for (_role, identity) in others.iter() {
+            let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
+            message_map.insert(
+                identity.mpc_identity(),
+                (Arc::new(tx), Arc::new(Mutex::new(rx))),
+            );
+        }
+
+        let mut out = Self::new_uninitialized(channel_size_limit, message_map);
         out.init(role_assignment);
         out
     }
 
     pub(crate) fn init(&mut self, role_assignment: &RoleAssignment) {
         if let InnerMessageQueueStore::Uninitialized(channel_maps) = &self.inner {
-            let mut mpc_identity_to_role = HashMap::new();
-            for role in role_assignment.keys() {
-                if let Some(identity) = role_assignment.get(role) {
-                    mpc_identity_to_role.insert(identity.mpc_identity().to_string(), *role);
-                }
-            }
+            let tx_map = DashMap::with_capacity(channel_maps.len());
+            let rx_map = DashMap::with_capacity(channel_maps.len());
 
-            let tx = DashMap::with_capacity(channel_maps.len());
-            let rx = DashMap::with_capacity(channel_maps.len());
-
-            for entry in channel_maps.iter() {
-                let (tx_channel, rx_channel) = entry.value();
-                if let Some(role) = mpc_identity_to_role.get(entry.key()) {
-                    tx.insert(entry.key().to_string(), tx_channel.clone());
-                    rx.insert(*role, rx_channel.clone());
+            // If an identity is in channel_maps and also in role_assignment,
+            // then we insert it to the initialized message queue.
+            // If an identity is not in channel_maps but in role_assignment,
+            // then we create a new channel for it.
+            for (role, identity) in role_assignment.iter() {
+                if let Some(entry) = channel_maps.get(&identity.mpc_identity()) {
+                    let (tx, rx) = entry.value();
+                    tx_map.insert(entry.key().clone(), tx.clone());
+                    rx_map.insert(*role, rx.clone());
                 } else {
-                    tracing::warn!(
-                        "MPC identity {} not found in role assignment {:?}",
-                        entry.key(),
-                        role_assignment
-                    );
+                    let (tx, rx) = channel::<NetworkRoundValue>(self.channel_size_limit);
+                    tx_map.insert(identity.mpc_identity(), Arc::new(tx));
+                    rx_map.insert(*role, Arc::new(Mutex::new(rx)));
                 }
             }
 
             self.inner = InnerMessageQueueStore::Initialized(InitializedMessageQueueStore {
-                role_assignment: role_assignment.clone(),
-                tx,
-                rx,
+                tx: tx_map,
+                rx: rx_map,
             });
         } else {
             tracing::warn!("MessageQueueStore is already initialized");
@@ -599,7 +586,7 @@ impl MessageQueueStore {
 
     pub(crate) fn get_tx(
         &self,
-        mpc_identity: &String,
+        mpc_identity: &MpcIdentity,
     ) -> Result<Option<Arc<Sender<NetworkRoundValue>>>, Box<tonic::Status>> {
         match &self.inner {
             InnerMessageQueueStore::Initialized(store) => Ok(store
@@ -626,70 +613,18 @@ impl MessageQueueStore {
         }
     }
 
-    // must be executed after initialization
-    pub(crate) fn contains_key(&self, mpc_identity: &str) -> bool {
-        match &self.inner {
-            InnerMessageQueueStore::Uninitialized(inner) => inner.contains_key(mpc_identity),
-            InnerMessageQueueStore::Initialized(store) => store.tx.contains_key(mpc_identity),
-        }
-    }
-
-    pub(crate) fn retain<F>(&self, mut f: F) -> Result<(), Box<tonic::Status>>
+    pub(crate) fn for_each<F>(&self, mut f: F) -> Result<(), Box<tonic::Status>>
     where
-        F: FnMut(&Role) -> bool,
+        F: FnMut(&Role),
     {
         match &self.inner {
             InnerMessageQueueStore::Uninitialized(_) => Err(Box::new(tonic::Status::internal(
-                "trying to retain message queue when it is not initialized",
+                "trying to iterate message queue when it is not initialized",
             ))),
             InnerMessageQueueStore::Initialized(inner) => {
-                inner.rx.retain(|role, _| f(role));
-
-                // identify the roles that are still remaining and convert them to identities
-                // note that we should not execute f again since it may have side effects
-                let ids_to_keep = inner
-                    .rx
-                    .iter()
-                    .filter_map(|entry| {
-                        inner
-                            .role_assignment
-                            .get(entry.key())
-                            .map(|k| k.mpc_identity())
-                    })
-                    .collect::<std::collections::HashSet<_>>();
-
-                inner.tx.retain(|k, _| ids_to_keep.contains(k.as_str()));
-                Ok(())
-            }
-        }
-    }
-
-    pub(crate) fn insert(
-        &self,
-        role: Role,
-        mpc_identity: String,
-        tx: Arc<Sender<NetworkRoundValue>>,
-        rx: Arc<Mutex<Receiver<NetworkRoundValue>>>,
-    ) -> Result<(), Box<tonic::Status>> {
-        match &self.inner {
-            InnerMessageQueueStore::Uninitialized(_) => Err(Box::new(tonic::Status::internal(
-                "trying to insert message queue when it is not initialized",
-            ))),
-            InnerMessageQueueStore::Initialized(ref store) => {
-                // check that what we're inserting is consistent with the role assignment
-                if let Some(existing_identity) = store.role_assignment.get(&role) {
-                    if existing_identity.mpc_identity() != mpc_identity {
-                        return Err(Box::new(tonic::Status::aborted(
-                            format!("Inconsistent identity for role {:?}: existing identity is {:?}, new identity is {:?}",
-                            role,
-                            existing_identity,
-                            mpc_identity)
-                        )));
-                    }
-                }
-
-                store.tx.insert(mpc_identity, tx);
-                store.rx.insert(role, rx);
+                inner.rx.iter().for_each(|entry| {
+                    f(entry.key());
+                });
                 Ok(())
             }
         }
@@ -699,11 +634,11 @@ impl MessageQueueStore {
     #[allow(clippy::type_complexity)]
     pub(crate) fn entry(
         &self,
-        mpc_identity: String,
+        mpc_identity: MpcIdentity,
     ) -> anyhow::Result<
         dashmap::mapref::entry::Entry<
             '_,
-            String,
+            MpcIdentity,
             (
                 Arc<Sender<NetworkRoundValue>>,
                 Arc<Mutex<Receiver<NetworkRoundValue>>>,
@@ -757,7 +692,7 @@ pub enum TlsExtensionGetter {
 pub struct NetworkingImpl {
     session_store: Arc<SessionStore>,
     // key is the MPC identity
-    opened_sessions_tracker: Arc<DashMap<String, u64>>,
+    opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     channel_size_limit: usize,
     max_opened_inactive_sessions: u64,
     max_waiting_time_for_message_queue: Duration,
@@ -772,8 +707,7 @@ impl NetworkingImpl {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         session_store: Arc<SessionStore>,
-        // key is the MPC identity
-        opened_sessions_tracker: Arc<DashMap<String, u64>>,
+        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
         channel_size_limit: usize,
         max_opened_inactive_sessions: u64,
         max_waiting_time_for_message_queue: Duration,
@@ -947,7 +881,7 @@ fn sender_verification(
 ) -> Result<(), Box<tonic::Status>> {
     if let Some(sender) = valid_tls_sender {
         // tag.sender is an the MPC identity, this should match the CN in the certificate
-        if sender != tag.sender {
+        if sender != tag.sender.0 {
             return Err(Box::new(tonic::Status::new(
                 tonic::Code::Unauthenticated,
                 format!(
@@ -1121,7 +1055,7 @@ impl Gnetworking for NetworkingImpl {
 
                     // Insert the new session into the store
                     vacant_entry.insert(SessionStatus::Inactive((
-                        MessageQueueStore::new_uninitialized(channel_maps),
+                        MessageQueueStore::new_uninitialized(self.channel_size_limit, channel_maps),
                         Instant::now(),
                     )));
                     *opened_session_tracker_entry += 1;
@@ -1166,7 +1100,7 @@ impl Gnetworking for NetworkingImpl {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Tag {
     pub(crate) session_id: SessionId,
-    pub(crate) sender: String, // MPC identity of the sender
+    pub(crate) sender: MpcIdentity,
     pub(crate) context_id: SessionId,
     pub(crate) round_counter: usize,
 }
