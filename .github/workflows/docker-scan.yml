@@ -37,6 +37,7 @@ jobs:
     permissions:
       issues: write # Required to create comments on issues
       pull-requests: write # Required to create comments on pull requests
+      packages: read # Required to read GitHub packages/container registry
     runs-on: ubuntu-latest
     needs: check-changes
     if: needs.check-changes.outputs.changed == 'true'
