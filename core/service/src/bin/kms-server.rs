@@ -124,7 +124,7 @@ async fn build_tls_config(
     security_module: Option<Arc<SecurityModuleProxy>>,
     public_vault: &Vault,
     sk: &PrivateSigKey,
-    #[cfg(feature = "testing")] mock_enclave: bool,
+    #[cfg(feature = "insecure")] mock_enclave: bool,
 ) -> anyhow::Result<(ServerConfig, ClientConfig)> {
     let context_id = *DEFAULT_MPC_CONTEXT;
     aws_lc_rs_default_provider()
@@ -204,7 +204,7 @@ async fn build_tls_config(
         .clone_key();
     let verifier = Arc::new(AttestedVerifier::new(
         pcr8_expected,
-        #[cfg(feature = "testing")]
+        #[cfg(feature = "insecure")]
         mock_enclave,
     )?);
     // Adding a context to the verifier is optional at this point and
@@ -487,7 +487,7 @@ async fn main() -> anyhow::Result<()> {
                             security_module.clone(),
                             &public_vault,
                             &sk,
-                            #[cfg(feature = "testing")]
+                            #[cfg(feature = "insecure")]
                             core_config.mock_enclave.is_some_and(|m| m),
                         )
                         .await?

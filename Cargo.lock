@@ -4224,6 +4224,7 @@ dependencies = [
  "hyper-rustls 0.24.2",
  "itertools 0.14.0",
  "k256",
+ "kms",
  "kms-grpc",
  "lazy_static",
  "ml-kem",
