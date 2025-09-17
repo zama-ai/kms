@@ -2,7 +2,7 @@
 # This is used to define the number of peers and their IDs
 kmsPeers:
   # Defines either the peer ID when count=1 or the start ID of a set of peers when count>1
-  id: 1
+  #id: 1
   # The number of peers managed by the StatefulSets
   count: 1
 
