@@ -358,9 +358,31 @@ impl GrpcNetworkingManager {
 
                 let message_store = if let SessionStatus::Inactive(message_store) = mutable_status {
                     // Upgrade the message store from the uninitialized state to the initialized state
-                    message_store
-                        .0
-                        .init(self.conf.get_message_limit(), role_assignment);
+                    message_store.0.init(
+                        self.conf.get_message_limit(),
+                        &others,
+                        |other_role: &Role| {
+                            // NOTE: I hold the session store write lock here, so this is safe
+                            let other_mpc_id = role_assignment.get(other_role);
+                            match other_mpc_id {
+                                Some(mpc_id) => {
+                                    self.opened_sessions_tracker
+                                        .entry(mpc_id.mpc_identity())
+                                        .and_modify(|count| {
+                                            *count = count.saturating_sub(1);
+                                        })
+                                        .or_insert(0);
+                                }
+                                None => {
+                                    tracing::warn!(
+                                        "Other role {:?} not found in role assignment {:?}",
+                                        other_role,
+                                        role_assignment
+                                    );
+                                }
+                            }
+                        },
+                    );
                     message_store.clone()
                 } else {
                     return Err(anyhow::anyhow!(
@@ -369,37 +391,6 @@ impl GrpcNetworkingManager {
                         owner
                     ));
                 };
-
-                // At the point the message store should be initiated with the
-                // correct number of parties. But we still need to update the
-                // [self.opened_sessions_tracker] for the other parties.
-                message_store.0.for_each(|other_role| {
-                    if !others.contains_key(other_role) {
-                        tracing::warn!(
-                            "Session {:?} already has a message queue for {:?}, but it is not in the roles list.",
-                            session_id,
-                            other_role
-                        );
-                    } else {
-                        // NOTE: I hold the session store write lock here, so this is safe
-                        let other_mpc_id = role_assignment.get(other_role);
-                        match other_mpc_id {
-                            Some(mpc_id) => {
-                                self.opened_sessions_tracker
-                                    .entry(mpc_id.mpc_identity())
-                                    .and_modify(|count| {*count = count.saturating_sub(1);})
-                                    .or_insert(0);
-                            },
-                            None => {
-                                tracing::warn!(
-                                    "Other role {:?} not found in role assignment {:?}",
-                                    other_role,
-                                    role_assignment
-                                );
-                            },
-                        }
-                    }
-                })?;
 
                 let connection_channel = self.sending_service.add_connections(&others).await?;
 
@@ -431,6 +422,7 @@ impl GrpcNetworkingManager {
                     &my_role,
                     self.conf.get_message_limit(),
                     role_assignment,
+                    |_| {}, // no need to update session trackers here
                 );
 
                 let session = Arc::new(NetworkSession {
@@ -514,10 +506,11 @@ impl MessageQueueStore {
     }
 
     #[allow(clippy::type_complexity)]
-    pub(crate) fn new_initialized(
+    pub(crate) fn new_initialized<F: Fn(&Role)>(
         my_role: &Role,
         channel_size_limit: usize,
         role_assignment: &RoleAssignment,
+        f: F,
     ) -> Self {
         let mut others = role_assignment.clone();
         others.remove(my_role);
@@ -532,11 +525,16 @@ impl MessageQueueStore {
         }
 
         let mut out = Self::new_uninitialized(message_map);
-        out.init(channel_size_limit, role_assignment);
+        out.init(channel_size_limit, role_assignment, f);
         out
     }
 
-    pub(crate) fn init(&mut self, channel_size_limit: usize, role_assignment: &RoleAssignment) {
+    pub(crate) fn init<F: Fn(&Role)>(
+        &mut self,
+        channel_size_limit: usize,
+        role_assignment: &RoleAssignment,
+        f: F,
+    ) {
         if let MessageQueueStore::Uninitialized(channel_maps) = &self {
             let tx_map = DashMap::with_capacity(channel_maps.len());
             let rx_map = DashMap::with_capacity(channel_maps.len());
@@ -547,6 +545,7 @@ impl MessageQueueStore {
             // then we create a new channel for it.
             for (role, identity) in role_assignment.iter() {
                 if let Some(entry) = channel_maps.get(&identity.mpc_identity()) {
+                    f(role);
                     let (tx, rx) = entry.value();
                     tx_map.insert(entry.key().clone(), tx.clone());
                     rx_map.insert(*role, rx.clone());
@@ -592,23 +591,6 @@ impl MessageQueueStore {
             MessageQueueStore::Uninitialized(_) => Err(anyhow::anyhow!(
                 "trying to get rx message queue on role {role} when it is not initialized",
             )),
-        }
-    }
-
-    pub(crate) fn for_each<F>(&self, mut f: F) -> Result<(), Box<tonic::Status>>
-    where
-        F: FnMut(&Role),
-    {
-        match &self {
-            MessageQueueStore::Uninitialized(_) => Err(Box::new(tonic::Status::internal(
-                "trying to iterate message queue when it is not initialized",
-            ))),
-            MessageQueueStore::Initialized(inner) => {
-                inner.rx.iter().for_each(|entry| {
-                    f(entry.key());
-                });
-                Ok(())
-            }
         }
     }
 

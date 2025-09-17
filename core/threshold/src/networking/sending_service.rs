@@ -719,8 +719,12 @@ mod tests {
         let channel_size_limit = 1000;
 
         // this is the message store of party 1, so party 2 is the other one
-        let message_store =
-            MessageQueueStore::new_initialized(&role_1, channel_size_limit, &role_assignment);
+        let message_store = MessageQueueStore::new_initialized(
+            &role_1,
+            channel_size_limit,
+            &role_assignment,
+            |_| {},
+        );
         let tx_2 = message_store.get_tx(&id_2.mpc_identity()).unwrap().unwrap();
         let context_id = SessionId::from(42);
 
