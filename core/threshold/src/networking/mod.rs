@@ -1,7 +1,7 @@
 //! Networking traits and implementations.
-
 use crate::execution::runtime::party::Role;
 use async_trait::async_trait;
+use std::sync::Arc;
 use tokio::time::{Duration, Instant};
 
 pub mod constants;
@@ -20,7 +20,7 @@ pub enum NetworkMode {
 /// Requirements for networking interface.
 #[async_trait]
 pub trait Networking {
-    async fn send(&self, value: Vec<u8>, receiver: &Role) -> anyhow::Result<()>;
+    async fn send(&self, value: Arc<Vec<u8>>, receiver: &Role) -> anyhow::Result<()>;
 
     async fn receive(&self, sender: &Role) -> anyhow::Result<Vec<u8>>;
 

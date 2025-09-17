@@ -44,7 +44,6 @@ where
     Self: PartialEq,
     Self: Sample,
     Self: Zero + One,
-    Self: Add<Self, Output = Self>,
     Self: Add<Self, Output = Self> + AddAssign<Self>,
     Self: Sub<Self, Output = Self> + SubAssign<Self>,
     Self: Mul<Self, Output = Self> + MulAssign<Self>,
@@ -60,6 +59,11 @@ where
     // Number of random bits required to sample a uniform element of the base ring
     const NUM_BITS_STAT_SEC_BASE_RING: usize;
     fn to_byte_vec(&self) -> Vec<u8>;
+    // Give a suboptimal blanket implem
+    // but leaves opportunity to be more clever (e.g. for ResiduePoly)
+    fn mul_by_u128(self, other: u128) -> Self {
+        self * Self::from_u128(other)
+    }
 }
 
 pub trait FromU128 {
