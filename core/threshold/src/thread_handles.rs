@@ -6,6 +6,8 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 use tracing::error;
 
+use crate::error::error_handler::anyhow_error_and_log;
+
 #[derive(Debug, Default)]
 pub struct ThreadHandleGroup {
     handles: Vec<JoinHandle<()>>,
@@ -141,4 +143,25 @@ where
         }
         Ok(results)
     }
+}
+
+/// Spawn a compute task on rayon and returns its result.
+///
+/// This can be used to offload the tokio executor from CPU bound tasks.
+pub async fn spawn_compute_bound<R: Send + 'static, F: FnOnce() -> R + Send + 'static>(
+    compute_fn: F,
+) -> anyhow::Result<R> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let current_span = tracing::Span::current();
+    rayon::spawn(move || {
+        let _guard = current_span.enter();
+        let res = compute_fn();
+        let _ = tx
+            .send(res)
+            .map_err(|_| ())
+            .inspect_err(|_| tracing::warn!("compute task receiver dropped"));
+    });
+
+    rx.await
+        .map_err(|_| anyhow_error_and_log("compute task sender dropped"))
 }
