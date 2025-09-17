@@ -40,7 +40,7 @@ async fn default_insecure_threshold_dkg_backup() {
 
     let test_path = None;
     // Purge private to make the test run faster since there will be less data to back up.
-    purge_priv(test_path, amount_parties).await;
+    purge_priv(test_path).await;
     purge(test_path, test_path, test_path, &key_id_1, amount_parties).await;
     purge(test_path, test_path, test_path, &key_id_2, amount_parties).await;
     purge_backup(test_path, amount_parties).await;
@@ -152,7 +152,7 @@ async fn default_insecure_threshold_autobackup_after_deletion() {
     .unwrap();
     let test_path = None;
     // Purge private to make the test run faster since there will be less data to back up.
-    purge_priv(test_path, amount_parties).await;
+    purge_priv(test_path).await;
     purge(test_path, test_path, test_path, &key_id, amount_parties).await;
     purge_backup(test_path, amount_parties).await;
     let (kms_servers, kms_clients, internal_client) =

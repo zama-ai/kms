@@ -544,53 +544,48 @@ pub async fn purge(
 
 /// Purge the entire content of the private storage.
 /// This is useful for testing backup
-pub async fn purge_priv(priv_path: Option<&Path>, amount_parties: usize) {
-    if amount_parties == 1 {
-        let final_central_path = match priv_path {
+pub async fn purge_priv(priv_path: Option<&Path>) {
+    let final_central_path = match priv_path {
+        Some(path) => path.to_path_buf(),
+        None => FileStorage::default_path(StorageType::PRIV, None).unwrap(),
+    };
+    // Ignore if the dir does not exist
+    let _ = tokio::fs::remove_dir_all(&final_central_path).await;
+    // Purge for the max amount of parties we may have in tests
+    for cur_party in 1..=13 {
+        let final_threshold_path = match priv_path {
             Some(path) => path.to_path_buf(),
-            None => FileStorage::default_path(StorageType::PRIV, None).unwrap(),
+            None => FileStorage::default_path(
+                StorageType::PRIV,
+                Some(Role::indexed_from_one(cur_party)),
+            )
+            .unwrap(),
         };
         // Ignore if the dir does not exist
-        let _ = tokio::fs::remove_dir_all(&final_central_path).await;
-    } else {
-        for cur_party in 1..=amount_parties {
-            let final_threshold_path = match priv_path {
-                Some(path) => path.to_path_buf(),
-                None => FileStorage::default_path(
-                    StorageType::PRIV,
-                    Some(Role::indexed_from_one(cur_party)),
-                )
-                .unwrap(),
-            };
-            // Ignore if the dir does not exist
-            let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
-        }
+        let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
     }
 }
 
 /// Purge the entire content of the public storage.
 /// This is useful for testing backup
-pub async fn purge_pub(pub_path: Option<&Path>, amount_parties: usize) {
-    if amount_parties == 1 {
-        let final_central_path = match pub_path {
+pub async fn purge_pub(pub_path: Option<&Path>) {
+    let final_central_path = match pub_path {
+        Some(path) => path.to_path_buf(),
+        None => FileStorage::default_path(StorageType::PUB, None).unwrap(),
+    };
+    // Ignore if the dir does not exist
+    let _ = tokio::fs::remove_dir_all(&final_central_path).await;
+    // Purge for the max amount of parties we may have in tests
+    for cur_party in 1..=13 {
+        let final_threshold_path = match pub_path {
             Some(path) => path.to_path_buf(),
-            None => FileStorage::default_path(StorageType::PUB, None).unwrap(),
+            None => {
+                FileStorage::default_path(StorageType::PUB, Some(Role::indexed_from_one(cur_party)))
+                    .unwrap()
+            }
         };
         // Ignore if the dir does not exist
-        let _ = tokio::fs::remove_dir_all(&final_central_path).await;
-    } else {
-        for cur_party in 1..=amount_parties {
-            let final_threshold_path = match pub_path {
-                Some(path) => path.to_path_buf(),
-                None => FileStorage::default_path(
-                    StorageType::PUB,
-                    Some(Role::indexed_from_one(cur_party)),
-                )
-                .unwrap(),
-            };
-            // Ignore if the dir does not exist
-            let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
-        }
+        let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
     }
 }
 

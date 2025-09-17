@@ -176,13 +176,13 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .unwrap();
 
     // Purge the private storage to tests the backup
-    purge_priv(None, 1).await;
+    purge_priv(None).await;
 
     // Reboot the servers
     let (_kms_server, mut kms_client, _internal_client) =
         crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
     // Purge the private storage again to delete the signing key
-    purge_priv(None, 1).await;
+    purge_priv(None).await;
 
     // Execute the backup restoring
     let mut rng = AesRng::seed_from_u64(13);
@@ -212,8 +212,8 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     // Check the data is correctly recovered
     assert_eq!(sk, sig_key);
     // Purge to ensure no left over state
-    purge_priv(None, 1).await;
-    purge_pub(None, 1).await;
+    purge_priv(None).await;
+    purge_pub(None).await;
 }
 
 async fn emulate_custodian(
