@@ -24,6 +24,7 @@ RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     protobuf \
     openssh
 
+
 # Install Rust using rustup
 ENV PATH="/root/.cargo/bin:${PATH}"
 ENV RUSTUP_HOME=/root/.rustup

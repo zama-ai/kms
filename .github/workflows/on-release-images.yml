@@ -16,7 +16,7 @@ permissions: {} # No permissions needed at workflow level
 jobs:
   docker-golden-image:
     name: on-release-images/docker-golden-image
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@a00aff2311294816e4eac33ff36c7f1010428b67
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@9beea8ce8c23205c88fdebc93951dfd17303b66e
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -41,7 +41,7 @@ jobs:
   docker-kms-core-client:
     name: on-release-images/docker-kms-core-client
     needs: docker-golden-image
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@a00aff2311294816e4eac33ff36c7f1010428b67
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@9beea8ce8c23205c88fdebc93951dfd17303b66e
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
