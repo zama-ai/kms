@@ -206,7 +206,11 @@ jobs:
             /home/ubuntu/.cargo/registry/index/
             /home/ubuntu/.cargo/registry/cache/
             /home/ubuntu/.cargo/git/db/
-            ${{ github.workspace }}/${{ inputs.working-directory }}/target
+            ${{ github.workspace }}/.cargo/bin/
+            ${{ github.workspace }}/.cargo/registry/index/
+            ${{ github.workspace }}/.cargo/registry/cache/
+            ${{ github.workspace }}/.cargo/git/db/
+            ${{ github.workspace }}/target
           key: |
             ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
@@ -290,10 +294,12 @@ jobs:
           pwd ${{ github.workspace }}
           echo ">>> ls ${{ github.workspace }}"
           ls -al ${{ github.workspace }}
-          echo ">>> ls ${{ github.workspace }}/${{ inputs.working-directory }}"
+          echo ">>> ls ${{ github.workspace }}/.cargo"
+          ls -al ${{ github.workspace }}/.cargo
+          echo ">>> ls ${{ github.workspace }}/target"
+          ls -al ${{ github.workspace }}/target
+          echo ">>> ls ${{ github.workspace }}/${{ inputs.working-directory }}
           ls -al ${{ github.workspace }}/${{ inputs.working-directory }}
-          echo ">>> ls ${{ github.workspace }}/${{ inputs.working-directory }}/target"
-          ls -al ${{ github.workspace }}/${{ inputs.working-directory }}/target
 
       # Test execution
       - name: Run Tests
@@ -332,6 +338,10 @@ jobs:
           echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
           cat ~/.aws/config &&
           RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
+          echo ">>> ls ${{ github.workspace }}"
+          ls -al ${{ github.workspace }}
+          echo ">>> ls ${{ github.workspace }}/target"
+          ls -al ${{ github.workspace }}/target
           echo ">>> ls ${{ github.workspace }}/${{ inputs.working-directory }}"
           ls -al ${{ github.workspace }}/${{ inputs.working-directory }}
           echo ">>> ls ${{ github.workspace }}/${{ inputs.working-directory }}/target"
