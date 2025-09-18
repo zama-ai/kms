@@ -515,7 +515,7 @@ Optional command line options for the public/user decryption command are:
 ### Custodian context
 
 In order to be able to do custodian based backup and recovery, the KMS nodes need to know the public keys of the custodians which will be able to help it recover. This is handled through custodian contexts. 
-For custodian based backup we currently only support a single active custodian context. This there will only exist one set of custodians under which a backup can be constructed. Whenever a new custodian context is made, this will replace the old context as the current backup method. 
+For custodian based backup we currently only support a single active custodian context. This means there will only exist one set of custodians under which a backup can be constructed. Whenever a new custodian context is made, this will replace the old context as the current backup method. 
 Note however that this does not remove the old backups (for safety reasons). Hence the backups _must_ be manually deleted once it has been validated that the new context works as intended. 
 Below we sketch how to use the core client to create a new custodian context:
 ```{bash}
