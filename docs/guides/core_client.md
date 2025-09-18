@@ -522,7 +522,7 @@ Below we sketch how to use the core client to create a new custodian context:
 $ cargo run -- -f <path-to-toml-config-file> new-custodian-context -t <custodian corruption threshold> -m <dir to setup from custodian 1> -m <dir to setup from custodian 2> ...
 ```
 The parameter `-t` specifies the corruption tolerance of the custodians. It must be less than half of the total set of custodians. The total set is inferred by the `-m` list, which expresses the paths to the setup messages of each of the custodians, sorted by their IDs in monotonically increasing order. _Note_ that the setup messages MUST have communicated securely as these contain setup information that will cryptographically authenticate the custodians later on.
-See [here](./backup.md#custodian-setup) for details. 
+See [the custodian setup section](./backup.md#custodian-setup) for details. 
 
 Finally a concrete example of a command for a setup with 3 custodians is the following:
 ```{bash}
