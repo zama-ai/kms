@@ -13,9 +13,9 @@ use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::backup_pke::BackupPrivateKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::base::INSECURE_PREPROCESSING_ID;
+use crate::util::key_setup::test_tools::purge_backup;
 use crate::util::key_setup::test_tools::EncryptionConfig;
 use crate::util::key_setup::test_tools::TestingPlaintext;
-use crate::util::key_setup::test_tools::{purge_backup, purge_recovery_info};
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
 use crate::{
@@ -64,9 +64,6 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
         test_path,
     )
     .await;
-    // Clean up backups to not interfere with test
-    purge_backup(test_path, amount_parties).await;
-    purge_recovery_info(test_path, amount_parties).await;
     let _mnemnonics = run_new_cus_context(
         &kms_clients,
         &mut internal_client,
@@ -136,9 +133,6 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     ))
     .unwrap();
 
-    // Clean up backups to not interfere with test
-    purge_backup(test_path, amount_parties).await;
-    purge_recovery_info(test_path, amount_parties).await;
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     // The threshold handle should only be started after the storage is purged

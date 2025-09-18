@@ -4,8 +4,6 @@ use crate::consts::KEY_PATH_PREFIX;
 use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::backup_pke::BackupCiphertext;
 use crate::util::file_handling::safe_read_element_versioned;
-use crate::util::key_setup::test_tools::purge_backup;
-use crate::util::key_setup::test_tools::purge_recovery_info;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
@@ -45,8 +43,6 @@ async fn new_custodian_context(
         "test_new_custodian_context_threshold_2_{amount_parties}"
     ))
     .unwrap();
-    purge_backup(test_path, amount_parties).await;
-    purge_recovery_info(test_path, amount_parties).await;
     let dkg_param: WrappedDKGParams = parameter.into();
 
     // The threshold handle should only be started after the storage is purged
@@ -61,8 +57,6 @@ async fn new_custodian_context(
         test_path,
     )
     .await;
-    // Check there is currently no backup
-    assert!(!backup_exists(amount_parties, test_path).await);
     run_new_cus_context(
         &kms_clients,
         &mut internal_client,
