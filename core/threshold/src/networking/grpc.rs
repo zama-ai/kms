@@ -399,9 +399,8 @@ impl GrpcNetworkingManager {
                 let connection_channel = self.sending_service.add_connections(&others).await?;
 
                 let message_queue = MessageQueueStore::new_initialized(
-                    &my_role,
                     self.conf.get_message_limit(),
-                    role_assignment,
+                    &others,
                     Arc::clone(&self.opened_sessions_tracker),
                 );
 
@@ -486,16 +485,12 @@ impl MessageQueueStore {
     }
 
     pub(crate) fn new_initialized(
-        my_role: &Role,
         channel_size_limit: usize,
-        role_assignment: &RoleAssignment,
+        others: &RoleAssignment,
         opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     ) -> Self {
-        let mut others = role_assignment.clone();
-        others.remove(my_role);
-
         let mut out = Self::new_uninitialized(DashMap::new());
-        out.init(channel_size_limit, &others, opened_sessions_tracker);
+        out.init(channel_size_limit, others, opened_sessions_tracker);
         out
     }
 
