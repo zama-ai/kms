@@ -15,9 +15,6 @@ const KMS_GEN_KEYS: &str = "kms-gen-keys";
 const KMS_GEN_TLS_CERTS: &str = "kms-gen-tls-certs";
 const KMS_INIT: &str = "kms-init";
 
-const KMS_CUSTODIAN: &str = "kms-custodian";
-const SEED_PHRASE_DESC: &str = "The SECRET seed phrase for the custodian keys is: ";
-
 /// Kill processes based on the executable name.
 /// Note that tests using this function should run in serial mode
 /// otherwise this function may kill processes in other tests.
@@ -565,7 +562,6 @@ mod kms_server_binary_test {
 
 #[cfg(test)]
 mod kms_custodian_binary_tests {
-    use crate::{KMS_CUSTODIAN, SEED_PHRASE_DESC};
     use aes_prng::AesRng;
     use assert_cmd::Command;
     use kms_grpc::{
@@ -576,6 +572,7 @@ mod kms_custodian_binary_tests {
             custodian::{InternalCustodianContext, InternalCustodianSetupMessage},
             operator::{InternalRecoveryRequest, Operator, RecoveryValidationMaterial},
             seed_phrase::custodian_from_seed_phrase,
+            KMS_CUSTODIAN, SEED_PHRASE_DESC,
         },
         cryptography::{
             backup_pke::{self, BackupPrivateKey},

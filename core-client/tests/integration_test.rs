@@ -4,6 +4,8 @@ use kms_core_client::*;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::KeyId;
 use kms_grpc::RequestId;
+use kms_lib::backup::KMS_CUSTODIAN;
+use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::consts::SIGNING_KEY_ID;
 use serial_test::serial;
 use std::path::Path;
@@ -415,7 +417,7 @@ async fn generate_custodian_keys_to_file(
             .join("CUSTODIAN")
             .join("setup-msg")
             .join(format!("setup-{}", cus_idx));
-        let output = Command::cargo_bin("kms-custodian")
+        let output = Command::cargo_bin(KMS_CUSTODIAN)
             .unwrap()
             .arg("generate")
             .arg("--randomness")
@@ -435,7 +437,6 @@ async fn generate_custodian_keys_to_file(
     (seeds, setup_msgs_paths)
 }
 
-const SEED_PHRASE_DESC: &str = "The SECRET seed phrase for the custodian keys is: ";
 fn extract_seed_phrase(out: Output) -> String {
     let errors = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -517,7 +518,7 @@ async fn custodian_reencrypt(
                 .join(pub_prefix)
                 .join(PubDataType::VerfKey.to_string())
                 .join(SIGNING_KEY_ID.to_string());
-            let output = Command::cargo_bin("kms-custodian")
+            let output = Command::cargo_bin(KMS_CUSTODIAN)
                 .unwrap()
                 .arg("decrypt")
                 .arg("--seed-phrase")

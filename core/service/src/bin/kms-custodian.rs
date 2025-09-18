@@ -1,5 +1,6 @@
 use aes_prng::AesRng;
 use clap::Parser;
+use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::{
     backup::{
         custodian::{Custodian, InternalCustodianSetupMessage},
@@ -118,10 +119,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 .unwrap();
             safe_write_element_versioned(&params.path, &setup_msg).await?;
             tracing::info!("Custodian keys generated successfully! Mnemonic will now be printed:");
-            println!("================= MNEMONIC =================");
-            println!("{}", mnemonic);
-            println!("============================================");
-            println!("Please store this mnemonic securely. It will not be stored anywhere else and is required to recover the custodian keys in the future.");
+            println!("{SEED_PHRASE_DESC}{mnemonic}");
         }
         CustodianCommand::Verify(params) => {
             // Logic for recovering keys
