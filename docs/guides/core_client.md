@@ -187,7 +187,7 @@ Note: since this structure is empty, it is tricky to set this with an environmen
 KMS_CORE__BACKUP_VAULT__KEYCHAIN__SECRET_SHARING__ENABLED=true
 ```
 
-As an example of the whole setup observe the following:
+Here is an example configuration:
 ```{toml}
 [backup_vault.storage.file]
 path = "./backup_vault"
