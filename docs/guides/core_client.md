@@ -203,7 +203,7 @@ Assuming the toml file has been appropriately modified to allow custodian based 
   This first involves finding a set of custodians. Each of these must then execute a setup procedure using the KMS custodian CLI tool. 
   This tool is detailed [here](./backup.md). More specifically the setup steps are detailed [here](./backup.md#Custodian-setup).
 2. Add a new custodian context
-  After the custodians have executed their setup locally, then the custodian must be setup in the KMS. This will eventually happen through the gateway but can also be executed with the CLI tool as detailed in [this section](#Custodian-context).
+  After the custodians have executed their setup locally, the KMS must be made aware of those custodians. This will eventually happen through the gateway but can also be executed with the CLI tool as detailed in [this section](#Custodian-context).
 3. Initiate the recovery.
   After step 1, the backups will be continuously kept up to date. Then when a recovery is needed, first the KMS must construct the correct data needed for the custodians in order to help decrypt this is done with the following command:
   ```{bash}
