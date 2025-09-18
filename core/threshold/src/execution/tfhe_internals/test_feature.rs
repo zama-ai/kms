@@ -808,7 +808,7 @@ pub fn to_hl_client_key(
         compression_key,
         noise_squashing_key,
         sns_compression_key,
-        None, //TODO: Parameters for the Rerand key
+        regular_params.get_rerand_params(),
         tfhe::Tag::default(),
     ))
 }
