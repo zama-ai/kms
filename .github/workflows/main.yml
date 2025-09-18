@@ -293,10 +293,8 @@ jobs:
     needs:
       - test-core-client
       - docker-golden-image
-    if: >-
-      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@e666182756172bc747d2be6e4eb9b4ed80a00a0e
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3d8b1adcb5504fef30223016d459e3e38b36f9d1
     with:
       docker-file: "./docker/core-client/Dockerfile"
       working-directory: "./core-client"
@@ -461,21 +459,17 @@ jobs:
     needs:
       - test-core-service
       - docker-golden-image
-    if: >-
-      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
-    uses: ./.github/workflows/common-docker-big-instance.yml
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3d8b1adcb5504fef30223016d459e3e38b36f9d1
     with:
       docker-file: "./docker/core/service/Dockerfile"
       working-directory: "./core/service"
       push_image: true
       image-name: 'kms/core-service'
       app-cache-dir: 'kms'
+      use-cgr-secrets: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
@@ -496,9 +490,7 @@ jobs:
       attestations: write # Required to create build attestations
     needs:
       - docker-core-service
-    if: >-
-      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
     uses: ./.github/workflows/common-nitro-enclave.yml
     with:
       docker-file-enclave: "./docker/core/service/enclave.dockerfile"
@@ -542,7 +534,7 @@ jobs:
     with:
       working-directory: './core/threshold'
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
-      # and limit the number of test ran in parallel to 4
+      # and limit the number of test run in parallel to 4
       args-tests: '-F slow_tests --lib'
       package-name: 'threshold-fhe'
       app-cache-dir: 'threshold-fhe'
@@ -651,10 +643,8 @@ jobs:
       pull-requests: read # Required to read pull request information
       packages: write # Required to publish packages
       attestations: write # Required to create build attestations
-    if: >-
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
-      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@e666182756172bc747d2be6e4eb9b4ed80a00a0e
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
+    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3d8b1adcb5504fef30223016d459e3e38b36f9d1
     with:
       docker-file: "./docker/base/Dockerfile"
       working-directory: "./base"
@@ -761,7 +751,6 @@ jobs:
     name: main/test-reporter
     if: ${{ always() && github.event_name == 'pull_request' }}
     needs:
-      - test-helm-chart
       - test-backward-compatibility
       - test-core-client
       - test-grpc
