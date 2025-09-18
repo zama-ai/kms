@@ -1,14 +1,17 @@
 use super::{custodian, error::BackupError, operator::Operator};
 use crate::{
-    backup::seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
+    backup::{
+        custodian::InternalCustodianContext,
+        operator::RecoveryValidationMaterial,
+        seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
+    },
     cryptography::{backup_pke, internal_crypto_types::gen_sig_keys},
 };
 use aes_prng::AesRng;
 use itertools::Itertools;
-use kms_grpc::RequestId;
+use kms_grpc::{kms::v1::CustodianContext, RequestId};
 use proptest::prelude::*;
 use rand::{rngs::OsRng, SeedableRng};
-use std::collections::BTreeMap;
 use threshold_fhe::execution::runtime::party::Role;
 
 enum DropShares {
@@ -30,7 +33,6 @@ const TEST_PARAMS: [(usize, usize, DropShares); 5] = [
 fn full_flow() {
     for (custodian_count, custodian_threshold, drop_share_config) in TEST_PARAMS {
         let operator_count = 4usize;
-        let secret_len = 32usize;
         let backup_id = RequestId::from_bytes([8u8; crate::consts::ID_LENGTH]);
 
         let mut rng = AesRng::seed_from_u64(1337);
@@ -54,38 +56,54 @@ fn full_flow() {
         let operators: Vec<_> = (0..operator_count)
             .map(|i| {
                 let operator_role = Role::indexed_from_zero(i);
-                let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-                let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
-                Operator::new(
-                    operator_role,
-                    custodian_messages.clone(),
+                let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+                (
+                    Operator::new(
+                        operator_role,
+                        custodian_messages.clone(),
+                        signing_key.clone(),
+                        custodian_threshold,
+                    )
+                    .unwrap(),
                     signing_key,
-                    verification_key,
-                    private_key,
-                    public_key,
-                    custodian_threshold,
                 )
-                .unwrap()
             })
             .collect();
 
+        let cus_context = CustodianContext {
+            custodian_nodes: custodian_messages
+                .iter()
+                .map(|msg| msg.to_owned().try_into().unwrap())
+                .collect(),
+            context_id: Some(backup_id.into()),
+            previous_context_id: None,
+            threshold: custodian_threshold as u32,
+        };
         // operators have some data, secret share and then encrypt for each custodian
-        let secrets = (0..operator_count)
+        let operator_cus_context = (0..operator_count)
             .map(|_| {
-                let mut buf = vec![0u8; secret_len];
-                rng.fill_bytes(&mut buf);
-                buf
+                let (backup_enc_key, backup_priv_key) = backup_pke::keygen(&mut rng).unwrap();
+                let operator_cus_context =
+                    InternalCustodianContext::new(cus_context.clone(), backup_enc_key).unwrap();
+                (backup_priv_key, operator_cus_context)
             })
             .collect::<Vec<_>>();
 
         // cts[i][j] should go to custodian j, for all i
         let cts = operators
             .iter()
-            .zip_eq(&secrets)
-            .map(|(operator, secret)| {
-                operator
-                    .secret_share_and_encrypt(&mut rng, secret, backup_id)
-                    .unwrap()
+            .zip_eq(&operator_cus_context)
+            .map(|((operator, _sig_key), (backup_key, cus_context))| {
+                (
+                    operator
+                        .secret_share_and_encrypt(
+                            &mut rng,
+                            &bc2wrap::serialize(backup_key).unwrap(),
+                            backup_id,
+                        )
+                        .unwrap(),
+                    cus_context.to_owned(),
+                )
             })
             .collect::<Vec<_>>();
 
@@ -97,7 +115,14 @@ fn full_flow() {
         let reencrypted_cts = operators
             .iter()
             .zip_eq(&cts)
-            .map(|(operator, (ct, com))| {
+            .map(|((operator, sig_key), ((ct, com), cus_context))| {
+                let (ephemeral_enc_key, ephemeral_dec_key) = backup_pke::keygen(&mut rng).unwrap();
+                let validation_material = RecoveryValidationMaterial::new(
+                    com.to_owned(),
+                    cus_context.to_owned(),
+                    sig_key,
+                )
+                .unwrap();
                 // reencrypted ciphertexts ciphertexts for one operator
                 (
                     custodians
@@ -106,26 +131,23 @@ fn full_flow() {
                             let custodian_role = custodian.role();
                             let backup = ct.get(&custodian_role).unwrap();
                             let verification_key = operator.verification_key();
-                            let operator_pk = operator.public_key();
                             let operator_role = operator.role();
 
                             // what is recovered is a reencryption
-                            (
-                                custodian_role,
-                                custodian
-                                    .verify_reencrypt(
-                                        &mut rng,
-                                        backup,
-                                        verification_key,
-                                        operator_pk,
-                                        backup_id,
-                                        operator_role,
-                                    )
-                                    .unwrap(),
-                            )
+                            custodian
+                                .verify_reencrypt(
+                                    &mut rng,
+                                    backup,
+                                    verification_key,
+                                    &ephemeral_enc_key,
+                                    backup_id,
+                                    operator_role,
+                                )
+                                .unwrap()
                         })
-                        .collect::<BTreeMap<_, _>>(),
-                    com,
+                        .collect_vec(),
+                    validation_material,
+                    ephemeral_dec_key,
                 )
             })
             .collect::<Vec<_>>();
@@ -134,26 +156,33 @@ fn full_flow() {
         let recovered_secrets: Vec<Vec<u8>> = operators
             .iter()
             .zip_eq(reencrypted_cts)
-            .map(|(operator, (mut reencrypted_ct, commitments))| {
-                // optionally remove elements during recovery
-                // we need to keep t + 1 shares, so remove n - (t + 1)
-                for _ in 0..(custodian_count - custodian_threshold - 1) {
-                    match drop_share_config {
-                        DropShares::NoDrop => { /* do nothing */ }
-                        DropShares::DropFront => {
-                            let _ = reencrypted_ct.pop_first().unwrap();
-                        }
-                        DropShares::DropBack => {
-                            let _ = reencrypted_ct.pop_last().unwrap();
+            .map(
+                |((operator, _sig), (mut reencrypted_ct, commitments, dec_key))| {
+                    // optionally remove elements during recovery
+                    // we need to keep t + 1 shares, so remove n - (t + 1)
+                    for _ in 0..(custodian_count - custodian_threshold - 1) {
+                        match drop_share_config {
+                            DropShares::NoDrop => { /* do nothing */ }
+                            DropShares::DropFront => {
+                                let _ = reencrypted_ct.remove(0);
+                            }
+                            DropShares::DropBack => {
+                                let _ = reencrypted_ct.pop().unwrap();
+                            }
                         }
                     }
-                }
-                operator
-                    .verify_and_recover(&reencrypted_ct, commitments, backup_id)
-                    .unwrap()
-            })
+                    operator
+                        .verify_and_recover(&reencrypted_ct, &commitments, backup_id, &dec_key)
+                        .unwrap()
+                },
+            )
             .collect();
-        assert_eq!(recovered_secrets, secrets);
+
+        for ((priv_key, _), recovered_key) in
+            operator_cus_context.iter().zip_eq(recovered_secrets.iter())
+        {
+            assert_eq!(recovered_key, &bc2wrap::serialize(priv_key).unwrap());
+        }
     }
 }
 
@@ -190,41 +219,16 @@ fn operator_setup() {
         })
         .collect();
 
-    // use the wrong operator ID
-    {
-        let mut wrong_custodian_messages = custodian_messages.clone();
-        wrong_custodian_messages[0].custodian_role = Role::indexed_from_zero(1);
-        let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
-        let operator = Operator::new(
-            Role::indexed_from_zero(0),
-            wrong_custodian_messages,
-            signing_key,
-            verification_key,
-            private_key,
-            public_key,
-            custodian_threshold,
-        );
-        assert!(matches!(
-            operator.unwrap_err(),
-            BackupError::CustodianSetupError
-        ));
-    }
-
     // use the wrong header, setup should fail
     {
         let mut wrong_custodian_messages = custodian_messages.clone();
         wrong_custodian_messages[0].header.push('z');
 
-        let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         let operator = Operator::new(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
             signing_key,
-            verification_key,
-            private_key,
-            public_key,
             custodian_threshold,
         );
         assert!(matches!(
@@ -238,15 +242,11 @@ fn operator_setup() {
         let mut wrong_custodian_messages = custodian_messages.clone();
         wrong_custodian_messages[0].timestamp += 3700;
 
-        let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         let operator = Operator::new(
             Role::indexed_from_zero(0),
             wrong_custodian_messages,
             signing_key,
-            verification_key,
-            private_key,
-            public_key,
             custodian_threshold,
         );
         assert!(matches!(
@@ -257,15 +257,11 @@ fn operator_setup() {
 
     // no tweaks, all should pass
     {
-        let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         let _ = Operator::new(
             Role::indexed_from_zero(0),
             custodian_messages,
             signing_key,
-            verification_key,
-            private_key,
-            public_key,
             custodian_threshold,
         )
         .unwrap();
@@ -308,15 +304,11 @@ fn custodian_reencrypt() {
     let operators: Vec<_> = (0..operator_count)
         .map(|i| {
             let operator_role = Role::indexed_from_zero(i);
-            let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-            let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
+            let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
             Operator::new(
                 operator_role,
                 custodian_messages.clone(),
                 signing_key,
-                verification_key,
-                private_key,
-                public_key,
                 custodian_threshold,
             )
             .unwrap()
@@ -344,7 +336,7 @@ fn custodian_reencrypt() {
         .collect::<Vec<_>>();
 
     let verification_key = operators[0].verification_key();
-    let operator_pk = operators[0].public_key();
+    let (ephemeral_enc_key, _ephemeral_dec_key) = backup_pke::keygen(&mut rng).unwrap();
 
     // tweak the ciphertext, so that signature verification fails
     {
@@ -359,7 +351,7 @@ fn custodian_reencrypt() {
                 &mut rng,
                 bad_cts[0].0.get(&operator_role).unwrap(),
                 verification_key,
-                operator_pk,
+                &ephemeral_enc_key,
                 backup_id,
                 operator_role,
             )
@@ -380,7 +372,7 @@ fn custodian_reencrypt() {
                 &mut rng,
                 bad_cts[0].0.get(&operator_role).unwrap(),
                 verification_key,
-                operator_pk,
+                &ephemeral_enc_key,
                 backup_id,
                 operator_role,
             )
@@ -397,7 +389,7 @@ fn custodian_reencrypt() {
                 &mut rng,
                 cts[0].0.get(&operator_role).unwrap(),
                 verification_key,
-                operator_pk,
+                &ephemeral_enc_key,
                 bad_backup_id,
                 operator_role,
             )
@@ -414,7 +406,7 @@ fn custodian_reencrypt() {
                 &mut rng,
                 cts[0].0.get(&operator_role).unwrap(),
                 verification_key,
-                operator_pk,
+                &ephemeral_enc_key,
                 backup_id,
                 wrong_operator_role,
             )
@@ -430,7 +422,7 @@ fn custodian_reencrypt() {
                 &mut rng,
                 cts[0].0.get(&operator_role).unwrap(),
                 verification_key,
-                operator_pk,
+                &ephemeral_enc_key,
                 backup_id,
                 operator_role,
             )

@@ -482,7 +482,10 @@ impl<
 mod tests {
     use std::time::Duration;
 
-    use kms_grpc::{kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain};
+    use kms_grpc::{
+        kms::v1::FheParameter,
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
+    };
     use rand::SeedableRng;
     use threshold_fhe::{
         algebra::structure_traits::Ring,
@@ -585,7 +588,7 @@ mod tests {
         rng: &mut AesRng,
     ) -> RealCrsGenerator<ram::RamStorage, ram::RamStorage, C> {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(
             vec![],
             vec![],

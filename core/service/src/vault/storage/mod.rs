@@ -292,7 +292,7 @@ pub async fn store_context_at_id<S: Storage>(
     .await
 }
 
-/// Simple wrapper around [read_context_at_request_id]
+/// Simple wrapper around [read_versioned_at_request_id]
 /// for the Context PrivDataType.
 pub async fn read_context_at_id<S: StorageReader>(
     storage: &S,
@@ -306,11 +306,16 @@ pub async fn read_context_at_id<S: StorageReader>(
     .await
 }
 
-pub async fn delete_context_at_request_id<S: Storage>(
+pub async fn delete_context_at_id<S: Storage>(
     storage: &mut S,
-    request_id: &RequestId,
+    request_id: &ContextId,
 ) -> anyhow::Result<()> {
-    delete_at_request_id(storage, request_id, &PrivDataType::ContextInfo.to_string()).await
+    delete_at_request_id(
+        storage,
+        &(*request_id).into(),
+        &PrivDataType::ContextInfo.to_string(),
+    )
+    .await
 }
 
 /// Helper method for reading all data of a specific type.

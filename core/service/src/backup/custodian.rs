@@ -1,3 +1,5 @@
+use crate::backup::operator::DSEP_BACKUP_RECOVERY;
+use crate::engine::validation::{parse_optional_proto_request_id, RequestIdParsingErr};
 use crate::{
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
@@ -6,7 +8,7 @@ use crate::{
         signcryption::internal_verify_sig,
     },
 };
-use kms_grpc::kms::v1::CustodianSetupMessage;
+use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
 use kms_grpc::rpc_types::InternalCustodianRecoveryOutput;
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
@@ -15,13 +17,14 @@ use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tfhe::safe_serialization::safe_serialize;
 use tfhe::{named::Named, safe_serialization::safe_deserialize, Versionize};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{execution::runtime::party::Role, hashing::DomainSep};
 
 use super::{
     error::BackupError,
-    operator::{BackupMaterial, InnerOperatorBackupOutput, DSEP_BACKUP_CIPHER},
+    operator::{BackupMaterial, InnerOperatorBackupOutput},
     traits::{BackupDecryptor, BackupSigner},
 };
 
@@ -95,6 +98,27 @@ impl TryFrom<CustodianSetupMessage> for InternalCustodianSetupMessage {
     }
 }
 
+impl TryFrom<InternalCustodianSetupMessage> for CustodianSetupMessage {
+    type Error = anyhow::Error;
+
+    fn try_from(value: InternalCustodianSetupMessage) -> Result<Self, Self::Error> {
+        let payload = CustodianSetupMessagePayload {
+            header: value.header,
+            random_value: value.random_value,
+            timestamp: value.timestamp,
+            public_enc_key: value.public_enc_key.clone(),
+            verification_key: value.public_verf_key.clone(),
+        };
+        let mut serialized_payload = Vec::new();
+        safe_serialize(&payload, &mut serialized_payload, SAFE_SER_SIZE_LIMIT)?;
+        Ok(CustodianSetupMessage {
+            custodian_role: value.custodian_role.one_based() as u64,
+            name: value.name,
+            payload: serialized_payload,
+        })
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum InternalCustodianContextVersioned {
     V0(InternalCustodianContext),
@@ -113,6 +137,39 @@ pub struct InternalCustodianContext {
 
 impl Named for InternalCustodianContext {
     const NAME: &'static str = "backup::CustodianContext";
+}
+
+impl InternalCustodianContext {
+    pub fn new(
+        custodian_context: CustodianContext,
+        backup_enc_key: BackupPublicKey,
+    ) -> anyhow::Result<Self> {
+        let mut node_map = HashMap::new();
+        for setup_message in custodian_context.custodian_nodes.iter() {
+            let internal_msg: InternalCustodianSetupMessage =
+                setup_message.to_owned().try_into()?;
+            node_map.insert(
+                Role::indexed_from_one(setup_message.custodian_role as usize),
+                internal_msg,
+            );
+        }
+        let context_id: RequestId = parse_optional_proto_request_id(
+            &custodian_context.context_id,
+            RequestIdParsingErr::CustodianContext,
+        )?;
+        let prev_context_id = custodian_context
+            .previous_context_id
+            .as_ref()
+            .map(|id| id.clone().try_into())
+            .transpose()?;
+        Ok(InternalCustodianContext {
+            context_id,
+            threshold: custodian_context.threshold,
+            previous_context_id: prev_context_id,
+            custodian_nodes: node_map,
+            backup_enc_key,
+        })
+    }
 }
 
 pub struct Custodian<S: BackupSigner, D: BackupDecryptor> {
@@ -179,7 +236,7 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
             sig: k256::ecdsa::Signature::from_slice(&backup.signature)?,
         };
         internal_verify_sig(
-            &DSEP_BACKUP_CIPHER,
+            &DSEP_BACKUP_RECOVERY,
             &backup.ciphertext,
             &signature,
             operator_verification_key,

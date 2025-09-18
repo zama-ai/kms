@@ -1,6 +1,7 @@
 use crate::{
     engine::{
-        centralized::central_kms::RealCentralizedKms,
+        centralized::central_kms::CentralizedKms,
+        traits::{BackupOperator, ContextManager},
         validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
     vault::storage::Storage,
@@ -35,8 +36,10 @@ use tonic::{Request, Response, Status};
 pub async fn init_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<InitRequest>,
 ) -> Result<Response<Empty>, Status> {
     let inner = request.into_inner();

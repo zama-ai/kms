@@ -1,8 +1,5 @@
-use crate::conf::FileStorage as FileStorageConf;
-use crate::conf::Storage as StorageConf;
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::storage::file::FileStorage;
-use crate::vault::storage::make_storage;
 use crate::vault::storage::{
     delete_all_at_request_id, read_versioned_at_request_id, StorageReader,
 };
@@ -494,53 +491,169 @@ pub async fn compute_cipher_from_stored_key(
 pub async fn purge(
     pub_path: Option<&Path>,
     priv_path: Option<&Path>,
-    backup_path: Option<&Path>,
+    _backup_path: Option<&Path>,
     id: &RequestId,
     amount_parties: usize,
 ) {
-    let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-    delete_all_at_request_id(&mut pub_storage, id).await;
-    let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
-    delete_all_at_request_id(&mut priv_storage, id).await;
-    let vault_storage_option = backup_path.map(|path| {
-        StorageConf::File(FileStorageConf {
-            path: path.to_path_buf(),
-        })
-    });
-    for i in 1..=amount_parties {
-        let mut threshold_pub =
-            FileStorage::new(pub_path, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap();
-        let mut threshold_priv = FileStorage::new(
-            priv_path,
-            StorageType::PRIV,
-            Some(Role::indexed_from_one(i)),
-        )
-        .unwrap();
-        let mut backup_storage = make_storage(
-            vault_storage_option.clone(),
-            StorageType::BACKUP,
-            Some(Role::indexed_from_one(i)),
-            None,
-            None,
-        )
-        .unwrap();
-        delete_all_at_request_id(&mut backup_storage, id).await;
-        delete_all_at_request_id(&mut threshold_pub, id).await;
-        delete_all_at_request_id(&mut threshold_priv, id).await;
+    // TODO(#2748) backups should probably be handled separately since this does not delete all the custodian based backups
+    // but only the non-custodian ones. Hence the following lines are commented out for now.
+    // let vault_storage_option = backup_path.map(|path| {
+    //     StorageConf::File(FileStorageConf {
+    //         path: path.to_path_buf(),
+    //     })
+    // });
+    if amount_parties == 1 {
+        let mut pub_storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
+        delete_all_at_request_id(&mut pub_storage, id).await;
+        let mut priv_storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
+        delete_all_at_request_id(&mut priv_storage, id).await;
+        // let mut backup_storage = make_storage(
+        //     vault_storage_option.clone(),
+        //     StorageType::BACKUP,
+        //     None,
+        //     None,
+        //     None,
+        // )
+        // .unwrap();
+        // delete_all_at_request_id(&mut backup_storage, id).await;
+    } else {
+        for i in 1..=amount_parties {
+            let mut threshold_pub =
+                FileStorage::new(pub_path, StorageType::PUB, Some(Role::indexed_from_one(i)))
+                    .unwrap();
+            let mut threshold_priv = FileStorage::new(
+                priv_path,
+                StorageType::PRIV,
+                Some(Role::indexed_from_one(i)),
+            )
+            .unwrap();
+            delete_all_at_request_id(&mut threshold_pub, id).await;
+            delete_all_at_request_id(&mut threshold_priv, id).await;
+            // let mut backup_storage = make_storage(
+            //     vault_storage_option.clone(),
+            //     StorageType::BACKUP,
+            //     Some(Role::indexed_from_one(i)),
+            //     None,
+            //     None,
+            // )
+            // .unwrap();
+            // delete_all_at_request_id(&mut backup_storage, id).await;
+        }
     }
 }
 
-pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
-    for cur_party in 1..=amount_parties {
-        let final_path = match backup_path {
+/// Purge the entire content of the private storage.
+/// This is useful for testing backup
+pub async fn purge_priv(priv_path: Option<&Path>) {
+    let final_central_path = match priv_path {
+        Some(path) => path.to_path_buf(),
+        None => FileStorage::default_path(StorageType::PRIV, None).unwrap(),
+    };
+    // Ignore if the dir does not exist
+    let _ = tokio::fs::remove_dir_all(&final_central_path).await;
+    // Purge for the max amount of parties we may have in tests
+    for cur_party in 1..=13 {
+        let final_threshold_path = match priv_path {
             Some(path) => path.to_path_buf(),
             None => FileStorage::default_path(
-                StorageType::BACKUP,
+                StorageType::PRIV,
                 Some(Role::indexed_from_one(cur_party)),
             )
             .unwrap(),
         };
-        tokio::fs::remove_dir_all(&final_path).await.unwrap();
+        // Ignore if the dir does not exist
+        let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
+    }
+}
+
+/// Purge the entire content of the public storage.
+/// This is useful for testing backup
+pub async fn purge_pub(pub_path: Option<&Path>) {
+    let final_central_path = match pub_path {
+        Some(path) => path.to_path_buf(),
+        None => FileStorage::default_path(StorageType::PUB, None).unwrap(),
+    };
+    // Ignore if the dir does not exist
+    let _ = tokio::fs::remove_dir_all(&final_central_path).await;
+    // Purge for the max amount of parties we may have in tests
+    for cur_party in 1..=13 {
+        let final_threshold_path = match pub_path {
+            Some(path) => path.to_path_buf(),
+            None => {
+                FileStorage::default_path(StorageType::PUB, Some(Role::indexed_from_one(cur_party)))
+                    .unwrap()
+            }
+        };
+        // Ignore if the dir does not exist
+        let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
+    }
+}
+
+/// Purge _all_ backed up data. Both custodian and non-custodian based backups.
+/// Note however that this method does _not_ purge anything in the private or public storage.
+/// Thus, if you want to avoid new custodian backups being constructed at boot ensure that `purge_recovery_info`
+/// is also called, as it deletes all the custodian recovery info.
+pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
+    if amount_parties == 1 {
+        let final_backup_central_path = match backup_path {
+            Some(path) => path.to_path_buf(),
+            None => FileStorage::default_path(StorageType::BACKUP, None).unwrap(),
+        };
+        // Ignore if the dir does not exist
+        let _ = tokio::fs::remove_dir_all(&final_backup_central_path).await;
+    } else {
+        for cur_party in 1..=amount_parties {
+            let final_backup_threshold_path = match backup_path {
+                Some(path) => path.to_path_buf(),
+                None => FileStorage::default_path(
+                    StorageType::BACKUP,
+                    Some(Role::indexed_from_one(cur_party)),
+                )
+                .unwrap(),
+            };
+            // Ignore if the dir does not exist
+            let _ = tokio::fs::remove_dir_all(&final_backup_threshold_path).await;
+        }
+    }
+}
+
+/// Remove all the data needed to perform custodian backups.
+/// This then allows your to prevent the automatic backup being done at boot
+/// when the system is configured with custodian backups.
+pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
+    if amount_parties == 1 {
+        let final_central_path = match path {
+            Some(path) => path.to_path_buf(),
+            None => FileStorage::default_path(StorageType::PUB, None).unwrap(),
+        };
+        let _ = tokio::fs::remove_dir_all(
+            &final_central_path.join(PubDataType::RecoveryRequest.to_string()),
+        )
+        .await;
+        let _ = tokio::fs::remove_dir_all(
+            &final_central_path.join(PubDataType::Commitments.to_string()),
+        )
+        .await;
+    } else {
+        for cur_party in 1..=amount_parties {
+            // Next purge recovery info
+            let final_threshold_path = match path {
+                Some(path) => path.to_path_buf(),
+                None => FileStorage::default_path(
+                    StorageType::PUB,
+                    Some(Role::indexed_from_one(cur_party)),
+                )
+                .unwrap(),
+            };
+            let _ = tokio::fs::remove_dir_all(
+                &final_threshold_path.join(PubDataType::RecoveryRequest.to_string()),
+            )
+            .await;
+            let _ = tokio::fs::remove_dir_all(
+                &final_threshold_path.join(PubDataType::Commitments.to_string()),
+            )
+            .await;
+        }
     }
 }
 
@@ -568,21 +681,35 @@ pub(crate) mod setup {
         vault::storage::{file::FileStorage, StorageType},
     };
     use kms_grpc::RequestId;
+    use std::path::Path;
     use threshold_fhe::execution::{runtime::party::Role, tfhe_internals::parameters::DKGParams};
 
-    pub async fn ensure_dir_exist() {
-        tokio::fs::create_dir_all(TMP_PATH_PREFIX).await.unwrap();
-        tokio::fs::create_dir_all(KEY_PATH_PREFIX).await.unwrap();
+    pub async fn ensure_dir_exist(path: Option<&Path>) {
+        match path {
+            Some(p) => {
+                tokio::fs::create_dir_all(p.join(TMP_PATH_PREFIX))
+                    .await
+                    .unwrap();
+                tokio::fs::create_dir_all(p.join(KEY_PATH_PREFIX))
+                    .await
+                    .unwrap();
+            }
+            None => {
+                tokio::fs::create_dir_all(TMP_PATH_PREFIX).await.unwrap();
+                tokio::fs::create_dir_all(KEY_PATH_PREFIX).await.unwrap();
+            }
+        }
     }
 
-    async fn testing_material() {
-        ensure_dir_exist().await;
-        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+    async fn testing_material(path: Option<&Path>) {
+        ensure_dir_exist(path).await;
+        ensure_client_keys_exist(path, &SIGNING_KEY_ID, true).await;
         central_material(
             &TEST_PARAM,
             &TEST_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_TEST_ID,
             &TEST_CENTRAL_CRS_ID,
+            path,
         )
         .await;
         threshold_material(
@@ -590,6 +717,7 @@ pub(crate) mod setup {
             &TEST_THRESHOLD_KEY_ID_4P,
             &TEST_THRESHOLD_CRS_ID_4P,
             4,
+            path,
         )
         .await;
         threshold_material(
@@ -597,6 +725,7 @@ pub(crate) mod setup {
             &TEST_THRESHOLD_KEY_ID_10P,
             &TEST_THRESHOLD_CRS_ID_10P,
             10,
+            path,
         )
         .await;
         #[cfg(feature = "slow_tests")]
@@ -605,12 +734,13 @@ pub(crate) mod setup {
             &TEST_THRESHOLD_KEY_ID_13P,
             &TEST_THRESHOLD_CRS_ID_13P,
             13,
+            path,
         )
         .await;
     }
 
-    pub(crate) async fn ensure_testing_material_exists() {
-        testing_material().await;
+    pub(crate) async fn ensure_testing_material_exists(path: Option<&Path>) {
+        testing_material(path).await;
     }
 
     #[cfg(feature = "slow_tests")]
@@ -621,13 +751,14 @@ pub(crate) mod setup {
             DEFAULT_THRESHOLD_CRS_ID_4P, DEFAULT_THRESHOLD_KEY_ID_10P,
             DEFAULT_THRESHOLD_KEY_ID_13P, DEFAULT_THRESHOLD_KEY_ID_4P, OTHER_CENTRAL_DEFAULT_ID,
         };
-        ensure_dir_exist().await;
+        ensure_dir_exist(None).await;
         ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
         central_material(
             &DEFAULT_PARAM,
             &DEFAULT_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_DEFAULT_ID,
             &DEFAULT_CENTRAL_CRS_ID,
+            None,
         )
         .await;
         threshold_material(
@@ -635,6 +766,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_KEY_ID_4P,
             &DEFAULT_THRESHOLD_CRS_ID_4P,
             4,
+            None,
         )
         .await;
         threshold_material(
@@ -642,6 +774,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_KEY_ID_10P,
             &DEFAULT_THRESHOLD_CRS_ID_10P,
             10,
+            None,
         )
         .await;
         threshold_material(
@@ -649,6 +782,7 @@ pub(crate) mod setup {
             &DEFAULT_THRESHOLD_KEY_ID_13P,
             &DEFAULT_THRESHOLD_CRS_ID_13P,
             13,
+            None,
         )
         .await;
     }
@@ -658,9 +792,10 @@ pub(crate) mod setup {
         fhe_key_id: &RequestId,
         other_fhe_key_id: &RequestId,
         crs_id: &RequestId,
+        path: Option<&Path>,
     ) {
-        let mut central_pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
-        let mut central_priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
+        let mut central_pub_storage = FileStorage::new(path, StorageType::PUB, None).unwrap();
+        let mut central_priv_storage = FileStorage::new(path, StorageType::PRIV, None).unwrap();
 
         ensure_central_server_signing_keys_exist(
             &mut central_pub_storage,
@@ -694,17 +829,18 @@ pub(crate) mod setup {
         fhe_key_id: &RequestId,
         crs_id: &RequestId,
         amount_parties: usize,
+        path: Option<&Path>,
     ) {
         let mut threshold_pub_storages = Vec::with_capacity(amount_parties);
         for i in 1..=amount_parties {
             threshold_pub_storages.push(
-                FileStorage::new(None, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap(),
+                FileStorage::new(path, StorageType::PUB, Some(Role::indexed_from_one(i))).unwrap(),
             );
         }
         let mut threshold_priv_storages = Vec::with_capacity(amount_parties);
         for i in 1..=amount_parties {
             threshold_priv_storages.push(
-                FileStorage::new(None, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap(),
+                FileStorage::new(path, StorageType::PRIV, Some(Role::indexed_from_one(i))).unwrap(),
             );
         }
 

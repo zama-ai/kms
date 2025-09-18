@@ -15,7 +15,8 @@ use tracing::Instrument;
 
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::engine::base::{retrieve_parameters, CrsGenMetadata};
-use crate::engine::centralized::central_kms::{async_generate_crs, RealCentralizedKms};
+use crate::engine::centralized::central_kms::{async_generate_crs, CentralizedKms};
+use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::validation::{
     parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
 };
@@ -28,8 +29,10 @@ use crate::vault::storage::Storage;
 pub async fn crs_gen_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<CrsGenRequest>,
 ) -> Result<Response<Empty>, Status> {
     tracing::info!("Received CRS generation request");
@@ -91,8 +94,10 @@ pub async fn crs_gen_impl<
 pub async fn get_crs_gen_result_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<kms_grpc::kms::v1::RequestId>,
 ) -> Result<Response<CrsGenResult>, Status> {
     let request_id =

@@ -2,21 +2,27 @@ use super::{
     custodian::{InternalCustodianSetupMessage, DSEP_BACKUP_CUSTODIAN, HEADER},
     error::BackupError,
     secretsharing,
-    traits::{BackupDecryptor, BackupSigner},
+    traits::BackupDecryptor,
 };
+use crate::backup::custodian::InternalCustodianContext;
 use crate::{
     anyhow_error_and_log,
     consts::SAFE_SER_SIZE_LIMIT,
     cryptography::{
         backup_pke::{BackupPrivateKey, BackupPublicKey},
         internal_crypto_types::{PrivateSigKey, PublicSigKey, Signature},
-        signcryption::internal_verify_sig,
+        signcryption::{internal_sign, internal_verify_sig},
     },
-    engine::base::safe_serialize_hash_element_versioned,
+    engine::{
+        base::safe_serialize_hash_element_versioned,
+        validation::{parse_optional_proto_request_id, RequestIdParsingErr},
+    },
 };
-use itertools::Itertools;
-use k256::ecdsa::SigningKey;
-use kms_grpc::{rpc_types::InternalCustodianRecoveryOutput, RequestId};
+use kms_grpc::{
+    kms::v1::{OperatorBackupOutput, RecoveryRequest},
+    rpc_types::InternalCustodianRecoveryOutput,
+    RequestId,
+};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -24,7 +30,11 @@ use std::{
     fmt::Display,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tfhe::{named::Named, safe_serialization::safe_serialize, Versionize};
+use tfhe::{
+    named::Named,
+    safe_serialization::{safe_deserialize, safe_serialize},
+    Versionize,
+};
 use tfhe_versionable::VersionsDispatch;
 use threshold_fhe::{
     algebra::galois_rings::degree_4::ResiduePolyF4Z64,
@@ -36,7 +46,6 @@ use threshold_fhe::{
 };
 
 pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
-pub(crate) const DSEP_BACKUP_CIPHER: DomainSep = *b"BKUPCIPH";
 pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRREQ";
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
@@ -45,128 +54,108 @@ pub enum InternalRecoveryRequestVersioned {
 }
 
 impl Named for InternalRecoveryRequest {
-    const NAME: &'static str = "backup::RecoveryRequest";
+    const NAME: &'static str = "backup::InternalRecoveryRequest";
 }
 
-/// The data sent to the custodians by the operator during the recovery procedure.
+/// The backup data returned to the custodians during recovery.
+/// WARNING: It is crucial that this is transported safely as it does not
+/// contain any authentication on the ephemeral encryption key [`enc_key`].
+/// This is because we have to assume that the operator has no access to the private storage
+/// when creating this object.
 #[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
 #[versionize(InternalRecoveryRequestVersioned)]
 pub struct InternalRecoveryRequest {
-    payload: InnerRecoveryRequest,
-    signature: Vec<u8>,
-}
-
-#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-enum InnerRecoveryRequestVersioned {
-    V0(InnerRecoveryRequest),
-}
-
-/// The data sent to the custodians by the operator during the recovery procedure.
-#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
-#[versionize(InnerRecoveryRequestVersioned)]
-struct InnerRecoveryRequest {
-    /// The ephemeral encryption key of the operator used when signcrypting the recovered data during transit to the operator.
     enc_key: BackupPublicKey,
-    /// The ciphertexts that are the backup. Indexed by the custodian role.
     cts: BTreeMap<Role, InnerOperatorBackupOutput>,
-    /// The request ID under which the backup was created.
     backup_id: RequestId,
-    /// The role of the operator
     operator_role: Role,
 }
 
-impl Named for InnerRecoveryRequest {
-    const NAME: &'static str = "backup::InnerRecoveryRequest";
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum RecoveryRequestPayloadVersioned {
+    V0(RecoveryRequestPayload),
+}
+
+/// The backup data constructed whenever a new custodian context is created.
+/// It is meant to be stored in the public storage as it is self-trusted via the signatures
+/// It is different from what is returned to custodians during recovery since it is then augmented with
+/// an ephemeral encryption key during that point in time.
+#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[versionize(RecoveryRequestPayloadVersioned)]
+pub struct RecoveryRequestPayload {
+    /// The ciphertexts that are the backup. Indexed by the custodian role.
+    pub cts: BTreeMap<Role, InnerOperatorBackupOutput>,
+    pub backup_enc_key: BackupPublicKey,
+}
+
+impl Named for RecoveryRequestPayload {
+    const NAME: &'static str = "backup::RecoveryRequestPayload";
 }
 
 impl InternalRecoveryRequest {
     pub fn new(
         enc_key: BackupPublicKey,
-        sig_key: &PrivateSigKey,
         cts: BTreeMap<Role, InnerOperatorBackupOutput>,
         backup_id: RequestId,
         operator_role: Role,
+        verf_key: Option<&PublicSigKey>,
     ) -> anyhow::Result<Self> {
-        let inner_req = InnerRecoveryRequest {
+        let res = InternalRecoveryRequest {
             enc_key,
             cts,
             backup_id,
             operator_role,
         };
-        let mut serialized_inner_req = Vec::new();
-        safe_serialize(&inner_req, &mut serialized_inner_req, SAFE_SER_SIZE_LIMIT).map_err(
-            |e| anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}")),
-        )?;
-        let signature = &crate::cryptography::signcryption::internal_sign(
-            &DSEP_BACKUP_RECOVERY,
-            &serialized_inner_req,
-            sig_key,
-        )?;
-        let signature_buf = signature.sig.to_vec();
-        let res = Self {
-            payload: inner_req,
-            signature: signature_buf,
-        };
-        let verf_key = PublicSigKey::new(*SigningKey::verifying_key(sig_key.sk()));
-        if !res.is_valid(&verf_key)? {
-            return Err(anyhow_error_and_log("Invalid RecoveryRequest data"));
+        if let Some(verf_key) = verf_key {
+            if !res.is_valid(verf_key)? {
+                return Err(anyhow_error_and_log("Invalid RecoveryRequest data"));
+            }
         }
         Ok(res)
     }
 
     /// Validate that the data in the request is sensible.
     pub fn is_valid(&self, verf_key: &PublicSigKey) -> anyhow::Result<bool> {
-        if !self.payload.backup_id.is_valid() {
-            tracing::warn!("RecoveryRequest has an invalid backup ID");
+        if !self.backup_id.is_valid() {
+            tracing::warn!("InternalRecoveryRequest has an invalid backup ID");
             return Ok(false);
         }
-        if self.payload.operator_role.one_based() == 0 {
-            tracing::warn!("RecoveryRequest has an invalid operator role");
+        if self.operator_role.one_based() == 0 {
+            tracing::warn!("InternalRecoveryRequest has an invalid operator role");
             return Ok(false);
         }
-        let mut serialized_inner_req: Vec<u8> = Vec::new();
-        safe_serialize(
-            &self.payload,
-            &mut serialized_inner_req,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .map_err(|e| {
-            anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
-        })?;
-        if internal_verify_sig(
-            &DSEP_BACKUP_RECOVERY,
-            &serialized_inner_req,
-            &Signature {
-                sig: k256::ecdsa::Signature::from_slice(&self.signature)?,
-            },
-            verf_key,
-        )
-        .is_err()
-        {
-            tracing::warn!("RecoveryRequest signature verification failed");
-            return Ok(false);
+        for cur in self.cts.values() {
+            if internal_verify_sig(
+                &DSEP_BACKUP_RECOVERY,
+                &cur.ciphertext,
+                &Signature {
+                    sig: k256::ecdsa::Signature::from_slice(&cur.signature)?,
+                },
+                verf_key,
+            )
+            .is_err()
+            {
+                tracing::warn!("InternalRecoveryRequest signature verification failed");
+                return Ok(false);
+            }
         }
         Ok(true)
     }
 
     pub fn encryption_key(&self) -> &BackupPublicKey {
-        &self.payload.enc_key
+        &self.enc_key
     }
 
     pub fn ciphertexts(&self) -> HashMap<Role, &InnerOperatorBackupOutput> {
-        self.payload
-            .cts
-            .iter()
-            .map(|(role, ct)| (*role, ct))
-            .collect()
+        self.cts.iter().map(|(role, ct)| (*role, ct)).collect()
     }
 
     pub fn backup_id(&self) -> RequestId {
-        self.payload.backup_id
+        self.backup_id
     }
 
     pub fn operator_role(&self) -> Role {
-        self.payload.operator_role
+        self.operator_role
     }
 }
 
@@ -174,21 +163,48 @@ impl Display for InternalRecoveryRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "RecoveryRequest with:\n backup id: {}\n operator role: {}",
-            self.payload.backup_id, self.payload.operator_role,
+            "InternalRecoveryRequest with:\n backup id: {}\n operator role: {}",
+            self.backup_id, self.operator_role,
         )
+    }
+}
+
+impl TryFrom<RecoveryRequest> for InternalRecoveryRequest {
+    type Error = anyhow::Error;
+
+    fn try_from(value: RecoveryRequest) -> Result<InternalRecoveryRequest, Self::Error> {
+        let enc_key: BackupPublicKey =
+            safe_deserialize(std::io::Cursor::new(&value.enc_key), SAFE_SER_SIZE_LIMIT).map_err(
+                |e| anyhow_error_and_log(format!("Could not deserialize enc_key: {e:?}")),
+            )?;
+        let cts = value
+            .cts
+            .iter()
+            .map(|(cur_role_idx, cur_backup_out)| {
+                (
+                    Role::indexed_from_one(*cur_role_idx as usize),
+                    cur_backup_out.clone().into(),
+                )
+            })
+            .collect();
+        let backup_id: RequestId =
+            parse_optional_proto_request_id(&value.backup_id, RequestIdParsingErr::BackupRecovery)?;
+        Ok(Self {
+            enc_key,
+            cts,
+            backup_id,
+            operator_role: Role::indexed_from_one(value.operator_role as usize),
+        })
     }
 }
 
 #[derive(Clone)]
 pub struct Operator {
     my_role: Role,
-    custodian_keys: Vec<(BackupPublicKey, PublicSigKey)>,
+    custodian_keys: HashMap<Role, (BackupPublicKey, PublicSigKey)>,
     signer: PrivateSigKey,
     // the public component of [signer] above
     verification_key: PublicSigKey,
-    decryptor: BackupPrivateKey,
-    public_key: BackupPublicKey,
     threshold: usize,
 }
 
@@ -199,8 +215,6 @@ impl std::fmt::Debug for Operator {
             .field("custodian_keys", &self.custodian_keys)
             .field("signer", &"ommitted")
             .field("verification_key", &self.verification_key)
-            .field("decryptor", &"ommitted")
-            .field("public_key", &self.public_key)
             .field("threshold", &self.threshold)
             .finish()
     }
@@ -224,7 +238,24 @@ pub struct InnerOperatorBackupOutput {
 }
 
 impl Named for InnerOperatorBackupOutput {
-    const NAME: &'static str = "backup::OperatorBackupOutput";
+    const NAME: &'static str = "backup::InnerOperatorBackupOutput";
+}
+
+impl From<OperatorBackupOutput> for InnerOperatorBackupOutput {
+    fn from(value: OperatorBackupOutput) -> Self {
+        Self {
+            ciphertext: value.ciphertext,
+            signature: value.signature,
+        }
+    }
+}
+impl From<InnerOperatorBackupOutput> for OperatorBackupOutput {
+    fn from(value: InnerOperatorBackupOutput) -> Self {
+        Self {
+            ciphertext: value.ciphertext,
+            signature: value.signature,
+        }
+    }
 }
 
 fn verify_n_t(n: usize, t: usize) -> Result<(), BackupError> {
@@ -235,56 +266,83 @@ fn verify_n_t(n: usize, t: usize) -> Result<(), BackupError> {
         return Err(BackupError::SetupError("t cannot be 0".to_string()));
     }
     if t * 2 >= n {
-        return Err(BackupError::SetupError(
-            "t < n/2 is not satisfied".to_string(),
-        ));
+        return Err(BackupError::SetupError(format!(
+            "t < n/2 is not satisfied, t is {t} and n is {n}"
+        )));
     }
     Ok(())
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
-pub enum BackupCommitmentsVersioned {
-    V0(BackupCommitments),
+pub enum RecoveryValidationMaterialVersioned {
+    V0(RecoveryValidationMaterial),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
-#[versionize(BackupCommitmentsVersioned)]
-pub struct BackupCommitments {
-    commitments: BTreeMap<Role, Vec<u8>>,
+#[versionize(RecoveryValidationMaterialVersioned)]
+pub struct RecoveryValidationMaterial {
+    payload: RecoveryValidationMaterialPayload,
     signature: Vec<u8>,
 }
 
-impl Named for BackupCommitments {
-    const NAME: &'static str = "backup::BackupCommitments";
+impl Named for RecoveryValidationMaterial {
+    const NAME: &'static str = "backup::RecoveryValidationMaterial";
 }
 
-impl BackupCommitments {
-    pub fn new(commitments: BTreeMap<Role, Vec<u8>>, sk: &PrivateSigKey) -> anyhow::Result<Self> {
-        let serialized_coms = bc2wrap::serialize(&commitments).map_err(|e| {
+impl RecoveryValidationMaterial {
+    pub fn new(
+        commitments: BTreeMap<Role, Vec<u8>>,
+        custodian_context: InternalCustodianContext,
+        sk: &PrivateSigKey,
+    ) -> anyhow::Result<Self> {
+        let payload = RecoveryValidationMaterialPayload {
+            commitments,
+            custodian_context,
+        };
+        let serialized_payload = bc2wrap::serialize(&payload).map_err(|e| {
             anyhow_error_and_log(format!("Could not serialize inner recovery request: {e:?}"))
         })?;
         let signature = &crate::cryptography::signcryption::internal_sign(
             &DSEP_BACKUP_RECOVERY,
-            &serialized_coms,
+            &serialized_payload,
             sk,
         )?;
         let signature_buf = signature.sig.to_vec();
         Ok(Self {
-            commitments,
+            payload,
             signature: signature_buf,
         })
     }
 
     pub fn get(&self, role: &Role) -> anyhow::Result<&[u8]> {
-        if role.one_based() > self.commitments.len() {
+        if role.one_based() > self.payload.commitments.len() {
             anyhow::bail!("Role {} is out of bounds for commitments", role);
         }
         let res = self
+            .payload
             .commitments
             .get(role)
             .ok_or_else(|| anyhow::anyhow!("No commitment found for role {}", role))?;
         Ok(res)
     }
+
+    pub fn custodian_context(&self) -> &InternalCustodianContext {
+        &self.payload.custodian_context
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum RecoveryValidationMaterialPayloadVersioned {
+    V0(RecoveryValidationMaterialPayload),
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(RecoveryValidationMaterialPayloadVersioned)]
+pub struct RecoveryValidationMaterialPayload {
+    pub commitments: BTreeMap<Role, Vec<u8>>,
+    pub custodian_context: InternalCustodianContext,
+}
+impl Named for RecoveryValidationMaterialPayload {
+    const NAME: &'static str = "backup::RecoveryValidationMaterialPayload";
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -403,15 +461,12 @@ impl Operator {
         my_role: Role,
         custodian_messages: Vec<InternalCustodianSetupMessage>,
         signer: PrivateSigKey,
-        operator_verf_key: PublicSigKey,
-        decryptor: BackupPrivateKey,
-        operator_enc_key: BackupPublicKey,
         threshold: usize,
     ) -> Result<Self, BackupError> {
         verify_n_t(custodian_messages.len(), threshold)?;
 
-        let mut custodian_keys = vec![];
-        for (i, msg) in custodian_messages.into_iter().enumerate() {
+        let mut custodian_keys = HashMap::new();
+        for msg in custodian_messages.into_iter() {
             let InternalCustodianSetupMessage {
                 header,
                 custodian_role,
@@ -427,15 +482,6 @@ impl Operator {
                 return Err(BackupError::CustodianSetupError);
             }
 
-            if custodian_role != Role::indexed_from_zero(i) {
-                tracing::error!(
-                    "Invalid custodian role in setup message: expected {} but got {}",
-                    Role::indexed_from_zero(i),
-                    custodian_role
-                );
-                return Err(BackupError::CustodianSetupError);
-            }
-
             let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
             const ONE_HOUR_SECS: u64 = 3600;
             if !(now - ONE_HOUR_SECS < timestamp && timestamp < now + ONE_HOUR_SECS) {
@@ -446,30 +492,20 @@ impl Operator {
                 return Err(BackupError::CustodianSetupError);
             }
 
-            custodian_keys.push((public_enc_key, public_verf_key));
+            custodian_keys.insert(custodian_role, (public_enc_key, public_verf_key));
         }
-
+        let verf_key = signer.clone().into();
         Ok(Self {
             my_role,
             custodian_keys,
             signer,
-            verification_key: operator_verf_key,
-            decryptor,
-            public_key: operator_enc_key,
+            verification_key: verf_key,
             threshold,
         })
     }
 
     pub fn verification_key(&self) -> &PublicSigKey {
         &self.verification_key
-    }
-
-    pub fn public_key(&self) -> &BackupPublicKey {
-        &self.public_key
-    }
-
-    pub fn public_key_bytes(&self) -> Vec<u8> {
-        self.public_key.encapsulation_key.clone()
     }
 
     pub fn role(&self) -> Role {
@@ -480,12 +516,22 @@ impl Operator {
     // the function fails afterwards.
     #[allow(unknown_lints)]
     #[allow(non_local_effect_before_error_return)]
+    #[allow(clippy::type_complexity)]
+    /// Construct a secret sharing of a `secret` and return a map of the basic backup recovery material,
+    /// indexed by the role of each custodian. Also return a map of each commitment to the secret share,
+    /// indexed by the role of each custodian.
     pub fn secret_share_and_encrypt<R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
         secret: &[u8],
         backup_id: RequestId,
-    ) -> Result<(BTreeMap<Role, InnerOperatorBackupOutput>, BackupCommitments), BackupError> {
+    ) -> Result<
+        (
+            BTreeMap<Role, InnerOperatorBackupOutput>,
+            BTreeMap<Role, Vec<u8>>,
+        ),
+        BackupError,
+    > {
         let n = self.custodian_keys.len();
         let t = self.threshold;
 
@@ -523,9 +569,7 @@ impl Operator {
 
         // Zip_eq will panic in case the two iterators are not of the same length.
         // Since `plain_ij` is created in this method from `shares` such a panic can only happen in case of a bug in this method
-        for ((role_j, shares), (enc_pk, sig_pk)) in
-            plain_ij.into_iter().zip_eq(&self.custodian_keys)
-        {
+        for (role_j, shares) in plain_ij.into_iter() {
             // Do a sanity check that we expect enough entropy in the shares
             // s.t. hashing these cannot allow a feasible brute-force attack.
             //
@@ -540,7 +584,11 @@ impl Operator {
                     "share is not long enough: actual={actual_length} < minimum={minimum_expected_length}"
                 )));
             }
-
+            let (enc_pk, sig_pk) = self.custodian_keys.get(&role_j).ok_or_else(|| {
+                BackupError::OperatorError(format!(
+                    "Could not find custodian keys for role {role_j}"
+                ))
+            })?;
             let backup_material = BackupMaterial {
                 backup_id,
                 custodian_pk: sig_pk.clone(),
@@ -554,8 +602,10 @@ impl Operator {
             safe_serialize(&backup_material, &mut msg, SAFE_SER_SIZE_LIMIT)
                 .map_err(|e| BackupError::BincodeError(e.to_string()))?;
             let ciphertext = enc_pk.encrypt(rng, &msg)?;
-            let signature = self.signer.sign(&DSEP_BACKUP_CIPHER, &ciphertext)?;
-
+            let signature = internal_sign(&DSEP_BACKUP_RECOVERY, &ciphertext, &self.signer)
+                .map_err(|e| BackupError::OperatorError(e.to_string()))?
+                .sig
+                .to_vec();
             // Commitment by the operator, which is a hash of [BackupMaterial].
             //
             // We cannot use the regular commitment routines from commitment.rs
@@ -582,8 +632,6 @@ impl Operator {
         }
 
         // 6. The commitments are stored by `P_i` and can be used to verify the shares later.
-        let commitments = BackupCommitments::new(commitments, &self.signer)
-            .map_err(|e| BackupError::OperatorError(format!("Could not sign commitments: {e}")))?;
         Ok((ct_shares, commitments))
     }
 
@@ -596,19 +644,21 @@ impl Operator {
     /// so the are a separate input.
     pub fn verify_and_recover(
         &self,
-        custodian_recovery_output: &BTreeMap<Role, InternalCustodianRecoveryOutput>,
-        commitments: &BackupCommitments,
+        custodian_recovery_output: &[InternalCustodianRecoveryOutput],
+        commitments: &RecoveryValidationMaterial,
         backup_id: RequestId,
+        dec_key: &BackupPrivateKey, // Note that this is the ephemeral decryption key, NOT the actual backup decryption key
     ) -> Result<Vec<u8>, BackupError> {
         // the output is ordered by custodian ID, from 0 to n-1
         // first check the signature and decrypt
         // decrypted_buf[j][i] where j = jth custodian, i = ith block
         let decrypted_buf = custodian_recovery_output
             .iter()
-            .map(|(custodian_role, ct)| {
-                let key = custodian_role.get_from(&self.custodian_keys).ok_or(
+            .map(|ct| {
+                let (_enc_key, verf_key) = self.custodian_keys.get(&ct.custodian_role).ok_or(
                     BackupError::OperatorError(format!(
-                        "missing custodian key for {custodian_role}"
+                        "missing custodian key for {}",
+                        ct.custodian_role
                     )),
                 )?;
                 // sigt_ij
@@ -616,18 +666,18 @@ impl Operator {
                     sig: k256::ecdsa::Signature::from_slice(&ct.signature)?,
                 };
                 let commitment = commitments
-                    .get(custodian_role)
+                    .get(&ct.custodian_role)
                     .map_err(|_| BackupError::OperatorError("missing commitment".to_string()))?;
-                internal_verify_sig(&DSEP_BACKUP_CUSTODIAN, &ct.ciphertext, &signature, &key.1)
+                internal_verify_sig(&DSEP_BACKUP_CUSTODIAN, &ct.ciphertext, &signature, verf_key)
                     .map_err(|e| BackupError::SignatureVerificationError(e.to_string()))?;
                 // st_ij
                 checked_decryption_deserialize(
-                    &self.decryptor,
+                    dec_key,
                     &ct.ciphertext,
                     commitment,
                     backup_id,
-                    &key.1,
-                    *custodian_role,
+                    verf_key,
+                    ct.custodian_role,
                     &self.verification_key,
                     self.my_role,
                 )

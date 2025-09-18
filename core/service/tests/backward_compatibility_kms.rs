@@ -322,20 +322,15 @@ fn test_operator_backup_output(
         .collect();
 
     let operator = {
-        let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         Operator::new(
             Role::indexed_from_zero(0),
-            custodian_messages,
+            custodian_messages.clone(),
             signing_key,
-            verification_key,
-            private_key,
-            public_key,
             test.custodian_threshold,
         )
         .unwrap()
     };
-
     let (cts, _commitments) = &operator
         .secret_share_and_encrypt(
             &mut rng,
