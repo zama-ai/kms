@@ -399,6 +399,7 @@ pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientK
     let compression_params = params
         .get_params_basics_handle()
         .get_compression_decompression_params();
+    let rerand_params = params.get_params_basics_handle().get_rerand_params();
     let sns_params = match params {
         DKGParams::WithoutSnS(_) => None,
         DKGParams::WithSnS(dkg_sns) => Some((dkg_sns.sns_params, dkg_sns.sns_compression_params)),
@@ -423,6 +424,11 @@ pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientK
         } else {
             config
         }
+    } else {
+        config
+    };
+    let config = if let Some(rerand_params) = rerand_params {
+        config.enable_ciphertext_re_randomization(rerand_params)
     } else {
         config
     };

@@ -327,6 +327,7 @@ pub trait DKGParamsBasics: Sync {
     fn get_msnrk_configuration(&self) -> MSNRKConfiguration;
     fn get_compression_decompression_params(&self) -> Option<DistributedCompressionParameters>;
     fn get_sns_compression_params(&self) -> Option<DistributedSnsCompressionParameters>;
+    fn get_rerand_params(&self) -> Option<ShortintKeySwitchingParameters>;
 
     fn all_lwe_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
     fn all_lwe_hat_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
@@ -1015,6 +1016,10 @@ impl DKGParamsBasics for DKGParamsRegular {
         self.dedicated_compact_public_key_parameters
     }
 
+    fn get_rerand_params(&self) -> Option<ShortintKeySwitchingParameters> {
+        self.cpk_re_randomization_ksk_params
+    }
+
     fn pksk_rshift(&self) -> i8 {
         let nb_bits_input = self
             .dedicated_compact_public_key_parameters
@@ -1343,6 +1348,10 @@ impl DKGParamsBasics for DKGParamsSnS {
         ShortintKeySwitchingParameters,
     )> {
         self.regular_params.get_dedicated_pk_params()
+    }
+
+    fn get_rerand_params(&self) -> Option<ShortintKeySwitchingParameters> {
+        self.regular_params.get_rerand_params()
     }
 
     fn pksk_rshift(&self) -> i8 {
