@@ -60,10 +60,16 @@ spec:
               cat kms-server.toml
               echo "### END - kms-server.toml ###"
           env:
+            {{- if .Values.kmsPeers.id }}
+            - name: KMS_CORE__THRESHOLD__MY_ID
+              value: "{{ .Values.kmsPeers.id }}"
+            {{- else }}
             - name: KMS_CORE__THRESHOLD__MY_ID
               valueFrom:
-                fieldRef:
-                  fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.thresholdId }}
+            {{- end }}
             - name: NO_COLOR
               value: "true"
             - name: RUN_MODE
@@ -326,10 +332,16 @@ spec:
               --write-privkey
               {{- end }}
           env:
+            {{- if .Values.kmsPeers.id }}
+            - name: KMS_CORE__THRESHOLD__MY_ID
+              value: "{{ .Values.kmsPeers.id }}"
+            {{- else }}
             - name: KMS_CORE__THRESHOLD__MY_ID
               valueFrom:
-                fieldRef:
-                  fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.thresholdId }}
+            {{- end }}
             {{- if .Values.minio.enabled }}
             - name: AWS_ACCESS_KEY_ID
               value: {{ .Values.minio.username}}
@@ -423,10 +435,16 @@ spec:
           {{- end }}
           env:
             {{- if .Values.kmsCore.thresholdMode.enabled }}
+            {{- if .Values.kmsPeers.id }}
+            - name: KMS_CORE__THRESHOLD__MY_ID
+              value: "{{ .Values.kmsPeers.id }}"
+            {{- else }}
             - name: KMS_CORE__THRESHOLD__MY_ID
               valueFrom:
-                fieldRef:
-                  fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
+                configMapKeyRef:
+                  name: {{ .Values.kmsCore.envFrom.configmap.name }}
+                  key: {{ .Values.kmsCore.envFrom.configmap.key.thresholdId }}
+            {{- end }}
             {{- end }}
             - name: "NO_COLOR"
               value: "true"
