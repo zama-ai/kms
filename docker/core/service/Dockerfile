@@ -7,15 +7,18 @@ FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS k
 # By default, cargo build --release.
 # But you can provide --build-arg LTO_RELEASE="--profile release-lto-off" locally to build locally
 ARG LTO_RELEASE=release
+ARG APP_CACHE_DIR=kms
 
 # Fetch dependencies and build binaries
 WORKDIR /app/kms
 COPY . .
 RUN mkdir -p /app/kms/core/service/bin
 
-RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
     cargo fetch --locked
-RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
+RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
     cargo build  --locked --profile=${LTO_RELEASE} -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init -F insecure && \
     cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-gen-keys -F testing -F insecure && \
     cp /app/kms/target/${LTO_RELEASE}/kms-server \
