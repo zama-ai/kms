@@ -96,7 +96,7 @@ pub enum CustodianCommand {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let telemetry = TelemetryConfig::builder()
-        .tracing_service_name("kms_core".to_string())
+        .tracing_service_name("kms_custodian".to_string())
         .build();
     init_tracing(&telemetry).await?;
 
@@ -226,15 +226,17 @@ fn get_rng(randomness: Option<&String>) -> AesRng {
 mod tests {
     use crate::{get_rng, SEED_PHRASE_DESC};
     use assert_cmd::Command;
-    use kms_grpc::{rpc_types::InternalCustodianRecoveryOutput, RequestId};
+    use kms_grpc::{
+        kms::v1::CustodianContext, rpc_types::InternalCustodianRecoveryOutput, RequestId,
+    };
     use kms_lib::{
         backup::{
-            custodian::InternalCustodianSetupMessage,
-            operator::{BackupCommitments, InternalRecoveryRequest, Operator},
+            custodian::{InternalCustodianContext, InternalCustodianSetupMessage},
+            operator::{InternalRecoveryRequest, Operator, RecoveryValidationMaterial},
             seed_phrase::custodian_from_seed_phrase,
         },
         cryptography::{
-            backup_pke::{self},
+            backup_pke::{self, BackupPrivateKey},
             internal_crypto_types::gen_sig_keys,
         },
         engine::base::derive_request_id,
@@ -302,7 +304,7 @@ mod tests {
     #[tracing_test::traced_test]
     #[tokio::test]
     #[serial_test::serial]
-    async fn sunshine_decrypt() {
+    async fn sunshine_decrypt_custodian() {
         let threshold = 1;
         let amount_custodians = 2 * threshold + 1; // Minimum amount of custodians is 2 * threshold + 1
         let amount_operators = 4;
@@ -323,18 +325,21 @@ mod tests {
         // Generate operator keys along with the message to be backed up
         let mut commitments = Vec::new();
         let mut operators = Vec::new();
+        let mut ephemeral_dec_keys = Vec::new();
+        let mut backup_dec_keys = Vec::new();
         for operator_index in 1..=amount_operators {
-            let (cur_commitments, operator) = make_backup(
+            let (cur_commitments, operator, ephemeral_dec, backup_dec) = make_backup(
                 temp_dir.path(),
                 threshold,
                 Role::indexed_from_one(operator_index),
                 setup_msgs.clone(),
                 backup_id,
-                format!("super secret data{operator_index}").as_bytes(),
             )
             .await;
             commitments.push(cur_commitments);
             operators.push(operator);
+            ephemeral_dec_keys.push(ephemeral_dec);
+            backup_dec_keys.push(backup_dec);
         }
 
         // Decrypt
@@ -367,19 +372,21 @@ mod tests {
         }
 
         // Validate the decryption
-        for (operator, commitment) in operators.iter().zip(&commitments) {
+        for ((operator, commitment), dec_key) in
+            operators.iter().zip(&commitments).zip(&ephemeral_dec_keys)
+        {
             let cur_res = decrypt_recovery(
                 temp_dir.path(),
                 amount_custodians,
                 operator,
                 commitment,
                 backup_id,
+                dec_key,
             )
             .await;
-            let expected_res = format!("super secret data{}", operator.role().one_based());
             assert_eq!(
                 cur_res,
-                expected_res.as_bytes(),
+                bc2wrap::serialize(&backup_dec_keys[&operator.role()]).unwrap(),
                 "Decryption did not match expected data for operator {}",
                 operator.role().one_based()
             );
@@ -430,8 +437,12 @@ mod tests {
         operator_role: Role,
         setup_msgs: Vec<InternalCustodianSetupMessage>,
         backup_id: RequestId,
-        msg: &[u8],
-    ) -> (BackupCommitments, Operator) {
+    ) -> (
+        RecoveryValidationMaterial,
+        Operator,
+        BackupPrivateKey,
+        BackupPrivateKey,
+    ) {
         let request_path = root_path.join(format!(
             "operator-{operator_role}{MAIN_SEPARATOR}{backup_id}-request.bin"
         ));
@@ -442,20 +453,38 @@ mod tests {
         let mut rng = get_rng(Some(&format!("operator{operator_role}").to_string()));
         // Note that in the actual deployment, the operator keys are generated before the encryption keys
         let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
-        let operator = Operator::new(
+        let (ephemeral_pub_key, ephemeral_priv_key) = backup_pke::keygen(&mut rng).unwrap();
+        let operator: Operator = Operator::new(
             operator_role,
-            setup_msgs,
+            setup_msgs.clone(),
             signing_key.clone(),
-            verification_key.clone(),
-            private_key,
-            public_key,
             threshold,
         )
         .unwrap();
+        let (backup_pke, backup_ske) = backup_pke::keygen(&mut rng).unwrap();
         let (ct_map, commitments) = operator
-            .secret_share_and_encrypt(&mut rng, msg, backup_id)
+            .secret_share_and_encrypt(
+                &mut rng,
+                &bc2wrap::serialize(&backup_ske).unwrap(),
+                backup_id,
+            )
             .unwrap();
+        let custodian_context = InternalCustodianContext::new(
+            CustodianContext {
+                custodian_nodes: setup_msgs
+                    .iter()
+                    .map(|cur| cur.to_owned().try_into().unwrap())
+                    .collect(),
+                context_id: Some(backup_id.into()),
+                previous_context_id: None,
+                threshold: threshold as u32,
+            },
+            backup_pke,
+        )
+        .unwrap();
+        let validation_material =
+            RecoveryValidationMaterial::new(commitments.clone(), custodian_context, &signing_key)
+                .unwrap();
         let mut ciphertexts = BTreeMap::new();
         for custodian_index in 1..=amount_custodians {
             let custodian_role = Role::indexed_from_one(custodian_index);
@@ -463,11 +492,11 @@ mod tests {
             ciphertexts.insert(custodian_role, ct.to_owned());
         }
         let recovery_request = InternalRecoveryRequest::new(
-            operator.public_key().to_owned(),
-            &signing_key,
+            ephemeral_pub_key,
             ciphertexts,
             backup_id,
             operator_role,
+            Some(&verification_key),
         )
         .unwrap();
         safe_write_element_versioned(&Path::new(&operator_verf_path), &verification_key)
@@ -476,17 +505,23 @@ mod tests {
         safe_write_element_versioned(&Path::new(&request_path), &recovery_request)
             .await
             .unwrap();
-        (commitments, operator)
+        (
+            validation_material,
+            operator,
+            ephemeral_priv_key,
+            backup_ske,
+        )
     }
 
     async fn decrypt_recovery(
         root_path: &Path,
         amount_custodians: usize,
         operator: &Operator,
-        commitment: &BackupCommitments,
+        commitment: &RecoveryValidationMaterial,
         backup_id: RequestId,
+        dec_key: &BackupPrivateKey,
     ) -> Vec<u8> {
-        let mut outputs = BTreeMap::new();
+        let mut outputs = Vec::new();
         for custodian_index in 1..=amount_custodians {
             let recovery_path = root_path.join(format!(
                 "operator-{}{MAIN_SEPARATOR}{backup_id}-recovered-keys-from-{custodian_index}.bin",
@@ -496,10 +531,10 @@ mod tests {
                 safe_read_element_versioned(&Path::new(&recovery_path))
                     .await
                     .unwrap();
-            outputs.insert(Role::indexed_from_one(custodian_index), payload);
+            outputs.push(payload);
         }
         operator
-            .verify_and_recover(&outputs, commitment, backup_id)
+            .verify_and_recover(&outputs, commitment, backup_id, dec_key)
             .unwrap()
     }
 }

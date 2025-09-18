@@ -154,8 +154,8 @@ pub struct AwsKmsKeychain {
     pub root_key_spec: AwsKmsKeySpec,
 }
 
-#[derive(Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
+#[derive(Default, Serialize, Deserialize, Validate, Clone, Debug, PartialEq)]
+#[serde(default, rename_all = "snake_case")]
 pub struct SecretSharingKeychain {}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, EnumIs, ValueEnum)]

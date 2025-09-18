@@ -1,10 +1,13 @@
 use crate::client::client_wasm::Client;
+use crate::conf::{Keychain, SecretSharingKeychain};
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::threshold::service::new_real_threshold_kms;
 use crate::engine::{run_server, Shutdown};
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::util::rate_limiter::RateLimiterConfig;
+use crate::vault::keychain::make_keychain_proxy;
+use crate::vault::storage::make_storage;
 use crate::vault::storage::{
     crypto_material::get_core_signing_key, file::FileStorage, Storage, StorageType,
 };
@@ -51,10 +54,6 @@ pub async fn setup_threshold_no_client<
     rate_limiter_conf: Option<RateLimiterConfig>,
     decryption_mode: Option<DecryptionMode>,
 ) -> HashMap<u32, ServerHandle> {
-    ensure_testing_material_exists().await;
-    #[cfg(feature = "slow_tests")]
-    ensure_default_material_exists().await;
-
     let mut handles = Vec::new();
     tracing::info!("Spawning servers...");
     let num_parties = priv_storage.len();
@@ -397,12 +396,9 @@ pub async fn setup_centralized_no_client<
 >(
     pub_storage: PubS,
     priv_storage: PrivS,
+    backup_vault: Option<Vault>,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> ServerHandle {
-    ensure_testing_material_exists().await;
-    #[cfg(feature = "slow_tests")]
-    ensure_default_material_exists().await;
-
     let ip_addr = DEFAULT_URL.parse().unwrap();
     // we use port numbers above 40001 so that it's easy to identify
     // which cores are running in the centralized mode from the logs
@@ -413,10 +409,16 @@ pub async fn setup_centralized_no_client<
         .unwrap();
     let (tx, rx) = tokio::sync::oneshot::channel();
     let sk = get_core_signing_key(&priv_storage).await.unwrap();
-    let (kms, health_service) =
-        RealCentralizedKms::new(pub_storage, priv_storage, None, sk, rate_limiter_conf)
-            .await
-            .expect("Could not create KMS");
+    let (kms, health_service) = RealCentralizedKms::new(
+        pub_storage,
+        priv_storage,
+        backup_vault,
+        None,
+        sk,
+        rate_limiter_conf,
+    )
+    .await
+    .expect("Could not create KMS");
     let arc_kms = Arc::new(kms);
     let arc_kms_clone = Arc::clone(&arc_kms);
     tokio::spawn(async move {
@@ -453,13 +455,15 @@ pub(crate) async fn setup_centralized<
 >(
     pub_storage: PubS,
     priv_storage: PrivS,
+    backup_vault: Option<Vault>,
     rate_limiter_conf: Option<RateLimiterConfig>,
 ) -> (
     ServerHandle,
     CoreServiceEndpointClient<tonic::transport::Channel>,
 ) {
     let server_handle =
-        setup_centralized_no_client(pub_storage, priv_storage, rate_limiter_conf).await;
+        setup_centralized_no_client(pub_storage, priv_storage, backup_vault, rate_limiter_conf)
+            .await;
     let url = format!(
         "{DEFAULT_PROTOCOL}://{DEFAULT_URL}:{}",
         server_handle.service_port
@@ -473,14 +477,20 @@ pub(crate) async fn setup_centralized<
 /// Read the centralized keys for testing from `centralized_key_path` and construct a KMS
 /// server, client end-point connection (which is needed to communicate with the server) and
 /// an internal client (for constructing requests and validating responses).
-pub async fn centralized_handles(
+pub async fn central_handle_w_vault(
     param: &DKGParams,
     rate_limiter_conf: Option<RateLimiterConfig>,
+    backup_vault: Option<Vault>,
 ) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
     let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
     let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
+
+    ensure_testing_material_exists(None).await;
+    #[cfg(feature = "slow_tests")]
+    ensure_default_material_exists().await;
+
     let (kms_server, kms_client) =
-        setup_centralized(pub_storage, priv_storage, rate_limiter_conf).await;
+        setup_centralized(pub_storage, priv_storage, backup_vault, rate_limiter_conf).await;
     let pub_storage =
         HashMap::from_iter([(1, FileStorage::new(None, StorageType::PUB, None).unwrap())]);
     let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
@@ -490,6 +500,43 @@ pub async fn centralized_handles(
     (kms_server, kms_client, internal_client)
 }
 
+/// Read the centralized keys for testing from `centralized_key_path` and construct a KMS
+/// server, client end-point connection (which is needed to communicate with the server) and
+/// an internal client (for constructing requests and validating responses).
+pub async fn centralized_handles(
+    param: &DKGParams,
+    rate_limiter_conf: Option<RateLimiterConfig>,
+) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
+    let backup_proxy_storage = make_storage(None, StorageType::BACKUP, None, None, None).unwrap();
+    let backup_vault = Vault {
+        storage: backup_proxy_storage,
+        keychain: None,
+    };
+    central_handle_w_vault(param, rate_limiter_conf, Some(backup_vault)).await
+}
+
+pub async fn centralized_custodian_handles(
+    param: &DKGParams,
+    rate_limiter_conf: Option<RateLimiterConfig>,
+) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
+    let pub_proxy_storage = make_storage(None, StorageType::PUB, None, None, None).unwrap();
+    let backup_proxy_storage = make_storage(None, StorageType::BACKUP, None, None, None).unwrap();
+    let keychain = Some(
+        make_keychain_proxy(
+            &Keychain::SecretSharing(SecretSharingKeychain {}),
+            None,
+            None,
+            Some(&pub_proxy_storage),
+        )
+        .await
+        .unwrap(),
+    );
+    let backup_vault = Vault {
+        storage: backup_proxy_storage,
+        keychain,
+    };
+    central_handle_w_vault(param, rate_limiter_conf, Some(backup_vault)).await
+}
 /// Wait for a server to be ready for requests. I.e. wait until it enters the SERVING state.
 /// Note that this method may panic if the server does not become ready within a certain time frame.
 pub async fn await_server_ready(service_name: &str, port: u16) {

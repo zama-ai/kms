@@ -64,6 +64,7 @@ pub(crate) enum RequestIdParsingErr {
     PublicDecResponse,
 
     CustodianContext,
+    BackupRecovery,
 }
 
 impl std::fmt::Display for RequestIdParsingErr {
@@ -104,6 +105,9 @@ impl std::fmt::Display for RequestIdParsingErr {
             }
             RequestIdParsingErr::CustodianContext => {
                 write!(f, "Invalid new custodian context result response ID")
+            }
+            RequestIdParsingErr::BackupRecovery => {
+                write!(f, "Invalid new backup recovery result response ID")
             }
         }
     }

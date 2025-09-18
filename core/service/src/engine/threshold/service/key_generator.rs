@@ -1418,7 +1418,7 @@ impl<
 mod tests {
     use kms_grpc::{
         kms::v1::{FheParameter, KeySetConfig},
-        rpc_types::alloy_to_protobuf_domain,
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
     };
     use rand::rngs::OsRng;
     use threshold_fhe::{
@@ -1503,7 +1503,7 @@ mod tests {
     ) {
         use crate::cryptography::internal_crypto_types::gen_sig_keys;
         let (_pk, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
-        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let session_preparer_manager = SessionPreparerManager::new_test_session();
         let session_preparer = SessionPreparer::new_test_session(
             base_kms.new_instance().await,

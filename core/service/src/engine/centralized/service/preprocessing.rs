@@ -1,7 +1,8 @@
 use crate::{
     engine::{
         base::compute_external_signature_preprocessing,
-        centralized::central_kms::RealCentralizedKms,
+        centralized::central_kms::CentralizedKms,
+        traits::{BackupOperator, ContextManager},
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -41,8 +42,10 @@ use tonic::{Request, Response, Status};
 pub async fn preprocessing_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<KeyGenPreprocRequest>,
 ) -> Result<Response<Empty>, Status> {
     let _permit = service.rate_limiter.start_preproc().await?;
@@ -109,8 +112,10 @@ pub async fn preprocessing_impl<
 pub async fn get_preprocessing_res_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<v1::RequestId>,
 ) -> Result<Response<KeyGenPreprocResult>, Status> {
     tracing::warn!(

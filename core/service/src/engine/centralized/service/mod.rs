@@ -7,7 +7,6 @@
 // - key_gen.rs: Key generation implementation
 
 // Module components
-mod context;
 mod crs_gen;
 mod decryption;
 mod initiator;
@@ -15,7 +14,6 @@ mod key_gen;
 mod preprocessing;
 
 // Re-export all the service components
-pub use context::*;
 pub use crs_gen::*;
 pub use decryption::*;
 pub use initiator::*;
@@ -42,6 +40,7 @@ mod tests {
         let (kms, _health_service) = RealCentralizedKms::new(
             pub_storage.clone(),
             FileStorage::new(path, StorageType::PRIV, None).unwrap(),
+            None,
             None,
             sig_key,
             None,

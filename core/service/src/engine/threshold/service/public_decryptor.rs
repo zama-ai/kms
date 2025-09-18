@@ -726,7 +726,10 @@ impl<
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
-    use kms_grpc::{kms::v1::TypedCiphertext, rpc_types::alloy_to_protobuf_domain};
+    use kms_grpc::{
+        kms::v1::TypedCiphertext,
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
+    };
     use rand::SeedableRng;
     use threshold_fhe::execution::{
         runtime::session::ParameterHandles, small_execution::prss::PRSSSetup,
@@ -842,7 +845,7 @@ mod tests {
         RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
         let param = TEST_PARAM;
         let session_preparer_manager = SessionPreparerManager::new_test_session();
 
