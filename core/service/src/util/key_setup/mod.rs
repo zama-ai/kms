@@ -171,6 +171,7 @@ where
     PubS: StorageForBytes,
     PrivS: StorageForBytes,
 {
+    println!("asdasdasdasdasddfdfsdfsdfsdf");
     // Check if keys already exist with error handling
     let temp: HashMap<RequestId, crate::cryptography::internal_crypto_types::PrivateSigKey> =
         match read_all_data_versioned(priv_storage, &PrivDataType::SigningKey.to_string()).await {
@@ -196,6 +197,7 @@ where
     let (pk, sk) = gen_sig_keys(&mut rng);
 
     // Store public verification key
+    println!("path to PUBPUB storage: {}", pub_storage.info());
     if let Err(e) =
         store_versioned_at_request_id(pub_storage, req_id, &pk, &PubDataType::VerfKey.to_string())
             .await

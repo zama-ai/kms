@@ -237,7 +237,7 @@ Assuming the toml file has been appropriately modified to allow custodian based 
   $ cargo run -- -f <path-to-toml-config-file> backup-restore
   ```
   This call will take the data in the backup and write this to the private storage. 
-  However, this will _NOT_ overwrite anything in the private storage. Hence the restore operation is non-destructive. If data in the private storage has been corrupted and that is why a restore is needed, then the corrupted data must be removed first. 
+  However, this will _NOT_ overwrite anything in the private storage, nor will it delete the old backup. Hence the restore operation is non-destructive. If data in the private storage has been corrupted and that is why a restore is needed, then the corrupted data must be removed first. Furthermore, the backup will have to be removed manually after confirming successful recovery.
   See [pitfalls](#pitfalls) below for details.
   Furthermore, observe that this will remove the decryption key from RAM. Hence the call can only be executed once. If a need arise to execute the call again then the `custodian-backup-recovery` call must be repeated. Also note that the old context should be considered burned after a restoring event and hence a new custodian context must be setup as described in step 1. 
 

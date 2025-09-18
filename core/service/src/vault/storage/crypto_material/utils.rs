@@ -236,6 +236,7 @@ async fn get_unique<
     storage: &S,
     storage_type: U,
 ) -> anyhow::Result<T> {
+    println!("path to storage: {}", storage.info());
     let mut sk_map: HashMap<RequestId, T> =
         read_all_data_versioned(storage, &storage_type.to_string())
             .await
