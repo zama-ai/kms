@@ -557,7 +557,6 @@ pub async fn purge_priv(priv_path: Option<&Path>) {
         )
         .unwrap();
         // Ignore if the dir does not exist
-        println!("Purging private path {:?}", storage.root_dir());
         let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
     }
 }

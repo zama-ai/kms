@@ -12,9 +12,14 @@ use crate::client::tests::threshold::public_decryption_tests::run_decryption_thr
 use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::backup_pke::BackupPrivateKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
+#[cfg(feature = "insecure")]
 use crate::engine::base::INSECURE_PREPROCESSING_ID;
 use crate::util::key_setup::test_tools::purge_backup;
+#[cfg(feature = "insecure")]
+use crate::util::key_setup::test_tools::purge_priv;
+#[cfg(feature = "insecure")]
 use crate::util::key_setup::test_tools::EncryptionConfig;
+#[cfg(feature = "insecure")]
 use crate::util::key_setup::test_tools::TestingPlaintext;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
@@ -23,13 +28,13 @@ use crate::{
     client::tests::threshold::common::threshold_handles_custodian_backup,
     cryptography::{backup_pke::BackupCiphertext, internal_crypto_types::WrappedDKGParams},
     engine::base::derive_request_id,
-    util::key_setup::test_tools::purge_priv,
 };
 use aes_prng::AesRng;
 use kms_grpc::kms::v1::{CustodianRecoveryRequest, Empty, RecoveryRequest};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{kms::v1::FheParameter, rpc_types::PrivDataType, RequestId};
+#[cfg(feature = "insecure")]
 use rand::SeedableRng;
 use serial_test::serial;
 use std::collections::HashMap;
@@ -382,6 +387,8 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await;
 }
 
+// Right now only used by insecure tests
+#[allow(dead_code)]
 async fn run_custodian_recovery_init(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) -> Vec<RecoveryRequest> {
@@ -409,6 +416,8 @@ async fn run_custodian_recovery_init(
     res
 }
 
+// Right now only used by insecure tests
+#[allow(dead_code)]
 async fn run_custodian_backup_recovery(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     req: &HashMap<usize, CustodianRecoveryRequest>,
@@ -438,6 +447,8 @@ async fn run_custodian_backup_recovery(
     res
 }
 
+// Right now only used by insecure tests
+#[allow(dead_code)]
 async fn run_restore_from_backup(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) -> Vec<Empty> {
@@ -465,6 +476,8 @@ async fn run_restore_from_backup(
     res
 }
 
+// Right now only used by insecure tests
+#[allow(dead_code)]
 async fn emulate_custodian(
     rng: &mut AesRng,
     test_path: Option<&std::path::Path>,
