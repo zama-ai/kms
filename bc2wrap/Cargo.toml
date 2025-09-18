@@ -7,5 +7,6 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+# IMPORTANT: Maintain alphabetical order when adding new dependencies
 bincode.workspace = true
 serde.workspace = true

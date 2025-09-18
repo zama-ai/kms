@@ -29,6 +29,20 @@ license = "BSD-3-Clause-Clear"
 version = "0.11.0"
 
 [workspace.dependencies]
+# IMPORTANT: When adding new dependencies or bumping versions, evaluate the following:
+# 1. Is the owner suspicious? (limited to one or few people/small companies in risky jurisdictions)
+# 2. Is the crate not particularly popular? (check download counts on crates.io)
+# 3. Is there an unusual jump in package versions? (e.g., 0.1.0 -> 3.0.0)
+# 4. Is documentation lacking? (check docs.rs and GitHub repo)
+# 5. For crypto/security-critical deps: Has it been audited? Is it from a reputable org?
+# 
+# Risk levels:
+# - LOW RISK: Well-known maintainers, high popularity (>1M downloads), good docs
+# - MEDIUM RISK: Individual maintainers, low popularity, security-critical, or needs audit
+# - HIGH RISK: Deprecated, suspicious ownership, undocumented, or major version jumps
+#
+# MAINTAIN ALPHABETICAL ORDER for all dependencies within each section
+
 # Internal Zama modules
 backward-compatibility = { path = "./backward-compatibility" }  # Internal backward compatibility testing
 bc2wrap = { path = "./bc2wrap" }  # Internal bincode wrapper - MEDIUM RISK: Internal custom implementation
@@ -52,7 +66,7 @@ assert_cmd = "=2.0.17"  # Assert command for testing - LOW RISK: assert-rs team,
 async-std = { version = "=1.13.1", features = ["attributes", "tokio1"] }  # Async runtime for testing - LOW RISK: async-rs team, 10M+ downloads
 async-trait = "=0.1.88"  # Async trait support - LOW RISK: dtolnay, widely used
 async_cell = "0.2.2"  # Async cell implementation - MEDIUM RISK: Individual maintainer, very low popularity, consider alternatives
-attestation-doc-validation = { version = "=0.10.0" }  # AWS Nitro attestation validation - MEDIUM RISK: Security-critical, low popularity, needs audit
+attestation-doc-validation = { version = "=0.10.0" }  # AWS Nitro attestation validation - LOW RISK: Evervault (reputable security company), security-critical but trusted
 aws-config = { version = "=1.5.9" }  # AWS SDK configuration - LOW RISK: Official AWS SDK, actively maintained
 aws-nitro-enclaves-nsm-api = { version = "=0.4.0" }  # AWS Nitro Enclaves NSM API - MEDIUM RISK: Security-critical enclave operations, needs audit
 aws-sdk-kms = { version = "=1.50.0" }  # AWS KMS client - LOW RISK: Official AWS SDK for key management

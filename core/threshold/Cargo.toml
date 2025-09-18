@@ -9,6 +9,7 @@ license.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+# IMPORTANT: Maintain alphabetical order when adding new dependencies
 aes.workspace = true
 aes-prng.workspace = true
 anyhow.workspace = true
@@ -81,6 +82,7 @@ zeroize.workspace = true
 tonic-build.workspace = true
 
 [dev-dependencies]
+# IMPORTANT: Maintain alphabetical order when adding new dependencies
 async-std.workspace = true
 criterion.workspace = true
 ctor.workspace = true
