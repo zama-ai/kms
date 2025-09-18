@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
+use kms_grpc::identifiers::ContextId;
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
 use kms_grpc::{
@@ -132,6 +133,19 @@ pub(crate) fn parse_proto_request_id(
     request_id: &kms_grpc::kms::v1::RequestId,
     id_type: RequestIdParsingErr,
 ) -> Result<RequestId, BoxedStatus> {
+    request_id.try_into().map_err(|_| {
+        BoxedStatus::from(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            format!("{id_type}: {request_id:?}"),
+        ))
+    })
+}
+
+// TODO we may need to generalize this into other types of IDs
+pub(crate) fn parse_proto_context_id(
+    request_id: &kms_grpc::kms::v1::RequestId,
+    id_type: RequestIdParsingErr,
+) -> Result<ContextId, BoxedStatus> {
     request_id.try_into().map_err(|_| {
         BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,

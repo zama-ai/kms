@@ -3,6 +3,7 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
 // === External Crates ===
 use kms_grpc::{
+    identifiers::ContextId,
     kms::v1::{self, Empty, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
     rpc_types::{optional_protobuf_to_alloy_domain, PubDataType},
     RequestId,
@@ -216,13 +217,13 @@ impl<
         preproc_handle_w_mode: PreprocHandleWithMode,
         req_id: RequestId,
         eip712_domain: &alloy_sol_types::Eip712Domain,
-        context_id: Option<RequestId>,
+        context_id: Option<ContextId>,
         permit: OwnedSemaphorePermit,
     ) -> anyhow::Result<()> {
-        let session_preparer = self
-            .session_preparer_getter
-            .get(&context_id.unwrap_or(*DEFAULT_MPC_CONTEXT))
-            .await?;
+        // TODO(zama-ai/kms-internal/issues/2758)
+        // remove the default context when all of context is ready
+        let context_id = context_id.unwrap_or(*DEFAULT_MPC_CONTEXT);
+        let session_preparer = self.session_preparer_getter.get(&context_id).await?;
 
         //Retrieve the right metric tag
         let op_tag = match (
@@ -273,7 +274,7 @@ impl<
         let base_session = {
             let session_id = req_id.derive_session_id()?;
             session_preparer
-                .make_base_session(session_id, NetworkMode::Async)
+                .make_base_session(session_id, context_id, NetworkMode::Async)
                 .await?
         };
 
@@ -1510,8 +1511,9 @@ mod tests {
             Arc::new(RwLock::new(None)),
             Arc::new(RwLock::new(None)),
         );
+        let context_id = *DEFAULT_MPC_CONTEXT;
         session_preparer_manager
-            .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
+            .insert(context_id, session_preparer)
             .await;
         let kg = RealKeyGenerator::<ram::RamStorage, ram::RamStorage, KG>::init_ram_keygen(
             base_kms,
@@ -1528,10 +1530,7 @@ mod tests {
         // We need to setup the preprocessor metastore so that keygen will pass
         for prep_id in &prep_ids {
             let session_id = prep_id.derive_session_id().unwrap();
-            let session_preparer = session_preparer_manager
-                .get(&DEFAULT_MPC_CONTEXT)
-                .await
-                .unwrap();
+            let session_preparer = session_preparer_manager.get(&context_id).await.unwrap();
             let dummy_prep = BucketMetaStore {
                 preprocessing_id: *prep_id,
                 external_signature: vec![],
@@ -1540,7 +1539,7 @@ mod tests {
                 >::new(
                     42,
                     &session_preparer
-                        .make_base_session(session_id, NetworkMode::Sync)
+                        .make_base_session(session_id, context_id, NetworkMode::Sync)
                         .await
                         .unwrap(),
                 )))),
