@@ -9,7 +9,9 @@ readme = "README.md"
 # Inherited from repository root Cargo.toml
 
 [dependencies]
-# IMPORTANT: Maintain alphabetical order when adding new dependencies
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
 anyhow.workspace = true
 clap.workspace = true
 config.workspace = true

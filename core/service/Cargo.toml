@@ -33,7 +33,9 @@ name = "kms-custodian"
 path = "src/bin/kms-custodian.rs"
 
 [dependencies]
-# IMPORTANT: Maintain alphabetical order when adding new dependencies
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
 aes.workspace = true
 aes-gcm.workspace = true
 aes-gcm-siv.workspace = true
@@ -116,7 +118,9 @@ x509-parser = { workspace = true, optional = true }
 zeroize.workspace = true
 
 [dev-dependencies]
-# IMPORTANT: Maintain alphabetical order when adding new dependencies
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
 assert_cmd.workspace = true
 backward-compatibility = { workspace = true, features = ["load", "tests"] }
 proptest.workspace = true

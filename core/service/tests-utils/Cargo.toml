@@ -10,7 +10,9 @@ license.workspace = true
 proc-macro = true
 
 [dependencies]
-# IMPORTANT: Maintain alphabetical order when adding new dependencies
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
 proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true

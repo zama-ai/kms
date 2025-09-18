@@ -29,7 +29,17 @@ license = "BSD-3-Clause-Clear"
 version = "0.11.0"
 
 [workspace.dependencies]
-# IMPORTANT: When adding new dependencies or bumping versions, evaluate the following:
+# ⚠️ WORKSPACE DEPENDENCY MANAGEMENT BEST PRACTICES ⚠️
+# 
+# 1. ADD ALL NEW DEPENDENCIES HERE in the workspace root, NOT in individual member crates
+# 2. Member crates should only reference workspace dependencies using .workspace = true
+# 3. This centralized approach ensures:
+#    - Consistent versions across all crates
+#    - Easier security audits and updates
+#    - Prevention of version conflicts
+#    - Single source of truth for dependency management
+#
+# SECURITY EVALUATION CHECKLIST for new dependencies:
 # 1. Is the owner suspicious? (limited to one or few people/small companies in risky jurisdictions)
 # 2. Is the crate not particularly popular? (check download counts on crates.io)
 # 3. Is there an unusual jump in package versions? (e.g., 0.1.0 -> 3.0.0)
