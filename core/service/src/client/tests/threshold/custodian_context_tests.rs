@@ -1,22 +1,18 @@
 use crate::client::client_wasm::Client;
 use crate::client::tests::threshold::common::threshold_handles_custodian_backup;
-use crate::consts::KEY_PATH_PREFIX;
 use crate::consts::SIGNING_KEY_ID;
-use crate::cryptography::backup_pke::BackupCiphertext;
-use crate::util::file_handling::safe_read_element_versioned;
+use crate::util::key_setup::test_tools::backup_exists;
+use crate::util::key_setup::test_tools::backup_files;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
 };
 use kms_grpc::kms::v1::{Empty, NewCustodianContextRequest};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::BackupDataType;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::{kms::v1::FheParameter, RequestId};
 use serial_test::serial;
 use std::collections::HashMap;
-use std::path::Path;
-use std::path::PathBuf;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
@@ -180,45 +176,4 @@ async fn launch_new_cus(
     }
     assert_eq!(responses_gen.len(), amount_parties);
     responses_gen
-}
-
-async fn backup_exists(amount_parties: usize, test_path: Option<&Path>) -> bool {
-    let mut backup_exists = false;
-    for cur_role in 1..=amount_parties {
-        let base_path = base_backup_path(cur_role, test_path);
-        let mut files = tokio::fs::read_dir(base_path).await.unwrap();
-        if files.next_entry().await.unwrap().is_some() {
-            backup_exists = true;
-        }
-    }
-    backup_exists
-}
-
-pub(crate) async fn backup_files(
-    amount_parties: usize,
-    test_path: Option<&Path>,
-    backup_id: &RequestId,
-    file_req: &RequestId,
-    data_type: &str,
-) -> Vec<BackupCiphertext> {
-    let mut files = Vec::new();
-    for cur_role in 1..=amount_parties {
-        let coerced_path = base_backup_path(cur_role, test_path)
-            .join(backup_id.to_string())
-            .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
-            .join(file_req.to_string());
-        // Attempt to read the file
-        if let Ok(file) = safe_read_element_versioned(coerced_path).await {
-            files.push(file);
-        }
-    }
-    files
-}
-
-fn base_backup_path(cur_role_idx: usize, test_path: Option<&Path>) -> PathBuf {
-    match test_path {
-        Some(p) => p,
-        None => Path::new(KEY_PATH_PREFIX),
-    }
-    .join(format!("BACKUP-p{cur_role_idx}"))
 }

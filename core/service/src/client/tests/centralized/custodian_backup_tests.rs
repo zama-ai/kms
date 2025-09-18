@@ -4,23 +4,19 @@ use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::test_tools::centralized_custodian_handles;
 #[cfg(feature = "insecure")]
 use crate::client::tests::centralized::crs_gen_tests::run_crs_centralized;
-use crate::client::tests::centralized::custodian_context_tests::{
-    backup_files, run_new_cus_context,
-};
+use crate::client::tests::centralized::custodian_context_tests::run_new_cus_context;
 use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
 use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
 use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::backup_pke::BackupPrivateKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::util::key_setup::test_tools::purge_backup;
+use crate::util::key_setup::test_tools::{backup_files, purge_backup};
 use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
 use crate::{
-    client::tests::common::TIME_TO_SLEEP_MS,
-    cryptography::{backup_pke::BackupCiphertext, internal_crypto_types::WrappedDKGParams},
-    engine::base::derive_request_id,
-    util::key_setup::test_tools::purge_priv,
+    client::tests::common::TIME_TO_SLEEP_MS, cryptography::internal_crypto_types::WrappedDKGParams,
+    engine::base::derive_request_id, util::key_setup::test_tools::purge_priv,
 };
 use aes_prng::AesRng;
 use kms_grpc::kms::v1::{CustodianRecoveryRequest, Empty, RecoveryRequest};
@@ -57,7 +53,9 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Check that signing key was backed up, since it will always be there
-    let _non_custodian_backup: BackupCiphertext = backup_files(
+    let _non_custodian_backup = backup_files(
+        1,
+        test_path,
         &req_new_cus,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
@@ -76,6 +74,8 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     let (_kms_server, _kms_client, _internal_client) =
         centralized_custodian_handles(&dkg_param, None, test_path).await;
     let _reread_backup = backup_files(
+        1,
+        test_path,
         &req_new_cus,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
@@ -118,9 +118,16 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     .await;
     run_crs_centralized(&mut kms_client, &internal_client, &crs_req, param, true).await;
     // Check that the new CRS was backed up
-    let crss = backup_files(&req_new_cus, &crs_req, &PrivDataType::CrsInfo.to_string()).await;
+    let crss = backup_files(
+        1,
+        test_path,
+        &req_new_cus,
+        &crs_req,
+        &PrivDataType::CrsInfo.to_string(),
+    )
+    .await;
     // Check that the format is correct
-    assert!(crss.priv_data_type == PrivDataType::CrsInfo);
+    assert!(crss[0].priv_data_type == PrivDataType::CrsInfo);
 
     drop(kms_client);
     drop(internal_client);
@@ -129,8 +136,14 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     // Check that the backup is still there an unmodified
     let (_kms_server, _kms_client, _internal_client) =
         centralized_custodian_handles(&dkg_param, None, test_path).await;
-    let reread_crss =
-        backup_files(&req_new_cus, &crs_req, &PrivDataType::CrsInfo.to_string()).await;
+    let reread_crss = backup_files(
+        1,
+        test_path,
+        &req_new_cus,
+        &crs_req,
+        &PrivDataType::CrsInfo.to_string(),
+    )
+    .await;
     assert_eq!(reread_crss, crss);
 }
 

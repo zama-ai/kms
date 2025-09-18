@@ -1,18 +1,15 @@
 use crate::client::client_wasm::Client;
 use crate::client::test_tools::centralized_custodian_handles;
-use crate::consts::KEY_PATH_PREFIX;
 use crate::consts::SIGNING_KEY_ID;
-use crate::cryptography::backup_pke::BackupCiphertext;
-use crate::util::file_handling::safe_read_element_versioned;
+use crate::util::key_setup::test_tools::backup_exists;
+use crate::util::key_setup::test_tools::backup_files;
 use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::BackupDataType;
 use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::{kms::v1::FheParameter, RequestId};
 use serial_test::serial;
-use std::path::Path;
 use tonic::transport::Channel;
 
 #[tracing_test::traced_test]
@@ -45,8 +42,10 @@ pub(crate) async fn new_custodian_context(
     )
     .await;
     // Check that the files are backed up
-    assert!(backup_exists().await);
+    assert!(backup_exists(1, test_path).await);
     let first_sig_keys = backup_files(
+        1,
+        test_path,
         &req_new_cus,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
@@ -62,6 +61,8 @@ pub(crate) async fn new_custodian_context(
     )
     .await;
     let second_sig_keys = backup_files(
+        1,
+        test_path,
         &req_new_cus2,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
@@ -78,6 +79,8 @@ pub(crate) async fn new_custodian_context(
     let (_kms_server, _kms_client, _internal_client) =
         centralized_custodian_handles(&dkg_param, None, test_path).await;
     let reboot_sig_keys = backup_files(
+        1,
+        test_path,
         &req_new_cus2,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
@@ -104,28 +107,4 @@ pub(crate) async fn run_new_cus_context(
         .await;
     assert!(response.is_ok());
     mnemonics
-}
-
-async fn backup_exists() -> bool {
-    let base_path = Path::new(KEY_PATH_PREFIX).join("BACKUP");
-    let mut files = tokio::fs::read_dir(base_path).await.unwrap();
-    files.next_entry().await.unwrap().is_some()
-}
-
-pub(crate) async fn backup_files(
-    backup_id: &RequestId,
-    file_req: &RequestId,
-    data_type: &str,
-) -> BackupCiphertext {
-    let coerced_path = Path::new(KEY_PATH_PREFIX)
-        .join("BACKUP")
-        .join(backup_id.to_string())
-        .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
-        .join(file_req.to_string());
-    // Attempt to read the file
-    if let Ok(file) = safe_read_element_versioned(coerced_path.clone()).await {
-        file
-    } else {
-        panic!("Failed to read backup file {:?}", coerced_path);
-    }
 }

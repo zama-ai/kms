@@ -3,7 +3,6 @@ use crate::backup::operator::InternalRecoveryRequest;
 use crate::backup::seed_phrase::custodian_from_seed_phrase;
 #[cfg(feature = "insecure")]
 use crate::client::tests::threshold::crs_gen_tests::run_crs;
-use crate::client::tests::threshold::custodian_context_tests::backup_files;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
 #[cfg(feature = "insecure")]
 use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
@@ -14,13 +13,13 @@ use crate::cryptography::backup_pke::BackupPrivateKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 #[cfg(feature = "insecure")]
 use crate::engine::base::INSECURE_PREPROCESSING_ID;
-use crate::util::key_setup::test_tools::purge_backup;
 #[cfg(feature = "insecure")]
 use crate::util::key_setup::test_tools::purge_priv;
 #[cfg(feature = "insecure")]
 use crate::util::key_setup::test_tools::EncryptionConfig;
 #[cfg(feature = "insecure")]
 use crate::util::key_setup::test_tools::TestingPlaintext;
+use crate::util::key_setup::test_tools::{backup_files, purge_backup};
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
 use crate::{

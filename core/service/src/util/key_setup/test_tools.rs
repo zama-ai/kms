@@ -1,3 +1,5 @@
+use crate::cryptography::backup_pke::BackupCiphertext;
+use crate::util::file_handling::safe_read_element_versioned;
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
@@ -5,7 +7,7 @@ use crate::vault::storage::{
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
-use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
+use kms_grpc::rpc_types::{BackupDataType, PubDataType, WrappedPublicKeyOwned};
 use kms_grpc::RequestId;
 use serde::de::DeserializeOwned;
 use std::path::Path;
@@ -586,14 +588,14 @@ pub async fn purge_pub(pub_path: Option<&Path>) {
 /// is also called, as it deletes all the custodian recovery info.
 pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
     if amount_parties == 1 {
-        let storage = FileStorage::new(backup_path, StorageType::PUB, None).unwrap();
+        let storage = FileStorage::new(backup_path, StorageType::BACKUP, None).unwrap();
         // Ignore if the dir does not exist
         let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
     } else {
         for cur_party in 1..=amount_parties {
             let storage = FileStorage::new(
                 backup_path,
-                StorageType::PUB,
+                StorageType::BACKUP,
                 Some(Role::indexed_from_one(cur_party)),
             )
             .unwrap();
@@ -601,6 +603,74 @@ pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
             let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
         }
     }
+}
+
+pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) -> bool {
+    let mut backup_exists = false;
+    if amount_parties == 1 {
+        let storage = FileStorage::new(backup_path, StorageType::BACKUP, None).unwrap();
+        let base_path = storage.root_dir();
+        let mut files = tokio::fs::read_dir(base_path).await.unwrap();
+        if files.next_entry().await.unwrap().is_some() {
+            backup_exists = true;
+        }
+    } else {
+        for cur_party in 1..=amount_parties {
+            let storage = FileStorage::new(
+                backup_path,
+                StorageType::BACKUP,
+                Some(Role::indexed_from_one(cur_party)),
+            )
+            .unwrap();
+            let base_path = storage.root_dir();
+            let mut files = tokio::fs::read_dir(base_path).await.unwrap();
+            if files.next_entry().await.unwrap().is_some() {
+                backup_exists = true;
+            }
+        }
+    }
+    backup_exists
+}
+
+pub async fn backup_files(
+    amount_parties: usize,
+    test_path: Option<&Path>,
+    backup_id: &RequestId,
+    file_req: &RequestId,
+    data_type: &str,
+) -> Vec<BackupCiphertext> {
+    let mut files = Vec::new();
+    if amount_parties == 1 {
+        let storage = FileStorage::new(test_path, StorageType::BACKUP, None).unwrap();
+        let coerced_path = storage
+            .root_dir()
+            .join(backup_id.to_string())
+            .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
+            .join(file_req.to_string());
+        // Attempt to read the file
+        if let Ok(file) = safe_read_element_versioned(coerced_path).await {
+            files.push(file);
+        }
+    } else {
+        for cur_role in 1..=amount_parties {
+            let storage = FileStorage::new(
+                test_path,
+                StorageType::BACKUP,
+                Some(Role::indexed_from_one(cur_role)),
+            )
+            .unwrap();
+            let coerced_path = storage
+                .root_dir()
+                .join(backup_id.to_string())
+                .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
+                .join(file_req.to_string());
+            // Attempt to read the file
+            if let Ok(file) = safe_read_element_versioned(coerced_path).await {
+                files.push(file);
+            }
+        }
+    }
+    files
 }
 
 /// Remove all the data needed to perform custodian backups.
