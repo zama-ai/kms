@@ -259,7 +259,6 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         test_path,
     )
     .await;
-
     let mnemnonics = run_new_cus_context(
         &kms_clients,
         &mut internal_client,

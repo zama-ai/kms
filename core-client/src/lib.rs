@@ -528,6 +528,7 @@ pub struct RecoveryInitParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+
 pub struct RecoveryParameters {
     #[clap(long, short = 'i')]
     pub custodian_context_id: RequestId,
