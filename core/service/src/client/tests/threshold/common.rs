@@ -65,6 +65,7 @@ async fn threshold_handles_w_vaults(
             ThresholdSigningKeyConfig::AllParties(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
             ),
+            true,
         )
         .await
         .unwrap();
