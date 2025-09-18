@@ -48,6 +48,10 @@ impl<Z: BaseRing> Ring for ResiduePolyF3<Z> {
         }
         res
     }
+
+    fn mul_by_u128(self, other: u128) -> Self {
+        self * Z::from_u128(other)
+    }
 }
 
 impl<Z: Clone> ResiduePolyF3<Z> {

@@ -444,9 +444,9 @@ fn setup_threshold_store() -> (
         keyset.public_keys.server_key.clone().into_raw_parts();
 
     let threshold_fhe_keys = ThresholdFheKeys {
-        private_keys: key_shares[0].to_owned(),
-        integer_server_key,
-        sns_key,
+        private_keys: Arc::new(key_shares[0].to_owned()),
+        integer_server_key: Arc::new(integer_server_key),
+        sns_key: sns_key.map(Arc::new),
         decompression_key: None,
         meta_data: dummy_info(),
     };
