@@ -1,3 +1,4 @@
+use crate::client::client_wasm::Client;
 use crate::client::test_tools::centralized_handles;
 use crate::client::tests::common::{assert_plaintext, TIME_TO_SLEEP_MS};
 #[cfg(feature = "slow_tests")]
@@ -12,10 +13,12 @@ use crate::util::key_setup::test_tools::{
     compute_cipher_from_stored_key, EncryptionConfig, TestingPlaintext,
 };
 use kms_grpc::kms::v1::{Empty, TypedCiphertext};
+use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::RequestId;
 use serial_test::serial;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
+use tonic::transport::Channel;
 
 #[tokio::test]
 #[serial]
@@ -135,6 +138,26 @@ pub(crate) async fn decryption_centralized(
     assert!(parallelism > 0);
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, kms_client, mut internal_client) = centralized_handles(dkg_params, None).await;
+    run_decryption_centralized(
+        &kms_client,
+        &mut internal_client,
+        key_id,
+        msgs,
+        encryption_config,
+        parallelism,
+    )
+    .await;
+    kms_server.assert_shutdown().await;
+}
+
+pub async fn run_decryption_centralized(
+    kms_client: &CoreServiceEndpointClient<Channel>,
+    internal_client: &mut Client,
+    key_id: &RequestId,
+    msgs: Vec<TestingPlaintext>,
+    encryption_config: EncryptionConfig,
+    parallelism: usize,
+) {
     let mut cts = Vec::new();
     for (i, msg) in msgs.clone().into_iter().enumerate() {
         let (ct, ct_format, fhe_type) =
@@ -147,12 +170,10 @@ pub(crate) async fn decryption_centralized(
         };
         cts.push(ctt);
     }
-
     // build parallel requests
     let reqs: Vec<_> = (0..parallelism)
         .map(|j: usize| {
-            let request_id = derive_request_id(&format!("TEST_DEC_ID_{j}")).unwrap();
-
+            let request_id = derive_request_id(&format!("TEST_DEC_ID_{key_id}_{j}")).unwrap();
             internal_client
                 .public_decryption_request(cts.clone(), &dummy_domain(), &request_id, key_id)
                 .unwrap()
@@ -255,6 +276,4 @@ pub(crate) async fn decryption_centralized(
             assert_plaintext(&msgs[i], plaintext);
         }
     }
-
-    kms_server.assert_shutdown().await;
 }

@@ -1,10 +1,9 @@
 use crate::client::client_wasm::Client;
+use crate::client::test_tools::centralized_custodian_handles;
 use crate::consts::KEY_PATH_PREFIX;
 use crate::consts::SIGNING_KEY_ID;
 use crate::cryptography::backup_pke::BackupCiphertext;
 use crate::util::file_handling::safe_read_element_versioned;
-use crate::util::key_setup::test_tools::purge_backup;
-use crate::util::key_setup::test_tools::purge_recovery_info;
 use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
 };
@@ -31,16 +30,12 @@ pub(crate) async fn new_custodian_context(
     let req_new_cus: RequestId = derive_request_id("test_new_custodian_context_central").unwrap();
     let req_new_cus2: RequestId =
         derive_request_id("test_new_custodian_context_central_2").unwrap();
-    purge_backup(None, 1).await;
-    purge_recovery_info(None, 1).await;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
 
     let dkg_param: WrappedDKGParams = parameter.into();
-    // The threshold handle should only be started after the storage is purged
-    // since the threshold parties will load the CRS from private storage
     let (kms_server, mut kms_client, mut internal_client) =
-        crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
-    // Check there is currently no backup
-    assert!(!backup_exists().await);
+        centralized_custodian_handles(&dkg_param, None, test_path).await;
     run_new_cus_context(
         &mut kms_client,
         &mut internal_client,
@@ -81,7 +76,7 @@ pub(crate) async fn new_custodian_context(
     drop(kms_client);
     drop(internal_client);
     let (_kms_server, _kms_client, _internal_client) =
-        crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
+        centralized_custodian_handles(&dkg_param, None, test_path).await;
     let reboot_sig_keys = backup_files(
         &req_new_cus2,
         &SIGNING_KEY_ID,
