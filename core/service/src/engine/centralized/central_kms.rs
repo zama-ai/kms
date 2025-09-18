@@ -503,7 +503,7 @@ pub struct CentralizedKms<
     // Map storing ongoing public decryption requests.
     pub(crate) pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     // Map storing ongoing user decryption requests.
-    pub(crate) user_decrypt_meta_map: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
+    pub(crate) user_dec_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     // Map storing ongoing CRS generation requests.
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     pub(crate) custodian_meta_map: Arc<RwLock<CustodianMetaStore>>,
@@ -1035,7 +1035,7 @@ impl<
                     DEC_CAPACITY,
                     MIN_DEC_CACHE,
                 ))),
-                user_decrypt_meta_map: Arc::new(RwLock::new(MetaStore::new(
+                user_dec_meta_store: Arc::new(RwLock::new(MetaStore::new(
                     DEC_CAPACITY,
                     MIN_DEC_CACHE,
                 ))),
@@ -1073,7 +1073,7 @@ impl<
 
     /// Get a reference to the user decryption MetaStore
     pub fn get_user_dec_meta_store(&self) -> &Arc<RwLock<MetaStore<UserDecryptCallValues>>> {
-        &self.user_decrypt_meta_map
+        &self.user_dec_meta_store
     }
 
     /// Get a reference to the CRS generation MetaStore

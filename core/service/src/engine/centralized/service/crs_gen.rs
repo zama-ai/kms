@@ -226,7 +226,7 @@ mod tests {
     #[tokio::test]
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(1234);
-        let kms = setup_central_test_kms(&mut rng).await;
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_crs_gen_sunshine").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = CrsGenRequest {
@@ -245,7 +245,7 @@ mod tests {
     #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(1234);
-        let kms = setup_central_test_kms(&mut rng).await;
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_crs_gen_already_exists").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request = CrsGenRequest {
@@ -265,7 +265,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(1234);
-        let kms = setup_central_test_kms(&mut rng).await;
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_crs_gen_invalid_argument").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
 
@@ -355,7 +355,7 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         let mut rng = AesRng::seed_from_u64(1234);
-        let kms = setup_central_test_kms(&mut rng).await;
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let bad_req_id = derive_request_id("test_crs_gen_not_found").unwrap();
         let get_result = get_crs_gen_result_impl(&kms, Request::new(bad_req_id.into())).await;
         assert_eq!(get_result.unwrap_err().code(), tonic::Code::NotFound);
@@ -364,7 +364,7 @@ mod tests {
     #[tokio::test]
     async fn resource_exhausted() {
         let mut rng = AesRng::seed_from_u64(1234);
-        let mut kms = setup_central_test_kms(&mut rng).await;
+        let (mut kms, _) = setup_central_test_kms(&mut rng).await;
         kms.set_bucket_size(1); // set bucket size to 1 to trigger resource exhausted error
         let req_id = derive_request_id("test_crs_gen_resource_exhausted").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();

@@ -72,18 +72,30 @@ pub async fn user_decrypt_impl<
         }
     }
 
-    // everything after this point should result in an abort error
+    // if the request already exists, then return the AlreadyExists error
+    // otherwise attempt to insert it to the meta store
     {
-        let mut guarded_meta_store = service.user_decrypt_meta_map.write().await;
+        let mut guarded_meta_store = service.user_dec_meta_store.write().await;
+        if guarded_meta_store.exists(&request_id) {
+            return Err(tonic::Status::new(
+                tonic::Code::AlreadyExists,
+                format!(
+                    "User decryption request with ID {} already exists",
+                    request_id
+                ),
+            ));
+        }
+
+        // everything after this point should result in an abort error
         ok_or_tonic_abort(
             guarded_meta_store.insert(&request_id),
-            "Could not insert user decryption into meta store".to_string(),
+            "Could not insert user decryption request ID into meta store".to_string(),
         )?;
     }
 
     timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
-    let meta_store = Arc::clone(&service.user_decrypt_meta_map);
+    let meta_store = Arc::clone(&service.user_dec_meta_store);
     let sig_key = Arc::clone(&service.base_kms.sig_key);
     let crypto_storage = service.crypto_storage.clone();
     let mut rng = service.base_kms.new_rng().await;
@@ -181,7 +193,7 @@ pub async fn get_user_decryption_result_impl<
         parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::UserDecResponse)?;
 
     let status = {
-        let guarded_meta_store = service.user_decrypt_meta_map.read().await;
+        let guarded_meta_store = service.user_dec_meta_store.read().await;
         guarded_meta_store.retrieve(&request_id)
     };
 
@@ -261,12 +273,24 @@ pub async fn public_decrypt_impl<
         }
     }
 
-    // everything after this point should result in an abort error
+    // if the request already exists, then return the AlreadyExists error
+    // otherwise attempt to insert it to the meta store
     {
         let mut guarded_meta_store = service.pub_dec_meta_store.write().await;
+        if guarded_meta_store.exists(&request_id) {
+            return Err(tonic::Status::new(
+                tonic::Code::AlreadyExists,
+                format!(
+                    "Public decryption request with ID {} already exists",
+                    request_id
+                ),
+            ));
+        }
+
+        // everything after this point should result in an abort error
         ok_or_tonic_abort(
             guarded_meta_store.insert(&request_id),
-            "Could not insert decryption into meta store".to_string(),
+            "Could not insert public decryption request ID into meta store".to_string(),
         )?;
     }
 
@@ -465,6 +489,7 @@ pub(crate) mod tests {
     };
 
     use crate::{
+        cryptography::internal_crypto_types::PublicSigKey,
         engine::centralized::{
             central_kms::RealCentralizedKms,
             service::key_gen::tests::{setup_test_kms_with_preproc, test_standard_keygen},
@@ -481,9 +506,10 @@ pub(crate) mod tests {
     ) -> (
         RealCentralizedKms<RamStorage, RamStorage>,
         tfhe::CompactPublicKey,
+        PublicSigKey,
     ) {
         let preproc_id: RequestId = RequestId::new_random(rng);
-        let kms = setup_test_kms_with_preproc(rng, &preproc_id).await;
+        let (kms, verf_key) = setup_test_kms_with_preproc(rng, &preproc_id).await;
 
         // at this point the key is generated
         test_standard_keygen(&kms, key_id, &preproc_id).await;
@@ -504,7 +530,7 @@ pub(crate) mod tests {
         tfhe::set_server_key(key);
         let WrappedPublicKeyOwned::Compact(pk) = wrapped_pk;
 
-        (kms, pk)
+        (kms, pk, verf_key)
     }
 
     pub(crate) fn make_test_msg_ct(
@@ -554,7 +580,7 @@ mod tests_public_decryption {
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(1234);
         let key_id = derive_request_id("keyid_decryption_sunshine").unwrap();
-        let (kms, pk) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let (kms, pk, _) = setup_test_kms_with_key(&mut rng, &key_id).await;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request_id = derive_request_id("req_id_decryption_sunshine").unwrap();
         let (msg, ciphertexts) = make_test_msg_ct(&pk, true);
@@ -587,7 +613,7 @@ mod tests_public_decryption {
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(1234);
         let key_id = derive_request_id("keyid_decryption_invalid_args").unwrap();
-        let (kms, pk) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let (kms, pk, _) = setup_test_kms_with_key(&mut rng, &key_id).await;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request_id = derive_request_id("req_id_decryption_invalid_args").unwrap();
         let (_msg, ct) = make_test_msg_ct(&pk, true);
@@ -670,7 +696,7 @@ mod tests_public_decryption {
     async fn not_found() {
         let mut rng = AesRng::seed_from_u64(1234);
         let key_id = derive_request_id("keyid_decryption_not_found").unwrap();
-        let (kms, pk) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let (kms, pk, _) = setup_test_kms_with_key(&mut rng, &key_id).await;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request_id = derive_request_id("req_id_decryption_not_found").unwrap();
         let (_msg, ct) = make_test_msg_ct(&pk, true);
@@ -711,13 +737,14 @@ mod tests_public_decryption {
     async fn resource_exhausted() {
         let mut rng = AesRng::seed_from_u64(1234);
         let key_id = derive_request_id("keyid_decryption_resource_exhausted").unwrap();
-        let (mut kms, pk) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let (mut kms, pk, _) = setup_test_kms_with_key(&mut rng, &key_id).await;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let request_id = derive_request_id("req_id_decryption_resource_exhausted").unwrap();
         let (_msg, ct) = make_test_msg_ct(&pk, true);
 
-        // set the rate limiter bucket size to 1
-        kms.set_bucket_size(1);
+        // set the rate limiter bucket size to 0
+        // it won't work if we just set it to 1 like crs/keygen because decryption only uses 1 token
+        kms.set_bucket_size(0);
 
         // make a normal request then it should fail
         {
@@ -735,5 +762,322 @@ mod tests_public_decryption {
                 .unwrap_err();
             assert_eq!(err.code(), tonic::Code::ResourceExhausted);
         }
+    }
+
+    #[tokio::test]
+    async fn already_exists() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let key_id = derive_request_id("keyid_decryption_already_exists").unwrap();
+        let (kms, pk, _) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request_id = derive_request_id("req_id_decryption_already_exists").unwrap();
+        let (_msg, ct) = make_test_msg_ct(&pk, true);
+
+        let request = PublicDecryptionRequest {
+            request_id: Some(request_id.into()),
+            ciphertexts: ct.clone(),
+            key_id: Some(key_id.into()),
+            domain: Some(domain.clone()),
+            extra_data: vec![],
+            context_id: None,
+            epoch_id: None,
+        };
+
+        // make a normal request, which should pass
+        let _ = public_decrypt_impl(&kms, tonic::Request::new(request.clone()))
+            .await
+            .unwrap();
+
+        // this should fail since it's using the same ID
+        let err = public_decrypt_impl(&kms, tonic::Request::new(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::AlreadyExists);
+    }
+}
+
+#[cfg(test)]
+mod test_user_decryption {
+    use aes_prng::AesRng;
+    use kms_grpc::rpc_types::alloy_to_protobuf_domain;
+    use ml_kem::{kem::Kem, MlKem512Params};
+    use rand::SeedableRng;
+
+    use crate::{
+        consts::SAFE_SER_SIZE_LIMIT,
+        cryptography::{
+            hybrid_ml_kem,
+            internal_crypto_types::{Cipher, PrivateEncKey, UnifiedPublicEncKey},
+            signcryption::ephemeral_encryption_key_generation,
+        },
+        dummy_domain,
+        engine::{
+            base::derive_request_id,
+            centralized::service::decryption::tests::{make_test_msg_ct, setup_test_kms_with_key},
+        },
+        util::key_setup::test_tools::TestingPlaintext,
+    };
+
+    use super::*;
+
+    fn make_test_pk(rng: &mut AesRng) -> (Vec<u8>, PrivateEncKey<Kem<MlKem512Params>>) {
+        let (enc_pk, enc_sk) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(rng);
+        let mut enc_key_buf = Vec::new();
+        // The key is freshly generated, so we can safely unwrap the serialization
+        tfhe::safe_serialization::safe_serialize(
+            &UnifiedPublicEncKey::MlKem512(enc_pk.clone()),
+            &mut enc_key_buf,
+            SAFE_SER_SIZE_LIMIT,
+        )
+        .expect("Failed to serialize ephemeral encryption key");
+
+        (enc_key_buf, enc_sk)
+    }
+
+    #[tokio::test]
+    async fn sunshine() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let key_id = derive_request_id("keyid_decryption_sunshine").unwrap();
+        let (kms, pk, _verf_key) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request_id = derive_request_id("req_id_decryption_sunshine").unwrap();
+        let (msg, ciphertexts) = make_test_msg_ct(&pk, true);
+        let client_address = alloy_primitives::address!("dadB0d80178819F2319190D340ce9A924f783711");
+        let (enc_key_buf, enc_sk) = make_test_pk(&mut rng);
+
+        let request = UserDecryptionRequest {
+            request_id: Some(request_id.into()),
+            typed_ciphertexts: ciphertexts,
+            key_id: Some(key_id.into()),
+            client_address: client_address.to_checksum(None),
+            enc_key: enc_key_buf,
+            domain: Some(domain.clone()),
+            extra_data: vec![],
+            context_id: None,
+            epoch_id: None,
+        };
+
+        let _ = user_decrypt_impl(&kms, tonic::Request::new(request))
+            .await
+            .unwrap();
+
+        let response =
+            get_user_decryption_result_impl(&kms, tonic::Request::new(request_id.into()))
+                .await
+                .unwrap();
+        let signcrypted_msg: Cipher = bc2wrap::deserialize(
+            &response
+                .into_inner()
+                .payload
+                .unwrap()
+                .signcrypted_ciphertexts[0]
+                .signcrypted_ciphertext,
+        )
+        .unwrap();
+        let res = hybrid_ml_kem::dec::<ml_kem::MlKem512>(signcrypted_msg.0, &enc_sk.0).unwrap();
+        assert_eq!(TestingPlaintext::from((res, tfhe::FheTypes::Bool)), msg);
+    }
+
+    #[tokio::test]
+    async fn invalid_argument() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let key_id = derive_request_id("keyid_decryption_invalid_argument").unwrap();
+        let (kms, pk, _verf_key) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request_id = derive_request_id("req_id_decryption_sunshine").unwrap();
+        let (_msg, ciphertexts) = make_test_msg_ct(&pk, true);
+        let client_address = alloy_primitives::address!("dadB0d80178819F2319190D340ce9A924f783711");
+        let (enc_key_buf, _enc_sk) = make_test_pk(&mut rng);
+
+        // missing request ID
+        {
+            let request = UserDecryptionRequest {
+                request_id: None,
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(key_id.into()),
+                client_address: client_address.to_checksum(None),
+                enc_key: enc_key_buf.clone(),
+                domain: Some(domain.clone()),
+                extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
+            };
+
+            let err = user_decrypt_impl(&kms, tonic::Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+
+        // wrongly formatted request ID
+        {
+            let wrong_request_id = kms_grpc::kms::v1::RequestId {
+                request_id: "wrong_id".to_string(),
+            };
+            let request = UserDecryptionRequest {
+                request_id: Some(wrong_request_id),
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(key_id.into()),
+                client_address: client_address.to_checksum(None),
+                enc_key: enc_key_buf.clone(),
+                domain: Some(domain.clone()),
+                extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
+            };
+            let err = user_decrypt_impl(&kms, tonic::Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+
+        // missing domain
+        {
+            let request = UserDecryptionRequest {
+                request_id: Some(request_id.into()),
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(key_id.into()),
+                client_address: client_address.to_checksum(None),
+                enc_key: enc_key_buf.clone(),
+                domain: None,
+                extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
+            };
+            let err = user_decrypt_impl(&kms, tonic::Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+
+        // wrongly formatted client address
+        {
+            let request = UserDecryptionRequest {
+                request_id: Some(request_id.into()),
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(key_id.into()),
+                client_address: "wrong_address".to_string(),
+                enc_key: enc_key_buf.clone(),
+                domain: Some(domain.clone()),
+                extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
+            };
+            let err = user_decrypt_impl(&kms, tonic::Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::InvalidArgument);
+        }
+    }
+
+    #[tokio::test]
+    async fn not_found() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let key_id = derive_request_id("keyid_decryption_invalid_argument").unwrap();
+        let (kms, pk, _verf_key) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request_id = derive_request_id("req_id_decryption_sunshine").unwrap();
+        let (_msg, ciphertexts) = make_test_msg_ct(&pk, true);
+        let client_address = alloy_primitives::address!("dadB0d80178819F2319190D340ce9A924f783711");
+        let (enc_key_buf, _enc_sk) = make_test_pk(&mut rng);
+
+        // not found when using a wrong key
+        {
+            let wrong_key_id = derive_request_id("wrong_keyid_decryption_not_found").unwrap();
+            let request = UserDecryptionRequest {
+                request_id: Some(request_id.into()),
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(wrong_key_id.into()), // wrong
+                client_address: client_address.to_checksum(None),
+                enc_key: enc_key_buf.clone(),
+                domain: Some(domain.clone()),
+                extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
+            };
+
+            let err = user_decrypt_impl(&kms, tonic::Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::NotFound);
+        }
+
+        // not found while attempting to get a response
+        {
+            let err = get_user_decryption_result_impl(&kms, tonic::Request::new(request_id.into()))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::NotFound);
+        }
+    }
+
+    #[tokio::test]
+    async fn resource_exhausted() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let key_id = derive_request_id("keyid_decryption_resource_exhausted").unwrap();
+        let (mut kms, pk, _verf_key) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request_id = derive_request_id("req_id_decryption_resource_exhausted").unwrap();
+        let (_msg, ciphertexts) = make_test_msg_ct(&pk, true);
+        let client_address = alloy_primitives::address!("dadB0d80178819F2319190D340ce9A924f783711");
+        let (enc_key_buf, _enc_sk) = make_test_pk(&mut rng);
+
+        // set the rate limiter bucket size to 0
+        // it won't work if we just set it to 1 like crs/keygen because decryption only uses 1 token
+        kms.set_bucket_size(0);
+
+        // make a normal request then it should fail
+        {
+            let request = UserDecryptionRequest {
+                request_id: Some(request_id.into()),
+                typed_ciphertexts: ciphertexts.clone(),
+                key_id: Some(key_id.into()),
+                client_address: client_address.to_checksum(None),
+                enc_key: enc_key_buf.clone(),
+                domain: Some(domain.clone()),
+                extra_data: vec![],
+                context_id: None,
+                epoch_id: None,
+            };
+            let err = user_decrypt_impl(&kms, tonic::Request::new(request))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+        }
+    }
+
+    #[tokio::test]
+    async fn already_exists() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let key_id = derive_request_id("keyid_decryption_already_exists").unwrap();
+        let (kms, pk, _verf_key) = setup_test_kms_with_key(&mut rng, &key_id).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+        let request_id = derive_request_id("req_id_decryption_already_exists").unwrap();
+        let (_msg, ciphertexts) = make_test_msg_ct(&pk, true);
+        let client_address = alloy_primitives::address!("dadB0d80178819F2319190D340ce9A924f783711");
+        let (enc_key_buf, _enc_sk) = make_test_pk(&mut rng);
+
+        let request = UserDecryptionRequest {
+            request_id: Some(request_id.into()),
+            typed_ciphertexts: ciphertexts.clone(),
+            key_id: Some(key_id.into()),
+            client_address: client_address.to_checksum(None),
+            enc_key: enc_key_buf.clone(),
+            domain: Some(domain.clone()),
+            extra_data: vec![],
+            context_id: None,
+            epoch_id: None,
+        };
+
+        // first request should succeed
+        let _ = user_decrypt_impl(&kms, tonic::Request::new(request.clone()))
+            .await
+            .unwrap();
+
+        // second one should fail
+        let err = user_decrypt_impl(&kms, tonic::Request::new(request))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::AlreadyExists);
     }
 }

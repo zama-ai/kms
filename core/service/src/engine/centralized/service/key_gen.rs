@@ -363,6 +363,7 @@ pub(crate) mod tests {
     use rand::SeedableRng;
 
     use crate::{
+        cryptography::internal_crypto_types::PublicSigKey,
         dummy_domain,
         engine::{
             base::derive_request_id,
@@ -379,8 +380,8 @@ pub(crate) mod tests {
     pub(crate) async fn setup_test_kms_with_preproc(
         rng: &mut AesRng,
         preproc_id: &RequestId,
-    ) -> RealCentralizedKms<RamStorage, RamStorage> {
-        let kms = setup_central_test_kms(rng).await;
+    ) -> (RealCentralizedKms<RamStorage, RamStorage>, PublicSigKey) {
+        let (kms, verf_key) = setup_central_test_kms(rng).await;
 
         // insert a preproc ID
         let preproc_req = KeyGenPreprocRequest {
@@ -398,7 +399,7 @@ pub(crate) mod tests {
         preprocessing_impl(&kms, tonic::Request::new(preproc_req))
             .await
             .unwrap();
-        kms
+        (kms, verf_key)
     }
 
     pub(crate) async fn test_standard_keygen(
@@ -435,7 +436,7 @@ pub(crate) mod tests {
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(42);
         let preproc_id = derive_request_id("test_keygen_sunshine_preproc").unwrap();
-        let kms = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
+        let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
         let request_id = derive_request_id("test_keygen_sunshine").unwrap();
         test_standard_keygen(&kms, &request_id, &preproc_id).await
     }
@@ -444,7 +445,7 @@ pub(crate) mod tests {
     async fn resource_exhausted() {
         let mut rng = AesRng::seed_from_u64(42);
         let preproc_id = derive_request_id("test_keygen_sunshine_preproc").unwrap();
-        let mut kms = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
+        let (mut kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
         kms.set_bucket_size(1);
 
         let request_id = derive_request_id("test_keygen_sunshine").unwrap();
@@ -476,7 +477,7 @@ pub(crate) mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let preproc_id = derive_request_id("test_keygen_invalid_arg_preproc_id").unwrap();
         let request_id = derive_request_id("test_keygen_invalid_arg_key_id").unwrap();
-        let kms = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
+        let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
 
         // wrong params
@@ -629,7 +630,7 @@ pub(crate) mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let preproc_id = derive_request_id("test_keygen_already_exists_preproc_id").unwrap();
         let request_id = derive_request_id("test_keygen_already_exists_key_id").unwrap();
-        let kms = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
+        let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
 
         // we try to generate the same key twice
@@ -670,7 +671,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn not_found() {
         let mut rng = AesRng::seed_from_u64(42);
-        let kms = setup_central_test_kms(&mut rng).await;
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let bad_key_id = derive_request_id("test_keygen_not_found").unwrap();
         let get_result = get_key_gen_result_impl(&kms, Request::new(bad_key_id.into())).await;
         assert_eq!(get_result.unwrap_err().code(), tonic::Code::NotFound);

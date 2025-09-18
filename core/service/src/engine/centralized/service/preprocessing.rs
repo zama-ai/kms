@@ -163,7 +163,7 @@ mod tests {
     #[tokio::test]
     async fn sunshine() {
         let mut rng = AesRng::seed_from_u64(1234);
-        let kms = setup_central_test_kms(&mut rng).await;
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let verf_key =
             PublicSigKey::new(SigningKey::verifying_key(kms.base_kms.sig_key.sk()).to_owned());
         let preproc_req_id = derive_request_id("test_preprocessing_sunshine").unwrap();
@@ -194,7 +194,7 @@ mod tests {
     #[tokio::test]
     async fn resource_exhausted() {
         let mut rng = AesRng::seed_from_u64(1234);
-        let mut kms = setup_central_test_kms(&mut rng).await;
+        let (mut kms, _) = setup_central_test_kms(&mut rng).await;
         kms.set_bucket_size(1);
 
         let preproc_req_id = derive_request_id("test_preprocessing_sunshine").unwrap();
@@ -216,7 +216,7 @@ mod tests {
     #[tokio::test]
     async fn already_exists() {
         let mut rng = AesRng::seed_from_u64(1234);
-        let kms = setup_central_test_kms(&mut rng).await;
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let preproc_req_id = derive_request_id("test_preprocessing_impl_already_exists").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let preproc_req = KeyGenPreprocRequest {
@@ -242,7 +242,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_argument() {
         let mut rng = AesRng::seed_from_u64(1234);
-        let kms = setup_central_test_kms(&mut rng).await;
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let preproc_req_id = derive_request_id("test_preprocessing_impl_missing_domain").unwrap();
 
         // Missing domain should lead to InvalidArgument
@@ -321,7 +321,7 @@ mod tests {
     #[tokio::test]
     async fn not_found() {
         let mut rng = AesRng::seed_from_u64(1234);
-        let kms = setup_central_test_kms(&mut rng).await;
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let bad_preproc_id = derive_request_id("test_preprocessing_not_found").unwrap();
         let get_result =
             get_preprocessing_res_impl(&kms, Request::new(bad_preproc_id.into())).await;

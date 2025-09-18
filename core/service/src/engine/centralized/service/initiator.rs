@@ -80,7 +80,7 @@ mod tests {
     #[tokio::test]
     async fn test_init_sunshine() {
         let mut rng = AesRng::seed_from_u64(1234);
-        let kms = setup_central_test_kms(&mut rng).await;
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_init_sunshine").unwrap();
         let preproc_req = InitRequest {
             request_id: Some((req_id).into()),
@@ -92,7 +92,7 @@ mod tests {
     #[tokio::test]
     async fn test_init_already_exists() {
         let mut rng = AesRng::seed_from_u64(1234);
-        let kms = setup_central_test_kms(&mut rng).await;
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id1 = derive_request_id("test_init_already_exists_1").unwrap();
         let req_id2 = derive_request_id("test_init_already_exists_2").unwrap();
 
@@ -116,7 +116,7 @@ mod tests {
     #[tokio::test]
     async fn test_init_missing_request_id() {
         let mut rng = AesRng::seed_from_u64(1234);
-        let kms = setup_central_test_kms(&mut rng).await;
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let preproc_req = InitRequest { request_id: None };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         assert!(result.is_err());
