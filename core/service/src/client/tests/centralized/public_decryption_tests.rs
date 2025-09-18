@@ -16,6 +16,7 @@ use kms_grpc::kms::v1::{Empty, TypedCiphertext};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::RequestId;
 use serial_test::serial;
+use std::path::Path;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
 use tonic::transport::Channel;
@@ -145,6 +146,7 @@ pub(crate) async fn decryption_centralized(
         msgs,
         encryption_config,
         parallelism,
+        None,
     )
     .await;
     kms_server.assert_shutdown().await;
@@ -157,11 +159,12 @@ pub async fn run_decryption_centralized(
     msgs: Vec<TestingPlaintext>,
     encryption_config: EncryptionConfig,
     parallelism: usize,
+    test_path: Option<&Path>,
 ) {
     let mut cts = Vec::new();
     for (i, msg) in msgs.clone().into_iter().enumerate() {
         let (ct, ct_format, fhe_type) =
-            compute_cipher_from_stored_key(None, msg, key_id, encryption_config).await;
+            compute_cipher_from_stored_key(test_path, msg, key_id, encryption_config).await;
         let ctt = TypedCiphertext {
             ciphertext: ct,
             fhe_type: fhe_type as i32,
