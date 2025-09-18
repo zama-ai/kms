@@ -21,9 +21,12 @@ use tokio::task::JoinSet;
 use tonic::transport::Channel;
 
 #[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(5, 2)]
+#[case(3, 1)]
 #[serial]
-async fn test_new_custodian_context_threshold() {
-    new_custodian_context(4, FheParameter::Test, 5, 2).await;
+async fn test_new_custodian_context_threshold(#[case] custodians: usize, #[case] threshold: u32) {
+    new_custodian_context(4, FheParameter::Test, custodians, threshold).await;
 }
 
 async fn new_custodian_context(

@@ -40,9 +40,12 @@ use tonic::transport::Channel;
 
 #[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(5, 2)]
+#[case(3, 1)]
 #[serial]
-async fn test_auto_update_backups_threshold() {
-    auto_update_backup(5, 2).await;
+async fn test_auto_update_backups_threshold(#[case] custodians: usize, #[case] threshold: u32) {
+    auto_update_backup(custodians, threshold).await;
 }
 
 async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
@@ -115,9 +118,12 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
 
 #[cfg(feature = "insecure")]
 #[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(5, 2)]
+#[case(3, 1)]
 #[serial]
-async fn test_backup_after_crs_threshold() {
-    backup_after_crs(5, 2).await;
+async fn test_backup_after_crs_threshold(#[case] custodians: usize, #[case] threshold: u32) {
+    backup_after_crs(custodians, threshold).await;
 }
 
 #[cfg(feature = "insecure")]
@@ -220,9 +226,12 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
 #[cfg(feature = "insecure")]
 #[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
+#[rstest::rstest]
+#[case(5, 2)]
+#[case(3, 1)]
 #[serial]
-async fn test_decrypt_after_recovery_threshold() {
-    decrypt_after_recovery(5, 2).await;
+async fn test_decrypt_after_recovery_threshold(#[case] custodians: usize, #[case] threshold: u32) {
+    decrypt_after_recovery(custodians, threshold).await;
 }
 
 #[cfg(feature = "insecure")]
