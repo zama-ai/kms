@@ -44,7 +44,7 @@ version = "0.11.0"
 # 2. Is the crate not particularly popular? (check download counts on crates.io)
 # 3. Is there an unusual jump in package versions? (e.g., 0.1.0 -> 3.0.0)
 # 4. Is documentation lacking? (check docs.rs and GitHub repo)
-# 5. For crypto/security-critical deps: Has it been audited? Is it from a reputable org?
+# 5. For crypto/security-critical deps: Has it been audited? Is it from a reputable org? Do the owner have a bounty program or at least details on responsible disclosure?
 # 
 # Risk levels:
 # - LOW RISK: Well-known maintainers, high popularity (>1M downloads), good docs
