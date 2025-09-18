@@ -195,7 +195,7 @@ path = "./backup_vault"
 ```
 
 #### Recovery
-Recovery with custodians is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason we here walk through all the steps needed from beginning to end, in order to setup custodian based backup and recovery.
+Recovery with custodians is rather complex and requires multiple steps and manually transferring data in a trusted manner. For this reason, we walk through all the steps needed from the beginning to the end in order to setup custodian based backup and recovery.
 
 Assuming the toml file has been appropriately modified to allow custodian based backup, as discussed above, then the steps needed are as follows:
 
