@@ -5,10 +5,16 @@ use crate::backup::seed_phrase::custodian_from_seed_phrase;
 use crate::client::tests::threshold::crs_gen_tests::run_crs;
 use crate::client::tests::threshold::custodian_context_tests::backup_files;
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
+#[cfg(feature = "insecure")]
+use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
+#[cfg(feature = "insecure")]
+use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
 use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::backup_pke::BackupPrivateKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::util::key_setup::test_tools::purge_pub;
+use crate::engine::base::INSECURE_PREPROCESSING_ID;
+use crate::util::key_setup::test_tools::EncryptionConfig;
+use crate::util::key_setup::test_tools::TestingPlaintext;
 use crate::util::key_setup::test_tools::{purge_backup, purge_recovery_info};
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
@@ -217,23 +223,28 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     }
 }
 
+#[cfg(feature = "insecure")]
+#[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_decrypt_after_recovery_threshold() {
     decrypt_after_recovery(5, 2).await;
 }
 
+#[cfg(feature = "insecure")]
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let amount_parties = 4;
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     let req_new_cus: RequestId = derive_request_id(&format!(
-        "test_decrypt_after_recovery_threshold_{amount_parties}"
+        "test_decrypt_after_recovery_threshold_cus_{amount_parties}"
     ))
     .unwrap();
-    let test_path = None;
-    // Clean up backups to not interfere with test
-    purge_backup(test_path, amount_parties).await;
-    purge_recovery_info(test_path, amount_parties).await;
+    let req_key: RequestId = derive_request_id(&format!(
+        "test_decrypt_after_recovery_threshold_key_{amount_parties}"
+    ))
+    .unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
 
     let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
@@ -245,12 +256,27 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         test_path,
     )
     .await;
+
     let mnemnonics = run_new_cus_context(
         &kms_clients,
         &mut internal_client,
         &req_new_cus,
         amount_custodians,
         threshold,
+    )
+    .await;
+
+    // Generate a key
+    let _keys = run_threshold_keygen(
+        FheParameter::Test,
+        &kms_clients,
+        &internal_client,
+        &INSECURE_PREPROCESSING_ID,
+        &req_key,
+        None,
+        None,
+        true,
+        test_path,
     )
     .await;
 
@@ -281,7 +307,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Reboot the servers
-    let (_kms_servers, kms_clients, _internal_client) = threshold_handles_custodian_backup(
+    let (kms_servers, kms_clients, internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
         true,
@@ -319,9 +345,39 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         // Check the data is correctly recovered
         assert_eq!(cur_sk, sig_keys[i - 1]);
     }
-    // Purge to ensure no left over state
-    purge_priv(test_path).await;
-    purge_pub(test_path).await;
+
+    // Reboot the servers and try to decrypt
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
+    drop(kms_clients);
+    drop(internal_client);
+    let (mut kms_servers, mut kms_clients, mut internal_client) =
+        threshold_handles_custodian_backup(
+            *dkg_param,
+            amount_parties,
+            true,
+            false,
+            None,
+            None,
+            test_path,
+        )
+        .await;
+    run_decryption_threshold(
+        &mut kms_servers,
+        &mut kms_clients,
+        &mut internal_client,
+        &req_key,
+        vec![TestingPlaintext::U8(u8::MAX)],
+        EncryptionConfig {
+            compression: false,
+            precompute_sns: false,
+        },
+        None,
+        1,
+        test_path,
+    )
+    .await;
 }
 
 async fn run_custodian_recovery_init(

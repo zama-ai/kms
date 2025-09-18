@@ -289,10 +289,15 @@ To further make this a manual test, make sure a [key is generated](#Key-generati
   Take note of the ID printed on the CLI after completion.
 4. Custodians do partial decryption.
   Fetch the public verification keys of the KMS nodes. With Minio these can be found at the following URLs:
+
   http://localhost:9000/kms/PUB-p1/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee
+  
   http://localhost:9000/kms/PUB-p2/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee
+
   http://localhost:9000/kms/PUB-p3/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee
+
   http://localhost:9000/kms/PUB-p4/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee
+
   Download these and copy them into `core-client/tests/data/keys`. Then execute the following command in root of the KMS project, replacing the seed_phrases with the appropriate ones learned from step 1:
   ```{bash}
   cargo run --bin kms-custodian decrypt --seed-phrase "prosper wool oak moon light situate end palm sick monster clever solid" --randomness 123  --custodian-role 1 --recovery-request-path core-client/tests/data/keys/CUSTODIAN/recovery/1 --operator-verf-key core-client/tests/data/keys/PUB-p1/VerfKey/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee --output-path core-client/tests/data/keys/CUSTODIAN/response/recovery-response-1-1
