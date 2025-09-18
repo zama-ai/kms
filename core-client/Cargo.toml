@@ -22,14 +22,12 @@ path = "src/bin.rs"
 # Maintain alphabetical order
 aes-prng.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
-alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 alloy-signer.workspace = true
+alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
+anyhow.workspace = true
 attestation-doc-validation.workspace = true
 bytes.workspace = true
-reqwest = { workspace = true, features = ["json", "rustls-tls"] }
-anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
-observability.workspace = true
 hex.workspace = true
 kms = { workspace = true, default-features = false, features = [
     "non-wasm",
@@ -37,7 +35,9 @@ kms = { workspace = true, default-features = false, features = [
     "insecure",
 ] }
 kms-grpc.workspace = true
+observability.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
+reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 serde = { workspace = true, features = ["derive"] }
 strum.workspace = true
 strum_macros.workspace = true
