@@ -361,14 +361,7 @@ impl GrpcNetworkingManager {
                     message_store.0.init(
                         self.conf.get_message_limit(),
                         &others,
-                        |other: MpcIdentity| {
-                            self.opened_sessions_tracker
-                                .entry(other)
-                                .and_modify(|count| {
-                                    *count = count.saturating_sub(1);
-                                })
-                                .or_insert(0);
-                        },
+                        Arc::clone(&self.opened_sessions_tracker),
                     );
                     message_store.clone()
                 } else {
@@ -409,7 +402,7 @@ impl GrpcNetworkingManager {
                     &my_role,
                     self.conf.get_message_limit(),
                     role_assignment,
-                    |_| {}, // no need to update session trackers here
+                    Arc::clone(&self.opened_sessions_tracker),
                 );
 
                 let session = Arc::new(NetworkSession {
@@ -492,35 +485,25 @@ impl MessageQueueStore {
         MessageQueueStore::Uninitialized(channel_maps)
     }
 
-    #[allow(clippy::type_complexity)]
-    pub(crate) fn new_initialized<F: Fn(MpcIdentity)>(
+    pub(crate) fn new_initialized(
         my_role: &Role,
         channel_size_limit: usize,
         role_assignment: &RoleAssignment,
-        f: F,
+        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     ) -> Self {
         let mut others = role_assignment.clone();
         others.remove(my_role);
 
-        let message_map = DashMap::with_capacity(others.len());
-        for (_role, identity) in others.iter() {
-            let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
-            message_map.insert(
-                identity.mpc_identity(),
-                (Arc::new(tx), Arc::new(Mutex::new(rx))),
-            );
-        }
-
-        let mut out = Self::new_uninitialized(message_map);
-        out.init(channel_size_limit, role_assignment, f);
+        let mut out = Self::new_uninitialized(DashMap::new());
+        out.init(channel_size_limit, &others, opened_sessions_tracker);
         out
     }
 
-    pub(crate) fn init<F: Fn(MpcIdentity)>(
+    pub(crate) fn init(
         &mut self,
         channel_size_limit: usize,
-        role_assignment: &RoleAssignment,
-        f_for_existing_ids: F,
+        others: &RoleAssignment,
+        opened_sessions_tracker: Arc<DashMap<MpcIdentity, u64>>,
     ) {
         if let MessageQueueStore::Uninitialized(channel_maps) = &self {
             let tx_map = DashMap::with_capacity(channel_maps.len());
@@ -530,10 +513,15 @@ impl MessageQueueStore {
             // then we insert it to the initialized message queue.
             // If an identity is not in channel_maps but in role_assignment,
             // then we create a new channel for it.
-            for (role, identity) in role_assignment.iter() {
+            for (role, identity) in others.iter() {
                 let mpc_id = identity.mpc_identity();
                 if let Some(entry) = channel_maps.get(&mpc_id) {
-                    f_for_existing_ids(mpc_id);
+                    opened_sessions_tracker
+                        .entry(mpc_id.clone())
+                        .and_modify(|count| {
+                            *count = count.saturating_sub(1);
+                        })
+                        .or_insert(0);
                     let (tx, rx) = entry.value();
                     tx_map.insert(entry.key().clone(), tx.clone());
                     rx_map.insert(*role, rx.clone());

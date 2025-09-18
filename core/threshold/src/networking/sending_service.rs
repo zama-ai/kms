@@ -564,7 +564,9 @@ impl Networking for NetworkSession {
 
 #[cfg(test)]
 mod tests {
-    use tokio::sync::RwLock;
+    use dashmap::DashMap;
+    use tokio::sync::mpsc::channel;
+    use tokio::sync::{Mutex, RwLock};
 
     use crate::networking::grpc::{
         MessageQueueStore, NetworkRoundValue, OptionConfigWrapper, TlsExtensionGetter,
@@ -732,13 +734,40 @@ mod tests {
 
         let channel_size_limit = 1000;
 
-        // this is the message store of party 1, so party 2 is the other one
-        let message_store = MessageQueueStore::new_initialized(
-            &role_1,
-            channel_size_limit,
-            &role_assignment,
-            |_| {},
+        // we manually initialize the message store instead of calling
+        // [MessageQueueStore::new_initialized] because we want set the uninitialized channel
+        // to test the session tracker
+        let dummy_session_tracker = Arc::new(DashMap::new());
+        let message_store = {
+            let channel_maps = DashMap::new();
+            let (tx, rx) = channel::<NetworkRoundValue>(channel_size_limit);
+            let tx = Arc::new(tx);
+            channel_maps.insert(
+                id_2.mpc_identity(),
+                (Arc::clone(&tx), Arc::new(Mutex::new(rx))),
+            );
+            let mut out = MessageQueueStore::new_uninitialized(channel_maps);
+
+            let mut others = role_assignment.clone();
+            others.remove(&role_1);
+            out.init(
+                channel_size_limit,
+                &others,
+                Arc::clone(&dummy_session_tracker),
+            );
+            out
+        };
+
+        // session tracker should have one entry for party 2 since it was in the uninitialized variant
+        assert_eq!(1, dummy_session_tracker.len());
+        assert_eq!(
+            0,
+            *dummy_session_tracker
+                .get(&id_2.mpc_identity())
+                .unwrap()
+                .value(),
         );
+
         let tx_2 = message_store.get_tx(&id_2.mpc_identity()).unwrap().unwrap();
         let context_id = SessionId::from(42);
 
