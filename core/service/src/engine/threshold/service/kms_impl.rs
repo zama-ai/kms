@@ -253,14 +253,11 @@ where
         read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
 
     let networking_manager = Arc::new(RwLock::new(GrpcNetworkingManager::new(
-        Role::indexed_from_one(config.my_id),
         tls_config
             .as_ref()
             .map(|(_, client_config)| client_config.clone()),
         config.core_to_core_net,
         peer_tcp_proxy,
-        // The mapping from roles to network addresses is dependent on contexts set dynamically, so we put it in a mutable map
-        Arc::new(RwLock::new(RoleAssignment::empty())),
     )?));
 
     // the initial MPC node might not accept any peers because initially there's no context
@@ -404,13 +401,6 @@ where
             session_preparer_manager
                 .insert(*DEFAULT_MPC_CONTEXT, session_preparer)
                 .await;
-            // TODO this is a workaround where we need to set the same role assignment
-            // to the GrpcNetworkingManager.
-            networking_manager
-                .write()
-                .await
-                .set_global_role_assignment(role_assignment)
-                .await;
             Some(())
         }
         None => None,
@@ -513,7 +503,6 @@ where
 
     let keygen_preprocessor = RealPreprocessor {
         sig_key: Arc::clone(&base_kms.sig_key),
-        prss_setup: prss_setup_z128,
         preproc_buckets,
         preproc_factory,
         num_sessions_preproc,

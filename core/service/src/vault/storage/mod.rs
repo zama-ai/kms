@@ -7,6 +7,7 @@ use anyhow::anyhow;
 use aws_sdk_s3::Client as S3Client;
 use enum_dispatch::enum_dispatch;
 use kms_grpc::{
+    identifiers::ContextId,
     rpc_types::{
         PrivDataType, PubDataType, PublicKeyType, WrappedPublicKey, WrappedPublicKeyOwned,
     },
@@ -277,34 +278,44 @@ pub async fn read_pk_at_request_id<S: StorageReader>(
 
 /// Simple wrapper around [store_versioned_at_request_id]
 /// for the Context PrivDataType.
-pub async fn store_context_at_request_id<S: Storage>(
+pub async fn store_context_at_id<S: Storage>(
     storage: &mut S,
-    request_id: &RequestId,
+    context_id: &ContextId,
     context_info: &context::ContextInfo,
 ) -> anyhow::Result<()> {
     store_versioned_at_request_id(
         storage,
-        request_id,
+        &(*context_id).into(),
         context_info,
         &PrivDataType::ContextInfo.to_string(),
     )
     .await
 }
 
-/// Simple wrapper around [read_context_at_request_id]
+/// Simple wrapper around [read_versioned_at_request_id]
 /// for the Context PrivDataType.
-pub async fn read_context_at_request_id<S: StorageReader>(
+pub async fn read_context_at_id<S: StorageReader>(
     storage: &S,
-    request_id: &RequestId,
+    context_id: &ContextId,
 ) -> anyhow::Result<context::ContextInfo> {
-    read_versioned_at_request_id(storage, request_id, &PrivDataType::ContextInfo.to_string()).await
+    read_versioned_at_request_id(
+        storage,
+        &(*context_id).into(),
+        &PrivDataType::ContextInfo.to_string(),
+    )
+    .await
 }
 
-pub async fn delete_context_at_request_id<S: Storage>(
+pub async fn delete_context_at_id<S: Storage>(
     storage: &mut S,
-    request_id: &RequestId,
+    request_id: &ContextId,
 ) -> anyhow::Result<()> {
-    delete_at_request_id(storage, request_id, &PrivDataType::ContextInfo.to_string()).await
+    delete_at_request_id(
+        storage,
+        &(*request_id).into(),
+        &PrivDataType::ContextInfo.to_string(),
+    )
+    .await
 }
 
 /// Helper method for reading all data of a specific type.

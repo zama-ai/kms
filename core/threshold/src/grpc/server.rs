@@ -5,7 +5,7 @@ use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Solve, Synd
 use crate::choreography::grpc::GrpcChoreography;
 use crate::conf::party::PartyConf;
 use crate::execution::online::preprocessing::{create_memory_factory, create_redis_factory};
-use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
+use crate::execution::runtime::party::Role;
 #[cfg(feature = "experimental")]
 use crate::experimental::choreography::grpc::ExperimentalGrpcChoreography;
 #[cfg(not(feature = "experimental"))]
@@ -13,9 +13,7 @@ use crate::malicious_execution::malicious_moby::add_strategy_to_router;
 use crate::networking::constants::NETWORK_TIMEOUT_LONG;
 use crate::networking::grpc::{GrpcNetworkingManager, GrpcServer, TlsExtensionGetter};
 use observability::telemetry::make_span;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tonic::transport::{Server, ServerTlsConfig};
 use tower_http::trace::TraceLayer;
 
@@ -26,18 +24,6 @@ where
     ResiduePoly<Z64, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
     ResiduePoly<Z128, EXTENSION_DEGREE>: Syndrome + ErrorCorrect + Invert + Solve + Derive,
 {
-    // TODO: This part is under discussion. We need to figure out how to handle the networking topology configuration
-    // For the moment we are using a provided configuration on `threshold_decrypt` gRPC endpoint,
-    // but it is not discarded to use a more dynamic approach.
-    let docker_static_endpoints: HashMap<Role, Identity> = settings
-        .protocol()
-        .peers()
-        .as_ref()
-        .unwrap_or(&Vec::new())
-        .iter()
-        .map(|peer| (peer.into(), peer.into()))
-        .collect();
-
     let my_role: Role = settings.protocol().host().into();
 
     let tls_conf = settings
@@ -48,11 +34,9 @@ where
 
     // the networking manager is shared between the two services
     let networking = Arc::new(GrpcNetworkingManager::new(
-        my_role,
         tls_conf,
         settings.net_conf,
         false,
-        Arc::new(RwLock::new(RoleAssignment::from(docker_static_endpoints))),
     )?);
     let networking_server = networking.new_server(TlsExtensionGetter::TlsConnectInfo);
 

@@ -1,7 +1,7 @@
 #[cfg(feature = "non-wasm")]
 use crate::engine::base::derive_request_id;
 #[cfg(feature = "non-wasm")]
-use kms_grpc::RequestId;
+use kms_grpc::{identifiers::ContextId, RequestId};
 use threshold_fhe::execution::tfhe_internals::parameters::{
     DKGParams, BC_PARAMS_SNS, PARAMS_TEST_BK_SNS,
 };
@@ -140,7 +140,7 @@ lazy_static::lazy_static! {
     // This is a bit hackish, but it works for now.
     pub static ref SIGNING_KEY_ID: RequestId = derive_request_id("SIGNING_KEY_ID").unwrap();
 
-    pub static ref DEFAULT_MPC_CONTEXT: RequestId = RequestId::from_bytes([
+    pub static ref DEFAULT_MPC_CONTEXT: ContextId = ContextId::from_bytes([
         1u8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 3,
         4,
     ]);
