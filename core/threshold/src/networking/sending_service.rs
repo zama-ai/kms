@@ -10,7 +10,7 @@ use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
 use backoff::SystemClock;
 use gen::gnetworking_client::GnetworkingClient;
-use hyper_rustls::{FixedServerNameResolver, HttpsConnectorBuilder};
+use hyper_rustls_ring::{FixedServerNameResolver, HttpsConnectorBuilder};
 use observability::telemetry::ContextPropagator;
 use tokio::{
     sync::{

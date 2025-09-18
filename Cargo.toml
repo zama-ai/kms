@@ -29,155 +29,146 @@ license = "BSD-3-Clause-Clear"
 version = "0.11.0"
 
 [workspace.dependencies]
-# AES encryption - LOW RISK: RustCrypto org, very popular (40M+ downloads), actively maintained
-aes = "=0.8.4"
-# AES-based PRNG for deterministic randomness - MEDIUM RISK: Individual maintainer, low popularity, custom implementation needs audit
-aes-prng = "=0.2.1"
-# Error handling - LOW RISK: dtolnay (very reputable), 100M+ downloads
-anyhow = "=1.0.98"
-# Async trait support - LOW RISK: dtolnay, widely used
-async-trait = "=0.1.88"
-# AWS Nitro attestation validation - MEDIUM RISK: Security-critical, low popularity, needs audit
-attestation-doc-validation = { version = "=0.10.0" }
-# Internal backward compatibility testing - LOW RISK: Internal Zama module
+# Internal Zama modules
 backward-compatibility = { path = "./backward-compatibility" }
-# Retry with exponential backoff - LOW RISK: Popular utility
-backoff = "=0.4.0"
-# Base64 encoding - LOW RISK: marshallpierce, 100M+ downloads
-base64 = "=0.22.1"
-# Binary serialization - LOW RISK: bincode-org, 20M+ downloads
-bincode = { version = "=2.0.1", features = ["serde"] }
-# Internal bincode wrapper - MEDIUM RISK: Internal custom implementation
 bc2wrap = { path = "./bc2wrap" }
-# Byte buffer utilities - LOW RISK: tokio team, 100M+ downloads
-bytes = "=1.10.1"
-# Conditional compilation - LOW RISK: alexcrichton, 100M+ downloads
-cfg-if = "=1.0.3"
-# CLI argument parsing - LOW RISK: clap-rs team, 100M+ downloads
-clap = { version = "=4.5.47", features = ["derive"] }
-# Configuration management - LOW RISK: mehcode, popular
-config = "=0.15.15"
-# Internal observability module - LOW RISK: Internal Zama module
-observability = { path = "./observability" }
-# Threshold FHE implementation - LOW RISK: Internal Zama core module
-threshold-fhe = { path = "./core/threshold/", default-features = false }
-# Enum dispatch optimization - LOW RISK: Popular macro utility
-enum_dispatch = "0.3.13"
-# Async futures - LOW RISK: rust-lang team, 100M+ downloads
-futures = "=0.3.31"
-# Futures utilities - LOW RISK: rust-lang team
-futures-util = "=0.3.31"
-# Hex encoding/decoding - LOW RISK: KokaKiwi, 100M+ downloads
-hex = "=0.4.3"
-# HTTP types - LOW RISK: hyperium team, 100M+ downloads
-http = "=1.3.1"
-# Iterator utilities - LOW RISK: bluss/rust-itertools, 100M+ downloads
-itertools = "=0.14.0"
-# secp256k1 elliptic curve - LOW RISK: RustCrypto org, 5M+ downloads
-k256 = "=0.13.4"
-# Core KMS service - LOW RISK: Internal Zama core module
 kms = { path = "./core/service", default-features = false }
-# KMS gRPC interface - LOW RISK: Internal Zama module
 kms-grpc = { path = "./core/grpc", default-features = false }
-# Lazy static initialization - LOW RISK: rust-lang-nursery, 100M+ downloads
-lazy_static = "=1.5.0"
-# Mocking for tests - LOW RISK: asomers, popular testing tool
-mockall = "=0.13.1"
-# OpenTelemetry observability - LOW RISK: CNCF project, well-maintained
-opentelemetry = "=0.29.1"
-# Token pasting macros - LOW RISK: dtolnay, useful macro utility
-paste = "=1.0"
-# Protocol Buffers - LOW RISK: tokio-rs team, 10M+ downloads
-prost = "=0.13.5"
-# Protocol Buffers build - LOW RISK: tokio-rs team
-prost-build = "=0.13.5"
-# Protocol Buffers types - LOW RISK: tokio-rs team
-prost-types = "=0.13.5"
-# Random number generation - LOW RISK: rust-random, 100M+ downloads
-rand = "=0.8.5"
-# Data parallelism - LOW RISK: rayon-rs, 50M+ downloads
-rayon = "=1.11.0"
-# X.509 certificate generation - MEDIUM RISK: Using custom fork (see patch section), needs verification
-rcgen = { version = "=0.14.0", default-features = false, features = [
-    "aws_lc_rs",
-    "crypto",
-    "pem",
-    "x509-parser",
-] }
-# HTTP client - LOW RISK: seanmonstar, 50M+ downloads, uses rustls for TLS
-reqwest = { version = "=0.12.22", default-features = false, features = [
-    "json",
-    "rustls-tls",
-] }
-# JSON Schema generation - LOW RISK: GREsau, popular
-schemars = "=0.8.22"
-# Serialization framework - LOW RISK: dtolnay, 200M+ downloads, industry standard
-serde = { version = "1.0.223", features = ["derive", "rc"] }
-# JSON serialization - LOW RISK: dtolnay, 200M+ downloads
-serde_json = "=1.0.145"
-# Serial test execution - LOW RISK: palfrey, useful for testing
-serial_test = "=3.2.0"
-# Enum utilities - LOW RISK: Peternator7, popular enum tooling
-strum = "=0.27.1"
-# Enum derive macros - LOW RISK: Peternator7
-strum_macros = "=0.27.1"
-# Temporary file handling - LOW RISK: Stebalien, 50M+ downloads
-tempfile = "=3.20.0"
-# Error derive macro - LOW RISK: dtolnay, 100M+ downloads
-thiserror = "=2.0.12"
-# gRPC health checking - LOW RISK: hyperium team
-tonic-health = "=0.13.1"
-# TLS support for tonic - LOW RISK: hyperium team
-tonic-tls = "=0.3.0"
-# Service framework - LOW RISK: tower-rs team, 50M+ downloads
-tower = "=0.5.2"
-# HTTP middleware - LOW RISK: tower-rs team
-tower-http = "=0.6.6"
-# Fully Homomorphic Encryption library - LOW RISK: Zama (same company), core crypto
-tfhe = "=1.3.3"
-# Cryptographically secure PRNG for TFHE - LOW RISK: Zama
-tfhe-csprng = "=0.6.0"
-# TFHE versioning support - LOW RISK: Zama
-tfhe-versionable = "=0.6.1"
-# Zero-knowledge proofs for TFHE - LOW RISK: Zama
-tfhe-zk-pok = "=0.7.2"
-# Async runtime - LOW RISK: tokio team, 100M+ downloads, industry standard
-tokio = { version = "=1.46.1", features = ["full"] }
-# Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
-tokio-rustls = { version = "=0.26.2", default-features = false, features = [
-    "aws_lc_rs",
-] }
-# gRPC framework - LOW RISK: hyperium team, 10M+ downloads
-tonic = "=0.13.1"
-# gRPC code generation - LOW RISK: hyperium team
-tonic-build = "=0.13.1"
-# Application instrumentation - LOW RISK: tokio-rs team, 100M+ downloads
-tracing = { version = "=0.1.41", features = ["log"] }
-# Log file rotation - LOW RISK: tokio-rs team
-tracing-appender = "=0.2.3"
-# OpenTelemetry integration - LOW RISK: tokio-rs team
-tracing-opentelemetry = "=0.30.0"
-# Tracing subscriber - LOW RISK: tokio-rs team
-tracing-subscriber = { version = "=0.3.20", features = ["fmt", "std"] }
-# Trait variant generation - LOW RISK: rust-lang team utility
-trait-variant = "0.1.2"
-# Struct validation - MEDIUM RISK: Individual maintainer, less active maintenance
-validator = { version = "=0.20.0", features = ["derive"] }
-# Secure memory wiping - LOW RISK: RustCrypto org, critical for key management, 10M+ downloads
-zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }
-# X.509 certificate parsing - LOW RISK: rusticata team, 5M+ downloads
-x509-parser = { version = "=0.17.0", features = ["verify"] }
+observability = { path = "./observability" }
+threshold-fhe = { path = "./core/threshold/", default-features = false }
 
-# Ethereum ABI encoding - LOW RISK: Alloy/Paradigm team, reputable, growing ecosystem
+# External dependencies (alphabetically sorted)
+aes = "=0.8.4"
+aes-gcm = { version = "=0.10.3", features = ["std"] }
+aes-gcm-siv = "=0.11.1"
+aes-prng = "=0.2.1"
 alloy-dyn-abi = "=1.3.1"
-# Ethereum primitives - LOW RISK: Alloy/Paradigm team
 alloy-primitives = "=1.3.1"
-# Solidity types & EIP-712 - LOW RISK: Alloy/Paradigm team
-alloy-sol-types = "=1.3.1"
-# Ethereum signing abstraction - LOW RISK: Alloy/Paradigm team
 alloy-signer = "=1.0.30"
-# Local Ethereum signer - LOW RISK: Alloy/Paradigm team
 alloy-signer-local = "=1.0.30"
+alloy-sol-types = "=1.3.1"
+anyhow = "=1.0.98"
+assert_cmd = "=2.0.17"
+async-std = { version = "=1.13.1", features = ["attributes", "tokio1"] }
+async-trait = "=0.1.88"
+async_cell = "0.2.2"
+attestation-doc-validation = { version = "=0.10.0" }
+aws-config = { version = "=1.5.9" }
+aws-nitro-enclaves-nsm-api = { version = "=0.4.0" }
+aws-sdk-kms = { version = "=1.50.0" }
+aws-sdk-s3 = { version = "=1.62.0" }
+aws-smithy-runtime = { version = "=1.7.3", features = ["client", "connector-hyper-0-14-x"] }
+aws-smithy-runtime-api = { version = "=1.7.3" }
+aws-smithy-types = { version = "=1.2.9" }
+axum = { version = "=0.8.4", features = ["tokio"] }
+backoff = "=0.4.0"
+base64 = "=0.22.1"
+bincode = { version = "=2.0.1", features = ["serde"] }
+bip39 = { version = "=2.2.0", features = ["alloc"] }
+bytes = "=1.10.1"
+cbc = { version = "=0.1.2", features = ["alloc"] }
+cfg-if = "=1.0.3"
+clap = { version = "=4.5.47", features = ["derive"] }
+config = "=0.15.15"
+const_format = "=0.2.34"
+console_error_panic_hook = { version = "=0.1.7" }
+criterion = { version = "=0.5.1", features = ["async_tokio"] }
+crypto-bigint = { version = "=0.6.1", features = ["serde", "rand_core", "extra-sizes"] }
+ctor = "=0.4.2"
+dashmap = "=6.1.0"
+derive_more = { version = "=2.0.1", features = ["display"] }
+enum_dispatch = "0.3.13"
+futures = "=0.3.31"
+futures-util = "=0.3.31"
+g2p = "=1.2.2"
+getrandom = { version = "=0.2.15", features = ["js"] }
+hex = "=0.4.3"
+http = "=1.3.1"
+http-legacy = { package = "http", version = "=0.2.12" }
+hyper-rustls = { version = "=0.24.2" }
+hyper-rustls-ring = { package = "hyper-rustls", version = "=0.27.7", default-features = false, features = ["http2", "ring"] }
+itertools = "=0.14.0"
+k256 = "=0.13.4"
+lazy_static = "=1.5.0"
+minijinja = { version = "=2.11.0", features = ["loader"] }
+ml-kem = "=0.2.1"
+mockall = "=0.13.1"
+ndarray = { version = "=0.16.1", features = ["serde"] }
+nom = "=8.0.0"
+num-integer = "=0.1.46"
+num-traits = "=0.2.19"
+oid-registry = "=0.8.1"
+opentelemetry = "=0.29.1"
+opentelemetry-http = "=0.29.0"
+opentelemetry-otlp = { version = "=0.29.0", features = ["tokio", "grpc-tonic"] }
+opentelemetry-prometheus = "=0.29.1"
+opentelemetry-semantic-conventions = "=0.29.0"
+opentelemetry-stdout = { version = "=0.29.0", features = ["trace"] }
+opentelemetry_sdk = { version = "=0.29.0", features = ["rt-tokio", "logs", "metrics"] }
+ordermap = "=0.5.7"
+paste = "=1.0"
+peak_alloc = { version = "=0.2.1" }
+pprof = { version = "=0.15.0", features = ["flamegraph", "criterion"] }
+proc-macro2 = "1.0"
+prometheus = { version = "=0.14.0", features = ["process"] }
+proptest = "=1.6.0"
+prost = "=0.13.5"
+prost-build = "=0.13.5"
+prost-types = "=0.13.5"
+quote = "1.0"
+rand = "=0.8.5"
+rasn = "=0.20.2"
+rasn-cms = "=0.20.2"
+rayon = "=1.11.0"
+rcgen = { version = "=0.14.0", default-features = false, features = ["aws_lc_rs", "crypto", "pem", "x509-parser"] }
+redis = { version = "=0.29.5" }
+reqwest = { version = "=0.12.22", default-features = false, features = ["json", "rustls-tls"] }
+rsa = { version = "=0.9.8", features = ["sha2", "serde"] }
+rstest = "=0.25.0"
+schemars = "=0.8.22"
+serde = { version = "1.0.223", features = ["derive", "rc"] }
+serde-wasm-bindgen = { version = "=0.6.5" }
+serde_json = "=1.0.145"
+serial_test = "=3.2.0"
+sha2 = "=0.10.9"
+sha3 = "=0.10.8"
+signature = "=2.2.0"
+statrs = "=0.18.0"
+strum = "=0.27.1"
+strum_macros = "=0.27.1"
+syn = { version = "2.0", features = ["full"] }
+sysinfo = "0.36.1"
+sysinfo-old = { package = "sysinfo", version = "=0.35.1" }
+tempfile = "=3.20.0"
+test-context = "=0.4.1"
+tfhe = "=1.3.3"
+tfhe-csprng = "=0.6.0"
+tfhe-versionable = "=0.6.1"
+tfhe-zk-pok = "=0.7.2"
+thiserror = "=2.0.12"
+tokio = { version = "=1.46.1", features = ["full"] }
+tokio-rustls = { version = "=0.26.2", default-features = false, features = ["aws_lc_rs"] }
+tokio-util = { version = "=0.7.15", features = ["rt"] }
+tonic = "=0.13.1"
+tonic-build = "=0.13.1"
+tonic-health = "=0.13.1"
+tonic-tls = "=0.3.0"
+tower = "=0.5.2"
+tower-http = "=0.6.6"
+tracing = { version = "=0.1.41", features = ["log"] }
+tracing-appender = "=0.2.3"
+tracing-opentelemetry = "=0.30.0"
+tracing-subscriber = { version = "=0.3.20", features = ["fmt", "std"] }
+tracing-test = "=0.2.5"
+trait-variant = "0.1.2"
+typed-builder = "=0.21.0"
+url = { version = "=2.5.4", features = ["serde"] }
+uuid = { version = "=1.16.0", features = ["v4", "fast-rng"] }
+validator = { version = "=0.20.0", features = ["derive"] }
+wasm-bindgen = { version = "=0.2.100", features = ["serde-serialize"] }
+webpki = { version = "=0.22.4", features = ["std"] }
+x509-parser = { version = "=0.17.0", features = ["verify"] }
+zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }
 
 [profile.wasm]
 inherits = "release"

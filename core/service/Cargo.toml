@@ -34,72 +34,54 @@ path = "src/bin/kms-custodian.rs"
 
 [dependencies]
 aes.workspace = true
-# AES-GCM-SIV authenticated encryption - LOW RISK: RustCrypto org, nonce misuse resistant, 500K+ downloads
-aes-gcm-siv = "=0.11.1"
+aes-gcm.workspace = true
+aes-gcm-siv.workspace = true
 aes-prng.workspace = true
-alloy-dyn-abi = { workspace = true }
+alloy-dyn-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
-alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
+alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 anyhow.workspace = true
-# AWS SDK configuration - LOW RISK: Official AWS SDK, actively maintained
-aws-config = { version = "=1.5.9", optional = true }
-# AWS Nitro Enclaves NSM API - MEDIUM RISK: Security-critical enclave operations, needs audit
-aws-nitro-enclaves-nsm-api = { version = "=0.4.0", optional = true }
-# AWS KMS client - LOW RISK: Official AWS SDK for key management
-aws-sdk-kms = { version = "=1.50.0", optional = true }
-# AWS S3 client - LOW RISK: Official AWS SDK for object storage
-aws-sdk-s3 = { version = "=1.62.0", optional = true }
-# AWS Smithy runtime - LOW RISK: Official AWS runtime library
-aws-smithy-runtime = { version = "=1.7.3", features = [
-    "client",
-    "connector-hyper-0-14-x",
-], optional = true }
-# AWS Smithy runtime API - LOW RISK: Official AWS runtime API
-aws-smithy-runtime-api = { version = "=1.7.3", optional = true }
-# AWS Smithy types - LOW RISK: Official AWS type definitions
-aws-smithy-types = { version = "=1.2.9", optional = true }
-bincode.workspace = true
-# BIP39 mnemonic seed phrases - LOW RISK: rust-bitcoin org (reputable), 1M+ downloads, 10+ developers, CI enabled
-bip39 = { version = "=2.2.0", features = ["alloc"] }
+async_cell.workspace = true
+aws-config = { workspace = true, optional = true }
+aws-nitro-enclaves-nsm-api = { workspace = true, optional = true }
+aws-sdk-kms = { workspace = true, optional = true }
+aws-sdk-s3 = { workspace = true, optional = true }
+aws-smithy-runtime = { workspace = true, optional = true }
+aws-smithy-runtime-api = { workspace = true, optional = true }
+aws-smithy-types = { workspace = true, optional = true }
 bc2wrap.workspace = true
-# CBC block cipher mode - LOW RISK: RustCrypto org, standard cipher mode, 5M+ downloads
-cbc = { version = "=0.1.2", features = ["alloc"] }
+bincode.workspace = true
+bip39.workspace = true
+cbc.workspace = true
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive"] }
-observability = { workspace = true, optional = true }
-threshold-fhe = { workspace = true, default-features = false, features = [
-    "extension_degree_4",
-] }
+console_error_panic_hook.workspace = true
 enum_dispatch.workspace = true
 futures-util.workspace = true
-kms-grpc = { workspace = true, default-features = false }
 hex.workspace = true
-# HTTP types (older version for compatibility) - LOW RISK: hyperium team
-http = "=0.2.12"
-# TLS for hyper HTTP client - LOW RISK: rustls team, memory-safe TLS
-hyper-rustls = { version = "=0.24.2", optional = true }
+http-legacy.workspace = true
+hyper-rustls = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true
+kms-grpc = { workspace = true, default-features = false }
 lazy_static.workspace = true
-# Parser combinator library - LOW RISK: Geal, 50M+ downloads, widely used
-nom = "=8.0.0"
+ml-kem.workspace = true
+nom.workspace = true
+observability = { workspace = true, optional = true }
+ordermap.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
-# ASN.1 encoding/decoding - MEDIUM RISK: XAMPPRocky, less popular (100K downloads), verify for crypto use
-rasn = "=0.20.2"
-# CMS (Cryptographic Message Syntax) - MEDIUM RISK: Same as rasn, security-critical
-rasn-cms = "=0.20.2"
+rasn.workspace = true
+rasn-cms.workspace = true
 rayon.workspace = true
 rcgen = { workspace = true, optional = true }
-# RSA public key cryptography - LOW RISK: RustCrypto org, 10M+ downloads
-rsa = { version = "=0.9.8", features = ["sha2", "serde"] }
+rsa.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
-# Digital signature traits - LOW RISK: RustCrypto org, 50M+ downloads
-signature = "=2.2.0"
+serde-wasm-bindgen.workspace = true
+signature.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
-# experimental-force_fft_algo_dif4 feature ensure PBS is deterministic
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
@@ -108,13 +90,17 @@ tfhe = { workspace = true, features = [
     "experimental-force_fft_algo_dif4",
     "extended-types",
 ] }
+tfhe-versionable.workspace = true
+thiserror.workspace = true
+threshold-fhe = { workspace = true, default-features = false, features = [
+    "extension_degree_4",
+] }
 tokio = { workspace = true, features = [
     "macros",
     "rt-multi-thread",
 ], optional = true }
 tokio-rustls = { workspace = true, optional = true }
-# Tokio utilities - LOW RISK: tokio team, 50M+ downloads
-tokio-util = { version = "=0.7.15", features = ["rt"] }
+tokio-util.workspace = true
 tonic = { workspace = true, optional = true }
 tonic-health = { workspace = true, optional = true }
 tonic-tls = { workspace = true, optional = true }
@@ -122,44 +108,25 @@ tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
 tracing = { workspace = true, features = ["log"] }
 trait-variant.workspace = true
-# URL parsing and manipulation - LOW RISK: servo team, 100M+ downloads
-url = { version = "=2.5.4", features = ["serde"] }
+url.workspace = true
 validator.workspace = true
-zeroize.workspace = true
-# Ordered map implementation - HIGH RISK: DEPRECATED, replaced by indexmap, should migrate
-ordermap = "=0.5.7"
+wasm-bindgen.workspace = true
 x509-parser = { workspace = true, optional = true }
-
-# [target.'cfg(target_arch = "wasm32")'.dependencies]
-# WASM panic hook for better error messages - LOW RISK: rustwasm team
-console_error_panic_hook = { version = "=0.1.7" }
-# Serde integration for wasm-bindgen - LOW RISK: RReverser, 5M+ downloads
-serde-wasm-bindgen = { version = "=0.6.5" }
-# WASM bindings - LOW RISK: rustwasm team, 50M+ downloads
-wasm-bindgen = { version = "=0.2.100", features = ["serde-serialize"] }
-tfhe-versionable.workspace = true
-# Async cell implementation - MEDIUM RISK: Individual maintainer, very low popularity, consider alternatives
-async_cell = "0.2.2"
-thiserror.workspace = true
-# AES-GCM authenticated encryption - LOW RISK: RustCrypto org, 10M+ downloads
-aes-gcm = { version = "=0.10.3", features = ["std"] }
-# ML-KEM (Kyber) post-quantum KEM - MEDIUM RISK: New standard implementation, needs security audit
-ml-kem = "=0.2.1"
+zeroize.workspace = true
 
 [dev-dependencies]
-assert_cmd = "=2.0.17"
+assert_cmd.workspace = true
+backward-compatibility = { workspace = true, features = ["load", "tests"] }
+proptest.workspace = true
+rstest.workspace = true
 serial_test.workspace = true
-sysinfo = "=0.35.1"
+sysinfo-old.workspace = true
 tempfile.workspace = true
-tracing-test = "=0.2.5"
-rstest = "=0.25.0"
-# The testing feature is only required for tests
+tests-utils = { path = "./tests-utils" }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "testing", "malicious_strategies",
 ] }
-backward-compatibility = { workspace = true, features = ["load", "tests"] }
-proptest = "=1.6.0"
-tests-utils = { path = "./tests-utils" }
+tracing-test.workspace = true
 
 [features]
 default = ["non-wasm"]

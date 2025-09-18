@@ -34,7 +34,7 @@ tfhe = { workspace = true, features = [
 tfhe-versionable.workspace = true
 threshold-fhe = { workspace = true, default-features = false, features = ["extension_degree_4"] }
 tracing = { workspace = true, features = ["log"] }
-wasm-bindgen = { version = "=0.2.100", features = ["serde-serialize"] }
+wasm-bindgen.workspace = true
 
 [build-dependencies]
 tonic-build.workspace = true
