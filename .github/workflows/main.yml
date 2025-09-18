@@ -293,9 +293,7 @@ jobs:
     needs:
       - test-core-client
       - docker-golden-image
-    if: >-
-      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3d8b1adcb5504fef30223016d459e3e38b36f9d1
     with:
       docker-file: "./docker/core-client/Dockerfile"
@@ -461,9 +459,7 @@ jobs:
     needs:
       - test-core-service
       - docker-golden-image
-    if: >-
-      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3d8b1adcb5504fef30223016d459e3e38b36f9d1
     # uses: ./.github/workflows/common-docker-big-instance.yml
     with:
@@ -498,9 +494,7 @@ jobs:
       attestations: write # Required to create build attestations
     needs:
       - docker-core-service
-    if: >-
-      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker'))
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
     uses: ./.github/workflows/common-nitro-enclave.yml
     with:
       docker-file-enclave: "./docker/core/service/enclave.dockerfile"
@@ -653,9 +647,7 @@ jobs:
       pull-requests: read # Required to read pull request information
       packages: write # Required to publish packages
       attestations: write # Required to create build attestations
-    if: >-
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')) ||
-      (startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3d8b1adcb5504fef30223016d459e3e38b36f9d1
     with:
       docker-file: "./docker/base/Dockerfile"
@@ -763,7 +755,6 @@ jobs:
     name: main/test-reporter
     if: ${{ always() && github.event_name == 'pull_request' }}
     needs:
-      - test-helm-chart
       - test-backward-compatibility
       - test-core-client
       - test-grpc
