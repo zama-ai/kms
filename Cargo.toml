@@ -40,7 +40,7 @@ version = "0.11.0"
 #    - Single source of truth for dependency management
 #
 # SECURITY EVALUATION CHECKLIST for new dependencies:
-# 1. Is the owner suspicious? (limited to one or few people/small companies in risky jurisdictions)
+# 1. Is the owner suspicious? (Is it only one or a few people, is it a company in a risky jurisdiction. Did the owner change recently?)
 # 2. Is the crate not particularly popular? (check download counts on crates.io)
 # 3. Is there an unusual jump in package versions? (e.g., 0.1.0 -> 3.0.0)
 # 4. Is documentation lacking? (check docs.rs and GitHub repo)
