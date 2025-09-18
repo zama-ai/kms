@@ -52,7 +52,7 @@ pub struct RealBackupOperator<
     PrivS: Storage + Sync + Send + 'static,
 > {
     my_role: Role,
-    base_kms: BaseKmsStruct,                    security_module..as_ref().map(Arc::clone),
+    base_kms: BaseKmsStruct,
     crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
     security_module: Option<Arc<SecurityModuleProxy>>,
     // Ephemeral decryption key only set and used during custodian based backup recovery
@@ -68,13 +68,13 @@ where
         my_role: Role,
         base_kms: BaseKmsStruct,
         crypto_storage: CryptoMaterialStorage<PubS, PrivS>,
-        security_module: Option<SecurityModuleProxy>,
+        security_module: Option<Arc<SecurityModuleProxy>>,
     ) -> Self {
         Self {
             my_role,
             base_kms,
             crypto_storage,
-            security_module,
+            security_module: security_module.as_ref().map(Arc::clone),
             ephemeral_dec_key: Arc::new(Mutex::new(None)),
         }
     }

@@ -126,7 +126,8 @@ impl GrpcSendingService {
                         receiver.hostname()
                     )));
                 }
-                let domain_name = ServerName::try_from(network_address.mpc_identity())?.to_owned();
+                let domain_name =
+                    ServerName::try_from(receiver.mpc_identity().to_string())?.to_owned();
 
                 // If we have a list of trusted software hashes, we're running
                 // within the AWS Nitro enclave and we have to use vsock proxies
