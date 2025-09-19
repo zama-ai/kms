@@ -160,11 +160,8 @@ impl AsyncTestContext for DockerComposeThresholdCustodianContextTest {
     }
 }
 
-async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T) -> String {
+async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T, test_path: &Path) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
-
-    let keys_folder: &Path = Path::new("tests/data/keys");
-
     let config = CmdConfig {
         file_conf: Some(String::from(path_to_config.to_str().unwrap())),
         command: CCCommand::InsecureKeyGen(InsecureKeyGenParameters {
@@ -176,7 +173,7 @@ async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T) -> String {
     };
 
     println!("Doing insecure key-gen");
-    let key_gen_results = execute_cmd(&config, keys_folder).await.unwrap();
+    let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
     println!("Insecure key-gen done");
 
     assert_eq!(key_gen_results.len(), 1);
@@ -190,18 +187,20 @@ async fn insecure_key_gen<T: DockerComposeContext>(ctx: &T) -> String {
 
 async fn key_and_crs_gen<T: DockerComposeContext>(
     ctx: &mut T,
+    test_path: &Path,
     insecure_crs_gen: bool,
 ) -> (String, String) {
-    let key_id = insecure_key_gen(ctx).await;
-    let crs_id = crs_gen(ctx, insecure_crs_gen).await;
+    let key_id = insecure_key_gen(ctx, test_path).await;
+    let crs_id = crs_gen(ctx, test_path, insecure_crs_gen).await;
     (key_id, crs_id)
 }
 
-async fn crs_gen<T: DockerComposeContext>(ctx: &T, insecure_crs_gen: bool) -> String {
+async fn crs_gen<T: DockerComposeContext>(
+    ctx: &T,
+    test_path: &Path,
+    insecure_crs_gen: bool,
+) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
-
-    let keys_folder: &Path = Path::new("tests/data/keys");
-
     let command = match insecure_crs_gen {
         true => CCCommand::InsecureCrsGen(CrsParameters { max_num_bits: 2048 }),
         false => CCCommand::CrsGen(CrsParameters { max_num_bits: 2048 }),
@@ -215,7 +214,7 @@ async fn crs_gen<T: DockerComposeContext>(ctx: &T, insecure_crs_gen: bool) -> St
     };
 
     println!("Doing CRS-gen");
-    let crs_gen_results = execute_cmd(&config, keys_folder).await.unwrap();
+    let crs_gen_results = execute_cmd(&config, test_path).await.unwrap();
     println!("CRS-gen done");
     assert_eq!(crs_gen_results.len(), 1);
     let crs_id = match crs_gen_results.first().unwrap() {
@@ -226,9 +225,7 @@ async fn crs_gen<T: DockerComposeContext>(ctx: &T, insecure_crs_gen: bool) -> St
     crs_id.to_string()
 }
 
-async fn real_preproc_and_keygen(config_path: &str) -> String {
-    let keys_folder: &Path = Path::new("tests/data/keys");
-
+async fn real_preproc_and_keygen(config_path: &str, test_path: &Path) -> String {
     let config = CmdConfig {
         file_conf: Some(config_path.to_string()),
         command: CCCommand::PreprocKeyGen(NoParameters {}),
@@ -237,7 +234,7 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
         expect_all_responses: true,
     };
     println!("Doing preprocessing");
-    let mut preproc_result = execute_cmd(&config, keys_folder).await.unwrap();
+    let mut preproc_result = execute_cmd(&config, test_path).await.unwrap();
     assert_eq!(preproc_result.len(), 1);
     let (preproc_id, _) = preproc_result.pop().unwrap();
     println!("Preprocessing done with ID {preproc_id:?}");
@@ -253,7 +250,7 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
         expect_all_responses: true,
     };
     println!("Doing key-gen");
-    let key_gen_results = execute_cmd(&config, keys_folder).await.unwrap();
+    let key_gen_results = execute_cmd(&config, test_path).await.unwrap();
     println!("Key-gen done");
     assert_eq!(key_gen_results.len(), 1);
 
@@ -286,11 +283,12 @@ async fn restore_from_backup<T: DockerComposeContext>(ctx: &T, test_path: &Path)
     "".to_string()
 }
 
-async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<CCCommand>) {
+async fn test_template<T: DockerComposeContext>(
+    ctx: &mut T,
+    commands: Vec<CCCommand>,
+    test_path: &Path,
+) {
     let path_to_config = ctx.root_path().join(ctx.config_path());
-
-    let keys_folder: &Path = Path::new("tests/data/keys");
-
     for command in commands {
         let config = CmdConfig {
             file_conf: Some(String::from(path_to_config.to_str().unwrap())),
@@ -300,7 +298,7 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<CCCom
             expect_all_responses: true,
         };
 
-        let results = execute_cmd(&config, keys_folder).await.unwrap();
+        let results = execute_cmd(&config, test_path).await.unwrap();
 
         //Make sure load is as expected
         match &command {
@@ -357,7 +355,7 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<CCCom
             };
 
             //We query result on a single request id, so should get a single result
-            let mut results_bis = execute_cmd(&config, keys_folder).await.unwrap();
+            let mut results_bis = execute_cmd(&config, test_path).await.unwrap();
             assert_eq!(results_bis.len(), 1);
             let (sid_bis, result_bis) = results_bis.remove(0);
 
@@ -464,6 +462,7 @@ async fn custodian_backup_init<T: DockerComposeContext>(
 
     let init_command = CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
         operator_recovery_resp_paths,
+        overwrite_ephemeral_key: false,
     });
     let init_config = CmdConfig {
         file_conf: Some(String::from(path_to_config.to_str().unwrap())),
@@ -572,7 +571,9 @@ async fn custodian_backup_recovery<T: DockerComposeContext>(
 #[serial(docker)]
 async fn test_centralized_secure(ctx: &mut DockerComposeCentralizedContext) {
     init_testing();
-    let (key_id, _crs_id) = key_and_crs_gen(ctx, false).await;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let (key_id, _crs_id) = key_and_crs_gen(ctx, keys_folder, false).await;
     integration_test_commands(ctx, key_id).await;
 }
 
@@ -581,7 +582,9 @@ async fn test_centralized_secure(ctx: &mut DockerComposeCentralizedContext) {
 #[serial(docker)]
 async fn test_centralized_insecure(ctx: &mut DockerComposeCentralizedContext) {
     init_testing();
-    let (key_id, _crs_id) = key_and_crs_gen(ctx, true).await;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let (key_id, _crs_id) = key_and_crs_gen(ctx, keys_folder, true).await;
     integration_test_commands(ctx, key_id).await;
 }
 
@@ -593,7 +596,7 @@ async fn test_centralized_restore_from_backup(ctx: &DockerComposeCentralizedCont
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let _crs_id = crs_gen(ctx, true).await;
+    let _crs_id = crs_gen(ctx, keys_folder, true).await;
     let _ = restore_from_backup(ctx, keys_folder).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
     // However we are testing this in the service/client tests. Hence this tests is mainly to ensure that the outer
@@ -650,7 +653,9 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
 #[serial(docker)]
 async fn test_threshold_secure(ctx: &mut DockerComposeThresholdContextDefault) {
     init_testing();
-    let (key_id, _crs_id) = key_and_crs_gen(ctx, false).await;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let (key_id, _crs_id) = key_and_crs_gen(ctx, keys_folder, false).await;
     integration_test_commands(ctx, key_id).await;
 }
 
@@ -659,11 +664,15 @@ async fn test_threshold_secure(ctx: &mut DockerComposeThresholdContextDefault) {
 #[serial(docker)]
 async fn test_threshold_insecure(ctx: &mut DockerComposeThresholdContextDefault) {
     init_testing();
-    let (key_id, _crs_id) = key_and_crs_gen(ctx, true).await;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let (key_id, _crs_id) = key_and_crs_gen(ctx, keys_folder, true).await;
     integration_test_commands(ctx, key_id).await;
 }
 
 async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id: String) {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
     let ctxt_path: &Path = Path::new("tests/data/test_encrypt_cipher.txt");
     let ctxt_with_sns_path: &Path = Path::new("tests/data/test_encrypt_cipher_with_sns.txt");
     // some commands are tested twice to see the cache in action
@@ -865,7 +874,12 @@ async fn integration_test_commands<T: DockerComposeContext>(ctx: &mut T, key_id:
         })),
     ];
 
-    test_template(ctx, [commands, commands_for_sns_precompute].concat()).await
+    test_template(
+        ctx,
+        [commands, commands_for_sns_precompute].concat(),
+        keys_folder,
+    )
+    .await
 }
 
 fn config_path_from_context(ctx: &impl DockerComposeContext) -> String {
@@ -881,9 +895,11 @@ fn config_path_from_context(ctx: &impl DockerComposeContext) -> String {
 #[serial(docker)]
 async fn test_threshold_sequential_preproc_keygen(ctx: &DockerComposeThresholdContextTest) {
     init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(&config_path).await;
-    let key_id_2 = real_preproc_and_keygen(&config_path).await;
+    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder).await;
     assert_ne!(key_id_1, key_id_2);
 }
 
@@ -892,10 +908,12 @@ async fn test_threshold_sequential_preproc_keygen(ctx: &DockerComposeThresholdCo
 #[serial(docker)]
 async fn test_threshold_concurrent_preproc_keygen(ctx: &DockerComposeThresholdContextTest) {
     init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
     let _ = join_all([
-        real_preproc_and_keygen(&config_path),
-        real_preproc_and_keygen(&config_path),
+        real_preproc_and_keygen(&config_path, keys_folder),
+        real_preproc_and_keygen(&config_path, keys_folder),
     ])
     .await;
 }
@@ -905,8 +923,10 @@ async fn test_threshold_concurrent_preproc_keygen(ctx: &DockerComposeThresholdCo
 #[serial(docker)]
 async fn test_threshold_sequential_crs(ctx: &DockerComposeThresholdContextDefault) {
     init_testing();
-    let crs_id_1 = crs_gen(ctx, false).await;
-    let crs_id_2 = crs_gen(ctx, false).await;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let crs_id_1 = crs_gen(ctx, keys_folder, false).await;
+    let crs_id_2 = crs_gen(ctx, keys_folder, false).await;
     assert_ne!(crs_id_1, crs_id_2);
 }
 
@@ -915,7 +935,13 @@ async fn test_threshold_sequential_crs(ctx: &DockerComposeThresholdContextDefaul
 #[serial(docker)]
 async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdContextDefault) {
     init_testing();
-    let res = join_all([crs_gen(ctx, false), crs_gen(ctx, false)]).await;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let res = join_all([
+        crs_gen(ctx, keys_folder, false),
+        crs_gen(ctx, keys_folder, false),
+    ])
+    .await;
     assert_ne!(res[0], res[1]);
 }
 
@@ -927,7 +953,7 @@ async fn test_threshold_restore_from_backup(ctx: &DockerComposeThresholdContextT
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
-    let _crs_id = crs_gen(ctx, true).await;
+    let _crs_id = crs_gen(ctx, keys_folder, true).await;
     let _ = restore_from_backup(ctx, keys_folder).await;
     // We don't have endpoints that allow us to purge the generate material within the docker images
     // so we can here only test that the end points are alive and acting as expected, rather than validating that
@@ -995,9 +1021,11 @@ async fn full_gen_tests_default_threshold_sequential_preproc_keygen(
     ctx: &DockerComposeThresholdContextDefault,
 ) {
     init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
     let config_path = config_path_from_context(ctx);
-    let key_id_1 = real_preproc_and_keygen(&config_path).await;
-    let key_id_2 = real_preproc_and_keygen(&config_path).await;
+    let key_id_1 = real_preproc_and_keygen(&config_path, keys_folder).await;
+    let key_id_2 = real_preproc_and_keygen(&config_path, keys_folder).await;
     assert_ne!(key_id_1, key_id_2);
 }
 
@@ -1008,7 +1036,9 @@ async fn full_gen_tests_default_threshold_sequential_crs(
     ctx: &DockerComposeThresholdContextDefault,
 ) {
     init_testing();
-    let crs_id_1 = crs_gen(ctx, false).await;
-    let crs_id_2 = crs_gen(ctx, false).await;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
+    let crs_id_1 = crs_gen(ctx, keys_folder, false).await;
+    let crs_id_2 = crs_gen(ctx, keys_folder, false).await;
     assert_ne!(crs_id_1, crs_id_2);
 }
