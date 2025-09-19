@@ -29,14 +29,14 @@ SEED=$(( SEED + 1 ))
 ##KEY GEN
 #Create preproc for dkg with test parameters
 $MOBYGO_EXEC -c $1 preproc-key-gen --dkg-params $PARAMS --num-sessions 5 --session-type small --sid $CURR_SID --seed $SEED
-#Checking every 1mn
-$MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true --interval 60
+#Checking every 30s
+$MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true --interval 30
 CURR_SID=$(( CURR_SID + 1 ))
 SEED=$(( SEED + 1 ))
 #Execute DKG using the produced preproc
 $MOBYGO_EXEC -c $1 threshold-key-gen --dkg-params $PARAMS --sid $CURR_SID  --preproc-sid $(( CURR_SID - 1)) --seed $SEED
-#Checking every 1mn
-$MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true --interval 60
+#Checking every 30s
+$MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true --interval 30
 #Get the key
 mkdir -p $KEY_PATH
 $MOBYGO_EXEC -c $1 threshold-key-gen-result --sid $CURR_SID  --storage-path $KEY_PATH
