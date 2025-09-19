@@ -48,24 +48,14 @@ pub async fn user_decrypt_impl<
     let inner = request.into_inner();
 
     let (typed_ciphertexts, link, client_enc_key, client_address, key_id, request_id, domain) =
-        validate_user_decrypt_req(&inner).map_err(|e| {
-            tracing::error!("Failed to validate user decryption request: {inner:?}, error: {e}");
-            Status::invalid_argument("Failed to validate user decryption request: {e:?}")
-        })?;
+        validate_user_decrypt_req(&inner)?;
 
     // check that the key exists
     {
-        let found = service
-            .crypto_storage
-            .inner
-            .fhe_keys_exist(&key_id)
-            .await
-            .map_err(|e| {
-                Status::aborted(format!(
-                    "Existence failed for key_id {key_id} and request_id {request_id}: {e:?}"
-                ))
-            })?;
-        if !found {
+        if !ok_or_tonic_abort(
+            service.crypto_storage.inner.fhe_keys_exist(&key_id).await,
+            format!("Existence check failed for key_id {key_id} and request_id {request_id}"),
+        )? {
             return Err(Status::not_found(format!(
                 "Key ID {key_id} not found for user decryption request {request_id}"
             )));
@@ -89,7 +79,10 @@ pub async fn user_decrypt_impl<
         // everything after this point should result in an abort error
         ok_or_tonic_abort(
             guarded_meta_store.insert(&request_id),
-            "Could not insert user decryption request ID into meta store".to_string(),
+            format!(
+                "Could not insert user decryption with ID {} into meta store",
+                request_id
+            ),
         )?;
     }
 

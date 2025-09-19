@@ -79,6 +79,17 @@ pub async fn key_gen_impl<
     // If all is ok write the request ID to the meta store
     // All validation must be done before inserting the request ID
     {
+        // Note that the keygen meta store should be checked first
+        // because we do not want to delete the preprocessing ID
+        // if the keygen request cannot proceed.
+        let mut guarded_meta_store = service.key_meta_map.write().await;
+        if guarded_meta_store.exists(&req_id) {
+            return Err(tonic::Status::new(
+                tonic::Code::AlreadyExists,
+                format!("Key with ID {req_id} already exists"),
+            ));
+        };
+
         let check_meta_store = {
             #[cfg(feature = "insecure")]
             {
@@ -88,22 +99,16 @@ pub async fn key_gen_impl<
             true
         };
         if check_meta_store {
-            let preproc_meta_store = service.prepreocessing_ids.read().await;
+            let mut preproc_meta_store = service.prepreocessing_ids.write().await;
             if !preproc_meta_store.exists(&preproc_id) {
                 return Err(tonic::Status::new(
                     tonic::Code::NotFound,
                     format!("Preprocessing ID {preproc_id} not found"),
                 ));
             }
+            preproc_meta_store.delete(&preproc_id);
         }
 
-        let mut guarded_meta_store = service.key_meta_map.write().await;
-        if guarded_meta_store.exists(&req_id) {
-            return Err(tonic::Status::new(
-                tonic::Code::AlreadyExists,
-                format!("Key with ID {req_id} already exists"),
-            ));
-        };
         // Insert [HandlerStatus::Started] into the meta store.
         // Note that this will fail if the request ID is already in the meta store
         ok_or_tonic_abort(
@@ -393,7 +398,7 @@ pub(crate) mod tests {
             epoch_id: None,
         };
 
-        // Because preprocessing is does not do anything useful in the centralized KMS,
+        // Because preprocessing does not do anything useful in the centralized KMS,
         // it is here only to make sure the API is consistent with the threshold KMS,
         // so the grpc call is fast and we do not need to check the result if the call succeeded.
         preprocessing_impl(&kms, tonic::Request::new(preproc_req))
@@ -671,9 +676,44 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn not_found() {
         let mut rng = AesRng::seed_from_u64(42);
-        let (kms, _) = setup_central_test_kms(&mut rng).await;
-        let bad_key_id = derive_request_id("test_keygen_not_found").unwrap();
-        let get_result = get_key_gen_result_impl(&kms, Request::new(bad_key_id.into())).await;
-        assert_eq!(get_result.unwrap_err().code(), tonic::Code::NotFound);
+        let preproc_id = derive_request_id("test_keygen_already_exists_preproc_id").unwrap();
+        let request_id = derive_request_id("test_keygen_already_exists_key_id").unwrap();
+        let (kms, _) = setup_test_kms_with_preproc(&mut rng, &preproc_id).await;
+        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
+
+        // try to generate a key twice using the same preprocessing ID
+        // the second one should fail with not found because the preprocessing ID is removed after use
+        {
+            test_standard_keygen(&kms, &request_id, &preproc_id).await;
+
+            let new_request_id = derive_request_id("test_keygen_already_exists_key_id_2").unwrap();
+            let request = KeyGenRequest {
+                params: Some(FheParameter::Test.into()),
+                keyset_config: None,
+                keyset_added_info: None,
+                request_id: Some((new_request_id).into()),
+                context_id: None,
+                preproc_id: Some((preproc_id).into()), // same preproc ID
+                domain: Some(domain),
+                epoch_id: None,
+            };
+            // this time it should fail
+            let err = key_gen_impl(
+                &kms,
+                tonic::Request::new(request),
+                #[cfg(feature = "insecure")]
+                true,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err.code(), tonic::Code::NotFound);
+        }
+
+        // we try to get a key that does not exist
+        {
+            let bad_key_id = derive_request_id("test_keygen_not_found").unwrap();
+            let get_result = get_key_gen_result_impl(&kms, Request::new(bad_key_id.into())).await;
+            assert_eq!(get_result.unwrap_err().code(), tonic::Code::NotFound);
+        }
     }
 }

@@ -545,7 +545,7 @@ pub(crate) fn validate_crs_gen_request(
 
 /// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)
 fn verify_max_num_bits(max_num_bits: usize) -> Result<(), BoxedStatus> {
-    if max_num_bits > 0 && max_num_bits <= 2048 && (max_num_bits & (max_num_bits - 1)) == 0 {
+    if max_num_bits > 0 && max_num_bits <= 2048 && usize::is_power_of_two(max_num_bits) {
         Ok(())
     } else {
         Err(tonic::Status::invalid_argument(format!(
