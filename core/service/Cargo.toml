@@ -126,7 +126,7 @@ backward-compatibility = { workspace = true, features = ["load", "tests"] }
 proptest.workspace = true
 rstest.workspace = true
 serial_test.workspace = true
-sysinfo-old.workspace = true
+sysinfo.workspace = true
 tempfile.workspace = true
 tests-utils = { path = "./tests-utils" }
 threshold-fhe = { workspace = true, default-features = false, features = [

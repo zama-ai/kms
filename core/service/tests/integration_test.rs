@@ -5,7 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::{fs, thread, time::Duration};
-use sysinfo_old::System;
+use sysinfo::System;
 use tests_utils::integration_test;
 use tests_utils::persistent_traces;
 use threshold_fhe::{conf::party::CertificatePaths, execution::runtime::party::Role};

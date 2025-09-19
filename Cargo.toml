@@ -30,7 +30,7 @@ version = "0.11.0"
 
 [workspace.dependencies]
 # ⚠️ WORKSPACE DEPENDENCY MANAGEMENT BEST PRACTICES ⚠️
-# 
+#
 # 1. ADD ALL NEW DEPENDENCIES HERE in the workspace root, NOT in individual member crates
 # 2. Member crates should only reference workspace dependencies using .workspace = true
 # 3. This centralized approach ensures:
@@ -46,7 +46,7 @@ version = "0.11.0"
 # 4. Is documentation lacking? (check docs.rs and GitHub repo)
 # 5. For crypto/security-critical deps: Has it been audited? Is it from a reputable org? Do the owner have a bounty program or at least details on responsible disclosure?
 # 6. Is there no or limited testing? (Check the project's GitHub CI)
-# 
+#
 # Risk levels:
 # - LOW RISK: Team/organization maintained (e.g., rust-lang, tokio, RustCrypto), high popularity (>1M downloads), good docs
 # - MEDIUM RISK: Team-maintained with lower popularity, or packages needing security audit
@@ -57,7 +57,7 @@ version = "0.11.0"
 # Internal Zama modules
 backward-compatibility = { path = "./backward-compatibility" }  # Internal backward compatibility testing
 bc2wrap = { path = "./bc2wrap" }  # Internal bincode wrapper custom implementation
-kms = { path = "./core/service", default-features = false }  # Core KMS service 
+kms = { path = "./core/service", default-features = false }  # Core KMS service
 kms-grpc = { path = "./core/grpc", default-features = false }  # KMS gRPC interface
 observability = { path = "./observability" }  # Internal observability module
 threshold-fhe = { path = "./core/threshold/", default-features = false }  # Threshold FHE implementation
@@ -163,7 +163,6 @@ strum = "=0.27.1"  # Enum utilities - HIGH RISK: Individual maintainer (Peternat
 strum_macros = "=0.27.1"  # Enum derive macros - HIGH RISK: Individual maintainer (Peternator7)
 syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - HIGH RISK: Individual maintainer (dtolnay), despite 993M downloads
 sysinfo = "0.36.1"  # System information gathering - HIGH RISK: Individual maintainer (GuillaumeGomez), despite 71M+ downloads
-sysinfo-old = { package = "sysinfo", version = "=0.35.1" }  # System information (older version) - HIGH RISK: Individual maintainer (GuillaumeGomez)
 tempfile = "=3.20.0"  # Temporary file handling - HIGH RISK: Individual maintainer (Stebalien), despite 345M+ downloads
 test-context = "=0.4.1"  # Test context utilities - HIGH RISK: Individual maintainer (slinkydeveloper), test-only dependency
 tfhe = "=1.3.3"  # Fully Homomorphic Encryption library - LOW RISK: Zama
