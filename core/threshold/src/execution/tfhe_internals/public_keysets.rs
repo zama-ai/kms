@@ -403,7 +403,7 @@ impl RawCompressedPubKeySet {
             }),
             noise_squashing_key,
             noise_squashing_compression_key,
-            rerand_ksk, // TODO: Rerandomization key
+            rerand_ksk,
             tfhe::Tag::default(),
         )
     }
