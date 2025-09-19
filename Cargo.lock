@@ -308,7 +308,7 @@ dependencies = [
  "derive_more",
  "foldhash",
  "hashbrown 0.15.5",
- "indexmap 2.11.1",
+ "indexmap 2.11.2",
  "itoa",
  "k256",
  "keccak-asm",
@@ -441,7 +441,7 @@ dependencies = [
  "alloy-sol-macro-input",
  "const-hex",
  "heck",
- "indexmap 2.11.1",
+ "indexmap 2.11.2",
  "proc-macro-error2",
  "proc-macro2",
  "quote",
@@ -1718,7 +1718,7 @@ dependencies = [
 
 [[package]]
 name = "backward-compatibility"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "aes-prng",
  "bincode 1.3.3",
@@ -2070,7 +2070,7 @@ dependencies = [
 
 [[package]]
 name = "cc-tests-utils"
-version = "0.11.0"
+version = "0.11.1"
 
 [[package]]
 name = "cexpr"
@@ -3346,7 +3346,7 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows 0.61.3",
+ "windows",
 ]
 
 [[package]]
@@ -3455,7 +3455,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "http 0.2.12",
- "indexmap 2.11.1",
+ "indexmap 2.11.2",
  "slab",
  "tokio",
  "tokio-util",
@@ -3474,7 +3474,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "http 1.3.1",
- "indexmap 2.11.1",
+ "indexmap 2.11.2",
  "slab",
  "tokio",
  "tokio-util",
@@ -3951,13 +3951,14 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.11.1"
+version = "2.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "206a8042aec68fa4a62e8d3f7aa4ceb508177d9324faf261e1959e495b7a1921"
+checksum = "24855426e2ca0eb0c416e7e1f548b11f7547805faeed2a3d3e961286b51f7d53"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.5",
  "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -3967,7 +3968,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "232929e1d75fe899576a3d5c7416ad0d88dbfbb3c3d6aa00873a7408a50ddb88"
 dependencies = [
  "ahash",
- "indexmap 2.11.1",
+ "indexmap 2.11.2",
  "is-terminal",
  "itoa",
  "log",
@@ -4151,7 +4152,7 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -4176,7 +4177,6 @@ dependencies = [
  "bc2wrap",
  "bincode 2.0.1",
  "bip39",
- "bytes",
  "cbc",
  "cfg-if",
  "clap",
@@ -4208,7 +4208,7 @@ dependencies = [
  "signature 2.2.0",
  "strum",
  "strum_macros",
- "sysinfo 0.35.1",
+ "sysinfo",
  "tempfile",
  "tests-utils",
  "tfhe",
@@ -4219,7 +4219,6 @@ dependencies = [
  "tokio-rustls 0.26.2",
  "tokio-util",
  "tonic 0.13.1",
- "tonic-build",
  "tonic-health",
  "tonic-tls",
  "tower 0.5.2",
@@ -4236,7 +4235,7 @@ dependencies = [
 
 [[package]]
 name = "kms-core-client"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "aes-prng",
  "alloy-primitives",
@@ -4273,7 +4272,7 @@ dependencies = [
 
 [[package]]
 name = "kms-grpc"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -4297,7 +4296,7 @@ dependencies = [
 
 [[package]]
 name = "kms-health-check"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -4853,7 +4852,7 @@ dependencies = [
 
 [[package]]
 name = "observability"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -4871,7 +4870,7 @@ dependencies = [
  "serde",
  "strum",
  "strum_macros",
- "sysinfo 0.36.1",
+ "sysinfo",
  "thiserror 2.0.12",
  "tokio",
  "tonic 0.13.1",
@@ -5098,7 +5097,7 @@ version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d31b8b7a99f71bdff4235faf9ce9eada0ad3562c8fbeb7d607d9f41a6ec569d"
 dependencies = [
- "indexmap 2.11.1",
+ "indexmap 2.11.2",
 ]
 
 [[package]]
@@ -5293,7 +5292,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3672b37090dbd86368a4145bc067582552b29c27377cad4e0a306c97f9bd7772"
 dependencies = [
  "fixedbitset",
- "indexmap 2.11.1",
+ "indexmap 2.11.2",
 ]
 
 [[package]]
@@ -6832,7 +6831,7 @@ dependencies = [
  "chrono",
  "hex",
  "indexmap 1.9.3",
- "indexmap 2.11.1",
+ "indexmap 2.11.2",
  "schemars 0.9.0",
  "schemars 1.0.4",
  "serde",
@@ -7262,20 +7261,6 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.35.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79251336d17c72d9762b8b54be4befe38d2db56fbbc0241396d70f173c39d47a"
-dependencies = [
- "libc",
- "memchr",
- "ntapi",
- "objc2-core-foundation",
- "objc2-io-kit",
- "windows 0.62.0",
-]
-
-[[package]]
-name = "sysinfo"
 version = "0.36.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "252800745060e7b9ffb7b2badbd8b31cfa4aa2e61af879d0a3bf2a317c20217d"
@@ -7285,7 +7270,7 @@ dependencies = [
  "ntapi",
  "objc2-core-foundation",
  "objc2-io-kit",
- "windows 0.61.3",
+ "windows",
 ]
 
 [[package]]
@@ -7336,7 +7321,7 @@ dependencies = [
 
 [[package]]
 name = "tests-utils"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7507,7 +7492,7 @@ dependencies = [
 
 [[package]]
 name = "threshold-fhe"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "aes",
  "aes-prng",
@@ -7798,7 +7783,7 @@ version = "0.22.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
 dependencies = [
- "indexmap 2.11.1",
+ "indexmap 2.11.2",
  "toml_datetime 0.6.11",
  "winnow",
 ]
@@ -7944,7 +7929,7 @@ checksum = "d039ad9159c98b70ecfd540b2573b97f7f52c3e8d9f8ad57a24b916a536975f9"
 dependencies = [
  "futures-core",
  "futures-util",
- "indexmap 2.11.1",
+ "indexmap 2.11.2",
  "pin-project-lite",
  "slab",
  "sync_wrapper",
@@ -8566,24 +8551,11 @@ version = "0.61.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9babd3a767a4c1aef6900409f85f5d53ce2544ccdfaa86dad48c91782c6d6893"
 dependencies = [
- "windows-collections 0.2.0",
+ "windows-collections",
  "windows-core 0.61.2",
- "windows-future 0.2.1",
+ "windows-future",
  "windows-link 0.1.3",
- "windows-numerics 0.2.0",
-]
-
-[[package]]
-name = "windows"
-version = "0.62.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9579d0e6970fd5250aa29aba5994052385ff55cf7b28a059e484bb79ea842e42"
-dependencies = [
- "windows-collections 0.3.0",
- "windows-core 0.62.0",
- "windows-future 0.3.0",
- "windows-link 0.2.0",
- "windows-numerics 0.3.0",
+ "windows-numerics",
 ]
 
 [[package]]
@@ -8593,15 +8565,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3beeceb5e5cfd9eb1d76b381630e82c4241ccd0d27f1a39ed41b2760b255c5e8"
 dependencies = [
  "windows-core 0.61.2",
-]
-
-[[package]]
-name = "windows-collections"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a90dd7a7b86859ec4cdf864658b311545ef19dbcf17a672b52ab7cefe80c336f"
-dependencies = [
- "windows-core 0.62.0",
 ]
 
 [[package]]
@@ -8638,18 +8601,7 @@ checksum = "fc6a41e98427b19fe4b73c550f060b59fa592d7d686537eebf9385621bfbad8e"
 dependencies = [
  "windows-core 0.61.2",
  "windows-link 0.1.3",
- "windows-threading 0.1.0",
-]
-
-[[package]]
-name = "windows-future"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2194dee901458cb79e1148a4e9aac2b164cc95fa431891e7b296ff0b2f1d8a6"
-dependencies = [
- "windows-core 0.62.0",
- "windows-link 0.2.0",
- "windows-threading 0.2.0",
+ "windows-threading",
 ]
 
 [[package]]
@@ -8694,16 +8646,6 @@ checksum = "9150af68066c4c5c07ddc0ce30421554771e528bde427614c61038bc2c92c2b1"
 dependencies = [
  "windows-core 0.61.2",
  "windows-link 0.1.3",
-]
-
-[[package]]
-name = "windows-numerics"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ce3498fe0aba81e62e477408383196b4b0363db5e0c27646f932676283b43d8"
-dependencies = [
- "windows-core 0.62.0",
- "windows-link 0.2.0",
 ]
 
 [[package]]
@@ -8818,15 +8760,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b66463ad2e0ea3bbf808b7f1d371311c80e115c0b71d60efc142cafbcfb057a6"
 dependencies = [
  "windows-link 0.1.3",
-]
-
-[[package]]
-name = "windows-threading"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab47f085ad6932defa48855254c758cdd0e2f2d48e62a34118a268d8f345e118"
-dependencies = [
- "windows-link 0.2.0",
 ]
 
 [[package]]

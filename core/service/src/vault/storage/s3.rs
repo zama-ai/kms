@@ -11,7 +11,7 @@ use aws_smithy_runtime_api::{
     },
 };
 use aws_smithy_types::config_bag::ConfigBag;
-use http::{header::HOST, HeaderValue};
+use http_legacy::{header::HOST, HeaderValue};
 use hyper_rustls::HttpsConnectorBuilder;
 use kms_grpc::RequestId;
 use serde::{de::DeserializeOwned, Serialize};

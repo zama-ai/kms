@@ -1,6 +1,6 @@
 //! Data generation for kms-core v0.11
 //! This file provides the code that is used to generate all the data to serialize and versionize
-//! for kms-core v0.11.
+//! for kms-core v0.11
 
 use aes_prng::AesRng;
 use kms_0_11::cryptography::internal_crypto_types::gen_sig_keys;
