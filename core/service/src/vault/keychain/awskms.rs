@@ -81,10 +81,13 @@ impl Asymm {
             .send()
             .await
             .map_err(|e| {
-                anyhow!(
-                    "Could not get public key: {}",
-                    e.into_source().unwrap_or("unknown AWS error".into())
-                )
+                let e1 = e.to_string();
+                let e2 = e.into_source().unwrap_or("unknown AWS error".into());
+                let e3 = e2
+                    .source()
+                    .map(|e| format!(": {e}"))
+                    .unwrap_or("".to_string());
+                anyhow!("Could not get public key: {e1}: {e2}{e3}")
             })?;
 
         let pk_spec = some_or_err(
@@ -182,10 +185,13 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
             .send()
             .await
             .map_err(|e| {
-                anyhow!(
-                    "Could not decrypt data key: {}",
-                    e.into_source().unwrap_or("unknown AWS error".into())
-                )
+                let e1 = e.to_string();
+                let e2 = e.into_source().unwrap_or("unknown AWS error".into());
+                let e3 = e2
+                    .source()
+                    .map(|e| format!(": {e}"))
+                    .unwrap_or("".to_string());
+                anyhow!("Could not decrypt data key: {e1}: {e2}{e3}")
             })?;
         let decrypt_data_key_response_ciphertext_bytes = some_or_err(
             decrypt_data_key_response.ciphertext_for_recipient,
@@ -245,10 +251,13 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
             .send()
             .await
             .map_err(|e| {
-                anyhow!(
-                    "Could not generate data key: {}",
-                    e.into_source().unwrap_or("unknown AWS error".into())
-                )
+                let e1 = e.to_string();
+                let e2 = e.into_source().unwrap_or("unknown AWS error".into());
+                let e3 = e2
+                    .source()
+                    .map(|e| format!(": {e}"))
+                    .unwrap_or("".to_string());
+                anyhow!("Could not generate data key: {e1}: {e2}{e3}")
             })?;
 
         // decrypt the data key with the Nitro enclave private key
