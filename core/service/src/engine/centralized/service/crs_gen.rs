@@ -4,7 +4,6 @@ use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
 use kms_grpc::kms::v1::{CrsGenRequest, CrsGenResult, Empty};
-use kms_grpc::rpc_types::optional_protobuf_to_alloy_domain;
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{ERR_CRS_GEN_FAILED, OP_CRS_GEN_REQUEST};
@@ -14,11 +13,11 @@ use tonic::{Request, Response, Status};
 use tracing::Instrument;
 
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::engine::base::{retrieve_parameters, CrsGenMetadata};
+use crate::engine::base::CrsGenMetadata;
 use crate::engine::centralized::central_kms::{async_generate_crs, CentralizedKms};
 use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::validation::{
-    parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
+    parse_proto_request_id, validate_crs_gen_request, RequestIdParsingErr,
 };
 use crate::ok_or_tonic_abort;
 use crate::util::meta_store::{handle_res_mapping, MetaStore};
@@ -41,21 +40,7 @@ pub async fn crs_gen_impl<
     let permit = service.rate_limiter.start_crsgen().await?;
 
     let inner = request.into_inner();
-    let req_id =
-        parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::CrsGenRequest)?;
-    let params = retrieve_parameters(Some(inner.params))?;
-
-    let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
-
-    // context_id is not used in the centralized KMS, but we validate it if present
-    let _context_id = match &inner.context_id {
-        Some(ctx) => Some(parse_proto_request_id(ctx, RequestIdParsingErr::Context)?),
-        None => None,
-    };
-
-    if let Some(max_num_bits) = inner.max_num_bits {
-        crate::engine::base::verify_max_num_bits(max_num_bits as usize)?;
-    }
+    let (req_id, params, eip712_domain) = validate_crs_gen_request(inner.clone())?;
 
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused
