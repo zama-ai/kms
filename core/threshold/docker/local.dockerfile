@@ -5,17 +5,16 @@
 FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms/rust-golden-image:latest AS kms-threshold
 
 WORKDIR /app/ddec
-
 # Copy project files
 COPY . .
 
 # Build with cargo install and caching
 ARG FEATURES
-RUN --mount=type=cache,target=$SCCACHE_DIR,sharing=locked \
-    mkdir -p /app/ddec/bin && \
+
+RUN mkdir -p /app/ddec/bin
+RUN cargo install --path core/threshold --root . --bins --no-default-features --features=${FEATURES}
     # cargo install --path . --root . --bins --no-default-features --features=${FEATURES}
     # NOTE: if we're in a workspace then we need to set a different path
-    cargo install --path core/threshold --root . --bins --no-default-features --features=${FEATURES}
 
 
 # Go tooling stage - only for grpc-health-probe
