@@ -19,7 +19,7 @@ use crate::util::key_setup::test_tools::purge_priv;
 use crate::util::key_setup::test_tools::EncryptionConfig;
 #[cfg(feature = "insecure")]
 use crate::util::key_setup::test_tools::TestingPlaintext;
-use crate::util::key_setup::test_tools::{backup_files, purge_backup};
+use crate::util::key_setup::test_tools::{purge_backup, read_backup_files};
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
 use crate::{
@@ -80,7 +80,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Check that signing key was backed up, since it will always be there
-    let initial_backup: Vec<BackupCiphertext> = backup_files(
+    let initial_backup: Vec<BackupCiphertext> = read_backup_files(
         amount_parties,
         test_path,
         &req_new_cus,
@@ -110,7 +110,7 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
         test_path,
     )
     .await;
-    let _reread_backup: Vec<BackupCiphertext> = backup_files(
+    let _reread_backup: Vec<BackupCiphertext> = read_backup_files(
         amount_parties,
         test_path,
         &req_new_cus,
@@ -177,7 +177,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Check that the new CRS was backed up
-    let crss: Vec<BackupCiphertext> = backup_files(
+    let crss: Vec<BackupCiphertext> = read_backup_files(
         amount_parties,
         test_path,
         &req_new_cus,
@@ -213,7 +213,7 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         test_path,
     )
     .await;
-    let reread_crss: Vec<BackupCiphertext> = backup_files(
+    let reread_crss: Vec<BackupCiphertext> = read_backup_files(
         amount_parties,
         test_path,
         &req_new_cus,
@@ -387,7 +387,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 }
 
 // Right now only used by insecure tests
-#[allow(dead_code)]
+#[cfg(feature = "insecure")]
 async fn run_custodian_recovery_init(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) -> Vec<RecoveryRequest> {
@@ -416,7 +416,7 @@ async fn run_custodian_recovery_init(
 }
 
 // Right now only used by insecure tests
-#[allow(dead_code)]
+#[cfg(feature = "insecure")]
 async fn run_custodian_backup_recovery(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     req: &HashMap<usize, CustodianRecoveryRequest>,
@@ -447,7 +447,7 @@ async fn run_custodian_backup_recovery(
 }
 
 // Right now only used by insecure tests
-#[allow(dead_code)]
+#[cfg(feature = "insecure")]
 async fn run_restore_from_backup(
     kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) -> Vec<Empty> {
@@ -476,7 +476,7 @@ async fn run_restore_from_backup(
 }
 
 // Right now only used by insecure tests
-#[allow(dead_code)]
+#[cfg(feature = "insecure")]
 async fn emulate_custodian(
     rng: &mut AesRng,
     recovery_requests: Vec<RecoveryRequest>,

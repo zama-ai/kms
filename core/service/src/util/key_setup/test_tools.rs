@@ -632,7 +632,7 @@ pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) ->
     backup_exists
 }
 
-pub async fn backup_files(
+pub async fn read_backup_files(
     amount_parties: usize,
     test_path: Option<&Path>,
     backup_id: &RequestId,

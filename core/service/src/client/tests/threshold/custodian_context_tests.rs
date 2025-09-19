@@ -2,7 +2,7 @@ use crate::client::client_wasm::Client;
 use crate::client::tests::threshold::common::threshold_handles_custodian_backup;
 use crate::consts::SIGNING_KEY_ID;
 use crate::util::key_setup::test_tools::backup_exists;
-use crate::util::key_setup::test_tools::backup_files;
+use crate::util::key_setup::test_tools::read_backup_files;
 use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
 use crate::{
     cryptography::internal_crypto_types::WrappedDKGParams, engine::base::derive_request_id,
@@ -66,7 +66,7 @@ async fn new_custodian_context(
     .await;
     // Check that the files are backed up
     assert!(backup_exists(amount_parties, test_path).await);
-    let first_sig_keys = backup_files(
+    let first_sig_keys = read_backup_files(
         amount_parties,
         test_path,
         &req_new_cus,
@@ -87,7 +87,7 @@ async fn new_custodian_context(
         threshold,
     )
     .await;
-    let second_sig_keys = backup_files(
+    let second_sig_keys = read_backup_files(
         amount_parties,
         test_path,
         &req_new_cus2,
@@ -121,7 +121,7 @@ async fn new_custodian_context(
         test_path,
     )
     .await;
-    let reboot_sig_keys = backup_files(
+    let reboot_sig_keys = read_backup_files(
         amount_parties,
         test_path,
         &req_new_cus2,
