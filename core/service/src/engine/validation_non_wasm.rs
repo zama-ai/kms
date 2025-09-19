@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
 use kms_grpc::identifiers::ContextId;
+use kms_grpc::kms::v1::CrsGenRequest;
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
 use kms_grpc::{
@@ -12,9 +13,11 @@ use kms_grpc::{
     },
     rpc_types::optional_protobuf_to_alloy_domain,
 };
+use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::hashing::DomainSep;
 
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::engine::base::retrieve_parameters;
 use crate::{
     anyhow_error_and_log,
     cryptography::{
@@ -515,6 +518,44 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
     }
 }
 
+pub(crate) fn validate_crs_gen_request(
+    req: CrsGenRequest,
+) -> Result<(RequestId, DKGParams, Eip712Domain, Option<ContextId>), BoxedStatus> {
+    let req_id =
+        parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
+    let params = retrieve_parameters(Some(req.params))?;
+
+    // This verification is more strict than the checks in [compute_witness_dim]
+    // because it only allows powers of 2. But there are no strong reasons
+    // to use max_num_bits that are not powers of 2 so we enforce it here.
+    if let Some(max_num_bits) = req.max_num_bits {
+        verify_max_num_bits(max_num_bits as usize)?;
+    }
+
+    // context_id is not used at the moment, but we validate it if present
+    let context_id = match &req.context_id {
+        Some(ctx) => Some(parse_proto_context_id(ctx, RequestIdParsingErr::Context)?),
+        None => None,
+    };
+
+    let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
+
+    Ok((req_id, params, eip712_domain, context_id))
+}
+
+/// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)
+fn verify_max_num_bits(max_num_bits: usize) -> Result<(), BoxedStatus> {
+    if max_num_bits > 0 && max_num_bits <= 2048 && usize::is_power_of_two(max_num_bits) {
+        Ok(())
+    } else {
+        Err(tonic::Status::invalid_argument(format!(
+            "max_num_bits must be a power of 2 between 1 and 2048, got {}",
+            max_num_bits
+        ))
+        .into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -548,7 +589,7 @@ mod tests {
     use super::{
         validate_public_decrypt_meta_data, validate_public_decrypt_req,
         validate_public_decrypt_responses_against_request, validate_user_decrypt_req,
-        verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
+        verify_max_num_bits, verify_user_decrypt_eip712, DSEP_PUBLIC_DECRYPTION,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_CT_COUNT, ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_FHE_TYPE,
         ERR_VALIDATE_PUBLIC_DECRYPTION_BAD_LINK, ERR_VALIDATE_PUBLIC_DECRYPTION_EMPTY_CTS,
         ERR_VALIDATE_PUBLIC_DECRYPTION_INVALID_AGG_RESP,
@@ -1616,5 +1657,16 @@ mod tests {
                 resp1.payload.clone()
             );
         }
+    }
+
+    #[test]
+    fn test_max_num_bits_verification() {
+        // max_num_bits should be at most 2048
+        assert!(verify_max_num_bits(2048).is_ok());
+        assert!(verify_max_num_bits(1024).is_ok());
+        assert!(verify_max_num_bits(1).is_ok());
+        assert!(verify_max_num_bits(0).is_err());
+        assert!(verify_max_num_bits(2049).is_err());
+        assert!(verify_max_num_bits(123).is_err());
     }
 }

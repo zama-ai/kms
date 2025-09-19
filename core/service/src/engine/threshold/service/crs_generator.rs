@@ -6,7 +6,6 @@ use aes_prng::AesRng;
 use kms_grpc::{
     identifiers::ContextId,
     kms::v1::{self, CrsGenRequest, CrsGenResult, Empty},
-    rpc_types::optional_protobuf_to_alloy_domain,
     utils::tonic_result::ok_or_tonic_abort,
     RequestId,
 };
@@ -36,13 +35,9 @@ use crate::{
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::internal_crypto_types::PrivateSigKey,
     engine::{
-        base::{
-            compute_info_crs, retrieve_parameters, BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS,
-        },
+        base::{compute_info_crs, BaseKmsStruct, CrsGenMetadata, DSEP_PUBDATA_CRS},
         threshold::traits::CrsGenerator,
-        validation::{
-            parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
-        },
+        validation::{parse_proto_request_id, validate_crs_gen_request, RequestIdParsingErr},
     },
     util::{
         meta_store::{handle_res_mapping, MetaStore},
@@ -104,8 +99,9 @@ impl<
             "Starting crs generation on kms for request ID {:?}",
             inner.request_id
         );
+        let (req_id, dkg_params, eip712_domain, context_id) =
+            validate_crs_gen_request(inner.clone())?;
 
-        let dkg_params = retrieve_parameters(Some(inner.params))?;
         let crs_params = dkg_params
             .get_params_basics_handle()
             .get_compact_pk_enc_params();
@@ -117,11 +113,6 @@ impl<
                     format!("witness dimension computation failed: {e}"),
                 )
             })?;
-
-        let req_id =
-            parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::CrsGenRequest)?;
-
-        let eip712_domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
 
         // Validate the request ID before proceeding
         {
@@ -152,17 +143,7 @@ impl<
             dkg_params,
             &eip712_domain,
             permit,
-            inner
-                .context_id
-                .as_ref()
-                .map(|id| id.try_into())
-                .transpose()
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::InvalidArgument,
-                        format!("invalid context id: {e}"),
-                    )
-                })?,
+            context_id,
             insecure,
         )
         .await
