@@ -8,11 +8,11 @@ use crate::engine::base::{CrsGenMetadata, KmsFheKeyHandles};
 use crate::engine::context::ContextInfo;
 use crate::engine::threshold::service::ThresholdFheKeys;
 use crate::engine::traits::ContextManager;
-use crate::engine::validation::{parse_proto_request_id, RequestIdParsingErr};
+use crate::engine::validation::{parse_proto_context_id, RequestIdParsingErr};
 use crate::vault::keychain::KeychainProxy;
 use crate::vault::storage::crypto_material::CryptoMaterialStorage;
 use crate::vault::storage::{
-    delete_at_request_id, delete_context_at_request_id, store_versioned_at_request_id,
+    delete_at_request_id, delete_context_at_id, store_versioned_at_request_id,
 };
 use crate::vault::Vault;
 use crate::{
@@ -23,7 +23,6 @@ use aes_prng::AesRng;
 use itertools::Itertools;
 use kms_grpc::kms::v1::{CustodianContext, NewKmsContextRequest};
 use kms_grpc::rpc_types::PrivDataType;
-use kms_grpc::RequestId;
 use kms_grpc::{kms::v1::Empty, utils::tonic_result::ok_or_tonic_abort};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
@@ -103,15 +102,15 @@ where
         &self,
         request: tonic::Request<kms_grpc::kms::v1::DestroyKmsContextRequest>,
     ) -> Result<tonic::Response<kms_grpc::kms::v1::Empty>, tonic::Status> {
-        let context_id = request
+        let proto_context_id = request
             .into_inner()
             .context_id
             .ok_or_else(|| Status::invalid_argument("context_id is required"))?;
         let storage_ref = self.crypto_storage.private_storage.clone();
         let mut guarded_priv_storage = storage_ref.lock().await;
-        let kms_context_id: RequestId =
-            parse_proto_request_id(&context_id, RequestIdParsingErr::CustodianContext)?;
-        delete_context_at_request_id(&mut *guarded_priv_storage, &kms_context_id)
+        let context_id =
+            parse_proto_context_id(&proto_context_id, RequestIdParsingErr::CustodianContext)?;
+        delete_context_at_id(&mut *guarded_priv_storage, &context_id)
             .await
             .map_err(|e| Status::internal(format!("Failed to delete context: {e}")))?;
         Ok(Response::new(Empty {}))
@@ -358,11 +357,12 @@ mod tests {
         engine::context::{NodeInfo, SoftwareVersion},
         util::meta_store::MetaStore,
         vault::storage::{
-            crypto_material::get_core_signing_key, ram::RamStorage, read_context_at_request_id,
+            crypto_material::get_core_signing_key, ram::RamStorage, read_context_at_id,
             store_versioned_at_request_id,
         },
     };
     use kms_grpc::{
+        identifiers::ContextId,
         kms::v1::DestroyKmsContextRequest,
         rpc_types::{KMSType, PrivDataType},
         RequestId,
@@ -411,7 +411,7 @@ mod tests {
         let (backup_encryption_public_key, _) = ephemeral_encryption_key_generation(&mut OsRng);
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
-        let req_id = RequestId::from_bytes([4u8; 32]);
+        let context_id = ContextId::from_bytes([4u8; 32]);
         let new_context = ContextInfo {
             kms_nodes: vec![NodeInfo {
                 name: "Node1".to_string(),
@@ -423,7 +423,7 @@ mod tests {
                 public_storage_url: "http://storage".to_string(),
                 extra_verification_keys: vec![],
             }],
-            context_id: req_id,
+            context_id,
             previous_context_id: None,
             software_version: SoftwareVersion {
                 major: 0,
@@ -452,11 +452,11 @@ mod tests {
         {
             let storage_ref = Arc::clone(&crypto_storage.private_storage);
             let guarded_priv_storage = storage_ref.lock().await;
-            let stored_context = read_context_at_request_id(&*guarded_priv_storage, &req_id)
+            let stored_context = read_context_at_id(&*guarded_priv_storage, &context_id)
                 .await
                 .unwrap();
 
-            assert_eq!(*stored_context.context_id(), req_id);
+            assert_eq!(*stored_context.context_id(), context_id);
             assert_eq!(stored_context.kms_nodes.len(), 1);
             assert_eq!(stored_context.kms_nodes[0].party_id, 1);
             assert_eq!(
@@ -467,7 +467,7 @@ mod tests {
 
         // now that it is stored, we try to delete it
         let request = Request::new(DestroyKmsContextRequest {
-            context_id: Some(req_id.into()),
+            context_id: Some(context_id.into()),
         });
 
         let response = context_manager.destroy_kms_context(request).await;
@@ -477,7 +477,7 @@ mod tests {
         {
             let storage_ref = Arc::clone(&crypto_storage.private_storage);
             let guarded_priv_storage = storage_ref.lock().await;
-            let _ = read_context_at_request_id(&*guarded_priv_storage, &req_id)
+            let _ = read_context_at_id(&*guarded_priv_storage, &context_id)
                 .await
                 .unwrap_err();
         }

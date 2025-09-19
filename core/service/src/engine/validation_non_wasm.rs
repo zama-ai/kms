@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use alloy_dyn_abi::Eip712Domain;
 use itertools::Itertools;
+use kms_grpc::identifiers::ContextId;
 use kms_grpc::kms::v1::CrsGenRequest;
 use kms_grpc::utils::tonic_result::BoxedStatus;
 use kms_grpc::RequestId;
@@ -135,6 +136,19 @@ pub(crate) fn parse_proto_request_id(
     request_id: &kms_grpc::kms::v1::RequestId,
     id_type: RequestIdParsingErr,
 ) -> Result<RequestId, BoxedStatus> {
+    request_id.try_into().map_err(|_| {
+        BoxedStatus::from(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            format!("{id_type}: {request_id:?}"),
+        ))
+    })
+}
+
+// TODO we may need to generalize this into other types of IDs
+pub(crate) fn parse_proto_context_id(
+    request_id: &kms_grpc::kms::v1::RequestId,
+    id_type: RequestIdParsingErr,
+) -> Result<ContextId, BoxedStatus> {
     request_id.try_into().map_err(|_| {
         BoxedStatus::from(tonic::Status::new(
             tonic::Code::InvalidArgument,
@@ -506,7 +520,7 @@ pub(crate) fn validate_public_decrypt_responses_against_request(
 
 pub(crate) fn validate_crs_gen_request(
     req: CrsGenRequest,
-) -> Result<(RequestId, DKGParams, Eip712Domain), BoxedStatus> {
+) -> Result<(RequestId, DKGParams, Eip712Domain, Option<ContextId>), BoxedStatus> {
     let req_id =
         parse_optional_proto_request_id(&req.request_id, RequestIdParsingErr::CrsGenRequest)?;
     let params = retrieve_parameters(Some(req.params))?;
@@ -519,14 +533,14 @@ pub(crate) fn validate_crs_gen_request(
     }
 
     // context_id is not used at the moment, but we validate it if present
-    let _context_id = match &req.context_id {
-        Some(ctx) => Some(parse_proto_request_id(ctx, RequestIdParsingErr::Context)?),
+    let context_id = match &req.context_id {
+        Some(ctx) => Some(parse_proto_context_id(ctx, RequestIdParsingErr::Context)?),
         None => None,
     };
 
     let eip712_domain = optional_protobuf_to_alloy_domain(req.domain.as_ref())?;
 
-    Ok((req_id, params, eip712_domain))
+    Ok((req_id, params, eip712_domain, context_id))
 }
 
 /// The max_num_bits should be a power of 2 between 1 and 2048 (inclusive)

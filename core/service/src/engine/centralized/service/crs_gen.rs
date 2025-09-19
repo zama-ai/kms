@@ -40,7 +40,7 @@ pub async fn crs_gen_impl<
     let permit = service.rate_limiter.start_crsgen().await?;
 
     let inner = request.into_inner();
-    let (req_id, params, eip712_domain) = validate_crs_gen_request(inner.clone())?;
+    let (req_id, params, eip712_domain, _context_id) = validate_crs_gen_request(inner.clone())?;
 
     // check that the request ID is not used yet
     // and then insert the request ID only if it's unused

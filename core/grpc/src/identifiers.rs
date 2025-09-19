@@ -46,6 +46,12 @@ pub struct KeyId([u8; ID_LENGTH]);
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
 pub struct RequestId([u8; ID_LENGTH]); // TODO(#2748) rename to InternalRequestId
 
+/// ContextId represents a unique identifier for a context,
+/// which is usually an operator context in the KMS,
+/// defined by [crate::engine::context::ContextInfo].
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy)]
+pub struct ContextId([u8; ID_LENGTH]);
+
 /// The default is 1 in most significant byte and the rest 0.
 impl Default for RequestId {
     fn default() -> Self {
@@ -66,37 +72,38 @@ impl Ord for RequestId {
         self.0.cmp(&other.0)
     }
 }
-impl Versionize for RequestId {
-    type Versioned<'vers> = &'vers RequestId;
-
-    fn versionize(&self) -> Self::Versioned<'_> {
-        self
-    }
-}
-
-impl VersionizeOwned for RequestId {
-    type VersionedOwned = RequestId;
-    fn versionize_owned(self) -> Self::VersionedOwned {
-        self
-    }
-}
-
-impl Unversionize for RequestId {
-    fn unversionize(
-        versioned: Self::VersionedOwned,
-    ) -> Result<Self, tfhe_versionable::UnversionizeError> {
-        Ok(versioned)
-    }
-}
-
-impl NotVersioned for RequestId {}
 
 // Common implementation for identifier types
 macro_rules! impl_identifiers {
-    ($type1:ident, $type2:ident) => {
+    ($type1:ident, $type2:ident, $type3:ident) => {
         // Implement common methods for each type
         macro_rules! impl_identifier_common {
             ($type:ident) => {
+                impl Versionize for $type {
+                    type Versioned<'vers> = &'vers $type;
+
+                    fn versionize(&self) -> Self::Versioned<'_> {
+                        self
+                    }
+                }
+
+                impl VersionizeOwned for $type {
+                    type VersionedOwned = $type;
+                    fn versionize_owned(self) -> Self::VersionedOwned {
+                        self
+                    }
+                }
+
+                impl Unversionize for $type {
+                    fn unversionize(
+                        versioned: Self::VersionedOwned,
+                    ) -> Result<Self, tfhe_versionable::UnversionizeError> {
+                        Ok(versioned)
+                    }
+                }
+
+                impl NotVersioned for $type {}
+
                 impl $type {
                     /// Creates a new identifier from raw bytes
                     pub fn from_bytes(bytes: [u8; ID_LENGTH]) -> Self {
@@ -411,17 +418,30 @@ macro_rules! impl_identifiers {
         // Implement common methods for both types
         impl_identifier_common!($type1);
         impl_identifier_common!($type2);
+        impl_identifier_common!($type3);
 
-        // Implement conversions between the types
+        // Implement conversions between type1 and the rest
         // Both types have the same internal representation, so we can just copy the bytes
+        impl From<$type1> for $type2 {
+            fn from(other: $type1) -> Self {
+                Self(other.into_bytes())
+            }
+        }
+
         impl From<$type2> for $type1 {
             fn from(other: $type2) -> Self {
                 Self(other.into_bytes())
             }
         }
 
-        impl From<$type1> for $type2 {
+        impl From<$type1> for $type3 {
             fn from(other: $type1) -> Self {
+                Self(other.into_bytes())
+            }
+        }
+
+        impl From<$type3> for $type1 {
+            fn from(other: $type3) -> Self {
                 Self(other.into_bytes())
             }
         }
@@ -429,7 +449,7 @@ macro_rules! impl_identifiers {
 }
 
 // Implement common methods for both identifier types with a single macro call
-impl_identifiers!(KeyId, RequestId);
+impl_identifiers!(RequestId, KeyId, ContextId);
 
 // Add tests
 #[cfg(test)]
