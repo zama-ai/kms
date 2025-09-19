@@ -412,6 +412,8 @@ async fn generate_custodian_keys_to_file(
             .join("CUSTODIAN")
             .join("setup-msg")
             .join(format!("setup-{}", cus_idx));
+        // NOTE the KMS Custodian is a separate binary needed for the full integration test flow.
+        // Ensure that it is compiled and up to date before running the test
         let output = Command::cargo_bin(KMS_CUSTODIAN)
             .unwrap()
             .arg("generate")
@@ -513,6 +515,8 @@ async fn custodian_reencrypt(
                 .join(pub_prefix)
                 .join(PubDataType::VerfKey.to_string())
                 .join(SIGNING_KEY_ID.to_string());
+            // NOTE the KMS Custodian is a separate binary needed for the full integration test flow.
+            // Ensure that it is compiled and up to date before running the test
             let output = Command::cargo_bin(KMS_CUSTODIAN)
                 .unwrap()
                 .arg("decrypt")

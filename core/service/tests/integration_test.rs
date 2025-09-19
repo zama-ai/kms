@@ -611,7 +611,7 @@ mod kms_custodian_binary_tests {
         output_string.trim().to_owned()
     }
 
-    pub(crate) fn extract_seed_phrase(output: &str) -> &str {
+    fn extract_seed_phrase(output: &str) -> &str {
         let seed_phrase_line = output.lines().find(|line| line.contains(SEED_PHRASE_DESC));
         seed_phrase_line
             .unwrap()
