@@ -88,7 +88,7 @@ tonic-build.workspace = true
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
 async-std.workspace = true
-criterion.workspace = true
+criterion= {workspace = true, features = ["async_tokio", "html_reports"] }
 ctor.workspace = true
 pprof.workspace = true
 proptest.workspace = true
