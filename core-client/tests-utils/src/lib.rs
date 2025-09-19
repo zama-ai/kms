@@ -46,7 +46,6 @@ impl DockerComposeCmd {
             .parent()
             .expect(err_parent_msg)
             .to_path_buf();
-        println!("Root path: {root_path:?}");
         DockerComposeCmd { root_path, mode }
     }
 
