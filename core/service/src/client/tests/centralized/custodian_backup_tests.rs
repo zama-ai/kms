@@ -116,7 +116,15 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         threshold,
     )
     .await;
-    run_crs_centralized(&mut kms_client, &internal_client, &crs_req, param, true).await;
+    run_crs_centralized(
+        &mut kms_client,
+        &internal_client,
+        &crs_req,
+        param,
+        true,
+        test_path,
+    )
+    .await;
     // Check that the new CRS was backed up
     let crss = backup_files(
         1,

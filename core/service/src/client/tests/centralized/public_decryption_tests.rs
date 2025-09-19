@@ -152,7 +152,7 @@ pub(crate) async fn decryption_centralized(
     kms_server.assert_shutdown().await;
 }
 
-pub async fn run_decryption_centralized(
+pub(crate) async fn run_decryption_centralized(
     kms_client: &CoreServiceEndpointClient<Channel>,
     internal_client: &mut Client,
     key_id: &RequestId,
