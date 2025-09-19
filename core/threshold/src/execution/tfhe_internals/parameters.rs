@@ -619,7 +619,7 @@ impl DKGParamsBasics for DKGParamsRegular {
     }
 
     fn num_needed_noise_rerand_ksk(&self) -> NoiseInfo {
-        // If there's a dedicated compact key with same parameter ,
+        // If there's a dedicated compact key with same parameter,
         // we won't need to generate a new rerand key.
         let amount = if self.cpk_re_randomization_ksk_params
             == self.dedicated_compact_public_key_parameters.map(|(_, p)| p)
