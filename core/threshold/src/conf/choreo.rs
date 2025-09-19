@@ -29,7 +29,11 @@ impl From<&ChoreoParty> for Role {
 
 impl From<&ChoreoParty> for Identity {
     fn from(party: &ChoreoParty) -> Identity {
-        Identity::new(party.logical_address.clone(), party.logical_port, None)
+        Identity::new(
+            party.logical_address.clone(),
+            party.logical_port,
+            Some(party.logical_address.clone()),
+        )
     }
 }
 
