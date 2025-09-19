@@ -12,6 +12,14 @@ services:
       - RUN_MODE=dev
       - RUST_LOG=info
       - NO_COLOR=true
+      - MOBY_STRATEGY={% if loop.index == 1%}{{moby_strategy}}{% else %}secure{% endif %}
+      - DDEC__NET_CONF__NETWORK_TIMEOUT={% if moby_strategy != "secure" %}10{% else %}120{% endif %}
+      - DDEC__NET_CONF__MESSAGE_LIMIT=70
+      - DDEC__NET_CONF__MULTIPLIER=1.1
+      - DDEC__NET_CONF__MAX_INTERVAL=60
+      - DDEC__NET_CONF__NETWORK_TIMEOUT_BK=300
+      - DDEC__NET_CONF__NETWORK_TIMEOUT_BK_SNS=1200
+      - DDEC__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE=2147483648
       - DDEC__PROTOCOL__HOST__ADDRESS=p{{ i+1 }}
       - DDEC__PROTOCOL__HOST__PORT=50000
       - DDEC__PROTOCOL__HOST__ID={{ i+1 }}
