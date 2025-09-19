@@ -186,8 +186,8 @@ impl Broadcast for MaliciousBroadcastSender {
 }
 
 /// Malicious implementation of the [`Broadcast`] protocol where the
-/// party (P_i), when acting as the sender, sends the correct message to the party with index i+1
-/// and the same random message to all the other parties, and does the same during the echo phase but
+/// party (P_i), when acting as the sender, sends a message to the party with index i+1
+/// and the same correct message to all the other parties, and does the same during the echo phase but
 /// does not vote for anything.
 ///
 /// The party outputs what it sees during round 1

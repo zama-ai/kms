@@ -465,7 +465,6 @@ where
 
         let mut base_sessions = Vec::new();
         for (idx, session_id) in sids.into_iter().enumerate() {
-            //We are executing offline phase, so requires Sync network
             let networking = self
                 .networking_manager
                 .make_network_session(
@@ -2016,15 +2015,6 @@ where
 
                     //First, rework the ctxt layout to match sessions'
                     let mut ctxts_w_session_layout = vec![Vec::new(); num_sessions];
-                    if ctxts.len() != ctxts_w_session_layout.len() {
-                        return Err(tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!(
-                                "Error in decryption parameters; number of sessions; {:?}, does not match number of ciphertext chunks; {:?}",
-                                ctxts_w_session_layout.len(), ctxts.len()
-                            ),
-                        ));
-                    }
                     ctxts.into_iter().for_each(|ctxt| {
                         ctxt.owned_blocks()
                             .into_iter()

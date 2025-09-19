@@ -165,6 +165,11 @@ async fn internal_receive_from_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
 ) -> anyhow::Result<()> {
     let deserialization_runtime = session.get_deserialization_runtime();
     for cur_sender in senders {
+        // Do not even try to receive from myself
+        // (Also avoids trigerring the warn below)
+        if cur_sender == &session.my_role() {
+            continue;
+        }
         // Ensure we want to receive from that sender (e.g. not from ourself or a malicious party)
         if check_fn(cur_sender, session)? {
             let networking = Arc::clone(session.network());
