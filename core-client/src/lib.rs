@@ -83,53 +83,94 @@ macro_rules! retry {
 #[derive(Serialize, Clone, Validate, Default, Debug)]
 #[validate(schema(function = validate_core_client_conf))]
 pub struct CoreClientConfig {
-    /// S3 endpoint from which to fetch keys
-    /// NOTE: We should probably move away from that and use the key-url
-    #[validate(length(min = 1))]
-    pub s3_endpoint: String,
-    /// Key folder where to store the keys
-    #[validate(length(min = 1))]
-    pub object_folder: Vec<String>,
+    // The mode of the KMS ("centralized" or "threshold"). Threshold by default.
+    pub kms_type: KmsType,
+    // List of configurations for the cores
+    pub cores: Vec<CoreConf>,
     pub decryption_mode: Option<DecryptionMode>,
     pub num_majority: usize,
     pub num_reconstruct: usize,
-    #[validate(length(min = 1))]
-    pub core_addresses: Vec<String>,
     pub fhe_params: Option<FheParameter>,
 }
 
-fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationError> {
-    let num_parties = conf.core_addresses.len();
+#[derive(Deserialize, Serialize, Clone, Validate, Default, Debug)]
+pub struct CoreConf {
+    /// The ID of the given KMS server (monotonically increasing positive integer starting at 1)
+    #[validate(range(min = 1))]
+    pub party_id: usize,
+    /// The address of the given KMS server, including the port
+    #[validate(length(min = 1))]
+    pub address: String,
+    /// The S3 endpoint where the public material of the given server can be reached
+    #[validate(length(min = 1))]
+    pub s3_endpoint: String,
+    /// The folder at the S3 endpoint where the data is stored
+    pub object_folder: String,
+}
 
-    if conf.object_folder.len() != conf.core_addresses.len() {
-        return Err(
-            ValidationError::new("Address/Object length mismatch").with_message(
+fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationError> {
+    // The number of parties in the configuration, this may not be the actual number of KMS parties IRL. But is just the ones we currently communicate with.
+    let num_parties = conf.cores.len();
+
+    for cur_core in &conf.cores {
+        if cur_core.party_id == 0 {
+            return Err(ValidationError::new("Incorrect Party ID").with_message(
                 format!(
-                    "Number of object folders ({}) must match number of core addresses ({})",
-                    conf.object_folder.len(),
-                    conf.core_addresses.len(),
+                    "Party ID must be between 1 and the number of parties ({}), but was {}.",
+                    num_parties, cur_core.party_id
                 )
                 .into(),
-            ),
-        );
+            ));
+        }
+        if conf
+            .cores
+            .iter()
+            .filter(|x| x.party_id == cur_core.party_id)
+            .count()
+            > 1
+        {
+            return Err(ValidationError::new("Duplicate Party ID").with_message(
+                format!(
+                    "Party ID {} is duplicated in the configuration.",
+                    cur_core.party_id
+                )
+                .into(),
+            ));
+        }
+        if conf
+            .cores
+            .iter()
+            .filter(|x| x.address == cur_core.address)
+            .count()
+            > 1
+        {
+            return Err(ValidationError::new("Duplicate Address").with_message(
+                format!(
+                    "Address {} is duplicated in the configuration.",
+                    cur_core.address
+                )
+                .into(),
+            ));
+        }
+    }
+    if conf.num_majority > num_parties {
+        return Err(ValidationError::new("Majority Vote Count Error").with_message(format!("Number for majority votes ({}) must be smaller than or equal to the number of parties the CLI communicates with ({}).", conf.num_majority, num_parties).into()));
+    }
+    if conf.num_reconstruct > num_parties {
+        return Err(ValidationError::new("Reconstruction Count Error").with_message(format!("Number for reconstruction shares ({}) must be smaller than or equal to the number of parties the CLI communicates with ({}).", conf.num_reconstruct, num_parties).into()));
+    }
+    if conf.num_reconstruct < conf.num_majority {
+        return Err(ValidationError::new("Reconstruction Count Error").with_message(format!("Number for reconstruction shares ({}) must be greater than or equal to the number of majority votes ({}).", conf.num_reconstruct, conf.num_majority).into()));
     }
 
     if num_parties > 1 {
-        // threshold config
-        let threshold = (num_parties - 1) / 3; // Note that this is floored division. We assumt that 3t+1=n for now.
-
-        // a majority is more than t parties agreeing. But we could also set it to a higher value up to num_parties.
-        if conf.num_majority <= threshold || conf.num_majority > num_parties {
-            return Err(ValidationError::new("Threshold Majority Vote Count Error").with_message(format!("Number for majority votes ({}) must be greater than the threshold ({}) and smaller than the number of parties ({}).", conf.num_majority, threshold, num_parties).into()));
-        }
-
-        // reconstruction needs at least t+2 parties responses. But we could also set it to a higher value up to num_parties.
-        if conf.num_reconstruct < threshold + 2 || conf.num_reconstruct > num_parties {
-            return Err(ValidationError::new("Threshold Reconstruction Count Error").with_message(format!("Number for reconstruction shares ({}) must be at least t+2 ({}) and smaller than the number of parties ({}).", conf.num_reconstruct, threshold + 2, num_parties).into()));
+        // Should be a threshold config
+        if conf.kms_type != KmsType::Threshold {
+            return Err(ValidationError::new("KMS Type Error").with_message(format!("KMS mode must be 'threshold' when there are multiple cores ({} cores configured).", num_parties).into()));
         }
     } else {
-        // centralized config, here both values must be 1.
-        if conf.num_majority != 1 {
+        // We may be in the centralized or threshold mode (communicating with a single server)
+        if conf.kms_type == KmsType::Centralized && conf.num_majority != 1 {
             return Err(
                 ValidationError::new("Centralized Majority Vote Count Error").with_message(
                     format!(
@@ -140,12 +181,23 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
                 ),
             );
         }
-        if conf.num_reconstruct != 1 {
+        if conf.kms_type == KmsType::Centralized && conf.num_reconstruct != 1 {
             return Err(
                 ValidationError::new("Centralized Reconstruction Count Error").with_message(
                     format!(
                     "Number for reconstruction ({}) must be equal to 1 for a centralized config.",
                     conf.num_reconstruct,
+                )
+                    .into(),
+                ),
+            );
+        }
+        if conf.cores.first().unwrap().party_id != 1 {
+            return Err(
+                ValidationError::new("Centralized Party ID Error").with_message(
+                    format!(
+                    "Party ID of the single core in a centralized config must be 1, but was {}.",
+                    conf.cores.first().unwrap().party_id
                 )
                     .into(),
                 ),
@@ -163,24 +215,24 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
     {
         #[derive(Deserialize, Clone, Default, Debug)]
         pub struct CoreClientConfigBuffer {
-            pub s3_endpoint: String,
-            pub object_folder: Vec<String>,
+            // The mode of the KMS ("centralized" or "threshold"). Threshold by default.
+            pub kms_type: KmsType,
+            // List of configurations for the cores
+            pub cores: Vec<CoreConf>,
             pub decryption_mode: Option<DecryptionMode>,
             pub num_majority: usize,
             pub num_reconstruct: usize,
-            pub core_addresses: Vec<String>,
             pub fhe_params: Option<FheParameter>,
         }
 
         let temp = CoreClientConfigBuffer::deserialize(deserializer)?;
 
         let conf = CoreClientConfig {
-            s3_endpoint: temp.s3_endpoint,
-            object_folder: temp.object_folder,
+            kms_type: temp.kms_type,
+            cores: temp.cores,
             decryption_mode: temp.decryption_mode,
             num_majority: temp.num_majority,
             num_reconstruct: temp.num_reconstruct,
-            core_addresses: temp.core_addresses,
             fhe_params: temp.fhe_params,
         };
 
@@ -576,16 +628,16 @@ pub struct CmdConfig {
     pub expect_all_responses: bool,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
-pub enum KmsMode {
+#[derive(Debug, Deserialize, Default, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
+pub enum KmsType {
     #[strum(serialize = "centralized")]
     #[serde(rename = "centralized")]
     Centralized,
     #[strum(serialize = "threshold")]
     #[serde(rename = "threshold")]
+    #[default]
     Threshold,
 }
-
 /// a dummy Eip-712 domain for testing
 fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     alloy_sol_types::eip712_domain!(
@@ -808,7 +860,7 @@ async fn fetch_global_pub_object_and_write_to_file(
     object_folder: &str,
 ) -> anyhow::Result<()> {
     // Fetch pub-key from storage and dump it for later use
-    let folder = destination_prefix.join("PUB").join(object_name);
+    let folder = destination_prefix.join(object_folder).join(object_name);
     let content = fetch_object(
         s3_endpoint,
         &format!("{object_folder}/{object_name}"),
@@ -818,53 +870,21 @@ async fn fetch_global_pub_object_and_write_to_file(
     write_bytes_to_file(&folder, object_id, content.as_ref()).await
 }
 
-/// This fetches material which is local
-/// i.e. everything related to parties verification keys
-async fn fetch_local_key_and_write_to_file(
-    destination_prefix: &Path,
-    s3_endpoint: &str,
-    object_id: &str,
-    object_name: &str,
-    object_folder: &[String],
-) -> anyhow::Result<()> {
-    // Fetch pub-key from storage and dump it for later use
-    if object_folder.len() == 1 {
-        fetch_global_pub_object_and_write_to_file(
-            destination_prefix,
-            s3_endpoint,
-            object_id,
-            object_name,
-            object_folder.first().unwrap(),
-        )
-        .await
-    } else {
-        for (party_idx, folder_name) in object_folder.iter().enumerate() {
-            let folder = destination_prefix
-                .join(format!("PUB-p{}", party_idx + 1))
-                .join(object_name);
-            let content = fetch_object(
-                s3_endpoint,
-                &format!("{folder_name}/{object_name}"),
-                object_id,
-            )
-            .await?;
-            write_bytes_to_file(&folder, object_id, content.as_ref()).await?;
-        }
-        Ok(())
-    }
-}
-
 /// This fetches the kms ethereum address from local storage
 async fn fetch_kms_addresses(
     sim_conf: &CoreClientConfig,
 ) -> Result<Vec<alloy_primitives::Address>, Box<dyn std::error::Error + 'static>> {
     let key_id = &SIGNING_KEY_ID.to_string();
-    let mut addr_bytes = Vec::with_capacity(sim_conf.object_folder.len());
+    let mut addr_bytes = Vec::with_capacity(sim_conf.cores.len());
 
-    for folder_name in &sim_conf.object_folder {
+    for cur_core in &sim_conf.cores {
         let content = fetch_object(
-            &sim_conf.s3_endpoint.clone(),
-            &format!("{}/{}", folder_name, "VerfAddress"),
+            &cur_core.s3_endpoint.clone(),
+            &format!(
+                "{}/{}",
+                cur_core.object_folder,
+                &PubDataType::VerfAddress.to_string()
+            ),
             key_id,
         )
         .await?;
@@ -1049,15 +1069,20 @@ async fn fetch_verf_keys(
     tracing::info!("Fetching verification keys");
 
     // Fetch objects associated with Signature keys
-    for object_name in ["VerfAddress", "VerfKey"] {
-        fetch_local_key_and_write_to_file(
-            destination_prefix,
-            cc_conf.s3_endpoint.as_str(),
-            &SIGNING_KEY_ID.to_string(),
-            object_name,
-            &cc_conf.object_folder,
-        )
-        .await?;
+    for object_name in [
+        &PubDataType::VerfAddress.to_string(),
+        &PubDataType::VerfKey.to_string(),
+    ] {
+        for cur_core in &cc_conf.cores {
+            fetch_global_pub_object_and_write_to_file(
+                destination_prefix,
+                cur_core.s3_endpoint.as_str(),
+                &SIGNING_KEY_ID.to_string(),
+                object_name,
+                &cur_core.object_folder,
+            )
+            .await?;
+        }
     }
     Ok(())
 }
@@ -1075,14 +1100,16 @@ async fn fetch_key(
     ];
     tracing::info!("Fetching public key, server key and sns key with id {key_id}");
     for object_name in object_names {
-        fetch_global_pub_object_and_write_to_file(
-            destination_prefix,
-            sim_conf.s3_endpoint.as_str(),
-            key_id,
-            &object_name.to_string(),
-            sim_conf.object_folder.first().unwrap(),
-        )
-        .await?;
+        for cur_core in &sim_conf.cores {
+            fetch_global_pub_object_and_write_to_file(
+                destination_prefix,
+                cur_core.s3_endpoint.as_str(),
+                key_id,
+                &object_name.to_string(),
+                &cur_core.object_folder,
+            )
+            .await?;
+        }
     }
     Ok(())
 }
@@ -1094,21 +1121,23 @@ async fn fetch_crs(
     destination_prefix: &Path,
 ) -> anyhow::Result<()> {
     tracing::info!("Fetching CRS with id {crs_id}");
-    fetch_global_pub_object_and_write_to_file(
-        destination_prefix,
-        cc_conf.s3_endpoint.as_str(),
-        crs_id,
-        "CRS",
-        cc_conf.object_folder.first().unwrap(),
-    )
-    .await?;
+    for cur_core in &cc_conf.cores {
+        fetch_global_pub_object_and_write_to_file(
+            destination_prefix,
+            cur_core.s3_endpoint.as_str(),
+            crs_id,
+            &PubDataType::CRS.to_string(),
+            &cur_core.object_folder,
+        )
+        .await?;
+    }
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn do_keygen(
     internal_client: &mut Client,
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cc_conf: &CoreClientConfig,
     cmd_conf: &CmdConfig,
@@ -1163,7 +1192,7 @@ async fn do_keygen(
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
 
-    for ce in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter_mut() {
         let req_cloned = dkg_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
@@ -1210,7 +1239,7 @@ async fn do_keygen(
 #[allow(clippy::too_many_arguments)]
 async fn do_crsgen(
     internal_client: &mut Client,
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cc_conf: &CoreClientConfig,
     cmd_conf: &CmdConfig,
@@ -1244,7 +1273,7 @@ async fn do_crsgen(
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
 
-    for ce in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter_mut() {
         let req_cloned = crs_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
@@ -1291,7 +1320,7 @@ async fn do_crsgen(
 #[allow(clippy::too_many_arguments)]
 async fn do_preproc(
     internal_client: &mut Client,
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cmd_conf: &CmdConfig,
     num_parties: usize,
@@ -1308,7 +1337,7 @@ async fn do_preproc(
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
 
-    for ce in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter_mut() {
         let req_cloned = pp_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
@@ -1333,10 +1362,10 @@ async fn do_preproc(
 }
 
 async fn do_get_operator_pub_keys(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) -> anyhow::Result<Vec<String>> {
     let mut req_tasks = JoinSet::new();
-    for ce in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter_mut() {
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
@@ -1370,7 +1399,7 @@ async fn do_get_operator_pub_keys(
 }
 
 async fn do_new_custodian_context(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     threshold: u32,
     custodian_setup_msg: Vec<InternalCustodianSetupMessage>,
@@ -1387,7 +1416,7 @@ async fn do_new_custodian_context(
         previous_context_id: None, // TODO(#2748) not really used now, should be refactored
         threshold,
     };
-    for ce in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter_mut() {
         let mut cur_client = ce.clone();
         let new_context_cloned = new_context.clone();
         req_tasks.spawn(async move {
@@ -1407,10 +1436,10 @@ async fn do_new_custodian_context(
 }
 
 async fn do_custodian_recovery_init(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) -> anyhow::Result<Vec<InternalRecoveryRequest>> {
     let mut req_tasks = JoinSet::new();
-    for ce in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter_mut() {
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
@@ -1430,21 +1459,19 @@ async fn do_custodian_recovery_init(
 }
 
 async fn do_custodian_backup_recovery(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     custodian_context_id: RequestId,
     custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
-    for (op_idx, ce) in core_endpoints.iter_mut().enumerate() {
+    for (core_idx, ce) in core_endpoints.iter_mut() {
         let mut cur_client = ce.clone();
+        let core_idx = *core_idx as usize;
         // We assume the core client endpoints are ordered by the server identity
         let mut cur_recoveries = Vec::new();
         for cur_recover in custodian_recovery_outputs.iter() {
             // Find the recoveries designated for the correct server
-            // Observe that in real world deployments this would mean everyone since
-            // if each KMS nodes has knowledge of _all_ the recoveries for all parites, then
-            // they can trivially recover the secret key!
-            if cur_recover.operator_role == Role::indexed_from_zero(op_idx) {
+            if cur_recover.operator_role == Role::indexed_from_one(core_idx) {
                 cur_recoveries.push(CustodianRecoveryOutput {
                     signature: cur_recover.signature.clone(),
                     ciphertext: cur_recover.ciphertext.clone(),
@@ -1471,10 +1498,10 @@ async fn do_custodian_backup_recovery(
 }
 
 async fn do_restore_from_backup(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
-    for ce in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter_mut() {
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
@@ -1512,42 +1539,27 @@ pub async fn execute_cmd(
 
     tracing::info!("Core Client Config: {:?}", cc_conf);
 
-    // if it's a public/user decryption, fetch the key and crs
+    // Always fetch the public verfication keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
+    tracing::info!("Fetching verification keys. ({command:?})");
+    fetch_verf_keys(&cc_conf, destination_prefix).await?;
+    // if it's a public/user decryption, also fetch server keys and CRS
     match command {
         CCCommand::PublicDecrypt(cipher_args) | CCCommand::UserDecrypt(cipher_args) => {
-            tracing::info!("Fetching verification keys. ({command:?})");
-            fetch_verf_keys(&cc_conf, destination_prefix).await?;
-
             //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
             if let CipherArguments::FromArgs(cipher_params) = cipher_args {
-                tracing::info!("Fetching tfhe keys. ({command:?})");
+                tracing::info!("Fetching computation keys. ({command:?})");
                 fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
             }
         }
         CCCommand::Encrypt(cipher_params) => {
-            tracing::info!("Fetching tfhe keys. ({command:?})");
+            tracing::info!("Fetching computation keys. ({command:?})");
             fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
         }
-        CCCommand::KeyGen(_)
-        | CCCommand::InsecureKeyGen(_)
-        | CCCommand::CrsGen(_)
-        | CCCommand::InsecureCrsGen(_)
-        | CCCommand::PreprocKeyGen(_)
-        | CCCommand::BackupRestore(_)
-        | CCCommand::NewCustodianContext(_)
-        | CCCommand::CustodianRecoveryInit(_)
-        | CCCommand::CustodianBackupRecovery(_) => {
-            tracing::info!("Fetching verification keys. ({command:?})");
-            fetch_verf_keys(&cc_conf, destination_prefix).await?;
-        }
-        _ => {
-            tracing::info!("No need to fetch key and CRS. ({command:?})");
-        }
+        _ => {}
     }
-
     let mut rng = AesRng::from_entropy();
 
-    let num_parties = cc_conf.core_addresses.len();
+    let num_parties = cc_conf.cores.len();
 
     ensure_client_keys_exist(Some(destination_prefix), &SIGNING_KEY_ID, true).await;
 
@@ -1555,8 +1567,8 @@ pub async fn execute_cmd(
     let client_storage: FileStorage =
         FileStorage::new(Some(destination_prefix), StorageType::CLIENT, None).unwrap();
     let mut internal_client: Option<Client> = None;
-    let mut core_endpoints_req = Vec::with_capacity(num_parties);
-    let mut core_endpoints_resp = Vec::with_capacity(num_parties);
+    let mut core_endpoints_req = HashMap::with_capacity(num_parties);
+    let mut core_endpoints_resp = HashMap::with_capacity(num_parties);
 
     let param = cc_conf.fhe_params.unwrap_or(FheParameter::Test);
     let client_param = match param {
@@ -1566,13 +1578,14 @@ pub async fn execute_cmd(
 
     if let CCCommand::Encrypt(_) = command {
         //Don't need to connect if we just do an encrypt
-    } else if num_parties == 1 {
+    } else if cc_conf.kms_type == KmsType::Centralized {
         // central cores
 
         let address = cc_conf
-            .core_addresses
+            .cores
             .first()
             .expect("No core address provided")
+            .address
             .clone();
 
         tracing::info!("Centralized Core Client - connecting to: {}", address);
@@ -1589,14 +1602,15 @@ pub async fn execute_cmd(
             5,
             100
         )?;
-        core_endpoints_req.push(core_endpoint_req);
+        // Centralized is always party 1
+        core_endpoints_req.insert(1, core_endpoint_req);
 
         let core_endpoint_resp = retry!(
             CoreServiceEndpointClient::connect(url.clone()).await,
             5,
             100
         )?;
-        core_endpoints_resp.push(core_endpoint_resp);
+        core_endpoints_resp.insert(1, core_endpoint_resp);
 
         // there's only 1 party, so use index 1
         pub_storage.insert(
@@ -1616,16 +1630,17 @@ pub async fn execute_cmd(
         tracing::info!("Centralized Client setup done.");
     } else {
         // threshold cores
-        let addresses = cc_conf.core_addresses.clone();
+        tracing::info!(
+            "Threshold Core Client - connecting to {:?} KMS server",
+            cc_conf.cores.len()
+        );
 
-        tracing::info!("Threshold Core Client - connecting to: {:?}", addresses);
-
-        for (i, address) in addresses.iter().enumerate() {
+        for cur_core in &cc_conf.cores {
             // make sure address starts with http://
-            let url = if address.starts_with("http://") {
-                address.clone()
+            let url = if cur_core.address.starts_with("http://") {
+                cur_core.address.clone()
             } else {
-                "http://".to_string() + address
+                "http://".to_string() + cur_core.address.as_str()
             };
 
             tracing::info!("Connecting to {:?}", url);
@@ -1635,21 +1650,21 @@ pub async fn execute_cmd(
                 5,
                 100
             )?;
-            core_endpoints_req.push(core_endpoint_req);
+            core_endpoints_req.insert(cur_core.party_id as u32, core_endpoint_req);
 
             let core_endpoint_resp = retry!(
                 CoreServiceEndpointClient::connect(url.clone()).await,
                 5,
                 100
             )?;
-            core_endpoints_resp.push(core_endpoint_resp);
+            core_endpoints_resp.insert(cur_core.party_id as u32, core_endpoint_resp);
 
             pub_storage.insert(
-                i as u32 + 1,
+                cur_core.party_id as u32,
                 FileStorage::new(
                     Some(destination_prefix),
                     StorageType::PUB,
-                    Some(Role::indexed_from_zero(i)),
+                    Some(Role::indexed_from_one(cur_core.party_id)),
                 )
                 .unwrap(),
             );
@@ -1742,7 +1757,7 @@ pub async fn execute_cmd(
                     // make parallel requests by calling [decrypt] in a thread
                     let mut req_tasks = JoinSet::new();
 
-                    for ce in core_endpoints_req.iter_mut() {
+                    for (_party_id, ce) in core_endpoints_req.iter_mut() {
                         let req_cloned = dec_req.clone();
                         let mut cur_client = ce.clone();
                         req_tasks.spawn(async move {
@@ -1835,8 +1850,8 @@ pub async fn execute_cmd(
                 internal_client,
                 ct_batch,
                 key_id,
-                core_endpoints_req.clone(),
-                core_endpoints_resp.clone(),
+                &mut core_endpoints_req,
+                &mut core_endpoints_resp,
                 ptxt,
                 num_parties,
                 max_iter,
@@ -2130,7 +2145,6 @@ pub async fn execute_cmd(
             pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
         }
         CCCommand::CustodianRecoveryInit(NoParameters {}) => {
-            // TODO(#2748) should have path as a parameter
             let res = do_custodian_recovery_init(&mut core_endpoints_req).await?;
             for cur_rec_req in &res {
                 let path = destination_prefix
@@ -2218,8 +2232,8 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
     internal_client: Arc<RwLock<Client>>,
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
-    core_endpoints_req: Vec<CoreServiceEndpointClient<Channel>>,
-    core_endpoints_resp: Vec<CoreServiceEndpointClient<Channel>>,
+    core_endpoints_req: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_resp: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     ptxt: TypedPlaintext,
     num_parties: usize,
     max_iter: usize,
@@ -2255,7 +2269,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
             // make parallel requests by calling user decryption in a thread
             let mut req_tasks = JoinSet::new();
 
-            for ce in &mut core_endpoints_req {
+            for ce in core_endpoints_req.values_mut() {
                 let req_cloned = user_decrypt_req.clone();
                 let mut cur_client = ce.clone();
                 req_tasks.spawn(async move {
@@ -2280,7 +2294,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
 
             // get all responses
             let mut resp_tasks = JoinSet::new();
-            for ce in &mut core_endpoints_resp {
+            for ce in core_endpoints_resp.values_mut() {
                 let mut cur_client = ce.clone();
                 let req_id_clone = user_decrypt_req.request_id.as_ref().unwrap().clone();
 
@@ -2399,7 +2413,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
 
 #[allow(clippy::too_many_arguments)]
 async fn get_public_decrypt_responses(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     dec_req: Option<PublicDecryptionRequest>,
     expected_answer: Option<TypedPlaintext>,
     request_id: RequestId,
@@ -2412,8 +2426,9 @@ async fn get_public_decrypt_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter_mut().enumerate() {
+    for (core_id, ce) in core_endpoints.iter_mut() {
         let mut cur_client = ce.clone();
+        let core_id = *core_id; // Copy the key so it is owned in the async block
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
@@ -2534,14 +2549,15 @@ async fn get_public_decrypt_responses(
 }
 
 async fn get_preproc_keygen_responses(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
 ) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, client) in core_endpoints.iter_mut().enumerate() {
+    for (core_id, client) in core_endpoints.iter_mut() {
         let mut client = client.clone();
+        let core_id = *core_id; // Copy the key so it is owned in the async block
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete preprocessing
             tokio::time::sleep(tokio::time::Duration::from_millis(
@@ -2591,7 +2607,7 @@ async fn get_preproc_keygen_responses(
 }
 
 async fn get_keygen_responses(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
     insecure: bool,
@@ -2600,8 +2616,9 @@ async fn get_keygen_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter_mut().enumerate() {
+    for (core_id, ce) in core_endpoints.iter_mut() {
         let mut cur_client = ce.clone();
+        let core_id = *core_id; // Copy the key so it is owned in the async block
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
@@ -2667,7 +2684,7 @@ async fn get_keygen_responses(
 }
 
 async fn get_crsgen_responses(
-    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
     insecure: bool,
@@ -2676,8 +2693,9 @@ async fn get_crsgen_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter_mut().enumerate() {
+    for (core_id, ce) in core_endpoints.iter_mut() {
         let mut cur_client = ce.clone();
+        let core_id = *core_id; // Copy the key so it is owned in the async block
 
         resp_tasks.spawn(async move {
             // Sleep to give the server some time to complete decryption
