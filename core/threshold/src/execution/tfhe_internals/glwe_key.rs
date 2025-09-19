@@ -9,9 +9,12 @@ use tfhe_versionable::VersionsDispatch;
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
-        structure_traits::{BaseRing, Ring},
+        structure_traits::{BaseRing, ErrorCorrect},
     },
-    execution::{online::preprocessing::BitPreprocessing, sharing::share::Share},
+    execution::{
+        online::preprocessing::BitPreprocessing, runtime::session::BaseSessionHandles,
+        sharing::share::Share, tfhe_internals::utils::compute_hamming_weight_secret_vector,
+    },
 };
 
 use super::lwe_key::LweSecretKeyShare;
@@ -35,17 +38,45 @@ pub struct GlweSecretKeyShare<Z: Clone, const EXTENSION_DEGREE: usize> {
 
 impl<Z: BaseRing, const EXTENSION_DEGREE: usize> GlweSecretKeyShare<Z, EXTENSION_DEGREE>
 where
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
 {
-    pub fn new_from_preprocessing<
+    pub async fn new_from_preprocessing<
         P: BitPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+        S: BaseSessionHandles,
     >(
         total_size: usize,
         polynomial_size: PolynomialSize,
         preprocessing: &mut P,
+        max_deviation_from_mean: Option<usize>,
+        session: &mut S,
     ) -> anyhow::Result<Self> {
+        let data = if let Some(max_dev) = max_deviation_from_mean {
+            let mean = (total_size / 2) as u128;
+            let max_dev = max_dev as u128;
+            let max_hw = Z::from_u128(mean + max_dev);
+            let min_hw = Z::from_u128(mean - max_dev);
+
+            let mut data;
+            loop {
+                data = preprocessing.next_bit_vec(total_size)?;
+                let hw = compute_hamming_weight_secret_vector(&data, session)
+                    .await?
+                    .to_scalar()?;
+                if hw <= max_hw && hw >= min_hw {
+                    tracing::info!("Hamming weight within bounds: {hw}");
+                    break;
+                }
+                tracing::info!(
+                    "Hamming weight out of bounds: {hw}. Expected mean : {mean}, max_dev : {max_dev}"
+                );
+            }
+            data
+        } else {
+            preprocessing.next_bit_vec(total_size)?
+        };
+
         Ok(Self {
-            data: preprocessing.next_bit_vec(total_size)?,
+            data,
             polynomial_size,
         })
     }
