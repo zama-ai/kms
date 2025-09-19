@@ -487,7 +487,6 @@ pub async fn central_handle_w_vault(
     let priv_storage = FileStorage::new(test_data_path, StorageType::PRIV, None).unwrap();
     let pub_storage = FileStorage::new(test_data_path, StorageType::PUB, None).unwrap();
 
-    println!("asldkjasdlfj");
     ensure_testing_material_exists(test_data_path).await;
     #[cfg(feature = "slow_tests")]
     ensure_default_material_exists().await;

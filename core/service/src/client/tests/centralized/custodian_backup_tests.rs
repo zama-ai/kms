@@ -24,6 +24,7 @@ use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{kms::v1::FheParameter, rpc_types::PrivDataType, RequestId};
 use rand::SeedableRng;
 use serial_test::serial;
+use std::path::Path;
 use tfhe::safe_serialization::safe_deserialize;
 use threshold_fhe::execution::runtime::party::Role;
 
@@ -221,7 +222,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         .await
         .unwrap()
         .into_inner();
-    let cus_rec_req = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics).await;
+    let cus_rec_req = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics, test_path).await;
     let _recovery_output = kms_client
         .custodian_backup_recovery(tonic::Request::new(cus_rec_req))
         .await
@@ -260,13 +261,14 @@ async fn emulate_custodian(
     rng: &mut AesRng,
     recovery_request: RecoveryRequest,
     mnemonics: Vec<String>,
+    test_path: Option<&Path>,
 ) -> CustodianRecoveryRequest {
     let backup_id = recovery_request.backup_id.clone().unwrap();
     let mut cus_outputs = Vec::new();
     for (cur_idx, cur_mnemonic) in mnemonics.iter().enumerate() {
         let custodian: Custodian<PrivateSigKey, BackupPrivateKey> =
             custodian_from_seed_phrase(cur_mnemonic, Role::indexed_from_zero(cur_idx)).unwrap();
-        let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
+        let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
         let verf_key = read_versioned_at_request_id(
             &pub_storage,
             &SIGNING_KEY_ID,

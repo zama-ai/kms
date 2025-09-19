@@ -31,7 +31,7 @@ async fn test_crs_gen_manual() {
     // Delete potentially old data
     purge(None, None, None, &crs_req_id, 1).await;
     // TEST_PARAM uses V1 CRS
-    crs_gen_centralized_manual(&TEST_PARAM, &crs_req_id, Some(FheParameter::Test)).await;
+    crs_gen_centralized_manual(&TEST_PARAM, &crs_req_id, Some(FheParameter::Test), None).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -60,6 +60,7 @@ async fn crs_gen_centralized_manual(
     dkg_params: &DKGParams,
     request_id: &RequestId,
     params: Option<FheParameter>,
+    test_path: Option<&Path>,
 ) {
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client, internal_client) =
@@ -103,7 +104,7 @@ async fn crs_gen_centralized_manual(
     // // check that the received request id matches the one we sent in the request
     assert_eq!(rvcd_req_id, client_request_id);
 
-    let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
+    let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
     // check that CRS signature is verified correctly for the current version
     let crs_unversioned: CompactPkeCrs = pub_storage
         .read_data(request_id, &PubDataType::CRS.to_string())
