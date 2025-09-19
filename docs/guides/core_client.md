@@ -207,9 +207,9 @@ Assuming the toml file has been appropriately modified to allow custodian based 
 3. Initiate the recovery.
   After step 1, the backups will be continuously kept up to date. Then when a recovery is needed, first the KMS must construct the correct data needed for the custodians in order to help decrypt this is done with the following command:
   ```{bash}
-  $ cargo run -- -f <path-to-toml-config-file> custodian-recovery-init -r <dir to store recovery info from operator 1> -r <dir to store recovery info from operator 2> ...
+  $ cargo run -- -f <path-to-toml-config-file> custodian-recovery-init [-o <bool>] -r <dir to store recovery info from operator 1> -r <dir to store recovery info from operator 2> ...
   ```
-  That is, an ordered list of arguments must be given; one for each of the KMS nodes. In monotonically increasing order of each of the KMS nodes' IDs. These directories will express where the the result of the initiation of each the servers will be stored, which must then be communicated with the custodians to proceed with the recovery.
+  That is, an optional boolean expressing whether to allow overwriting any potential existing ephemeral key (default is false) followed by an ordered list of arguments must be given; one for each of the KMS nodes. In monotonically increasing order of each of the KMS nodes' IDs. These directories will express where the the result of the initiation of each the servers will be stored, which must then be communicated with the custodians to proceed with the recovery.
 
   As a concrete example of a command for a setup with 4 servers is the following:
   ```{bash}

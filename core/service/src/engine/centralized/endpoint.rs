@@ -365,7 +365,7 @@ impl<
     #[tracing::instrument(skip(self, request))]
     async fn custodian_recovery_init(
         &self,
-        request: Request<kms_grpc::kms::v1::Empty>,
+        request: Request<kms_grpc::kms::v1::CustodianRecoveryInitRequest>,
     ) -> Result<Response<kms_grpc::kms::v1::RecoveryRequest>, Status> {
         METRICS.increment_request_counter(OP_CUSTODIAN_RECOVERY_INIT);
         self.backup_operator

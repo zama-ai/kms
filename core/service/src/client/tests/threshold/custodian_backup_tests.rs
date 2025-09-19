@@ -29,6 +29,8 @@ use crate::{
     engine::base::derive_request_id,
 };
 use aes_prng::AesRng;
+#[cfg(feature = "insecure")]
+use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
 use kms_grpc::kms::v1::{CustodianRecoveryRequest, Empty, RecoveryRequest};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::PubDataType;
@@ -397,7 +399,9 @@ async fn run_custodian_recovery_init(
         let mut cur_client = kms_clients.get(&i).unwrap().clone();
         tasks_gen.spawn(async move {
             cur_client
-                .custodian_recovery_init(tonic::Request::new(Empty {}))
+                .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+                    overwrite_ephemeral_key: false,
+                }))
                 .await
         });
     }

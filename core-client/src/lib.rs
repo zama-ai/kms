@@ -10,10 +10,10 @@ use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, CrsGenResult, CustodianContext, CustodianRecoveryOutput,
-    CustodianRecoveryRequest, Empty, FheParameter, KeyGenPreprocResult, KeyGenResult,
-    NewCustodianContextRequest, PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext,
-    TypedPlaintext,
+    CiphertextFormat, CrsGenResult, CustodianContext, CustodianRecoveryInitRequest,
+    CustodianRecoveryOutput, CustodianRecoveryRequest, Empty, FheParameter, KeyGenPreprocResult,
+    KeyGenResult, NewCustodianContextRequest, PublicDecryptionRequest, PublicDecryptionResponse,
+    TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, InternalCustodianRecoveryOutput, PubDataType};
@@ -523,6 +523,8 @@ pub struct ResultParameters {
 
 #[derive(Debug, Parser, Clone)]
 pub struct RecoveryInitParameters {
+    #[clap(long, short = 'o', default_value_t = false)]
+    pub overwrite_ephemeral_key: bool,
     #[clap(long, short = 'r')]
     pub operator_recovery_resp_paths: Vec<PathBuf>,
 }
@@ -1415,13 +1417,16 @@ async fn do_new_custodian_context(
 
 async fn do_custodian_recovery_init(
     core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    overwrite_ephemeral_key: bool,
 ) -> anyhow::Result<Vec<InternalRecoveryRequest>> {
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints.iter_mut() {
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
-                .custodian_recovery_init(tonic::Request::new(Empty {}))
+                .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+                    overwrite_ephemeral_key,
+                }))
                 .await
         });
     }
@@ -2137,9 +2142,11 @@ pub async fn execute_cmd(
             pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
         }
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
+            overwrite_ephemeral_key,
             operator_recovery_resp_paths,
         }) => {
-            let res = do_custodian_recovery_init(&mut core_endpoints_req).await?;
+            let res = do_custodian_recovery_init(&mut core_endpoints_req, *overwrite_ephemeral_key)
+                .await?;
             assert_eq!(res.len(), operator_recovery_resp_paths.len());
             for (op_zero_idx, cur_path) in operator_recovery_resp_paths.iter().enumerate() {
                 let cur_res = res

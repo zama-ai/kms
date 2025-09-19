@@ -19,7 +19,9 @@ use crate::{
     engine::base::derive_request_id, util::key_setup::test_tools::purge_priv,
 };
 use aes_prng::AesRng;
-use kms_grpc::kms::v1::{CustodianRecoveryRequest, Empty, RecoveryRequest};
+use kms_grpc::kms::v1::{
+    CustodianRecoveryInitRequest, CustodianRecoveryRequest, Empty, RecoveryRequest,
+};
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{kms::v1::FheParameter, rpc_types::PrivDataType, RequestId};
 use rand::SeedableRng;
@@ -218,7 +220,9 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     // Execute the backup restoring
     let mut rng = AesRng::seed_from_u64(13);
     let recovery_req_resp = kms_client
-        .custodian_recovery_init(tonic::Request::new(Empty {}))
+        .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+            overwrite_ephemeral_key: false,
+        }))
         .await
         .unwrap()
         .into_inner();

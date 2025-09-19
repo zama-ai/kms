@@ -28,6 +28,7 @@ use crate::{
     },
 };
 use itertools::Itertools;
+use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
 use kms_grpc::{
     kms::v1::{CustodianRecoveryRequest, RecoveryRequest},
     rpc_types::PubDataType,
@@ -173,12 +174,22 @@ where
     /// Restores the most recent custodian based backup.
     async fn custodian_recovery_init(
         &self,
-        _request: Request<Empty>,
+        request: Request<CustodianRecoveryInitRequest>,
     ) -> Result<Response<RecoveryRequest>, Status> {
         // Lock the ephemeral key for the entire duration of the method
         let mut guarded_priv_key = self.ephemeral_dec_key.lock().await;
         if guarded_priv_key.is_some() {
-            tracing::warn!("Ephemeral decryption key already exists. OVERWRITING the old ephemeral key, thus invalidating any previous recovery initialization!");
+            match request.into_inner().overwrite_ephemeral_key {
+                true => {
+                    tracing::warn!("Ephemeral decryption key already exists. OVERWRITING the old ephemeral key, thus invalidating any previous recovery initialization!");
+                }
+                false => {
+                    return Err(Status::new(
+                        tonic::Code::AlreadyExists,
+                        "Ephemeral decryption key already exists. Use the `overwrite_ephemeral_key` flag to overwrite it, thus invalidating any previous recovery initialization!",
+                    ));
+                }
+            }
         }
         let backup_id = get_latest_backup_id(&self.crypto_storage.backup_vault)
             .await
