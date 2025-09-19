@@ -119,10 +119,15 @@ pub struct AttestedVerifier {
     // TLS identity is based on the decryption signing key, and no traditional
     // PKI is used.
     pcr8_expected: bool,
+    #[cfg(feature = "testing")]
+    mock_enclave: bool,
 }
 
 impl AttestedVerifier {
-    pub fn new(pcr8_expected: bool) -> anyhow::Result<Self> {
+    pub fn new(
+        pcr8_expected: bool,
+        #[cfg(feature = "testing")] mock_enclave: bool,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             root_hint_subjects: Vec::new(),
             supported_algs: CryptoProvider::get_default()
@@ -133,6 +138,8 @@ Crypto provider should exist at this point"
                 .signature_verification_algorithms,
             contexts: RwLock::new(HashMap::new()),
             pcr8_expected,
+            #[cfg(feature = "testing")]
+            mock_enclave,
         })
     }
 
@@ -236,25 +243,32 @@ impl ServerCertVerifier for AttestedVerifier {
         let (context, _, server_verifier) = self.get_context_and_verifiers_for_x509_cert(&cert)?;
         // check the enclave-generated certificate used for the TLS session as
         // usual (however, we expect it to be self-signed)
+        tracing::debug!("Verifying certificate for server {:?}", server_name);
         server_verifier
             .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
             .inspect_err(|e| {
                 tracing::error!("server verifier validation error: {e}");
             })?;
         // check the bundled attestation document and EIF signing certificate
+        #[cfg(feature = "testing")]
+        let do_validation = !&self.mock_enclave;
+        #[cfg(not(feature = "testing"))]
+        let do_validation = true;
         if let Some(release_pcrs) = &context.release_pcrs {
-            validate_wrapped_cert(
-                &cert,
-                release_pcrs,
-                self.pcr8_expected,
-                CertVerifier::Server(server_verifier.clone(), server_name, ocsp_response),
-                intermediates,
-                now,
-            )
-            .map_err(|e| {
-                tracing::error!("bundled attestation document validation error: {e}");
-                Error::General(e.to_string())
-            })?;
+            if do_validation {
+                validate_wrapped_cert(
+                    &cert,
+                    release_pcrs,
+                    self.pcr8_expected,
+                    CertVerifier::Server(server_verifier.clone(), server_name, ocsp_response),
+                    intermediates,
+                    now,
+                )
+                .map_err(|e| {
+                    tracing::error!("bundled attestation document validation error: {e}");
+                    Error::General(e.to_string())
+                })?;
+            }
         }
         Ok(ServerCertVerified::assertion())
     }
@@ -327,19 +341,25 @@ impl ClientCertVerifier for AttestedVerifier {
             })?;
 
         // check the bundled attestation document and EIF signing certificate
+        #[cfg(feature = "testing")]
+        let do_validation = !&self.mock_enclave;
+        #[cfg(not(feature = "testing"))]
+        let do_validation = true;
         if let Some(release_pcrs) = &context.release_pcrs {
-            validate_wrapped_cert(
-                &cert,
-                release_pcrs,
-                self.pcr8_expected,
-                CertVerifier::Client(client_verifier.clone()),
-                intermediates,
-                now,
-            )
-            .map_err(|e| {
-                tracing::error!("bundled attestation document validation error: {e}");
-                Error::General(e.to_string())
-            })?;
+            if do_validation {
+                validate_wrapped_cert(
+                    &cert,
+                    release_pcrs,
+                    self.pcr8_expected,
+                    CertVerifier::Client(client_verifier.clone()),
+                    intermediates,
+                    now,
+                )
+                .map_err(|e| {
+                    tracing::error!("bundled attestation document validation error: {e}");
+                    Error::General(e.to_string())
+                })?;
+            }
         }
 
         Ok(ClientCertVerified::assertion())
@@ -402,7 +422,12 @@ fn validate_wrapped_cert(
     };
     let attestation_doc =
         attestation_doc_validation::validate_and_parse_attestation_doc(attestation_doc.value)
-            .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))?;
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("AWS Nitro attestation failed: {e}"),
+                )
+            })?;
     let Some(attested_pk) = attestation_doc.public_key else {
         bail!("Bad certificate: public key not present in attestation document")
     };
@@ -492,10 +517,10 @@ pub fn extract_context_id_from_cert(cert: &X509Certificate) -> anyhow::Result<Se
     // Note that `cert.serial` is a BigInt, so we need to convert it to
     // bytes and then convert it to u128. As such, it does not matter
     // what endianess we use for the conversion, as long as we are
-    // consistent on both sides. Here we use little-endian.
-    let context_id = SessionId::from(u128::from_le_bytes(
+    // consistent on both sides. Here we use big-endian.
+    let context_id = SessionId::from(u128::from_be_bytes(
         cert.serial
-            .to_bytes_le()
+            .to_bytes_be()
             .try_into()
             .or(Err(anyhow!("Invalid context ID length")))?,
     ));

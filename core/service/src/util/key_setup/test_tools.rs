@@ -852,6 +852,7 @@ pub(crate) mod setup {
             ThresholdSigningKeyConfig::AllParties(
                 (1..=amount_parties).map(|i| format!("party-{i}")).collect(),
             ),
+            false,
         )
         .await;
         ensure_threshold_keys_exist(
