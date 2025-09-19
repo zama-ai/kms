@@ -1,4 +1,5 @@
 use kms_grpc::kms::v1::CiphertextFormat;
+use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
 use kms_grpc::kms::v1::CustodianRecoveryRequest;
 use kms_grpc::kms::v1::DestroyCustodianContextRequest;
 use kms_grpc::kms::v1::DestroyKmsContextRequest;
@@ -97,7 +98,7 @@ pub trait BackupOperator {
 
     async fn custodian_recovery_init(
         &self,
-        request: Request<Empty>,
+        request: Request<CustodianRecoveryInitRequest>,
     ) -> Result<Response<RecoveryRequest>, Status>;
 
     async fn custodian_backup_recovery(

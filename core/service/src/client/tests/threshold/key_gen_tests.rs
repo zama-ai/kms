@@ -35,6 +35,8 @@ use crate::consts::TEST_PARAM;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 #[cfg(feature = "slow_tests")]
 use crate::util::rate_limiter::RateLimiterConfig;
+#[cfg(any(feature = "slow_tests", feature = "insecure"))]
+use std::path::Path;
 #[cfg(feature = "slow_tests")]
 use std::sync::Arc;
 #[cfg(feature = "slow_tests")]
@@ -74,7 +76,7 @@ impl TestKeyGenResult {
 #[serial]
 async fn test_insecure_dkg(#[case] amount_parties: usize) {
     let key_id: RequestId = derive_request_id(&format!(
-        "test_inscure_dkg_key_{amount_parties}_{TEST_PARAM:?}"
+        "test_insecure_dkg_key_{amount_parties}_{TEST_PARAM:?}"
     ))
     .unwrap();
     purge(None, None, None, &key_id, amount_parties).await;
@@ -89,6 +91,7 @@ async fn test_insecure_dkg(#[case] amount_parties: usize) {
         None,
         None,
         true,
+        None,
     )
     .await;
     _ = keys.clone().get_standard();
@@ -126,6 +129,7 @@ async fn default_insecure_dkg(#[case] amount_parties: usize) {
         None,
         None,
         true,
+        None,
     )
     .await;
 
@@ -182,6 +186,7 @@ pub(crate) async fn run_threshold_keygen(
     decompression_keygen: Option<(RequestId, RequestId)>,
     sns_compression_keygen: Option<RequestId>,
     insecure: bool,
+    data_root_path: Option<&Path>,
 ) -> TestKeyGenResult {
     let keyset_config = match (decompression_keygen, sns_compression_keygen) {
         (None, None) => None,
@@ -240,6 +245,7 @@ pub(crate) async fn run_threshold_keygen(
         internal_client,
         insecure,
         decompression_keygen.is_some(),
+        data_root_path,
     )
     .await
 }
@@ -289,6 +295,7 @@ async fn wait_for_keygen_result(
     internal_client: &Client,
     insecure: bool,
     decompression_keygen: bool,
+    data_root_path: Option<&Path>,
 ) -> TestKeyGenResult {
     use threshold_fhe::execution::{
         runtime::party::Role, tfhe_internals::test_feature::to_hl_client_key,
@@ -354,7 +361,7 @@ async fn wait_for_keygen_result(
         for (idx, kg_res) in finished.into_iter() {
             let role = Role::indexed_from_one(idx as usize);
             let kg_res = kg_res.unwrap().into_inner();
-            let storage = FileStorage::new(None, StorageType::PUB, Some(role)).unwrap();
+            let storage = FileStorage::new(data_root_path, StorageType::PUB, Some(role)).unwrap();
             let decompression_key: Option<DecompressionKey> = internal_client
                 .retrieve_key_no_verification(&kg_res, PubDataType::DecompressionKey, &storage)
                 .await
@@ -385,7 +392,7 @@ async fn wait_for_keygen_result(
         for (idx, kg_res) in finished.into_iter() {
             let role = Role::indexed_from_one(idx as usize);
             let kg_res = kg_res.unwrap().into_inner();
-            let storage = FileStorage::new(None, StorageType::PUB, Some(role)).unwrap();
+            let storage = FileStorage::new(data_root_path, StorageType::PUB, Some(role)).unwrap();
 
             let (server_key, public_key) = internal_client
                 .retrieve_server_key_and_public_key(
@@ -396,6 +403,7 @@ async fn wait_for_keygen_result(
                     &storage,
                 )
                 .await
+                .inspect_err(|e| tracing::error!("error retrieving server and public key: {e}"))
                 .unwrap()
                 .unwrap();
 
@@ -412,7 +420,8 @@ async fn wait_for_keygen_result(
 
             let key_id =
                 RequestId::from_str(kg_res.request_id.unwrap().request_id.as_str()).unwrap();
-            let priv_storage = FileStorage::new(None, StorageType::PRIV, Some(role)).unwrap();
+            let priv_storage =
+                FileStorage::new(data_root_path, StorageType::PRIV, Some(role)).unwrap();
             let mut threshold_fhe_keys: ThresholdFheKeys = priv_storage
                 .read_data(&key_id, &PrivDataType::FheKeyInfo.to_string())
                 .await
@@ -538,6 +547,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         None,
         None,
         insecure,
+        None,
     )
     .await;
     let (client_key_1, _public_key_1, server_key_1) = keys1.get_standard();
@@ -564,6 +574,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         None,
         None,
         insecure,
+        None,
     )
     .await;
     let (client_key_2, _public_key_2, _server_key_2) = keys2.get_standard();
@@ -590,6 +601,7 @@ pub(crate) async fn run_threshold_decompression_keygen(
         Some((key_id_1, key_id_2)),
         None,
         insecure,
+        None,
     )
     .await
     .get_decompression_only();
@@ -659,6 +671,7 @@ async fn run_threshold_sns_compression_keygen(
         None,
         Some(*base_key_id),
         insecure,
+        None,
     )
     .await;
     let (client_key_2, _public_key_2, server_key_2) = keys2.get_standard();
@@ -774,6 +787,7 @@ pub(crate) async fn preproc_and_keygen(
                         None,
                         None,
                         insecure,
+                        None,
                     )
                     .await
                 }
@@ -818,6 +832,7 @@ pub(crate) async fn preproc_and_keygen(
                 None,
                 None,
                 insecure,
+                None,
             )
             .await;
             // blockchain parameters always have mod switch noise reduction key

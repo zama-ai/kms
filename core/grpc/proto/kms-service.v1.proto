@@ -372,7 +372,7 @@ service CoreServiceEndpoint {
   // # Conditions
   // ## Pre-condition:  -
   // ## Post-condition: -
-  rpc CustodianRecoveryInit(kms.v1.Empty) returns (kms.v1.RecoveryRequest);
+  rpc CustodianRecoveryInit(kms.v1.CustodianRecoveryInitRequest) returns (kms.v1.RecoveryRequest);
 
   // Recover the master decryption key secret shared with custodians as part of a custodian-based backup recovery
   //
