@@ -88,7 +88,7 @@ aws-smithy-runtime-api = { version = "=1.7.3" }  # AWS Smithy runtime API - LOW 
 aws-smithy-types = { version = "=1.2.9" }  # AWS Smithy types - LOW RISK: Official AWS type definitions
 axum = { version = "=0.8.4", features = ["tokio"] }  # Web framework - LOW RISK: tokio-rs team, 168M+ downloads, actively maintained
 backoff = "=0.4.0"  # Retry with exponential backoff - HIGH RISK: Individual maintainer (ihrwein), despite 50M+ downloads
-base64 = "=0.22.1"  # Base64 encoding - MEDIUM RISK: Individual maintainers (marshallpierce, alicemaz), despite 718M downloads
+base64 = "=0.22.1"  # Base64 encoding - HIGH RISK: Individual maintainer (marshallpierce), despite 718M downloads
 bincode = { version = "=2.0.1", features = ["serde"] }  # Binary serialization - LOW RISK: bincode-org, 147M+ downloads
 bip39 = { version = "=2.2.0", features = ["alloc"] }  # BIP39 mnemonic seed phrases - LOW RISK: rust-bitcoin org (reputable), CI enabled
 bytes = "=1.10.1"  # Byte buffer utilities - LOW RISK: tokio team, 100M+ downloads
