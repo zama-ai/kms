@@ -1,48 +1,45 @@
-use crate::backup::custodian::Custodian;
-use crate::backup::operator::InternalRecoveryRequest;
-use crate::backup::seed_phrase::custodian_from_seed_phrase;
-#[cfg(feature = "insecure")]
-use crate::client::tests::threshold::crs_gen_tests::run_crs;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "insecure")] {
+        use crate::backup::custodian::Custodian;
+        use crate::backup::operator::InternalRecoveryRequest;
+        use crate::backup::seed_phrase::custodian_from_seed_phrase;
+        use crate::client::tests::threshold::crs_gen_tests::run_crs;
+        use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
+        use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
+        use crate::consts::SAFE_SER_SIZE_LIMIT;
+        use crate::cryptography::backup_pke::BackupPrivateKey;
+        use crate::cryptography::internal_crypto_types::PrivateSigKey;
+        use crate::engine::base::INSECURE_PREPROCESSING_ID;
+        use crate::util::key_setup::test_tools::purge_priv;
+        use crate::util::key_setup::test_tools::EncryptionConfig;
+        use crate::util::key_setup::test_tools::TestingPlaintext;
+        use crate::vault::storage::file::FileStorage;
+        use crate::vault::storage::read_versioned_at_request_id;
+        use aes_prng::AesRng;
+        use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
+        use rand::SeedableRng;
+        use kms_grpc::kms::v1::{CustodianRecoveryRequest, Empty, RecoveryRequest};
+        use kms_grpc::rpc_types::PubDataType;
+        use std::collections::HashMap;
+        use tfhe::safe_serialization::safe_deserialize;
+        use threshold_fhe::execution::runtime::party::Role;
+        use tokio::task::JoinSet;
+        use tonic::transport::Channel;
+    }
+}
 use crate::client::tests::threshold::custodian_context_tests::run_new_cus_context;
-#[cfg(feature = "insecure")]
-use crate::client::tests::threshold::key_gen_tests::run_threshold_keygen;
-#[cfg(feature = "insecure")]
-use crate::client::tests::threshold::public_decryption_tests::run_decryption_threshold;
-use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
-use crate::cryptography::backup_pke::BackupPrivateKey;
-use crate::cryptography::internal_crypto_types::PrivateSigKey;
-#[cfg(feature = "insecure")]
-use crate::engine::base::INSECURE_PREPROCESSING_ID;
-#[cfg(feature = "insecure")]
-use crate::util::key_setup::test_tools::purge_priv;
-#[cfg(feature = "insecure")]
-use crate::util::key_setup::test_tools::EncryptionConfig;
-#[cfg(feature = "insecure")]
-use crate::util::key_setup::test_tools::TestingPlaintext;
+use crate::consts::SIGNING_KEY_ID;
 use crate::util::key_setup::test_tools::{purge_backup, read_backup_files};
-use crate::vault::storage::file::FileStorage;
-use crate::vault::storage::{read_versioned_at_request_id, StorageType};
+use crate::vault::storage::StorageType;
 use crate::{
     client::tests::common::TIME_TO_SLEEP_MS,
     client::tests::threshold::common::threshold_handles_custodian_backup,
     cryptography::{backup_pke::BackupCiphertext, internal_crypto_types::WrappedDKGParams},
     engine::base::derive_request_id,
 };
-use aes_prng::AesRng;
-#[cfg(feature = "insecure")]
-use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
-use kms_grpc::kms::v1::{CustodianRecoveryRequest, Empty, RecoveryRequest};
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{kms::v1::FheParameter, rpc_types::PrivDataType, RequestId};
-#[cfg(feature = "insecure")]
-use rand::SeedableRng;
 use serial_test::serial;
-use std::collections::HashMap;
-use tfhe::safe_serialization::safe_deserialize;
-use threshold_fhe::execution::runtime::party::Role;
-use tokio::task::JoinSet;
-use tonic::transport::Channel;
 
 #[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
