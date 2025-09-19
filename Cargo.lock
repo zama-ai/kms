@@ -4258,6 +4258,7 @@ dependencies = [
  "serial_test",
  "strum",
  "strum_macros",
+ "tempfile",
  "test-context",
  "tfhe",
  "threshold-fhe",

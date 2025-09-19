@@ -265,10 +265,8 @@ async fn real_preproc_and_keygen(config_path: &str) -> String {
     key_id.to_string()
 }
 
-async fn restore_from_backup<T: DockerComposeContext>(ctx: &T) -> String {
+async fn restore_from_backup<T: DockerComposeContext>(ctx: &T, test_path: &Path) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
-
-    let keys_folder: &Path = Path::new("tests/data/keys");
 
     let init_command = CCCommand::BackupRestore(NoParameters {});
     let init_config = CmdConfig {
@@ -280,7 +278,7 @@ async fn restore_from_backup<T: DockerComposeContext>(ctx: &T) -> String {
     };
 
     println!("Doing restore from backup");
-    let restore_from_backup_results = execute_cmd(&init_config, keys_folder).await.unwrap();
+    let restore_from_backup_results = execute_cmd(&init_config, test_path).await.unwrap();
     println!("Restore from backup done");
     assert_eq!(restore_from_backup_results.len(), 1);
     // No backup ID is returned since restore_from_backup can also be used without custodians
@@ -376,12 +374,11 @@ async fn test_template<T: DockerComposeContext>(ctx: &mut T, commands: Vec<CCCom
 
 async fn new_custodian_context<T: DockerComposeContext>(
     ctx: &T,
+    test_path: &Path,
     custodian_threshold: u32,
     setup_msg_paths: Vec<PathBuf>,
 ) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
-
-    let keys_folder: &Path = Path::new("tests/data/keys");
     let command = CCCommand::NewCustodianContext(NewCustodianContextParameters {
         threshold: custodian_threshold,
         setup_msg_paths,
@@ -395,7 +392,7 @@ async fn new_custodian_context<T: DockerComposeContext>(
     };
 
     println!("Doing new custodian context");
-    let backup_init_results = execute_cmd(&init_config, keys_folder).await.unwrap();
+    let backup_init_results = execute_cmd(&init_config, test_path).await.unwrap();
     println!("New custodian context done");
     assert_eq!(backup_init_results.len(), 1);
     let res_id = match backup_init_results.first().unwrap() {
@@ -460,11 +457,10 @@ fn extract_seed_phrase(out: Output) -> String {
 
 async fn custodian_backup_init<T: DockerComposeContext>(
     ctx: &T,
+    test_path: &Path,
     operator_recovery_resp_paths: Vec<PathBuf>,
 ) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
-
-    let keys_folder: &Path = Path::new("tests/data/keys");
 
     let init_command = CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
         operator_recovery_resp_paths,
@@ -478,7 +474,7 @@ async fn custodian_backup_init<T: DockerComposeContext>(
     };
 
     println!("Doing backup init");
-    let backup_init_results = execute_cmd(&init_config, keys_folder).await.unwrap();
+    let backup_init_results = execute_cmd(&init_config, test_path).await.unwrap();
     println!("Backup init done");
     assert_eq!(backup_init_results.len(), 1);
     let res_id = match backup_init_results.first().unwrap() {
@@ -542,12 +538,11 @@ async fn custodian_reencrypt(
 
 async fn custodian_backup_recovery<T: DockerComposeContext>(
     ctx: &T,
+    test_path: &Path,
     custodian_recovery_outputs: Vec<PathBuf>,
     backup_id: RequestId,
 ) -> String {
     let path_to_config = ctx.root_path().join(ctx.config_path());
-    let keys_folder: &Path = Path::new("tests/data/keys");
-
     let command = CCCommand::CustodianBackupRecovery(RecoveryParameters {
         custodian_context_id: backup_id,
         custodian_recovery_outputs,
@@ -561,7 +556,7 @@ async fn custodian_backup_recovery<T: DockerComposeContext>(
     };
 
     println!("Doing backup recovery");
-    let backup_recovery_results = execute_cmd(&init_config, keys_folder).await.unwrap();
+    let backup_recovery_results = execute_cmd(&init_config, test_path).await.unwrap();
     println!("Backup init recovery");
     assert_eq!(backup_recovery_results.len(), 1);
     let res_id = match backup_recovery_results.first().unwrap() {
@@ -596,8 +591,10 @@ async fn test_centralized_insecure(ctx: &mut DockerComposeCentralizedContext) {
 #[serial(docker)]
 async fn test_centralized_restore_from_backup(ctx: &DockerComposeCentralizedContext) {
     init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
     let _crs_id = crs_gen(ctx, true).await;
-    let _ = restore_from_backup(ctx).await;
+    let _ = restore_from_backup(ctx, keys_folder).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
     // However we are testing this in the service/client tests. Hence this tests is mainly to ensure that the outer
     // end points, and content returned from the KMS to the custodians, work as expected.
@@ -610,17 +607,19 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
     init_testing();
     let amount_custodians = 5;
     let custodian_threshold = 2;
-    let keys_folder: &Path = Path::new("tests/data/keys");
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
     let (seeds, setup_msg_paths) =
         generate_custodian_keys_to_file(keys_folder, amount_custodians).await;
-    let cus_backup_id = new_custodian_context(ctx, custodian_threshold, setup_msg_paths).await;
+    let cus_backup_id =
+        new_custodian_context(ctx, keys_folder, custodian_threshold, setup_msg_paths).await;
     let operator_recovery_resp_path = keys_folder
         .join("CUSTODIAN")
         .join("recovery")
         .join(&cus_backup_id)
         .join("central");
     let init_backup_id =
-        custodian_backup_init(ctx, vec![operator_recovery_resp_path.clone()]).await;
+        custodian_backup_init(ctx, keys_folder, vec![operator_recovery_resp_path.clone()]).await;
     assert_eq!(cus_backup_id, init_backup_id);
     let recovery_output_paths = custodian_reencrypt(
         keys_folder,
@@ -633,12 +632,13 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
     .await;
     let recovery_backup_id = custodian_backup_recovery(
         ctx,
+        keys_folder,
         recovery_output_paths,
         RequestId::from_str(&cus_backup_id).unwrap(),
     )
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
-    let _ = restore_from_backup(ctx).await;
+    let _ = restore_from_backup(ctx, keys_folder).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
     // However we are testing this in the service/client tests. Hence this tests is mainly to ensure that the outer
     // end points, and content returned from the KMS to the custodians, work as expected.
@@ -925,8 +925,10 @@ async fn test_threshold_concurrent_crs(ctx: &DockerComposeThresholdContextDefaul
 #[serial(docker)]
 async fn test_threshold_restore_from_backup(ctx: &DockerComposeThresholdContextTest) {
     init_testing();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
     let _crs_id = crs_gen(ctx, true).await;
-    let _ = restore_from_backup(ctx).await;
+    let _ = restore_from_backup(ctx, keys_folder).await;
     // We don't have endpoints that allow us to purge the generate material within the docker images
     // so we can here only test that the end points are alive and acting as expected, rather than validating that
     // data gets restored. Instead tests in the client within core have tests for validating this
@@ -940,10 +942,12 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianCo
     let amount_custodians = 5;
     let custodian_threshold = 2;
     let amount_operators = 4; // TODO should not be hardcoded but not sure how I can get it easily
-    let keys_folder: &Path = Path::new("tests/data/keys");
+    let temp_dir = tempfile::tempdir().unwrap();
+    let keys_folder = temp_dir.path();
     let (seeds, setup_msg_paths) =
         generate_custodian_keys_to_file(keys_folder, amount_custodians).await;
-    let cus_backup_id = new_custodian_context(ctx, custodian_threshold, setup_msg_paths).await;
+    let cus_backup_id =
+        new_custodian_context(ctx, keys_folder, custodian_threshold, setup_msg_paths).await;
     // Paths to where the results of the backup init will be stored
     let mut operator_recovery_resp_paths = Vec::new();
     for cur_op_idx in 1..=amount_operators {
@@ -955,7 +959,8 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianCo
                 .join(cur_op_idx.to_string()),
         );
     }
-    let init_backup_id = custodian_backup_init(ctx, operator_recovery_resp_paths.clone()).await;
+    let init_backup_id =
+        custodian_backup_init(ctx, keys_folder, operator_recovery_resp_paths.clone()).await;
     assert_eq!(cus_backup_id, init_backup_id);
     let recovery_output_paths = custodian_reencrypt(
         keys_folder,
@@ -968,12 +973,13 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianCo
     .await;
     let recovery_backup_id = custodian_backup_recovery(
         ctx,
+        keys_folder,
         recovery_output_paths,
         RequestId::from_str(&cus_backup_id).unwrap(),
     )
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
-    let _ = restore_from_backup(ctx).await;
+    let _ = restore_from_backup(ctx, keys_folder).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate recovery.
     // However we are testing this in the service/client. Hence this tests is mainly to ensure that the outer
     // end points and content returned from the KMS to the custodians work as expected.

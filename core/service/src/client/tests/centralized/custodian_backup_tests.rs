@@ -210,7 +210,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     purge_priv(test_path).await;
 
     // Reboot the servers
-    let (_kms_server, mut kms_client, mut internal_client) =
+    let (kms_server, mut kms_client, internal_client) =
         centralized_custodian_handles(&dkg_param, None, test_path).await;
     // Purge the private storage again to delete the signing key
     purge_priv(test_path).await;
@@ -240,8 +240,15 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     )
     .await
     .unwrap();
-    // Check the data is correctly recovered
     assert_eq!(sk, sig_key);
+
+    kms_server.assert_shutdown().await;
+    drop(kms_client);
+    drop(internal_client);
+    let (_kms_server, kms_client, mut internal_client) =
+        centralized_custodian_handles(&dkg_param, None, test_path).await;
+
+    // Check the data is correctly recovered
     run_decryption_centralized(
         &kms_client,
         &mut internal_client,

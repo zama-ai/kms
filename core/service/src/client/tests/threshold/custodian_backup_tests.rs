@@ -330,7 +330,7 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let mut rng = AesRng::seed_from_u64(13);
     let recovery_req_resp = run_custodian_recovery_init(&kms_clients).await;
     assert_eq!(recovery_req_resp.len(), amount_parties);
-    let cus_out = emulate_custodian(&mut rng, test_path, recovery_req_resp, mnemnonics).await;
+    let cus_out = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics, test_path).await;
     let recovery_output = run_custodian_backup_recovery(&kms_clients, &cus_out).await;
     assert_eq!(recovery_output.len(), amount_parties);
     let res = run_restore_from_backup(&kms_clients).await;
@@ -479,9 +479,9 @@ async fn run_restore_from_backup(
 #[allow(dead_code)]
 async fn emulate_custodian(
     rng: &mut AesRng,
-    test_path: Option<&std::path::Path>,
     recovery_requests: Vec<RecoveryRequest>,
     mnemonics: Vec<String>,
+    test_path: Option<&std::path::Path>,
 ) -> HashMap<usize, CustodianRecoveryRequest> {
     let backup_id = recovery_requests[0].backup_id.clone().unwrap();
     let mut outputs_for_operators = HashMap::new();

@@ -38,6 +38,7 @@ rand = { workspace = true, features = ["std", "std_rng"] }
 serde = { workspace = true, features = ["derive"] }
 strum.workspace = true
 strum_macros.workspace = true
+tempfile.workspace = true
 tfhe.workspace = true
 threshold-fhe.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
