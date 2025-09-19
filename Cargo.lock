@@ -7847,7 +7847,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2ad0b7ae9cfeef5605163839cb9221f453399f15cfb5c10be9885fcf56611f9"
 dependencies = [
  "indexmap 2.11.2",
- "toml_datetime 0.6.11",
+ "toml_datetime",
+ "toml_parser",
  "winnow",
 ]
 
