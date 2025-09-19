@@ -676,7 +676,7 @@ async fn threshold_decrypt_command(
         (1 << tfhe_type.get_num_bits_rep()) - 1
     };
     let messages = rand::thread_rng()
-        .sample_iter(Uniform::<u64>::from(0..max_value))
+        .sample_iter(Uniform::<u64>::from(0..=max_value))
         .take(num_messages)
         .collect_vec();
 

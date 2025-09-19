@@ -69,76 +69,8 @@ fn bench_fhe_type<FheType>(
     }
 
     {
-        write!(name, "add({type_name}, {type_name})").unwrap();
-        bench_group.bench_function(&name, |b| b.iter(|| black_box(&lhs + &rhs)));
-        name.clear();
-    }
-
-    {
-        write!(name, "overflowing_add({type_name}, {type_name})").unwrap();
-        bench_group.bench_function(&name, |b| {
-            b.iter(|| black_box((&lhs).overflowing_add(&rhs)))
-        });
-        name.clear();
-    }
-
-    {
-        write!(name, "overflowing_sub({type_name}, {type_name})").unwrap();
-        bench_group.bench_function(&name, |b| b.iter(|| black_box(lhs.overflowing_sub(&rhs))));
-        name.clear();
-    }
-
-    {
-        write!(name, "sub({type_name}, {type_name})").unwrap();
-        bench_group.bench_function(&name, |b| b.iter(|| black_box(&lhs - &rhs)));
-        name.clear();
-    }
-
-    {
         write!(name, "mul({type_name}, {type_name})").unwrap();
         bench_group.bench_function(&name, |b| b.iter(|| black_box(&lhs * &rhs)));
-        name.clear();
-    }
-
-    {
-        write!(name, "bitand({type_name}, {type_name})").unwrap();
-        bench_group.bench_function(&name, |b| b.iter(|| black_box(&lhs & &rhs)));
-        name.clear();
-    }
-
-    {
-        write!(name, "bitor({type_name}, {type_name})").unwrap();
-        bench_group.bench_function(&name, |b| b.iter(|| black_box(&lhs | &rhs)));
-        name.clear();
-    }
-
-    {
-        write!(name, "bitxor({type_name}, {type_name})").unwrap();
-        bench_group.bench_function(&name, |b| b.iter(|| black_box(&lhs ^ &rhs)));
-        name.clear();
-    }
-
-    {
-        write!(name, "shl({type_name}, {type_name})").unwrap();
-        bench_group.bench_function(&name, |b| b.iter(|| black_box(&lhs << &rhs)));
-        name.clear();
-    }
-
-    {
-        write!(name, "shr({type_name}, {type_name})").unwrap();
-        bench_group.bench_function(&name, |b| b.iter(|| black_box(&lhs >> &rhs)));
-        name.clear();
-    }
-
-    {
-        write!(name, "rotl({type_name}, {type_name})").unwrap();
-        bench_group.bench_function(&name, |b| b.iter(|| black_box((&lhs).rotate_left(&rhs))));
-        name.clear();
-    }
-
-    {
-        write!(name, "rotr({type_name}, {type_name})").unwrap();
-        bench_group.bench_function(&name, |b| b.iter(|| black_box((&lhs).rotate_right(&rhs))));
         name.clear();
     }
 }
@@ -187,93 +119,8 @@ where
     }
 
     {
-        write!(name, "{bench_name}_add_memory({type_name}, {type_name})").unwrap();
-        let bench_fn = |(lhs, rhs): (FheType, FheType)| &lhs + &rhs;
-        bench_memory(bench_fn, (lhs.clone(), rhs.clone()), name.clone());
-        name.clear();
-    }
-
-    {
-        write!(
-            name,
-            "{bench_name}_overflowing_add_memory({type_name}, {type_name})"
-        )
-        .unwrap();
-        let bench_fn = |(lhs, rhs): (FheType, FheType)| (&lhs).overflowing_add(&rhs);
-        bench_memory(bench_fn, (rhs.clone(), lhs.clone()), name.clone());
-        name.clear();
-    }
-
-    {
-        write!(
-            name,
-            "{bench_name}_overflowing_sub_memory({type_name}, {type_name})"
-        )
-        .unwrap();
-        let bench_fn = |(lhs, rhs): (FheType, FheType)| (&lhs).overflowing_sub(&rhs);
-        bench_memory(bench_fn, (rhs.clone(), lhs.clone()), name.clone());
-        name.clear();
-    }
-
-    {
-        write!(name, "{bench_name}_sub_memory({type_name}, {type_name})").unwrap();
-        let bench_fn = |(lhs, rhs): (FheType, FheType)| &lhs - &rhs;
-        bench_memory(bench_fn, (rhs.clone(), lhs.clone()), name.clone());
-        name.clear();
-    }
-
-    {
         write!(name, "{bench_name}_mul_memory({type_name}, {type_name})").unwrap();
         let bench_fn = |(lhs, rhs): (FheType, FheType)| &lhs * &rhs;
-        bench_memory(bench_fn, (rhs.clone(), lhs.clone()), name.clone());
-        name.clear();
-    }
-
-    {
-        write!(name, "{bench_name}_bitand_mem({type_name}, {type_name})").unwrap();
-        let bench_fn = |(lhs, rhs): (FheType, FheType)| &lhs & &rhs;
-        bench_memory(bench_fn, (rhs.clone(), lhs.clone()), name.clone());
-        name.clear();
-    }
-
-    {
-        write!(name, "{bench_name}_bitor_mem({type_name}, {type_name})").unwrap();
-        let bench_fn = |(lhs, rhs): (FheType, FheType)| &lhs | &rhs;
-        bench_memory(bench_fn, (rhs.clone(), lhs.clone()), name.clone());
-        name.clear();
-    }
-
-    {
-        write!(name, "{bench_name}_bitxor_mem({type_name}, {type_name})").unwrap();
-        let bench_fn = |(lhs, rhs): (FheType, FheType)| &lhs ^ &rhs;
-        bench_memory(bench_fn, (rhs.clone(), lhs.clone()), name.clone());
-        name.clear();
-    }
-
-    {
-        write!(name, "{bench_name}_shl_mem({type_name}, {type_name})").unwrap();
-        let bench_fn = |(lhs, rhs): (FheType, FheType)| &lhs << &rhs;
-        bench_memory(bench_fn, (rhs.clone(), lhs.clone()), name.clone());
-        name.clear();
-    }
-
-    {
-        write!(name, "{bench_name}_shr_mem({type_name}, {type_name})").unwrap();
-        let bench_fn = |(lhs, rhs): (FheType, FheType)| &lhs >> &rhs;
-        bench_memory(bench_fn, (rhs.clone(), lhs.clone()), name.clone());
-        name.clear();
-    }
-
-    {
-        write!(name, "{bench_name}_rotl_mem({type_name}, {type_name})").unwrap();
-        let bench_fn = |(lhs, rhs): (FheType, FheType)| (&lhs).rotate_left(&rhs);
-        bench_memory(bench_fn, (rhs.clone(), lhs.clone()), name.clone());
-        name.clear();
-    }
-
-    {
-        write!(name, "{bench_name}_rotr_mem({type_name}, {type_name})").unwrap();
-        let bench_fn = |(lhs, rhs): (FheType, FheType)| (&lhs).rotate_right(&rhs);
         bench_memory(bench_fn, (rhs.clone(), lhs.clone()), name.clone());
         name.clear();
     }
@@ -328,48 +175,11 @@ fn main() {
         #[cfg(not(feature = "measure_memory"))]
         let mut c = Criterion::default().sample_size(10).configure_from_args();
 
-        //{
-        //    let bench_name = format!("{bench_name}_FheUint2");
-        //    #[cfg(not(feature = "measure_memory"))]
-        //    let mut group = c.benchmark_group(&bench_name);
-        //    bench_fhe_uint2(&mut group, &cks);
-        //}
-
-        //{
-        //    let bench_name = format!("{bench_name}_FheUint4");
-        //    let mut group = c.benchmark_group(&bench_name);
-        //    bench_fhe_uint4(&mut group, &cks);
-        //}
-
-        //{
-        //    let bench_name = format!("{bench_name}_FheUint8");
-        //    let mut group = c.benchmark_group(&bench_name);
-        //    bench_fhe_uint8(&mut group, &cks);
-        //}
-
-        //{
-        //    let bench_name = format!("{bench_name}_FheUint16");
-        //    let mut group = c.benchmark_group(&bench_name);
-        //    bench_fhe_uint16(&mut group, &cks);
-        //}
-
-        //{
-        //    let bench_name = format!("{bench_name}_FheUint32");
-        //    let mut group = c.benchmark_group(&bench_name);
-        //    bench_fhe_uint32(&mut group, &cks);
-        //}
-
         {
             let bench_name = format!("{bench_name}_FheUint64");
             let mut group = c.benchmark_group(&bench_name);
             bench_fhe_uint64(&mut group, &cks);
         }
-
-        //{
-        //    let bench_name = format!("{bench_name}_FheUint128");
-        //    let mut group = c.benchmark_group(&bench_name);
-        //    bench_fhe_uint128(&mut group, &cks);
-        //}
 
         #[cfg(not(feature = "measure_memory"))]
         c.final_summary();
@@ -390,32 +200,8 @@ fn main() {
 
         let bench_name = format!("non-threshold_basic-ops_{name}");
 
-        //{
-        //    bench_fhe_uint2(&cks, &bench_name);
-        //}
-
-        //{
-        //    bench_fhe_uint4(&cks, &bench_name);
-        //}
-
-        //{
-        //    bench_fhe_uint8(&cks, &bench_name);
-        //}
-
-        //{
-        //    bench_fhe_uint16(&cks, &bench_name);
-        //}
-
-        //{
-        //    bench_fhe_uint32(&cks, &bench_name);
-        //}
-
         {
             bench_fhe_uint64(&cks, &bench_name);
         }
-
-        //{
-        //    bench_fhe_uint128(&cks, &bench_name);
-        //}
     }
 }

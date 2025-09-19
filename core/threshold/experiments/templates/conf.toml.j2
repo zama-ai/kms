@@ -8,6 +8,10 @@
 # moby (parties) and mobygo (choreographer) because these two components are only
 # used for benchmarking.
 
+{% if moby_strategy != "secure"%}
+malicious_roles = [1]
+{% endif %}
+
 [telemetry]
 tracing_service_name = "choreographer"
 tracing_endpoint = "http://127.0.0.1:4317"

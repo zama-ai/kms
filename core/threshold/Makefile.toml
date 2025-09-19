@@ -89,12 +89,12 @@ args = ["run", "--bin", "gen-experiment", "--release", "--features", "templating
 #Generate docker-compose file for the TFHE parties as well as the toml config file for the choreogrpaher for a local deployment
 [tasks.tfhe-gen-experiment]
 command = "cargo"
-args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-o", "${EXPERIMENT_NAME}", "all", "--protocol", "tfhe" ]
+args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-s", "${MOBY_STRATEGY}", "-f", "temp", "-o", "${EXPERIMENT_NAME}", "all", "--protocol", "tfhe" ]
 
 #Generate docker-compose file for the BGV parties as well as the toml config file for the choreogrpaher for a local deployment
 [tasks.bgv-gen-experiment]
 command = "cargo"
-args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-o", "${EXPERIMENT_NAME}" , "all", "--protocol", "bgv"]
+args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-s", "${MOBY_STRATEGY}", "-f", "temp", "-o", "${EXPERIMENT_NAME}" , "all", "--protocol", "bgv"]
 
 
 #Bring parties alive based on provided yml file
@@ -180,19 +180,36 @@ run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experimen
 
 # For small session we run with N=4,t=1
 [tasks.tfhe-run-small-session]
-env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-fake-dkg-bench"}
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="secure", EXPERIMENT_NAME="tfhe-small-session"}
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-small"], fork = true, cleanup_task = "shutdown" }
+
+[tasks.tfhe-run-small-session-drop]
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="drop_all", EXPERIMENT_NAME="tfhe-small-session-drop"}
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-small"], fork = true }
+
+[tasks.tfhe-run-small-session-malicious-bcast]
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="malicious_broadcast", EXPERIMENT_NAME="tfhe-small-session-malicious-bcast"}
 run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-small"], fork = true, cleanup_task = "shutdown" }
 
 # For large session we run with N=5,t=1
 [tasks.tfhe-run-large-session]
-env = {"NUM_PARTIES" = "5", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-real-dkg-bench"}
+env = {"NUM_PARTIES" = "5", THRESHOLD = "1", MOBY_STRATEGY="secure", EXPERIMENT_NAME="tfhe-large-session"}
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-large"], fork = true, cleanup_task = "shutdown" }
+
+[tasks.tfhe-run-large-session-drop]
+env = {"NUM_PARTIES" = "5", THRESHOLD = "1", MOBY_STRATEGY="drop_all", EXPERIMENT_NAME="tfhe-large-session-drop"}
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-large"], fork = true, cleanup_task = "shutdown" }
+
+
+[tasks.tfhe-run-large-session-malicious-bcast]
+env = {"NUM_PARTIES" = "5", THRESHOLD = "1", MOBY_STRATEGY="malicious_broadcast", EXPERIMENT_NAME="tfhe-large-session-malicious-bcast"}
 run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-large"], fork = true, cleanup_task = "shutdown" }
 
 ##For BGV we set NUM_PARTIES to 4 as we only need small sessions
 [tasks.bgv-bench-fake-dkg]
-env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="bgv-fake-dkg-bench"}
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="secure", EXPERIMENT_NAME="bgv"}
 run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experiment-name", "start-parties-healthy", "bgv-test-fake-dkg"], fork = true, cleanup_task = "shutdown" }
 
 [tasks.bgv-bench-real-dkg]
-env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="bgv-real-dkg-bench"}
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="secure", EXPERIMENT_NAME="bgv"}
 run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experiment-name", "start-parties-healthy", "bgv-test-real-dkg"], fork = true, cleanup_task = "shutdown" }
