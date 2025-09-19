@@ -17,7 +17,7 @@ clap.workspace = true
 config.workspace = true
 hex.workspace = true
 kms-grpc.workspace = true
-kms.workspace = true
+kms = { workspace = true, default-features = true }
 observability.workspace = true
 serde.workspace = true
 serde_json.workspace = true
