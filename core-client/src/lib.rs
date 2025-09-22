@@ -32,8 +32,8 @@ use kms_lib::util::file_handling::{
 };
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::util::key_setup::test_tools::{
-    compute_cipher_from_stored_key, load_crs_from_storage, load_pk_from_storage,
-    load_server_key_from_storage, EncryptionConfig, TestingPlaintext,
+    compute_cipher_from_stored_key, load_material_from_storage, load_pk_from_storage,
+    EncryptionConfig, TestingPlaintext,
 };
 use kms_lib::vault::storage::{file::FileStorage, StorageType};
 use kms_lib::DecryptionMode;
@@ -698,13 +698,11 @@ pub async fn fetch_ctxt_from_file(
 
 /// encrypt a given value and return the ciphertext
 /// parameters:
-/// - `to_encrypt`: the value to encrypt in little endian byte order
-/// - `fhe_type`: the type of the value to encrypt
-/// - `key_id`: the key identifier to use for encryption
-/// - `keys_folder`: the folder where the keys are stored
-/// - `compressed`: whether to compress the ciphertext or not
+/// - `keys_folder`: the root of the storage of the core client
+/// - `party_id`: the 1-indexed ID of the KMS core whose public keys we will use (should not matter as long as the server is online)
 pub async fn encrypt(
     keys_folder: &Path,
+    party_id: usize,
     cipher_params: CipherParameters,
 ) -> Result<EncryptionResult, Box<dyn std::error::Error + 'static>> {
     let to_encrypt = parse_hex(cipher_params.to_encrypt.as_str())?;
@@ -734,6 +732,7 @@ pub async fn encrypt(
         Some(keys_folder),
         typed_to_encrypt,
         &cipher_params.key_id.into(),
+        party_id,
         EncryptionConfig {
             compression: cipher_params.compression,
             precompute_sns: cipher_params.precompute_sns,
@@ -1061,77 +1060,42 @@ fn check_external_decryption_signature(
     Ok(())
 }
 
-/// retrieve public verification keys and Ethereum addresses of the MPC servers
-async fn fetch_verf_keys(
-    cc_conf: &CoreClientConfig,
-    destination_prefix: &Path,
-) -> anyhow::Result<()> {
-    tracing::info!("Fetching verification keys");
-
-    // Fetch objects associated with Signature keys
-    for object_name in [
-        &PubDataType::VerfAddress.to_string(),
-        &PubDataType::VerfKey.to_string(),
-    ] {
-        for cur_core in &cc_conf.cores {
-            fetch_global_pub_object_and_write_to_file(
-                destination_prefix,
-                cur_core.s3_endpoint.as_str(),
-                &SIGNING_KEY_ID.to_string(),
-                object_name,
-                &cur_core.object_folder,
-            )
-            .await?;
-        }
-    }
-    Ok(())
-}
-
-/// Fetch all remote objects associated with TFHE keys and store locally for the core client
-async fn fetch_key(
-    key_id: &str,
+/// Fetch all remote objects and store them locally for the core client
+/// Return the server ID of the first core that was successfully contacted
+async fn fetch_elements(
+    element_id: &str,
+    element_types: &[PubDataType],
     sim_conf: &CoreClientConfig,
     destination_prefix: &Path,
-) -> anyhow::Result<()> {
-    let object_names = vec![
-        PubDataType::PublicKey,
-        PubDataType::PublicKeyMetadata,
-        PubDataType::ServerKey,
-    ];
-    tracing::info!("Fetching public key, server key and sns key with id {key_id}");
-    for object_name in object_names {
+) -> anyhow::Result<usize> {
+    tracing::info!("Fetching public key, server key and sns key with id {element_id}");
+    let mut successfull_core_id = None;
+    for object_name in element_types {
         for cur_core in &sim_conf.cores {
-            fetch_global_pub_object_and_write_to_file(
+            if fetch_global_pub_object_and_write_to_file(
                 destination_prefix,
                 cur_core.s3_endpoint.as_str(),
-                key_id,
+                element_id,
                 &object_name.to_string(),
                 &cur_core.object_folder,
             )
-            .await?;
+            .await
+            .is_err()
+            {
+                tracing::warn!("Could not fetch object {object_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
+            } else if successfull_core_id.is_none() {
+                successfull_core_id = Some(cur_core.party_id);
+            }
         }
     }
-    Ok(())
-}
-
-/// Fetch the remote CRS and store locally for the core client
-async fn fetch_crs(
-    crs_id: &str,
-    cc_conf: &CoreClientConfig,
-    destination_prefix: &Path,
-) -> anyhow::Result<()> {
-    tracing::info!("Fetching CRS with id {crs_id}");
-    for cur_core in &cc_conf.cores {
-        fetch_global_pub_object_and_write_to_file(
-            destination_prefix,
-            cur_core.s3_endpoint.as_str(),
-            crs_id,
-            &PubDataType::CRS.to_string(),
-            &cur_core.object_folder,
-        )
-        .await?;
+    match successfull_core_id {
+        None => {
+            Err(anyhow::anyhow!(
+                "Could not fetch key with id {element_id} from any core. At least one core is required to proceed."
+            ))
+        }
+        Some(core_id) => Ok(core_id),
     }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1541,24 +1505,15 @@ pub async fn execute_cmd(
 
     // Always fetch the public verfication keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
     tracing::info!("Fetching verification keys. ({command:?})");
-    fetch_verf_keys(&cc_conf, destination_prefix).await?;
-    // if it's a public/user decryption, also fetch server keys and CRS
-    match command {
-        CCCommand::PublicDecrypt(cipher_args) | CCCommand::UserDecrypt(cipher_args) => {
-            //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-            if let CipherArguments::FromArgs(cipher_params) = cipher_args {
-                tracing::info!("Fetching computation keys. ({command:?})");
-                fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
-            }
-        }
-        CCCommand::Encrypt(cipher_params) => {
-            tracing::info!("Fetching computation keys. ({command:?})");
-            fetch_key(&cipher_params.key_id.as_str(), &cc_conf, destination_prefix).await?;
-        }
-        _ => {}
-    }
+    let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
+    let _ = fetch_elements(
+        &SIGNING_KEY_ID.to_string(),
+        &public_verf_types,
+        &cc_conf,
+        destination_prefix,
+    )
+    .await?;
     let mut rng = AesRng::from_entropy();
-
     let num_parties = cc_conf.cores.len();
 
     ensure_client_keys_exist(Some(destination_prefix), &SIGNING_KEY_ID, true).await;
@@ -1694,6 +1649,12 @@ pub async fn execute_cmd(
 
     let command_timer_start = tokio::time::Instant::now();
 
+    // if it's a encryption or public/user decryption, also fetch server keys
+    let key_types = vec![
+        PubDataType::PublicKey,
+        PubDataType::PublicKeyMetadata,
+        PubDataType::ServerKey,
+    ];
     // Execute the command
     let res = match command {
         CCCommand::PublicDecrypt(cipher_args) => {
@@ -1703,7 +1664,6 @@ pub async fn execute_cmd(
             } else {
                 cc_conf.num_majority
             };
-
             let EncryptionResult {
                 cipher: ciphertext,
                 ct_format,
@@ -1714,7 +1674,16 @@ pub async fn execute_cmd(
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
-                    encrypt(destination_prefix, cipher_parameters.clone()).await?
+                    //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
+                    tracing::info!("Fetching computation keys. ({command:?})");
+                    let party_id = fetch_elements(
+                        &cipher_parameters.key_id.as_str(),
+                        &key_types,
+                        &cc_conf,
+                        destination_prefix,
+                    )
+                    .await?;
+                    encrypt(destination_prefix, party_id, cipher_parameters.clone()).await?
                 }
             };
 
@@ -1830,7 +1799,16 @@ pub async fn execute_cmd(
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
-                    encrypt(destination_prefix, cipher_parameters.clone()).await?
+                    //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
+                    tracing::info!("Fetching computation keys. ({command:?})");
+                    let party_id = fetch_elements(
+                        &cipher_parameters.key_id.as_str(),
+                        &key_types,
+                        &cc_conf,
+                        destination_prefix,
+                    )
+                    .await?;
+                    encrypt(destination_prefix, party_id, cipher_parameters.clone()).await?
                 }
             };
 
@@ -1971,7 +1949,15 @@ pub async fn execute_cmd(
             vec![(None, String::new())]
         }
         CCCommand::Encrypt(cipher_parameters) => {
-            encrypt(destination_prefix, cipher_parameters.clone()).await?;
+            tracing::info!("Fetching computation keys. ({command:?})");
+            let party_id = fetch_elements(
+                &cipher_parameters.key_id.as_str(),
+                &key_types,
+                &cc_conf,
+                destination_prefix,
+            )
+            .await?;
+            encrypt(destination_prefix, party_id, cipher_parameters.clone()).await?;
             vec![(None, "Encryption generated".to_string())]
         }
         CCCommand::PreprocKeyGenResult(result_parameters) => {
@@ -2770,9 +2756,26 @@ async fn fetch_and_check_keygen(
 
     // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
     // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
-    fetch_key(&request_id.to_string(), cc_conf, destination_prefix).await?;
-    let public_key = load_pk_from_storage(Some(destination_prefix), &request_id).await;
-    let server_key = load_server_key_from_storage(Some(destination_prefix), &request_id).await;
+    let key_types = vec![
+        PubDataType::PublicKey,
+        PubDataType::PublicKeyMetadata,
+        PubDataType::ServerKey,
+    ];
+    let party_id = fetch_elements(
+        &request_id.to_string(),
+        &key_types,
+        cc_conf,
+        destination_prefix,
+    )
+    .await?;
+    let public_key = load_pk_from_storage(Some(destination_prefix), &request_id, party_id).await;
+    let server_key: ServerKey = load_material_from_storage(
+        Some(destination_prefix),
+        &request_id,
+        PubDataType::ServerKey,
+        party_id,
+    )
+    .await;
 
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;
@@ -2821,8 +2824,20 @@ async fn fetch_and_check_crsgen(
 
     // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
     // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
-    fetch_crs(&request_id.to_string(), cc_conf, destination_prefix).await?;
-    let crs = load_crs_from_storage(Some(destination_prefix), &request_id).await;
+    let party_id = fetch_elements(
+        &request_id.to_string(),
+        &[PubDataType::CRS],
+        cc_conf,
+        destination_prefix,
+    )
+    .await?;
+    let crs: CompactPkeCrs = load_material_from_storage(
+        Some(destination_prefix),
+        &request_id,
+        PubDataType::CRS,
+        party_id,
+    )
+    .await;
 
     for response in responses {
         let resp_req_id: RequestId = response.request_id.try_into()?;

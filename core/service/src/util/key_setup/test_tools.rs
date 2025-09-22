@@ -14,7 +14,6 @@ use tfhe::named::Named;
 use tfhe::prelude::SquashNoise;
 use tfhe::prelude::Tagged;
 use tfhe::safe_serialization::safe_serialize;
-use tfhe::zk::CompactPkeCrs;
 use tfhe::{
     FheBool, FheTypes, FheUint1024, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256,
     FheUint32, FheUint4, FheUint512, FheUint64, FheUint8, FheUint80, HlCompactable, HlCompressible,
@@ -367,15 +366,24 @@ impl From<tfhe::integer::bigint::U256> for TestingPlaintext {
     }
 }
 
-async fn get_storage(pub_path: Option<&Path>, data_id: &RequestId, data_type: &str) -> FileStorage {
+async fn get_storage(
+    pub_path: Option<&Path>,
+    data_id: &RequestId,
+    data_type: &str,
+    party_id: usize,
+) -> FileStorage {
     // Try first with centralized storage
     let mut storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
     if storage.data_exists(data_id, data_type).await.unwrap() {
         tracing::info!("Using centralized storage at {}/{}", data_id, data_type);
     } else {
         // Try with the threshold storage
-        storage =
-            FileStorage::new(pub_path, StorageType::PUB, Some(Role::indexed_from_one(1))).unwrap();
+        storage = FileStorage::new(
+            pub_path,
+            StorageType::PUB,
+            Some(Role::indexed_from_one(party_id)),
+        )
+        .unwrap();
         tracing::info!(
             "Fallback to threshold file storage with path {:?}",
             storage.root_dir()
@@ -384,31 +392,35 @@ async fn get_storage(pub_path: Option<&Path>, data_id: &RequestId, data_type: &s
     storage
 }
 
-async fn load_material_from_storage<T>(
+pub async fn load_material_from_storage<T>(
     pub_path: Option<&Path>,
     key_id: &RequestId,
     data_type: PubDataType,
+    party_id: usize,
 ) -> T
 where
     T: DeserializeOwned + Unversionize + Named + Send,
     <T as tfhe_versionable::VersionizeOwned>::VersionedOwned: Send,
 {
-    let storage = get_storage(pub_path, key_id, &data_type.to_string()).await;
+    let storage = get_storage(pub_path, key_id, &data_type.to_string(), party_id).await;
     let material: T = read_versioned_at_request_id(&storage, key_id, &data_type.to_string())
         .await
         .unwrap();
     material
 }
 
-pub async fn load_server_key_from_storage(
+pub async fn load_pk_from_storage(
     pub_path: Option<&Path>,
     key_id: &RequestId,
-) -> tfhe::ServerKey {
-    load_material_from_storage(pub_path, key_id, PubDataType::ServerKey).await
-}
-
-pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &RequestId) -> FhePublicKey {
-    let storage = get_storage(pub_path, key_id, &PubDataType::PublicKey.to_string()).await;
+    party_id: usize,
+) -> FhePublicKey {
+    let storage = get_storage(
+        pub_path,
+        key_id,
+        &PubDataType::PublicKey.to_string(),
+        party_id,
+    )
+    .await;
     let wrapped_pk = read_pk_at_request_id(&storage, key_id)
         .await
         .expect("load_pk_from_storage failed");
@@ -416,66 +428,18 @@ pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &RequestId) -
     pk
 }
 
-pub async fn load_crs_from_storage(pub_path: Option<&Path>, crs_id: &RequestId) -> CompactPkeCrs {
-    load_material_from_storage(pub_path, crs_id, PubDataType::CRS).await
-}
-
-async fn load_material_from_any_pub_storage<T>(
-    pub_path: Option<&Path>,
-    key_id: &RequestId,
-    data_type: PubDataType,
-) -> T
-where
-    T: DeserializeOwned + Unversionize + Named + Send,
-{
-    let storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
-    if storage
-        .data_exists(key_id, &data_type.to_string())
-        .await
-        .unwrap()
-    {
-        tracing::info!(
-            "Server key exists at {} for type {}",
-            key_id,
-            data_type.to_string()
-        );
-        storage
-            .read_data(key_id, &data_type.to_string())
-            .await
-            .unwrap()
-    } else {
-        // Try with the threshold storage
-        let storage =
-            FileStorage::new(pub_path, StorageType::PUB, Some(Role::indexed_from_one(1))).unwrap();
-        tracing::info!(
-            "Fallback to threshold file storage for server key at {} for data type {}",
-            key_id,
-            data_type.to_string()
-        );
-        storage
-            .read_data(key_id, &data_type.to_string())
-            .await
-            .unwrap()
-    }
-}
-
-async fn load_server_key_from_any_pub_storage(
-    pub_path: Option<&Path>,
-    key_id: &RequestId,
-) -> ServerKey {
-    load_material_from_any_pub_storage(pub_path, key_id, PubDataType::ServerKey).await
-}
-
 /// This function should be used for testing only and it can panic.
 pub async fn compute_cipher_from_stored_key(
     pub_path: Option<&Path>,
     msg: TestingPlaintext,
     key_id: &RequestId,
+    party_id: usize,
     enc_config: EncryptionConfig,
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
-    let pk = load_pk_from_storage(pub_path, key_id).await;
+    let pk = load_pk_from_storage(pub_path, key_id, party_id).await;
     //Setting the server key as we may need id to expand the ciphertext during compute_cipher
-    let server_key = load_server_key_from_any_pub_storage(pub_path, key_id).await;
+    let server_key: ServerKey =
+        load_material_from_storage(pub_path, key_id, PubDataType::ServerKey, party_id).await;
 
     // compute_cipher can take a long time since it may do SnS
     let (send, recv) = tokio::sync::oneshot::channel();
