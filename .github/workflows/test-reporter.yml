@@ -1,8 +1,6 @@
 name: test-reporter
 
 on:
-  pull_request:
-
   workflow_call:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
