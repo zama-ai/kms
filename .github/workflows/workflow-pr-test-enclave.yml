@@ -12,7 +12,6 @@ permissions: {}
 jobs:
   core-service:
     name: workflow-pr-test-enclave/core-service (bpr)
-    needs: docker-golden-image
     uses: ./.github/workflows/common-docker-big-instance.yml
     permissions:
       actions: read # Required to read workflow run information
