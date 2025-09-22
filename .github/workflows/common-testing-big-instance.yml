@@ -5,7 +5,7 @@ on:
       args-tests:
         type: string
         required: false
-        default: ''
+        default: ""
       working-directory:
         type: string
         required: true
@@ -28,7 +28,7 @@ on:
       wasm-test-feature:
         type: string
         required: false
-        default: '-F wasm_tests'
+        default: "-F wasm_tests"
       package-name:
         type: string
         required: true
@@ -47,7 +47,7 @@ on:
       slab-backend:
         type: string
         required: false
-        default: 'big-instance'
+        default: "big-instance"
       app-cache-dir:
         type: string
         required: true
@@ -112,12 +112,12 @@ jobs:
   run-build:
     name: common-testing-big-instance/run-build
     permissions:
+      actions: read # Required to read workflow run information and download artifacts
       checks: write # Required to create GitHub checks for test results
+      contents: read # Required to checkout repository code
+      issues: write # Required to create comments on issues
       packages: read # Required to read GitHub packages/container registry
       pull-requests: write # Required to create comments on pull requests
-      issues: write # Required to create comments on issues
-      actions: read # Required to read workflow run information and download artifacts
-      contents: read # Required to checkout repository code
     needs: start-runner
     uses: ./.github/workflows/common-testing.yml
     secrets:
@@ -163,5 +163,3 @@ jobs:
           slab-url: ${{ secrets.SLAB_BASE_URL }}
           job-secret: ${{ secrets.JOB_SECRET }}
           label: ${{ needs.start-runner.outputs.label }}
-
-
