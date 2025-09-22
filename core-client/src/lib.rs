@@ -2959,7 +2959,7 @@ mod tests {
             check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[wrong_address])
                 .unwrap_err()
                 .to_string()
-                .contains("External crs/pubkey signature verification failed!")
+                .contains("External signature verification failed for crsgen as it does not contain the right address")
         );
 
         // check that verification fails for signature that is too short
@@ -2986,7 +2986,7 @@ mod tests {
             check_crsgen_ext_signature(&crs, crs_id, &wrong_sig, &domain, &[addr])
                 .unwrap_err()
                 .to_string()
-                .contains("External crs/pubkey signature verification failed!")
+                .contains("External signature verification failed for crsgen as it does not contain the right address")
         );
     }
 }

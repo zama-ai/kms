@@ -233,6 +233,7 @@ jobs:
         echo "$MATRIX"
 
 
+  # Core client integration tests
   test-core-client:
     name: main/test-core-client
     # job permissions
@@ -276,6 +277,40 @@ jobs:
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
+  # Core client unit tests
+  test-core-client-unit:
+    name: main/test-core-client-unit
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs: check-changes
+    if: needs.check-changes.outputs.changes-core-client == 'true'
+    uses: ./.github/workflows/common-testing.yml
+    with:
+      working-directory: './core-client'
+      package-name: 'kms-core-client'
+      # Explicitly skip integration tests since they are all named something with centralized or threshold or full_gen_tests
+      args-tests: '-- --skip centralized --skip threshold --skip full_gen_tests'
+      app-cache-dir: 'kms-core-client'
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   # Builds Docker image for core-client
   # Only runs on main/release branches after successful tests
@@ -753,6 +788,7 @@ jobs:
     needs:
       - test-backward-compatibility
       - test-core-client
+      - test-core-client-unit
       - test-grpc
       - test-core-service
       - test-core-threshold-pr
