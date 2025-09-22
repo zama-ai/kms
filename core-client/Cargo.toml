@@ -41,6 +41,7 @@ reqwest = { workspace = true, features = ["json", "rustls-tls"] }
 serde = { workspace = true, features = ["derive"] }
 strum.workspace = true
 strum_macros.workspace = true
+tempfile.workspace = true
 tfhe.workspace = true
 threshold-fhe.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
@@ -54,6 +55,7 @@ validator.workspace = true
 # ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
 # Use .workspace = true to reference workspace dependencies
 # Maintain alphabetical order
+assert_cmd.workspace = true
 cc-tests-utils = { path = "./tests-utils" }
 serial_test.workspace = true
 test-context.workspace = true

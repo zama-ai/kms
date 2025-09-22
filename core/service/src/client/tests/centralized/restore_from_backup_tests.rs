@@ -108,7 +108,7 @@ async fn default_insecure_central_crs_backup() {
         derive_request_id(&format!("default_insecure_central_crs_backup_{param:?}",)).unwrap();
     purge(None, None, None, &req_id, 1).await;
     purge_backup(None, 1).await;
-    crs_gen_centralized(&req_id, param, true).await;
+    crs_gen_centralized(&req_id, param, true, None).await;
 
     // Generated crs, delete it from private storage
     let mut priv_storage: FileStorage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
