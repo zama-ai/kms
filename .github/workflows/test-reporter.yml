@@ -39,24 +39,28 @@ jobs:
           token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           persist-credentials: true
 
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           path: /tmp/junit
           pattern: junit-test-report-*
 
       - name: Display structure of downloaded files
+        continue-on-error: true
         run: |
           if find /tmp/junit -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
             echo "Files found in /tmp/junit"
             ls -R /tmp/junit/
             echo "TIMESTAMP=$(date +"%Y-%m-%d - %H:%M:%S")" >> "$GITHUB_ENV"
+            echo "EXIT_CODE=0" >> "$GITHUB_ENV"
           else
             echo "No junit test files found in /tmp/junit"
-            exit 0
+            echo "EXIT_CODE=1" >> "$GITHUB_ENV"
+            exit 1
           fi
 
       - name: Publish Test Report
-        uses: ctrf-io/github-test-reporter@646f98cfc16c6f7a0e1f6100cabe2deb95dd2eef  # v1.0.22
+        if: env.EXIT_CODE == 0
+        uses: ctrf-io/github-test-reporter@646f98cfc16c6f7a0e1f6100cabe2deb95dd2eef # v1.0.22
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -70,7 +74,7 @@ jobs:
           test-report: true
           flaky-report: true
           collapse-large-reports: true
-          report-order: 'github-report,pull-request-report,test-report,flaky-report'
+          report-order: "github-report,pull-request-report,test-report,flaky-report"
           integrations-config: |
             {
               "junit-to-ctrf": {
