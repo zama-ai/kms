@@ -23,30 +23,22 @@ pub use preprocessing::*;
 #[cfg(test)]
 mod tests {
     use crate::{
-        cryptography::internal_crypto_types::gen_sig_keys,
+        cryptography::internal_crypto_types::{gen_sig_keys, PublicSigKey},
         engine::centralized::central_kms::RealCentralizedKms,
-        vault::storage::{file::FileStorage, StorageType},
+        vault::storage::ram::RamStorage,
     };
     use aes_prng::AesRng;
-    use rand::SeedableRng;
-    use std::path::Path;
 
     pub(crate) async fn setup_central_test_kms(
-        path: Option<&Path>,
-    ) -> RealCentralizedKms<FileStorage, FileStorage> {
-        let mut rng = AesRng::seed_from_u64(39);
-        let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
-        let pub_storage = FileStorage::new(path, StorageType::PUB, None).unwrap();
-        let (kms, _health_service) = RealCentralizedKms::new(
-            pub_storage.clone(),
-            FileStorage::new(path, StorageType::PRIV, None).unwrap(),
-            None,
-            None,
-            sig_key,
-            None,
-        )
-        .await
-        .expect("Could not create KMS");
-        kms
+        rng: &mut AesRng,
+    ) -> (RealCentralizedKms<RamStorage, RamStorage>, PublicSigKey) {
+        let (verf_key, sig_key) = gen_sig_keys(rng);
+        let public_storage = RamStorage::new();
+        let private_storage = RamStorage::new();
+        let (kms, _health_service) =
+            RealCentralizedKms::new(public_storage, private_storage, None, None, sig_key, None)
+                .await
+                .expect("Could not create KMS");
+        (kms, verf_key)
     }
 }

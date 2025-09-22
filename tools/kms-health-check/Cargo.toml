@@ -9,12 +9,15 @@ readme = "README.md"
 # Inherited from repository root Cargo.toml
 
 [dependencies]
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
 anyhow.workspace = true
 clap.workspace = true
 config.workspace = true
 hex.workspace = true
-kms-grpc = { path = "../../core/grpc" }
-kms = { path = "../../core/service" }
+kms-grpc.workspace = true
+kms = { workspace = true, default-features = true }
 observability.workspace = true
 serde.workspace = true
 serde_json.workspace = true
