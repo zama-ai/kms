@@ -10,10 +10,10 @@ use bytes::Bytes;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use core::str;
 use kms_grpc::kms::v1::{
-    CiphertextFormat, CrsGenResult, CustodianContext, CustodianRecoveryOutput,
-    CustodianRecoveryRequest, Empty, FheParameter, KeyGenPreprocResult, KeyGenResult,
-    NewCustodianContextRequest, PublicDecryptionRequest, PublicDecryptionResponse, TypedCiphertext,
-    TypedPlaintext,
+    CiphertextFormat, CrsGenResult, CustodianContext, CustodianRecoveryInitRequest,
+    CustodianRecoveryOutput, CustodianRecoveryRequest, Empty, FheParameter, KeyGenPreprocResult,
+    KeyGenResult, NewCustodianContextRequest, PublicDecryptionRequest, PublicDecryptionResponse,
+    TypedCiphertext, TypedPlaintext,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::rpc_types::{protobuf_to_alloy_domain, InternalCustodianRecoveryOutput, PubDataType};
@@ -522,11 +522,20 @@ pub struct ResultParameters {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct RecoveryInitParameters {
+    #[clap(long, short = 'o', default_value_t = false)]
+    pub overwrite_ephemeral_key: bool,
+    #[clap(long, short = 'r')]
+    pub operator_recovery_resp_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Parser, Clone)]
+
 pub struct RecoveryParameters {
     #[clap(long, short = 'i')]
     pub custodian_context_id: RequestId,
     #[clap(long, short = 'r')]
-    pub custodian_recovery_outputs: Vec<PathBuf>, // TODO(#2748) should this just be a root directory with everything in?
+    pub custodian_recovery_outputs: Vec<PathBuf>,
 }
 
 #[derive(Debug, Subcommand, Clone)]
@@ -549,7 +558,7 @@ pub enum CCCommand {
     InsecureCrsGenResult(ResultParameters),
     NewCustodianContext(NewCustodianContextParameters),
     GetOperatorPublicKey(NoParameters),
-    CustodianRecoveryInit(NoParameters),
+    CustodianRecoveryInit(RecoveryInitParameters),
     CustodianBackupRecovery(RecoveryParameters),
     BackupRestore(NoParameters),
     DoNothing(NoParameters),
@@ -1408,13 +1417,16 @@ async fn do_new_custodian_context(
 
 async fn do_custodian_recovery_init(
     core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    overwrite_ephemeral_key: bool,
 ) -> anyhow::Result<Vec<InternalRecoveryRequest>> {
     let mut req_tasks = JoinSet::new();
     for ce in core_endpoints.iter_mut() {
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
-                .custodian_recovery_init(tonic::Request::new(Empty {}))
+                .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+                    overwrite_ephemeral_key,
+                }))
                 .await
         });
     }
@@ -2129,16 +2141,19 @@ pub async fn execute_cmd(
             let pks = do_get_operator_pub_keys(&mut core_endpoints_req).await?;
             pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
         }
-        CCCommand::CustodianRecoveryInit(NoParameters {}) => {
-            // TODO(#2748) should have path as a parameter
-            let res = do_custodian_recovery_init(&mut core_endpoints_req).await?;
-            for cur_rec_req in &res {
-                let path = destination_prefix
-                    .join("CUSTODIAN")
-                    .join("recovery")
-                    .join(cur_rec_req.backup_id().to_string())
-                    .join(cur_rec_req.operator_role().to_string());
-                safe_write_element_versioned(path, cur_rec_req).await?;
+        CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
+            overwrite_ephemeral_key,
+            operator_recovery_resp_paths,
+        }) => {
+            let res = do_custodian_recovery_init(&mut core_endpoints_req, *overwrite_ephemeral_key)
+                .await?;
+            assert_eq!(res.len(), operator_recovery_resp_paths.len());
+            for (op_zero_idx, cur_path) in operator_recovery_resp_paths.iter().enumerate() {
+                let cur_res = res
+                    .iter()
+                    .find(|&x| x.operator_role() == Role::indexed_from_zero(op_zero_idx))
+                    .unwrap();
+                safe_write_element_versioned(cur_path, cur_res).await?;
             }
             vec![(
                 Some(res[0].backup_id()),
@@ -2959,7 +2974,7 @@ mod tests {
             check_crsgen_ext_signature(&crs, crs_id, &external_sig, &domain, &[wrong_address])
                 .unwrap_err()
                 .to_string()
-                .contains("External crs/pubkey signature verification failed!")
+                .contains("External signature verification failed for crsgen as it does not contain the right address")
         );
 
         // check that verification fails for signature that is too short
@@ -2986,7 +3001,7 @@ mod tests {
             check_crsgen_ext_signature(&crs, crs_id, &wrong_sig, &domain, &[addr])
                 .unwrap_err()
                 .to_string()
-                .contains("External crs/pubkey signature verification failed!")
+                .contains("External signature verification failed for crsgen as it does not contain the right address")
         );
     }
 }

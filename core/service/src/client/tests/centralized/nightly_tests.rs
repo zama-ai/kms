@@ -174,7 +174,7 @@ async fn default_insecure_crs_gen_centralized() {
     // Delete potentially old data
     purge(None, None, None, &crs_req_id, 1).await;
 
-    crs_gen_centralized(&crs_req_id, FheParameter::Default, true).await;
+    crs_gen_centralized(&crs_req_id, FheParameter::Default, true, None).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -184,5 +184,5 @@ async fn default_crs_gen_centralized() {
     // Delete potentially old data
     purge(None, None, None, &crs_req_id, 1).await;
     // We test for both insecure and secure since these are distinct endpoints, although inner computation is the same
-    crs_gen_centralized(&crs_req_id, FheParameter::Default, false).await;
+    crs_gen_centralized(&crs_req_id, FheParameter::Default, false, None).await;
 }

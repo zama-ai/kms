@@ -581,6 +581,11 @@ message OperatorPublicKey {
   bytes attestation_document = 2;
 }
 
+message CustodianRecoveryInitRequest {
+  // Allow overwriting in case an ephemeral key has already been set
+  bool overwrite_ephemeral_key = 1;
+}
+
 // The data constructed by a single custodian to help a single operator recover their private master decryption key
 message CustodianRecoveryOutput {
   bytes signature = 1;
