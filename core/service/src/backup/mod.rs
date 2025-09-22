@@ -7,3 +7,6 @@ pub mod traits;
 
 #[cfg(test)]
 mod tests;
+
+pub const KMS_CUSTODIAN: &str = "kms-custodian";
+pub const SEED_PHRASE_DESC: &str = "The SECRET seed phrase for the custodian keys is: ";

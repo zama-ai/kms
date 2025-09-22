@@ -1,30 +1,32 @@
 use crate::backup::custodian::Custodian;
 use crate::backup::operator::InternalRecoveryRequest;
 use crate::backup::seed_phrase::custodian_from_seed_phrase;
+use crate::client::test_tools::centralized_custodian_handles;
 #[cfg(feature = "insecure")]
 use crate::client::tests::centralized::crs_gen_tests::run_crs_centralized;
-use crate::client::tests::centralized::custodian_context_tests::{
-    backup_files, run_new_cus_context,
-};
+use crate::client::tests::centralized::custodian_context_tests::run_new_cus_context;
+use crate::client::tests::centralized::key_gen_tests::run_key_gen_centralized;
+use crate::client::tests::centralized::public_decryption_tests::run_decryption_centralized;
 use crate::consts::{SAFE_SER_SIZE_LIMIT, SIGNING_KEY_ID};
 use crate::cryptography::backup_pke::BackupPrivateKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::util::key_setup::test_tools::{purge, purge_pub};
-use crate::util::key_setup::test_tools::{purge_backup, purge_recovery_info};
+use crate::util::key_setup::test_tools::{purge_backup, read_backup_files};
+use crate::util::key_setup::test_tools::{EncryptionConfig, TestingPlaintext};
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{read_versioned_at_request_id, StorageType};
 use crate::{
-    client::tests::common::TIME_TO_SLEEP_MS,
-    cryptography::{backup_pke::BackupCiphertext, internal_crypto_types::WrappedDKGParams},
-    engine::base::derive_request_id,
-    util::key_setup::test_tools::purge_priv,
+    client::tests::common::TIME_TO_SLEEP_MS, cryptography::internal_crypto_types::WrappedDKGParams,
+    engine::base::derive_request_id, util::key_setup::test_tools::purge_priv,
 };
 use aes_prng::AesRng;
-use kms_grpc::kms::v1::{CustodianRecoveryRequest, Empty, RecoveryRequest};
+use kms_grpc::kms::v1::{
+    CustodianRecoveryInitRequest, CustodianRecoveryRequest, Empty, RecoveryRequest,
+};
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::{kms::v1::FheParameter, rpc_types::PrivDataType, RequestId};
 use rand::SeedableRng;
 use serial_test::serial;
+use std::path::Path;
 use tfhe::safe_serialization::safe_deserialize;
 use threshold_fhe::execution::runtime::party::Role;
 
@@ -39,14 +41,12 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
         "auto_update_backup_central_{amount_custodians}_{threshold}"
     ))
     .unwrap();
-    purge(None, None, None, &req_new_cus, 1).await;
-    // Clean up backups to not interfere with test
-    purge_backup(None, 1).await;
-    purge_recovery_info(None, 1).await;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client, mut internal_client) =
-        crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
+        centralized_custodian_handles(&dkg_param, None, test_path).await;
     let _mnemnonics = run_new_cus_context(
         &mut kms_client,
         &mut internal_client,
@@ -56,7 +56,9 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     )
     .await;
     // Check that signing key was backed up, since it will always be there
-    let _non_custodian_backup: BackupCiphertext = backup_files(
+    let _non_custodian_backup = read_backup_files(
+        1,
+        test_path,
         &req_new_cus,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
@@ -69,12 +71,14 @@ async fn auto_update_backup(amount_custodians: usize, threshold: u32) {
     drop(internal_client);
 
     // Purge backup
-    purge_backup(None, 1).await;
+    purge_backup(test_path, 1).await;
 
     // Check that the backup is still there
     let (_kms_server, _kms_client, _internal_client) =
-        crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
-    let _reread_backup = backup_files(
+        centralized_custodian_handles(&dkg_param, None, test_path).await;
+    let _reread_backup = read_backup_files(
+        1,
+        test_path,
         &req_new_cus,
         &SIGNING_KEY_ID,
         &PrivDataType::SigningKey.to_string(),
@@ -101,15 +105,12 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         "test_backup_after_crs_central_crs_{amount_custodians}_{threshold}"
     ))
     .unwrap();
-    purge(None, None, None, &crs_req, 1).await;
-    purge(None, None, None, &req_new_cus, 1).await;
-    // Clean up backups to not interfere with test
-    purge_backup(None, 1).await;
-    purge_recovery_info(None, 1).await;
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
 
     // Generate a new crs
     let (kms_server, mut kms_client, mut internal_client) =
-        crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
+        centralized_custodian_handles(&dkg_param, None, test_path).await;
     let _mnemnonics = run_new_cus_context(
         &mut kms_client,
         &mut internal_client,
@@ -118,24 +119,46 @@ async fn backup_after_crs(amount_custodians: usize, threshold: u32) {
         threshold,
     )
     .await;
-    run_crs_centralized(&mut kms_client, &internal_client, &crs_req, param, true).await;
+    run_crs_centralized(
+        &mut kms_client,
+        &internal_client,
+        &crs_req,
+        param,
+        true,
+        test_path,
+    )
+    .await;
     // Check that the new CRS was backed up
-    let crss = backup_files(&req_new_cus, &crs_req, &PrivDataType::CrsInfo.to_string()).await;
+    let crss = read_backup_files(
+        1,
+        test_path,
+        &req_new_cus,
+        &crs_req,
+        &PrivDataType::CrsInfo.to_string(),
+    )
+    .await;
     // Check that the format is correct
-    assert!(crss.priv_data_type == PrivDataType::CrsInfo);
+    assert!(crss[0].priv_data_type == PrivDataType::CrsInfo);
 
     drop(kms_client);
     drop(internal_client);
     // Shut down the servers
     kms_server.assert_shutdown().await;
-    // Check that the backup is still there an unmodified
+    // Check that the backup is still there and unmodified
     let (_kms_server, _kms_client, _internal_client) =
-        crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
-    let reread_crss =
-        backup_files(&req_new_cus, &crs_req, &PrivDataType::CrsInfo.to_string()).await;
+        centralized_custodian_handles(&dkg_param, None, test_path).await;
+    let reread_crss = read_backup_files(
+        1,
+        test_path,
+        &req_new_cus,
+        &crs_req,
+        &PrivDataType::CrsInfo.to_string(),
+    )
+    .await;
     assert_eq!(reread_crss, crss);
 }
 
+#[tracing_test::traced_test]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn test_decrypt_after_recovery_central() {
@@ -144,13 +167,14 @@ async fn test_decrypt_after_recovery_central() {
 
 async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
-    let req_new_cus: RequestId = derive_request_id("test_decrypt_after_recovery_central").unwrap();
+    let req_new_cus: RequestId =
+        derive_request_id("test_decrypt_after_recovery_central_cus").unwrap();
+    let key_id: RequestId = derive_request_id("test_decrypt_after_recovery_central_key").unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
 
-    // Clean up backups to not interfere with test
-    purge_backup(None, 1).await;
-    purge_recovery_info(None, 1).await;
     let (kms_server, mut kms_client, mut internal_client) =
-        crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
+        centralized_custodian_handles(&dkg_param, None, test_path).await;
     let mnemnonics = run_new_cus_context(
         &mut kms_client,
         &mut internal_client,
@@ -159,14 +183,23 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
         threshold,
     )
     .await;
-
+    run_key_gen_centralized(
+        &mut kms_client,
+        &internal_client,
+        &key_id,
+        FheParameter::Test,
+        None,
+        None,
+        test_path,
+    )
+    .await;
     // Shut down the servers
     kms_server.assert_shutdown().await;
     drop(kms_client);
     drop(internal_client);
 
     // Read the private signing key for reference
-    let priv_store = FileStorage::new(None, StorageType::PRIV, None).unwrap();
+    let priv_store = FileStorage::new(test_path, StorageType::PRIV, None).unwrap();
     let sig_key: PrivateSigKey = read_versioned_at_request_id(
         &priv_store,
         &SIGNING_KEY_ID,
@@ -176,22 +209,24 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .unwrap();
 
     // Purge the private storage to tests the backup
-    purge_priv(None).await;
+    purge_priv(test_path).await;
 
     // Reboot the servers
-    let (_kms_server, mut kms_client, _internal_client) =
-        crate::client::test_tools::centralized_custodian_handles(&dkg_param, None).await;
+    let (kms_server, mut kms_client, internal_client) =
+        centralized_custodian_handles(&dkg_param, None, test_path).await;
     // Purge the private storage again to delete the signing key
-    purge_priv(None).await;
+    purge_priv(test_path).await;
 
     // Execute the backup restoring
     let mut rng = AesRng::seed_from_u64(13);
     let recovery_req_resp = kms_client
-        .custodian_recovery_init(tonic::Request::new(Empty {}))
+        .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+            overwrite_ephemeral_key: false,
+        }))
         .await
         .unwrap()
         .into_inner();
-    let cus_rec_req = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics).await;
+    let cus_rec_req = emulate_custodian(&mut rng, recovery_req_resp, mnemnonics, test_path).await;
     let _recovery_output = kms_client
         .custodian_backup_recovery(tonic::Request::new(cus_rec_req))
         .await
@@ -209,24 +244,42 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     )
     .await
     .unwrap();
-    // Check the data is correctly recovered
     assert_eq!(sk, sig_key);
-    // Purge to ensure no left over state
-    purge_priv(None).await;
-    purge_pub(None).await;
+
+    kms_server.assert_shutdown().await;
+    drop(kms_client);
+    drop(internal_client);
+    let (_kms_server, kms_client, mut internal_client) =
+        centralized_custodian_handles(&dkg_param, None, test_path).await;
+
+    // Check the data is correctly recovered
+    run_decryption_centralized(
+        &kms_client,
+        &mut internal_client,
+        &key_id,
+        vec![TestingPlaintext::U8(u8::MAX)],
+        EncryptionConfig {
+            compression: false,
+            precompute_sns: false,
+        },
+        1,
+        test_path,
+    )
+    .await;
 }
 
 async fn emulate_custodian(
     rng: &mut AesRng,
     recovery_request: RecoveryRequest,
     mnemonics: Vec<String>,
+    test_path: Option<&Path>,
 ) -> CustodianRecoveryRequest {
     let backup_id = recovery_request.backup_id.clone().unwrap();
     let mut cus_outputs = Vec::new();
     for (cur_idx, cur_mnemonic) in mnemonics.iter().enumerate() {
         let custodian: Custodian<PrivateSigKey, BackupPrivateKey> =
             custodian_from_seed_phrase(cur_mnemonic, Role::indexed_from_zero(cur_idx)).unwrap();
-        let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
+        let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
         let verf_key = read_versioned_at_request_id(
             &pub_storage,
             &SIGNING_KEY_ID,

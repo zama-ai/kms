@@ -16,7 +16,7 @@ anyhow.workspace = true
 clap.workspace = true
 config.workspace = true
 hex.workspace = true
-kms-grpc.workspace = true
+kms-grpc = {workspace = true, features = ["non-wasm"]}
 kms = { workspace = true, default-features = true }
 observability.workspace = true
 serde.workspace = true

@@ -1,3 +1,5 @@
+use crate::cryptography::backup_pke::BackupCiphertext;
+use crate::util::file_handling::safe_read_element_versioned;
 use crate::util::key_setup::FhePublicKey;
 use crate::vault::storage::file::FileStorage;
 use crate::vault::storage::{
@@ -5,7 +7,7 @@ use crate::vault::storage::{
 };
 use crate::vault::storage::{read_pk_at_request_id, StorageType};
 use kms_grpc::kms::v1::{CiphertextFormat, TypedPlaintext};
-use kms_grpc::rpc_types::{PubDataType, WrappedPublicKeyOwned};
+use kms_grpc::rpc_types::{BackupDataType, PubDataType, WrappedPublicKeyOwned};
 use kms_grpc::RequestId;
 use serde::de::DeserializeOwned;
 use std::path::Path;
@@ -509,47 +511,38 @@ pub async fn purge(
 /// Purge the entire content of the private storage.
 /// This is useful for testing backup
 pub async fn purge_priv(priv_path: Option<&Path>) {
-    let final_central_path = match priv_path {
-        Some(path) => path.to_path_buf(),
-        None => FileStorage::default_path(StorageType::PRIV, None).unwrap(),
-    };
+    let storage = FileStorage::new(priv_path, StorageType::PRIV, None).unwrap();
     // Ignore if the dir does not exist
-    let _ = tokio::fs::remove_dir_all(&final_central_path).await;
+    let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
     // Purge for the max amount of parties we may have in tests
     for cur_party in 1..=13 {
-        let final_threshold_path = match priv_path {
-            Some(path) => path.to_path_buf(),
-            None => FileStorage::default_path(
-                StorageType::PRIV,
-                Some(Role::indexed_from_one(cur_party)),
-            )
-            .unwrap(),
-        };
+        let storage = FileStorage::new(
+            priv_path,
+            StorageType::PRIV,
+            Some(Role::indexed_from_one(cur_party)),
+        )
+        .unwrap();
         // Ignore if the dir does not exist
-        let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
+        let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
     }
 }
 
 /// Purge the entire content of the public storage.
 /// This is useful for testing backup
 pub async fn purge_pub(pub_path: Option<&Path>) {
-    let final_central_path = match pub_path {
-        Some(path) => path.to_path_buf(),
-        None => FileStorage::default_path(StorageType::PUB, None).unwrap(),
-    };
+    let storage = FileStorage::new(pub_path, StorageType::PUB, None).unwrap();
     // Ignore if the dir does not exist
-    let _ = tokio::fs::remove_dir_all(&final_central_path).await;
+    let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
     // Purge for the max amount of parties we may have in tests
     for cur_party in 1..=13 {
-        let final_threshold_path = match pub_path {
-            Some(path) => path.to_path_buf(),
-            None => {
-                FileStorage::default_path(StorageType::PUB, Some(Role::indexed_from_one(cur_party)))
-                    .unwrap()
-            }
-        };
+        let storage = FileStorage::new(
+            pub_path,
+            StorageType::PUB,
+            Some(Role::indexed_from_one(cur_party)),
+        )
+        .unwrap();
         // Ignore if the dir does not exist
-        let _ = tokio::fs::remove_dir_all(&final_threshold_path).await;
+        let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
     }
 }
 
@@ -559,26 +552,89 @@ pub async fn purge_pub(pub_path: Option<&Path>) {
 /// is also called, as it deletes all the custodian recovery info.
 pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
     if amount_parties == 1 {
-        let final_backup_central_path = match backup_path {
-            Some(path) => path.to_path_buf(),
-            None => FileStorage::default_path(StorageType::BACKUP, None).unwrap(),
-        };
+        let storage = FileStorage::new(backup_path, StorageType::BACKUP, None).unwrap();
         // Ignore if the dir does not exist
-        let _ = tokio::fs::remove_dir_all(&final_backup_central_path).await;
+        let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
     } else {
         for cur_party in 1..=amount_parties {
-            let final_backup_threshold_path = match backup_path {
-                Some(path) => path.to_path_buf(),
-                None => FileStorage::default_path(
-                    StorageType::BACKUP,
-                    Some(Role::indexed_from_one(cur_party)),
-                )
-                .unwrap(),
-            };
+            let storage = FileStorage::new(
+                backup_path,
+                StorageType::BACKUP,
+                Some(Role::indexed_from_one(cur_party)),
+            )
+            .unwrap();
             // Ignore if the dir does not exist
-            let _ = tokio::fs::remove_dir_all(&final_backup_threshold_path).await;
+            let _ = tokio::fs::remove_dir_all(&storage.root_dir()).await;
         }
     }
+}
+
+pub async fn backup_exists(amount_parties: usize, backup_path: Option<&Path>) -> bool {
+    let mut backup_exists = false;
+    if amount_parties == 1 {
+        let storage = FileStorage::new(backup_path, StorageType::BACKUP, None).unwrap();
+        let base_path = storage.root_dir();
+        let mut files = tokio::fs::read_dir(base_path).await.unwrap();
+        if files.next_entry().await.unwrap().is_some() {
+            backup_exists = true;
+        }
+    } else {
+        for cur_party in 1..=amount_parties {
+            let storage = FileStorage::new(
+                backup_path,
+                StorageType::BACKUP,
+                Some(Role::indexed_from_one(cur_party)),
+            )
+            .unwrap();
+            let base_path = storage.root_dir();
+            let mut files = tokio::fs::read_dir(base_path).await.unwrap();
+            if files.next_entry().await.unwrap().is_some() {
+                backup_exists = true;
+            }
+        }
+    }
+    backup_exists
+}
+
+pub async fn read_backup_files(
+    amount_parties: usize,
+    test_path: Option<&Path>,
+    backup_id: &RequestId,
+    file_req: &RequestId,
+    data_type: &str,
+) -> Vec<BackupCiphertext> {
+    let mut files = Vec::new();
+    if amount_parties == 1 {
+        let storage = FileStorage::new(test_path, StorageType::BACKUP, None).unwrap();
+        let coerced_path = storage
+            .root_dir()
+            .join(backup_id.to_string())
+            .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
+            .join(file_req.to_string());
+        // Attempt to read the file
+        if let Ok(file) = safe_read_element_versioned(coerced_path).await {
+            files.push(file);
+        }
+    } else {
+        for cur_role in 1..=amount_parties {
+            let storage = FileStorage::new(
+                test_path,
+                StorageType::BACKUP,
+                Some(Role::indexed_from_one(cur_role)),
+            )
+            .unwrap();
+            let coerced_path = storage
+                .root_dir()
+                .join(backup_id.to_string())
+                .join(BackupDataType::PrivData(data_type.try_into().unwrap()).to_string())
+                .join(file_req.to_string());
+            // Attempt to read the file
+            if let Ok(file) = safe_read_element_versioned(coerced_path).await {
+                files.push(file);
+            }
+        }
+    }
+    files
 }
 
 /// Remove all the data needed to perform custodian backups.
@@ -586,37 +642,27 @@ pub async fn purge_backup(backup_path: Option<&Path>, amount_parties: usize) {
 /// when the system is configured with custodian backups.
 pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
     if amount_parties == 1 {
-        let final_central_path = match path {
-            Some(path) => path.to_path_buf(),
-            None => FileStorage::default_path(StorageType::PUB, None).unwrap(),
-        };
-        let _ = tokio::fs::remove_dir_all(
-            &final_central_path.join(PubDataType::RecoveryRequest.to_string()),
-        )
-        .await;
-        let _ = tokio::fs::remove_dir_all(
-            &final_central_path.join(PubDataType::Commitments.to_string()),
-        )
-        .await;
+        let storage = FileStorage::new(path, StorageType::PUB, None).unwrap();
+        let base_dir = storage.root_dir();
+        let _ = tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryRequest.to_string()))
+            .await;
+        let _ =
+            tokio::fs::remove_dir_all(&base_dir.join(PubDataType::Commitments.to_string())).await;
     } else {
         for cur_party in 1..=amount_parties {
             // Next purge recovery info
-            let final_threshold_path = match path {
-                Some(path) => path.to_path_buf(),
-                None => FileStorage::default_path(
-                    StorageType::PUB,
-                    Some(Role::indexed_from_one(cur_party)),
-                )
-                .unwrap(),
-            };
-            let _ = tokio::fs::remove_dir_all(
-                &final_threshold_path.join(PubDataType::RecoveryRequest.to_string()),
+            let storage = FileStorage::new(
+                path,
+                StorageType::PUB,
+                Some(Role::indexed_from_one(cur_party)),
             )
-            .await;
-            let _ = tokio::fs::remove_dir_all(
-                &final_threshold_path.join(PubDataType::Commitments.to_string()),
-            )
-            .await;
+            .unwrap();
+            let base_dir = storage.root_dir();
+            let _ =
+                tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryRequest.to_string()))
+                    .await;
+            let _ = tokio::fs::remove_dir_all(&base_dir.join(PubDataType::Commitments.to_string()))
+                .await;
         }
     }
 }

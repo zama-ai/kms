@@ -1,5 +1,5 @@
 use crate::client::client_wasm::Client;
-use crate::conf::{Keychain, SecretSharingKeychain};
+use crate::conf::{self, Keychain, SecretSharingKeychain};
 use crate::consts::{DEC_CAPACITY, DEFAULT_PROTOCOL, DEFAULT_URL, MAX_TRIES, MIN_DEC_CACHE};
 use crate::engine::centralized::central_kms::RealCentralizedKms;
 use crate::engine::threshold::service::new_real_threshold_kms;
@@ -24,6 +24,7 @@ use itertools::Itertools;
 use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
 use std::collections::HashMap;
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
@@ -481,19 +482,22 @@ pub async fn central_handle_w_vault(
     param: &DKGParams,
     rate_limiter_conf: Option<RateLimiterConfig>,
     backup_vault: Option<Vault>,
+    test_data_path: Option<&Path>,
 ) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
-    let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
-    let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
+    let priv_storage = FileStorage::new(test_data_path, StorageType::PRIV, None).unwrap();
+    let pub_storage = FileStorage::new(test_data_path, StorageType::PUB, None).unwrap();
 
-    ensure_testing_material_exists(None).await;
+    ensure_testing_material_exists(test_data_path).await;
     #[cfg(feature = "slow_tests")]
     ensure_default_material_exists().await;
 
     let (kms_server, kms_client) =
         setup_centralized(pub_storage, priv_storage, backup_vault, rate_limiter_conf).await;
-    let pub_storage =
-        HashMap::from_iter([(1, FileStorage::new(None, StorageType::PUB, None).unwrap())]);
-    let client_storage = FileStorage::new(None, StorageType::CLIENT, None).unwrap();
+    let pub_storage = HashMap::from_iter([(
+        1,
+        FileStorage::new(test_data_path, StorageType::PUB, None).unwrap(),
+    )]);
+    let client_storage = FileStorage::new(test_data_path, StorageType::CLIENT, None).unwrap();
     let internal_client = Client::new_client(client_storage, pub_storage, param, None)
         .await
         .unwrap();
@@ -512,15 +516,24 @@ pub async fn centralized_handles(
         storage: backup_proxy_storage,
         keychain: None,
     };
-    central_handle_w_vault(param, rate_limiter_conf, Some(backup_vault)).await
+    // Use default location for storage
+    central_handle_w_vault(param, rate_limiter_conf, Some(backup_vault), None).await
 }
 
 pub async fn centralized_custodian_handles(
     param: &DKGParams,
     rate_limiter_conf: Option<RateLimiterConfig>,
+    test_data_path: Option<&Path>,
 ) -> (ServerHandle, CoreServiceEndpointClient<Channel>, Client) {
-    let pub_proxy_storage = make_storage(None, StorageType::PUB, None, None, None).unwrap();
-    let backup_proxy_storage = make_storage(None, StorageType::BACKUP, None, None, None).unwrap();
+    let store_path = test_data_path.map(|p| {
+        conf::Storage::File(conf::FileStorage {
+            path: p.to_path_buf(),
+        })
+    });
+    let pub_proxy_storage =
+        make_storage(store_path.clone(), StorageType::PUB, None, None, None).unwrap();
+    let backup_proxy_storage =
+        make_storage(store_path, StorageType::BACKUP, None, None, None).unwrap();
     let keychain = Some(
         make_keychain_proxy(
             &Keychain::SecretSharing(SecretSharingKeychain {}),
@@ -535,7 +548,7 @@ pub async fn centralized_custodian_handles(
         storage: backup_proxy_storage,
         keychain,
     };
-    central_handle_w_vault(param, rate_limiter_conf, Some(backup_vault)).await
+    central_handle_w_vault(param, rate_limiter_conf, Some(backup_vault), test_data_path).await
 }
 /// Wait for a server to be ready for requests. I.e. wait until it enters the SERVING state.
 /// Note that this method may panic if the server does not become ready within a certain time frame.
