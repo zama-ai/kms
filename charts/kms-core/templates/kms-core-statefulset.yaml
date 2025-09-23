@@ -429,9 +429,9 @@ spec:
                   fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
             {{- end }}
             - name: TOKIO_WORKER_THREADS
-              value: {{ int .Values.kmsCore.thresholdMode.tokioWorkerThreads }}
+              value: {{ .Values.kmsCore.thresholdMode.tokioWorkerThreads | quote }}
             - name: RAYON_NUM_THREADS
-              value: {{ int .Values.kmsCore.thresholdMode.rayonNumThreads }}
+              value: {{ .Values.kmsCore.thresholdMode.rayonNumThreads | quote }}
             - name: "NO_COLOR"
               value: "true"
             - name: RUN_MODE
