@@ -1441,7 +1441,7 @@ pub mod tests {
                 run_shortint_with_compact: true,
                 run_fheuint: true,
                 run_fheuint_with_compression: true,
-                run_rerand: false,
+                run_rerand: true,
             },
         )
         .await
