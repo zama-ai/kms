@@ -158,7 +158,6 @@ jobs:
           username: ${{ secrets.CGR_USERNAME }}
           password: ${{ secrets.CGR_PASSWORD }}
 
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
         with:
@@ -175,7 +174,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           buildkitd-flags: --debug
 
-
       ############################################################################
       # Rust toolchain setup
       #
@@ -187,7 +185,7 @@ jobs:
           cache: false
 
       - name: Install cargo-llvm-cov & nextest
-        uses: taiki-e/install-action@1dd4d60a583436c5738af3d204f159f44d92f704  # v2.61.0
+        uses: taiki-e/install-action@1dd4d60a583436c5738af3d204f159f44d92f704 # v2.61.0
         with:
           tool: cargo-llvm-cov,nextest,grcov
 
@@ -301,30 +299,30 @@ jobs:
           # else
           #   RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
           # fi
-          AWS_ACCESS_KEY_ID: "minioadmin"
-          AWS_SECRET_ACCESS_KEY: "minioadmin"
-          AWS_DEFAULT_REGION: "eu-north-1"
-          AWS_ENDPOINT: "http://127.0.0.1:9000"
+          # AWS_ACCESS_KEY_ID: "minioadmin"
+          # AWS_SECRET_ACCESS_KEY: "minioadmin"
+          # AWS_DEFAULT_REGION: "eu-north-1"
+          # AWS_ENDPOINT: "http://127.0.0.1:9000"
           BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
           ARGS_TESTS: ${{inputs.args-tests}}
           NEXTEST_RETRIES: 3
           NEXTEST_TEST_THREADS: ${{inputs.nextest-test-threads}}
           EVENT_NAME: ${{ github.event_name }}
           RUNNER_TEMP: ${{ runner.temp }}
-          RUSTC_WRAPPER: "sccache"  # For sccache
+          RUSTC_WRAPPER: "sccache" # For sccache
           SCCACHE_BUCKET: gh-actions-cache-eu-west-3
           SCCACHE_REGION: eu-west-3
           SCCACHE_S3_KEY_PREFIX: ${{ inputs.app-cache-dir }}
         run: |
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
-          echo "aws_access_key_id = ${AWS_ACCESS_KEY_ID}" >> ~/.aws/credentials &&
-          echo "aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}" >> ~/.aws/credentials &&
+          echo "aws_access_key_id = minioadmin" >> ~/.aws/credentials &&
+          echo "aws_secret_access_key = minioadmin" >> ~/.aws/credentials &&
           cat ~/.aws/credentials &&
           echo "[default]" > ~/.aws/config &&
           echo "output=json" >> ~/.aws/config &&
-          echo "region=${AWS_DEFAULT_REGION}" >> ~/.aws/config &&
-          echo "endpoint_url=${AWS_ENDPOINT}" >> ~/.aws/config &&
+          echo "region=eu-north-1" >> ~/.aws/config &&
+          echo "endpoint_url=http://127.0.0.1:9000" >> ~/.aws/config &&
           cat ~/.aws/config &&
           RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
 
@@ -337,7 +335,7 @@ jobs:
 
       - name: Upload Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}
           path: /tmp/junit.xml
