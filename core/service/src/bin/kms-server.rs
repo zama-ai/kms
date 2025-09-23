@@ -341,7 +341,12 @@ async fn main() -> anyhow::Result<()> {
             .map(|tls| tls.is_semi_auto() || tls.is_full_auto())
             .unwrap_or(false);
     let security_module = need_security_module
-        .then(make_security_module)
+        .then(|| {
+            make_security_module(
+                #[cfg(feature = "insecure")]
+                core_config.mock_enclave.is_some_and(|m| m),
+            )
+        })
         .transpose()
         .inspect_err(|e| tracing::warn!("Could not initialize security module: {e}"))?
         .map(Arc::new);

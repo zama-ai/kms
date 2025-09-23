@@ -243,11 +243,13 @@ pub enum SecurityModuleProxy {
     MockNitro(DevNitro),
 }
 
-pub fn make_security_module() -> anyhow::Result<SecurityModuleProxy> {
+pub fn make_security_module(
+    #[cfg(feature = "insecure")] mock_enclave: bool,
+) -> anyhow::Result<SecurityModuleProxy> {
     #[cfg(not(feature = "insecure"))]
     let security_module = SecurityModuleProxy::from(nitro::Nitro::new()?);
     #[cfg(feature = "insecure")]
-    let security_module = {
+    let security_module = if mock_enclave {
         let sk = p384::SecretKey::from_sec1_der(&crate::consts::MOCK_NITRO_SIGNING_KEY_BYTES)
             .expect("Failed to load mock Nitro key");
         let sk_der = sk.to_pkcs8_der()?;
@@ -264,6 +266,8 @@ pub fn make_security_module() -> anyhow::Result<SecurityModuleProxy> {
                 .pcrs(Pcrs::zeros())
                 .build(),
         )
+    } else {
+        SecurityModuleProxy::from(nitro::Nitro::new()?)
     };
     Ok(security_module)
 }
