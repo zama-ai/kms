@@ -316,16 +316,16 @@ jobs:
         run: |
           ####################################################
           # Setup MinIO config
-          mkdir -p ~/.aws/ &&
-          echo "[default]" > ~/.aws/credentials &&
-          echo "aws_access_key_id = minioadmin" >> ~/.aws/credentials &&
-          echo "aws_secret_access_key = minioadmin" >> ~/.aws/credentials &&
-          cat ~/.aws/credentials &&
-          echo "[default]" > ~/.aws/config &&
-          echo "output=json" >> ~/.aws/config &&
-          echo "region=eu-north-1" >> ~/.aws/config &&
-          echo "endpoint_url=http://127.0.0.1:9000" >> ~/.aws/config &&
-          cat ~/.aws/config &&
+          # mkdir -p ~/.aws/ &&
+          # echo "[default]" > ~/.aws/credentials &&
+          # echo "aws_access_key_id = minioadmin" >> ~/.aws/credentials &&
+          # echo "aws_secret_access_key = minioadmin" >> ~/.aws/credentials &&
+          # cat ~/.aws/credentials &&
+          # echo "[default]" > ~/.aws/config &&
+          # echo "output=json" >> ~/.aws/config &&
+          # echo "region=eu-north-1" >> ~/.aws/config &&
+          # echo "endpoint_url=http://127.0.0.1:9000" >> ~/.aws/config &&
+          # cat ~/.aws/config &&
           ####################################################
           # Run tests
           RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
