@@ -126,8 +126,14 @@ impl GrpcSendingService {
                         receiver.hostname()
                     )));
                 }
-                let domain_name =
-                    ServerName::try_from(receiver.mpc_identity().to_string())?.to_owned();
+                let domain_name = ServerName::try_from(receiver.mpc_identity().to_string())
+                    .map_err(|_e| {
+                        anyhow_error_and_log(format!(
+                            "The MPC identity {} is not a valid DNS name",
+                            receiver.mpc_identity()
+                        ))
+                    })?
+                    .to_owned();
 
                 // If we have a list of trusted software hashes, we're running
                 // within the AWS Nitro enclave and we have to use vsock proxies
