@@ -2743,8 +2743,8 @@ pub mod tests {
             builder.push(b);
             let list = builder.build().unwrap();
 
-            let a: FheUint64 = list.get(0).unwrap().unwrap();
-            let b: FheUint64 = list.get(1).unwrap().unwrap();
+            let mut a: FheUint64 = list.get(0).unwrap().unwrap();
+            let mut b: FheUint64 = list.get(1).unwrap().unwrap();
 
             assert_eq!(a.re_randomization_metadata().data(), &rand_a);
             assert_eq!(b.re_randomization_metadata().data(), &rand_b);
@@ -2761,16 +2761,16 @@ pub mod tests {
 
             // Add ciphertexts to the context
 
-            re_rand_context.add_to_context(&a);
-            re_rand_context.add_to_context(&b);
+            re_rand_context.add_ciphertext(&a);
+            re_rand_context.add_ciphertext(&b);
 
             let mut seed_gen = re_rand_context.finalize();
 
-            let a_re_rand = a.re_randomize(cpk, seed_gen.next_seed()).unwrap();
+            a.re_randomize(cpk, seed_gen.next_seed().unwrap()).unwrap();
 
-            let b_re_rand = b.re_randomize(cpk, seed_gen.next_seed()).unwrap();
+            b.re_randomize(cpk, seed_gen.next_seed().unwrap()).unwrap();
 
-            let c = a_re_rand + b_re_rand;
+            let c = a + b;
             let dec: u64 = c.decrypt(cks);
 
             assert_eq!(clear_a.wrapping_add(clear_b), dec);
