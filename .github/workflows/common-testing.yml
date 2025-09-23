@@ -192,23 +192,28 @@ jobs:
           tool: cargo-llvm-cov,nextest,grcov
 
       ############################################################################
-      # Setup cache for dockerfile and inject in docker
+      # Setup cache
       #
-      - name: Setup Cache
-        uses: runs-on/cache@197b09d6da1bf42f673fee18769c794b789a0c7d # v4
-        id: cache
-        env:
-          RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
-          RUNS_ON_AWS_REGION: eu-west-3
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
         with:
-          path: |
-            /home/ubuntu/.cargo/bin/
-            /home/ubuntu/.cargo/registry/index/
-            /home/ubuntu/.cargo/registry/cache/
-            /home/ubuntu/.cargo/git/db/
-            ${{ github.workspace }}/target
-          key: |
-            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          version: "v0.10.0"
+
+      # - name: Setup Cache
+      #   uses: runs-on/cache@197b09d6da1bf42f673fee18769c794b789a0c7d # v4
+      #   id: cache
+      #   env:
+      #     RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
+      #     RUNS_ON_AWS_REGION: eu-west-3
+      #   with:
+      #     path: |
+      #       /home/ubuntu/.cargo/bin/
+      #       /home/ubuntu/.cargo/registry/index/
+      #       /home/ubuntu/.cargo/registry/cache/
+      #       /home/ubuntu/.cargo/git/db/
+      #       ${{ github.workspace }}/target
+      #     key: |
+      #       ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install Protoc
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
@@ -306,6 +311,10 @@ jobs:
           NEXTEST_TEST_THREADS: ${{inputs.nextest-test-threads}}
           EVENT_NAME: ${{ github.event_name }}
           RUNNER_TEMP: ${{ runner.temp }}
+          RUSTC_WRAPPER: "sccache"  # For sccache
+          SCCACHE_BUCKET: gh-actions-cache-eu-west-3
+          SCCACHE_REGION: eu-west-3
+          SCCACHE_S3_KEY_PREFIX: ${{ inputs.working-directory }}
         run: |
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
