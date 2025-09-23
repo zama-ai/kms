@@ -186,6 +186,7 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 {
+    /// Observe that in case a custodian is missing or something bad is detected in the data then the function will fail
     async fn inner_new_custodian_context(&self, context: CustodianContext) -> anyhow::Result<()> {
         let backup_vault = match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => backup_vault,

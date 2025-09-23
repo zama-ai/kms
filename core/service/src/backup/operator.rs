@@ -329,6 +329,38 @@ impl RecoveryValidationMaterial {
     pub fn custodian_context(&self) -> &InternalCustodianContext {
         &self.payload.custodian_context
     }
+
+    /// Validated the signature on the recovery validation material.
+    /// This is useful after deserializing from untrusted storage such as public storage
+    pub fn validate(&self, verf_key: &PublicSigKey) -> bool {
+        let serialized_payload = match bc2wrap::serialize(&self.payload) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!("Could not serialize recovery validation material payload: {e:?}");
+                return false;
+            }
+        };
+        let sig = match k256::ecdsa::Signature::from_slice(&self.signature) {
+            Ok(sig) => sig,
+            Err(e) => {
+                tracing::warn!("Could not parse recovery validation material signature: {e:?}");
+                return false;
+            }
+        };
+        let signature = Signature { sig };
+        match internal_verify_sig(
+            &DSEP_BACKUP_RECOVERY,
+            &serialized_payload,
+            &signature,
+            verf_key,
+        ) {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::info!("Could not verify recovery validation material signature: {e:?}");
+                false
+            }
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]

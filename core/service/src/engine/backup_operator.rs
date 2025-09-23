@@ -1,3 +1,4 @@
+use crate::consts::SIGNING_KEY_ID;
 use crate::engine::utils::query_key_material_availability;
 use crate::{
     anyhow_error_and_log,
@@ -28,7 +29,8 @@ use crate::{
     },
 };
 use itertools::Itertools;
-use kms_grpc::kms::v1::CustodianRecoveryInitRequest;
+use kms_grpc::kms::v1::{CustodianRecoveryInitRequest, CustodianRecoveryOutput};
+use kms_grpc::rpc_types::InternalCustodianRecoveryOutput;
 use kms_grpc::{
     kms::v1::{CustodianRecoveryRequest, RecoveryRequest},
     rpc_types::PubDataType,
@@ -93,6 +95,7 @@ where
             let signature = Signature {
                 sig: k256::ecdsa::Signature::from_slice(&cur_cus_ct.signature)?,
             };
+            // Sanity check that public data has not been corrupted since we constructed it during custodian init
             internal_verify_sig(
                 &DSEP_BACKUP_RECOVERY,
                 &cur_cus_ct.ciphertext,
@@ -253,37 +256,34 @@ where
             &inner.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
         )?;
-        let mut parsed_custodian_rec = Vec::new();
-        for cur_recovery_output in inner.custodian_recovery_outputs {
-            if cur_recovery_output.operator_role != self.my_role.one_based() as u64 {
-                return Err(Status::new(
-                    tonic::Code::InvalidArgument,
-                    format!(
-                        "Received recovery output for operator role {}, but current server's role is {}",
-                        cur_recovery_output.operator_role,
-                        self.my_role.one_based()
-                    ),
-                ));
-            }
-            parsed_custodian_rec.push(cur_recovery_output.try_into().map_err(|e| {
+        let (recovery_material, parsed_custodian_rec) = {
+            prune_custodian_data(
+                inner.custodian_recovery_outputs,
+                self.my_role,
+                &context_id,
+                &self.crypto_storage.get_public_storage(),
+            )
+            .await
+            .map_err(|e| {
                 Status::new(
                     tonic::Code::Internal,
-                    format!("Failed parse custodian recovery outputs: {e}"),
+                    format!("Failed to prune custodian recovery outputs: {e}"),
                 )
-            })?);
-        }
-        let commitments: RecoveryValidationMaterial = {
-            let guarded_pub_storage = self.crypto_storage.public_storage.lock().await;
-            guarded_pub_storage
-                .read_data(&context_id, &PubDataType::Commitments.to_string())
-                .await
-                .map_err(|e| {
-                    Status::new(
-                        tonic::Code::Internal,
-                        format!("Failed to read backup commitments: {e}"),
-                    )
-                })?
+            })?
         };
+        // Check that we have enough valid recovery outputs
+        if parsed_custodian_rec.len()
+            < (recovery_material.custodian_context().threshold as usize) + 1
+        {
+            return Err(Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!(
+                        "Only received {} valid recovery outputs, but threshold is {}. Cannot recover the backup decryption key.",
+                        parsed_custodian_rec.len(),
+                        recovery_material.custodian_context().threshold
+                    ),
+                ));
+        }
         match self.crypto_storage.backup_vault {
             Some(ref backup_vault) => {
                 let mut backup_vault: tokio::sync::MutexGuard<'_, Vault> =
@@ -292,16 +292,16 @@ where
                     Some(KeychainProxy::SecretSharing(ref mut keychain)) => {
                         let operator = Operator::new(
                             self.my_role,
-                            commitments.custodian_context().custodian_nodes.values().cloned().collect_vec(),
+                            recovery_material.custodian_context().custodian_nodes.values().cloned().collect_vec(),
                             self.base_kms.sig_key.as_ref().clone(),
-                            commitments.custodian_context().threshold as usize,
+                            recovery_material.custodian_context().threshold as usize,
                         ).map_err(|e| {
                             Status::new(
                                 tonic::Code::Internal,
                                 format!("Failed to create operator for secret sharing based decryption: {e}"),
                             )
                         })?;
-                        let serialized_dec_key = operator.verify_and_recover(&parsed_custodian_rec, &commitments, context_id, &ephemeral_dec_key).map_err(|e| {
+                        let serialized_dec_key = operator.verify_and_recover(&parsed_custodian_rec, &recovery_material, context_id, &ephemeral_dec_key).map_err(|e| {
                             Status::new(
                                 tonic::Code::Unauthenticated,
                                 format!("Failed to verify the backup decryption request: {e}"),
@@ -388,6 +388,56 @@ where
 
         Ok(Response::new(response))
     }
+}
+async fn prune_custodian_data<S>(
+    custodian_recovery_outputs: Vec<CustodianRecoveryOutput>,
+    my_role: Role,
+    context_id: &RequestId,
+    public_storage: &Mutex<S>,
+) -> anyhow::Result<(
+    RecoveryValidationMaterial,
+    Vec<InternalCustodianRecoveryOutput>,
+)>
+where
+    S: StorageReader + Send,
+{
+    let mut parsed_custodian_rec = Vec::new();
+    for cur_recovery_output in custodian_recovery_outputs {
+        let cur_role = cur_recovery_output.operator_role;
+        if cur_role != my_role.one_based() as u64 {
+            tracing::warn!(
+                    "Received recovery output for operator role {}, but current server's role is {}. The output will be ignored.",
+                    cur_recovery_output.operator_role,
+                    my_role.one_based()
+                );
+        } else {
+            match cur_recovery_output.try_into() {
+                Ok(output) => parsed_custodian_rec.push(output),
+                Err(e) => {
+                    tracing::warn!(
+                            "Failed to parse custodian recovery output for operator role {}: {e}. The output will be ignored.",
+                            cur_role,
+                        );
+                }
+            }
+        }
+    }
+    let public_storage_guard = public_storage.lock().await;
+    let recovery_material: RecoveryValidationMaterial = {
+        let verf_key = public_storage_guard
+            .read_data(&SIGNING_KEY_ID, &PubDataType::VerfKey.to_string())
+            .await?;
+        let recovery_material: RecoveryValidationMaterial = public_storage_guard
+            .read_data(context_id, &PubDataType::Commitments.to_string())
+            .await?;
+        if !recovery_material.validate(&verf_key) {
+            anyhow::bail!(
+                "The custodian context associated with the provided context ID is invalid",
+            );
+        }
+        recovery_material
+    };
+    Ok((recovery_material, parsed_custodian_rec))
 }
 
 async fn get_latest_backup_id(
