@@ -177,23 +177,23 @@ required-features = ["testing", "extension_degree_8"]
 
 [[bench]]
 name = "non-threshold_erc20"
-path = "benches/non-threshold/erc20.rs"
+path = "benches/non-threshold/erc20_plain.rs"
 harness = false
 
 [[bench]]
 name = "non-threshold_erc20_memory"
-path = "benches/non-threshold/erc20.rs"
+path = "benches/non-threshold/erc20_memory.rs"
 harness = false
 required-features = ["non-wasm", "measure_memory"]
 
 [[bench]]
 name = "non-threshold_basic-ops"
-path = "benches/non-threshold/basic_ops.rs"
+path = "benches/non-threshold/basic_ops_plain.rs"
 harness = false
 
 [[bench]]
 name = "non-threshold_basic-ops_memory"
-path = "benches/non-threshold/basic_ops.rs"
+path = "benches/non-threshold/basic_ops_memory.rs"
 harness = false
 required-features = ["non-wasm", "measure_memory"]
 

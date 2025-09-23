@@ -166,7 +166,7 @@ bench_type!(FheUint128);
 #[global_allocator]
 pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
 
-fn main() {
+pub(crate) fn run_bench() {
     #[cfg(feature = "measure_memory")]
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 

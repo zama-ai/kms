@@ -117,7 +117,7 @@ fn bench_transfer_throughput<FheType, F>(
 pub static PEAK_ALLOC: peak_alloc::PeakAlloc = peak_alloc::PeakAlloc;
 
 #[allow(unused_mut)]
-fn main() {
+pub(crate) fn run_bench() {
     #[cfg(feature = "measure_memory")]
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 
