@@ -628,7 +628,7 @@ impl DKGParamsBasics for DKGParamsRegular {
         } else {
             self.lwe_hat_dimension().0 * self.decomposition_level_count_rerand_ksk().0
         };
-        let bound = NoiseBounds::LweNoise(self.glwe_tuniform_bound());
+        let bound = NoiseBounds::GlweNoise(self.glwe_tuniform_bound());
         NoiseInfo { amount, bound }
     }
 
