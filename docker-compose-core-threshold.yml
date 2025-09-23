@@ -56,7 +56,7 @@ services:
       echo 'region=us-east-1' >> ~/.aws/config &&
       cat ~/.aws/config &&
       echo 'Generating signing keys' &&
-      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 1 --tls-subject dev-kms-core-1.com --tls-wildcard &&
+      kms-gen-keys --mock-enclave --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 1 --tls-subject dev-kms-core-1.com --tls-wildcard &&
       wget -O ./certs/cert_dev-kms-core-1.com.pem ftp://$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY@dev-s3-mock:8021/kms/PUB-p1/CACert/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee &&
       cat ./certs/cert_dev-kms-core-1.com.pem &&
       sleep 5 &&
@@ -101,7 +101,7 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Generating signing keys' &&
-      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 2 --tls-subject dev-kms-core-2.com --tls-wildcard &&
+      kms-gen-keys --mock-enclave --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 2 --tls-subject dev-kms-core-2.com --tls-wildcard &&
       wget -O ./certs/cert_dev-kms-core-2.com.pem ftp://$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY@dev-s3-mock:8021/kms/PUB-p2/CACert/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee &&
       cat ./certs/cert_dev-kms-core-2.com.pem &&
       sleep 5 &&
@@ -149,7 +149,7 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Generating signing keys' &&
-      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 3 --tls-subject dev-kms-core-3.com --tls-wildcard &&
+      kms-gen-keys --mock-enclave --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 3 --tls-subject dev-kms-core-3.com --tls-wildcard &&
       wget -O ./certs/cert_dev-kms-core-3.com.pem ftp://$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY@dev-s3-mock:8021/kms/PUB-p3/CACert/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee &&
       cat ./certs/cert_dev-kms-core-3.com.pem &&
       sleep 5 &&
@@ -197,7 +197,7 @@ services:
       AWS_SECRET_ACCESS_KEY=$$(cat /minio_secrets/secret_key) &&
       export AWS_SECRET_ACCESS_KEY &&
       echo 'Generating signing keys' &&
-      kms-gen-keys --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 4 --tls-subject dev-kms-core-4.com --tls-wildcard &&
+      kms-gen-keys --mock-enclave --public-storage s3 --public-s3-bucket kms --aws-s3-endpoint http://dev-s3-mock:9000 --aws-region us-east-1 --private-storage file --private-file-path ./keys --cmd signing-keys threshold --signing-key-party-id 4 --tls-subject dev-kms-core-4.com --tls-wildcard &&
       wget -O ./certs/cert_dev-kms-core-4.com.pem ftp://$$AWS_ACCESS_KEY_ID:$$AWS_SECRET_ACCESS_KEY@dev-s3-mock:8021/kms/PUB-p4/CACert/60b7070add74be3827160aa635fb255eeeeb88586c4debf7ab1134ddceb4beee &&
       cat ./certs/cert_dev-kms-core-4.com.pem &&
       sleep 5 &&

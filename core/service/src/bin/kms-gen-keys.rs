@@ -78,6 +78,9 @@ struct Args {
     /// Optional AWS KMS key spec that encrypts the private storage
     #[clap(long, default_value = None, value_enum)]
     root_key_spec: Option<AwsKmsKeySpec>,
+    #[cfg(feature = "insecure")]
+    #[clap(long, default_value_t = false)]
+    mock_enclave: bool,
     #[clap(long, default_value_t = StorageCommand::File, value_enum)]
     private_storage: StorageCommand,
     #[clap(long, default_value = None)]
@@ -280,7 +283,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     // security module (used for remote attestation with AWS KMS only so far)
     let security_module = if need_awskms_client {
-        Some(Arc::new(make_security_module()?))
+        Some(Arc::new(make_security_module(
+            #[cfg(feature = "insecure")]
+            args.mock_enclave,
+        )?))
     } else {
         None
     };
