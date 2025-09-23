@@ -314,7 +314,7 @@ jobs:
           RUSTC_WRAPPER: "sccache"  # For sccache
           SCCACHE_BUCKET: gh-actions-cache-eu-west-3
           SCCACHE_REGION: eu-west-3
-          SCCACHE_S3_KEY_PREFIX: ${{ inputs.working-directory }}
+          SCCACHE_S3_KEY_PREFIX: ${{ inputs.app-cache-dir }}
         run: |
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
