@@ -733,6 +733,27 @@ where
     )
     .await?;
 
+    // If needed, compute the mod switch noise reduction key
+    let msnrk = match params_basics_handle.get_msnrk_configuration() {
+        MSNRKConfiguration::Standard => CompressedModulusSwitchConfiguration::Standard,
+        MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
+            CompressedModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
+                generate_compressed_mod_switch_noise_reduction_key(
+                    &lwe_secret_key_share,
+                    &msnrkparams,
+                    &mut mpc_encryption_rng,
+                    session,
+                    preprocessing,
+                    seed,
+                )
+                .await?,
+            )
+        }
+        MSNRKConfiguration::CenteredMeanNoiseReduction => {
+            CompressedModulusSwitchConfiguration::CenteredMeanNoiseReduction
+        }
+    };
+
     //If needed, compute the SnS BK
     let (glwe_secret_key_share_sns, bk_sns, msnrk_sns) = match params {
         DKGParams::WithSnS(sns_params) => {
@@ -829,30 +850,39 @@ where
         }
     };
 
-    // If needed, compute the mod switch noise reduction key
-    let msnrk = match params_basics_handle.get_msnrk_configuration() {
-        MSNRKConfiguration::Standard => CompressedModulusSwitchConfiguration::Standard,
-        MSNRKConfiguration::DriftTechniqueNoiseReduction(msnrkparams) => {
-            CompressedModulusSwitchConfiguration::DriftTechniqueNoiseReduction(
-                generate_compressed_mod_switch_noise_reduction_key(
-                    &lwe_secret_key_share,
-                    &msnrkparams,
-                    &mut mpc_encryption_rng,
-                    session,
-                    preprocessing,
-                    seed,
-                )
-                .await?,
-            )
-        }
-        MSNRKConfiguration::CenteredMeanNoiseReduction => {
-            CompressedModulusSwitchConfiguration::CenteredMeanNoiseReduction
-        }
-    };
-
     // note that glwe_secret_key_share_compression may be None even if compression_keys is Some
     // this is because we might have generated the compression keys from an existing compression sk share
     let (glwe_secret_key_share_compression, compression_keys) = compression_material;
+
+    let cpk_re_randomization_ksk = match (
+        params_basics_handle.get_pksk_params(),
+        params_basics_handle.get_rerand_ksk_params(),
+    ) {
+        (Some(pksk_params), Some(cpk_re_randomization_ksk_params)) => {
+            // If these are equal, we already have the KSK from the LWE sk of the PK
+            // and the glwe sk that's necessary for rerand
+            if pksk_params == cpk_re_randomization_ksk_params {
+                Some(CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK)
+            } else {
+                Some(CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(
+                    generate_compressed_key_switch_key(
+                        &lwe_hat_secret_key_share,
+                        &glwe_sk_share_as_lwe,
+                        &cpk_re_randomization_ksk_params,
+                        &mut mpc_encryption_rng,
+                        session,
+                        preprocessing,
+                        seed,
+                    )
+                    .await?,
+                ))
+            }
+        }
+        (_, None) => None,
+        _ => {
+            panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization.")
+        }
+    };
 
     // If needed, compute the sns compression keys
     let sns_compression_materials =
@@ -884,36 +914,6 @@ where
             }
             None => (None, None),
         };
-
-    let cpk_re_randomization_ksk = match (
-        params_basics_handle.get_pksk_params(),
-        params_basics_handle.get_rerand_ksk_params(),
-    ) {
-        (Some(pksk_params), Some(cpk_re_randomization_ksk_params)) => {
-            // If these are equal, we already have the KSK from the LWE sk of the PK
-            // and the glwe sk that's necessary for rerand
-            if pksk_params == cpk_re_randomization_ksk_params {
-                Some(CompressedReRandomizationRawKeySwitchingKey::UseCPKEncryptionKSK)
-            } else {
-                Some(CompressedReRandomizationRawKeySwitchingKey::DedicatedKSK(
-                    generate_compressed_key_switch_key(
-                        &lwe_hat_secret_key_share,
-                        &glwe_sk_share_as_lwe,
-                        &cpk_re_randomization_ksk_params,
-                        &mut mpc_encryption_rng,
-                        session,
-                        preprocessing,
-                        seed,
-                    )
-                    .await?,
-                ))
-            }
-        }
-        (_, None) => None,
-        _ => {
-            panic!("Inconsistent ClientKey set-up for CompactPublicKey re-randomization.")
-        }
-    };
 
     let pub_key_set = RawCompressedPubKeySet {
         lwe_public_key,
