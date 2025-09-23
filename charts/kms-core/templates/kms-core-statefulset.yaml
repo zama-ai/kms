@@ -428,6 +428,10 @@ spec:
                 fieldRef:
                   fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
             {{- end }}
+            - name: TOKIO_WORKER_THREADS
+              value: "18"
+            - name: RAYON_NUM_THREADS
+              value: "43"
             - name: "NO_COLOR"
               value: "true"
             - name: RUN_MODE
