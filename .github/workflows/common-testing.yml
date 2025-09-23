@@ -314,6 +314,8 @@ jobs:
           SCCACHE_REGION: eu-west-3
           SCCACHE_S3_KEY_PREFIX: ${{ inputs.app-cache-dir }}
         run: |
+          ####################################################
+          # Setup MinIO config
           mkdir -p ~/.aws/ &&
           echo "[default]" > ~/.aws/credentials &&
           echo "aws_access_key_id = minioadmin" >> ~/.aws/credentials &&
@@ -324,13 +326,20 @@ jobs:
           echo "region=eu-north-1" >> ~/.aws/config &&
           echo "endpoint_url=http://127.0.0.1:9000" >> ~/.aws/config &&
           cat ~/.aws/config &&
+          ####################################################
+          # Run tests
           RUST_BACKTRACE=full cargo nextest run --profile ci --no-fail-fast ${ARGS_TESTS:+$ARGS_TESTS}
 
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
         run: |
           echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
-          cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit.xml # zizmor: ignore[template-injection]
+          if find "${GITHUB_WORKSPACE}"/target/nextest/ci -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
+            cp -Lpr "${GITHUB_WORKSPACE}"/target/nextest/ci/junit.xml /tmp/junit.xml # zizmor: ignore[template-injection]
+          else
+            echo "No junit test files found in ${GITHUB_WORKSPACE}/target/nextest/ci"
+            exit 1
+          fi
         shell: bash
 
       - name: Upload Test Results
