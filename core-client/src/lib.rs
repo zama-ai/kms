@@ -1598,7 +1598,7 @@ pub async fn execute_cmd(
     } else {
         // threshold cores
         tracing::info!(
-            "Threshold Core Client - connecting to {:?} KMS server",
+            "Threshold Core Client - connecting to n={:?} KMS servers",
             cc_conf.cores.len()
         );
 
