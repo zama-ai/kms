@@ -322,80 +322,43 @@ fn full_flow_drop_msg() {
         custodian_threshold,
     );
     // Drop first and last custodian
-    {
-        let mnemonics_dropped: BTreeMap<Role, String> = mnemonics
-            .iter()
-            // Drop custodians 1 and 5, the maximum allowed
-            .filter_map(|(k, v)| {
-                if *k != Role::indexed_from_one(1) || *k != Role::indexed_from_one(5) {
-                    Some((*k, v.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        assert!(mnemonics_dropped.len() > custodian_threshold);
-        let backups = custodian_recover(
-            &mut rng,
-            &backup_id,
-            &mnemonics_dropped,
-            &payload_for_custodians,
-            custodian_threshold,
-        );
-        assert!(backups.len() == operator_count);
-        let recovered_secrets = operator_recover(&backups, &operators, &backup_id);
-        assert!(recovered_secrets.len() == operator_count);
+    let mnemonics_dropped: BTreeMap<Role, String> = mnemonics
+        .iter()
+        // Drop custodians 1 and 5, the maximum allowed
+        .filter_map(|(k, v)| {
+            if *k != Role::indexed_from_one(1) || *k != Role::indexed_from_one(5) {
+                Some((*k, v.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(mnemonics_dropped.len() > custodian_threshold);
+    let backups = custodian_recover(
+        &mut rng,
+        &backup_id,
+        &mnemonics_dropped,
+        &payload_for_custodians,
+        custodian_threshold,
+    );
+    assert!(backups.len() == operator_count);
+    let recovered_secrets = operator_recover(&backups, &operators, &backup_id);
+    assert!(recovered_secrets.len() == operator_count);
 
-        for idx in 1..=operator_count {
-            let role = Role::indexed_from_one(idx);
-            assert!(recovered_secrets.contains_key(&role));
-            let cur_priv_key = operators.get(&role).unwrap().2.clone();
-            assert_eq!(
-                recovered_secrets[&role],
-                bc2wrap::serialize(&cur_priv_key).unwrap()
-            );
-        }
-    }
-    // Drop middle custodians
-    {
-        let mnemonics_dropped: BTreeMap<Role, String> = mnemonics
-            .iter()
-            // Drop custodians 1 and 5, the maximum allowed
-            .filter_map(|(k, v)| {
-                if *k != Role::indexed_from_one(1) || *k != Role::indexed_from_one(5) {
-                    Some((*k, v.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        assert!(mnemonics_dropped.len() > custodian_threshold);
-        let backups = custodian_recover(
-            &mut rng,
-            &backup_id,
-            &mnemonics_dropped,
-            &payload_for_custodians,
-            custodian_threshold,
+    for idx in 1..=operator_count {
+        let role = Role::indexed_from_one(idx);
+        assert!(recovered_secrets.contains_key(&role));
+        let cur_priv_key = operators.get(&role).unwrap().2.clone();
+        assert_eq!(
+            recovered_secrets[&role],
+            bc2wrap::serialize(&cur_priv_key).unwrap()
         );
-        assert!(backups.len() == operator_count);
-        let recovered_secrets = operator_recover(&backups, &operators, &backup_id);
-        assert!(recovered_secrets.len() == operator_count);
-
-        for idx in 1..=operator_count {
-            let role = Role::indexed_from_one(idx);
-            assert!(recovered_secrets.contains_key(&role));
-            let cur_priv_key = operators.get(&role).unwrap().2.clone();
-            assert_eq!(
-                recovered_secrets[&role],
-                bc2wrap::serialize(&cur_priv_key).unwrap()
-            );
-        }
     }
 }
 
 #[test]
 #[should_panic]
-fn full_flow_malicious_custodian_first() {
+fn full_flow_malicious_custodian_not_enough() {
     let mut rng = AesRng::seed_from_u64(1337);
     let backup_id = derive_request_id(std::stringify!(full_flow_malicious_custodian)).unwrap();
     let operator_count = 4usize;
@@ -404,19 +367,45 @@ fn full_flow_malicious_custodian_first() {
 
     let (setup_msgs, _mnemonics) = generate_setup_messages(&mut rng, custodian_count);
     // Change one custodian's setup messages to an invalid one
-    {
-        let mut setup_msgs_malicious = setup_msgs.clone();
-        // Remove 2nd setup message
-        setup_msgs_malicious.remove(1);
-        // Should panic because we don't have enough custodians
-        let _ = operator_handle_init(
-            &mut rng,
-            &setup_msgs_malicious,
-            &backup_id,
-            operator_count,
-            custodian_threshold,
-        );
-    }
+
+    let mut setup_msgs_malicious = setup_msgs.clone();
+    // Remove 2nd setup message
+    setup_msgs_malicious.remove(1);
+    // Remove 3nd setup message
+    setup_msgs_malicious.remove(1);
+    // Remove 4nd setup message
+    setup_msgs_malicious.remove(1);
+    // Should panic because we need at least 3 custodians.
+    let _ = operator_handle_init(
+        &mut rng,
+        &setup_msgs_malicious,
+        &backup_id,
+        operator_count,
+        custodian_threshold,
+    );
+}
+
+#[test]
+fn full_flow_malicious_custodian_init() {
+    let mut rng = AesRng::seed_from_u64(1337);
+    let backup_id = derive_request_id(std::stringify!(full_flow_malicious_custodian)).unwrap();
+    let operator_count = 4usize;
+    let custodian_count = 5usize;
+    let custodian_threshold = 2usize;
+
+    let (setup_msgs, _mnemonics) = generate_setup_messages(&mut rng, custodian_count);
+    // Change one custodian's setup messages to an invalid one
+    let mut setup_msgs_malicious = setup_msgs.clone();
+    // Remove 2nd setup message
+    setup_msgs_malicious.remove(1);
+    // Should be fine since we just need at least 2+1 = 3 custodians
+    let (_operators, _payload_for_custodians) = operator_handle_init(
+        &mut rng,
+        &setup_msgs_malicious,
+        &backup_id,
+        operator_count,
+        custodian_threshold,
+    );
 }
 
 #[test]

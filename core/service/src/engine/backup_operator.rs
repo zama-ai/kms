@@ -419,7 +419,7 @@ where
         anyhow::bail!("The custodian context associated with the provided context ID is invalid",);
     }
     if !recovery_material.validate(verf_key) {
-        anyhow::bail!("The custodian context associated with the provided context ID is invalid",);
+        anyhow::bail!("Could not verify the signature on the recovery material",);
     }
     Ok(recovery_material)
 }
