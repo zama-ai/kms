@@ -187,6 +187,7 @@ Crypto provider should exist at this point"
         let context_id =
             extract_context_id_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
         let subject = extract_subject_from_cert(cert).map_err(|e| Error::General(e.to_string()))?;
+        tracing::debug!("Getting context and verifiers for {subject}");
 
         let contexts = self
             .contexts
@@ -243,7 +244,11 @@ impl ServerCertVerifier for AttestedVerifier {
         let (context, _, server_verifier) = self.get_context_and_verifiers_for_x509_cert(&cert)?;
         // check the enclave-generated certificate used for the TLS session as
         // usual (however, we expect it to be self-signed)
-        tracing::debug!("Verifying certificate for server {:?}", server_name);
+        tracing::debug!(
+            "Verifying certificate {:?} for server {:?}",
+            cert,
+            server_name
+        );
         server_verifier
             .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
             .inspect_err(|e| {
