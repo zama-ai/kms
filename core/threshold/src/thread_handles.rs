@@ -18,7 +18,7 @@ impl ThreadHandleGroup {
     pub fn new() -> Self {
         tracing::info!(
             "Creating new ThreadHandleGroup. rayon::max_num_threads: {}, tokio::num_workers: {}.",
-            rayon::max_num_threads(),
+            rayon::current_num_threads(),
             tokio::runtime::Handle::current().metrics().num_workers()
         );
         Self {

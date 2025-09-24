@@ -235,7 +235,7 @@ async fn main() -> anyhow::Result<()> {
         env::var_os("TOKIO_WORKER_THREADS"),
         env::var_os("RAYON_NUM_THREADS"),
         thread::available_parallelism()?.get(),
-        rayon::max_num_threads(),
+        rayon::current_num_threads(),
         tokio::runtime::Handle::current().metrics().num_workers()
     );
 
