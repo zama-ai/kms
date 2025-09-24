@@ -413,7 +413,7 @@ where
 {
     let public_storage_guard = public_storage.lock().await;
     let recovery_material: RecoveryValidationMaterial = public_storage_guard
-        .read_data(context_id, &PubDataType::Commitments.to_string())
+        .read_data(context_id, &PubDataType::RecoveryMaterial.to_string())
         .await?;
     if &recovery_material.custodian_context().context_id != context_id {
         anyhow::bail!("The custodian context associated with the provided context ID is invalid",);

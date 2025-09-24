@@ -857,7 +857,7 @@ mod kms_custodian_binary_tests {
         root_path: &Path,
         amount_custodians: usize,
         operator: &Operator,
-        commitment: &RecoveryValidationMaterial,
+        recovery_material: &RecoveryValidationMaterial,
         backup_id: RequestId,
         dec_key: &BackupPrivateKey,
     ) -> Vec<u8> {
@@ -874,7 +874,7 @@ mod kms_custodian_binary_tests {
             outputs.push(payload);
         }
         operator
-            .verify_and_recover(&outputs, commitment, backup_id, dec_key)
+            .verify_and_recover(&outputs, recovery_material, backup_id, dec_key)
             .unwrap()
     }
 }
