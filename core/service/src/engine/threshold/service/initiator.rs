@@ -315,7 +315,6 @@ mod tests {
                         address: "dummy".to_string(),
                         mpc_identity: None,
                         port: 1,
-                        service_port: None,
                         tls_cert: None,
                     }]),
                     core_to_core_net: None,

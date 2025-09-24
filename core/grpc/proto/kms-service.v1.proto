@@ -13,7 +13,7 @@ import "kms.v1.proto";
 // also documented in the RPC documentation below.
 // In summary, only `NotFound`, `Unavailable`, and `ResourceExhausted` can be retried by the caller,
 // the other errors indicate that the caller should not retry.
-// 
+//
 // `InvalidArgument` - Data in the request is incorrect or not set according to
 // the pre and post conditions. The caller should fix the arguments before
 // trying again. The request ID is consumed and cannot be used again.

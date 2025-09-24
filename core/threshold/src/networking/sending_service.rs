@@ -6,10 +6,10 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+use super::gen::gnetworking_client::GnetworkingClient;
 use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
 use backoff::SystemClock;
-use gen::gnetworking_client::GnetworkingClient;
 use hyper_rustls_ring::{FixedServerNameResolver, HttpsConnectorBuilder};
 use observability::telemetry::ContextPropagator;
 use tokio::{
@@ -36,11 +36,7 @@ use super::grpc::{MessageQueueStore, OptionConfigWrapper, Tag};
 use super::{NetworkMode, Networking};
 use crate::thread_handles::ThreadHandleGroup;
 
-mod gen {
-    #![allow(clippy::derive_partial_eq_without_eq)]
-    tonic::include_proto!("ddec_networking");
-}
-use self::gen::SendValueRequest;
+use super::gen::SendValueRequest;
 
 pub struct ArcSendValueRequest {
     tag: Arc<Vec<u8>>,
@@ -98,7 +94,7 @@ pub struct GrpcSendingService {
 impl GrpcSendingService {
     /// Create the network channel between self and the grpc server of the other party
     /// or retrieve it if one already exists
-    async fn connect_to_party(
+    pub(crate) async fn connect_to_party(
         &self,
         receiver: Identity,
     ) -> anyhow::Result<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>> {
