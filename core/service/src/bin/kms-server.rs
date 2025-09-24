@@ -515,6 +515,12 @@ async fn main() -> anyhow::Result<()> {
             let need_peer_tcp_proxy =
                 need_security_module && core_config.mock_enclave.is_some_and(|m| !m);
 
+            if need_peer_tcp_proxy {
+                tracing::warn!("KMS server will connect to peers through vsock proxies");
+            } else {
+                tracing::warn!("KMS server will connect to peers directly");
+            };
+
             let (kms, health_service, metastore_status_service) = new_real_threshold_kms(
                 threshold_config,
                 public_vault,
