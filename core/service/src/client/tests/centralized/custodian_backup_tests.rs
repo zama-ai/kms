@@ -268,6 +268,110 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await;
 }
 
+#[cfg(feature = "insecure")]
+#[tracing_test::traced_test]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn test_decrypt_after_recovery_centralized_negative() {
+    decrypt_after_recovery_negative(5, 2).await;
+    logs_contain("Failed to parse custodian recovery output for");
+    logs_contain("Could not verify recovery validation material signature for custodian role 1");
+    logs_contain("Could not verify recovery validation material signature for custodian role 3");
+}
+
+#[cfg(feature = "insecure")]
+async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u32) {
+    let amount_parties = 4;
+    let dkg_param: WrappedDKGParams = FheParameter::Test.into();
+    let req_new_cus: RequestId = derive_request_id(&format!(
+        "test_decrypt_after_recovery_threshold_negative_{amount_parties}"
+    ))
+    .unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_path = Some(temp_dir.path());
+
+    let (kms_server, mut kms_client, mut internal_client) =
+        centralized_custodian_handles(&dkg_param, None, test_path).await;
+    let mnemnonics = run_new_cus_context(
+        &mut kms_client,
+        &mut internal_client,
+        &req_new_cus,
+        amount_custodians,
+        threshold,
+    )
+    .await;
+
+    // Shut down the servers
+    kms_server.assert_shutdown().await;
+    drop(kms_client);
+    drop(internal_client);
+
+    // Read the private signing key for reference
+    let priv_store = FileStorage::new(test_path, StorageType::PRIV, None).unwrap();
+    let sig_key: PrivateSigKey = read_versioned_at_request_id(
+        &priv_store,
+        &SIGNING_KEY_ID,
+        &PrivDataType::SigningKey.to_string(),
+    )
+    .await
+    .unwrap();
+
+    // Purge the private storage to tests the backup
+    purge_priv(test_path).await;
+
+    // Reboot the servers
+    let (_kms_server, mut kms_client, _internal_client) =
+        centralized_custodian_handles(&dkg_param, None, test_path).await;
+    // Purge the private storage again to delete the signing key
+    purge_priv(test_path).await;
+
+    // Execute the backup restoring
+    let mut rng = AesRng::seed_from_u64(13);
+    let recovery_req_resp = kms_client
+        .custodian_recovery_init(tonic::Request::new(CustodianRecoveryInitRequest {
+            overwrite_ephemeral_key: false,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let mut cus_rec_req =
+        emulate_custodian(&mut rng, recovery_req_resp, mnemnonics, test_path).await;
+    // Change a bit in two of the custodians contribution to the recover requests to make them invalid
+    // First custodian 1
+    cus_rec_req
+        .custodian_recovery_outputs
+        .get_mut(0)
+        .unwrap()
+        // Flip a bit in the 11th byte
+        .ciphertext[11] ^= 1;
+    // Then in custodian 3
+    cus_rec_req
+        .custodian_recovery_outputs
+        .get_mut(2)
+        .unwrap()
+        // Flip a bit in the 7th byte
+        .ciphertext[7] ^= 1;
+    let _recovery_output = kms_client
+        .custodian_backup_recovery(tonic::Request::new(cus_rec_req))
+        .await
+        .unwrap();
+    let _restore_output = kms_client
+        .restore_from_backup(tonic::Request::new(Empty {}))
+        .await
+        .unwrap();
+
+    // Check that the key material is back
+    let new_sig_key: PrivateSigKey = read_versioned_at_request_id(
+        &priv_store,
+        &SIGNING_KEY_ID,
+        &PrivDataType::SigningKey.to_string(),
+    )
+    .await
+    .unwrap();
+    // Check the data is correctly recovered
+    assert_eq!(sig_key, new_sig_key);
+}
+
 async fn emulate_custodian(
     rng: &mut AesRng,
     recovery_request: RecoveryRequest,

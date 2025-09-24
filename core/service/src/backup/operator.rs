@@ -281,7 +281,7 @@ pub enum RecoveryValidationMaterialVersioned {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(RecoveryValidationMaterialVersioned)]
 pub struct RecoveryValidationMaterial {
-    payload: RecoveryValidationMaterialPayload,
+    pub(crate) payload: RecoveryValidationMaterialPayload,
     signature: Vec<u8>,
 }
 

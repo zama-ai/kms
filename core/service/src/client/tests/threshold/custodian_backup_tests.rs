@@ -311,7 +311,6 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     // Purge the private storage to tests the backup
     purge_priv(test_path).await;
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
     // Reboot the servers
     let (kms_servers, kms_clients, internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
@@ -408,7 +407,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = Some(temp_dir.path());
 
-    let (_kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
+    let (kms_servers, kms_clients, mut internal_client) = threshold_handles_custodian_backup(
         *dkg_param,
         amount_parties,
         true,
@@ -426,6 +425,13 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
         threshold,
     )
     .await;
+
+    // Shut down the servers
+    for (_, kms_server) in kms_servers {
+        kms_server.assert_shutdown().await;
+    }
+    drop(kms_clients);
+    drop(internal_client);
 
     let mut sig_keys = Vec::new();
     // Read the private signing keys for reference
@@ -445,6 +451,20 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
     // Purge the private storage to tests the backup
     purge_priv(test_path).await;
 
+    // Reboot the servers
+    let (_kms_servers, kms_clients, _internal_client) = threshold_handles_custodian_backup(
+        *dkg_param,
+        amount_parties,
+        true,
+        false,
+        None,
+        None,
+        test_path,
+    )
+    .await;
+    // Purge the private storage again to delete the signing key
+    purge_priv(test_path).await;
+
     // Execute the backup restoring
     let mut rng = AesRng::seed_from_u64(13);
     let recovery_req_resp = run_custodian_recovery_init(&kms_clients).await;
@@ -460,7 +480,7 @@ async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u3
             .unwrap()
             // Flip a bit in the 11th byte
             .ciphertext[11] ^= 1;
-        // Then in party 3
+        // Then in custodian 3
         cur_payload
             .custodian_recovery_outputs
             .get_mut(2)
