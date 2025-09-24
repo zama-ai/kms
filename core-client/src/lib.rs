@@ -2838,7 +2838,7 @@ async fn fetch_and_check_crsgen(
         responses.len()
     );
 
-    // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
+    // Download the generated CRS. We do this just once, to save time, assuming that all generated keys are indentical.
     // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
     let party_id = fetch_elements(
         &request_id.to_string(),
