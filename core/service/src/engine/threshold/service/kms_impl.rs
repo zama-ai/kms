@@ -240,7 +240,8 @@ where
     let mut public_key_info = HashMap::new();
     let mut pk_map = HashMap::new();
     let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
-        read_all_data_versioned(&public_storage, &PubDataType::Commitments.to_string()).await?;
+        read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
+            .await?;
     let verf_key = PublicSigKey::from_sk(&sk);
     for (cur_req_id, cur_rec_material) in &validation_material {
         if !cur_rec_material.validate(&verf_key) {

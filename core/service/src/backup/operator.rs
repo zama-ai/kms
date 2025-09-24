@@ -321,6 +321,7 @@ impl RecoveryValidationMaterial {
         Ok(res)
     }
 
+    /// Get the commitment for a specific role.
     pub fn get(&self, role: &Role) -> anyhow::Result<&[u8]> {
         if role.one_based() > self.payload.commitments.len() {
             anyhow::bail!("Role {} is out of bounds for commitments", role);
@@ -684,7 +685,7 @@ impl Operator {
     pub fn verify_and_recover(
         &self,
         custodian_recovery_output: &[InternalCustodianRecoveryOutput],
-        commitments: &RecoveryValidationMaterial,
+        recovery_material: &RecoveryValidationMaterial,
         backup_id: RequestId,
         dec_key: &BackupPrivateKey, // Note that this is the ephemeral decryption key, NOT the actual backup decryption key
     ) -> Result<Vec<u8>, BackupError> {
@@ -704,7 +705,7 @@ impl Operator {
                 let signature = Signature {
                     sig: k256::ecdsa::Signature::from_slice(&ct.signature)?,
                 };
-                let commitment = commitments
+                let commitment = recovery_material
                     .get(&ct.custodian_role)
                     .map_err(|_| BackupError::OperatorError("missing commitment".to_string()))?;
                 internal_verify_sig(&DSEP_BACKUP_CUSTODIAN, &ct.ciphertext, &signature, verf_key)
