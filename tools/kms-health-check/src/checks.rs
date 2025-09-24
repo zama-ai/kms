@@ -297,7 +297,7 @@ async fn process_health_status(
     let peers_status_for_all_contexts = &health_status.peers_from_all_contexts;
     let mut contexts_status = Vec::new();
     for result_peers_status in peers_status_for_all_contexts {
-        let peers_status = Vec::new();
+        let mut peers_status = Vec::new();
         let total_nodes = result_peers_status.peers.len() as u32;
 
         // Set overall health based on server's assessment
@@ -321,6 +321,16 @@ async fn process_health_status(
             _ => return,                  // Keep current status for unspecified values
         };
 
+        for peer in &result_peers_status.peers {
+            peers_status.push(PeerStatus {
+                peer_id: peer.peer_id,
+                endpoint: peer.endpoint.clone(),
+                reachable: peer.reachable,
+                latency_ms: peer.latency_ms,
+                error: Some(peer.error.clone()),
+            })
+        }
+
         let self_node_info = NodeInfo {
             node_type: node_type_str.to_string(),
             my_party_id: result_peers_status.my_party_id,
@@ -337,6 +347,7 @@ async fn process_health_status(
         };
         contexts_status.push(context);
     }
+    result.context_info = Some(contexts_status);
 }
 
 // Helper function to check key material (fallback when health status not available)

@@ -3,6 +3,8 @@
 //! and that ignores the length info that v2 provides.
 //! This mimics the old bincode v1 API and thus can be used as a drop-in replacement for the existing codebase.
 
+const TWO_GB: usize = 2147483648;
+
 /// wrapper around bincode::serde::encode_to_vec that uses the legacy config
 /// (using bincode v2 underneath)
 pub fn serialize<T: serde::Serialize + ?Sized>(
@@ -16,5 +18,6 @@ pub fn serialize<T: serde::Serialize + ?Sized>(
 pub fn deserialize<T: serde::de::DeserializeOwned>(
     bytes: &[u8],
 ) -> Result<T, bincode::error::DecodeError> {
-    bincode::serde::decode_from_slice(bytes, bincode::config::legacy()).map(|t| t.0)
+    bincode::serde::decode_from_slice(bytes, bincode::config::legacy().with_limit::<TWO_GB>())
+        .map(|t| t.0)
 }

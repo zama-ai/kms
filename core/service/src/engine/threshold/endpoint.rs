@@ -415,7 +415,7 @@ impl_endpoint! {
                 let min_threshold = (total_nodes / 3) + 1; // Minimum threshold to be able to reconstruct anything
                 let health_check_results = health_check_session.run_healthcheck().await;
                 let mut peers_status = Vec::new();
-                let mut nodes_reachable = 0;
+                let mut nodes_reachable = 1; //I am reachable
                 if let Ok(results) = health_check_results {
                     for ((role, identity), result) in results.into_iter() {
                         let peer_status = match result {
