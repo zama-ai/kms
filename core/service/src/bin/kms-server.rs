@@ -513,7 +513,7 @@ async fn main() -> anyhow::Result<()> {
             let need_peer_tcp_proxy = need_security_module;
             #[cfg(feature = "insecure")]
             let need_peer_tcp_proxy =
-                need_security_module && core_config.mock_enclave.is_some_and(|m| !m);
+                need_security_module && !core_config.mock_enclave.is_some_and(|m| m);
 
             if need_peer_tcp_proxy {
                 tracing::warn!("KMS server will connect to peers through vsock proxies");
