@@ -245,7 +245,7 @@ where
     let verf_key = PublicSigKey::from_sk(&sk);
     for (cur_req_id, cur_rec_material) in &validation_material {
         if !cur_rec_material.validate(&verf_key) {
-            anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the signing key");
+            anyhow::bail!("Validation material for context {cur_req_id} failed to validate against the verification key");
         }
     }
     let custodian_context: HashMap<RequestId, InternalCustodianContext> = validation_material
