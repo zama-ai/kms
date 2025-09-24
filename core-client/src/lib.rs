@@ -80,7 +80,7 @@ macro_rules! retry {
     };
 }
 
-#[derive(Serialize, Clone, Validate, Default, Debug)]
+#[derive(Serialize, Clone, Validate, Debug)]
 #[validate(schema(function = validate_core_client_conf))]
 pub struct CoreClientConfig {
     // The mode of the KMS ("centralized" or "threshold"). Threshold by default.
@@ -113,7 +113,7 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
     let num_parties = conf.cores.len();
 
     for cur_core in &conf.cores {
-        if cur_core.party_id == 0 {
+        if cur_core.party_id == 0 || cur_core.party_id > num_parties {
             return Err(ValidationError::new("Incorrect Party ID").with_message(
                 format!(
                     "Party ID must be between 1 and the number of parties ({}), but was {}.",
@@ -170,38 +170,40 @@ fn validate_core_client_conf(conf: &CoreClientConfig) -> Result<(), ValidationEr
         }
     } else {
         // We may be in the centralized or threshold mode (communicating with a single server)
-        if conf.kms_type == KmsType::Centralized && conf.num_majority != 1 {
-            return Err(
-                ValidationError::new("Centralized Majority Vote Count Error").with_message(
-                    format!(
+        if conf.kms_type == KmsType::Centralized {
+            if conf.num_majority != 1 {
+                return Err(
+                    ValidationError::new("Centralized Majority Vote Count Error").with_message(
+                        format!(
                     "Number for majority votes ({}) must be equal to 1 for a centralized config.",
                     conf.num_majority,
                 )
-                    .into(),
-                ),
-            );
-        }
-        if conf.kms_type == KmsType::Centralized && conf.num_reconstruct != 1 {
-            return Err(
-                ValidationError::new("Centralized Reconstruction Count Error").with_message(
-                    format!(
+                        .into(),
+                    ),
+                );
+            }
+            if conf.num_reconstruct != 1 {
+                return Err(
+                    ValidationError::new("Centralized Reconstruction Count Error").with_message(
+                        format!(
                     "Number for reconstruction ({}) must be equal to 1 for a centralized config.",
                     conf.num_reconstruct,
                 )
-                    .into(),
-                ),
-            );
-        }
-        if conf.cores.first().unwrap().party_id != 1 {
-            return Err(
-                ValidationError::new("Centralized Party ID Error").with_message(
-                    format!(
+                        .into(),
+                    ),
+                );
+            }
+            if conf.cores.first().expect("no party IDs found").party_id != 1 {
+                return Err(
+                    ValidationError::new("Centralized Party ID Error").with_message(
+                        format!(
                     "Party ID of the single core in a centralized config must be 1, but was {}.",
                     conf.cores.first().unwrap().party_id
                 )
-                    .into(),
-                ),
-            );
+                        .into(),
+                    ),
+                );
+            }
         }
     }
 
@@ -213,7 +215,7 @@ impl<'de> Deserialize<'de> for CoreClientConfig {
     where
         D: serde::Deserializer<'de>,
     {
-        #[derive(Deserialize, Clone, Default, Debug)]
+        #[derive(Deserialize, Clone, Debug)]
         pub struct CoreClientConfigBuffer {
             // The mode of the KMS ("centralized" or "threshold"). Threshold by default.
             pub kms_type: KmsType,
@@ -637,14 +639,13 @@ pub struct CmdConfig {
     pub expect_all_responses: bool,
 }
 
-#[derive(Debug, Deserialize, Default, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
 pub enum KmsType {
     #[strum(serialize = "centralized")]
     #[serde(rename = "centralized")]
     Centralized,
     #[strum(serialize = "threshold")]
     #[serde(rename = "threshold")]
-    #[default]
     Threshold,
 }
 /// a dummy Eip-712 domain for testing
@@ -1070,15 +1071,16 @@ fn check_external_decryption_signature(
 }
 
 /// Fetch all remote objects and store them locally for the core client
-/// Return the server ID of the first core that was successfully contacted
+/// Return the server IDs of all servers that were successfully contacted
+/// or an error if no server could be contacted
 async fn fetch_elements(
     element_id: &str,
     element_types: &[PubDataType],
     sim_conf: &CoreClientConfig,
     destination_prefix: &Path,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<Vec<usize>> {
     tracing::info!("Fetching public key, server key and sns key with id {element_id}");
-    let mut successfull_core_id = None;
+    let mut successfull_core_ids = Vec::new();
     for object_name in element_types {
         for cur_core in &sim_conf.cores {
             if fetch_global_pub_object_and_write_to_file(
@@ -1092,18 +1094,17 @@ async fn fetch_elements(
             .is_err()
             {
                 tracing::warn!("Could not fetch object {object_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
-            } else if successfull_core_id.is_none() {
-                successfull_core_id = Some(cur_core.party_id);
+            } else {
+                successfull_core_ids.push(cur_core.party_id);
             }
         }
     }
-    match successfull_core_id {
-        None => {
-            Err(anyhow::anyhow!(
+    if successfull_core_ids.is_empty() {
+        Err(anyhow::anyhow!(
                 "Could not fetch key with id {element_id} from any core. At least one core is required to proceed."
             ))
-        }
-        Some(core_id) => Ok(core_id),
+    } else {
+        Ok(successfull_core_ids)
     }
 }
 
@@ -1688,14 +1689,19 @@ pub async fn execute_cmd(
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     tracing::info!("Fetching computation keys. ({command:?})");
-                    let party_id = fetch_elements(
+                    let party_ids = fetch_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
                         &cc_conf,
                         destination_prefix,
                     )
                     .await?;
-                    encrypt(destination_prefix, party_id, cipher_parameters.clone()).await?
+                    encrypt(
+                        destination_prefix,
+                        *party_ids.first().expect("no party IDs found"),
+                        cipher_parameters.clone(),
+                    )
+                    .await?
                 }
             };
 
@@ -1813,14 +1819,19 @@ pub async fn execute_cmd(
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
                     tracing::info!("Fetching computation keys. ({command:?})");
-                    let party_id = fetch_elements(
+                    let party_ids = fetch_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
                         &cc_conf,
                         destination_prefix,
                     )
                     .await?;
-                    encrypt(destination_prefix, party_id, cipher_parameters.clone()).await?
+                    encrypt(
+                        destination_prefix,
+                        *party_ids.first().expect("no party IDs found"),
+                        cipher_parameters.clone(),
+                    )
+                    .await?
                 }
             };
 
@@ -1962,14 +1973,19 @@ pub async fn execute_cmd(
         }
         CCCommand::Encrypt(cipher_parameters) => {
             tracing::info!("Fetching computation keys. ({command:?})");
-            let party_id = fetch_elements(
+            let party_ids = fetch_elements(
                 &cipher_parameters.key_id.as_str(),
                 &key_types,
                 &cc_conf,
                 destination_prefix,
             )
             .await?;
-            encrypt(destination_prefix, party_id, cipher_parameters.clone()).await?;
+            encrypt(
+                destination_prefix,
+                *party_ids.first().expect("no party IDs found"),
+                cipher_parameters.clone(),
+            )
+            .await?;
             vec![(None, "Encryption generated".to_string())]
         }
         CCCommand::PreprocKeyGenResult(result_parameters) => {
@@ -2777,19 +2793,24 @@ async fn fetch_and_check_keygen(
         PubDataType::PublicKeyMetadata,
         PubDataType::ServerKey,
     ];
-    let party_id = fetch_elements(
+    let party_ids = fetch_elements(
         &request_id.to_string(),
         &key_types,
         cc_conf,
         destination_prefix,
     )
     .await?;
-    let public_key = load_pk_from_storage(Some(destination_prefix), &request_id, party_id).await;
+    let public_key = load_pk_from_storage(
+        Some(destination_prefix),
+        &request_id,
+        *party_ids.first().expect("no party IDs found"),
+    )
+    .await;
     let server_key: ServerKey = load_material_from_storage(
         Some(destination_prefix),
         &request_id,
         PubDataType::ServerKey,
-        party_id,
+        *party_ids.first().expect("no party IDs found"),
     )
     .await;
 
@@ -2840,7 +2861,7 @@ async fn fetch_and_check_crsgen(
 
     // Download the generated CRS. We do this just once, to save time, assuming that all generated keys are indentical.
     // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
-    let party_id = fetch_elements(
+    let party_ids = fetch_elements(
         &request_id.to_string(),
         &[PubDataType::CRS],
         cc_conf,
@@ -2851,7 +2872,7 @@ async fn fetch_and_check_crsgen(
         Some(destination_prefix),
         &request_id,
         PubDataType::CRS,
-        party_id,
+        *party_ids.first().expect("no party IDs found"),
     )
     .await;
 
