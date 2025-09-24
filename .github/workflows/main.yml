@@ -8,10 +8,10 @@ name: main
 
 on:
   schedule:
-    - cron: '0 0 * * 1-5' # Runs at midnight UTC (1 AM CET) Monday-Friday
+    - cron: "0 0 * * 1-5" # Runs at midnight UTC (1 AM CET) Monday-Friday
   pull_request:
   push:
-    branches: ['main', 'release/*']
+    branches: ["main", "release/*"]
 
 # Controls concurrent workflow runs:
 # - Groups runs by git ref
@@ -50,45 +50,44 @@ jobs:
       changes-docs: ${{ steps.filter.outputs.docs }}
       changes-helm-chart: ${{ steps.filter.outputs.helm-chart }}
     steps:
-    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      with:
-        persist-credentials: true
-    - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36  # v3.0.2
-      id: filter
-      with:
-        # Define paths that trigger specific component workflows
-        # Changes to observability affect multiple components
-        filters: |
-          backward-compatibility:
-            - 'backward-compatibility/**'
-          ci:
-            - '.github/workflows/**'
-          core-client:
-            - 'core-client/**'
-            - 'observability/**'
-            - 'Cargo.toml'
-            - 'Cargo.lock'
-          core-grpc:
-            - 'core/grpc/**'
-            - 'Cargo.toml'
-            - 'Cargo.lock'
-          core-service:
-            - 'core/grpc/**'
-            - 'core/service/**'
-            - 'core/threshold/**'
-            - 'observability/**'
-            - 'Cargo.toml'
-            - 'Cargo.lock'
-          core-threshold:
-            - 'core/threshold/**'
-            - 'observability/**'
-            - 'Cargo.toml'
-            - 'Cargo.lock'
-          docs:
-            - 'docs/**'
-          helm-chart:
-            - 'charts/**'
-
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: true
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: filter
+        with:
+          # Define paths that trigger specific component workflows
+          # Changes to observability affect multiple components
+          filters: |
+            backward-compatibility:
+              - 'backward-compatibility/**'
+            ci:
+              - '.github/workflows/**'
+            core-client:
+              - 'core-client/**'
+              - 'observability/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            core-grpc:
+              - 'core/grpc/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            core-service:
+              - 'core/grpc/**'
+              - 'core/service/**'
+              - 'core/threshold/**'
+              - 'observability/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            core-threshold:
+              - 'core/threshold/**'
+              - 'observability/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            docs:
+              - 'docs/**'
+            helm-chart:
+              - 'charts/**'
 
   ############################################################################
   # Helm chart pipeline
@@ -96,8 +95,9 @@ jobs:
   # - Changes to charts/**
   ############################################################################
   test-helm-chart:
-    name: main/test-helm-chart
-     # job permissions
+    name:
+      main/test-helm-chart
+      # job permissions
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -107,8 +107,9 @@ jobs:
     uses: ./.github/workflows/helm-test.yml
 
   lint-helm-chart:
-    name: main/lint-helm-chart
-     # job permissions
+    name:
+      main/lint-helm-chart
+      # job permissions
     permissions:
       actions: read # Required to read workflow run information
       contents: read # Required to checkout repository code
@@ -148,12 +149,12 @@ jobs:
     container:
       image: python:3.10.17-bullseye@sha256:0b9be13617fed7d883b30e31a47371a8bdd60a4bb5e45fcda63cb4a3846f6d98
     steps:
-    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      with:
-        persist-credentials: false
-    - run: python3 -m pip install linkcheckmd
-    - name: Check dead-link
-      run: python3 ci/script/local_docs_link_check.py
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - run: python3 -m pip install linkcheckmd
+      - name: Check dead-link
+        run: python3 ci/script/local_docs_link_check.py
 
   ############################################################################
   # KMS Backward Compatibility Testing
@@ -181,11 +182,11 @@ jobs:
       github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
-      working-directory: './core/service'
-      args-tests: 'backward_compatibility'
-      package-name: 'kms'
-      slab-backend: 'big-instance-service'
-      app-cache-dir: 'kms'
+      working-directory: "./core/service"
+      args-tests: "backward_compatibility"
+      package-name: "kms"
+      slab-backend: "big-instance-service"
+      app-cache-dir: "kms"
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -200,7 +201,6 @@ jobs:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
 
   ############################################################################
   # Core Client Pipeline
@@ -223,16 +223,16 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
-    - id: set-matrix
-      run: |
-        MATRIX="matrix={\"include\":["
-        # Regular tests: Run different test suites in parallel with specific features
-        MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests\"}"
-        MATRIX="${MATRIX%,}]}"
-        echo "$MATRIX" >> "$GITHUB_OUTPUT"
-        echo "$MATRIX"
+      - id: set-matrix
+        run: |
+          MATRIX="matrix={\"include\":["
+          # Regular tests: Run different test suites in parallel with specific features
+          MATRIX="${MATRIX}{\"args-tests\":\"threshold -- --skip centralized --skip full_gen_tests\"},{\"args-tests\":\"centralized -- --skip threshold --skip full_gen_tests\"}"
+          MATRIX="${MATRIX%,}]}"
+          echo "$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "$MATRIX"
 
-
+  # Core client integration tests
   test-core-client:
     name: main/test-core-client
     # job permissions
@@ -257,10 +257,10 @@ jobs:
       matrix: ${{fromJson(needs.prepare-core-client-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
-      working-directory: './core-client'
-      package-name: 'kms-core-client'
+      working-directory: "./core-client"
+      package-name: "kms-core-client"
       args-tests: ${{ matrix.args-tests }}
-      app-cache-dir: 'kms-core-client'
+      app-cache-dir: "kms-core-client"
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -276,6 +276,40 @@ jobs:
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
+  # Core client unit tests
+  test-core-client-unit:
+    name: main/test-core-client-unit
+    # job permissions
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    needs: check-changes
+    if: needs.check-changes.outputs.changes-core-client == 'true'
+    uses: ./.github/workflows/common-testing-big-instance.yml
+    with:
+      working-directory: "./core-client"
+      package-name: "kms-core-client"
+      # Explicitly skip integration tests since they are all named something with centralized or threshold or full_gen_tests
+      args-tests: "-- --skip centralized --skip threshold --skip full_gen_tests"
+      app-cache-dir: "kms-core-client"
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      BOT_USERNAME: ${{ secrets.BOT_USERNAME }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   # Builds Docker image for core-client
   # Only runs on main/release branches after successful tests
@@ -299,8 +333,8 @@ jobs:
       docker-file: "./docker/core-client/Dockerfile"
       working-directory: "./core-client"
       push_image: true
-      image-name: 'kms/core-client'
-      app-cache-dir: 'kms-core-client'
+      image-name: "kms/core-client"
+      app-cache-dir: "kms-core-client"
       use-cgr-secrets: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -329,10 +363,10 @@ jobs:
     if: needs.check-changes.outputs.changes-core-grpc == 'true' || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
-      working-directory: './core/grpc'
-      args-tests: '--all-features'
-      package-name: 'kms-grpc'
-      app-cache-dir: 'kms-grpc'
+      working-directory: "./core/grpc"
+      args-tests: "--all-features"
+      package-name: "kms-grpc"
+      app-cache-dir: "kms-grpc"
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -347,7 +381,6 @@ jobs:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
 
   ############################################################################
   # Core Service Pipeline
@@ -381,19 +414,19 @@ jobs:
     env:
       EVENT_NAME: ${{ github.event_name }}
     steps:
-    - id: set-matrix
-      run: |
-        MATRIX="matrix={\"include\":["
-        if [[ "${EVENT_NAME}" == "schedule" ]]; then
-          # Nightly tests: Run comprehensive test suite in release mode
-          MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly_tests\"}"
-        else
-          # Regular tests: Run different test suites in parallel with specific features
-          MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly_tests\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly_tests\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly_tests\"}"
-        fi
-        MATRIX="${MATRIX%,}]}"
-        echo "$MATRIX" >> "$GITHUB_OUTPUT"
-        echo "$MATRIX"
+      - id: set-matrix
+        run: |
+          MATRIX="matrix={\"include\":["
+          if [[ "${EVENT_NAME}" == "schedule" ]]; then
+            # Nightly tests: Run comprehensive test suite in release mode
+            MATRIX="${MATRIX}{\"args-tests\":\"--release -F slow_tests -F s3_tests -F insecure nightly_tests\"}"
+          else
+            # Regular tests: Run different test suites in parallel with specific features
+            MATRIX="${MATRIX}{\"args-tests\":\"-F testing --lib\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure default_user_decryption_threshold -- --skip nightly_tests\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure threshold -- --skip default_user_decryption_threshold --skip nightly_tests\"},{\"args-tests\":\"-F slow_tests -F s3_tests -F insecure -- --skip threshold --skip nightly_tests\"}"
+          fi
+          MATRIX="${MATRIX%,}]}"
+          echo "$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "$MATRIX"
 
   # Runs core service tests based on the matrix configuration
   # Uses big instance for better performance and includes:
@@ -420,13 +453,13 @@ jobs:
       matrix: ${{fromJson(needs.prepare-matrix.outputs.matrix)}}
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
-      working-directory: './core/service'
+      working-directory: "./core/service"
       args-tests: ${{ matrix.args-tests }}
       run-minio: true
       run-wasm: true
-      package-name: 'kms'
-      slab-backend: 'big-instance-service'
-      app-cache-dir: 'kms'
+      package-name: "kms"
+      slab-backend: "big-instance-service"
+      app-cache-dir: "kms"
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -441,7 +474,6 @@ jobs:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
 
   # Builds the core service Docker image
   # Only runs on main/release branches after successful tests
@@ -465,8 +497,8 @@ jobs:
       docker-file: "./docker/core/service/Dockerfile"
       working-directory: "./core/service"
       push_image: true
-      image-name: 'kms/core-service'
-      app-cache-dir: 'kms'
+      image-name: "kms/core-service"
+      app-cache-dir: "kms"
       use-cgr-secrets: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -496,8 +528,8 @@ jobs:
       docker-file-enclave: "./docker/core/service/enclave.dockerfile"
       working-directory: "./core/service"
       push_image: true
-      image-name: 'kms/core-service'
-      image-enclave-name: 'kms/core-service-enclave'
+      image-name: "kms/core-service"
+      image-enclave-name: "kms/core-service-enclave"
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
@@ -532,12 +564,12 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true'
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
-      working-directory: './core/threshold'
+      working-directory: "./core/threshold"
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test run in parallel to 4
-      args-tests: '-F slow_tests --lib'
-      package-name: 'threshold-fhe'
-      app-cache-dir: 'threshold-fhe'
+      args-tests: "-F slow_tests --lib"
+      package-name: "threshold-fhe"
+      app-cache-dir: "threshold-fhe"
       nextest-test-threads: 4
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -553,7 +585,6 @@ jobs:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
 
   # Runs extended threshold tests on main/release branches
   # Includes Redis integration and all test suites
@@ -572,13 +603,13 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && contains(fromJSON('["release/", "main"]'), github.ref) || github.ref == 'refs/heads/main'
     uses: ./.github/workflows/common-testing-big-instance.yml
     with:
-      working-directory: './core/threshold'
+      working-directory: "./core/threshold"
       # with the rayon pool, each test uses more thread to run. We run those tests on a 16 core machine
       # and limit the number of test ran in parallel to 4
-      args-tests: '-F slow_tests --lib'
+      args-tests: "-F slow_tests --lib"
       run-redis: true
-      package-name: 'threshold-fhe'
-      app-cache-dir: 'threshold-fhe'
+      package-name: "threshold-fhe"
+      app-cache-dir: "threshold-fhe"
       nextest-test-threads: 4
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
@@ -611,10 +642,10 @@ jobs:
     if: needs.check-changes.outputs.changes-core-threshold == 'true' && startsWith(github.head_ref, 'dependabot/')
     uses: ./.github/workflows/common-testing.yml
     with:
-      working-directory: './core/threshold'
-      args-tests: '--lib'
-      package-name: 'threshold-fhe'
-      app-cache-dir: 'threshold-fhe'
+      working-directory: "./core/threshold"
+      args-tests: "--lib"
+      package-name: "threshold-fhe"
+      app-cache-dir: "threshold-fhe"
     secrets:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -625,8 +656,6 @@ jobs:
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
-
 
   ############################################################################
   # Build rust golden image
@@ -649,8 +678,8 @@ jobs:
       docker-file: "./docker/base/Dockerfile"
       working-directory: "./base"
       push_image: true
-      image-name: 'kms/rust-golden-image'
-      app-cache-dir: 'kms-base'
+      image-name: "kms/rust-golden-image"
+      app-cache-dir: "kms-base"
       use-cgr-secrets: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -658,7 +687,6 @@ jobs:
       AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
 
   ############################################################################
   # ██████╗ ██████╗  ██████╗  ██████╗  ██████╗██████╗
@@ -753,6 +781,7 @@ jobs:
     needs:
       - test-backward-compatibility
       - test-core-client
+      - test-core-client-unit
       - test-grpc
       - test-core-service
       - test-core-threshold-pr
