@@ -35,21 +35,6 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
         )?,
     }
 
-    // Node info
-    if let Some(node_info) = &result.node_info {
-        writeln!(output, "\n[NODE INFO]:")?;
-        writeln!(output, "  Type: {}", node_info.node_type)?;
-        if node_info.node_type == "threshold" {
-            writeln!(output, "  Party ID: {}", node_info.my_party_id)?;
-            writeln!(
-                output,
-                "  Threshold: {} required",
-                node_info.threshold_required
-            )?;
-            writeln!(output, "  Nodes Reachable: {}", node_info.nodes_reachable)?;
-        }
-    }
-
     // Config validation
     if let Some(config) = &result.config_valid {
         writeln!(output, "\n[CONFIG]:")?;
@@ -137,54 +122,41 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
         }
     }
 
-    // Peer status for threshold
-    if let Some(peers) = &result.peer_status {
-        writeln!(output, "\n[PEER STATUS]:")?;
-        let reachable = peers.iter().filter(|p| p.reachable).count();
-        writeln!(output, "  {} of {} peers reachable", reachable, peers.len())?;
+    // Peer status for threshold for each of the contexts
+    if let Some(contexts) = &result.context_info {
+        for context in contexts {
+            writeln!(
+                output,
+                "\n[PEER STATUS FOR CONTEXT {:?}]:",
+                context.context_id.clone().map(|c| c.request_id)
+            )?;
+            let reachable = context.peers_status.iter().filter(|p| p.reachable).count();
+            writeln!(
+                output,
+                "  {} of {} peers reachable",
+                reachable,
+                context.peers_status.len()
+            )?;
 
-        for peer in peers {
-            if peer.reachable {
-                writeln!(
-                    output,
-                    "  [OK] Party {} @ {} ({}ms)",
-                    peer.peer_id, peer.endpoint, peer.latency_ms
-                )?;
-
-                // Display key material in consistent format with host
-                writeln!(output, "       FHE Keys: {}", peer.fhe_key_ids.len())?;
-                for key_id in &peer.fhe_key_ids {
-                    writeln!(output, "         - {}", key_id)?;
+            for peer in &context.peers_status {
+                if peer.reachable {
+                    writeln!(
+                        output,
+                        "  [OK] Party {} @ {} ({}ms)",
+                        peer.peer_id, peer.endpoint, peer.latency_ms
+                    )?;
+                } else {
+                    writeln!(
+                        output,
+                        "  [FAIL] Party {} @ {}",
+                        peer.peer_id, peer.endpoint
+                    )?;
+                    writeln!(
+                        output,
+                        "         Error: {}",
+                        peer.error.as_ref().unwrap_or(&"Unreachable".to_string())
+                    )?;
                 }
-
-                writeln!(output, "       CRS Keys: {}", peer.crs_ids.len())?;
-                for key_id in &peer.crs_ids {
-                    writeln!(output, "         - {}", key_id)?;
-                }
-
-                writeln!(
-                    output,
-                    "       Preprocessing: {}",
-                    peer.preprocessing_key_ids.len()
-                )?;
-                for key_id in &peer.preprocessing_key_ids {
-                    writeln!(output, "         - {}", key_id)?;
-                }
-
-                if !peer.storage_info.is_empty() {
-                    writeln!(output, "       Storage: {}", peer.storage_info)?;
-                }
-            } else {
-                writeln!(
-                    output,
-                    "  [FAIL] Party {} @ {}",
-                    peer.peer_id, peer.endpoint
-                )?;
-                writeln!(
-                    output,
-                    "         Error: {}",
-                    peer.error.as_ref().unwrap_or(&"Unreachable".to_string())
-                )?;
             }
         }
     }

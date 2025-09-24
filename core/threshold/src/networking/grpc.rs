@@ -1,12 +1,7 @@
 //! gRPC-based networking.
 
-mod gen {
-    #![allow(clippy::derive_partial_eq_without_eq)]
-    tonic::include_proto!("ddec_networking");
-}
-
-use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
-use self::gen::{SendValueRequest, SendValueResponse};
+use super::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
+use super::gen::{SendValueRequest, SendValueResponse};
 use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
 use super::tls::extract_subject_from_cert;
 use super::NetworkMode;
@@ -18,11 +13,13 @@ use crate::networking::constants::{
     NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
     SESSION_CLEANUP_INTERVAL_SECS, SESSION_STATUS_UPDATE_INTERVAL_SECS,
 };
+use crate::networking::health_check::HealthCheckSession;
 use crate::networking::Networking;
 use crate::session_id::SessionId;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, Weak};
 
 use tokio::sync::{
@@ -317,6 +314,41 @@ impl GrpcNetworkingManager {
             #[cfg(feature = "testing")]
             force_tls,
         })
+    }
+
+    pub async fn make_healthcheck_session(
+        &self,
+        context_id: SessionId,
+        role_assignment: &RoleAssignment,
+        my_role: Role,
+    ) -> anyhow::Result<HealthCheckSession> {
+        let mut others = role_assignment.clone();
+        let owner = match others.remove(&my_role) {
+            Some(owner) => owner,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "My role {:?} not found in role assignment {:?}",
+                    my_role,
+                    role_assignment
+                ));
+            }
+        };
+
+        let mut connection_channels = HashMap::new();
+        for (role, identity) in others.inner.into_iter() {
+            let channel = self
+                .sending_service
+                .connect_to_party(identity.clone())
+                .await?;
+            connection_channels.insert((role, identity), channel);
+        }
+
+        Ok(HealthCheckSession::new(
+            owner,
+            my_role,
+            context_id,
+            connection_channels,
+        ))
     }
 
     /// Create a new session from the network manager.
@@ -809,17 +841,17 @@ fn parse_identity_context_from_cert(
 // Verify that the sender in the tag matches the identity extracted from the TLS certificate
 fn sender_verification(
     #[cfg(feature = "testing")] force_tls: bool,
-    tag: &Tag,
+    tag_sender: &MpcIdentity,
     valid_tls_sender: Option<String>,
 ) -> Result<(), Box<tonic::Status>> {
     if let Some(sender) = valid_tls_sender {
         // tag.sender is an the MPC identity, this should match the CN in the certificate
-        if sender != tag.sender.0 {
+        if sender != tag_sender.0 {
             return Err(Box::new(tonic::Status::new(
                 tonic::Code::Unauthenticated,
                 format!(
                     "wrong sender: expected {sender} to be in in tag {}",
-                    tag.sender
+                    tag_sender
                 ),
             )));
         }
@@ -858,7 +890,6 @@ fn sender_verification(
             )));
         }
     }
-    tracing::debug!("passed sender verification, tag is {:?}", tag);
     Ok(())
 }
 
@@ -889,127 +920,124 @@ impl Gnetworking for NetworkingImpl {
         .map_err(|boxed| *boxed)?;
 
         let request = request.into_inner();
-        let tag = bc2wrap::deserialize::<Tag>(&request.tag).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                format!("failed to parse value: {}", e),
-            )
-        })?;
+        let tag = bc2wrap::deserialize::<Tag>(&request.tag);
 
-        // Extract context ID
-        // If TLS is used, it is taken from the certificate and is trusted
-        let context_id = match valid_tls_sender_and_context {
-            Some((_, context_id)) => context_id,
-            None => tag.context_id,
-        };
+        match tag {
+            Ok(tag) => {
+                // Extract context ID
+                // If TLS is used, it is taken from the certificate and is trusted
+                let context_id = match valid_tls_sender_and_context {
+                    Some((_, context_id)) => context_id,
+                    None => tag.context_id,
+                };
 
-        #[cfg(feature = "choreographer")]
-        {
-            match NETWORK_RECEIVED_MEASUREMENT.entry(tag.session_id) {
-                dashmap::Entry::Occupied(mut occupied_entry) => {
-                    let entry = occupied_entry.get_mut();
-                    *entry += request.tag.len() + request.value.len()
+                sender_verification(
+                    #[cfg(feature = "testing")]
+                    self.force_tls,
+                    &tag.sender,
+                    valid_tls_sender_and_context.map(|(sender, _)| sender),
+                )
+                .map_err(|e| *e)?;
+
+                tracing::debug!(
+                    "Starting session lookup for session_id={:?}, sender={:?}, round={}",
+                    tag.session_id,
+                    tag.sender,
+                    tag.round_counter
+                );
+
+                #[cfg(feature = "choreographer")]
+                {
+                    match NETWORK_RECEIVED_MEASUREMENT.entry(tag.session_id) {
+                        dashmap::Entry::Occupied(mut occupied_entry) => {
+                            let entry = occupied_entry.get_mut();
+                            *entry += request.tag.len() + request.value.len()
+                        }
+                        dashmap::Entry::Vacant(vacant_entry) => {
+                            vacant_entry.insert(request.tag.len() + request.value.len());
+                        }
+                    };
                 }
-                dashmap::Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(request.tag.len() + request.value.len());
-                }
-            };
-        }
 
-        sender_verification(
-            #[cfg(feature = "testing")]
-            self.force_tls,
-            &tag,
-            valid_tls_sender_and_context.map(|(sender, _)| sender),
-        )
-        .map_err(|e| *e)?;
-
-        tracing::debug!(
-            "Starting session lookup for session_id={:?}, sender={:?}, round={}",
-            tag.session_id,
-            tag.sender,
-            tag.round_counter
-        );
-
-        // First try with only read lock to avoid blocking
-        let tx = if let Some(session_status) = self.session_store.get(&tag.session_id) {
-            match self.fetch_tx_channel(session_status.value(), &tag)? {
-                Some(tx) => tx,
-                None => {
-                    // If the session is completed or inactive, we return early
-                    return Ok(tonic::Response::new(SendValueResponse::default()));
-                }
-            }
-        } else {
-            // We write lock the session store to create a new one
-            match self.session_store.entry(tag.session_id) {
-                dashmap::Entry::Occupied(occupied_entry) => {
-                    // Can be occupied if ever state has changed by the time we reach this branch of the if statement
-                    match self.fetch_tx_channel(occupied_entry.get(), &tag)? {
+                // First try with only read lock to avoid blocking
+                let tx = if let Some(session_status) = self.session_store.get(&tag.session_id) {
+                    match self.fetch_tx_channel(session_status.value(), &tag)? {
                         Some(tx) => tx,
                         None => {
                             // If the session is completed or inactive, we return early
                             return Ok(tonic::Response::new(SendValueResponse::default()));
                         }
                     }
-                }
-                dashmap::Entry::Vacant(vacant_entry) => {
-                    tracing::debug!(
+                } else {
+                    // We write lock the session store to create a new one
+                    match self.session_store.entry(tag.session_id) {
+                        dashmap::Entry::Occupied(occupied_entry) => {
+                            // Can be occupied if ever state has changed by the time we reach this branch of the if statement
+                            match self.fetch_tx_channel(occupied_entry.get(), &tag)? {
+                                Some(tx) => tx,
+                                None => {
+                                    // If the session is completed or inactive, we return early
+                                    return Ok(tonic::Response::new(SendValueResponse::default()));
+                                }
+                            }
+                        }
+                        dashmap::Entry::Vacant(vacant_entry) => {
+                            tracing::debug!(
                         "Session {:?} not found in session_store, creating a new inactive one.",
                         tag.session_id
                     );
-                    let mut opened_session_tracker_entry = self
-                        .opened_sessions_tracker
-                        .entry(tag.sender.clone())
-                        .or_insert(0);
-                    if *opened_session_tracker_entry >= self.max_opened_inactive_sessions {
-                        tracing::warn!(
+                            let mut opened_session_tracker_entry = self
+                                .opened_sessions_tracker
+                                .entry(tag.sender.clone())
+                                .or_insert(0);
+                            if *opened_session_tracker_entry >= self.max_opened_inactive_sessions {
+                                tracing::warn!(
                             "Too many inactive sessions opened by {:?}. Got {}, Max allowed: {}",
                             &tag.sender,
                             *opened_session_tracker_entry,
                             self.max_opened_inactive_sessions
                         );
-                        return Err(tonic::Status::new(
+                                return Err(tonic::Status::new(
                             tonic::Code::ResourceExhausted,
                             format!(
                                 "Too many inactive sessions opened by {:?}. Got {}, Max allowed: {}",
                                 tag.sender,*opened_session_tracker_entry, self.max_opened_inactive_sessions
                             ),
                         ));
+                            }
+                            // Create a new session with an inactive status
+                            let channel_maps = DashMap::new();
+                            let (tx, rx) = channel::<NetworkRoundValue>(self.channel_size_limit);
+                            let tx = Arc::new(tx);
+                            channel_maps.insert(
+                                tag.sender.clone(),
+                                (Arc::clone(&tx), Arc::new(Mutex::new(rx))),
+                            );
+
+                            // Insert the new session into the store
+                            vacant_entry.insert(SessionStatus::Inactive((
+                                MessageQueueStore::new_uninitialized(channel_maps),
+                                Instant::now(),
+                            )));
+                            *opened_session_tracker_entry += 1;
+                            tx
+                        }
                     }
-                    // Create a new session with an inactive status
-                    let channel_maps = DashMap::new();
-                    let (tx, rx) = channel::<NetworkRoundValue>(self.channel_size_limit);
-                    let tx = Arc::new(tx);
-                    channel_maps.insert(
-                        tag.sender.clone(),
-                        (Arc::clone(&tx), Arc::new(Mutex::new(rx))),
-                    );
+                };
 
-                    // Insert the new session into the store
-                    vacant_entry.insert(SessionStatus::Inactive((
-                        MessageQueueStore::new_uninitialized(channel_maps),
-                        Instant::now(),
-                    )));
-                    *opened_session_tracker_entry += 1;
-                    tx
-                }
-            }
-        };
+                // Send message - ignore send errors as receiver may have dropped
+                let send_result = tokio::time::timeout(
+                    self.max_waiting_time_for_message_queue,
+                    tx.send(NetworkRoundValue {
+                        value: request.value,
+                        context_id,
+                        round_counter: tag.round_counter,
+                    }),
+                )
+                .await;
 
-        // Send message - ignore send errors as receiver may have dropped
-        let send_result = tokio::time::timeout(
-            self.max_waiting_time_for_message_queue,
-            tx.send(NetworkRoundValue {
-                value: request.value,
-                context_id,
-                round_counter: tag.round_counter,
-            }),
-        )
-        .await;
-
-        if let Err(e) = send_result {
-            tracing::warn!(
+                if let Err(e) = send_result {
+                    tracing::warn!(
             "Failed to process value for session {:?}, sender {:?}, round {}. Queue has been full for {} seconds.",
             tag.session_id,
             &tag.sender,
@@ -1017,16 +1045,37 @@ impl Gnetworking for NetworkingImpl {
             self.max_waiting_time_for_message_queue.as_secs()
         );
 
-            return Err(tonic::Status::new(
-                tonic::Code::ResourceExhausted,
-                format!(
-                    "Failed to process value for session {:?}, sender {:?}, round {}: {:?}",
-                    tag.session_id, tag.sender, tag.round_counter, e
-                ),
-            ));
-        }
+                    return Err(tonic::Status::new(
+                        tonic::Code::ResourceExhausted,
+                        format!(
+                            "Failed to process value for session {:?}, sender {:?}, round {}: {:?}",
+                            tag.session_id, tag.sender, tag.round_counter, e
+                        ),
+                    ));
+                }
 
-        Ok(tonic::Response::new(SendValueResponse::default()))
+                Ok(tonic::Response::new(SendValueResponse::default()))
+            }
+            Err(_) => {
+                let health_tag = bc2wrap::deserialize::<HealthTag>(&request.tag).map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("failed to parse value: {} as a Tag or HealthTag", e),
+                    )
+                })?;
+
+                sender_verification(
+                    #[cfg(feature = "testing")]
+                    self.force_tls,
+                    &health_tag.sender,
+                    valid_tls_sender_and_context.map(|(sender, _)| sender),
+                )
+                .map_err(|e| *e)?;
+
+                tracing::info!("Received a HealthPing from {}", health_tag.sender);
+                Ok(tonic::Response::new(SendValueResponse::default()))
+            }
+        }
     }
 }
 
@@ -1036,4 +1085,10 @@ pub struct Tag {
     pub(crate) sender: MpcIdentity,
     pub(crate) context_id: SessionId,
     pub(crate) round_counter: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HealthTag {
+    pub(crate) sender: MpcIdentity,
+    pub(crate) context_id: SessionId,
 }
