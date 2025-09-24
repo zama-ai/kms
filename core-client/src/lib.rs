@@ -1111,7 +1111,7 @@ async fn fetch_elements(
 #[allow(clippy::too_many_arguments)]
 async fn do_keygen(
     internal_client: &mut Client,
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cc_conf: &CoreClientConfig,
     cmd_conf: &CmdConfig,
@@ -1166,7 +1166,7 @@ async fn do_keygen(
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
 
-    for (_party_id, ce) in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter() {
         let req_cloned = dkg_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
@@ -1213,7 +1213,7 @@ async fn do_keygen(
 #[allow(clippy::too_many_arguments)]
 async fn do_crsgen(
     internal_client: &mut Client,
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cc_conf: &CoreClientConfig,
     cmd_conf: &CmdConfig,
@@ -1247,7 +1247,7 @@ async fn do_crsgen(
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
 
-    for (_party_id, ce) in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter() {
         let req_cloned = crs_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
@@ -1294,7 +1294,7 @@ async fn do_crsgen(
 #[allow(clippy::too_many_arguments)]
 async fn do_preproc(
     internal_client: &mut Client,
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     cmd_conf: &CmdConfig,
     num_parties: usize,
@@ -1311,7 +1311,7 @@ async fn do_preproc(
     // make parallel requests by calling insecure keygen in a thread
     let mut req_tasks = JoinSet::new();
 
-    for (_party_id, ce) in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter() {
         let req_cloned = pp_req.clone();
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
@@ -1336,10 +1336,10 @@ async fn do_preproc(
 }
 
 async fn do_get_operator_pub_keys(
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
 ) -> anyhow::Result<Vec<String>> {
     let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
@@ -1373,7 +1373,7 @@ async fn do_get_operator_pub_keys(
 }
 
 async fn do_new_custodian_context(
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     rng: &mut AesRng,
     threshold: u32,
     custodian_setup_msg: Vec<InternalCustodianSetupMessage>,
@@ -1390,7 +1390,7 @@ async fn do_new_custodian_context(
         previous_context_id: None, // TODO(#2748) not really used now, should be refactored
         threshold,
     };
-    for (_party_id, ce) in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let new_context_cloned = new_context.clone();
         req_tasks.spawn(async move {
@@ -1410,11 +1410,11 @@ async fn do_new_custodian_context(
 }
 
 async fn do_custodian_recovery_init(
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     overwrite_ephemeral_key: bool,
 ) -> anyhow::Result<Vec<InternalRecoveryRequest>> {
     let mut req_tasks = JoinSet::new();
-    for (_party_id, ce) in core_endpoints.iter_mut() {
+    for (_party_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         req_tasks.spawn(async move {
             cur_client
@@ -1436,12 +1436,12 @@ async fn do_custodian_recovery_init(
 }
 
 async fn do_custodian_backup_recovery(
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     custodian_context_id: RequestId,
     custodian_recovery_outputs: Vec<InternalCustodianRecoveryOutput>,
 ) -> anyhow::Result<()> {
     let mut req_tasks = JoinSet::new();
-    for (core_idx, ce) in core_endpoints.iter_mut() {
+    for (core_idx, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let core_idx = *core_idx as usize;
         // We assume the core client endpoints are ordered by the server identity
@@ -1611,7 +1611,11 @@ pub async fn execute_cmd(
                 "http://".to_string() + cur_core.address.as_str()
             };
 
-            tracing::info!("Connecting to {:?}", url);
+            tracing::info!(
+                "Connecting to party {:?} via URL {:?}",
+                cur_core.party_id,
+                url
+            );
 
             let core_endpoint_req = retry!(
                 CoreServiceEndpointClient::connect(url.clone()).await,
@@ -1724,8 +1728,8 @@ pub async fn execute_cmd(
                 let req_id = RequestId::new_random(&mut rng);
                 let internal_client = internal_client.clone();
                 let ct_batch = ct_batch.clone();
-                let mut core_endpoints_req = core_endpoints_req.clone();
-                let mut core_endpoints_resp = core_endpoints_resp.clone();
+                let core_endpoints_req = core_endpoints_req.clone();
+                let core_endpoints_resp = core_endpoints_resp.clone();
                 let ptxt = ptxt.clone();
                 let kms_addrs = kms_addrs.clone();
 
@@ -1744,7 +1748,7 @@ pub async fn execute_cmd(
                     // make parallel requests by calling [decrypt] in a thread
                     let mut req_tasks = JoinSet::new();
 
-                    for (_party_id, ce) in core_endpoints_req.iter_mut() {
+                    for (_party_id, ce) in core_endpoints_req.iter() {
                         let req_cloned = dec_req.clone();
                         let mut cur_client = ce.clone();
                         req_tasks.spawn(async move {
@@ -1767,7 +1771,7 @@ pub async fn execute_cmd(
                     );
 
                     let resp_response_vec = get_public_decrypt_responses(
-                        &mut core_endpoints_resp,
+                        &core_endpoints_resp,
                         Some(dec_req),
                         Some(ptxt),
                         req_id,
@@ -1851,8 +1855,8 @@ pub async fn execute_cmd(
                 internal_client,
                 ct_batch,
                 key_id,
-                &mut core_endpoints_req,
-                &mut core_endpoints_resp,
+                &core_endpoints_req,
+                &core_endpoints_resp,
                 ptxt,
                 num_parties,
                 max_iter,
@@ -1868,7 +1872,7 @@ pub async fn execute_cmd(
             tracing::info!("Key generation with parameter {}.", param.as_str_name());
             let req_id = do_keygen(
                 &mut internal_client,
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1893,7 +1897,7 @@ pub async fn execute_cmd(
             let dummy_preproc_id = RequestId::new_random(&mut rng);
             let req_id = do_keygen(
                 &mut internal_client,
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1915,7 +1919,7 @@ pub async fn execute_cmd(
 
             let req_id = do_crsgen(
                 &mut internal_client,
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1938,7 +1942,7 @@ pub async fn execute_cmd(
 
             let req_id = do_crsgen(
                 &mut internal_client,
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 &mut rng,
                 &cc_conf,
                 cmd_config,
@@ -1958,7 +1962,7 @@ pub async fn execute_cmd(
 
             let req_id = do_preproc(
                 &mut internal_client,
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 &mut rng,
                 cmd_config,
                 num_parties,
@@ -1990,7 +1994,7 @@ pub async fn execute_cmd(
         }
         CCCommand::PreprocKeyGenResult(result_parameters) => {
             let req_id: RequestId = result_parameters.request_id;
-            let _ = get_preproc_keygen_responses(&mut core_endpoints_req, req_id, max_iter).await?;
+            let _ = get_preproc_keygen_responses(&core_endpoints_req, req_id, max_iter).await?;
             vec![(Some(req_id), "preproc result queried".to_string())]
         }
         CCCommand::KeyGenResult(result_parameters) => {
@@ -2001,7 +2005,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 req_id,
                 max_iter,
                 false,
@@ -2031,7 +2035,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_keygen_responses(
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 req_id,
                 max_iter,
                 true,
@@ -2061,7 +2065,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_public_decrypt_responses(
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 None,
                 None,
                 req_id,
@@ -2083,7 +2087,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 req_id,
                 max_iter,
                 false,
@@ -2113,7 +2117,7 @@ pub async fn execute_cmd(
             };
             let req_id: RequestId = result_parameters.request_id;
             let resp_response_vec = get_crsgen_responses(
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 req_id,
                 max_iter,
                 true,
@@ -2143,7 +2147,7 @@ pub async fn execute_cmd(
                 setup_msgs.push(cur_setup);
             }
             let context_id = do_new_custodian_context(
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 &mut rng,
                 new_custodian_context_parameters.threshold,
                 setup_msgs,
@@ -2155,15 +2159,15 @@ pub async fn execute_cmd(
             )]
         }
         CCCommand::GetOperatorPublicKey(NoParameters {}) => {
-            let pks = do_get_operator_pub_keys(&mut core_endpoints_req).await?;
+            let pks = do_get_operator_pub_keys(&core_endpoints_req).await?;
             pks.into_iter().map(|pk| (None, pk)).collect::<Vec<_>>()
         }
         CCCommand::CustodianRecoveryInit(RecoveryInitParameters {
             overwrite_ephemeral_key,
             operator_recovery_resp_paths,
         }) => {
-            let res = do_custodian_recovery_init(&mut core_endpoints_req, *overwrite_ephemeral_key)
-                .await?;
+            let res =
+                do_custodian_recovery_init(&core_endpoints_req, *overwrite_ephemeral_key).await?;
             assert_eq!(res.len(), operator_recovery_resp_paths.len());
             for (op_zero_idx, cur_path) in operator_recovery_resp_paths.iter().enumerate() {
                 let cur_res = res
@@ -2188,7 +2192,7 @@ pub async fn execute_cmd(
                 custodian_outputs.push(read_recovery);
             }
             do_custodian_backup_recovery(
-                &mut core_endpoints_req,
+                &core_endpoints_req,
                 *custodian_context_id,
                 custodian_outputs,
             )
@@ -2250,8 +2254,8 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
     internal_client: Arc<RwLock<Client>>,
     ct_batch: Vec<TypedCiphertext>,
     key_id: KeyId,
-    core_endpoints_req: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
-    core_endpoints_resp: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_req: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints_resp: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     ptxt: TypedPlaintext,
     num_parties: usize,
     max_iter: usize,
@@ -2266,8 +2270,8 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
         let req_id = RequestId::new_random(rng);
         let internal_client = internal_client.clone();
         let ct_batch = ct_batch.clone();
-        let mut core_endpoints_req = core_endpoints_req.clone();
-        let mut core_endpoints_resp = core_endpoints_resp.clone();
+        let core_endpoints_req = core_endpoints_req.clone();
+        let core_endpoints_resp = core_endpoints_resp.clone();
         let original_plaintext = ptxt.clone();
 
         // start timing measurement for this request
@@ -2287,7 +2291,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
             // make parallel requests by calling user decryption in a thread
             let mut req_tasks = JoinSet::new();
 
-            for ce in core_endpoints_req.values_mut() {
+            for ce in core_endpoints_req.values() {
                 let req_cloned = user_decrypt_req.clone();
                 let mut cur_client = ce.clone();
                 req_tasks.spawn(async move {
@@ -2312,7 +2316,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
 
             // get all responses
             let mut resp_tasks = JoinSet::new();
-            for ce in core_endpoints_resp.values_mut() {
+            for ce in core_endpoints_resp.values() {
                 let mut cur_client = ce.clone();
                 let req_id_clone = user_decrypt_req.request_id.as_ref().unwrap().clone();
 
@@ -2431,7 +2435,7 @@ async fn do_user_decrypt<R: Rng + CryptoRng>(
 
 #[allow(clippy::too_many_arguments)]
 async fn get_public_decrypt_responses(
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     dec_req: Option<PublicDecryptionRequest>,
     expected_answer: Option<TypedPlaintext>,
     request_id: RequestId,
@@ -2444,7 +2448,7 @@ async fn get_public_decrypt_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter_mut() {
+    for (core_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let core_id = *core_id; // Copy the key so it is owned in the async block
 
@@ -2567,13 +2571,13 @@ async fn get_public_decrypt_responses(
 }
 
 async fn get_preproc_keygen_responses(
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
 ) -> anyhow::Result<Vec<KeyGenPreprocResult>> {
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, client) in core_endpoints.iter_mut() {
+    for (core_id, client) in core_endpoints.iter() {
         let mut client = client.clone();
         let core_id = *core_id; // Copy the key so it is owned in the async block
         resp_tasks.spawn(async move {
@@ -2625,7 +2629,7 @@ async fn get_preproc_keygen_responses(
 }
 
 async fn get_keygen_responses(
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
     insecure: bool,
@@ -2634,7 +2638,7 @@ async fn get_keygen_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter_mut() {
+    for (core_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let core_id = *core_id; // Copy the key so it is owned in the async block
 
@@ -2702,7 +2706,7 @@ async fn get_keygen_responses(
 }
 
 async fn get_crsgen_responses(
-    core_endpoints: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    core_endpoints: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     request_id: RequestId,
     max_iter: usize,
     insecure: bool,
@@ -2711,7 +2715,7 @@ async fn get_crsgen_responses(
     // get all responses
     let mut resp_tasks = JoinSet::new();
     //We use enumerate to be able to sort the responses so they are determinstic for a given config
-    for (core_id, ce) in core_endpoints.iter_mut() {
+    for (core_id, ce) in core_endpoints.iter() {
         let mut cur_client = ce.clone();
         let core_id = *core_id; // Copy the key so it is owned in the async block
 
