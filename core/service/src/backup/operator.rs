@@ -308,10 +308,17 @@ impl RecoveryValidationMaterial {
             sk,
         )?;
         let signature_buf = signature.sig.to_vec();
-        Ok(Self {
+        let res = Self {
             payload,
             signature: signature_buf,
-        })
+        };
+        // Sanity check
+        if !res.validate(&PublicSigKey::from_sk(sk)) {
+            return Err(anyhow_error_and_log(
+                "Could not validate newly created recovery validation material",
+            ));
+        }
+        Ok(res)
     }
 
     pub fn get(&self, role: &Role) -> anyhow::Result<&[u8]> {
@@ -735,5 +742,38 @@ impl Operator {
         }
         let out = secretsharing::reconstruct(all_sharings, self.threshold)?;
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        cryptography::{backup_pke::keygen, internal_crypto_types::gen_sig_keys},
+        engine::base::derive_request_id,
+    };
+    use aes_prng::AesRng;
+    use kms_grpc::kms::v1::CustodianContext;
+    use rand::SeedableRng;
+
+    #[test]
+    fn validate_recovery_validation_material() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let (verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let (enc_key, _dec_key) = keygen(&mut rng).unwrap();
+        let backup_id = derive_request_id("test").unwrap();
+        let commitments = BTreeMap::new();
+        let custodian_context = CustodianContext {
+            custodian_nodes: Vec::new(),
+            context_id: Some(backup_id.into()),
+            previous_context_id: None,
+            threshold: 1,
+        };
+        let internal_custodian_context =
+            InternalCustodianContext::new(custodian_context, enc_key).unwrap();
+        let rvm =
+            RecoveryValidationMaterial::new(commitments, internal_custodian_context, &sig_key)
+                .unwrap();
+        assert!(rvm.validate(&verf_key));
     }
 }

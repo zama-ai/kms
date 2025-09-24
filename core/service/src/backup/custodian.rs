@@ -13,10 +13,8 @@ use kms_grpc::rpc_types::InternalCustodianRecoveryOutput;
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::{named::Named, safe_serialization::safe_deserialize, Versionize};
 use tfhe_versionable::VersionsDispatch;
@@ -131,7 +129,7 @@ pub struct InternalCustodianContext {
     pub threshold: u32,
     pub context_id: RequestId,
     pub previous_context_id: Option<RequestId>,
-    pub custodian_nodes: HashMap<Role, InternalCustodianSetupMessage>,
+    pub custodian_nodes: BTreeMap<Role, InternalCustodianSetupMessage>,
     pub backup_enc_key: BackupPublicKey,
 }
 
@@ -144,7 +142,7 @@ impl InternalCustodianContext {
         custodian_context: CustodianContext,
         backup_enc_key: BackupPublicKey,
     ) -> anyhow::Result<Self> {
-        let mut node_map = HashMap::new();
+        let mut node_map = BTreeMap::new();
         for setup_message in custodian_context.custodian_nodes.iter() {
             let internal_msg: InternalCustodianSetupMessage =
                 setup_message.to_owned().try_into()?;

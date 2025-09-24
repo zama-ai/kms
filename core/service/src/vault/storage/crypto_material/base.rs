@@ -2,6 +2,7 @@
 //!
 //! This module provides the foundational storage implementation used by
 //! both centralized and threshold KMS variants.
+use super::{check_data_exists, log_storage_success, CryptoMaterialReader};
 use crate::{
     anyhow_error_and_warn_log,
     backup::operator::{RecoveryRequestPayload, RecoveryValidationMaterial},
@@ -32,8 +33,6 @@ use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
-
-use super::{check_data_exists, log_storage_success, CryptoMaterialReader};
 
 /// A cached generic storage entity for the common data structures
 /// used by both the centralized and the threshold KMS.
@@ -647,6 +646,8 @@ where
                         true,
                     );
                 }
+
+                println!("Digest for roleof commitments: {:?}", commitments);
                 let commit_store_result = store_versioned_at_request_id(
                     &mut (*public_storage_guard),
                     &req_id,
