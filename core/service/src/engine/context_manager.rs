@@ -317,6 +317,8 @@ async fn gen_recovery_request_payload(
             .collect_vec(),
         (*sig_key).clone(),
         custodian_context.threshold as usize,
+        // the amount of custodians are defined by the initial context
+        custodian_context.custodian_nodes.len(),
     )?;
     let mut serialized_priv_key = Vec::new();
     safe_serialize(

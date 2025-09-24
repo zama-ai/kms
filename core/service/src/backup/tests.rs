@@ -63,6 +63,7 @@ fn operator_setup() {
             wrong_custodian_messages,
             signing_key,
             custodian_threshold,
+            custodian_count,
         );
         assert!(matches!(
             operator.unwrap_err(),
@@ -81,6 +82,7 @@ fn operator_setup() {
             wrong_custodian_messages,
             signing_key,
             custodian_threshold,
+            custodian_count,
         );
         assert!(matches!(
             operator.unwrap_err(),
@@ -96,6 +98,7 @@ fn operator_setup() {
             custodian_messages,
             signing_key,
             custodian_threshold,
+            custodian_count,
         )
         .unwrap();
     }
@@ -143,6 +146,7 @@ fn custodian_reencrypt() {
                 custodian_messages.clone(),
                 signing_key,
                 custodian_threshold,
+                custodian_count,
             )
             .unwrap()
         })
@@ -282,6 +286,7 @@ fn full_flow(
         &backup_id,
         operator_count,
         custodian_threshold,
+        custodian_count,
     );
     let backups = custodian_recover(
         &mut rng,
@@ -320,6 +325,7 @@ fn full_flow_drop_msg() {
         &backup_id,
         operator_count,
         custodian_threshold,
+        custodian_count,
     );
     // Drop first and last custodian
     let mnemonics_dropped: BTreeMap<Role, String> = mnemonics
@@ -382,6 +388,7 @@ fn full_flow_malicious_custodian_not_enough() {
         &backup_id,
         operator_count,
         custodian_threshold,
+        custodian_count,
     );
 }
 
@@ -405,6 +412,7 @@ fn full_flow_malicious_custodian_init() {
         &backup_id,
         operator_count,
         custodian_threshold,
+        custodian_count,
     );
 }
 
@@ -423,6 +431,7 @@ fn full_flow_malicious_custodian_second() {
         &backup_id,
         operator_count,
         custodian_threshold,
+        custodian_count,
     );
     // Change one custodian's mnemonic to an invalid one
     {
@@ -511,6 +520,7 @@ fn full_flow_malicious_operator() {
         &backup_id,
         operator_count,
         custodian_threshold,
+        custodian_count,
     );
     // Drop one operator's init messages and set another to something malicious
     {
@@ -576,6 +586,7 @@ fn operator_handle_init(
     backup_id: &RequestId,
     operator_count: usize,
     custodian_threshold: usize,
+    custodian_count: usize,
 ) -> (
     BTreeMap<Role, (Operator, RecoveryValidationMaterial, BackupPrivateKey)>, // Operator role to (Operator, validation material, ephemeral decryption key)
     BTreeMap<
@@ -606,6 +617,7 @@ fn operator_handle_init(
             setup_msgs.to_vec(),
             signing_key.clone(),
             custodian_threshold,
+            custodian_count,
         )
         .unwrap();
         let (backup_enc_key, backup_priv_key) = backup_pke::keygen(rng).unwrap();
