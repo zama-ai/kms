@@ -251,7 +251,6 @@ where
             }
         };
         let inner = request.into_inner();
-        let amount_custodians = inner.custodian_recovery_outputs.len(); // Amount of custodians get defined in this call
         let context_id: RequestId = parse_optional_proto_request_id(
             &inner.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
@@ -304,6 +303,8 @@ where
                     backup_vault.lock().await;
                 match backup_vault.keychain {
                     Some(KeychainProxy::SecretSharing(ref mut keychain)) => {
+                        // Amount of custodians get defined during context creation
+                        let amount_custodians =recovery_material.payload.custodian_context.custodian_nodes.len();
                         let operator = Operator::new(
                             self.my_role,
                             recovery_material.custodian_context().custodian_nodes.values().cloned().collect_vec(),
