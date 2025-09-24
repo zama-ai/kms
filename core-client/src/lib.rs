@@ -449,14 +449,14 @@ pub struct CipherParameters {
     /// Expected one of ebool, euint4, ..., euint2048
     #[clap(long, short = 'd')]
     pub data_type: FheType,
-    /// Boolean to activate ciphertext compression or not. Default: False.
+    /// Disable ciphertext compression. Default: False, i.e. compression is used.
     #[clap(long, short = 'c')]
-    pub compression: bool,
-    /// Boolean to do SnS preprocessing on the ciphertext or not.
+    pub no_compression: bool,
+    /// Disable SnS preprocessing on the ciphertext on the core-client.
     /// SnS preprocessing performs a PBS to convert 64-bit ciphertexts to 128-bit ones.
-    /// Default: False.
-    #[clap(long)]
-    pub precompute_sns: bool,
+    /// Default: False, i.e. the SNS is precomputed on the core client.
+    #[clap(long, short = 's')]
+    pub no_precompute_sns: bool,
     /// Key identifier to use for public/user decryption.
     #[clap(long, short = 'k')]
     pub key_id: KeyId,
@@ -744,8 +744,8 @@ pub async fn encrypt(
         &cipher_params.key_id.into(),
         party_id,
         EncryptionConfig {
-            compression: cipher_params.compression,
-            precompute_sns: cipher_params.precompute_sns,
+            compression: !cipher_params.no_compression,
+            precompute_sns: !cipher_params.no_precompute_sns,
         },
     )
     .await;
