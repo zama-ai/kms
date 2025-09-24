@@ -1516,16 +1516,6 @@ pub async fn execute_cmd(
 
     tracing::info!("Core Client Config: {:?}", cc_conf);
 
-    // Always fetch the public verfication keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
-    tracing::info!("Fetching verification keys. ({command:?})");
-    let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
-    let _ = fetch_elements(
-        &SIGNING_KEY_ID.to_string(),
-        &public_verf_types,
-        &cc_conf,
-        destination_prefix,
-    )
-    .await?;
     let mut rng = AesRng::from_entropy();
     let num_parties = cc_conf.cores.len();
 
@@ -1545,117 +1535,130 @@ pub async fn execute_cmd(
     };
 
     if let CCCommand::Encrypt(_) = command {
-        //Don't need to connect if we just do an encrypt
-    } else if cc_conf.kms_type == KmsType::Centralized {
-        // central cores
-
-        let address = cc_conf
-            .cores
-            .first()
-            .expect("No core address provided")
-            .address
-            .clone();
-
-        tracing::info!("Centralized Core Client - connecting to: {}", address);
-
-        // make sure address starts with http://
-        let url = if address.starts_with("http://") {
-            address
-        } else {
-            "http://".to_string() + &address
-        };
-
-        let core_endpoint_req = retry!(
-            CoreServiceEndpointClient::connect(url.clone()).await,
-            5,
-            100
-        )?;
-        // Centralized is always party 1
-        core_endpoints_req.insert(1, core_endpoint_req);
-
-        let core_endpoint_resp = retry!(
-            CoreServiceEndpointClient::connect(url.clone()).await,
-            5,
-            100
-        )?;
-        core_endpoints_resp.insert(1, core_endpoint_resp);
-
-        // there's only 1 party, so use index 1
-        pub_storage.insert(
-            1,
-            FileStorage::new(Some(destination_prefix), StorageType::PUB, None).unwrap(),
-        );
-        internal_client = Some(
-            Client::new_client(
-                client_storage,
-                pub_storage,
-                &client_param,
-                cc_conf.decryption_mode,
-            )
-            .await
-            .unwrap(),
-        );
-        tracing::info!("Centralized Client setup done.");
+        //Don't need to fetch or connect if we just do an encrypt
+    } else if let CCCommand::DoNothing(_) = command {
+        // Don't need to fetch or connect if we just do nothing
     } else {
-        // threshold cores
-        tracing::info!(
-            "Threshold Core Client - connecting to n={:?} KMS servers",
-            cc_conf.cores.len()
-        );
+        // Otherwise always fetch the public verfication keys, as otherwise the internal Client will complain when being constructed as it cannot validate the connection with the servers
+        tracing::info!("Fetching verification keys. ({command:?})");
+        let public_verf_types = vec![PubDataType::VerfAddress, PubDataType::VerfKey];
+        let _ = fetch_elements(
+            &SIGNING_KEY_ID.to_string(),
+            &public_verf_types,
+            &cc_conf,
+            destination_prefix,
+        )
+        .await?;
 
-        for cur_core in &cc_conf.cores {
-            // make sure address starts with http://
-            let url = if cur_core.address.starts_with("http://") {
-                cur_core.address.clone()
-            } else {
-                "http://".to_string() + cur_core.address.as_str()
-            };
+        match cc_conf.kms_type {
+            KmsType::Centralized => {
+                let address = cc_conf
+                    .cores
+                    .first()
+                    .expect("No core address provided")
+                    .address
+                    .clone();
 
-            tracing::info!(
-                "Connecting to party {:?} via URL {:?}",
-                cur_core.party_id,
-                url
-            );
+                tracing::info!("Centralized Core Client - connecting to: {}", address);
 
-            let core_endpoint_req = retry!(
-                CoreServiceEndpointClient::connect(url.clone()).await,
-                5,
-                100
-            )?;
-            core_endpoints_req.insert(cur_core.party_id as u32, core_endpoint_req);
+                // make sure address starts with http://
+                let url = if address.starts_with("http://") {
+                    address
+                } else {
+                    "http://".to_string() + &address
+                };
 
-            let core_endpoint_resp = retry!(
-                CoreServiceEndpointClient::connect(url.clone()).await,
-                5,
-                100
-            )?;
-            core_endpoints_resp.insert(cur_core.party_id as u32, core_endpoint_resp);
+                let core_endpoint_req = retry!(
+                    CoreServiceEndpointClient::connect(url.clone()).await,
+                    5,
+                    100
+                )?;
+                // Centralized is always party 1
+                core_endpoints_req.insert(1, core_endpoint_req);
 
-            pub_storage.insert(
-                cur_core.party_id as u32,
-                FileStorage::new(
-                    Some(destination_prefix),
-                    StorageType::PUB,
-                    Some(Role::indexed_from_one(cur_core.party_id)),
-                )
-                .unwrap(),
-            );
-        }
+                let core_endpoint_resp = retry!(
+                    CoreServiceEndpointClient::connect(url.clone()).await,
+                    5,
+                    100
+                )?;
+                core_endpoints_resp.insert(1, core_endpoint_resp);
 
-        internal_client = Some(
-            Client::new_client(
-                client_storage,
-                pub_storage,
-                &client_param,
-                cc_conf.decryption_mode,
-            )
-            .await
-            .unwrap(),
-        );
+                // there's only 1 party, so use index 1
+                pub_storage.insert(
+                    1,
+                    FileStorage::new(Some(destination_prefix), StorageType::PUB, None).unwrap(),
+                );
+                internal_client = Some(
+                    Client::new_client(
+                        client_storage,
+                        pub_storage,
+                        &client_param,
+                        cc_conf.decryption_mode,
+                    )
+                    .await
+                    .unwrap(),
+                );
+                tracing::info!("Centralized Client setup done.");
+            }
+            KmsType::Threshold => {
+                // threshold cores
+                tracing::info!(
+                    "Threshold Core Client - connecting to n={:?} KMS servers",
+                    cc_conf.cores.len()
+                );
 
-        tracing::info!("Threshold Client setup done.");
+                for cur_core in &cc_conf.cores {
+                    // make sure address starts with http://
+                    let url = if cur_core.address.starts_with("http://") {
+                        cur_core.address.clone()
+                    } else {
+                        "http://".to_string() + cur_core.address.as_str()
+                    };
+
+                    tracing::info!(
+                        "Connecting to party {:?} via URL {:?}",
+                        cur_core.party_id,
+                        url
+                    );
+
+                    let core_endpoint_req = retry!(
+                        CoreServiceEndpointClient::connect(url.clone()).await,
+                        5,
+                        100
+                    )?;
+                    core_endpoints_req.insert(cur_core.party_id as u32, core_endpoint_req);
+
+                    let core_endpoint_resp = retry!(
+                        CoreServiceEndpointClient::connect(url.clone()).await,
+                        5,
+                        100
+                    )?;
+                    core_endpoints_resp.insert(cur_core.party_id as u32, core_endpoint_resp);
+
+                    pub_storage.insert(
+                        cur_core.party_id as u32,
+                        FileStorage::new(
+                            Some(destination_prefix),
+                            StorageType::PUB,
+                            Some(Role::indexed_from_one(cur_core.party_id)),
+                        )
+                        .unwrap(),
+                    );
+                }
+                internal_client = Some(
+                    Client::new_client(
+                        client_storage,
+                        pub_storage,
+                        &client_param,
+                        cc_conf.decryption_mode,
+                    )
+                    .await
+                    .unwrap(),
+                );
+                tracing::info!("Threshold Client setup done.");
+            }
+        };
     }
-
     tracing::info!(
         "Parties: {}. FHE Parameters: {}",
         num_parties,
