@@ -265,7 +265,7 @@ pub async fn run_decryption_threshold(
     let mut bits = 0;
     for (i, msg) in msgs.clone().into_iter().enumerate() {
         let (ct, ct_format, fhe_type) =
-            compute_cipher_from_stored_key(data_root_path, msg, key_id, enc_config).await;
+            compute_cipher_from_stored_key(data_root_path, msg, key_id, 1, enc_config).await;
         let ctt = TypedCiphertext {
             ciphertext: ct,
             fhe_type: fhe_type as i32,

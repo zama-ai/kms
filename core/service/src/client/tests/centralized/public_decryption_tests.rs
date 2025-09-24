@@ -164,7 +164,7 @@ pub(crate) async fn run_decryption_centralized(
     let mut cts = Vec::new();
     for (i, msg) in msgs.clone().into_iter().enumerate() {
         let (ct, ct_format, fhe_type) =
-            compute_cipher_from_stored_key(test_path, msg, key_id, encryption_config).await;
+            compute_cipher_from_stored_key(test_path, msg, key_id, 1, encryption_config).await;
         let ctt = TypedCiphertext {
             ciphertext: ct,
             fhe_type: fhe_type as i32,

@@ -447,7 +447,7 @@ pub(crate) async fn user_decryption_threshold(
     let (mut kms_servers, mut kms_clients, mut internal_client) =
         threshold_handles(dkg_params, amount_parties, true, None, decryption_mode).await;
     let (ct, ct_format, fhe_type) =
-        compute_cipher_from_stored_key(None, msg, key_id, enc_config).await;
+        compute_cipher_from_stored_key(None, msg, key_id, 1, enc_config).await;
 
     // make requests
     let reqs: Vec<_> = (0..parallelism)
