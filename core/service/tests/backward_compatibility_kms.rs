@@ -328,6 +328,7 @@ fn test_operator_backup_output(
             custodian_messages.clone(),
             signing_key,
             test.custodian_threshold,
+            custodian_messages.len(), // Testing a sunshine case where all custodians are present
         )
         .unwrap()
     };

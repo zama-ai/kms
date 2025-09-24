@@ -251,6 +251,7 @@ where
             }
         };
         let inner = request.into_inner();
+        let amount_custodians = inner.custodian_recovery_outputs.len(); // Amount of custodians get defined in this call
         let context_id: RequestId = parse_optional_proto_request_id(
             &inner.custodian_context_id,
             RequestIdParsingErr::BackupRecovery,
@@ -308,6 +309,7 @@ where
                             recovery_material.custodian_context().custodian_nodes.values().cloned().collect_vec(),
                             self.base_kms.sig_key.as_ref().clone(),
                             recovery_material.custodian_context().threshold as usize,
+                            amount_custodians,
                         ).map_err(|e| {
                             Status::new(
                                 tonic::Code::Internal,
