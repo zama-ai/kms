@@ -77,13 +77,12 @@ impl HealthCheckSession {
                 (*role, id.clone(), client.clone(), tag_serialized.clone());
             tasks.spawn(async move {
                 let start = std::time::Instant::now();
-                let request = tonic::Request::new(super::gen::SendValueRequest {
+                let request = tonic::Request::new(super::gen::HealthCheckRequest {
                     tag: tag_serialized,
-                    value: Vec::new(),
                 });
                 let response = tokio::time::timeout(
                     Duration::from_secs(TIMEOUT_MAX_WAIT_S),
-                    client.clone().send_value(request),
+                    client.clone().health_check(request),
                 )
                 .await;
                 let duration = start.elapsed();
