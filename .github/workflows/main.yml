@@ -456,7 +456,6 @@ jobs:
       working-directory: "./core/service"
       args-tests: ${{ matrix.args-tests }}
       run-minio: true
-      run-wasm: true
       package-name: "kms"
       slab-backend: "big-instance-service"
       app-cache-dir: "kms"
