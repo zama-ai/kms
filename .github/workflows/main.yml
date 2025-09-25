@@ -495,6 +495,7 @@ jobs:
       working-directory: "./core/service"
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # Builds the core service Docker image
   # Only runs on main/release branches after successful tests
