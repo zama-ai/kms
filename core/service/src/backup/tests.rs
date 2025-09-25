@@ -19,6 +19,7 @@ use rand::{rngs::OsRng, SeedableRng};
 use std::collections::BTreeMap;
 use threshold_fhe::execution::runtime::party::Role;
 
+#[tracing_test::traced_test]
 #[test]
 fn operator_setup() {
     let mut rng = OsRng;
@@ -52,7 +53,7 @@ fn operator_setup() {
         })
         .collect();
 
-    // use the wrong header, setup should fail
+    // use the wrong header for one party. This should not cause a failure
     {
         let mut wrong_custodian_messages = custodian_messages.clone();
         wrong_custodian_messages[0].header.push('z');
@@ -65,16 +66,14 @@ fn operator_setup() {
             custodian_threshold,
             custodian_count,
         );
-        assert!(matches!(
-            operator.unwrap_err(),
-            BackupError::CustodianSetupError,
-        ));
+        assert!(operator.is_ok());
+        logs_contain("Invalid header in custodian setup message from custodian 1");
     }
 
-    // use the wrong timestamp, setup should fail
+    // use the wrong timestamp, setup should not fail
     {
         let mut wrong_custodian_messages = custodian_messages.clone();
-        wrong_custodian_messages[0].timestamp += 3700;
+        wrong_custodian_messages[1].timestamp += 24 * 3700;
 
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         let operator = Operator::new(
@@ -84,23 +83,8 @@ fn operator_setup() {
             custodian_threshold,
             custodian_count,
         );
-        assert!(matches!(
-            operator.unwrap_err(),
-            BackupError::CustodianSetupError,
-        ));
-    }
-
-    // no tweaks, all should pass
-    {
-        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let _ = Operator::new(
-            Role::indexed_from_zero(0),
-            custodian_messages,
-            signing_key,
-            custodian_threshold,
-            custodian_count,
-        )
-        .unwrap();
+        assert!(operator.is_ok());
+        logs_contain("Invalid timestamp in custodian setup message from custodian 2");
     }
 }
 
@@ -392,6 +376,7 @@ fn full_flow_malicious_custodian_not_enough() {
     );
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn full_flow_malicious_custodian_init() {
     let mut rng = AesRng::seed_from_u64(1337);
@@ -406,14 +391,27 @@ fn full_flow_malicious_custodian_init() {
     // Remove 2nd setup message
     setup_msgs_malicious.remove(1);
     // Should be fine since we just need at least 2+1 = 3 custodians
-    let (_operators, _payload_for_custodians) = operator_handle_init(
-        &mut rng,
-        &setup_msgs_malicious,
-        &backup_id,
-        operator_count,
-        custodian_threshold,
-        custodian_count,
-    );
+    for op_idx in 1..=operator_count {
+        let operator_role = Role::indexed_from_one(op_idx);
+        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
+        let operator = Operator::new(
+            operator_role,
+            setup_msgs.to_vec(),
+            signing_key.clone(),
+            custodian_threshold,
+            custodian_count,
+        )
+        .unwrap();
+        let (_backup_enc_key, backup_priv_key) = backup_pke::keygen(&mut rng).unwrap();
+        let res = operator.secret_share_and_encrypt(
+            &mut rng,
+            &bc2wrap::serialize(&backup_priv_key).unwrap(),
+            backup_id,
+        );
+        assert!(res.is_ok());
+    }
+    // Check that we indeed get a warning about the malicious custodian
+    logs_contain("Could not find custodian keys for role 2");
 }
 
 #[test]
