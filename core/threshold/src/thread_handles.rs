@@ -16,11 +16,6 @@ pub struct ThreadHandleGroup {
 impl ThreadHandleGroup {
     /// Create a new empty group of thread handles
     pub fn new() -> Self {
-        tracing::info!(
-            "Creating new ThreadHandleGroup. rayon::max_num_threads: {}, tokio::num_workers: {}.",
-            rayon::current_num_threads(),
-            tokio::runtime::Handle::current().metrics().num_workers()
-        );
         Self {
             handles: Vec::new(),
         }

@@ -231,12 +231,12 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting KMS Server with core config: {:?}", &core_config);
 
     tracing::info!(
-        "Multi-threading ENV vars: Tokio {:?}; Rayon {:?}; available_parallelism: {}, rayon::max_num_threads: {}, tokio::num_workers: {}.",
-        env::var_os("TOKIO_WORKER_THREADS"),
-        env::var_os("RAYON_NUM_THREADS"),
-        thread::available_parallelism()?.get(),
+        "Multi-threading values: TOKIO_WORKER_THREADS: {:?}, tokio::num_workers: {}, RAYON_NUM_THREADS: {:?}, rayon::current_num_threads: {}, available_parallelism: {}.",
+        env::var_os("TOKIO_WORKER_THREADS").unwrap_or_else(|| "not set".into()),
+        tokio::runtime::Handle::current().metrics().num_workers(),
+        env::var_os("RAYON_NUM_THREADS").unwrap_or_else(||  "not set".into()),
         rayon::current_num_threads(),
-        tokio::runtime::Handle::current().metrics().num_workers()
+        thread::available_parallelism()?.get(),
     );
 
     let party_role = core_config
