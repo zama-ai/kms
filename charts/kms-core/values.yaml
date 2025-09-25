@@ -94,6 +94,8 @@ kmsCore:
     initialIntervalMs: 100
     enableSysMetrics: true
     refreshIntervalMs: 5000
+    tokioWorkerThreads: 6
+    rayonNumThreads: 43
     # Threshold value is the number of corruptions that the protocol handles.
     # 1 for 4 parties, 4 for 13 parties
     thresholdValue: 4
