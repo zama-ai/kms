@@ -178,7 +178,7 @@ graph TD
     F --> H[HealthStatusResponse]
     G --> H
 
-    H --> I[Display: Self + Peer key details]
+    H --> I[Display: Self key details + Peer health]
 
     style A fill:#e1f5fe
     style C fill:#f3e5f5
