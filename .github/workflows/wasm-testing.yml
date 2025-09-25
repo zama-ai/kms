@@ -1,15 +1,44 @@
-name: npm-release
+name: wasm-testing
 
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      working-directory:
+        type: string
+        required: true
+      wasm-test-feature:
+        type: string
+        required: false
+        default: "-F wasm_tests"
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
+      NPM_TOKEN:
+        required: false
 
+env:
+  NPM_TAG: "test"
+
+# No top-level permissions needed - job-level permissions are more specific
 permissions: {}
 
 jobs:
-  npm-release:
-    name: npm-release
+  wasm-testing:
+    name: wasm-testing
+    permissions:
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
+      contents: read # Required to checkout repository code
+    timeout-minutes: 500
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+
     steps:
       - name: Checkout Project
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -22,10 +51,25 @@ jobs:
       - name: Install
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
+      - name: Build wasm with tests
+        env:
+          WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
+        run: wasm-pack build --target nodejs . --no-default-features "${WASM_TEST_FEATURE}"
+
       - name: Install node
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 20
+
+      - name: Generate wasm test files
+        env:
+          WASM_TEST_FEATURE: ${{ inputs.wasm-test-feature }}
+        run: |
+          cargo test test_user_decryption_threshold_and_write_transcript "${WASM_TEST_FEATURE}" --lib
+          cargo test test_user_decryption_centralized_and_write_transcript "${WASM_TEST_FEATURE}" --lib
+
+      - name: Test wasm
+        run: node --test tests/js
 
       # NPM package handling
       - name: Set NPM version tag to latest
@@ -52,7 +96,7 @@ jobs:
         with:
           token: ${{ secrets.NPM_TOKEN }}
           package: ./core/service/pkg/package.json
-          dry-run: false
+          dry-run: true
           provenance: false # change to true when repo is public (see #1048)
           tag: ${{ env.NPM_TAG }}
 
@@ -70,7 +114,7 @@ jobs:
         with:
           token: ${{ secrets.NPM_TOKEN }}
           package: ./core/service/pkg/package.json
-          dry-run: false
+          dry-run: true
           provenance: false # change to true when repo is public (see #1048)
           tag: ${{ env.NPM_TAG }}
 
