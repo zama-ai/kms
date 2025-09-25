@@ -2,6 +2,8 @@
 
 Health monitoring tool for Zama KMS deployments. Validates configurations, checks connectivity, and verifies key material for both centralized and threshold KMS instances.
 
+__NOTE__: This tool uses the MPC P2P connection between the peers to perform the healthcheck.
+
 ## Features
 
 - **Config Validation**: Parse and validate KMS configuration files using actual KMS server validation logic
@@ -48,7 +50,7 @@ Create a `health-check.toml` file to configure timeout settings:
 # Connection timeout in seconds (default: 5)
 connection_timeout_secs = 5
 
-# Request timeout in seconds (default: 10)  
+# Request timeout in seconds (default: 10)
 request_timeout_secs = 10
 ```
 
@@ -87,77 +89,62 @@ Configuration values are applied in the following order (highest precedence firs
 2. Configuration file (`--health-config`)
 3. Default values
 
-```
 
 ## Example Output
 
 ```
 [INFO]:
   [OK] Valid threshold config
-  [OK] Storage: file
-  [OK] Listen address: dev-kms-core-3:50003
-  [OK] Threshold: 1 (requires 3 of 4 nodes for MPC)
+  [OK] Storage: File(FileStorage { path: "./keys" })
+  [OK] Listen address: 0.0.0.0:50300
+  [OK] Threshold: 1 - Node requirements:
+      - 2 of 4 nodes minimum for threshold operations (t+1)
+      - 3 of 4 nodes for healthy status (2/3 majority)
+      - 4 of 4 nodes for optimal status (all nodes online)
+      (!!!)  Operational recommendation: All 4 nodes should be online for best performance
   [OK] 4 peers configured:
-      - Peer 1 at dev-kms-core-1:50001
-      - Peer 2 at dev-kms-core-2:50002
-      - Peer 3 at dev-kms-core-3:50003
-      - Peer 4 at dev-kms-core-4:50004
+      - Peer 1 at abcd.dev-kms-core-1.com:50001
+      - Peer 2 at abcd.dev-kms-core-2.com:50002
+      - Peer 3 at abcd.dev-kms-core-3.com:50003
+      - Peer 4 at abcd.dev-kms-core-4.com:50004
 
 [KMS HEALTH CHECK REPORT]
 ==================================================
 
-[OK] Overall Status: Healthy
-
-[NODE INFO]:
-  Type: threshold
-  Party ID: 3
-  Threshold: 1 required
-  Nodes Reachable: 4
+[OK] Overall Status: Healthy - Sufficient majority
 
 [CONFIG]:
   [OK] Valid threshold config
-  [OK] Storage: file
+  [OK] Storage: File(FileStorage { path: "./keys" })
 
 [CONNECTIVITY]:
-  [OK] Reachable (latency: 1ms)
+  [OK] Reachable (latency: 2ms)
 
 [KEY MATERIAL]:
   [OK] FHE Keys: 1
-       - a178eec2319d082f82f844ee2d07f2357ab643511786f116ecf7afba74f28ffe
-  [OK] CRS Keys: 0
-  [OK] Preprocessing: 1
-       - b289ffd3420e193g93g955ff3e18g3468bc754622897g227fdf8bgcb85g39ggg
+       - b1f8a080bd63e357b16e37eafb555a2d739d6a8f6bb13a2b3b9840cc45618b33
+  [OK] CRS: 0
+  [OK] Preprocessing: 0
   [OK] Storage: Threshold KMS - file storage with root_path '/app/kms/core/service/keys/PRIV-p3'
 
 [OPERATOR KEY]:
-  [FAIL] Not available: status: Unimplemented, message: "Backup vault does not support operator public key retrieval", details: [], metadata: MetadataMap { headers: {"content-type": "application/grpc", "date": "Tue, 02 Sep 2025 12:39:48 GMT"} }
+  [FAIL] Not available: status: Unimplemented, message: "Backup vault does not support operator public key retrieval", details: [], metadata: MetadataMap { headers: {"content-type": "application/grpc", "date": "Thu, 25 Sep 2025 13:23:53 GMT"} }
 
-[PEER STATUS]:
-  3 of 3 peers reachable
-  [OK] Party 1 @ http://dev-kms-core-1:50100 (1ms)
-       FHE Keys: 1
-         - a178eec2319d082f82f844ee2d07f2357ab643511786f116ecf7afba74f28ffe
-       CRS Keys: 0
-       Preprocessing: 1
-         - b289ffd3420e193g93g955ff3e18g3468bc754622897g227fdf8bgcb85g39ggg
-       Storage: Threshold KMS - file storage with root_path '/app/kms/core/service/keys/PRIV-p1'
-  [OK] Party 2 @ http://dev-kms-core-2:50200 (41ms)
-       FHE Keys: 1
-         - a178eec2319d082f82f844ee2d07f2357ab643511786f116ecf7afba74f28ffe
-       CRS Keys: 0
-       Preprocessing: 1
-         - b289ffd3420e193g93g955ff3e18g3468bc754622897g227fdf8bgcb85g39ggg
-       Storage: Threshold KMS - file storage with root_path '/app/kms/core/service/keys/PRIV-p2'
-  [OK] Party 4 @ http://dev-kms-core-4:50400 (10ms)
-       FHE Keys: 1
-         - a178eec2319d082f82f844ee2d07f2357ab643511786f116ecf7afba74f28ffe
-       CRS Keys: 0
-       Preprocessing: 1
-         - b289ffd3420e193g93g955ff3e18g3468bc754622897g227fdf8bgcb85g39ggg
-       Storage: Threshold KMS - file storage with root_path '/app/kms/core/service/keys/PRIV-p4'
+[CONTEXT 0101010101010101010101010101010101010101010101010101010101020304]:
 
-[INFO]:
-  All health checks passed
+  [NODE INFO]:
+    Type: threshold
+    Party ID: 3
+    Threshold: 2 required
+    Nodes Reachable: 4
+
+  [PEER STATUS]:
+    3 of 3 peers reachable
+    [OK] Party 1 @ abcd.dev-kms-core-1.com (17ms)
+    [OK] Party 2 @ abcd.dev-kms-core-2.com (17ms)
+    [OK] Party 4 @ abcd.dev-kms-core-4.com (17ms)
+
+  Optimal: All 3 peers online and reachable
 
 ==================================================
 ```
@@ -165,7 +152,7 @@ Configuration values are applied in the following order (highest precedence firs
 ## Health Status Levels
 
 - **Optimal**: All nodes online and reachable, perfect operational state
-- **Healthy**: Sufficient 2/3 majority but not all nodes online, functional but should investigate offline nodes  
+- **Healthy**: Sufficient 2/3 majority but not all nodes online, functional but should investigate offline nodes
 - **Degraded**: At least threshold + 1 but below 2/3 majority, operational with reduced fault tolerance
 - **Unhealthy**: Insufficient nodes for operations, critical issues requiring immediate attention
 
@@ -180,19 +167,19 @@ The KMS exposes two complementary gRPC endpoints for health monitoring and key m
 ```mermaid
 graph TD
     A[Health Check Tool] --> B[GetHealthStatus on Self]
-    
+
     B --> C[Self KMS Core]
     C --> D[Query own storage]
     C --> E[GetKeyMaterialAvailability on each Peer]
-    
+
     D --> F[Own key counts]
     E --> G[Peer key IDs + connectivity]
-    
+
     F --> H[HealthStatusResponse]
     G --> H
-    
+
     H --> I[Display: Self + Peer key details]
-    
+
     style A fill:#e1f5fe
     style C fill:#f3e5f5
     style I fill:#e8f5e8
@@ -212,7 +199,7 @@ enum HealthStatus {
   HEALTH_STATUS_UNSPECIFIED = 0;
   HEALTH_STATUS_OPTIMAL = 1;     // All nodes online and reachable
   HEALTH_STATUS_HEALTHY = 2;     // Sufficient 2/3 majority but not all nodes
-  HEALTH_STATUS_DEGRADED = 3;    // At least threshold + 1 but below 2/3
+  HEALTH_STATUS_DEGRADED = 3;    // Above minimum threshold but below 2/3
   HEALTH_STATUS_UNHEALTHY = 4;   // Insufficient nodes for operations
 }
 
@@ -223,36 +210,44 @@ enum NodeType {
   NODE_TYPE_THRESHOLD = 2;
 }
 
-message HealthStatusResponse {
-  // Overall health status
-  HealthStatus status = 1;
-  
-  // Peer health information (threshold mode only)
-  repeated PeerHealth peers = 2;
-  
-  // Self key material IDs
-  repeated string my_fhe_key_ids = 3;
-  repeated string my_crs_ids = 4;
-  repeated string my_preprocessing_key_ids = 5;
-  string my_storage_info = 6;
-  
-  // Runtime configuration
-  NodeType node_type = 7;
-  uint32 my_party_id = 8;         // Only for threshold mode
-  uint32 threshold_required = 9;   // Minimum nodes needed
-  uint32 nodes_reachable = 10;    // Currently reachable nodes
-}
 
-message PeerHealth {
-  uint32 peer_id = 1;
-  string endpoint = 2;
-  bool reachable = 3;
-  uint32 latency_ms = 4;
-  uint32 fhe_keys = 5;
-  uint32 crs_keys = 6;
-  uint32 preprocessing_keys = 7;
-  string storage_info = 8;
-  string error = 9;              // Error if unreachable
+  // Health information for a peer node
+  message PeerHealth {
+    // Peer party ID (for threshold mode)
+    uint32 peer_id = 1;
+    // Peer endpoint address
+    string endpoint = 2;
+    // Whether the peer is reachable
+    bool reachable = 3;
+    // Connection latency in milliseconds
+    uint32 latency_ms = 4;
+    // Error message if peer is unreachable
+    string error = 5;
+  }
+
+  message PeersFromContext {
+    RequestId context_id = 1;
+    uint32 my_party_id = 2;
+    uint32 threshold_required = 3; // Minimum nodes needed
+    uint32 nodes_reachable = 4; // Currently reachable nodes
+    HealthStatus status = 5; // Overall health status
+    repeated PeerHealth peers = 6;
+  }
+
+// Response containing comprehensive health status
+message HealthStatusResponse {
+  // Health status of all peers for every contexts
+  repeated PeersFromContext peers_from_all_contexts = 1;
+
+  // Self key material IDs and storage info
+  repeated string my_fhe_key_ids = 2;
+  repeated string my_crs_ids = 3;
+  repeated string my_preprocessing_key_ids = 4;
+  string my_storage_info = 5;
+
+  // Runtime configuration info
+  NodeType node_type = 6;
+
 }
 ```
 
