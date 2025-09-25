@@ -26,7 +26,7 @@ jobs:
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:zws-dev
+          tags: tag:kms-ci
 
       - name: Setup helm
         run: |
@@ -65,8 +65,8 @@ jobs:
 
       - name: Create namespace for performance testing
         run: |
-          kubectl create namespace kms-performance-ci-${{ github.run_id }}
-          kubectl config set-context --current --namespace=kms-performance-ci-${{ github.run_id }}
+          kubectl create namespace kms-ci
+          kubectl config set-context --current --namespace=kms-ci
 
       - name: Setup registry credentials secrets
 
@@ -75,22 +75,22 @@ jobs:
       - name: Setup tkms-infra
         run: |
           helm install tkms-infra ghcr.io/zama-zws/crossplane/tkms-infra
-          --namespace kms-performance-ci-${{ github.run_id }}
+          --namespace kms-ci
           --version 0.3.0
 
       - name: Wait tkms-infra to be ready
         run: |
-          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=tkms-infra -n kms-performance-ci-${{ github.run_id }}
+          # kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=tkms-infra -n kms-ci
 
       - name: Setup kms-core with 13 parties
         run: |
           helm install kms-core ghcr.io/zama-ai/kms/kms-core
-          --namespace kms-performance-ci-${{ github.run_id }}
+          --namespace kms-ci
           --version 1.0.10
 
       - name: Wait kms-core to be ready
         run: |
-          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=tkms-infra -n kms-performance-ci-${{ github.run_id }}
+          # kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=tkms-infra -n kms-ci
 
       - name: Run performance testing
         run: |
