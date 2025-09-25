@@ -1,0 +1,100 @@
+name: performance-testing
+
+on:
+  workflow_call:
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
+        required: true
+
+
+permissions: {}
+
+jobs:
+  performance-testing:
+    name: performance-testing
+    runs-on: ubuntu-latest
+    steps:
+      ################################################################
+      # SET UP REQUIRED TOOLS
+      #
+      - name: Setup tailscale
+        uses: tailscale/github-action@84a3f23bb4d843bcf4da6cf824ec1be473daf4de # v3.2.3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:zws-dev
+
+      - name: Setup helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          export PATH=$PATH:/usr/local/bin
+
+      - name: Setup argo workflow CLI
+        env:
+          ARGO_OS: "${{ runner.os }}"
+          ARGO_VERSION: "v3.7.2"
+        run: |
+          # Detect OS
+          if [[ "$(uname -s)" != "Darwin" ]]; then
+            ARGO_OS="linux"
+          fi
+          # Download the binary
+          curl -sLO "https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-${ARGO_OS}-amd64.gz"
+          # Unzip
+          gunzip "argo-${ARGO_OS}-amd64.gz"
+          # Make binary executable
+          chmod +x "argo-${ARGO_OS}-amd64"
+          # Move binary to path
+          mv "./argo-${ARGO_OS}-amd64" /usr/local/bin/argo
+          # Test installation
+          argo version
+
+      - name: Setup kubeconfig
+        run: |
+          tailscale configure kubeconfig tailscale-operator-zws-dev.diplodocus-boa.ts.net
+      ################################################################
+
+      - name: Checkout Project
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Create namespace for performance testing
+        run: |
+          kubectl create namespace kms-performance-ci-${{ github.run_id }}
+          kubectl config set-context --current --namespace=kms-performance-ci-${{ github.run_id }}
+
+      - name: Setup registry credentials secrets
+
+      - name: Setup slack webhook secrets
+
+      - name: Setup tkms-infra
+        run: |
+          helm install tkms-infra ghcr.io/zama-zws/crossplane/tkms-infra
+          --namespace kms-performance-ci-${{ github.run_id }}
+          --version 0.3.0
+
+      - name: Wait tkms-infra to be ready
+        run: |
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=tkms-infra -n kms-performance-ci-${{ github.run_id }}
+
+      - name: Setup kms-core with 13 parties
+        run: |
+          helm install kms-core ghcr.io/zama-ai/kms/kms-core
+          --namespace kms-performance-ci-${{ github.run_id }}
+          --version 1.0.10
+
+      - name: Wait kms-core to be ready
+        run: |
+          kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=tkms-infra -n kms-performance-ci-${{ github.run_id }}
+
+      - name: Run performance testing
+        run: |
+
+
+      - name: Cleanup
+        run: |
