@@ -27,7 +27,7 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
         )?,
         HealthStatus::Degraded => writeln!(
             output,
-            "\n[WARN] Overall Status: Degraded - Reduced fault tolerance"
+            "\n[WARN] Overall Status: Degraded - Reduced fault tolerance or missing key material"
         )?,
         HealthStatus::Unhealthy => writeln!(
             output,
@@ -73,7 +73,7 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
                     writeln!(output, "       - {}", key_id)?;
                 }
             }
-            writeln!(output, "  [OK] CRS Keys: {}", keys.crs_ids.len())?;
+            writeln!(output, "  [OK] CRS: {}", keys.crs_ids.len())?;
             if !keys.crs_ids.is_empty() {
                 for key_id in &keys.crs_ids {
                     writeln!(output, "       - {}", key_id)?;
@@ -127,13 +127,31 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
         for context in contexts {
             writeln!(
                 output,
-                "\n[PEER STATUS FOR CONTEXT {:?}]:",
-                context.context_id.clone().map(|c| c.request_id)
+                "\n[CONTEXT {}]:",
+                context
+                    .context_id
+                    .clone()
+                    .map(|c| c.request_id)
+                    .unwrap_or_else(|| "UNKNOWN".to_string())
             )?;
+            let self_info = &context.self_node_info;
+            writeln!(output, "\n  [NODE INFO]:")?;
+            writeln!(output, "    Type: {}", self_info.node_type)?;
+            if self_info.node_type == "threshold" {
+                writeln!(output, "    Party ID: {}", self_info.my_party_id)?;
+                writeln!(
+                    output,
+                    "    Threshold: {} required",
+                    self_info.threshold_required
+                )?;
+                writeln!(output, "    Nodes Reachable: {}", self_info.nodes_reachable)?;
+            }
+
+            writeln!(output, "\n  [PEER STATUS]:")?;
             let reachable = context.peers_status.iter().filter(|p| p.reachable).count();
             writeln!(
                 output,
-                "  {} of {} peers reachable",
+                "    {} of {} peers reachable",
                 reachable,
                 context.peers_status.len()
             )?;
@@ -142,22 +160,23 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
                 if peer.reachable {
                     writeln!(
                         output,
-                        "  [OK] Party {} @ {} ({}ms)",
+                        "    [OK] Party {} @ {} ({}ms)",
                         peer.peer_id, peer.endpoint, peer.latency_ms
                     )?;
                 } else {
                     writeln!(
                         output,
-                        "  [FAIL] Party {} @ {}",
+                        "    [FAIL] Party {} @ {}",
                         peer.peer_id, peer.endpoint
                     )?;
                     writeln!(
                         output,
-                        "         Error: {}",
+                        "           Error: {}",
                         peer.error.as_ref().unwrap_or(&"Unreachable".to_string())
                     )?;
                 }
             }
+            writeln!(output, "\n  {}", context.recommendation)?;
         }
     }
 
