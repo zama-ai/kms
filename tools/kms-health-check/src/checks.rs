@@ -298,25 +298,26 @@ async fn process_health_status(
     let mut contexts_status = Vec::new();
     for result_peers_status in peers_status_for_all_contexts {
         let mut peers_status = Vec::new();
-        let total_nodes = result_peers_status.peers.len() as u32;
+        let total_peers = result_peers_status.peers.len() as u32;
+        let num_peers_reachable = result_peers_status.nodes_reachable - 1; // Exclude self
 
         // Set overall health based on server's assessment
         let (context_health,recommendation) = match result_peers_status.status {
             1 => (HealthStatus::Optimal,format!(
                     "Optimal: All {} peers online and reachable",
-                    total_nodes
+                    total_peers
                 )),   // HEALTH_STATUS_OPTIMAL
             2 => (HealthStatus::Healthy,format!(
                     "Healthy but not optimal: {}/{} peers reachable (sufficient majority but {} peers offline)",
-                    result_peers_status.nodes_reachable, total_nodes, total_nodes - result_peers_status.nodes_reachable
+                    num_peers_reachable, total_peers, total_peers - num_peers_reachable
                 )),   // HEALTH_STATUS_HEALTHY
             3 => (HealthStatus::Degraded,format!(
                     "(!!!)  INVESTIGATE: Even with healthy status, explore why {} peers are offline. Check peer connectivity, network issues, or node failures to restore optimal fault tolerance.",
-                    total_nodes - result_peers_status.nodes_reachable
+                    total_peers - num_peers_reachable
                 )) , // HEALTH_STATUS_DEGRADED
             4 => (HealthStatus::Unhealthy,format!(
-                    "Critical: Only {} peers reachable, but {} required for threshold operations",
-                    result_peers_status.nodes_reachable, result_peers_status.threshold_required
+                    "Critical: Only {} peers reachable, but {} required nodes for threshold operations",
+                    num_peers_reachable, result_peers_status.threshold_required
                 )), // HEALTH_STATUS_UNHEALTHY
             _ => return,                  // Keep current status for unspecified values
         };
