@@ -1,6 +1,7 @@
 use crate::{
     engine::{
-        centralized::central_kms::RealCentralizedKms,
+        centralized::central_kms::CentralizedKms,
+        traits::{BackupOperator, ContextManager},
         validation::{parse_optional_proto_request_id, RequestIdParsingErr},
     },
     vault::storage::Storage,
@@ -35,8 +36,10 @@ use tonic::{Request, Response, Status};
 pub async fn init_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<InitRequest>,
 ) -> Result<Response<Empty>, Status> {
     let inner = request.into_inner();
@@ -66,6 +69,9 @@ pub async fn init_impl<
 
 #[cfg(test)]
 mod tests {
+    use aes_prng::AesRng;
+    use rand::SeedableRng;
+
     use super::*;
     use crate::engine::{
         base::derive_request_id, centralized::service::tests::setup_central_test_kms,
@@ -73,8 +79,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_init_sunshine() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let kms = setup_central_test_kms(Some(tempdir.path())).await;
+        let mut rng = AesRng::seed_from_u64(1234);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id = derive_request_id("test_init_sunshine").unwrap();
         let preproc_req = InitRequest {
             request_id: Some((req_id).into()),
@@ -82,10 +88,11 @@ mod tests {
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         assert!(result.is_ok());
     }
+
     #[tokio::test]
     async fn test_init_already_exists() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let kms = setup_central_test_kms(Some(tempdir.path())).await;
+        let mut rng = AesRng::seed_from_u64(1234);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let req_id1 = derive_request_id("test_init_already_exists_1").unwrap();
         let req_id2 = derive_request_id("test_init_already_exists_2").unwrap();
 
@@ -108,8 +115,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_init_missing_request_id() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let kms = setup_central_test_kms(Some(tempdir.path())).await;
+        let mut rng = AesRng::seed_from_u64(1234);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let preproc_req = InitRequest { request_id: None };
         let result = init_impl(&kms, Request::new(preproc_req)).await;
         assert!(result.is_err());

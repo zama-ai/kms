@@ -5,12 +5,13 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
 use anyhow::anyhow;
 use itertools::Itertools;
 use kms_grpc::{
+    identifiers::ContextId,
     kms::v1::{
         self, CiphertextFormat, Empty, PublicDecryptionRequest, PublicDecryptionResponse,
         PublicDecryptionResponsePayload, TypedPlaintext,
     },
     utils::tonic_result::BoxedStatus,
-    RequestId,
+    IdentifierError, RequestId,
 };
 use observability::{
     metrics,
@@ -151,8 +152,10 @@ impl<
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
     /// flooding or bit-decomposition
+    #[allow(clippy::too_many_arguments)]
     async fn inner_decrypt<T>(
         session_id: SessionId,
+        context_id: ContextId,
         session_prep: Arc<SessionPreparer>,
         ct: Vec<u8>,
         fhe_type: FheTypes,
@@ -165,7 +168,7 @@ impl<
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     {
         tracing::info!(
-            "{:?} started inner_decrypt with mode {:?}",
+            "{:?} started inner_decrypt with mode {:?} with session ID {session_id} and context ID {context_id}",
             session_prep.own_identity().await?,
             dec_mode
         );
@@ -181,7 +184,7 @@ impl<
             DecryptionMode::NoiseFloodSmall => {
                 let session = ok_or_tonic_abort(
                     session_prep
-                        .prepare_ddec_data_from_sessionid_z128(session_id)
+                        .make_small_async_session_z128(session_id, context_id)
                         .await,
                     "Could not prepare ddec data for noiseflood decryption".to_string(),
                 )?;
@@ -202,7 +205,7 @@ impl<
             DecryptionMode::BitDecSmall => {
                 let mut session = ok_or_tonic_abort(
                     session_prep
-                        .prepare_ddec_data_from_sessionid_z64(session_id)
+                        .make_small_async_session_z64(session_id, context_id)
                         .await,
                     "Could not prepare ddec data for bitdec decryption".to_string(),
                 )?;
@@ -273,19 +276,17 @@ impl<
             "Received new decryption request"
         );
 
-        let context_id = inner
-            .context_id
-            .clone()
-            .unwrap_or((*DEFAULT_MPC_CONTEXT).into());
+        // TODO(zama-ai/kms-internal/issues/2758)
+        // remove the default context when all of context is ready
+        let context_id: ContextId = match &inner.context_id {
+            Some(c) => c
+                .try_into()
+                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
+            None => *DEFAULT_MPC_CONTEXT,
+        };
         let session_preparer = Arc::new(
             self.session_preparer_getter
-                .get(
-                    &context_id
-                        .try_into()
-                        .map_err(|e: kms_grpc::IdentifierError| {
-                            tonic::Status::new(tonic::Code::Internal, e.to_string())
-                        })?,
-                )
+                .get(&context_id)
                 .await
                 .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?,
         );
@@ -452,6 +453,7 @@ impl<
                 let res_plaintext = match fhe_type {
                     FheTypes::Uint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
                         internal_sid,
+                        context_id,
                         prep,
                         ciphertext,
                         fhe_type,
@@ -463,6 +465,7 @@ impl<
                     .map(TypedPlaintext::from_u2048),
                     FheTypes::Uint1024 => Self::inner_decrypt::<tfhe::integer::bigint::U1024>(
                         internal_sid,
+                        context_id,
                         prep,
                         ciphertext,
                         fhe_type,
@@ -474,6 +477,7 @@ impl<
                     .map(TypedPlaintext::from_u1024),
                     FheTypes::Uint512 => Self::inner_decrypt::<tfhe::integer::bigint::U512>(
                         internal_sid,
+                        context_id,
                         prep,
                         ciphertext,
                         fhe_type,
@@ -485,6 +489,7 @@ impl<
                     .map(TypedPlaintext::from_u512),
                     FheTypes::Uint256 => Self::inner_decrypt::<tfhe::integer::U256>(
                         internal_sid,
+                        context_id,
                         prep,
                         ciphertext,
                         fhe_type,
@@ -496,6 +501,7 @@ impl<
                     .map(TypedPlaintext::from_u256),
                     FheTypes::Uint160 => Self::inner_decrypt::<tfhe::integer::U256>(
                         internal_sid,
+                        context_id,
                         prep,
                         ciphertext,
                         fhe_type,
@@ -507,6 +513,7 @@ impl<
                     .map(TypedPlaintext::from_u160),
                     FheTypes::Uint128 => Self::inner_decrypt::<u128>(
                         internal_sid,
+                        context_id,
                         prep,
                         ciphertext,
                         fhe_type,
@@ -518,6 +525,7 @@ impl<
                     .map(|x| TypedPlaintext::new(x, fhe_type)),
                     FheTypes::Uint80 => Self::inner_decrypt::<u128>(
                         internal_sid,
+                        context_id,
                         prep,
                         ciphertext,
                         fhe_type,
@@ -534,6 +542,7 @@ impl<
                     | FheTypes::Uint32
                     | FheTypes::Uint64 => Self::inner_decrypt::<u64>(
                         internal_sid,
+                        context_id,
                         prep,
                         ciphertext,
                         fhe_type,
@@ -726,7 +735,10 @@ impl<
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
-    use kms_grpc::{kms::v1::TypedCiphertext, rpc_types::alloy_to_protobuf_domain};
+    use kms_grpc::{
+        kms::v1::TypedCiphertext,
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
+    };
     use rand::SeedableRng;
     use threshold_fhe::execution::{
         runtime::session::ParameterHandles, small_execution::prss::PRSSSetup,
@@ -842,7 +854,7 @@ mod tests {
         RealPublicDecryptor<ram::RamStorage, ram::RamStorage, DummyNoisefloodDecryptor>,
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
         let param = TEST_PARAM;
         let session_preparer_manager = SessionPreparerManager::new_test_session();
 

@@ -10,6 +10,15 @@ start-compose-threshold:
 stop-compose-threshold:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold.yml down --volumes --remove-orphans
 
+build-compose-threshold-custodian:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml -f docker-compose-core-gateway-threshold.yml build
+
+start-compose-threshold-custodian:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml up -d --wait
+
+stop-compose-threshold-custodian:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-threshold-custodian.yml down --volumes --remove-orphans
+
 build-compose-centralized:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml build
 
@@ -18,6 +27,15 @@ start-compose-centralized:
 
 stop-compose-centralized:
 	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized.yml down --volumes --remove-orphans
+
+build-compose-centralized-custodian:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized-custodian.yml build
+
+start-compose-centralized-custodian:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized-custodian.yml up -d --wait
+
+stop-compose-centralized-custodian:
+	docker compose -vvv -f docker-compose-core-base.yml -f docker-compose-core-centralized-custodian.yml down --volumes --remove-orphans
 
 ## TODO not sure what we do about these:
 # start-compose-threshold-observability:

@@ -1,17 +1,24 @@
 use crate::anyhow_error_and_log;
 #[cfg(feature = "non-wasm")]
-use crate::backup::custodian::InternalCustodianContext;
+use crate::backup::operator::RecoveryValidationMaterial;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::decompression;
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
 use crate::cryptography::signcryption::{signcrypt, SigncryptionPayload};
 #[cfg(feature = "non-wasm")]
+use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
 use crate::engine::base::{BaseKmsStruct, KmsFheKeyHandles};
 use crate::engine::base::{KeyGenMetadata, PubDecCallValues, UserDecryptCallValues};
+#[cfg(feature = "non-wasm")]
+use crate::engine::context_manager::RealContextManager;
+#[cfg(feature = "non-wasm")]
+use crate::engine::traits::{BackupOperator, ContextManager};
 use crate::engine::traits::{BaseKms, Kms};
 use crate::engine::validation::DSEP_USER_DECRYPTION;
 use crate::engine::Shutdown;
@@ -35,7 +42,11 @@ use kms_grpc::kms::v1::UserDecryptionResponsePayload;
 use kms_grpc::kms::v1::{CiphertextFormat, TypedCiphertext, TypedPlaintext};
 #[cfg(feature = "non-wasm")]
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
+#[cfg(feature = "non-wasm")]
+use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PrivDataType;
+#[cfg(feature = "non-wasm")]
+use kms_grpc::rpc_types::PubDataType;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng, RngCore};
@@ -61,6 +72,8 @@ use tfhe::{FheTypes, ServerKey};
 use threshold_fhe::execution::keyset_config::KeySetCompressionConfig;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
+#[cfg(feature = "non-wasm")]
+use threshold_fhe::execution::runtime::party::Role;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 #[cfg(feature = "non-wasm")]
 use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
@@ -473,9 +486,11 @@ pub(crate) struct CentralizedTestingKeys {
 /// Observe that the order of write access MUST be as follows to avoid dead locks:
 /// PublicStorage -> PrivateStorage -> FheKeys/XXX_meta_map
 #[cfg(feature = "non-wasm")]
-pub struct RealCentralizedKms<
+pub struct CentralizedKms<
     PubS: Storage + Send + Sync + 'static,
     PrivS: Storage + Send + Sync + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 > {
     pub(crate) base_kms: BaseKmsStruct,
     pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
@@ -488,10 +503,12 @@ pub struct RealCentralizedKms<
     // Map storing ongoing public decryption requests.
     pub(crate) pub_dec_meta_store: Arc<RwLock<MetaStore<PubDecCallValues>>>,
     // Map storing ongoing user decryption requests.
-    pub(crate) user_decrypt_meta_map: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
+    pub(crate) user_dec_meta_store: Arc<RwLock<MetaStore<UserDecryptCallValues>>>,
     // Map storing ongoing CRS generation requests.
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     pub(crate) custodian_meta_map: Arc<RwLock<CustodianMetaStore>>,
+    pub(crate) context_manager: CM,
+    pub(crate) backup_operator: BO,
     // Rate limiting
     pub(crate) rate_limiter: RateLimiter,
     // Health reporter for the the grpc server
@@ -500,6 +517,9 @@ pub struct RealCentralizedKms<
     pub(crate) tracker: Arc<TaskTracker>,
     pub(crate) thread_handles: Arc<RwLock<ThreadHandleGroup>>,
 }
+#[cfg(feature = "non-wasm")]
+pub type RealCentralizedKms<PubS, PrivS> =
+    CentralizedKms<PubS, PrivS, RealContextManager<PubS, PrivS>, RealBackupOperator<PubS, PrivS>>;
 
 /// Perform asynchronous decryption and serialize the result
 #[cfg(feature = "non-wasm")]
@@ -508,7 +528,7 @@ pub fn central_public_decrypt<
     PrivS: Storage + Sync + Send + 'static,
 >(
     keys: &KmsFheKeyHandles,
-    cts: &Vec<TypedCiphertext>,
+    cts: &[TypedCiphertext],
     metric_tags: Vec<(&'static str, String)>,
 ) -> anyhow::Result<Vec<TypedPlaintext>> {
     use observability::{
@@ -617,8 +637,12 @@ pub async fn async_user_decrypt<
 
 // impl fmt::Debug for CentralizedKms, we don't want to include the decryption key in the debug output
 #[cfg(feature = "non-wasm")]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> fmt::Debug
-    for RealCentralizedKms<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        CM: ContextManager + Sync + Send + 'static,
+        BO: BackupOperator + Sync + Send + 'static,
+    > fmt::Debug for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("CentralizedKms")
@@ -628,8 +652,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 }
 
 #[cfg(feature = "non-wasm")]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> BaseKms
-    for RealCentralizedKms<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        CM: ContextManager + Sync + Send + 'static,
+        BO: BackupOperator + Sync + Send + 'static,
+    > BaseKms for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         dsep: &DomainSep,
@@ -864,8 +892,12 @@ fn unsafe_decrypt(
 }
 
 #[cfg(feature = "non-wasm")]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Kms
-    for RealCentralizedKms<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        CM: ContextManager + Sync + Send + 'static,
+        BO: BackupOperator + Sync + Send + 'static,
+    > Kms for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn public_decrypt(
         keys: &KmsFheKeyHandles,
@@ -919,18 +951,23 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 }
 
 #[cfg(feature = "non-wasm")]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
-    RealCentralizedKms<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        CM: ContextManager + Sync + Send + 'static,
+        BO: BackupOperator + Sync + Send + 'static,
+    > CentralizedKms<PubS, PrivS, CM, BO>
 {
     pub async fn new(
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
+        security_module: Option<SecurityModuleProxy>,
         sk: PrivateSigKey,
         rate_limiter_conf: Option<RateLimiterConfig>,
-    ) -> anyhow::Result<(Self, HealthServer<impl Health>)> {
+    ) -> anyhow::Result<(RealCentralizedKms<PubS, PrivS>, HealthServer<impl Health>)> {
         let key_info: HashMap<RequestId, KmsFheKeyHandles> =
-            read_all_data_versioned(&private_storage, &PrivDataType::FheKeyInfo.to_string())
+            read_all_data_versioned(&private_storage, &PrivDataType::FhePrivateKey.to_string())
                 .await?;
         let mut pk_map = HashMap::new();
         for id in key_info.keys() {
@@ -947,10 +984,15 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             .collect();
         let crs_info: HashMap<RequestId, CrsGenMetadata> =
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-
-        let custodian_info: HashMap<RequestId, InternalCustodianContext> =
-            read_all_data_versioned(&private_storage, &PrivDataType::CustodianInfo.to_string())
-                .await?;
+        let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
+            read_all_data_versioned(&public_storage, &PubDataType::Commitments.to_string()).await?;
+        let custodian_context = validation_material
+            .into_iter()
+            .map(|(r, com)| (r, com.custodian_context().to_owned()))
+            .collect();
+        let custodian_meta_store =
+            Arc::new(RwLock::new(MetaStore::new_from_map(custodian_context)));
+        let tracker = Arc::new(TaskTracker::new());
 
         let crypto_storage = CentralizedCryptoMaterialStorage::new(
             public_storage,
@@ -959,15 +1001,32 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             pk_map,
             key_info,
         );
-
+        let base_kms = BaseKmsStruct::new(KMSType::Centralized, sk)?;
+        let context_manager: RealContextManager<PubS, PrivS> = RealContextManager {
+            base_kms: base_kms.new_instance().await,
+            crypto_storage: crypto_storage.inner.clone(),
+            custodian_meta_store: Arc::clone(&custodian_meta_store),
+            my_role: Role::indexed_from_one(1), // Centralized KMS is always party 1
+        };
+        let backup_operator = RealBackupOperator::new(
+            Role::indexed_from_one(1), // Centralized KMS is always party 1
+            base_kms.new_instance().await,
+            crypto_storage.inner.clone(),
+            security_module,
+        );
+        // Update backup vault if it exists
+        // This ensures that all files in the private storage are also in the backup vault
+        // Thus the vault gets automatically updated incase its location changes, or in case of a deletion
+        // Note however that the data in the vault is not checked for corruption.
+        backup_operator.update_backup_vault().await?;
         let (health_reporter, health_service) = tonic_health::server::health_reporter();
         // We will serve as soon as the server is started
         health_reporter
-            .set_serving::<CoreServiceEndpointServer<RealCentralizedKms<PubS, PrivS>>>()
+            .set_serving::<CoreServiceEndpointServer<CentralizedKms<PubS, PrivS, CM, BO>>>()
             .await;
         Ok((
-            RealCentralizedKms {
-                base_kms: BaseKmsStruct::new(sk)?,
+            CentralizedKms {
+                base_kms,
                 crypto_storage,
                 init_ids: Arc::new(RwLock::new(MetaStore::new_from_map(HashMap::new()))),
                 prepreocessing_ids: Arc::new(RwLock::new(MetaStore::new_from_map(HashMap::new()))),
@@ -976,15 +1035,17 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     DEC_CAPACITY,
                     MIN_DEC_CACHE,
                 ))),
-                user_decrypt_meta_map: Arc::new(RwLock::new(MetaStore::new(
+                user_dec_meta_store: Arc::new(RwLock::new(MetaStore::new(
                     DEC_CAPACITY,
                     MIN_DEC_CACHE,
                 ))),
                 crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(crs_info))),
-                custodian_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(custodian_info))),
+                custodian_meta_map: Arc::clone(&custodian_meta_store),
+                context_manager,
+                backup_operator,
                 rate_limiter: RateLimiter::new(rate_limiter_conf.unwrap_or_default()),
                 health_reporter: Arc::new(RwLock::new(health_reporter)),
-                tracker: Arc::new(TaskTracker::new()),
+                tracker: Arc::clone(&tracker),
                 thread_handles: Arc::new(RwLock::new(ThreadHandleGroup::new())),
             },
             health_service,
@@ -993,8 +1054,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 }
 
 #[cfg(feature = "non-wasm")]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
-    RealCentralizedKms<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        CM: ContextManager + Sync + Send + 'static,
+        BO: BackupOperator + Sync + Send + 'static,
+    > CentralizedKms<PubS, PrivS, CM, BO>
 {
     /// Get a reference to the key generation MetaStore
     pub fn get_key_gen_meta_store(&self) -> &Arc<RwLock<MetaStore<KeyGenMetadata>>> {
@@ -1008,7 +1073,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
     /// Get a reference to the user decryption MetaStore
     pub fn get_user_dec_meta_store(&self) -> &Arc<RwLock<MetaStore<UserDecryptCallValues>>> {
-        &self.user_decrypt_meta_map
+        &self.user_dec_meta_store
     }
 
     /// Get a reference to the CRS generation MetaStore
@@ -1022,8 +1087,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 }
 
 #[tonic::async_trait]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Shutdown
-    for RealCentralizedKms<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        CM: ContextManager + Sync + Send + 'static,
+        BO: BackupOperator + Sync + Send + 'static,
+    > Shutdown for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn shutdown(&self) -> anyhow::Result<JoinHandle<()>> {
         let h_repoter = self.health_reporter.clone();
@@ -1043,8 +1112,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
 #[allow(clippy::let_underscore_future)]
 #[cfg(feature = "non-wasm")]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Drop
-    for RealCentralizedKms<PubS, PrivS>
+impl<
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
+        CM: ContextManager + Sync + Send + 'static,
+        BO: BackupOperator + Sync + Send + 'static,
+    > Drop for CentralizedKms<PubS, PrivS, CM, BO>
 {
     fn drop(&mut self) {
         if let Some(handles) = Arc::get_mut(&mut self.thread_handles) {
@@ -1060,9 +1133,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{
-        generate_fhe_keys, CentralizedKmsKeys, CentralizedTestingKeys, RealCentralizedKms, Storage,
-    };
+    use super::{generate_fhe_keys, CentralizedKmsKeys, CentralizedTestingKeys, Storage};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, OTHER_CENTRAL_DEFAULT_ID,
@@ -1077,10 +1148,12 @@ pub(crate) mod tests {
     };
     use crate::dummy_domain;
     use crate::engine::base::{compute_handle, derive_request_id};
+    use crate::engine::centralized::central_kms::RealCentralizedKms;
     use crate::engine::traits::Kms;
     use crate::engine::validation::DSEP_USER_DECRYPTION;
     use crate::util::file_handling::{read_element, write_element};
     use crate::util::key_setup::test_tools::{compute_cipher, EncryptionConfig};
+    use crate::util::rate_limiter::RateLimiter;
     use crate::vault::storage::{file::FileStorage, ram::RamStorage};
     use crate::vault::storage::{store_pk_at_request_id, store_versioned_at_request_id};
     use aes_prng::AesRng;
@@ -1113,6 +1186,18 @@ pub(crate) mod tests {
             .await
     }
 
+    impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'static>
+        RealCentralizedKms<PubS, PrivS>
+    {
+        pub(crate) fn set_bucket_size(&mut self, bucket_size: usize) {
+            let config = crate::util::rate_limiter::RateLimiterConfig {
+                bucket_size,
+                ..Default::default()
+            };
+            self.rate_limiter = RateLimiter::new(config);
+        }
+    }
+
     // Construct a storage for private keys
     pub(crate) async fn new_priv_ram_storage_from_existing_keys(
         keys: &CentralizedKmsKeys,
@@ -1123,7 +1208,7 @@ pub(crate) mod tests {
                 &mut ram_storage,
                 cur_req_id,
                 cur_keys,
-                &PrivDataType::FheKeyInfo.to_string(),
+                &PrivDataType::FhePrivateKey.to_string(),
             )
             .await?;
         }
@@ -1375,6 +1460,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap(),
                 None,
+                None,
                 keys.centralized_kms_keys.sig_sk.clone(),
                 None,
             )
@@ -1530,13 +1616,14 @@ pub(crate) mod tests {
         };
 
         let kms = {
-            let (mut inner, _health_service) = RealCentralizedKms::new(
+            let (mut inner, _health_service) = RealCentralizedKms::<RamStorage, RamStorage>::new(
                 new_pub_ram_storage_from_existing_keys(&keys.pub_fhe_keys)
                     .await
                     .unwrap(),
                 new_priv_ram_storage_from_existing_keys(&keys.centralized_kms_keys)
                     .await
                     .unwrap(),
+                None,
                 None,
                 keys.centralized_kms_keys.sig_sk.clone(),
                 None,

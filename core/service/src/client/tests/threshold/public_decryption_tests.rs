@@ -1,3 +1,8 @@
+use std::collections::HashMap;
+use std::path::Path;
+
+use crate::client::client_wasm::Client;
+use crate::client::test_tools::ServerHandle;
 use crate::client::tests::common::TIME_TO_SLEEP_MS;
 use crate::client::tests::threshold::common::threshold_handles;
 #[cfg(feature = "slow_tests")]
@@ -15,11 +20,13 @@ use crate::util::key_setup::test_tools::{
 };
 use crate::util::rate_limiter::RateLimiterConfig;
 use kms_grpc::kms::v1::TypedCiphertext;
+use kms_grpc::kms_service::v1::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_grpc::RequestId;
 use serial_test::serial;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use tokio::task::JoinSet;
+use tonic::transport::Channel;
 
 #[tokio::test(flavor = "multi_thread")]
 #[rstest::rstest]
@@ -225,11 +232,40 @@ pub async fn decryption_threshold(
         decryption_mode,
     )
     .await;
+    run_decryption_threshold(
+        &mut kms_servers,
+        &mut kms_clients,
+        &mut internal_client,
+        key_id,
+        msgs,
+        enc_config,
+        party_ids_to_crash,
+        parallelism,
+        None,
+    )
+    .await;
+}
+
+#[expect(clippy::too_many_arguments)]
+pub async fn run_decryption_threshold(
+    kms_servers: &mut HashMap<u32, ServerHandle>,
+    kms_clients: &mut HashMap<u32, CoreServiceEndpointClient<Channel>>,
+    internal_client: &mut Client,
+    key_id: &RequestId,
+    msgs: Vec<TestingPlaintext>,
+    enc_config: EncryptionConfig,
+    party_ids_to_crash: Option<Vec<usize>>,
+    parallelism: usize,
+    data_root_path: Option<&Path>,
+) {
+    let amount_parties = kms_clients.len();
+    assert_eq!(amount_parties, kms_servers.len());
+    assert!(parallelism > 0);
     let mut cts = Vec::new();
     let mut bits = 0;
     for (i, msg) in msgs.clone().into_iter().enumerate() {
         let (ct, ct_format, fhe_type) =
-            compute_cipher_from_stored_key(None, msg, key_id, enc_config).await;
+            compute_cipher_from_stored_key(data_root_path, msg, key_id, 1, enc_config).await;
         let ctt = TypedCiphertext {
             ciphertext: ct,
             fhe_type: fhe_type as i32,

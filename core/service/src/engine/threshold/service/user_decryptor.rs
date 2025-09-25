@@ -8,12 +8,13 @@ use std::{
 // === External Crates ===
 use anyhow::anyhow;
 use kms_grpc::{
+    identifiers::ContextId,
     kms::v1::{
         self, Empty, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
         UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
     },
     utils::tonic_result::BoxedStatus,
-    RequestId,
+    IdentifierError, RequestId,
 };
 use observability::{
     metrics,
@@ -172,6 +173,7 @@ impl<
     async fn inner_user_decrypt(
         req_id: &RequestId,
         session_prep: Arc<SessionPreparer>,
+        context_id: ContextId,
         rng: impl CryptoRng + RngCore + Send + 'static,
         typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
@@ -214,7 +216,7 @@ impl<
             tracing::info!(
                 request_id = hex_req_id,
                 request_id_decimal = decimal_req_id,
-                "User Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {session_id}. Handle: {}",
+                "User Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {session_id} and context ID: {context_id}. Handle: {}",
                 hex::encode(&typed_ciphertext.external_handle)
             );
 
@@ -228,7 +230,7 @@ impl<
                 DecryptionMode::NoiseFloodSmall => {
                     let session = ok_or_tonic_abort(
                         session_prep
-                            .prepare_ddec_data_from_sessionid_z128(session_id)
+                            .make_small_async_session_z128(session_id, context_id)
                             .await,
                         "Could not prepare ddec data for noiseflood decryption".to_string(),
                     )?;
@@ -272,7 +274,7 @@ impl<
                 DecryptionMode::BitDecSmall => {
                     let mut session = ok_or_tonic_abort(
                         session_prep
-                            .prepare_ddec_data_from_sessionid_z64(session_id)
+                            .make_small_async_session_z64(session_id, context_id)
                             .await,
                         "Could not prepare ddec data for bitdec decryption".to_string(),
                     )?;
@@ -452,19 +454,18 @@ impl<
             request_id = ?inner.request_id,
             "Received a new user decryption request",
         );
-        let context_id = inner
-            .context_id
-            .clone()
-            .unwrap_or((*DEFAULT_MPC_CONTEXT).into());
+
+        // TODO(zama-ai/kms-internal/issues/2758)
+        // remove the default context when all of context is ready
+        let context_id: ContextId = match &inner.context_id {
+            Some(c) => c
+                .try_into()
+                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
+            None => *DEFAULT_MPC_CONTEXT,
+        };
         let session_preparer = Arc::new(
             self.session_preparer_getter
-                .get(
-                    &context_id
-                        .try_into()
-                        .map_err(|e: kms_grpc::IdentifierError| {
-                            tonic::Status::new(tonic::Code::Internal, e.to_string())
-                        })?,
-                )
+                .get(&context_id)
                 .await
                 .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?,
         );
@@ -580,6 +581,7 @@ impl<
                         Self::inner_user_decrypt(
                             &req_id,
                             prep,
+                            context_id,
                             rng,
                             typed_ciphertexts,
                             link.clone(),
@@ -661,7 +663,10 @@ impl<
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
-    use kms_grpc::{kms::v1::CiphertextFormat, rpc_types::alloy_to_protobuf_domain};
+    use kms_grpc::{
+        kms::v1::CiphertextFormat,
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
+    };
     use rand::SeedableRng;
     use tfhe::FheTypes;
     use threshold_fhe::execution::{
@@ -745,7 +750,7 @@ mod tests {
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
-        let base_kms = BaseKmsStruct::new(sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
         let session_preparer_manager = SessionPreparerManager::new_test_session();
 
         let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(

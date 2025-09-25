@@ -1,7 +1,8 @@
 use crate::{
     engine::{
         base::compute_external_signature_preprocessing,
-        centralized::central_kms::RealCentralizedKms,
+        centralized::central_kms::CentralizedKms,
+        traits::{BackupOperator, ContextManager},
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
         },
@@ -41,8 +42,10 @@ use tonic::{Request, Response, Status};
 pub async fn preprocessing_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<KeyGenPreprocRequest>,
 ) -> Result<Response<Empty>, Status> {
     let _permit = service.rate_limiter.start_preproc().await?;
@@ -50,6 +53,13 @@ pub async fn preprocessing_impl<
     let domain = optional_protobuf_to_alloy_domain(inner.domain.as_ref())?;
     let request_id =
         parse_optional_proto_request_id(&inner.request_id, RequestIdParsingErr::PreprocRequest)?;
+
+    // context_id is not used in the centralized KMS, but we validate it if present
+    let _context_id = match &inner.context_id {
+        Some(ctx) => Some(parse_proto_request_id(ctx, RequestIdParsingErr::Context)?),
+        None => None,
+    };
+
     //Ensure there's no entry in preproc buckets for that request_id
     let entry_exists = {
         let ids = service.prepreocessing_ids.read().await;
@@ -109,8 +119,10 @@ pub async fn preprocessing_impl<
 pub async fn get_preprocessing_res_impl<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
+    CM: ContextManager + Sync + Send + 'static,
+    BO: BackupOperator + Sync + Send + 'static,
 >(
-    service: &RealCentralizedKms<PubS, PrivS>,
+    service: &CentralizedKms<PubS, PrivS, CM, BO>,
     request: Request<v1::RequestId>,
 ) -> Result<Response<KeyGenPreprocResult>, Status> {
     tracing::warn!(
@@ -140,15 +152,18 @@ mod tests {
             centralized::service::tests::setup_central_test_kms,
         },
     };
+    use aes_prng::AesRng;
     use k256::ecdsa::SigningKey;
     use kms_grpc::{
         kms::v1::FheParameter, rpc_types::alloy_to_protobuf_domain,
         solidity_types::PrepKeygenVerification,
     };
+    use rand::SeedableRng;
+
     #[tokio::test]
-    async fn test_preprocessing_sunshine() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let kms = setup_central_test_kms(Some(tempdir.path())).await;
+    async fn sunshine() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let verf_key =
             PublicSigKey::new(SigningKey::verifying_key(kms.base_kms.sig_key.sk()).to_owned());
         let preproc_req_id = derive_request_id("test_preprocessing_sunshine").unwrap();
@@ -177,9 +192,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_preprocessing_already_exists() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let kms = setup_central_test_kms(Some(tempdir.path())).await;
+    async fn resource_exhausted() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let (mut kms, _) = setup_central_test_kms(&mut rng).await;
+        kms.set_bucket_size(1);
+
+        let preproc_req_id = derive_request_id("test_preprocessing_sunshine").unwrap();
+        let domain = dummy_domain();
+        let preproc_req = KeyGenPreprocRequest {
+            params: FheParameter::Test.into(),
+            keyset_config: None,
+            request_id: Some((preproc_req_id).into()),
+            context_id: None,
+            domain: Some(alloy_to_protobuf_domain(&domain).unwrap()),
+            epoch_id: None,
+        };
+        let err = preprocessing_impl(&kms, Request::new(preproc_req))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+    }
+
+    #[tokio::test]
+    async fn already_exists() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let preproc_req_id = derive_request_id("test_preprocessing_impl_already_exists").unwrap();
         let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
         let preproc_req = KeyGenPreprocRequest {
@@ -203,42 +240,94 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_preprocessing_missing_domain() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let kms = setup_central_test_kms(Some(tempdir.path())).await;
+    async fn invalid_argument() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
         let preproc_req_id = derive_request_id("test_preprocessing_impl_missing_domain").unwrap();
-        let preproc_req = KeyGenPreprocRequest {
-            params: FheParameter::Test.into(),
-            keyset_config: None,
-            request_id: Some((preproc_req_id).into()),
-            context_id: None,
-            domain: None, // Missing domain
-            epoch_id: None,
-        };
-        let result = preprocessing_impl(&kms, Request::new(preproc_req))
-            .await
-            .err()
-            .unwrap();
-        assert_eq!(result.code(), tonic::Code::InvalidArgument);
+
+        // Missing domain should lead to InvalidArgument
+        {
+            let preproc_req = KeyGenPreprocRequest {
+                params: FheParameter::Test.into(),
+                keyset_config: None,
+                request_id: Some((preproc_req_id).into()),
+                context_id: None,
+                domain: None, // Missing domain
+                epoch_id: None,
+            };
+            let result = preprocessing_impl(&kms, Request::new(preproc_req))
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(result.code(), tonic::Code::InvalidArgument);
+        }
+
+        // missing request_id should lead to InvalidArgument
+        {
+            let preproc_req = KeyGenPreprocRequest {
+                params: FheParameter::Test.into(),
+                keyset_config: None,
+                request_id: None,
+                context_id: None,
+                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                epoch_id: None,
+            };
+            let result = preprocessing_impl(&kms, Request::new(preproc_req))
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(result.code(), tonic::Code::InvalidArgument);
+        }
+
+        // wrong request_id should lead to InvalidArgument
+        {
+            let preproc_req = KeyGenPreprocRequest {
+                params: FheParameter::Test.into(),
+                keyset_config: None,
+                request_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "xyz".to_string(),
+                }),
+                context_id: None,
+                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                epoch_id: None,
+            };
+            let result = preprocessing_impl(&kms, Request::new(preproc_req))
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(result.code(), tonic::Code::InvalidArgument);
+        }
+
+        // wrong context ID should lead to InvalidArgument
+        {
+            let preproc_req = KeyGenPreprocRequest {
+                params: FheParameter::Test.into(),
+                keyset_config: None,
+                request_id: Some(preproc_req_id.into()),
+                context_id: Some(kms_grpc::kms::v1::RequestId {
+                    request_id: "xyz".to_string(),
+                }),
+                domain: Some(alloy_to_protobuf_domain(&dummy_domain()).unwrap()),
+                epoch_id: None,
+            };
+            let result = preprocessing_impl(&kms, Request::new(preproc_req))
+                .await
+                .err()
+                .unwrap();
+            assert_eq!(result.code(), tonic::Code::InvalidArgument);
+        }
     }
 
     #[tokio::test]
-    async fn test_preprocessing_missing_request_id() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let kms = setup_central_test_kms(Some(tempdir.path())).await;
-        let domain = alloy_to_protobuf_domain(&dummy_domain()).unwrap();
-        let preproc_req = KeyGenPreprocRequest {
-            params: FheParameter::Test.into(),
-            keyset_config: None,
-            request_id: None, // Missing request_id
-            context_id: None,
-            domain: Some(domain),
-            epoch_id: None,
-        };
-        let result = preprocessing_impl(&kms, Request::new(preproc_req))
-            .await
-            .err()
-            .unwrap();
-        assert_eq!(result.code(), tonic::Code::InvalidArgument);
+    async fn not_found() {
+        let mut rng = AesRng::seed_from_u64(1234);
+        let (kms, _) = setup_central_test_kms(&mut rng).await;
+        let bad_preproc_id = derive_request_id("test_preprocessing_not_found").unwrap();
+        let get_result =
+            get_preprocessing_res_impl(&kms, Request::new(bad_preproc_id.into())).await;
+        assert_eq!(get_result.unwrap_err().code(), tonic::Code::NotFound);
     }
+
+    // NOTE: it's not possible to have an unavailable error
+    // for when getting the response because the preprocessing is instant
 }
