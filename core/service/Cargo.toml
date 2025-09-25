@@ -82,6 +82,7 @@ rasn-cms.workspace = true
 rayon.workspace = true
 rcgen = { workspace = true, optional = true }
 rsa.workspace = true
+rustls-webpki.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde-wasm-bindgen.workspace = true
 signature.workspace = true

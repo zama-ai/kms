@@ -35,16 +35,10 @@ use crate::vault::storage::{
     store_versioned_at_request_id, StorageForBytes, StorageReader, StorageType,
 };
 use itertools::Itertools;
-use k256::pkcs8::EncodePrivateKey;
 use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
-use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, KeyUsagePurpose,
-    PKCS_ECDSA_P256K1_SHA256,
-};
 use std::collections::HashMap;
 use std::path::Path;
-use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
 
 /// Compact public key for FHE operations
 pub type FhePublicKey = tfhe::CompactPublicKey;
@@ -668,38 +662,11 @@ where
         let (pk, sk) = gen_sig_keys(&mut rng);
 
         // self-sign a CA certificate with the private signing key
-        let subject = subject_str.as_str();
-
-        let sans_vec = [
-            if tls_wildcard {
-                vec![format!("*.{}", subject)]
-            } else {
-                vec![]
-            },
-            vec![
-                subject.to_string(),
-                "localhost".to_string(),
-                "192.168.0.1".to_string(),
-                "127.0.0.1".to_string(),
-                "0:0:0:0:0:0:0:1".to_string(),
-            ],
-        ]
-        .concat();
-
-        let mut ca_cp = CertificateParams::new(sans_vec)?;
-        ca_cp.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
-
-        let mut distinguished_name = DistinguishedName::new();
-        distinguished_name.push(DnType::CommonName, subject);
-        ca_cp.distinguished_name = distinguished_name;
-        ca_cp.key_usages = vec![KeyUsagePurpose::KeyCertSign];
-        let sk_der = sk.sk().to_pkcs8_der()?;
-        let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
-            &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
-            &PKCS_ECDSA_P256K1_SHA256,
+        let (ca_cert_ki, ca_cert) = threshold_fhe::tls_certs::create_ca_cert_from_signing_key(
+            subject_str.as_str(),
+            tls_wildcard,
+            sk.sk(),
         )?;
-
-        let ca_cert = ca_cp.self_signed(&ca_keypair)?;
 
         // Store public verification key
         if let Err(store_err) = store_versioned_at_request_id(
@@ -768,7 +735,7 @@ where
         }
         tracing::info!(
             "Successfully stored CA certificate {} under the handle {} in storage \"{}\"",
-            hex::encode(ca_cp.key_identifier(&ca_keypair)),
+            hex::encode(ca_cert_ki),
             request_id,
             pub_storages[i - 1].info()
         );

@@ -1,3 +1,4 @@
+use anyhow::ensure;
 use clap::Parser;
 use futures_util::future::OptionFuture;
 use k256::ecdsa::SigningKey;
@@ -37,10 +38,11 @@ use tokio::net::TcpListener;
 use tokio_rustls::rustls::{
     client::{danger::DangerousClientConfigBuilder, ClientConfig},
     crypto::aws_lc_rs::default_provider as aws_lc_rs_default_provider,
-    pki_types::{CertificateDer, PrivateKeyDer},
+    pki_types::{CertificateDer, PrivateKeyDer, UnixTime},
     server::ServerConfig,
     version::TLS13,
 };
+use webpki::{anchor_from_trusted_cert, EndEntityCert, KeyUsage};
 
 #[derive(Parser)]
 #[clap(name = "KMS server")]
@@ -191,9 +193,54 @@ async fn build_tls_config(
             .await?;
             let ca_cert = x509_parser::pem::parse_x509_pem(ca_cert_bytes.as_bytes())?.1;
 
+            // check if the CA certificate matches the KMS signing key
+            let ca_cert_x509 = ca_cert.parse_x509()?;
+            // ensure!(
+            //     x509_parser::verify::verify_signature(
+            //         ca_cert_x509.public_key(),
+            //         &ca_cert_x509.signature_algorithm,
+            //         &ca_cert_x509.signature_value,
+            //         ca_cert_x509.tbs_certificate.raw
+            //     )
+            //     .is_ok(),
+            //     "CA certificate (self-)signature invalid"
+            // );
+            if let x509_parser::public_key::PublicKey::EC(pk_sec1) =
+                ca_cert_x509.public_key().parsed()?
+            {
+                let ca_pk = Box::new(pk_sec1.data());
+                let sk_vk = sk.sk().verifying_key().to_encoded_point(false).to_bytes();
+                ensure!(
+                    **ca_pk == *sk_vk,
+                    "CA certificate public key {:?} doesn't correspond to the KMS verifying key {:?}",
+                    hex::encode(*ca_pk),
+                    hex::encode(sk_vk)
+                );
+            } else {
+                panic!("CA certificate public key isn't ECDSA");
+            };
+
             let (cert, key) = security_module
-                .issue_x509_cert(context_id, ca_cert, sk, true)
+                .issue_x509_cert(context_id, &ca_cert, sk, true)
                 .await?;
+
+            // sanity check
+            EndEntityCert::try_from(&cert.contents.as_slice().into())?
+                .verify_for_usage(
+                    &[webpki::aws_lc_rs::ECDSA_P256K1_SHA256],
+                    &[anchor_from_trusted_cert(
+                        &ca_cert.contents.as_slice().into(),
+                    )?],
+                    &[],
+                    UnixTime::now(),
+                    KeyUsage::server_auth(),
+                    None,
+                    None,
+                )
+                .unwrap_or_else(|e| {
+                    panic!("TLS certificate signed by enclave CA is invalid, cannot proceed: {e}")
+                });
+
             (cert, key, Some(Arc::new(trusted_releases.clone())), false)
         }
     };
@@ -406,6 +453,10 @@ async fn main() -> anyhow::Result<()> {
 
     // compute corresponding public key and derive address from private sig key
     let pk = SigningKey::verifying_key(sk.sk());
+    tracing::info!(
+        "KMS verifying key is {}",
+        hex::encode(pk.to_encoded_point(false).to_bytes())
+    );
     tracing::info!(
         "Public ethereum address is {}",
         alloy_signer::utils::public_key_to_address(pk)
