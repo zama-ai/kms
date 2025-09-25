@@ -170,10 +170,10 @@ graph TD
 
     B --> C[Self KMS Core]
     C --> D[Query own storage]
-    C --> E[GetKeyMaterialAvailability on each Peer]
+    C --> E[HealthPing on MPC P2P network to each Peer]
 
     D --> F[Own key counts]
-    E --> G[Peer key IDs + connectivity]
+    E --> G[Peer connectivity]
 
     F --> H[HealthStatusResponse]
     G --> H
