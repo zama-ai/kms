@@ -1,12 +1,15 @@
 use anyhow::anyhow;
 use clap::Parser;
+use k256::{ecdsa::SigningKey, pkcs8::EncodePrivateKey};
 use rcgen::BasicConstraints::Constrained;
 use rcgen::{
-    Certificate, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose, SerialNumber, PKCS_ECDSA_P256_SHA256,
+    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
+    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, SerialNumber,
+    PKCS_ECDSA_P256K1_SHA256, PKCS_ECDSA_P256_SHA256,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
 
 /// This is the serial number derived from DEFAULT_MPC_CONTEXT.derive_session_id().unwrap().
 pub const DEFAULT_SESSION_ID_FROM_CONTEXT: u128 = 75144625629816062620302474174838463545;
@@ -120,6 +123,21 @@ fn create_ca_cert(
     let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
     create_ca_cert_from_keypair(&keypair, ca_name, is_ca, wildcard)
         .map(|(cert, params)| (keypair, cert, params))
+}
+
+pub fn create_ca_cert_from_signing_key(
+    ca_name: &str,
+    wildcard: bool,
+    sk: &SigningKey,
+) -> anyhow::Result<(Vec<u8>, Certificate)> {
+    let is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
+    let sk_der = sk.to_pkcs8_der()?;
+    let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
+        &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
+        &PKCS_ECDSA_P256K1_SHA256,
+    )?;
+    create_ca_cert_from_keypair(&ca_keypair, ca_name, &is_ca, wildcard)
+        .map(|(cert, params)| (params.key_identifier(&ca_keypair), cert))
 }
 
 fn create_ca_cert_from_keypair(
@@ -362,17 +380,35 @@ pub async fn entry_point() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{create_ca_cert, create_core_certs, validate_ca_name};
-    use rcgen::{BasicConstraints::Constrained, Certificate, IsCa};
-    use webpki::{EndEntityCert, ErrorExt, TlsClientTrustAnchors, TrustAnchor};
+    use super::{
+        create_ca_cert, create_ca_cert_from_signing_key, create_core_certs, validate_ca_name,
+    };
+    use k256::{ecdsa::SigningKey, pkcs8::EncodePrivateKey};
+    use rand::rngs::OsRng;
+    use rcgen::{
+        BasicConstraints::Constrained, Certificate, CertificateParams, IsCa, KeyPair,
+        PKCS_ECDSA_P256K1_SHA256,
+    };
+    use tokio_rustls::rustls::pki_types::{PrivatePkcs8KeyDer, UnixTime};
+    use webpki::{anchor_from_trusted_cert, EndEntityCert, KeyUsage};
 
-    fn signed_verify(leaf_cert: &Certificate, ca_cert: &Certificate) -> Result<(), ErrorExt> {
-        let ee = EndEntityCert::try_from(leaf_cert.der().as_ref()).unwrap();
-        let ta = [TrustAnchor::try_from_cert_der(ca_cert.der().as_ref()).unwrap()];
-        let tcta = TlsClientTrustAnchors(&ta);
-        let wt = webpki::Time::try_from(std::time::SystemTime::now()).unwrap();
+    fn signed_verify(leaf_cert: &Certificate, ca_cert: &Certificate) -> anyhow::Result<()> {
+        let ee = EndEntityCert::try_from(leaf_cert.der())?;
+        let ta = [anchor_from_trusted_cert(ca_cert.der())?];
 
-        ee.verify_is_valid_tls_client_cert_ext(&[&webpki::ECDSA_P256_SHA256], &tcta, &[], wt)
+        ee.verify_for_usage(
+            &[
+                webpki::aws_lc_rs::ECDSA_P256_SHA256,
+                webpki::aws_lc_rs::ECDSA_P256K1_SHA256,
+            ],
+            &ta,
+            &[],
+            UnixTime::now(),
+            KeyUsage::server_auth(),
+            None,
+            None,
+        )?;
+        Ok(())
     }
 
     #[test]
@@ -436,6 +472,29 @@ mod tests {
             verif.is_err(),
             "certificate validation succeeded, but was expected to fail!"
         );
+    }
+
+    #[test]
+    fn test_ca_cert_from_signing_key_verify() {
+        let ca_name = "p1.kms.zama.ai";
+        let sk = SigningKey::random(&mut OsRng);
+        let (_ca_cert_ki, ca_cert) = create_ca_cert_from_signing_key(ca_name, false, &sk).unwrap();
+
+        let sk_der = sk.to_pkcs8_der().unwrap();
+        let ca_keypair = KeyPair::from_pkcs8_der_and_sign_algo(
+            &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
+            &PKCS_ECDSA_P256K1_SHA256,
+        )
+        .unwrap();
+        let ca_cert_params = CertificateParams::from_ca_cert_der(ca_cert.der()).unwrap();
+
+        let core_certs =
+            create_core_certs(ca_name, 2, &ca_keypair, &ca_cert_params, false).unwrap();
+
+        for c in core_certs {
+            let verif = signed_verify(&c.1 .1, &ca_cert);
+            assert!(verif.is_ok(), "certificate validation failed!");
+        }
     }
 
     #[test]

@@ -147,7 +147,7 @@ pub trait SecurityModule {
     async fn issue_x509_cert(
         &self,
         context_id: ContextId,
-        ca_cert_pem: Pem,
+        ca_cert_pem: &Pem,
         ca_key: &PrivateSigKey,
         wildcard: bool,
     ) -> anyhow::Result<(Pem, Pem)> {
@@ -188,7 +188,8 @@ pub trait SecurityModule {
             &PrivatePkcs8KeyDer::from(sk_der.as_bytes()),
             &PKCS_ECDSA_P256K1_SHA256,
         )?;
-        let ca_cert_params = CertificateParams::from_ca_cert_der(&ca_cert_pem.contents.into())?;
+        let ca_cert_params =
+            CertificateParams::from_ca_cert_der(&ca_cert_pem.contents.as_slice().into())?;
 
         let mut tls_cp = CertificateParams::new(sans_vec)?;
         tls_cp.is_ca = IsCa::ExplicitNoCa;
