@@ -1,0 +1,105 @@
+name: docker-check-build
+on:
+  pull_request:
+
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  docker-check-build:
+    name: docker-check-build
+    permissions:
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      packages: read # Required to read GitHub packages/container registry
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        dockerfile:
+          - 'docker/base/Dockerfile'
+          - 'docker/core/service/Dockerfile'
+          - 'docker/core-client/Dockerfile'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: true
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          persist-credentials: false
+
+      - name: Get Rust version
+        env:
+          GH_WORKSPACE: ${{ github.workspace }}
+        run: |
+          version="$(cat "${GH_WORKSPACE}/toolchain.txt")"
+          echo "RUST_IMAGE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
+        with:
+          platforms: linux/amd64
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Chainguard Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: cgr.dev
+          username: ${{ secrets.CGR_USERNAME }}
+          password: ${{ secrets.CGR_PASSWORD }}
+
+      - name: Docker Build and Push with Platform Tag
+        id: build
+        uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
+        env:
+          RUNS_ON_S3_BUCKET_CACHE: gh-actions-cache-eu-west-3
+          RUNS_ON_AWS_REGION: eu-west-3
+        with:
+          build-args: |
+            RUST_IMAGE_VERSION=${{ env.RUST_IMAGE_VERSION }}
+            TARGETARCH=amd64
+          context: '.'
+          secrets: BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          pull: false
+          load: true
+          provenance: false
+          sbom: false
+          target: prod
+          tags: |
+            base:latest
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          image-ref: base:latest
+          format: "table"
+          severity: "CRITICAL,HIGH"
+          output: trivy-result.txt
+
+      - name: Check Trivy result file
+        run: cat trivy-result.txt
+
+      - name: Format Trivy Scan Result
+        run: |
+          if [ -s trivy-result.txt ]; then
+            echo -e "## Vulnerability Scan Results\n<details><summary>Details</summary>\n\n\`\`\`\n$(cat trivy-result.txt)\n\`\`\`\n</details>" > formatted-trivy-result.md
+          else
+            echo -e "## Vulnerability Scan Results\nNo vulnerabilities were detected." > formatted-trivy-result.md
+          fi
+
+      - name: Clean up Trivy result file
+        run: rm -f trivy-result.txt formatted-trivy-result.md
