@@ -333,16 +333,15 @@ impl<
                     "Public decryption request with ID {req_id} already exists"
                 )));
             }
-
-            if !ok_or_tonic_abort(
-                self.crypto_storage.threshold_fhe_keys_exists(&key_id).await,
-                "Could not check threshold fhe key existance".to_string(),
-            )? {
-                return Err(Status::not_found(format!(
-                    "Threshold FHE keys with key ID {key_id} not found"
-                )));
-            }
         }
+
+        self.crypto_storage
+            .refresh_threshold_fhe_keys(&key_id)
+            .await
+            .map_err(|e| {
+                tracing::warn!(error=?e, key_id=?key_id, "Failed to refresh threshold FHE keys");
+                Status::not_found(format!("Threshold FHE keys with key ID {key_id} not found"))
+            })?;
 
         timer.tags([(TAG_KEY_ID, key_id.as_str())]);
         tracing::debug!(
@@ -375,13 +374,6 @@ impl<
             "MetaStore INITIAL insert - req_id={}, key_id={}, party={}, ciphertexts_count={}, lock_acquired_in={:?}, total_lock_held={:?}",
             req_id, key_id, session_preparer.my_role().map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?, ciphertexts.len(), lock_acquired_time, total_lock_time
         );
-
-        ok_or_tonic_abort(
-            self.crypto_storage
-                .refresh_threshold_fhe_keys(&key_id)
-                .await,
-            format!("Cannot find threshold keys with key ID {key_id}"),
-        )?;
 
         let ext_handles_bytes = ciphertexts
             .iter()
