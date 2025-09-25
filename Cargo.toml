@@ -152,7 +152,7 @@ reqwest = { version = "=0.12.22", default-features = false, features = ["json", 
 rsa = { version = "=0.9.8", features = ["sha2", "serde"] }  # RSA public key cryptography - LOW RISK: RustCrypto org
 rstest = "=0.25.0"  # Test framework - HIGH RISK: Individual maintainer (la10736), test-only dependency
 schemars = "=0.8.22"  # JSON Schema generation - HIGH RISK: Individual maintainer (GREsau), despite popularity, 81M+ downloads
-serde = { version = "1.0.223", features = ["derive", "rc"] }  # Serialization framework - MEDIUM RISK: Reputable individual maintainer (dtolnay), 641M downloads
+serde = { version = "1.0.226", features = ["derive", "rc"] }  # Serialization framework - MEDIUM RISK: Reputable individual maintainer (dtolnay), 641M downloads
 serde-wasm-bindgen = { version = "=0.6.5" }  # Serde integration for wasm-bindgen - HIGH RISK: Individual maintainer (RReverser), despite 37M+ downloads
 serde_json = "=1.0.145"  # JSON serialization - MEDIUM RISK: Reputable individual maintainer (dtolnay), 563M downloads
 serial_test = "=3.2.0"  # Serial test execution - HIGH RISK: Individual maintainer (palfrey), test-only dependency
@@ -166,10 +166,10 @@ syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RIS
 sysinfo = "0.36.1"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
 tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
-tfhe = {git = "https://github.com/zama-ai/tfhe-rs.git"}  # Fully Homomorphic Encryption library - LOW RISK: Zama
-tfhe-csprng = {git = "https://github.com/zama-ai/tfhe-rs.git"}  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
-tfhe-versionable = {git = "https://github.com/zama-ai/tfhe-rs.git"}  # TFHE versioning support - LOW RISK: Zama
-tfhe-zk-pok = {git = "https://github.com/zama-ai/tfhe-rs.git"}  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
+tfhe = "=1.4.0-alpha.0"  # Fully Homomorphic Encryption library - LOW RISK: Zama
+tfhe-csprng = "=0.7.0"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
+tfhe-versionable = "=0.6.2"  # TFHE versioning support - LOW RISK: Zama
+tfhe-zk-pok = "=0.7.3"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
 thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual maintainer (dtolnay), 545M downloads
 tokio = { version = "=1.46.1", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard
 tokio-rustls = { version = "=0.26.2", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation
