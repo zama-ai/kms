@@ -117,7 +117,7 @@ Configuration values are applied in the following order (highest precedence firs
   [OK] Valid threshold config
   [OK] Storage: File(FileStorage { path: "./keys" })
 
-[CONNECTIVITY]:
+[CORE SERVICE CONNECTIVITY]:
   [OK] Reachable (latency: 2ms)
 
 [KEY MATERIAL]:

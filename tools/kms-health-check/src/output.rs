@@ -51,7 +51,7 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
 
     // Connectivity
     if let Some(conn) = &result.connectivity {
-        writeln!(output, "\n[CONNECTIVITY]:")?;
+        writeln!(output, "\n[CORE SERVICE CONNECTIVITY]:")?;
         if conn.reachable {
             writeln!(output, "  [OK] Reachable (latency: {}ms)", conn.latency_ms)?;
         } else {
