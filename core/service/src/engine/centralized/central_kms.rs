@@ -504,7 +504,9 @@ pub struct CentralizedKms<
     pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     // NOT USED - only here to ensure we can keep track of calls similar to the threshold KMS
     pub(crate) init_ids: Arc<RwLock<MetaStore<()>>>,
-    // NOT USED - only here to ensure we can sign responses in the same manner as the threshold KMS
+    // Ensures we can sign responses in the same manner as the threshold KMS
+    // and keeps track of the parameters sent during a PreprocRequest
+    // to use them in the corresponding KeyGenRequest
     pub(crate) preprocessing_meta_store: Arc<RwLock<MetaStore<CentralizedPreprocBucket>>>,
     // Map storing ongoing key generation requests.
     pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenMetadata>>>,

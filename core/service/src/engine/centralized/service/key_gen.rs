@@ -510,7 +510,8 @@ pub(crate) mod tests {
                 keyset_added_info: None,
                 request_id: Some(request_id.into()),
                 context_id: None,
-                preproc_id: Some(preproc_id.into()),
+                //If we set a preproc_id here, params will be ignored and thus this request wont fail
+                preproc_id: None,
                 domain: Some(domain.clone()),
                 epoch_id: None,
             };

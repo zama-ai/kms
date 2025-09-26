@@ -510,9 +510,6 @@ impl<
 
                 // Note: This relies on the ordering of the PubDataType enum
                 // which must be kept stable (in particular, ServerKey must be before PublicKey)
-
-                // !!NoteToReviewer!!: We can also decide to build Vec here with explicit order by
-                // manually getting from the HashMap; lmk if you prefer that
                 let key_digests = res
                     .key_digest_map
                     .into_iter()
