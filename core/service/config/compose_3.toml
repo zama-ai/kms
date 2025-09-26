@@ -1,5 +1,7 @@
 # See default_1.toml for the documentation.
 
+mock_enclave = true
+
 [service]
 listen_address = "0.0.0.0"
 listen_port = 50300
@@ -36,9 +38,10 @@ num_sessions_preproc = 2
 
 decryption_mode = "NoiseFloodSmall"
 
-[threshold.tls.manual]
-cert.path = "certs/cert_dev-kms-core-3.com.pem"
-key.path = "certs/key_dev-kms-core-3.com.pem"
+[[threshold.tls.full_auto.trusted_releases]]
+pcr0 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+pcr1 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+pcr2 = "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 
 [[threshold.peers]]
 party_id = 1

@@ -43,7 +43,7 @@ strum.workspace = true
 strum_macros.workspace = true
 tempfile.workspace = true
 tfhe.workspace = true
-threshold-fhe.workspace = true
+threshold-fhe = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tonic = { workspace = true }
 tracing = { workspace = true, features = ["log"] }

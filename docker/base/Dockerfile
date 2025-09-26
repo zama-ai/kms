@@ -14,7 +14,6 @@ RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     make \
     perl \
     binutils \
-    ca-certificates \
     gcc \
     libstdc++ \
     linux-headers \
