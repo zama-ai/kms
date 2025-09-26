@@ -14,7 +14,9 @@ use crate::{
 const TIMEOUT_MAX_WAIT_S: u64 = 5;
 
 pub struct HealthCheckSession {
+    /// My own [`Identity`]
     pub(crate) owner: Identity,
+    /// My own [`Role`]
     pub(crate) my_role: Role,
     pub(crate) context_id: SessionId,
     pub(crate) connection_channels: HashMap<

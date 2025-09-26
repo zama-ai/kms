@@ -342,8 +342,9 @@ impl Drop for GrpcSendingService {
 /// It also deals with the network round and timeouts
 #[derive(Debug)]
 pub struct NetworkSession {
+    /// My own [`Identity`]
     pub(crate) owner: Identity,
-    /// Sessin id of this Network session
+    /// [`SessionId`] of this Network session
     pub(crate) session_id: SessionId,
     pub(crate) context_id: SessionId,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`]
