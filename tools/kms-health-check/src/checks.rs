@@ -302,20 +302,20 @@ async fn process_health_status(
         let num_peers_reachable = result_peers_status.nodes_reachable - 1; // Exclude self
 
         // Set overall health based on server's assessment
-        let (context_health,recommendation) = match result_peers_status.status {
-            1 => (HealthStatus::Optimal,format!(
+        let (context_health, recommendation) = match result_peers_status.status {
+            1 => (HealthStatus::Optimal, format!(
                     "Optimal: All {} peers online and reachable",
                     total_peers
                 )),   // HEALTH_STATUS_OPTIMAL
-            2 => (HealthStatus::Healthy,format!(
+            2 => (HealthStatus::Healthy, format!(
                     "Healthy but not optimal: {}/{} peers reachable (sufficient majority but {} peers offline)",
                     num_peers_reachable, total_peers, total_peers - num_peers_reachable
                 )),   // HEALTH_STATUS_HEALTHY
-            3 => (HealthStatus::Degraded,format!(
+            3 => (HealthStatus::Degraded, format!(
                     "(!!!)  INVESTIGATE: Even with healthy status, explore why {} peers are offline. Check peer connectivity, network issues, or node failures to restore optimal fault tolerance.",
                     total_peers - num_peers_reachable
                 )) , // HEALTH_STATUS_DEGRADED
-            4 => (HealthStatus::Unhealthy,format!(
+            4 => (HealthStatus::Unhealthy, format!(
                     "Critical: Only {} peers reachable, but {} required nodes for threshold operations",
                     num_peers_reachable, result_peers_status.threshold_required
                 )), // HEALTH_STATUS_UNHEALTHY

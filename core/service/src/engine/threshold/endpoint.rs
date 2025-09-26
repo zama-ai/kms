@@ -429,12 +429,12 @@ impl_endpoint! {
                                     error: String::new(),
                                 }
                             }
-                            HealthCheckStatus::Error((latency,error)) => PeerHealth {
+                            HealthCheckStatus::Error((latency, error)) => PeerHealth {
                                 peer_id: role.one_based() as u32,
                                 endpoint: identity.hostname().to_string(),
                                 reachable: false,
                                 latency_ms: latency.as_millis() as u32,
-                                error: format!("Error : {}",error.message()),
+                                error: format!("Error : {}", error.message()),
                             },
                             HealthCheckStatus::TimeOut(elapsed) => {PeerHealth {
                                 peer_id: role.one_based() as u32,
