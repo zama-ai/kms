@@ -520,16 +520,15 @@ impl<
                     "User decryption request with ID {req_id} already exists"
                 )));
             }
-
-            if !ok_or_tonic_abort(
-                crypto_storage.threshold_fhe_keys_exists(&key_id).await,
-                "Could not check threshold fhe key existance".to_string(),
-            )? {
-                return Err(Status::not_found(format!(
-                    "Threshold FHE keys with key ID {key_id} not found"
-                )));
-            }
         }
+
+        self.crypto_storage
+            .refresh_threshold_fhe_keys(&key_id)
+            .await
+            .map_err(|e| {
+                tracing::warn!(error=?e, key_id=?key_id, "Failed to refresh threshold FHE keys");
+                Status::not_found(format!("Threshold FHE keys with key ID {key_id} not found"))
+            })?;
 
         // Below we write to the meta-store.
         // After writing, the the meta-store on this [req_id] will be in the "Started" state
@@ -543,11 +542,6 @@ impl<
                 "Could not insert user decryption request".to_string(),
             )?;
         }
-
-        ok_or_tonic_abort(
-            crypto_storage.refresh_threshold_fhe_keys(&key_id).await,
-            format!("Cannot find threshold keys with key ID {key_id}"),
-        )?;
 
         let prep = Arc::clone(&session_preparer);
         let dec_mode = self.decryption_mode;
