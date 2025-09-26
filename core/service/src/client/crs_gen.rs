@@ -335,8 +335,8 @@ pub(crate) mod tests {
         // Should fail due to no valid signatures
         assert!(res.is_err());
         // Check that we fail because of invalid signature
-        logs_contain("Signature could not be verified for a CRS");
-        // Check that the failed signature indeed does get included in the count thus validating fix https://github.com/zama-ai/kms/pull/3
-        logs_contain("Not enough signatures on CRS results!");
+        assert!(logs_contain("Signature could not be verified for a CRS"));
+        // Ensure that a value with a bad sig does not get counted like it did before the fix
+        assert!(!logs_contain("CRS map contains 1 entries"));
     }
 }
