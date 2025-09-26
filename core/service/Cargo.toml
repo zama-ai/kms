@@ -33,59 +33,58 @@ name = "kms-custodian"
 path = "src/bin/kms-custodian.rs"
 
 [dependencies]
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
 aes.workspace = true
-aes-gcm-siv = "=0.11.1"
+aes-gcm.workspace = true
+aes-gcm-siv.workspace = true
 aes-prng.workspace = true
-alloy-dyn-abi = { workspace = true }
+alloy-dyn-abi.workspace = true
 alloy-primitives = { workspace = true, features = ["k256"] }
-alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 alloy-signer.workspace = true
 alloy-signer-local.workspace = true
+alloy-sol-types = { workspace = true, features = ["eip712-serde"] }
 anyhow.workspace = true
-aws-config = { version = "=1.5.9", optional = true }
-aws-nitro-enclaves-nsm-api = { version = "=0.4.0", optional = true }
-aws-sdk-kms = { version = "=1.50.0", optional = true }
-aws-sdk-s3 = { version = "=1.62.0", optional = true }
-aws-smithy-runtime = { version = "=1.7.3", features = [
-    "client",
-    "connector-hyper-0-14-x",
-], optional = true }
-aws-smithy-runtime-api = { version = "=1.7.3", optional = true }
-aws-smithy-types = { version = "=1.2.9", optional = true }
-bincode.workspace = true
-# Needed for seed phrase generation for custodian backup. Project by "rust-bitcoin" that also make package `secp256k1` we use.
-# Package used by 6k+ projects, and project itself has 10+ developers, has CI enabled, but no statements regarding security.
-bip39 = { version = "=2.2.0", features = ["alloc"] }
+async_cell.workspace = true
+aws-config = { workspace = true, optional = true }
+aws-nitro-enclaves-nsm-api = { workspace = true, optional = true }
+aws-sdk-kms = { workspace = true, optional = true }
+aws-sdk-s3 = { workspace = true, optional = true }
+aws-smithy-runtime = { workspace = true, optional = true }
+aws-smithy-runtime-api = { workspace = true, optional = true }
+aws-smithy-types = { workspace = true, optional = true }
 bc2wrap.workspace = true
-bytes.workspace = true
-cbc = { version = "=0.1.2", features = ["alloc"] }
+bincode.workspace = true
+bip39.workspace = true
+cbc.workspace = true
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive"] }
-observability = { workspace = true, optional = true }
-threshold-fhe = { workspace = true, default-features = false, features = [
-    "extension_degree_4",
-] }
+console_error_panic_hook.workspace = true
 enum_dispatch.workspace = true
 futures-util.workspace = true
-kms-grpc = { workspace = true, default-features = false }
 hex.workspace = true
-http = "=0.2.12"
-hyper-rustls = { version = "=0.24.2", optional = true }
+http-legacy.workspace = true
+hyper-rustls = { workspace = true, optional = true }
 itertools.workspace = true
 k256.workspace = true
+kms-grpc = { workspace = true, default-features = false }
 lazy_static.workspace = true
-nom = "=8.0.0"
+ml-kem.workspace = true
+nom.workspace = true
+observability = { workspace = true, optional = true }
+ordermap.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
-rasn = "=0.20.2"
-rasn-cms = "=0.20.2"
+rasn.workspace = true
+rasn-cms.workspace = true
 rayon.workspace = true
 rcgen = { workspace = true, optional = true }
-rsa = { version = "=0.9.8", features = ["sha2", "serde"] }
+rsa.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
-signature = "=2.2.0"
+serde-wasm-bindgen.workspace = true
+signature.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
-# experimental-force_fft_algo_dif4 feature ensure PBS is deterministic
 tfhe = { workspace = true, features = [
     "boolean",
     "shortint",
@@ -94,12 +93,17 @@ tfhe = { workspace = true, features = [
     "experimental-force_fft_algo_dif4",
     "extended-types",
 ] }
+tfhe-versionable.workspace = true
+thiserror.workspace = true
+threshold-fhe = { workspace = true, default-features = false, features = [
+    "extension_degree_4",
+] }
 tokio = { workspace = true, features = [
     "macros",
     "rt-multi-thread",
 ], optional = true }
 tokio-rustls = { workspace = true, optional = true }
-tokio-util = { version = "=0.7.15", features = ["rt"] }
+tokio-util.workspace = true
 tonic = { workspace = true, optional = true }
 tonic-health = { workspace = true, optional = true }
 tonic-tls = { workspace = true, optional = true }
@@ -107,39 +111,28 @@ tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
 tracing = { workspace = true, features = ["log"] }
 trait-variant.workspace = true
-url = { version = "=2.5.4", features = ["serde"] }
+url.workspace = true
 validator.workspace = true
-zeroize.workspace = true
-ordermap = "=0.5.7"
+wasm-bindgen.workspace = true
 x509-parser = { workspace = true, optional = true }
-
-# [target.'cfg(target_arch = "wasm32")'.dependencies]
-console_error_panic_hook = { version = "=0.1.7" }
-serde-wasm-bindgen = { version = "=0.6.5" }
-wasm-bindgen = { version = "=0.2.100", features = ["serde-serialize"] }
-tfhe-versionable.workspace = true
-async_cell = "0.2.2"
-thiserror.workspace = true
-aes-gcm = { version = "=0.10.3", features = ["std"] }
-ml-kem = "=0.2.1"
+zeroize.workspace = true
 
 [dev-dependencies]
-assert_cmd = "=2.0.17"
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
+assert_cmd.workspace = true
+backward-compatibility = { workspace = true, features = ["load", "tests"] }
+proptest.workspace = true
+rstest.workspace = true
 serial_test.workspace = true
-sysinfo = "=0.35.1"
+sysinfo.workspace = true
 tempfile.workspace = true
-tracing-test = "=0.2.5"
-rstest = "=0.25.0"
-# The testing feature is only required for tests
+tests-utils = { path = "./tests-utils" }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "testing", "malicious_strategies",
 ] }
-backward-compatibility = { workspace = true, features = ["load", "tests"] }
-proptest = "=1.6.0"
-tests-utils = { path = "./tests-utils" }
-
-[build-dependencies]
-tonic-build.workspace = true
+tracing-test.workspace = true
 
 [features]
 default = ["non-wasm"]

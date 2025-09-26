@@ -29,6 +29,7 @@ use crate::choreography::requests::{
 };
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::communication::broadcast::{Broadcast, SyncReliableBroadcast};
+use crate::execution::constants::DEFAULT_CHOREOGRAPHY_CONTEXT_ID;
 use crate::execution::endpoints::decryption::{
     combine_plaintext_blocks, init_prep_bitdec, run_decryption_noiseflood_64,
     task_decryption_bitdec_par, BlocksPartialDecrypt, DecryptionMode, OfflineNoiseFloodSession,
@@ -409,6 +410,7 @@ where
     async fn create_base_session(
         &self,
         request_sid: SessionId,
+        context_id: SessionId,
         threshold: u8,
         role_assignment: Arc<RwLock<RoleAssignment>>,
         network_mode: NetworkMode,
@@ -417,6 +419,7 @@ where
         Ok(self
             .create_base_sessions(
                 request_sid,
+                context_id,
                 1,
                 threshold,
                 role_assignment,
@@ -436,11 +439,14 @@ where
             )?)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn create_base_sessions(
         &self,
         request_sid: SessionId,
+        context_id: SessionId,
         num_sessions: usize,
         threshold: u8,
+        // TODO does not need to be Arc
         role_assignment: Arc<RwLock<RoleAssignment>>,
         network_mode: NetworkMode,
         seed: Option<u64>,
@@ -462,7 +468,13 @@ where
             //We are executing offline phase, so requires Sync network
             let networking = self
                 .networking_manager
-                .make_session(session_id, &*role_assignment.read().await, network_mode)
+                .make_network_session(
+                    session_id,
+                    context_id,
+                    &*role_assignment.read().await,
+                    self.my_role,
+                    network_mode,
+                )
                 .map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
@@ -579,6 +591,7 @@ where
         let mut base_session = self
             .create_base_session(
                 session_id,
+                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
                 role_assignment,
                 NetworkMode::Sync,
@@ -700,6 +713,7 @@ where
         let base_sessions = self
             .create_base_sessions(
                 start_sid,
+                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 num_sessions as usize,
                 threshold,
                 role_assignment,
@@ -914,6 +928,7 @@ where
         let mut base_session = self
             .create_base_session(
                 session_id,
+                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
                 role_assignment,
                 NetworkMode::Async,
@@ -1082,6 +1097,7 @@ where
             let mut base_session = self
                 .create_base_session(
                     session_id,
+                    *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                     0,
                     role_assignment,
                     NetworkMode::Sync,
@@ -1200,6 +1216,7 @@ where
                 let base_sessions = self
                     .create_base_sessions(
                         session_id,
+                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         num_sessions,
                         threshold,
                         role_assignment,
@@ -1269,6 +1286,7 @@ where
                 let base_sessions = self
                     .create_base_sessions(
                         session_id,
+                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         num_sessions,
                         threshold,
                         role_assignment,
@@ -1362,6 +1380,7 @@ where
                 let base_session = self
                     .create_base_session(
                         session_id,
+                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         threshold,
                         role_assignment,
                         NetworkMode::Sync,
@@ -1412,6 +1431,7 @@ where
                 let base_session = self
                     .create_base_session(
                         session_id,
+                        *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                         threshold,
                         role_assignment,
                         NetworkMode::Sync,
@@ -1557,9 +1577,10 @@ where
             let ctxt = ctxts[0].clone();
 
             //Create one session for bcast
-            let bcast_session = self
+            let mut bcast_session = self
                 .create_base_session(
                     session_id,
+                    *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                     threshold,
                     role_assignment.clone(),
                     NetworkMode::Sync,
@@ -1579,6 +1600,7 @@ where
                     let base_sessions = self
                         .create_base_sessions(
                             new_session_id,
+                            *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                             num_sessions,
                             threshold,
                             role_assignment.clone(),
@@ -1608,7 +1630,7 @@ where
                     //Do bcast after the Sns to sync parties
                     let _ = SyncReliableBroadcast::default()
                         .broadcast_from_all(
-                            &bcast_session,
+                            &mut bcast_session,
                             BroadcastValue::from(Z128::from_u128(42)),
                         )
                         .await;
@@ -1644,18 +1666,21 @@ where
                         // May panic
                         {
                             let decrypt_span = tracing::info_span!("Online-NoiseFloodSmall");
-                            let key_ref = key_ref.clone();
                             tracing::info!(
                                 "Starting session with id {} to decrypt {} ctxts",
                                 small_session.session.borrow().session_id(),
                                 ctxts.len()
                             );
+
+                            let key_shares = Arc::new(key_ref.1.clone());
                             decryption_tasks.spawn(
                                 async move {
-                                    let mut noiseflood_preprocessing = small_session
-                                        .init_prep_noiseflooding(ctxts.len() * num_blocks)
-                                        .await
-                                        .unwrap();
+                                    let noiseflood_preprocessing = Arc::new(Mutex::new(
+                                        small_session
+                                            .init_prep_noiseflooding(ctxts.len() * num_blocks)
+                                            .await
+                                            .unwrap(),
+                                    ));
 
                                     let mut base_session =
                                         small_session.session.into_inner().base_session;
@@ -1670,9 +1695,9 @@ where
                                                 SecureOnlineNoiseFloodDecryption,
                                             >(
                                                 &mut base_session,
-                                                &mut noiseflood_preprocessing,
-                                                &key_ref.1,
-                                                &ctxt,
+                                                noiseflood_preprocessing.clone(),
+                                                key_shares.clone(),
+                                                Arc::new(ctxt),
                                                 SnsDecryptionKeyType::SnsKey,
                                             )
                                             .await
@@ -1717,6 +1742,7 @@ where
                     let base_sessions = self
                         .create_base_sessions(
                             new_session_id,
+                            *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                             num_sessions * num_blocks,
                             threshold,
                             role_assignment.clone(),
@@ -1733,7 +1759,7 @@ where
                     //Do bcast to sync parties
                     let _ = SyncReliableBroadcast::default()
                         .broadcast_from_all(
-                            &bcast_session,
+                            &mut bcast_session,
                             BroadcastValue::from(Z128::from_u128(42)),
                         )
                         .await;
@@ -1916,9 +1942,11 @@ where
             //This is running the online phase of ddec, so can work in Async network
             let networking = self
                 .networking_manager
-                .make_session(
+                .make_network_session(
                     session_id,
+                    *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                     &*role_assignment.read().await,
+                    self.my_role,
                     NetworkMode::Async,
                 )
                 .await
@@ -1973,6 +2001,7 @@ where
                     let base_sessions = self
                         .create_base_sessions(
                             session_id,
+                            *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                             num_sessions,
                             threshold,
                             role_assignment.clone(),
@@ -2112,10 +2141,11 @@ where
                         let server_key = key_ref.0.server_key.as_ref();
                         let mut res = Vec::new();
                         let sns_key = key_ref.0.server_key.noise_squashing_key();
-                        for (ctxt, mut preprocessing) in
+                        for (ctxt, preprocessing) in
                             ctxts.into_iter().zip_eq(preprocessings.into_iter())
                         // May panic
                         {
+                            let preprocessing = Arc::new(Mutex::new(preprocessing));
                             let ct_large = if let Some(sns_key) = sns_key {
                                 match ctxt {
                                     RadixOrBoolCiphertext::Radix(ct) => {
@@ -2135,6 +2165,7 @@ where
                             } else {
                                 panic!("Missing key (it was there just before)")
                             };
+                            let key_shares = Arc::new(key_ref.1.clone());
                             res.push(
                                 run_decryption_noiseflood_64::<
                                     EXTENSION_DEGREE,
@@ -2143,9 +2174,9 @@ where
                                     SecureOnlineNoiseFloodDecryption,
                                 >(
                                     &mut base_session,
-                                    &mut preprocessing,
-                                    &key_ref.1,
-                                    &ct_large,
+                                    preprocessing,
+                                    key_shares,
+                                    Arc::new(ct_large),
                                     SnsDecryptionKeyType::SnsKey,
                                 )
                                 .await
@@ -2260,6 +2291,7 @@ where
         let mut base_session = self
             .create_base_session(
                 session_id,
+                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 threshold,
                 role_assignment.clone(),
                 NetworkMode::Sync,
@@ -2421,6 +2453,7 @@ where
         let mut base_sessions = self
             .create_base_sessions(
                 session_id,
+                *DEFAULT_CHOREOGRAPHY_CONTEXT_ID,
                 3,
                 threshold,
                 Arc::new(RwLock::new(RoleAssignment::from(role_assignment))),

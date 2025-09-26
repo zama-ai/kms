@@ -10,7 +10,7 @@ pub trait BackupSigner {
     where
         T: AsRef<[u8]> + ?Sized;
 }
-
+// TODO(#2748) remove as it causes more issues than good
 impl BackupSigner for PrivateSigKey {
     fn sign<T: AsRef<[u8]> + ?Sized>(
         &self,

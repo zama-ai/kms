@@ -2,7 +2,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 // === External Crates ===
-use kms_grpc::RequestId;
+use kms_grpc::identifiers::ContextId;
 use threshold_fhe::{
     algebra::galois_rings::degree_4::{ResiduePolyF4Z128, ResiduePolyF4Z64},
     execution::{
@@ -14,6 +14,7 @@ use threshold_fhe::{
     },
     networking::{grpc::GrpcNetworkingManager, NetworkMode},
     session_id::SessionId,
+    thread_handles::spawn_compute_bound,
 };
 use tokio::sync::RwLock;
 
@@ -51,13 +52,13 @@ impl SessionPreparerManager {
     }
 
     /// Returns a new instance of the session preparer for the given context ID.
-    pub(crate) async fn get(&self, request_id: &RequestId) -> anyhow::Result<SessionPreparer> {
-        self.inner.get(request_id).await
+    pub(crate) async fn get(&self, context_id: &ContextId) -> anyhow::Result<SessionPreparer> {
+        self.inner.get(context_id).await
     }
 
     /// Inserts a new session preparer into the manager.
-    pub(crate) async fn insert(&self, request_id: RequestId, session_preparer: SessionPreparer) {
-        self.inner.insert(request_id, session_preparer).await
+    pub(crate) async fn insert(&self, context_id: ContextId, session_preparer: SessionPreparer) {
+        self.inner.insert(context_id, session_preparer).await
     }
 
     #[cfg(test)]
@@ -74,19 +75,19 @@ impl SessionPreparerManager {
 /// that does not have a cloned Rng state.
 #[derive(Clone)]
 pub struct SessionPreparerGetter {
-    session_preparer: Arc<RwLock<HashMap<RequestId, SessionPreparer>>>,
+    session_preparer: Arc<RwLock<HashMap<ContextId, SessionPreparer>>>,
     name: String,
 }
 
 impl SessionPreparerGetter {
     /// Returns a new instance of the session preparer for the given context ID.
-    pub async fn get(&self, request_id: &RequestId) -> anyhow::Result<SessionPreparer> {
+    pub async fn get(&self, context_id: &ContextId) -> anyhow::Result<SessionPreparer> {
         let guarded_session_preparer = self.session_preparer.read().await;
-        match guarded_session_preparer.get(request_id) {
+        match guarded_session_preparer.get(context_id) {
             Some(session_preparer) => Ok(session_preparer.new_instance().await),
             None => Err(anyhow::anyhow!(
                 "No session preparer found for context ID: {}",
-                request_id
+                context_id
             )),
         }
     }
@@ -97,11 +98,11 @@ impl SessionPreparerGetter {
 
     /// Inserts a new session preparer into the manager.
     /// This function should be private and only used by the `SessionPreparerManager`.
-    async fn insert(&self, request_id: RequestId, session_preparer: SessionPreparer) {
+    async fn insert(&self, context_id: ContextId, session_preparer: SessionPreparer) {
         self.session_preparer
             .write()
             .await
-            .insert(request_id, session_preparer);
+            .insert(context_id, session_preparer);
     }
 }
 
@@ -175,12 +176,13 @@ impl SessionPreparer {
     pub async fn get_networking(
         &self,
         session_id: SessionId,
+        context_id: ContextId,
         network_mode: NetworkMode,
     ) -> anyhow::Result<threshold_fhe::execution::runtime::session::NetworkingImpl> {
         self.inner
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
-            .get_networking(session_id, network_mode)
+            .get_networking(session_id, context_id, network_mode)
             .await
     }
 
@@ -198,34 +200,65 @@ impl SessionPreparer {
     pub async fn make_base_session(
         &self,
         session_id: SessionId,
+        context_id: ContextId,
         network_mode: NetworkMode,
     ) -> anyhow::Result<BaseSession> {
         self.inner
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
-            .make_base_session(session_id, network_mode)
+            .make_base_session(session_id, context_id, network_mode)
             .await
     }
 
-    pub async fn prepare_ddec_data_from_sessionid_z128(
+    /// Make a small session with Z128 PRSS for the Async network mode.
+    pub async fn make_small_async_session_z128(
         &self,
         session_id: SessionId,
+        context_id: ContextId,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
         self.inner
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
-            .prepare_ddec_data_from_sessionid_z128(session_id)
+            .make_small_session_z128(session_id, context_id, NetworkMode::Async)
             .await
     }
 
-    pub async fn prepare_ddec_data_from_sessionid_z64(
+    /// Make a small session with Z64 PRSS for the Async network mode.
+    pub async fn make_small_async_session_z64(
         &self,
         session_id: SessionId,
+        context_id: ContextId,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
         self.inner
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
-            .prepare_ddec_data_from_sessionid_z64(session_id)
+            .make_small_session_z64(session_id, context_id, NetworkMode::Async)
+            .await
+    }
+
+    /// Make a small session with Z128 PRSS for the Sync network mode.
+    pub async fn make_small_sync_session_z128(
+        &self,
+        session_id: SessionId,
+        context_id: ContextId,
+    ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .make_small_session_z128(session_id, context_id, NetworkMode::Sync)
+            .await
+    }
+
+    /// Make a small session with Z64 PRSS for the Sync network mode.
+    pub async fn make_small_sync_session_z64(
+        &self,
+        session_id: SessionId,
+        context_id: ContextId,
+    ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
+        self.inner
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!(ERR_SESSION_NOT_INITIALIZED))?
+            .make_small_session_z64(session_id, context_id, NetworkMode::Sync)
             .await
     }
 
@@ -276,16 +309,28 @@ impl InnerSessionPreparer {
     async fn get_networking(
         &self,
         session_id: SessionId,
+        context_id: ContextId,
         network_mode: NetworkMode,
     ) -> anyhow::Result<threshold_fhe::execution::runtime::session::NetworkingImpl> {
+        // We need to convert [ContextId] type to [SessionId]
+        // because the core/threshold library is only aware of the [SessionId]
+        // since we cannot store something as long as ContextId in the x509 certificate.
+        let context_id = context_id.derive_session_id()?;
         let nm = self.networking_manager.read().await;
+
         let networking = nm
-            .make_session(session_id, &self.role_assignment, network_mode)
+            .make_network_session(
+                session_id,
+                context_id,
+                &self.role_assignment,
+                self.my_role,
+                network_mode,
+            )
             .await?;
         Ok(networking)
     }
 
-    pub async fn get_session_parameters(
+    async fn get_session_parameters(
         &self,
         session_id: SessionId,
     ) -> anyhow::Result<SessionParameters> {
@@ -298,12 +343,15 @@ impl InnerSessionPreparer {
         Ok(parameters)
     }
 
-    pub async fn make_base_session(
+    async fn make_base_session(
         &self,
         session_id: SessionId,
+        context_id: ContextId,
         network_mode: NetworkMode,
     ) -> anyhow::Result<BaseSession> {
-        let networking = self.get_networking(session_id, network_mode).await;
+        let networking = self
+            .get_networking(session_id, context_id, network_mode)
+            .await;
 
         let parameters = SessionParameters::new(
             self.threshold,
@@ -316,19 +364,21 @@ impl InnerSessionPreparer {
         Ok(base_session)
     }
 
-    pub async fn prepare_ddec_data_from_sessionid_z128(
+    async fn make_small_session_z128(
         &self,
         session_id: SessionId,
+        context_id: ContextId,
+        network_mode: NetworkMode,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z128>> {
-        //DDec for small session is only online, so requires only Async network
         let base_session = self
-            .make_base_session(session_id, NetworkMode::Async)
+            .make_base_session(session_id, context_id, network_mode)
             .await?;
         let prss_setup = some_or_tonic_abort(
             self.prss_setup_z128.read().await.clone(),
             "No PRSS setup Z128 exists".to_string(),
         )?;
-        let prss_state = prss_setup.new_prss_session_state(session_id);
+        let prss_state =
+            spawn_compute_bound(move || prss_setup.new_prss_session_state(session_id)).await?;
 
         let session = SmallSession {
             base_session,
@@ -337,13 +387,14 @@ impl InnerSessionPreparer {
         Ok(session)
     }
 
-    async fn prepare_ddec_data_from_sessionid_z64(
+    async fn make_small_session_z64(
         &self,
         session_id: SessionId,
+        context_id: ContextId,
+        network_mode: NetworkMode,
     ) -> anyhow::Result<SmallSession<ResiduePolyF4Z64>> {
-        //DDec for small session is only online, so requires only Async network
         let base_session = self
-            .make_base_session(session_id, NetworkMode::Async)
+            .make_base_session(session_id, context_id, network_mode)
             .await?;
         let prss_setup = some_or_tonic_abort(
             self.prss_setup_z64.read().await.clone(),
@@ -388,14 +439,7 @@ impl InnerSessionPreparer {
             })),
         };
         let networking_manager = Arc::new(RwLock::new(
-            GrpcNetworkingManager::new(
-                Role::indexed_from_one(1),
-                None,
-                None,
-                false,
-                Arc::new(RwLock::new(role_assignment.clone())),
-            )
-            .unwrap(),
+            GrpcNetworkingManager::new(None, None, false).unwrap(),
         ));
 
         Self {

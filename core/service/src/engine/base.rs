@@ -23,6 +23,7 @@ use kms_grpc::kms::v1::{
 use kms_grpc::rpc_types::abi_encode_plaintexts;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::CrsGenSignedPubDataHandleInternalWrapper;
+use kms_grpc::rpc_types::KMSType;
 use kms_grpc::rpc_types::PubDataType;
 #[cfg(feature = "non-wasm")]
 use kms_grpc::rpc_types::SignedPubDataHandleInternal;
@@ -352,7 +353,7 @@ pub fn deserialize_to_low_level(
     fhe_type: FheTypes,
     ct_format: CiphertextFormat,
     serialized_high_level: &[u8],
-    decompression_key: &Option<DecompressionKey>,
+    decompression_key: Option<&DecompressionKey>,
 ) -> anyhow::Result<LowLevelCiphertext> {
     let radix_ct = match fhe_type {
         FheTypes::Bool => match ct_format {
@@ -597,17 +598,19 @@ pub fn compute_external_pubdata_signature<D: SolStruct>(
 }
 
 pub struct BaseKmsStruct {
+    pub(crate) kms_type: KMSType,
     pub(crate) sig_key: Arc<PrivateSigKey>,
     pub(crate) serialized_verf_key: Arc<Vec<u8>>,
     pub(crate) rng: Arc<Mutex<AesRng>>,
 }
 
 impl BaseKmsStruct {
-    pub fn new(sig_key: PrivateSigKey) -> anyhow::Result<Self> {
+    pub fn new(kms_type: KMSType, sig_key: PrivateSigKey) -> anyhow::Result<Self> {
         let serialized_verf_key = Arc::new(bc2wrap::serialize(&PublicSigKey::new(
             SigningKey::verifying_key(sig_key.sk()).to_owned(),
         ))?);
         Ok(BaseKmsStruct {
+            kms_type,
             sig_key: Arc::new(sig_key),
             serialized_verf_key,
             rng: Arc::new(Mutex::new(AesRng::from_entropy())),
@@ -617,6 +620,7 @@ impl BaseKmsStruct {
     /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
     pub async fn new_instance(&self) -> Self {
         Self {
+            kms_type: self.kms_type,
             sig_key: self.sig_key.clone(),
             serialized_verf_key: self.serialized_verf_key.clone(),
             rng: Arc::new(Mutex::new(self.new_rng().await)),
@@ -1200,7 +1204,7 @@ pub(crate) mod tests {
             FheTypes::Bool,
             CiphertextFormat::SmallExpanded,
             &ct_buf,
-            &None,
+            None,
         )
         .is_err());
 
@@ -1209,7 +1213,7 @@ pub(crate) mod tests {
             FheTypes::Uint32,
             CiphertextFormat::SmallExpanded,
             &ct_buf,
-            &None,
+            None,
         )
         .is_ok());
     }
@@ -1247,7 +1251,7 @@ pub(crate) mod tests {
                 FheTypes::Uint32,
                 CiphertextFormat::BigExpanded,
                 &ct_buf,
-                &None,
+                None,
             )
             .is_err());
 
@@ -1256,7 +1260,7 @@ pub(crate) mod tests {
                 FheTypes::Uint32,
                 CiphertextFormat::SmallExpanded,
                 &ct_buf,
-                &None,
+                None,
             )
             .unwrap();
         }
@@ -1271,7 +1275,7 @@ pub(crate) mod tests {
                 FheTypes::Uint32,
                 CiphertextFormat::SmallExpanded,
                 &ct_buf,
-                &None,
+                None,
             )
             .is_err());
 
@@ -1280,7 +1284,7 @@ pub(crate) mod tests {
                 FheTypes::Uint32,
                 CiphertextFormat::BigExpanded,
                 &ct_buf,
-                &None,
+                None,
             )
             .unwrap();
         }
@@ -1330,7 +1334,7 @@ pub(crate) mod tests {
                 FheTypes::Uint32,
                 CiphertextFormat::SmallCompressed,
                 &ct_buf,
-                &None,
+                None,
             )
             .is_err());
         }
@@ -1341,7 +1345,7 @@ pub(crate) mod tests {
                 FheTypes::Uint32,
                 CiphertextFormat::SmallCompressed,
                 &ct_buf,
-                &decompression_key,
+                decompression_key.as_ref(),
             )
             .unwrap();
         }

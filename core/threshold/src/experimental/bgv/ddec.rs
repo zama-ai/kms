@@ -84,9 +84,13 @@ pub(crate) async fn noise_flood_decryption<
 
     let dist_shift = LevelOne::from_u128(PLAINTEXT_MODULUS.get().into());
     //NOTE: We assumed a power of two cyclotomic ring, so E_M = 1 (Design Decision 24)
-    let shifted_t_vec = (0..N::VALUE)
-        .map(|_| prss_state.mask_next(own_role, 1u128 << ((LOG_B_MULT - LOG_PLAINTEXT) as u128)))
-        .try_collect::<_, Vec<LevelOne>, _>()?
+    let shifted_t_vec = prss_state
+        .mask_next_vec(
+            own_role,
+            1u128 << ((LOG_B_MULT - LOG_PLAINTEXT) as u128),
+            N::VALUE,
+        )
+        .await?
         .into_iter()
         .map(|x| x * dist_shift)
         .collect_vec();

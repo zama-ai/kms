@@ -154,7 +154,7 @@ impl<
 
         // PRSS robust init requires broadcast, which is implemented with Sync network assumption
         let mut base_session = session_preparer
-            .make_base_session(session_id, NetworkMode::Sync)
+            .make_base_session(session_id, *DEFAULT_MPC_CONTEXT, NetworkMode::Sync)
             .await?;
 
         tracing::info!("Starting PRSS for identity {}.", own_identity);
@@ -263,8 +263,6 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
 
     use crate::{
@@ -277,13 +275,10 @@ mod tests {
         vault::storage::{file::FileStorage, ram, StorageType},
     };
     use aes_prng::AesRng;
-    use kms_grpc::kms::v1::InitRequest;
+    use kms_grpc::{kms::v1::InitRequest, rpc_types::KMSType};
     use rand::SeedableRng;
     use threshold_fhe::{
-        execution::{
-            endpoints::decryption::DecryptionMode,
-            runtime::party::{Role, RoleAssignment},
-        },
+        execution::{endpoints::decryption::DecryptionMode, runtime::party::Role},
         malicious_execution::small_execution::malicious_prss::{EmptyPrss, FailingPrss},
     };
 
@@ -421,27 +416,8 @@ mod tests {
     }
 
     fn test_network_manager() -> Arc<RwLock<GrpcNetworkingManager>> {
-        let role_assignment = RoleAssignment {
-            inner: HashMap::from_iter((1..=4).map(|i| {
-                let identity = threshold_fhe::execution::runtime::party::Identity::new(
-                    "localhost".to_string(),
-                    8080 + i as u16,
-                    None,
-                );
-                (Role::indexed_from_one(i), identity)
-            })),
-        };
-        let role_assignment = Arc::new(RwLock::new(role_assignment));
-
         Arc::new(RwLock::new(
-            GrpcNetworkingManager::new(
-                Role::indexed_from_one(1),
-                None,
-                None,
-                false,
-                role_assignment.clone(),
-            )
-            .unwrap(),
+            GrpcNetworkingManager::new(None, None, false).unwrap(),
         ))
     }
 
@@ -452,7 +428,7 @@ mod tests {
         rng: &mut AesRng,
     ) -> RealInitiator<ram::RamStorage, I> {
         let (_pk, sk) = gen_sig_keys(rng);
-        let base_kms = BaseKmsStruct::new(sk).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk).unwrap();
         let session_preparer_manager = SessionPreparerManager::new_test_session();
         let session_preparer = SessionPreparer::new_test_session(
             base_kms.new_instance().await,

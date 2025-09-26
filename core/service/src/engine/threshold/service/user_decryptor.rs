@@ -1,14 +1,20 @@
 // === Standard Library ===
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    ops::DerefMut,
+    sync::{Arc, Mutex},
+};
 
 // === External Crates ===
 use anyhow::anyhow;
 use kms_grpc::{
+    identifiers::ContextId,
     kms::v1::{
         self, Empty, TypedCiphertext, TypedPlaintext, TypedSigncryptedCiphertext,
         UserDecryptionRequest, UserDecryptionResponse, UserDecryptionResponsePayload,
     },
-    RequestId,
+    utils::tonic_result::BoxedStatus,
+    IdentifierError, RequestId,
 };
 use observability::{
     metrics,
@@ -37,6 +43,7 @@ use threshold_fhe::{
         runtime::session::SmallSession,
         tfhe_internals::private_keysets::PrivateKeySet,
     },
+    thread_handles::spawn_compute_bound,
 };
 use tokio::sync::{OwnedRwLockReadGuard, RwLock};
 use tokio_util::task::TaskTracker;
@@ -79,8 +86,8 @@ pub trait NoiseFloodPartialDecryptor: Send + Sync {
     type Prep: OfflineNoiseFloodSession<{ ResiduePolyF4Z128::EXTENSION_DEGREE }> + Send;
     async fn partial_decrypt(
         noiseflood_session: &mut Self::Prep,
-        server_key: &tfhe::integer::ServerKey,
-        ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+        server_key: Arc<tfhe::integer::ServerKey>,
+        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
         ct: LowLevelCiphertext,
         secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
@@ -103,8 +110,8 @@ impl NoiseFloodPartialDecryptor for SecureNoiseFloodPartialDecryptor {
 
     async fn partial_decrypt(
         noiseflood_session: &mut Self::Prep,
-        server_key: &tfhe::integer::ServerKey,
-        ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+        server_key: Arc<tfhe::integer::ServerKey>,
+        ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
         ct: LowLevelCiphertext,
         secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
     ) -> anyhow::Result<(
@@ -166,11 +173,12 @@ impl<
     async fn inner_user_decrypt(
         req_id: &RequestId,
         session_prep: Arc<SessionPreparer>,
-        rng: &mut (impl CryptoRng + RngCore),
-        typed_ciphertexts: &[TypedCiphertext],
+        context_id: ContextId,
+        rng: impl CryptoRng + RngCore + Send + 'static,
+        typed_ciphertexts: Vec<TypedCiphertext>,
         link: Vec<u8>,
-        client_enc_key: &UnifiedPublicEncKey,
-        client_address: &alloy_primitives::Address,
+        client_enc_key: UnifiedPublicEncKey,
+        client_address: alloy_primitives::Address,
         sig_key: Arc<PrivateSigKey>,
         fhe_keys: OwnedRwLockReadGuard<HashMap<RequestId, ThresholdFheKeys>, ThresholdFheKeys>,
         server_verf_key: Vec<u8>,
@@ -182,9 +190,13 @@ impl<
 
         let mut all_signcrypted_cts = vec![];
 
+        let rng = Arc::new(Mutex::new(rng));
+        let client_enc_key = Arc::new(client_enc_key);
+        let client_address = Arc::new(client_address);
+
         // TODO: Each iteration of this loop should probably happen
         // inside its own tokio task
-        for (ctr, typed_ciphertext) in typed_ciphertexts.iter().enumerate() {
+        for (ctr, typed_ciphertext) in typed_ciphertexts.into_iter().enumerate() {
             // Create and start a the timer, it'll be dropped and thus
             // exported at the end of the iteration
             let mut inner_timer = metrics::METRICS
@@ -195,8 +207,8 @@ impl<
             let fhe_type_str = typed_ciphertext.fhe_type_string();
             inner_timer.tag(TAG_TFHE_TYPE, fhe_type_str);
             let ct_format = typed_ciphertext.ciphertext_format();
-            let ct = &typed_ciphertext.ciphertext;
             let external_handle = typed_ciphertext.external_handle.clone();
+            let ct = typed_ciphertext.ciphertext;
             let session_id = req_id.derive_session_id_with_counter(ctr as u64)?;
 
             let hex_req_id = hex::encode(req_id.as_bytes());
@@ -204,18 +216,21 @@ impl<
             tracing::info!(
                 request_id = hex_req_id,
                 request_id_decimal = decimal_req_id,
-                "User Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {session_id}. Handle: {}",
+                "User Decrypt Request: Decrypting ciphertext #{ctr} with internal session ID: {session_id} and context ID: {context_id}. Handle: {}",
                 hex::encode(&typed_ciphertext.external_handle)
             );
 
-            let low_level_ct =
-                deserialize_to_low_level(fhe_type, ct_format, ct, &keys.decompression_key)?;
+            let decomp_key = keys.decompression_key.clone();
+            let low_level_ct = spawn_compute_bound(move || {
+                deserialize_to_low_level(fhe_type, ct_format, &ct, decomp_key.as_deref())
+            })
+            .await??;
 
             let pdec: Result<(Vec<u8>, u32, std::time::Duration), anyhow::Error> = match dec_mode {
                 DecryptionMode::NoiseFloodSmall => {
                     let session = ok_or_tonic_abort(
                         session_prep
-                            .prepare_ddec_data_from_sessionid_z128(session_id)
+                            .make_small_async_session_z128(session_id, context_id)
                             .await,
                         "Could not prepare ddec data for noiseflood decryption".to_string(),
                     )?;
@@ -223,9 +238,9 @@ impl<
 
                     let pdec = Dec::partial_decrypt(
                         &mut noiseflood_session,
-                        &keys.integer_server_key,
+                        keys.integer_server_key.clone(),
                         keys.sns_key
-                            .as_ref()
+                            .clone()
                             .ok_or_else(|| anyhow::anyhow!("missing sns key"))?,
                         low_level_ct,
                         &keys.private_keys,
@@ -259,7 +274,7 @@ impl<
                 DecryptionMode::BitDecSmall => {
                     let mut session = ok_or_tonic_abort(
                         session_prep
-                            .prepare_ddec_data_from_sessionid_z64(session_id)
+                            .make_small_async_session_z64(session_id, context_id)
                             .await,
                         "Could not prepare ddec data for bitdec decryption".to_string(),
                     )?;
@@ -309,14 +324,26 @@ impl<
                         plaintext: TypedPlaintext::from_bytes(pdec_serialized, fhe_type),
                         link: link.clone(),
                     };
-                    let enc_res = signcrypt(
-                        rng,
-                        &DSEP_USER_DECRYPTION,
-                        &bc2wrap::serialize(&signcryption_msg)?,
-                        client_enc_key,
-                        client_address,
-                        &sig_key,
-                    )?;
+
+                    let rng = rng.clone();
+                    let sig_key = sig_key.clone();
+                    let client_enc_key = client_enc_key.clone();
+                    let client_address = client_address.clone();
+
+                    let enc_res = spawn_compute_bound(move || {
+                        let mut rng = rng
+                            .lock()
+                            .map_err(|_| anyhow_error_and_log("Poisoned mutex guard"))?;
+                        signcrypt(
+                            rng.deref_mut(),
+                            &DSEP_USER_DECRYPTION,
+                            &bc2wrap::serialize(&signcryption_msg)?,
+                            &client_enc_key,
+                            &client_address,
+                            &sig_key,
+                        )
+                    })
+                    .await??;
                     let res = bc2wrap::serialize(&enc_res)?;
 
                     tracing::info!(
@@ -352,7 +379,7 @@ impl<
             &sig_key,
             &payload,
             domain,
-            client_enc_key,
+            &client_enc_key,
             extra_data.clone(),
         )?;
         Ok((payload, external_signature, extra_data))
@@ -422,24 +449,23 @@ impl<
         &self,
         request: Request<UserDecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        let inner = request.into_inner();
+        let inner = Arc::new(request.into_inner());
         tracing::info!(
             request_id = ?inner.request_id,
             "Received a new user decryption request",
         );
-        let context_id = inner
-            .context_id
-            .clone()
-            .unwrap_or((*DEFAULT_MPC_CONTEXT).into());
+
+        // TODO(zama-ai/kms-internal/issues/2758)
+        // remove the default context when all of context is ready
+        let context_id: ContextId = match &inner.context_id {
+            Some(c) => c
+                .try_into()
+                .map_err(|e: IdentifierError| tonic::Status::invalid_argument(e.to_string()))?,
+            None => *DEFAULT_MPC_CONTEXT,
+        };
         let session_preparer = Arc::new(
             self.session_preparer_getter
-                .get(
-                    &context_id
-                        .try_into()
-                        .map_err(|e: kms_grpc::IdentifierError| {
-                            tonic::Status::new(tonic::Code::Internal, e.to_string())
-                        })?,
-                )
+                .get(&context_id)
                 .await
                 .map_err(|e| tonic::Status::new(tonic::Code::Internal, e.to_string()))?,
         );
@@ -458,21 +484,31 @@ impl<
 
         let permit = self.rate_limiter.start_user_decrypt().await?;
 
-        let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) =
-            validate_user_decrypt_req(&inner).inspect_err(|e| {
-                tracing::error!(
-                    error = ?e,
-                    request_id = ?inner.request_id,
-                    "Failed to validate decrypt request {}",
-                    format_user_request(&inner)
-                );
-            })?;
+        let (typed_ciphertexts, link, client_enc_key, client_address, key_id, req_id, domain) = {
+            let inner = inner.clone();
+            spawn_compute_bound(move || validate_user_decrypt_req(inner.as_ref()))
+                .await
+                .map_err(|_| {
+                    BoxedStatus::from(tonic::Status::new(
+                        tonic::Code::Internal,
+                        "Error delegating validate_user_decrypt_req to rayon".to_string(),
+                    ))
+                })?
+        }
+        .inspect_err(|e| {
+            tracing::error!(
+                error = ?e,
+                request_id = ?inner.request_id,
+                "Failed to validate decrypt request {}",
+                format_user_request(inner.as_ref())
+            );
+        })?;
 
         timer.tags([(TAG_KEY_ID, key_id.as_str())]);
 
         let meta_store = Arc::clone(&self.user_decrypt_meta_store);
         let crypto_storage = self.crypto_storage.clone();
-        let mut rng = self.base_kms.new_rng().await;
+        let rng = self.base_kms.new_rng().await;
         let sig_key = Arc::clone(&self.base_kms.sig_key);
 
         // Do some checks before we start modifying the database
@@ -484,16 +520,15 @@ impl<
                     "User decryption request with ID {req_id} already exists"
                 )));
             }
-
-            if !ok_or_tonic_abort(
-                crypto_storage.threshold_fhe_keys_exists(&key_id).await,
-                "Could not check threshold fhe key existance".to_string(),
-            )? {
-                return Err(Status::not_found(format!(
-                    "Threshold FHE keys with key ID {key_id} not found"
-                )));
-            }
         }
+
+        self.crypto_storage
+            .refresh_threshold_fhe_keys(&key_id)
+            .await
+            .map_err(|e| {
+                tracing::warn!(error=?e, key_id=?key_id, "Failed to refresh threshold FHE keys");
+                Status::not_found(format!("Threshold FHE keys with key ID {key_id} not found"))
+            })?;
 
         // Below we write to the meta-store.
         // After writing, the the meta-store on this [req_id] will be in the "Started" state
@@ -507,11 +542,6 @@ impl<
                 "Could not insert user decryption request".to_string(),
             )?;
         }
-
-        ok_or_tonic_abort(
-            crypto_storage.refresh_threshold_fhe_keys(&key_id).await,
-            format!("Cannot find threshold keys with key ID {key_id}"),
-        )?;
 
         let prep = Arc::clone(&session_preparer);
         let dec_mode = self.decryption_mode;
@@ -545,11 +575,12 @@ impl<
                         Self::inner_user_decrypt(
                             &req_id,
                             prep,
-                            &mut rng,
-                            &typed_ciphertexts,
+                            context_id,
+                            rng,
+                            typed_ciphertexts,
                             link.clone(),
-                            &client_enc_key,
-                            &client_address,
+                            client_enc_key,
+                            client_address,
                             sig_key,
                             k,
                             server_verf_key,
@@ -626,7 +657,10 @@ impl<
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
-    use kms_grpc::{kms::v1::CiphertextFormat, rpc_types::alloy_to_protobuf_domain};
+    use kms_grpc::{
+        kms::v1::CiphertextFormat,
+        rpc_types::{alloy_to_protobuf_domain, KMSType},
+    };
     use rand::SeedableRng;
     use tfhe::FheTypes;
     use threshold_fhe::execution::{
@@ -658,8 +692,8 @@ mod tests {
 
         async fn partial_decrypt(
             noiseflood_session: &mut Self::Prep,
-            _server_key: &tfhe::integer::ServerKey,
-            _ck: &tfhe::integer::noise_squashing::NoiseSquashingKey,
+            _server_key: Arc<tfhe::integer::ServerKey>,
+            _ck: Arc<tfhe::integer::noise_squashing::NoiseSquashingKey>,
             _ct: LowLevelCiphertext,
             _secret_key_share: &PrivateKeySet<{ ResiduePolyF4Z128::EXTENSION_DEGREE }>,
         ) -> anyhow::Result<(
@@ -710,7 +744,7 @@ mod tests {
     ) {
         let (_pk, sk) = gen_sig_keys(rng);
         let param = TEST_PARAM;
-        let base_kms = BaseKmsStruct::new(sk.clone()).unwrap();
+        let base_kms = BaseKmsStruct::new(KMSType::Threshold, sk.clone()).unwrap();
         let session_preparer_manager = SessionPreparerManager::new_test_session();
 
         let prss_setup_z128 = Arc::new(RwLock::new(Some(PRSSSetup::new_testing_prss(

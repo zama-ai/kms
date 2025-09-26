@@ -21,6 +21,7 @@ cfg_if::cfg_if! {
         use threshold_fhe::execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
         use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
         use threshold_fhe::session_id::SessionId;
+        use std::sync::Arc;
 
     }
 }
@@ -399,7 +400,7 @@ where
         priv_storage,
         key_id,
         &PubDataType::PublicKey.to_string(),
-        &PrivDataType::FheKeyInfo.to_string(),
+        &PrivDataType::FhePrivateKey.to_string(),
     )
     .await
     {
@@ -479,7 +480,7 @@ where
             priv_storage,
             req_id,
             key_info,
-            &PrivDataType::FheKeyInfo.to_string(),
+            &PrivDataType::FhePrivateKey.to_string(),
         )
         .await
         {
@@ -828,42 +829,36 @@ where
     // Compute threshold < amount_parties/3
     let threshold = max_threshold(amount_parties);
 
-    // For simplicity just test if the last party has the keys
-    let last_pub = pub_storages
-        .last()
-        .ok_or("No public storage available")
-        .unwrap_or_else(|e| {
-            panic!("Failed to access public storage: {e}");
-        });
-    let last_priv = priv_storages
-        .last()
-        .ok_or("No private storage available")
-        .unwrap_or_else(|e| {
-            panic!("Failed to access private storage: {e}");
-        });
-
-    match check_data_exists(
-        last_pub,
-        last_priv,
-        key_id,
-        &PubDataType::PublicKey.to_string(),
-        &PrivDataType::FheKeyInfo.to_string(),
-    )
-    .await
-    {
-        Ok(true) => {
-            let priv_info = last_priv.info();
-            let pub_info = last_pub.info();
-            log_data_exists(priv_info, Some(pub_info), key_id, "Threshold FHE keys");
-            return false;
-        }
-        Ok(false) => {} // Continue with generation
-        Err(e) => {
-            tracing::warn!("Error checking if threshold FHE keys exist: {}", e);
-            // Continue with generation, assuming data doesn't exist
+    let mut all_data_exists = true;
+    for (pub_storage, priv_storage) in pub_storages.iter().zip_eq(priv_storages.iter()) {
+        match check_data_exists(
+            pub_storage,
+            priv_storage,
+            key_id,
+            &PubDataType::PublicKey.to_string(),
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+        {
+            Ok(true) => {
+                continue; // Data exists for this party, check next
+            }
+            Ok(false) => {
+                all_data_exists = false;
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("Error checking if threshold FHE keys exist: {}", e);
+                // Continue with generation, assuming data doesn't exist
+                all_data_exists = false;
+                break;
+            }
         }
     }
-
+    if all_data_exists {
+        tracing::info!("Threshold FHE keys exists, skipping generation");
+        return false;
+    }
     let mut rng = get_rng(deterministic, Some(amount_parties as u64));
 
     // Collect signing keys from all private storages with proper error handling
@@ -923,10 +918,10 @@ where
             }
         };
         let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: key_shares[i - 1].to_owned(),
-            integer_server_key: integer_server_key.clone(),
-            sns_key: sns_key.clone(),
-            decompression_key: decompression_key.clone(),
+            private_keys: Arc::new(key_shares[i - 1].to_owned()),
+            integer_server_key: Arc::new(integer_server_key.clone()),
+            sns_key: sns_key.clone().map(Arc::new),
+            decompression_key: decompression_key.clone().map(Arc::new),
             meta_data: info,
         };
 
@@ -1028,38 +1023,37 @@ where
 
     let amount_parties = pub_storages.len();
 
-    // Check if the last party has the CRS. If so, we can stop, otherwise we need to generate it.
+    // Check if the all parties have the CRS. If so, we can stop, otherwise we need to generate it.
     // PANICS: If storage access fails or if no storage is available
-    match check_data_exists(
-        pub_storages.last().expect("No public storage available"),
-        priv_storages.last().expect("No private storage available"),
-        crs_id,
-        &PubDataType::CRS.to_string(),
-        &PrivDataType::CrsInfo.to_string(),
-    )
-    .await
-    {
-        Ok(true) => {
-            log_data_exists(
-                priv_storages
-                    .last()
-                    .expect("No private storage available")
-                    .info(),
-                Some(
-                    pub_storages
-                        .last()
-                        .expect("No public storage available")
-                        .info(),
-                ),
-                crs_id,
-                "Threshold CRS",
-            );
-            return false;
+    let mut all_data_exists = true;
+    for (pub_storage, priv_storage) in pub_storages.iter().zip_eq(priv_storages.iter()) {
+        match check_data_exists(
+            pub_storage,
+            priv_storage,
+            crs_id,
+            &PubDataType::CRS.to_string(),
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await
+        {
+            Ok(true) => {
+                continue; // Data exists for this party, check next
+            }
+            Ok(false) => {
+                all_data_exists = false;
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("Error checking if threshold FHE keys exist: {}", e);
+                // Continue with generation, assuming data doesn't exist
+                all_data_exists = false;
+                break;
+            }
         }
-        Ok(false) => {} // Continue with generation
-        Err(e) => {
-            panic!("Failed to check if threshold CRS exists: {e}");
-        }
+    }
+    if all_data_exists {
+        tracing::info!("Threshold CRS exist, skipping generation");
+        return false;
     }
 
     // Collect signing keys from all private storages

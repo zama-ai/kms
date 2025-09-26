@@ -28,7 +28,7 @@ use kms_lib::{
         Vault,
     },
 };
-use std::{net::ToSocketAddrs, sync::Arc};
+use std::{env, net::ToSocketAddrs, sync::Arc, thread};
 use threshold_fhe::{
     execution::runtime::party::Role,
     networking::tls::{build_ca_certs_map, AttestedVerifier},
@@ -230,6 +230,15 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting KMS Server with core config: {:?}", &core_config);
 
+    tracing::info!(
+        "Multi-threading values: TOKIO_WORKER_THREADS: {:?}, tokio::num_workers: {}, RAYON_NUM_THREADS: {:?}, rayon::current_num_threads: {}, available_parallelism: {}.",
+        env::var_os("TOKIO_WORKER_THREADS").unwrap_or_else(|| "not set".into()),
+        tokio::runtime::Handle::current().metrics().num_workers(),
+        env::var_os("RAYON_NUM_THREADS").unwrap_or_else(||  "not set".into()),
+        rayon::current_num_threads(),
+        thread::available_parallelism()?.get(),
+    );
+
     let party_role = core_config
         .threshold
         .as_ref()
@@ -361,7 +370,16 @@ async fn main() -> anyhow::Result<()> {
             .private_vault
             .as_ref()
             .and_then(|v| v.keychain.as_ref())
-            .map(|k| make_keychain_proxy(k, awskms_client.clone(), security_module.clone(), None)),
+            .map(|k| {
+                // Observe that the public storage is used to load a backup_id and backup key
+                // in the case where the custodian based secret sharing is used
+                make_keychain_proxy(
+                    k,
+                    awskms_client.clone(),
+                    security_module.clone(),
+                    Some(&public_vault.storage),
+                )
+            }),
     )
     .await
     .transpose()
@@ -408,7 +426,7 @@ async fn main() -> anyhow::Result<()> {
                     k,
                     awskms_client.clone(),
                     security_module.clone(),
-                    Some(&private_vault),
+                    Some(&public_vault),
                 )
             }),
     )
@@ -511,6 +529,7 @@ async fn main() -> anyhow::Result<()> {
                 public_vault,
                 private_vault,
                 backup_vault,
+                security_module,
                 sk,
                 core_config.rate_limiter_conf,
             )

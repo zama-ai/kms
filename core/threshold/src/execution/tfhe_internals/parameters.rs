@@ -243,7 +243,7 @@ pub struct DKGParamsSnS {
     pub sns_compression_params: Option<NoiseSquashingCompressionParameters>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct NoiseInfo {
     pub amount: usize,
     pub bound: NoiseBounds,

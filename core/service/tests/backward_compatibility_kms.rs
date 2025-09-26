@@ -36,7 +36,7 @@ use kms_lib::{
     vault::keychain::AppKeyBlob,
 };
 use rand::SeedableRng;
-use std::{collections::HashMap, env, path::Path};
+use std::{collections::HashMap, env, path::Path, sync::Arc};
 use tfhe::integer::compression_keys::DecompressionKey;
 use threshold_fhe::execution::{
     runtime::party::Role, tfhe_internals::public_keysets::FhePubKeySet,
@@ -214,10 +214,10 @@ fn test_threshold_fhe_keys(
     let original_versionized: ThresholdFheKeys = load_and_unversionize(dir, test, format)?;
 
     let new_versionized = ThresholdFheKeys {
-        private_keys,
-        integer_server_key,
-        sns_key,
-        decompression_key,
+        private_keys: Arc::new(private_keys),
+        integer_server_key: Arc::new(integer_server_key),
+        sns_key: sns_key.map(Arc::new),
+        decompression_key: decompression_key.map(Arc::new),
         meta_data: KeyGenMetadata::LegacyV0(pk_meta_data),
     };
 
@@ -322,20 +322,15 @@ fn test_operator_backup_output(
         .collect();
 
     let operator = {
-        let (verification_key, signing_key) = gen_sig_keys(&mut rng);
-        let (public_key, private_key) = backup_pke::keygen(&mut rng).unwrap();
+        let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         Operator::new(
             Role::indexed_from_zero(0),
-            custodian_messages,
+            custodian_messages.clone(),
             signing_key,
-            verification_key,
-            private_key,
-            public_key,
             test.custodian_threshold,
         )
         .unwrap()
     };
-
     let (cts, _commitments) = &operator
         .secret_share_and_encrypt(
             &mut rng,

@@ -17,6 +17,7 @@ use kms_grpc::rpc_types::PrivDataType;
 use kms_grpc::rpc_types::PubDataType;
 use kms_grpc::RequestId;
 use serial_test::serial;
+use std::path::Path;
 use std::str::FromStr;
 use tonic::transport::Channel;
 
@@ -182,14 +183,13 @@ async fn preproc_centralized(
     assert_eq!(inner_resp.preprocessing_id, Some((*preproc_id).into()));
 }
 
-async fn key_gen_centralized(
+pub(crate) async fn key_gen_centralized(
     request_id: &RequestId,
     params: FheParameter,
     keyset_config: Option<KeySetConfig>,
     keyset_added_info: Option<KeySetAddedInfo>,
 ) {
     let dkg_params: WrappedDKGParams = params.into();
-    let preproc_id = derive_request_id(&format!("preproc-for-request{}", request_id)).unwrap();
 
     let rate_limiter_conf = RateLimiterConfig {
         bucket_size: 100 * 3, // Multiply by 3 to account for the decompression key generation case
@@ -202,21 +202,43 @@ async fn key_gen_centralized(
     tokio::time::sleep(tokio::time::Duration::from_millis(TIME_TO_SLEEP_MS)).await;
     let (kms_server, mut kms_client, internal_client) =
         crate::client::test_tools::centralized_handles(&dkg_params, Some(rate_limiter_conf)).await;
+    run_key_gen_centralized(
+        &mut kms_client,
+        &internal_client,
+        request_id,
+        params,
+        keyset_config,
+        keyset_added_info,
+        None,
+    )
+    .await;
+    kms_server.assert_shutdown().await;
+}
 
+pub async fn run_key_gen_centralized(
+    kms_client: &mut CoreServiceEndpointClient<Channel>,
+    internal_client: &Client,
+    key_req_id: &RequestId,
+    params: FheParameter,
+    keyset_config: Option<KeySetConfig>,
+    keyset_added_info: Option<KeySetAddedInfo>,
+    test_path: Option<&Path>,
+) {
+    let preproc_id = derive_request_id(&format!("preproc-for-request{}", key_req_id)).unwrap();
     let domain = dummy_domain();
     preproc_centralized(
         &preproc_id,
         params,
         keyset_config,
         &domain,
-        &mut kms_client,
-        &internal_client,
+        kms_client,
+        internal_client,
     )
     .await;
 
     let gen_req = internal_client
         .key_gen_request(
-            request_id,
+            key_req_id,
             &preproc_id,
             Some(params),
             keyset_config,
@@ -230,18 +252,18 @@ async fn key_gen_centralized(
         .unwrap();
     assert_eq!(gen_response.into_inner(), Empty {});
     let mut response = kms_client
-        .get_key_gen_result(tonic::Request::new((*request_id).into()))
+        .get_key_gen_result(tonic::Request::new((*key_req_id).into()))
         .await;
     while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
         // Sleep to give the server some time to complete key generation
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         response = kms_client
-            .get_key_gen_result(tonic::Request::new((*request_id).into()))
+            .get_key_gen_result(tonic::Request::new((*key_req_id).into()))
             .await;
     }
     let inner_resp = response.unwrap().into_inner();
-    let pub_storage = FileStorage::new(None, StorageType::PUB, None).unwrap();
-    let priv_storage = FileStorage::new(None, StorageType::PRIV, None).unwrap();
+    let pub_storage = FileStorage::new(test_path, StorageType::PUB, None).unwrap();
+    let priv_storage = FileStorage::new(test_path, StorageType::PRIV, None).unwrap();
 
     let inner_config = keyset_config.unwrap_or_default();
     let keyset_type = KeySetType::try_from(inner_config.keyset_type).unwrap();
@@ -252,7 +274,7 @@ async fn key_gen_centralized(
         let (server_key, _public_key) = internal_client
             .retrieve_server_key_and_public_key(
                 &preproc_id,
-                request_id,
+                key_req_id,
                 resp,
                 &domain_clone,
                 &pub_storage,
@@ -265,7 +287,7 @@ async fn key_gen_centralized(
         let handle: crate::engine::base::KmsFheKeyHandles = priv_storage
             .read_data(
                 &req_id.try_into().unwrap(),
-                &PrivDataType::FheKeyInfo.to_string(),
+                &PrivDataType::FhePrivateKey.to_string(),
             )
             .await
             .unwrap();
@@ -290,9 +312,9 @@ async fn key_gen_centralized(
                 .try_into()
                 .unwrap();
             crate::client::key_gen::tests::identical_keys_except_sns_compression_from_storage(
-                &internal_client,
+                internal_client,
                 &pub_storage,
-                request_id,
+                key_req_id,
                 &new_keyset_id,
             )
             .await;
@@ -321,11 +343,11 @@ async fn key_gen_centralized(
             )
             .unwrap();
             let handles_1: crate::engine::base::KmsFheKeyHandles = priv_storage
-                .read_data(&keyid_1, &PrivDataType::FheKeyInfo.to_string())
+                .read_data(&keyid_1, &PrivDataType::FhePrivateKey.to_string())
                 .await
                 .unwrap();
             let handles_2: crate::engine::base::KmsFheKeyHandles = priv_storage
-                .read_data(&keyid_2, &PrivDataType::FheKeyInfo.to_string())
+                .read_data(&keyid_2, &PrivDataType::FhePrivateKey.to_string())
                 .await
                 .unwrap();
 
@@ -354,6 +376,4 @@ async fn key_gen_centralized(
             );
         }
     }
-
-    kms_server.assert_shutdown().await;
 }

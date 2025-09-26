@@ -34,6 +34,7 @@ pub(crate) async fn send_dec_reqs(
             None,
             msg,
             key_id,
+            1,
             EncryptionConfig {
                 compression: true,
                 precompute_sns: false,
