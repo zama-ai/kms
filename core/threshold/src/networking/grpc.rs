@@ -351,6 +351,9 @@ impl GrpcNetworkingManager {
             owner,
             my_role,
             context_id,
+            // We use the same timeout in HealthCheck than
+            // in Sync MPC protocols
+            self.conf.get_network_timeout(),
             connection_channels,
         ))
     }
