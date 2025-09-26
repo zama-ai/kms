@@ -916,7 +916,7 @@ impl Gnetworking for NetworkingImpl {
         let health_tag = bc2wrap::deserialize_safe::<HealthTag>(&request.tag).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                format!("failed to parse value: {} as a Tag or HealthTag", e),
+                format!("failed to parse value: {} as a HealthTag", e),
             )
         })?;
 
