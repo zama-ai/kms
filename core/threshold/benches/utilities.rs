@@ -1,6 +1,4 @@
 #[cfg(feature = "measure_memory")]
-use criterion::profiler::Profiler;
-#[cfg(feature = "measure_memory")]
 use threshold_fhe::allocator::MEM_ALLOCATOR;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use threshold_fhe::execution::tfhe_internals::parameters::{
@@ -8,32 +6,52 @@ use threshold_fhe::execution::tfhe_internals::parameters::{
     NIST_PARAMS_P8_SNS_LWE,
 };
 
-/// Best workaround to using criterion to measure memory seems to be using the Profiler.
-/// We can then get memory reporting using
-/// cargo bench -- --profile-time <num_seconds>
-/// inspired by this discussion:
-/// https://github.com/bheisler/criterion.rs/issues/97
-///
-/// Couple of issues though:
-/// - we are most likely also measuring criterion's overhead
-/// - we are only measuring memory allocated on the heap
 #[cfg(feature = "measure_memory")]
-pub struct MemoryProfiler;
+fn print_memory_usage(bench_name: String, results: Vec<usize>) {
+    let num_runs = results.len();
+    // Compute mean and std deviation of the results
+    let mean = results.iter().sum::<usize>() as f64 / num_runs as f64;
+    let std_dv = (results
+        .iter()
+        .map(|x| (*x as f64 - mean).powi(2))
+        .sum::<f64>()
+        / num_runs as f64)
+        .sqrt();
+    let sorted = {
+        let mut sorted = results.clone();
+        sorted.sort();
+        sorted
+    };
+    let min = sorted.first().unwrap();
+    let max = sorted.last().unwrap();
+    let median = sorted[sorted.len() / 2];
+    println!(
+        "Memory usage for {bench_name} (avg over {num_runs} runs) : {mean} B.
+        \t [min:{min}, median:{median}, max:{max}]
+        \t STD_DV: {std_dv}\n"
+    );
+}
 
 #[cfg(feature = "measure_memory")]
-impl Profiler for MemoryProfiler {
-    fn start_profiling(&mut self, _: &str, _: &std::path::Path) {
+pub fn bench_memory<
+    I: Clone + Send + Sync + 'static,
+    O: Send + 'static,
+    F: Fn(I) -> O + Clone + Send + Sync + 'static,
+>(
+    bench_fn: F,
+    input: I,
+    bench_name: String,
+) {
+    let mut results = Vec::new();
+
+    for _ in 0..10 {
         MEM_ALLOCATOR.get().unwrap().reset_peak_usage();
-        println!(
-            "\nABOUT TO START MEMORY PROFILER, RESET PEAK USAGE TO CURRENT {}",
-            MEM_ALLOCATOR.get().unwrap().peak_usage()
-        );
+        let input = input.clone();
+        let bench_fn = bench_fn.clone();
+        std::hint::black_box(bench_fn(input));
+        results.push(MEM_ALLOCATOR.get().unwrap().peak_usage());
     }
-
-    fn stop_profiling(&mut self, _: &str, _: &std::path::Path) {
-        let size = MEM_ALLOCATOR.get().unwrap().peak_usage();
-        println!("Profiling finished. Allocated {size} B");
-    }
+    print_memory_usage(bench_name, results);
 }
 
 pub const ALL_PARAMS: [(&str, DKGParams); 5] = [

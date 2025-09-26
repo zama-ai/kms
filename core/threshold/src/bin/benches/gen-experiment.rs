@@ -57,6 +57,9 @@ pub struct Cli {
     #[clap(short = 'd', long, default_value = "experiments/templates")]
     template_dir: String,
 
+    #[clap(short = 's', long, default_value = "secure")]
+    moby_strategy: String,
+
     #[clap(subcommand)]
     command: Option<Command>,
 }
@@ -93,12 +96,20 @@ fn main() {
         }
     };
 
+    let image_degree = (args.n_parties as f64).log2().floor() as u32 + 1;
+    let image_name = match protocol.as_str() {
+        "bgv" => "bgv-core".to_string(),
+        "tfhe" => format!("tfhe-core-degree-{image_degree}"),
+        _ => panic!("Unsupported protocol: {protocol}"),
+    };
+
     let context = context!(
         n_parties => args.n_parties,
         threshold => args.threshold,
         experiment_name => args.experiment_name,
         witness_dim => args.witness_dim,
-        protocol => protocol,
+        image_name => image_name,
+        moby_strategy => args.moby_strategy,
     );
 
     // Create the directory (if not exists) that will be used for experiment files
