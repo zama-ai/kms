@@ -2,7 +2,7 @@ use crate::session_id::SessionId;
 
 use anyhow::{anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256, Sha384};
+use sha2::{Digest, Sha384};
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
@@ -432,15 +432,7 @@ fn validate_wrapped_cert(
     let Some(attested_pk) = attestation_doc.public_key else {
         bail!("Bad certificate: public key not present in attestation document")
     };
-    if cert.public_key().raw != attested_pk.as_slice() {
-        let mut cert_pk_hasher = Sha256::new();
-        cert_pk_hasher.update(cert.public_key().raw);
-        let cert_pk_hash = hex::encode(cert_pk_hasher.finalize().as_slice());
-        let mut att_pk_hasher = Sha256::new();
-        att_pk_hasher.update(attested_pk.as_slice());
-        let att_pk_hash = hex::encode(att_pk_hasher.finalize().as_slice());
-        bail!("Bad certificate: subject public key with hash {} does not match attestation document public key with hash {}", cert_pk_hash, att_pk_hash)
-    };
+    ensure!(*cert.public_key().raw == *attested_pk.as_slice(), "Bad certificate: subject public key info {} does not match attestation document public key info {}", hex::encode(cert.public_key().raw), hex::encode(attested_pk.as_slice()));
 
     // check software release hashes
     let Some(pcr0) = attestation_doc.pcrs.get(&0) else {

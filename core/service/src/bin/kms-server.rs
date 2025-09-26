@@ -195,16 +195,6 @@ async fn build_tls_config(
 
             // check if the CA certificate matches the KMS signing key
             let ca_cert_x509 = ca_cert.parse_x509()?;
-            // ensure!(
-            //     x509_parser::verify::verify_signature(
-            //         ca_cert_x509.public_key(),
-            //         &ca_cert_x509.signature_algorithm,
-            //         &ca_cert_x509.signature_value,
-            //         ca_cert_x509.tbs_certificate.raw
-            //     )
-            //     .is_ok(),
-            //     "CA certificate (self-)signature invalid"
-            // );
             if let x509_parser::public_key::PublicKey::EC(pk_sec1) =
                 ca_cert_x509.public_key().parsed()?
             {
