@@ -1208,7 +1208,7 @@ pub fn partial_decrypt128<const EXTENSION_DEGREE: usize>(
     ddec_key_type: SnsDecryptionKeyType,
 ) -> anyhow::Result<ResiduePoly<Z128, EXTENSION_DEGREE>>
 where
-    ResiduePoly<Z128, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let sns_secret_key = match ddec_key_type {
         SnsDecryptionKeyType::SnsKey => match &sk_share.glwe_secret_key_share_sns_as_lwe {
@@ -1253,7 +1253,7 @@ pub fn partial_decrypt64<const EXTENSION_DEGREE: usize>(
     ct_block: &tfhe::shortint::Ciphertext,
 ) -> anyhow::Result<ResiduePoly<Z64, EXTENSION_DEGREE>>
 where
-    ResiduePoly<Z64, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect,
 {
     let ciphertext_modulus = 64;
     let mut output_ctxt;

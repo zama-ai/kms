@@ -1,6 +1,6 @@
 use crate::algebra::{
     galois_rings::common::ResiduePoly,
-    structure_traits::{BaseRing, Ring, Zero},
+    structure_traits::{BaseRing, ErrorCorrect, Zero},
 };
 use itertools::Itertools;
 use tfhe::{
@@ -31,7 +31,7 @@ fn generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_DEGREE: usize>(
     generator: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
 ) where
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
     Gen: ParallelByteRandomGenerator,
 {
     let decomp_base_log = lwe_packing_keyswitch_key.decomposition_base_log();
@@ -83,7 +83,7 @@ pub fn allocate_and_generate_lwe_packing_keyswitch_key<Z, Gen, const EXTENSION_D
 ) -> LwePackingKeyswitchKeyShares<Z, EXTENSION_DEGREE>
 where
     Z: BaseRing,
-    ResiduePoly<Z, EXTENSION_DEGREE>: Ring,
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
     Gen: ParallelByteRandomGenerator,
 {
     // Ensure the input key and output key have the same number of elements to avoid a panic in `generate_lwe_packing_keyswitch_key`
