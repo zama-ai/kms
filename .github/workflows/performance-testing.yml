@@ -65,13 +65,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Create namespace for performance testing
         run: |
           kubectl config get-contexts
           kubectl config use-context tailscale-operator-zws-dev.diplodocus-boa.ts.net
-          kubectl get ns
-          kubectl create namespace kms-ci
-          kubectl get pod -n kms-ci
 
       # - name: Setup registry credentials secrets
 
@@ -87,11 +91,11 @@ jobs:
       #   run: |
       #     # kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=tkms-infra -n kms-ci
 
-      # - name: Setup kms-core with 13 parties
-      #   run: |
-      #     helm install kms-core ghcr.io/zama-ai/kms/kms-core
-      #     --namespace kms-ci
-      #     --version 1.0.10
+      - name: Setup kms-core with 13 parties
+        run: |
+          helm install kms-core ghcr.io/zama-ai/kms/kms-core
+          --namespace kms-ci
+          --version 1.3.0
 
       # - name: Wait kms-core to be ready
       #   run: |
