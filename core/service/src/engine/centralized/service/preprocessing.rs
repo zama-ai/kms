@@ -1,7 +1,7 @@
 use crate::{
     engine::{
-        base::compute_external_signature_preprocessing,
-        centralized::central_kms::CentralizedKms,
+        base::{compute_external_signature_preprocessing, retrieve_parameters},
+        centralized::central_kms::{CentralizedKms, CentralizedPreprocBucket},
         traits::{BackupOperator, ContextManager},
         validation::{
             parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
@@ -62,27 +62,35 @@ pub async fn preprocessing_impl<
 
     //Ensure there's no entry in preproc buckets for that request_id
     let entry_exists = {
-        let ids = service.prepreocessing_ids.read().await;
-        ids.exists(&request_id)
+        let preprocessing_meta_store = service.preprocessing_meta_store.read().await;
+        preprocessing_meta_store.exists(&request_id)
     };
     // If the entry did not exist before, start the preproc
     // NOTE: We currently consider an existing entry is NOT an error
     if !entry_exists {
-        let mut ids = service.prepreocessing_ids.write().await;
+        let mut preprocessing_meta_store = service.preprocessing_meta_store.write().await;
         ok_or_tonic_abort(
-            ids.insert(&request_id),
+            preprocessing_meta_store.insert(&request_id),
             "Could not insert preprocessing ID into meta store".to_string(),
         )?;
+
+        let params = retrieve_parameters(Some(inner.params))?;
+        let external_signature = compute_external_signature_preprocessing(
+            &service.base_kms.sig_key,
+            &request_id,
+            &domain,
+        )
+        .map_err(|e| e.to_string());
+
+        let preproc_bucket =
+            external_signature.map(|external_signature| CentralizedPreprocBucket {
+                preprocessing_id: request_id,
+                external_signature,
+                dkg_param: params,
+            });
+
         ok_or_tonic_abort(
-            ids.update(
-                &request_id,
-                compute_external_signature_preprocessing(
-                    &service.base_kms.sig_key,
-                    &request_id,
-                    &domain,
-                )
-                .map_err(|e| e.to_string()),
-            ),
+            preprocessing_meta_store.update(&request_id, preproc_bucket),
             "Could not update preprocessing ID in meta store".to_string(),
         )?;
         tracing::warn!(
@@ -132,13 +140,13 @@ pub async fn get_preprocessing_res_impl<
         parse_proto_request_id(&request.into_inner(), RequestIdParsingErr::PreprocResponse)?;
 
     let status = {
-        let guarded_meta_store = service.prepreocessing_ids.read().await;
+        let guarded_meta_store = service.preprocessing_meta_store.read().await;
         guarded_meta_store.retrieve(&request_id)
     };
     let preproc_data = handle_res_mapping(status, &request_id, "Preprocessing").await?;
     Ok(Response::new(KeyGenPreprocResult {
         preprocessing_id: Some(request_id.into()),
-        external_signature: preproc_data,
+        external_signature: preproc_data.external_signature,
     }))
 }
 #[cfg(test)]
