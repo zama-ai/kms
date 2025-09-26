@@ -112,7 +112,9 @@ pub trait SecurityModule {
         // Enclave-terminated TLS sessions will use this keypair, not the one in
         // `cert`.
         let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
-        let attestation_document = self.attest_pk_bytes(keypair.der_bytes().to_vec()).await?;
+        let attestation_document = self
+            .attest_pk_bytes(keypair.subject_public_key_info())
+            .await?;
 
         cp.custom_extensions = vec![
             // This custom extension is meant to carry an AWS Nitro attestation
@@ -216,7 +218,7 @@ pub trait SecurityModule {
         // `cert`.
         let tls_keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
         let attestation_document = self
-            .attest_pk_bytes(tls_keypair.der_bytes().to_vec())
+            .attest_pk_bytes(tls_keypair.subject_public_key_info())
             .await?;
 
         tls_cp.custom_extensions = vec![
@@ -229,6 +231,7 @@ pub trait SecurityModule {
         ];
 
         let tls_cert = tls_cp.signed_by(&tls_keypair, &ca_cert_params, &ca_keypair)?;
+
         Ok((
             parse_x509_pem(tls_cert.pem().as_ref())?.1,
             parse_x509_pem(tls_keypair.serialize_pem().as_ref())?.1,
