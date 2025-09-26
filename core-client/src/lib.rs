@@ -446,16 +446,16 @@ pub struct CipherParameters {
     #[clap(long, short = 'e')]
     pub to_encrypt: String,
     /// Data type of `to_encrypt`.
-    /// Expected one of ebool, euint4, ..., euint2048
+    /// Expected one of ebool, euint8, ..., euint256
     #[clap(long, short = 'd')]
     pub data_type: FheType,
     /// Disable ciphertext compression. Default: False, i.e. compression is used.
-    #[clap(long, short = 'c')]
+    #[clap(long, alias = "nc")]
     pub no_compression: bool,
     /// Disable SnS preprocessing on the ciphertext on the core-client.
     /// SnS preprocessing performs a PBS to convert 64-bit ciphertexts to 128-bit ones.
-    /// Default: False, i.e. the SNS is precomputed on the core client.
-    #[clap(long, short = 's')]
+    /// Default: False, i.e. the SnS is precomputed on the core client.
+    #[clap(long, alias = "ns")]
     pub no_precompute_sns: bool,
     /// Key identifier to use for public/user decryption.
     #[clap(long, short = 'k')]
