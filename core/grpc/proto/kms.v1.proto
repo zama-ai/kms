@@ -12,7 +12,7 @@ message InitRequest {
 message Empty {}
 
 /// A unique 32 Byte / 256 Bit ID, to be used to identify a request and
-/// for retrieving the computed result later on. 
+/// for retrieving the computed result later on.
 /// Must be encoded in lower-case hex. The string must NOT contain a `0x` prefix.
 message RequestId { string request_id = 1; }
 
@@ -161,6 +161,14 @@ message KeyGenRequest {
   RequestId epoch_id = 8;
 }
 
+message KeyDigest {
+  // The type of the generated key, e.g., "ServerKey", "PublicKey".
+  string key_type = 1;
+
+  // The digest of the generated key.
+  bytes digest = 2;
+}
+
 message KeyGenResult {
   // The 32 Byte / 256 Bit ID of the key generation request, without `0x` prefix.
   RequestId request_id = 1;
@@ -171,7 +179,7 @@ message KeyGenResult {
   // Mapping of key type string to digest
   // e.g., ("ServerKey", vec![1,2,3,4]), ("PublicKey", vec![2,3,4,5]).
   // The domain separator DSEP_PUBDATA_KEY="PDAT_KEY" is used when hashing the keys.
-  map<string, bytes> key_digests = 3;
+  repeated KeyDigest key_digests = 3;
 
   // EIP-712 signature on the key generation result.
   // The structure signed has the following fields:
@@ -347,9 +355,9 @@ message PublicDecryptionResponse {
   bytes extra_data = 4;
 }
 
-// Eip712 domain information. 
-// Any constraints specified in the [standard](https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator) _must_ be fulfilled.  
-// Furthermore, be aware that all parameters will eventually be parsed into Solidity types. 
+// Eip712 domain information.
+// Any constraints specified in the [standard](https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator) _must_ be fulfilled.
+// Furthermore, be aware that all parameters will eventually be parsed into Solidity types.
 message Eip712DomainMsg {
   string name = 1;
   string version = 2;
@@ -655,46 +663,46 @@ enum NodeType {
 message HealthStatusResponse {
   // Overall health status
   HealthStatus status = 1;
-  
+
   // Health information for a peer node
   message PeerHealth {
     // Peer party ID (for threshold mode)
     uint32 peer_id = 1;
-    
+
     // Peer endpoint address
     string endpoint = 2;
-    
+
     // Whether the peer is reachable
     bool reachable = 3;
-    
+
     // Connection latency in milliseconds
     uint32 latency_ms = 4;
-    
+
     // Storage info from peer
     string storage_info = 5;
-    
+
     // Error message if peer is unreachable
     string error = 6;
-    
+
     // Key IDs for FHE keys on peer (when available)
     repeated string fhe_key_ids = 7;
-    
+
     // Key IDs for CRS keys on peer (when available)
     repeated string crs_ids = 8;
-    
+
     // Key IDs for preprocessing keys on peer (when available)
     repeated string preprocessing_key_ids = 9;
   }
-  
+
   // Health status of all peers
   repeated PeerHealth peers = 2;
-  
+
   // Self key material IDs and storage info
   repeated string my_fhe_key_ids = 3;
   repeated string my_crs_ids = 4;
   repeated string my_preprocessing_key_ids = 5;
   string my_storage_info = 6;
-  
+
   // Runtime configuration info
   NodeType node_type = 7;
   uint32 my_party_id = 8; // Only for threshold mode

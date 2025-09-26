@@ -1,11 +1,11 @@
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
-use kms_grpc::kms::v1::{Empty, KeyGenRequest, KeyGenResult};
+use itertools::Itertools;
+use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
 use kms_grpc::rpc_types::optional_protobuf_to_alloy_domain;
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{ERR_KEYGEN_FAILED, ERR_KEY_EXISTS, OP_KEYGEN};
-use std::collections::HashMap;
 use std::sync::Arc;
 use threshold_fhe::execution::keyset_config::KeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -181,14 +181,20 @@ pub async fn get_key_gen_result_impl<
                     request_id, res.key_id
                 )));
             }
+            let key_digests = res
+                .key_digest_map
+                .into_iter()
+                .sorted_by_key(|x| x.0)
+                .map(|(key, digest)| KeyDigest {
+                    key_type: key.to_string(),
+                    digest,
+                })
+                .collect::<Vec<_>>();
+
             Ok(Response::new(KeyGenResult {
                 request_id: Some(request_id.into()),
                 preprocessing_id: Some(res.preprocessing_id.into()),
-                key_digests: res
-                    .key_digest_map
-                    .into_iter()
-                    .map(|(k, v)| (k.to_string(), v))
-                    .collect(),
+                key_digests,
                 external_signature: res.external_signature,
             }))
         }
@@ -206,7 +212,7 @@ pub async fn get_key_gen_result_impl<
                 // we do not attempt to convert the legacy key digest map
                 // because it does not match the format to the current one
                 // since no domain separation is used
-                key_digests: HashMap::new(),
+                key_digests: Vec::new(),
                 external_signature: vec![],
             }))
         }
