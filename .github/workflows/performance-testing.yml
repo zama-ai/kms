@@ -69,6 +69,8 @@ jobs:
         run: |
           kubectl config get-contexts
           kubectl config use-context tailscale-operator-zws-dev.diplodocus-boa.ts.net
+          kubectl get ns
+          kubectl create namespace kms-ci
           kubectl get pod -n kms-ci
 
       # - name: Setup registry credentials secrets
