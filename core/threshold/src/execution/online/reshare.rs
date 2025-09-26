@@ -879,18 +879,18 @@ mod tests {
             raw_sns_private_key.into_container()[..sns_private_key_len].to_vec(),
             sns_poly_size,
         );
-        let new_sns_params = sns_params;
+        let mut new_sns_params = sns_params;
 
-        match new_sns_params {
+        match &mut new_sns_params {
             tfhe::shortint::parameters::NoiseSquashingParameters::Classic(
-                mut noise_squashing_classic_parameters,
+                noise_squashing_classic_parameters,
             ) => {
                 noise_squashing_classic_parameters.polynomial_size = sns_poly_size;
                 noise_squashing_classic_parameters.glwe_dimension =
                     GlweDimension(sns_private_key_len);
             }
             tfhe::shortint::parameters::NoiseSquashingParameters::MultiBit(
-                mut noise_squashing_multi_bit_parameters,
+                noise_squashing_multi_bit_parameters,
             ) => {
                 noise_squashing_multi_bit_parameters.polynomial_size = sns_poly_size;
                 noise_squashing_multi_bit_parameters.glwe_dimension =
