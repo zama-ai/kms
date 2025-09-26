@@ -217,12 +217,14 @@ impl Client {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use super::*;
+    use crate::consts::TEST_PARAM;
+    use crate::vault::storage::ram::RamStorage;
+    use crate::vault::storage::Storage;
     use tfhe::zk::CompactPkeCrs;
     use tfhe::ProvenCompactCiphertextList;
     use tfhe::Tag;
     use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-
-    use crate::consts::TEST_PARAM;
 
     pub(crate) fn verify_pp(dkg_params: &DKGParams, pp: &CompactPkeCrs) {
         let dkg_params_handle = dkg_params.get_params_basics_handle();
@@ -279,5 +281,62 @@ pub(crate) mod tests {
 
         let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
         verify_pp(&dkg_params, &crs);
+    }
+
+    #[tracing_test::traced_test]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn process_distributed_crs_result_invalid_signature_does_not_insert_key() {
+        // Setup
+        let client = Client::new(
+            HashMap::new(),
+            alloy_primitives::Address::new([1; 20]), // The all 1 address
+            None,
+            TEST_PARAM,
+            None,
+        );
+        let request_id = RequestId::default();
+        let domain = Eip712Domain::default();
+        let dkg_params = TEST_PARAM;
+        let params_h = dkg_params.get_params_basics_handle();
+        let config =
+            tfhe::ConfigBuilder::with_custom_parameters(params_h.to_classic_pbs_parameters())
+                .use_dedicated_compact_public_key_parameters(
+                    params_h.get_dedicated_pk_params().unwrap(),
+                )
+                .build();
+        let crs = CompactPkeCrs::from_config(config, 2048).unwrap();
+
+        // Create a CrsGenResult with an invalid signature
+        let crs_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_CRS, &crs).unwrap();
+        let result = CrsGenResult {
+            request_id: Some(request_id.into()),
+            crs_digest: crs_digest.clone(),
+            external_signature: vec![0u8; 65], // Invalid signature
+            ..Default::default()
+        };
+
+        let mut storage = RamStorage::new();
+        storage
+            .store_data(&crs, &request_id, &PubDataType::CRS.to_string())
+            .await
+            .unwrap();
+        let res_storage = vec![(result, storage)];
+
+        // Run
+        let res = client
+            .process_distributed_crs_result(
+                &request_id,
+                res_storage,
+                &domain,
+                1, // min_agree_count
+            )
+            .await;
+
+        // Should fail due to no valid signatures
+        assert!(res.is_err());
+        // Check that we fail because of invalid signature
+        assert!(logs_contain("Signature could not be verified for a CRS"));
+        // Ensure that a value with a bad sig does not get counted like it did before the fix
+        assert!(!logs_contain("CRS map contains 1 entries"));
     }
 }
