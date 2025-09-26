@@ -67,7 +67,7 @@ jobs:
 
       - name: Create namespace for performance testing
         run: |
-          kubectl get namespace
+          kubectl config get-contexts
 
       #     kubectl create namespace kms-ci
       #     kubectl config set-context --current --namespace=kms-ci
