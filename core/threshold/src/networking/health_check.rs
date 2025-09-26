@@ -11,13 +11,12 @@ use crate::{
     session_id::SessionId,
 };
 
-const TIMEOUT_MAX_WAIT_S: u64 = 5;
-
 pub struct HealthCheckSession {
     /// My own [`Identity`]
     pub(crate) owner: Identity,
     /// My own [`Role`]
     pub(crate) my_role: Role,
+    pub(crate) timeout: Duration,
     pub(crate) context_id: SessionId,
     pub(crate) connection_channels: HashMap<
         (Role, Identity),
@@ -38,6 +37,7 @@ impl HealthCheckSession {
         owner: Identity,
         my_role: Role,
         context_id: SessionId,
+        timeout: Duration,
         connection_channels: HashMap<
             (Role, Identity),
             GnetworkingClient<InterceptedService<Channel, ContextPropagator>>,
@@ -47,6 +47,7 @@ impl HealthCheckSession {
             owner,
             my_role,
             context_id,
+            timeout,
             connection_channels,
         }
     }
@@ -75,24 +76,26 @@ impl HealthCheckSession {
 
         let mut tasks = JoinSet::new();
         for ((role, id), client) in self.connection_channels.iter() {
-            let (role, id, client, tag_serialized) =
-                (*role, id.clone(), client.clone(), tag_serialized.clone());
+            let (role, id, client, tag_serialized, timeout) = (
+                *role,
+                id.clone(),
+                client.clone(),
+                tag_serialized.clone(),
+                self.timeout,
+            );
             tasks.spawn(async move {
                 let start = std::time::Instant::now();
                 let request = tonic::Request::new(super::gen::HealthCheckRequest {
                     tag: tag_serialized,
                 });
-                let response = tokio::time::timeout(
-                    Duration::from_secs(TIMEOUT_MAX_WAIT_S),
-                    client.clone().health_check(request),
-                )
-                .await;
+                let response =
+                    tokio::time::timeout(timeout, client.clone().health_check(request)).await;
                 let duration = start.elapsed();
 
                 let response = match response {
                     Ok(Ok(_)) => HealthCheckStatus::Ok(duration),
                     Ok(Err(e)) => HealthCheckStatus::Error((duration, e)),
-                    Err(_e) => HealthCheckStatus::TimeOut(Duration::from_secs(TIMEOUT_MAX_WAIT_S)),
+                    Err(_e) => HealthCheckStatus::TimeOut(timeout),
                 };
                 (role, id, response)
             });
