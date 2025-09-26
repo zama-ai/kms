@@ -68,9 +68,8 @@ jobs:
       - name: Create namespace for performance testing
         run: |
           kubectl config get-contexts
-
-      #     kubectl create namespace kms-ci
-      #     kubectl config set-context --current --namespace=kms-ci
+          kubectl config use-context tailscale-operator-zws-dev.diplodocus-boa.ts.net
+          kubectl get namespace
 
       # - name: Setup registry credentials secrets
 
