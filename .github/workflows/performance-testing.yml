@@ -1,14 +1,16 @@
 name: performance-testing
 
 on:
-  workflow_call:
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN:
-        required: true
-      CGR_USERNAME:
-        required: true
-      CGR_PASSWORD:
-        required: true
+  pull_request:
+
+  # workflow_call:
+  #   secrets:
+  #     BLOCKCHAIN_ACTIONS_TOKEN:
+  #       required: true
+  #     CGR_USERNAME:
+  #       required: true
+  #     CGR_PASSWORD:
+  #       required: true
 
 
 permissions: {}
@@ -65,36 +67,38 @@ jobs:
 
       - name: Create namespace for performance testing
         run: |
-          kubectl create namespace kms-ci
-          kubectl config set-context --current --namespace=kms-ci
+          kubectl get namespace
 
-      - name: Setup registry credentials secrets
+      #     kubectl create namespace kms-ci
+      #     kubectl config set-context --current --namespace=kms-ci
 
-      - name: Setup slack webhook secrets
+      # - name: Setup registry credentials secrets
 
-      - name: Setup tkms-infra
-        run: |
-          helm install tkms-infra ghcr.io/zama-zws/crossplane/tkms-infra
-          --namespace kms-ci
-          --version 0.3.0
+      # - name: Setup slack webhook secrets
 
-      - name: Wait tkms-infra to be ready
-        run: |
-          # kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=tkms-infra -n kms-ci
+      # - name: Setup tkms-infra
+      #   run: |
+      #     helm install tkms-infra ghcr.io/zama-zws/crossplane/tkms-infra
+      #     --namespace kms-ci
+      #     --version 0.3.0
 
-      - name: Setup kms-core with 13 parties
-        run: |
-          helm install kms-core ghcr.io/zama-ai/kms/kms-core
-          --namespace kms-ci
-          --version 1.0.10
+      # - name: Wait tkms-infra to be ready
+      #   run: |
+      #     # kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=tkms-infra -n kms-ci
 
-      - name: Wait kms-core to be ready
-        run: |
-          # kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=tkms-infra -n kms-ci
+      # - name: Setup kms-core with 13 parties
+      #   run: |
+      #     helm install kms-core ghcr.io/zama-ai/kms/kms-core
+      #     --namespace kms-ci
+      #     --version 1.0.10
 
-      - name: Run performance testing
-        run: |
+      # - name: Wait kms-core to be ready
+      #   run: |
+      #     # kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=tkms-infra -n kms-ci
+
+      # - name: Run performance testing
+      #   run: |
 
 
-      - name: Cleanup
-        run: |
+      # - name: Cleanup
+      #   run: |
