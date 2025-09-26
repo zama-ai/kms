@@ -323,6 +323,10 @@ impl GrpcNetworkingManager {
         my_role: Role,
     ) -> anyhow::Result<HealthCheckSession> {
         let mut others = role_assignment.clone();
+
+        // Removing self from the role_assignment map
+        // as we only want to connect to others.
+        // Store my own identity in the session
         let owner = match others.remove(&my_role) {
             Some(owner) => owner,
             None => {
@@ -367,6 +371,9 @@ impl GrpcNetworkingManager {
         let party_count = role_assignment.len();
         let mut others = role_assignment.clone();
 
+        // Removing self from the role_assignment map
+        // as we only want to connect to others.
+        // Store my own identity in the session
         let owner = match others.remove(&my_role) {
             Some(owner) => owner,
             None => {
