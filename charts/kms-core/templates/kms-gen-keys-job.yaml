@@ -41,18 +41,6 @@ spec:
                   name: {{ .Values.kmsCore.envFrom.configmap.name }}
                   key: {{ .Values.kmsCore.envFrom.configmap.key.coreClientS3Endpoint }}
             {{- end }}
-            - name: OBJECT_FOLDER
-              {{- if .Values.kmsCore.thresholdMode.peersList }}
-              value: '[{{ if .Values.kmsCore.thresholdMode.enabled }}{{ range $i, $peer := .Values.kmsCore.thresholdMode.peersList }}{{- if $i -}},{{ end }}"PUB-p{{- $peer.id -}}"{{- end }}{{ else }}"PUB"{{ end }}]'
-              {{- else }}
-              value: '[{{ if .Values.kmsCore.thresholdMode.enabled }}{{ range $i := $peersIDList }}{{- if (sub $i 1) -}},{{ end }}"PUB-p{{- printf "%d" $i -}}"{{- end }}{{ else }}"PUB"{{ end }}]'
-              {{- end }}
-            - name: CORE_ADDRESSES
-            {{- if .Values.kmsCore.thresholdMode.peersList }}
-              value: '[{{ range $i, $peer := .Values.kmsCore.thresholdMode.peersList }}{{- if $i -}},{{ end }}"http://{{- $peer.host }}:{{- $.Values.kmsCore.ports.client -}}"{{- end }}]'
-            {{- else }}
-              value: '[{{ range $i := $peersIDList }}{{- if (sub $i 1) -}},{{ end }}"http://{{- printf "%s-%d" $kmsCoreName $i }}:{{- $.Values.kmsCore.ports.client -}}"{{- end }}]'
-            {{- end }}
             - name: NUM_MAJORITY
               value: '{{ .Values.kmsCoreClient.num_majority | int }}'
             - name: NUM_RECONSTRUCT
