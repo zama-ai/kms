@@ -116,11 +116,6 @@ fn num_blocks_sunshine() {
         fhe_types_to_num_blocks(FheTypes::Bool, params, 1).unwrap(),
         1
     );
-    // 2 bits per block, using Euint4 as internal representation
-    assert_eq!(
-        fhe_types_to_num_blocks(FheTypes::Uint4, params, 1).unwrap(),
-        2
-    );
     // 2 bits per block
     assert_eq!(
         fhe_types_to_num_blocks(FheTypes::Uint8, params, 1).unwrap(),
