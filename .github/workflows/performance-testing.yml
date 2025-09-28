@@ -112,17 +112,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Set kubeconfig
         run: |
           kubectl config get-contexts
           kubectl config use-context tailscale-operator-zws-dev.diplodocus-boa.ts.net
+
+      - name: Login to zws GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ZWS_BOT_TOKEN }}
 
       - name: Setup registry credentials secrets
         run: |
@@ -137,6 +137,13 @@ jobs:
       #     kubectl create secret generic slack-webhook \
       #     --from-literal=url=${{ secrets.SLACK_WEBHOOK_URL }} \
       #     --namespace kms-ci
+
+      - name: Login to zama.ai GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup tkms-infra
         run: |
