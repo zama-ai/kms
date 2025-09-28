@@ -60,8 +60,8 @@ jobs:
       docker-file: "./docker/base/Dockerfile"
       working-directory: "./base"
       push_image: true
-      image-name: 'kms/rust-golden-image'
-      app-cache-dir: 'kms-base'
+      image-name: "kms/rust-golden-image"
+      app-cache-dir: "kms-base"
       use-cgr-secrets: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -88,8 +88,8 @@ jobs:
       docker-file: "./docker/core-client/Dockerfile"
       working-directory: "./core-client"
       push_image: true
-      image-name: 'kms/core-client'
-      app-cache-dir: 'kms-core-client'
+      image-name: "kms/core-client"
+      app-cache-dir: "kms-core-client"
       use-cgr-secrets: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -118,7 +118,6 @@ jobs:
       push_image: true
       image-name: "kms/core-service"
       app-cache-dir: "kms"
-      use-cgr-secrets: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
