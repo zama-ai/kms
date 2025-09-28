@@ -89,7 +89,6 @@ jobs:
             helm-chart:
               - 'charts/**'
 
-
   ############################################################################
   # Docker build pipeline
   # Triggered by:
@@ -98,6 +97,13 @@ jobs:
   docker-build:
     name: docker-build
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
+    permissions:
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC authentication
+      pull-requests: read # Required to read pull request information
+      packages: write # Required to publish Docker images
+      attestations: write # Required to create build attestations
     uses: ./.github/workflows/docker-build.yml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}

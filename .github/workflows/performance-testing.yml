@@ -32,6 +32,13 @@ permissions: {}
 jobs:
   docker-build:
     name: docker-build
+    permissions:
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC authentication
+      pull-requests: read # Required to read pull request information
+      packages: write # Required to publish Docker images
+      attestations: write # Required to create build attestations
     uses: ./.github/workflows/docker-build.yml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -144,7 +151,7 @@ jobs:
             --namespace "${NAMESPACE}" \
             --version "${TKMS_INFRA_CHART_VERSION:-"0.3.0"}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/tkms-infra/values-kms-ci.yaml \
-            --set kmsParties.awsKms.recipientAttestationImageSHA384=${PCR0}
+            --set kmsParties.awsKms.recipientAttestationImageSHA384="${PCR0}"
           fi
 
       - name: Wait tkms-infra to be ready
@@ -238,8 +245,8 @@ jobs:
 
       - name: Run performance testing
         run: |
-          sed -i 's/<version>/"${IMAGE_TAG}"/g' 'kms/ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml'
-          argo submit -n argo 'kms/ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml' --log
+          sed -i "s/<version>/${IMAGE_TAG}/g" ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml
+          argo submit -n argo ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml --log
 
       - name: Cleanup
         run: |
