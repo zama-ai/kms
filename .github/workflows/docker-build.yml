@@ -167,7 +167,6 @@ jobs:
       push_image: true
       image-name: "kms/core-service"
       image-enclave-name: "kms/core-service-enclave"
-      runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
