@@ -1,0 +1,46 @@
+# Deployment Type Options:
+# - centralized: Deploy only public vault with IRSA.
+# - centralizedWithEnclave: Deploy public vault with IRSA and enclave enabled.
+# - threshold: Deploy public vault without IRSA and KMS parties without enclave.
+# - thresholdWithEnclave: Deploy public vault without IRSA and KMS parties with enclave enabled.
+deploymentType: threshold
+
+# TODO to delete in the future release
+encryptKeysWithAwsKms: false
+
+region: eu-west-1
+environment: zws-dev
+
+fullnameOverride: kms-party-kms-ci
+
+publicBucketVault:
+  enabled: true
+  irsa:
+    enabled: true
+    serviceAccountName: kms-ci
+  deletionPolicy: Delete
+  labels:
+    environment: kms-ci
+  configMapTargetRef:
+    enabled: false
+  tags:
+    Environment: zws-dev
+    ManagedBy: zama
+
+kmsParties:
+  enabled: true
+  serviceAccountPrefixName: kms-ci
+  publishConnectionDetailsTo:
+    # This is the prefix name of the ConfigMap that will be created : <prefixName>-<index>
+    prefixName: kms-ci
+  tags:
+    Environment: zws-dev
+    ManagedBy: zama
+  replicas: 13
+  # matchExistingName allows to reference an existing public bucket vault if it already exists
+  publicBucketVaultRef:
+    # This is the existing name of the public bucket vault that will be used to reference
+    # matchExistingName: kms-bucket-vault-with-enclave
+    # This is the k8s label of the public bucket vault that will be used to reference
+    matchLabels:
+      environment: kms-ci

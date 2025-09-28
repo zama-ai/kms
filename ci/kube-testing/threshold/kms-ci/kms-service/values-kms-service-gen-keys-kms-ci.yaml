@@ -1,0 +1,35 @@
+kmsCore:
+  enabled: false
+
+kmsCoreClient:
+  enabled: false
+  image:
+    name: ghcr.io/zama-ai/kms/core-client
+    tag: <version>
+  num_majority: 5 # 2 when 4 parties and 5 when 13 parties
+  num_reconstruct: 9 # 3 when 4 parties and 9 when 13 parties
+  decryption_mode: NoiseFloodSmall
+  fhe_parameter: Default
+  envFrom:
+    configmap:
+      name: kms-ci-1
+
+kmsInit:
+  enabled: false
+
+kmsGenKeys:
+  enabled: true
+  keyGenArgs: "insecure-key-gen"
+  crsGenArgs: "insecure-crs-gen --max-num-bits 2048"
+  configmap:
+    name: kms-keys
+  nodeSelector:
+    karpenter.sh/nodepool: kms-pool
+  tolerations:
+    - key: karpenter.sh/nodepool
+      effect: NoSchedule
+      operator: Equal
+      value: kms-pool
+
+kmsGenCertAndKeys:
+  enabled: false

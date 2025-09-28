@@ -89,6 +89,26 @@ jobs:
             helm-chart:
               - 'charts/**'
 
+
+  ############################################################################
+  # Docker build pipeline
+  # Triggered by:
+  # - Label : "Docker" on pull request
+  ############################################################################
+  docker-build:
+    name: docker-build
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
+    uses: ./.github/workflows/docker-build.yml
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+
   ############################################################################
   # Helm chart pipeline
   # Triggered by:
@@ -311,38 +331,6 @@ jobs:
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
-  # Builds Docker image for core-client
-  # Only runs on main/release branches after successful tests
-  # Also runs on pull requests targeting main/release branches with the docker label
-  docker-core-client:
-    name: main/docker-core-client
-    # job permissions
-    permissions:
-      actions: write # Required to write workflow run information
-      attestations: write # Required to create build attestations
-      contents: write # Required to modify repository code
-      id-token: write # Required for OIDC token generation
-      pull-requests: write # Required to create comments on pull requests
-      packages: write # Required to publish packages
-    needs:
-      - test-core-client
-      - docker-golden-image
-    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3d8b1adcb5504fef30223016d459e3e38b36f9d1
-    with:
-      docker-file: "./docker/core-client/Dockerfile"
-      working-directory: "./core-client"
-      push_image: true
-      image-name: "kms/core-client"
-      app-cache-dir: "kms-core-client"
-      use-cgr-secrets: true
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
   ############################################################################
   # GRPC Testing
   # Triggered by:
@@ -475,66 +463,6 @@ jobs:
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
-  # Builds the core service Docker image
-  # Only runs on main/release branches after successful tests
-  # Uses a custom Dockerfile optimized for production
-  docker-core-service:
-    name: main/docker-core-service
-    # job permissions
-    permissions:
-      actions: read # Required to read workflow run information
-      contents: read # Required to checkout repository code
-      id-token: write # Required for OIDC token generation
-      pull-requests: read # Required to read pull request information
-      packages: write # Required to publish packages
-      attestations: write # Required to create build attestations
-    needs:
-      - test-core-service
-      - docker-golden-image
-    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3d8b1adcb5504fef30223016d459e3e38b36f9d1
-    with:
-      docker-file: "./docker/core/service/Dockerfile"
-      working-directory: "./core/service"
-      push_image: true
-      image-name: "kms/core-service"
-      app-cache-dir: "kms"
-      use-cgr-secrets: true
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
-  # Builds AWS Nitro Enclave image for secure execution
-  # Only runs on main/release branches after core service image is built
-  # Creates both regular container and enclave-specific images
-  docker-nitro-enclave:
-    name: main/docker-nitro-enclave
-    # job permissions
-    permissions:
-      actions: read # Required to read workflow run information
-      contents: write # Required to modify repository code
-      id-token: write # Required for OIDC token generation
-      pull-requests: read # Required to read pull request information
-      packages: write # Required to publish packages
-      attestations: write # Required to create build attestations
-    needs:
-      - docker-core-service
-    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
-    uses: ./.github/workflows/common-nitro-enclave.yml
-    with:
-      docker-file-enclave: "./docker/core/service/enclave.dockerfile"
-      working-directory: "./core/service"
-      push_image: true
-      image-name: "kms/core-service"
-      image-enclave-name: "kms/core-service-enclave"
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
-
   ############################################################################
   # Core Threshold Pipeline
   # Testing triggered by:
@@ -657,36 +585,30 @@ jobs:
       CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
       CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
-  ############################################################################
-  # Build rust golden image
-  # Only runs on main/release branches after successful tests
-  # Provides dependencies for building rust kms-core images
-  ############################################################################
-  docker-golden-image:
-    name: main/docker-golden-image
-    # job permissions
+  # Test reporting job that runs after all tests complete
+  # Only runs on pull requests to generate test reports
+  test-reporter:
+    name: main/test-reporter
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    needs:
+      - test-backward-compatibility
+      - test-core-client
+      - test-core-client-unit
+      - test-grpc
+      - test-core-service
+      - test-core-threshold-pr
+      - test-core-threshold-main
+      - build-dependabot
+    uses: ./.github/workflows/test-reporter.yml
     permissions:
-      actions: read # Required to read workflow run information
+      checks: write # Required to create GitHub checks for test results
+      packages: read # Required to read GitHub packages/container registry
+      issues: write # Required to create comments on issues
+      pull-requests: write # Required to create comments on pull requests
+      actions: read # Required to read workflow run information and download artifacts
       contents: read # Required to checkout repository code
-      id-token: write # Required for OIDC token generation
-      pull-requests: read # Required to read pull request information
-      packages: write # Required to publish packages
-      attestations: write # Required to create build attestations
-    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'docker')
-    uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3d8b1adcb5504fef30223016d459e3e38b36f9d1
-    with:
-      docker-file: "./docker/base/Dockerfile"
-      working-directory: "./base"
-      push_image: true
-      image-name: "kms/rust-golden-image"
-      app-cache-dir: "kms-base"
-      use-cgr-secrets: true
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
   # ██████╗ ██████╗  ██████╗  ██████╗  ██████╗██████╗
@@ -772,28 +694,3 @@ jobs:
   #     image-tag: ${{ needs.docker-nitro-enclave.outputs.image_tag }}
   #   secrets:
   #     ZWS_BOT_TOKEN: ${{ secrets.ZWS_BOT_TOKEN }}
-
-  # Test reporting job that runs after all tests complete
-  # Only runs on pull requests to generate test reports
-  test-reporter:
-    name: main/test-reporter
-    if: ${{ always() && github.event_name == 'pull_request' }}
-    needs:
-      - test-backward-compatibility
-      - test-core-client
-      - test-core-client-unit
-      - test-grpc
-      - test-core-service
-      - test-core-threshold-pr
-      - test-core-threshold-main
-      - build-dependabot
-    uses: ./.github/workflows/test-reporter.yml
-    permissions:
-      checks: write # Required to create GitHub checks for test results
-      packages: read # Required to read GitHub packages/container registry
-      issues: write # Required to create comments on issues
-      pull-requests: write # Required to create comments on pull requests
-      actions: read # Required to read workflow run information and download artifacts
-      contents: read # Required to checkout repository code
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}

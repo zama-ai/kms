@@ -1,0 +1,11 @@
+kmsPeers:
+  id: 5
+
+kmsCore:
+  serviceAccountName: kms-ci-5
+  envFrom:
+    configmap:
+      name: kms-ci-5
+
+kmsGenCertAndKeys:
+  enabled: false
