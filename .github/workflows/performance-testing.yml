@@ -119,8 +119,8 @@ jobs:
 
       - name: Setup registry credentials secrets
         run: |
-          helm install sync-secrets ghcr.io/zama-zws/helm-charts/sync-secrets
-          --namespace ${NAMESPACE}
+          helm install sync-secrets ghcr.io/zama-zws/helm-charts/sync-secrets \
+          --namespace ${NAMESPACE} \
           --version ${SYNC_SECRETS_CHART_VERSION:-"0.2.1"}
 
       # - name: Setup slack webhook secrets
@@ -140,10 +140,10 @@ jobs:
             --values ./ci/kube-testing/threshold/kms-ci/tkms-infra/values-kms-ci.yaml
           fi
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            helm install tkms-infra oci://ghcr.io/zama-zws/crossplane/tkms-infra
-            --namespace ${NAMESPACE}
-            --version ${TKMS_INFRA_CHART_VERSION:-"0.3.0"}
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/tkms-infra/values-kms-ci.yaml
+            helm install tkms-infra oci://ghcr.io/zama-zws/crossplane/tkms-infra \
+            --namespace ${NAMESPACE} \
+            --version ${TKMS_INFRA_CHART_VERSION:-"0.3.0"} \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/tkms-infra/values-kms-ci.yaml \
             --set kmsParties.awsKms.recipientAttestationImageSHA384=${PCR0}
           fi
 
@@ -171,62 +171,62 @@ jobs:
       - name: Setup kms-core with 13 parties
         run: |
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
-            helm install kms-core oci://ghcr.io/zama-ai/kms/kms-core
-            --namespace ${NAMESPACE}
-            --version ${KMS_CHART_VERSION:-"1.3.0"}
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-1-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-2-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-3-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-4-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-5-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-6-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-7-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-8-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-9-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-10-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-11-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-12-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-13-kms-ci.yaml
-            --set kmsCoreClient.image.tag=${IMAGE_TAG}
+            helm install kms-core oci://ghcr.io/zama-ai/kms/kms-core \
+            --namespace ${NAMESPACE} \
+            --version ${KMS_CHART_VERSION:-"1.3.0"} \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-1-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-2-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-3-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-4-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-5-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-6-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-7-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-8-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-9-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-10-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-11-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-12-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-13-kms-ci.yaml \
+            --set kmsCoreClient.image.tag=${IMAGE_TAG} \
             --set kmsCore.image.tag=${IMAGE_TAG}
           fi
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            helm install kms-core oci://ghcr.io/zama-ai/kms/kms-core
-            --namespace ${NAMESPACE}
-            --version ${KMS_CHART_VERSION:-"1.3.0"}
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-1-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-2-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-3-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-4-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-5-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-6-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-7-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-8-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-9-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-10-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-11-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-12-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-13-kms-ci.yaml
-            --set kmsCoreClient.image.tag=${IMAGE_TAG}
-            --set kmsCore.image.tag=${IMAGE_TAG}
-            --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0=${PCR0}
-            --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1=${PCR1}
+            helm install kms-core oci://ghcr.io/zama-ai/kms/kms-core \
+            --namespace ${NAMESPACE} \
+            --version ${KMS_CHART_VERSION:-"1.3.0"} \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-1-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-2-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-3-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-4-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-5-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-6-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-7-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-8-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-9-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-10-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-11-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-12-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-threshold-13-kms-ci.yaml \
+            --set kmsCoreClient.image.tag=${IMAGE_TAG} \
+            --set kmsCore.image.tag=${IMAGE_TAG} \
+            --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0=${PCR0} \
+            --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1=${PCR1} \
             --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2=${PCR2}
           fi
           if [[ "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
-            helm install kms-core oci://ghcr.io/zama-ai/kms/kms-core
-            --namespace ${NAMESPACE}
-            --version ${KMS_CHART_VERSION:-"1.3.0"}
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml
-            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml
-            --set kmsCoreClient.image.tag=${IMAGE_TAG}
+            helm install kms-core oci://ghcr.io/zama-ai/kms/kms-core \
+            --namespace ${NAMESPACE} \
+            --version ${KMS_CHART_VERSION:-"1.3.0"} \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
+            --values ./ci/kube-testing/${DEPLOYMENT_TYPE}/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml \
+            --set kmsCoreClient.image.tag=${IMAGE_TAG} \
             --set kmsCore.image.tag=${IMAGE_TAG}
           fi
 
