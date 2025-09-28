@@ -123,7 +123,7 @@ jobs:
 
       - name: Setup registry credentials secrets
         run: |
-          helm install sync-secrets ghcr.io/zama-zws/helm-charts/sync-secrets \
+          helm install sync-secrets oci://ghcr.io/zama-zws/helm-charts/sync-secrets \
           --namespace "${NAMESPACE}" \
           --version "${SYNC_SECRETS_CHART_VERSION:-"0.2.1"}"
 
