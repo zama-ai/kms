@@ -29,6 +29,8 @@ publicBucketVault:
 
 kmsParties:
   enabled: true
+  connectorDatabase:
+    enabled: false
   serviceAccountPrefixName: kms-ci
   publishConnectionDetailsTo:
     # This is the prefix name of the ConfigMap that will be created : <prefixName>-<index>
