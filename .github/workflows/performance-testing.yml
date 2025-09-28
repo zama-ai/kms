@@ -138,13 +138,6 @@ jobs:
       #     --from-literal=url=${{ secrets.SLACK_WEBHOOK_URL }} \
       #     --namespace kms-ci
 
-      - name: Login to zama.ai GitHub Container Registry
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Setup tkms-infra
         run: |
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
@@ -181,6 +174,13 @@ jobs:
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             kubectl wait --for=condition=ready xenclavenodegroups -l crossplane.io/claim-namespace="${NAMESPACE}" -n "${NAMESPACE}"
           fi
+
+      - name: Login to zama.ai GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup kms-core with 13 parties
         run: |
@@ -256,6 +256,7 @@ jobs:
           argo submit -n argo ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml --log
 
       - name: Cleanup
+        if: always()
         run: |
           helm uninstall kms-core -n "${NAMESPACE}"
           helm uninstall tkms-infra -n "${NAMESPACE}"
