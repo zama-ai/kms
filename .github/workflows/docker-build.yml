@@ -81,7 +81,7 @@ jobs:
       image-name: "kms/rust-golden-image"
       app-cache-dir: "kms-base"
       use-cgr-secrets: true
-      runs_on-amd: "large_ubuntu_32"
+      runs-on-amd: "large_ubuntu_32"
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -113,7 +113,7 @@ jobs:
       image-name: "kms/core-client"
       app-cache-dir: "kms-core-client"
       use-cgr-secrets: true
-      runs_on-amd: "large_ubuntu_32"
+      runs-on-amd: "large_ubuntu_32"
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -145,7 +145,7 @@ jobs:
       image-name: "kms/core-service"
       app-cache-dir: "kms"
       use-cgr-secrets: true
-      runs_on-amd: "large_ubuntu_32"
+      runs-on-amd: "large_ubuntu_32"
       # runs-on-amd: ${{ needs.start-amd64-runner.outputs.label }}
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
