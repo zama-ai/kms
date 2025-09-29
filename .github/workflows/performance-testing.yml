@@ -184,7 +184,7 @@ jobs:
       - name: Setup kms-core with 13 parties
         run: |
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
-            helm install kms-core oci://ghcr.io/zama-ai/kms/kms-core \
+            helm install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
             --version "${KMS_CHART_VERSION:-"1.3.0"}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-ci.yaml \
@@ -207,7 +207,7 @@ jobs:
             --set kmsCore.image.tag="${IMAGE_TAG}"
           fi
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            helm install kms-core oci://ghcr.io/zama-ai/kms/kms-core \
+            helm install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
             --version "${KMS_CHART_VERSION:-"1.3.0"}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-ci.yaml \
@@ -233,7 +233,7 @@ jobs:
             --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}"
           fi
           if [[ "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
-            helm install kms-core oci://ghcr.io/zama-ai/kms/kms-core \
+            helm install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
             --version "${KMS_CHART_VERSION:-"1.3.0"}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-ci.yaml \
