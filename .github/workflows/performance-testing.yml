@@ -157,22 +157,21 @@ jobs:
       - name: Wait tkms-infra to be ready
         run: |
           # WAIT FOR DEPLOYMENT OF TKMS INFRA IS DONE
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-1 -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-2 -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-3 -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-4 -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-5 -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-6 -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-7 -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-8 -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-9 -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-10 -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-11 -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-12 -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-13 -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready xs3 -l crossplane.io/claim-namespace="${NAMESPACE}" -n "${NAMESPACE}"
+          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-1 -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-2 -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-3 -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-4 -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-5 -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-6 -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-7 -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-8 -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-9 -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-10 -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-11 -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-12 -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-13 -n "${NAMESPACE}" --timeout=120s
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            kubectl wait --for=condition=ready xenclavenodegroups -l crossplane.io/claim-namespace="${NAMESPACE}" -n "${NAMESPACE}"
+            kubectl wait --for=condition=ready enclavenodegroups -l crossplane.io/claim-namespace="${NAMESPACE}" -n "${NAMESPACE}" --timeout=120s
           fi
 
       - name: Login to zama.ai GitHub Container Registry
@@ -246,9 +245,9 @@ jobs:
 
       - name: Wait kms-core to be ready
         run: |
-          kubectl wait --for=condition=complete job -l app=kms-threshold-init-job -n "${NAMESPACE}"
-          kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys -n "${NAMESPACE}"
-          kubectl wait --for=condition=ready pod -l app=kms-core -n "${NAMESPACE}"
+          kubectl wait --for=condition=complete job -l app=kms-threshold-init-job -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys -n "${NAMESPACE}" --timeout=120s
+          kubectl wait --for=condition=ready pod -l app=kms-core -n "${NAMESPACE}" --timeout=120s
 
       - name: Run performance testing
         run: |
