@@ -750,23 +750,54 @@ async fn keychain_initialized(backup_vault_guard: &tokio::sync::MutexGuard<'_, V
 mod tests {
     use super::*;
     use crate::{
-        backup::custodian::{InternalCustodianContext, InternalCustodianSetupMessage},
+        backup::custodian::{CustodianSetupMessagePayload, InternalCustodianContext, HEADER},
         cryptography::{backup_pke::keygen, internal_crypto_types::gen_sig_keys},
         engine::base::derive_request_id,
     };
     use aes_prng::AesRng;
-    use kms_grpc::kms::v1::CustodianContext;
+    use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
     use rand::SeedableRng;
-    use std::collections::BTreeMap;
+    use std::{
+        collections::BTreeMap,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     fn dummy_recovery_material(threshold: u32) -> RecoveryValidationMaterial {
         let mut rng = AesRng::seed_from_u64(0);
-        let (_verf_key, sig_key) = gen_sig_keys(&mut rng);
+        let (verf_key, sig_key) = gen_sig_keys(&mut rng);
         let (enc_key, _dec_key) = keygen(&mut rng).unwrap();
         let backup_id = derive_request_id("test").unwrap();
         let commitments = BTreeMap::new();
+        // Dummy payload; but needs to be a properly serialized payload
+        let payload = CustodianSetupMessagePayload {
+            header: HEADER.to_string(),
+            random_value: [4_u8; 32],
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            public_enc_key: enc_key.clone(),
+            verification_key: verf_key.clone(),
+        };
+        let mut payload_serial = Vec::new();
+        safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
+        let setup_msg1 = CustodianSetupMessage {
+            custodian_role: 1,
+            name: "Custodian-1".to_string(),
+            payload: payload_serial.clone(),
+        };
+        let setup_msg2 = CustodianSetupMessage {
+            custodian_role: 2,
+            name: "Custodian-2".to_string(),
+            payload: payload_serial.clone(),
+        };
+        let setup_msg3 = CustodianSetupMessage {
+            custodian_role: 3,
+            name: "Custodian-3".to_string(),
+            payload: payload_serial.clone(),
+        };
         let custodian_context = CustodianContext {
-            custodian_nodes: Vec::new(),
+            custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
             context_id: Some(backup_id.into()),
             previous_context_id: None,
             threshold,
@@ -787,8 +818,8 @@ mod tests {
 
     #[tracing_test::traced_test]
     #[tokio::test]
-    async fn test_prune_custodian_data_invalid_operator_role() {
-        let recovery_material = dummy_recovery_material(2);
+    async fn test_filter_custodian_data_invalid_operator_role() {
+        let recovery_material = dummy_recovery_material(1);
         let my_role = Role::indexed_from_one(1);
         let outputs = vec![
             dummy_output_for_role(1, 2), // operator_role does not match my_role
@@ -800,8 +831,8 @@ mod tests {
 
     #[tracing_test::traced_test]
     #[tokio::test]
-    async fn test_prune_custodian_data_invalid_custodian_role() {
-        let recovery_material = dummy_recovery_material(2);
+    async fn test_filter_custodian_data_invalid_custodian_role() {
+        let recovery_material = dummy_recovery_material(1);
         let my_role = Role::indexed_from_one(1);
         let outputs = vec![
             dummy_output_for_role(0, 1),  // custodian_role == 0
@@ -816,59 +847,40 @@ mod tests {
 
     #[tracing_test::traced_test]
     #[tokio::test]
-    async fn test_prune_custodian_data_invalid_signature() {
-        let mut recovery_material = dummy_recovery_material(2);
-        // Note there is no node information in the dummy material, insert something for role 1
-        let mut rng = AesRng::seed_from_u64(0);
-        let (verf_key, _sig_key) = gen_sig_keys(&mut rng);
-        let (enc_key, _dec_key) = keygen(&mut rng).unwrap();
-        recovery_material
-            .payload
-            .custodian_context
-            .custodian_nodes
-            .insert(
-                Role::indexed_from_one(1),
-                InternalCustodianSetupMessage {
-                    header: "string".to_string(),
-                    custodian_role: Role::indexed_from_one(1),
-                    name: "cus-1".to_string(),
-                    random_value: [11_u8; 32],
-                    timestamp: 0,
-                    public_enc_key: enc_key,
-                    public_verf_key: verf_key,
-                },
-            );
+    async fn test_filter_custodian_data_invalid_signature() {
+        // Note there is no node information in the dummy material
+        let recovery_material = dummy_recovery_material(1);
         let my_role = Role::indexed_from_one(1);
         let outputs = vec![
-            dummy_output_for_role(1, 1), // signature is invalid
+            dummy_output_for_role(1, 1),
+            dummy_output_for_role(2, 1),
+            dummy_output_for_role(3, 1),
         ];
         let result = filter_custodian_data(outputs, &recovery_material, my_role).await;
         assert!(result.is_err());
         assert!(logs_contain("Failed to parse signature for custodian"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Only received 0 valid recovery outputs")); // Signatures are wrong so no valid outputs
     }
 
     #[tracing_test::traced_test]
     #[tokio::test]
-    async fn test_prune_custodian_data_missing_verification_key() {
+    async fn test_filter_custodian_data_missing_verification_key() {
         // Note there is no node information in the dummy material
-        let recovery_material = dummy_recovery_material(2);
+        let mut recovery_material = dummy_recovery_material(1);
+        recovery_material
+            .payload
+            .custodian_context
+            .custodian_nodes
+            .remove(&Role::indexed_from_one(2));
         let my_role = Role::indexed_from_one(1);
-        let outputs = vec![dummy_output_for_role(1, 1)];
+        let outputs = vec![dummy_output_for_role(1, 1), dummy_output_for_role(2, 1)];
         let result = filter_custodian_data(outputs, &recovery_material, my_role).await;
         assert!(result.is_err());
         assert!(logs_contain(
             "Could not find verification key for custodian role"
         ));
-    }
-
-    #[tracing_test::traced_test]
-    #[tokio::test]
-    async fn test_prune_custodian_data_not_enough_valid_outputs() {
-        let recovery_material = dummy_recovery_material(3); // threshold = 3
-        let my_role = Role::indexed_from_one(1);
-        let outputs = vec![dummy_output_for_role(1, 1), dummy_output_for_role(2, 1)]; // Only 2 outputs, threshold+1 required
-        let result = filter_custodian_data(outputs, &recovery_material, my_role).await;
-        assert!(result.is_err());
-        assert!(logs_contain("Only received"));
     }
 }

@@ -142,6 +142,15 @@ impl InternalCustodianContext {
         custodian_context: CustodianContext,
         backup_enc_key: BackupPublicKey,
     ) -> anyhow::Result<Self> {
+        if custodian_context.threshold == 0
+            || 2 * custodian_context.threshold as usize >= custodian_context.custodian_nodes.len()
+        {
+            return Err(anyhow::anyhow!(
+                "Invalid threshold in custodian context: threshold is {}, but there are {} custodian nodes",
+                custodian_context.threshold,
+                custodian_context.custodian_nodes.len()
+            ));
+        }
         let mut node_map = BTreeMap::new();
         for setup_message in custodian_context.custodian_nodes.iter() {
             let internal_msg: InternalCustodianSetupMessage =
@@ -165,15 +174,6 @@ impl InternalCustodianContext {
                     "Duplicate custodian role found in custodian context"
                 ));
             }
-        }
-        if custodian_context.threshold == 0
-            || 2 * custodian_context.threshold as usize >= custodian_context.custodian_nodes.len()
-        {
-            return Err(anyhow::anyhow!(
-                "Invalid threshold in custodian context: threshold is {}, but there are {} custodian nodes",
-                custodian_context.threshold,
-                custodian_context.custodian_nodes.len()
-            ));
         }
         let context_id: RequestId = parse_optional_proto_request_id(
             &custodian_context.context_id,

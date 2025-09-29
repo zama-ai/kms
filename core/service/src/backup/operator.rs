@@ -805,11 +805,12 @@ impl Operator {
 mod tests {
     use super::*;
     use crate::{
+        backup::custodian::CustodianSetupMessagePayload,
         cryptography::{backup_pke::keygen, internal_crypto_types::gen_sig_keys},
         engine::base::derive_request_id,
     };
     use aes_prng::AesRng;
-    use kms_grpc::kms::v1::CustodianContext;
+    use kms_grpc::kms::v1::{CustodianContext, CustodianSetupMessage};
     use rand::SeedableRng;
 
     #[test]
@@ -818,9 +819,34 @@ mod tests {
         let (verf_key, sig_key) = gen_sig_keys(&mut rng);
         let (enc_key, _dec_key) = keygen(&mut rng).unwrap();
         let backup_id = derive_request_id("test").unwrap();
+        // Dummy payload; but needs to be a properly serialized payload
+        let payload = CustodianSetupMessagePayload {
+            header: HEADER.to_string(),
+            random_value: [4_u8; 32],
+            timestamp: 0,
+            public_enc_key: enc_key.clone(),
+            verification_key: verf_key.clone(),
+        };
+        let mut payload_serial = Vec::new();
+        safe_serialize(&payload, &mut payload_serial, SAFE_SER_SIZE_LIMIT).unwrap();
+        let setup_msg1 = CustodianSetupMessage {
+            custodian_role: 1,
+            name: "Custodian-1".to_string(),
+            payload: payload_serial.clone(),
+        };
+        let setup_msg2 = CustodianSetupMessage {
+            custodian_role: 2,
+            name: "Custodian-2".to_string(),
+            payload: payload_serial.clone(),
+        };
+        let setup_msg3 = CustodianSetupMessage {
+            custodian_role: 3,
+            name: "Custodian-3".to_string(),
+            payload: payload_serial.clone(),
+        };
         let commitments = BTreeMap::new();
         let custodian_context = CustodianContext {
-            custodian_nodes: Vec::new(),
+            custodian_nodes: vec![setup_msg1, setup_msg2, setup_msg3],
             context_id: Some(backup_id.into()),
             previous_context_id: None,
             threshold: 1,
