@@ -271,7 +271,7 @@ where
             })?
         };
         let parsed_custodian_rec = {
-            prune_custodian_data(
+            filter_custodian_data(
                 inner.custodian_recovery_outputs,
                 &recovery_material,
                 self.my_role,
@@ -406,6 +406,7 @@ where
         Ok(Response::new(response))
     }
 }
+/// Load and validate the recovery validation material associated with the provided context ID
 async fn load_recovery_validation_material<S>(
     public_storage: &Mutex<S>,
     context_id: &RequestId,
@@ -427,7 +428,9 @@ where
     Ok(recovery_material)
 }
 
-async fn prune_custodian_data(
+/// Filter and validate the custodian recovery outputs, returning a map from custodian role to recovery output
+/// Each output is verified to be correctly signed by the custodian and to be intended for the current operator role.
+async fn filter_custodian_data(
     custodian_recovery_outputs: Vec<CustodianRecoveryOutput>,
     recovery_material: &RecoveryValidationMaterial,
     my_role: Role,
@@ -790,7 +793,7 @@ mod tests {
         let outputs = vec![
             dummy_output_for_role(1, 2), // operator_role does not match my_role
         ];
-        let result = prune_custodian_data(outputs, &recovery_material, my_role).await;
+        let result = filter_custodian_data(outputs, &recovery_material, my_role).await;
         assert!(result.is_err());
         assert!(logs_contain("Received recovery output for operator role"));
     }
@@ -804,7 +807,7 @@ mod tests {
             dummy_output_for_role(0, 1),  // custodian_role == 0
             dummy_output_for_role(99, 1), // custodian_role out of bounds
         ];
-        let result = prune_custodian_data(outputs, &recovery_material, my_role).await;
+        let result = filter_custodian_data(outputs, &recovery_material, my_role).await;
         assert!(result.is_err());
         assert!(logs_contain(
             "Received recovery output with invalid custodian role"
@@ -839,7 +842,7 @@ mod tests {
         let outputs = vec![
             dummy_output_for_role(1, 1), // signature is invalid
         ];
-        let result = prune_custodian_data(outputs, &recovery_material, my_role).await;
+        let result = filter_custodian_data(outputs, &recovery_material, my_role).await;
         assert!(result.is_err());
         assert!(logs_contain("Failed to parse signature for custodian"));
     }
@@ -851,7 +854,7 @@ mod tests {
         let recovery_material = dummy_recovery_material(2);
         let my_role = Role::indexed_from_one(1);
         let outputs = vec![dummy_output_for_role(1, 1)];
-        let result = prune_custodian_data(outputs, &recovery_material, my_role).await;
+        let result = filter_custodian_data(outputs, &recovery_material, my_role).await;
         assert!(result.is_err());
         assert!(logs_contain(
             "Could not find verification key for custodian role"
@@ -864,7 +867,7 @@ mod tests {
         let recovery_material = dummy_recovery_material(3); // threshold = 3
         let my_role = Role::indexed_from_one(1);
         let outputs = vec![dummy_output_for_role(1, 1), dummy_output_for_role(2, 1)]; // Only 2 outputs, threshold+1 required
-        let result = prune_custodian_data(outputs, &recovery_material, my_role).await;
+        let result = filter_custodian_data(outputs, &recovery_material, my_role).await;
         assert!(result.is_err());
         assert!(logs_contain("Only received"));
     }

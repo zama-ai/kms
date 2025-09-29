@@ -581,6 +581,9 @@ fn generate_setup_messages(
     (setup_msgs, mnemonics)
 }
 
+/// Emulate the honest operators' execute of `CustodianRecoveryInit` by
+/// returning two maps; one with the material to return to the custodians and
+/// one with the material of the emulated operators' internal state (needed to continue the backup recovery protocol).
 #[allow(clippy::type_complexity)]
 fn operator_handle_init(
     rng: &mut AesRng,

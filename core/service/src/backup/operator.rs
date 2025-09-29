@@ -918,13 +918,43 @@ mod tests {
 
     #[tracing_test::traced_test]
     #[test]
-    fn operator_new_fails_with_invalid_timestamp() {
+    fn operator_new_fails_with_invalid_timestamp_past() {
         let mut rng = AesRng::seed_from_u64(6);
         let (enc_key, _) = keygen(&mut rng).unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
         let mut msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
-        msg1.timestamp = 0; // way out of range
+        msg1.timestamp = 0; // too far in the past
+        let msg2 =
+            valid_custodian_msg(Role::indexed_from_one(2), enc_key.clone(), verf_key.clone());
+        let msg3 =
+            valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
+        let (_, sig_key) = gen_sig_keys(&mut rng);
+        let result = Operator::new(
+            Role::indexed_from_one(1),
+            vec![msg1.clone(), msg2.clone(), msg3.clone()],
+            sig_key,
+            1,
+            3,
+        );
+        // The result is ok since we only fail in one message
+        assert!(result.is_ok());
+        assert!(logs_contain("Invalid timestamp in custodian setup message"));
+    }
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn operator_new_fails_with_invalid_timestamp_future() {
+        let mut rng = AesRng::seed_from_u64(6);
+        let (enc_key, _) = keygen(&mut rng).unwrap();
+        let (verf_key, _) = gen_sig_keys(&mut rng);
+        let mut msg1 =
+            valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
+        let present = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        msg1.timestamp = present + 24 * 3600 + 2; // too far in the future by 2 seconds
         let msg2 =
             valid_custodian_msg(Role::indexed_from_one(2), enc_key.clone(), verf_key.clone());
         let msg3 =

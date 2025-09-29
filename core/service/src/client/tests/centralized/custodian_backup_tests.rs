@@ -287,12 +287,9 @@ async fn test_decrypt_after_recovery_centralized_negative() {
 
 #[cfg(feature = "insecure")]
 async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u32) {
-    let amount_parties = 4;
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
-    let req_new_cus: RequestId = derive_request_id(&format!(
-        "test_decrypt_after_recovery_threshold_negative_{amount_parties}"
-    ))
-    .unwrap();
+    let req_new_cus: RequestId =
+        derive_request_id("test_decrypt_after_recovery_centralized_negative").unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let test_path = Some(temp_dir.path());
 

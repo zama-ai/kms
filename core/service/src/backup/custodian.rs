@@ -166,6 +166,15 @@ impl InternalCustodianContext {
                 ));
             }
         }
+        if custodian_context.threshold == 0
+            || 2 * custodian_context.threshold as usize >= custodian_context.custodian_nodes.len()
+        {
+            return Err(anyhow::anyhow!(
+                "Invalid threshold in custodian context: threshold is {}, but there are {} custodian nodes",
+                custodian_context.threshold,
+                custodian_context.custodian_nodes.len()
+            ));
+        }
         let context_id: RequestId = parse_optional_proto_request_id(
             &custodian_context.context_id,
             RequestIdParsingErr::CustodianContext,
@@ -355,6 +364,35 @@ mod tests {
         };
         let result = InternalCustodianContext::new(context, backup_pk.clone());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn invalid_threshold_should_fail() {
+        let mut rng = AesRng::seed_from_u64(40);
+        let (backup_pk, _) = keygen(&mut rng).unwrap();
+        let setup_msg1 = CustodianSetupMessage {
+            custodian_role: 1,
+            name: "Custodian-1".to_string(),
+            payload: vec![],
+        };
+        let setup_msg2 = CustodianSetupMessage {
+            custodian_role: 2,
+            name: "Custodian-2".to_string(),
+            payload: vec![],
+        };
+        let context = CustodianContext {
+            custodian_nodes: vec![setup_msg1, setup_msg2],
+            context_id: None,
+            previous_context_id: None,
+            threshold: 1, // Invalid threshold, since 1 is not less than 2/2
+        };
+        let result = InternalCustodianContext::new(context, backup_pk.clone());
+        assert!(result.is_err());
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("Invalid threshold in custodian context"));
     }
 
     #[test]
