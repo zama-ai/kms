@@ -32,6 +32,7 @@ fn default_builder() -> Builder {
         .type_attribute("ComputeKeyType", DERIVES)
         .type_attribute("KeySetAddedInfo", DERIVES)
         .type_attribute("TypedSigncryptedCiphertext", DERIVES)
+        .type_attribute("KeyDigest", DERIVES)
 }
 
 // This is the `main` for wasm builds, which does not include

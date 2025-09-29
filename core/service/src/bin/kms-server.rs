@@ -28,7 +28,7 @@ use kms_lib::{
         Vault,
     },
 };
-use std::{net::ToSocketAddrs, sync::Arc};
+use std::{env, net::ToSocketAddrs, sync::Arc, thread};
 use threshold_fhe::{
     execution::runtime::party::Role,
     networking::tls::{build_ca_certs_map, AttestedVerifier},
@@ -229,6 +229,15 @@ async fn main() -> anyhow::Result<()> {
         init_conf_kms_core_telemetry::<CoreConfig>(&args.config_file).await?;
 
     tracing::info!("Starting KMS Server with core config: {:?}", &core_config);
+
+    tracing::info!(
+        "Multi-threading values: TOKIO_WORKER_THREADS: {:?}, tokio::num_workers: {}, RAYON_NUM_THREADS: {:?}, rayon::current_num_threads: {}, available_parallelism: {}.",
+        env::var_os("TOKIO_WORKER_THREADS").unwrap_or_else(|| "not set".into()),
+        tokio::runtime::Handle::current().metrics().num_workers(),
+        env::var_os("RAYON_NUM_THREADS").unwrap_or_else(||  "not set".into()),
+        rayon::current_num_threads(),
+        thread::available_parallelism()?.get(),
+    );
 
     let party_role = core_config
         .threshold
