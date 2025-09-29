@@ -646,8 +646,6 @@ where
                         true,
                     );
                 }
-
-                println!("Digest for roleof commitments: {:?}", recovery_material);
                 let commit_store_result = store_versioned_at_request_id(
                     &mut (*public_storage_guard),
                     &req_id,

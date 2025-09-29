@@ -304,7 +304,7 @@ where
                 match backup_vault.keychain {
                     Some(KeychainProxy::SecretSharing(ref mut keychain)) => {
                         // Amount of custodians get defined during context creation
-                        let amount_custodians =recovery_material.payload.custodian_context.custodian_nodes.len();
+                        let amount_custodians = recovery_material.payload.custodian_context.custodian_nodes.len();
                         let operator = Operator::new(
                             self.my_role,
                             recovery_material.custodian_context().custodian_nodes.values().cloned().collect_vec(),

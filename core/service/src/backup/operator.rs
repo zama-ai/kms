@@ -47,6 +47,7 @@ use threshold_fhe::{
 
 pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
 pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRREQ";
+const TIMESTAMP_VALIDATION_WINDOW_SECS: u64 = 24 * 3600; // 1 day
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
 pub enum InternalRecoveryRequestVersioned {
@@ -540,11 +541,13 @@ impl Operator {
             }
 
             let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            const ONE_DAY_SECS: u64 = 24 * 3600;
-            if !(now - ONE_DAY_SECS < timestamp && timestamp < now + ONE_DAY_SECS) {
+            if !(now - TIMESTAMP_VALIDATION_WINDOW_SECS < timestamp
+                && timestamp < now + TIMESTAMP_VALIDATION_WINDOW_SECS)
+            {
                 tracing::warn!(
-                    "Invalid timestamp in custodian setup message from custodian {}: expected within one day of now, but got {}",
+                    "Invalid timestamp in custodian setup message from custodian {}: expected within {} seconds of now, but got {}",
                     custodian_role,
+                    TIMESTAMP_VALIDATION_WINDOW_SECS,
                     timestamp
                 );
                 continue;

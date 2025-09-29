@@ -316,10 +316,10 @@ fn full_flow_drop_msg() {
         .iter()
         // Drop custodians 1 and 5, the maximum allowed
         .filter_map(|(k, v)| {
-            if *k != Role::indexed_from_one(1) || *k != Role::indexed_from_one(5) {
-                Some((*k, v.clone()))
-            } else {
+            if *k == Role::indexed_from_one(1) || *k == Role::indexed_from_one(5) {
                 None
+            } else {
+                Some((*k, v.clone()))
             }
         })
         .collect();
