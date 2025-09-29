@@ -1261,7 +1261,7 @@ mod tests {
 
         set_server_key(keyset.public_keys.server_key.clone());
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, msg, 8).unwrap();
-        let (raw_ct, _id, _tag) = ct.into_raw_parts();
+        let (raw_ct, _id, _tag, _rerand_metadata) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
         //Could probably be run Async, but NIST doc says all offline is Sync

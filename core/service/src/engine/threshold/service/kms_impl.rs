@@ -528,7 +528,7 @@ where
         base_kms: base_kms.new_instance().await,
         crypto_storage: crypto_storage.clone(),
         crs_meta_store,
-        session_preparer_getter,
+        session_preparer_getter: session_preparer_getter.clone(),
         tracker: Arc::clone(&tracker),
         ongoing: Arc::clone(&slow_events),
         rate_limiter: rate_limiter.clone(),
@@ -570,7 +570,7 @@ where
         insecure_crs_generator,
         context_manager,
         backup_operator,
-        Arc::new(config.clone()),
+        session_preparer_getter,
         Arc::clone(&tracker),
         thread_core_health_reporter,
         abort_handle,
@@ -604,6 +604,7 @@ mod tests {
                 decompression_key,
                 sns_key,
                 _sns_compression_key,
+                _rerand_key,
                 _tag,
             ) = keyset.public_keys.server_key.into_raw_parts();
 
