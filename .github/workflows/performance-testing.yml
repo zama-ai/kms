@@ -128,7 +128,8 @@ jobs:
         run: |
           helm install sync-secrets oci://ghcr.io/zama-zws/helm-charts/sync-secrets \
           --namespace "${NAMESPACE}" \
-          --version "${SYNC_SECRETS_CHART_VERSION:-"0.2.1"}"
+          --version "${SYNC_SECRETS_CHART_VERSION:-"0.2.1"}" \
+          --values ./ci/kube-testing/threshold/kms-ci/registry-credential/values-kms-ci.yaml
 
       # - name: Setup slack webhook secrets
       #   env:
@@ -176,10 +177,6 @@ jobs:
 
       - name: Setup kms-core with 13 parties
         run: |
-          ls -al ./ci
-          ls -al ./ci/kube-testing
-          ls -al ./ci/kube-testing/${DEPLOYMENT_TYPE}
-          echo "###################################################"
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
             helm install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
@@ -201,7 +198,7 @@ jobs:
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-12-kms-ci.yaml \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-13-kms-ci.yaml \
             --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
-            --set kmsCore.image.tag="${IMAGE_TAG}"
+            --set kmsCore.image.tag="${IMAGE_TAG}" \
           fi
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             helm install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
