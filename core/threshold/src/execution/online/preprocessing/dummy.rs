@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 use super::BitDecPreprocessing;
 use super::BitPreprocessing;
@@ -23,7 +23,6 @@ use crate::execution::online::preprocessing::TriplePreprocessing;
 use crate::execution::online::secret_distributions::RealSecretDistributions;
 use crate::execution::online::secret_distributions::SecretDistributions;
 use crate::execution::online::triple::Triple;
-use crate::execution::runtime::party::Identity;
 use crate::execution::runtime::session::BaseSession;
 use crate::execution::runtime::session::SessionParameters;
 use crate::execution::runtime::session::SmallSession;
@@ -105,18 +104,13 @@ impl<Z> crate::ProtocolDescription for DummyPreprocessing<Z> {
 
 impl<Z> Default for DummyPreprocessing<Z> {
     fn default() -> Self {
-        let role_assignments =
-            HashMap::from_iter([(Role::indexed_from_one(1), Identity::default())]);
-        let own_identity = role_assignments
-            .get(&Role::indexed_from_one(1))
-            .cloned()
-            .unwrap();
+        let role_assignments = HashSet::from_iter([Role::indexed_from_one(1)]);
         DummyPreprocessing {
             seed: 0,
             parameters: SessionParameters::new(
                 0,
                 crate::session_id::SessionId::from(0u128),
-                own_identity,
+                Role::indexed_from_one(1),
                 role_assignments,
             )
             .unwrap(),
@@ -365,7 +359,7 @@ where
     }
 
     /// Fill the masks directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
-    fn fill_from_small_session(
+    async fn fill_from_small_session(
         &mut self,
         _session: &mut SmallSession<ResiduePoly<Z128, EXTENSION_DEGREE>>,
         _amount: usize,

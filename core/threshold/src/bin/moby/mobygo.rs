@@ -20,11 +20,10 @@ use threshold_fhe::{
     },
     conf::choreo::ChoreoConf,
     execution::{
-        endpoints::{
-            decryption::{DecryptionMode, RadixOrBoolCiphertext},
-            keygen::FhePubKeySet,
+        endpoints::decryption::{DecryptionMode, RadixOrBoolCiphertext},
+        tfhe_internals::{
+            parameters::DkgParamsAvailable, public_keysets::FhePubKeySet, utils::expanded_encrypt,
         },
-        tfhe_internals::{parameters::DkgParamsAvailable, utils::expanded_encrypt},
     },
     session_id::SessionId,
 };

@@ -15,7 +15,7 @@ use crate::{
 };
 use crypto_bigint::{NonZero, U1536};
 use itertools::Itertools;
-use std::ops::Mul;
+use std::{ops::Mul, sync::Arc};
 use tracing::instrument;
 
 #[derive(Clone)]
@@ -39,7 +39,7 @@ impl BGVShareSecretKey {
     }
 }
 
-#[instrument(name="BGV.Threshold-KeyGen",skip_all, fields(sid = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="BGV.Threshold-KeyGen",skip_all, fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
 pub async fn bgv_distributed_keygen<N, S: BaseSessionHandles, P: BGVDkgPreprocessing>(
     session: &mut S,
     preprocessing: &mut P,
@@ -96,13 +96,21 @@ where
     let e_pk_prime_times_p = e_pk_prime.iter().map(|x| x * p).collect_vec();
 
     //Compute sk odot sk in the polynomial ring via NTT
-    let sk_share_ntt = sk_ntt
-        .into_iter()
-        .map(|val| Share::new(own_role, val))
-        .collect_vec();
+    let sk_share_ntt = Arc::new(
+        sk_ntt
+            .into_iter()
+            .map(|val| Share::new(own_role, val))
+            .collect_vec(),
+    );
 
     let triples = preprocessing.next_triple_vec(N::VALUE)?;
-    let sk_odot_sk_ntt_share = mult_list(&sk_share_ntt, &sk_share_ntt, triples, session).await?;
+    let sk_odot_sk_ntt_share = mult_list(
+        Arc::clone(&sk_share_ntt),
+        Arc::clone(&sk_share_ntt),
+        triples,
+        session,
+    )
+    .await?;
     let mut sk_odot_sk = sk_odot_sk_ntt_share
         .iter()
         .map(|share| share.value())
@@ -245,8 +253,8 @@ mod tests {
         assert_eq!(plaintext, plaintext_vec);
     }
 
-    #[test]
-    fn test_dkg_dummy_preproc() {
+    #[tokio::test]
+    async fn test_dkg_dummy_preproc() {
         let parties = 5;
         let threshold = 1;
         let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
@@ -276,12 +284,13 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        );
+        )
+        .await;
         test_dkg(&mut results, PLAINTEXT_MODULUS.get().0);
     }
 
-    #[test]
-    fn test_dkg_with_offline() {
+    #[tokio::test]
+    async fn test_dkg_with_offline() {
         let parties = 5;
         let threshold = 1;
         let mut task = |mut session: SmallSession<LevelKsw>, _bot: Option<String>| async move {
@@ -290,7 +299,7 @@ mod tests {
             session
                 .network()
                 .set_timeout_for_next_round(Duration::from_secs(600))
-                .unwrap();
+                .await;
             let mut bgv_preproc = InMemoryBGVDkgPreprocessing::default();
             bgv_preproc
                 .fill_from_base_preproc(N65536::VALUE, &mut session, &mut dummy_preproc)
@@ -300,7 +309,7 @@ mod tests {
             session
                 .network()
                 .set_timeout_for_next_round(*NETWORK_TIMEOUT_ASYNC)
-                .unwrap();
+                .await;
             let (pk, sk) = bgv_distributed_keygen::<N65536, _, _>(
                 &mut session,
                 &mut bgv_preproc,
@@ -323,7 +332,8 @@ mod tests {
             None,
             &mut task,
             None,
-        );
+        )
+        .await;
 
         test_dkg(&mut results, PLAINTEXT_MODULUS.get().0);
     }

@@ -21,7 +21,7 @@ use kms_lib::{
     },
     vault::{
         aws::build_aws_sdk_config,
-        keychain::{awskms::build_aws_kms_client, make_keychain},
+        keychain::{awskms::build_aws_kms_client, make_keychain_proxy},
         storage::{
             delete_at_request_id, make_storage, s3::build_s3_client, Storage, StorageForBytes,
             StorageType,
@@ -298,30 +298,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tls_subject: _,
             } => Some(Role::indexed_from_one(i)),
         };
-        pub_storages.push(
-            make_storage(
-                match args.public_storage {
-                    StorageCommand::File => args.public_file_path.as_ref().map(|path| {
-                        StorageConf::File(FileStorage {
-                            path: path.to_path_buf(),
-                        })
-                    }),
-                    StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
-                        bucket: args
-                            .public_s3_bucket
-                            .as_ref()
-                            .expect("S3 bucket must be set for public storage")
-                            .clone(),
-                        prefix: args.public_s3_prefix.clone(),
-                    })),
-                },
-                StorageType::PUB,
-                party_role,
-                None,
-                s3_client.clone(),
-            )
-            .unwrap(),
-        );
+        let pub_proxy_storage = make_storage(
+            match args.public_storage {
+                StorageCommand::File => args.public_file_path.as_ref().map(|path| {
+                    StorageConf::File(FileStorage {
+                        path: path.to_path_buf(),
+                    })
+                }),
+                StorageCommand::S3 => Some(StorageConf::S3(S3Storage {
+                    bucket: args
+                        .public_s3_bucket
+                        .as_ref()
+                        .expect("S3 bucket must be set for public storage")
+                        .clone(),
+                    prefix: args.public_s3_prefix.clone(),
+                })),
+            },
+            StorageType::PUB,
+            party_role,
+            None,
+            s3_client.clone(),
+        )
+        .unwrap();
         let private_keychain = OptionFuture::from(
             args.root_key_id
                 .as_ref()
@@ -334,18 +332,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .as_ref()
                 .map(|k| {
-                    make_keychain(
+                    make_keychain_proxy(
                         k,
                         awskms_client.clone(),
                         security_module.clone(),
-                        None,
-                        party_role,
-                        None,
+                        Some(&pub_proxy_storage),
                     )
                 }),
         )
         .await
         .transpose()?;
+        pub_storages.push(pub_proxy_storage);
         priv_vaults.push(Vault {
             storage: make_storage(
                 match args.private_storage {

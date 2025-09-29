@@ -54,8 +54,9 @@ where
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::{fmt::Display, sync::Arc, thread};
+    use std::{collections::HashSet, fmt::Display, sync::Arc, thread};
 
+    use futures::future::join_all;
     use itertools::Itertools;
     use tokio::sync::mpsc::{channel, Receiver, Sender};
 
@@ -85,8 +86,8 @@ pub(crate) mod tests {
                 triple::Triple,
             },
             runtime::{
-                party::Identity,
-                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+                party::Role,
+                test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
             sharing::share::Share,
         },
@@ -167,15 +168,15 @@ pub(crate) mod tests {
         threshold: u8,
         type_production: Typeproduction,
     ) -> (
-        Vec<Identity>,
+        HashSet<Role>,
         Vec<ReceiverChannelCollectionWithTracker<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
     )
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     {
-        //Create identities and runtime
-        let identities = generate_fixed_identities(num_parties);
+        // Create roles  and runtime
+        let roles = generate_fixed_roles(num_parties);
         // Preprocessing assumes Sync network
         let runtimes =
             (0..num_sessions)
@@ -183,7 +184,7 @@ pub(crate) mod tests {
                     DistributedTestRuntime::<
                     ResiduePoly<Z64, EXTENSION_DEGREE>,
                     EXTENSION_DEGREE ,
-                >::new(identities.clone(), threshold, NetworkMode::Sync, None)
+                >::new(roles.clone(), threshold, NetworkMode::Sync, None)
                 })
                 .collect_vec();
         let runtimes = Arc::new(runtimes);
@@ -192,20 +193,20 @@ pub(crate) mod tests {
 
         //For test runtime we need multiple runtimes for mutltiple channels
         let rt = tokio::runtime::Runtime::new().unwrap();
-        for party_id in 0..num_parties {
+        for party in roles.clone() {
             let runtimes = runtimes.clone();
             let rt_handle = rt.handle().clone();
             handles.add(thread::spawn(move || {
                 //inside a party
                 let _guard = rt_handle.enter();
-                println!("Thread created for {party_id}");
+                println!("Thread created for party {party}");
 
                 //For each party, create num_sessions sessions
                 let sessions = runtimes
                     .iter()
                     .zip_eq(0..num_sessions)
                     .map(|(runtime, session_id)| {
-                        runtime.large_session_for_party(SessionId::from(session_id), party_id)
+                        runtime.large_session_for_party(SessionId::from(session_id), party)
                     })
                     .collect_vec();
 
@@ -267,7 +268,7 @@ pub(crate) mod tests {
         let mut channels = Vec::new();
         channels.extend(handles.join_all_with_results().unwrap());
 
-        (identities, channels)
+        (roles, channels)
     }
 
     pub fn test_production_small<const EXTENSION_DEGREE: usize>(
@@ -278,20 +279,20 @@ pub(crate) mod tests {
         threshold: u8,
         type_production: Typeproduction,
     ) -> (
-        Vec<Identity>,
+        HashSet<Role>,
         Vec<ReceiverChannelCollectionWithTracker<ResiduePoly<Z64, EXTENSION_DEGREE>>>,
     )
     where
         ResiduePoly<Z64, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve + Derive,
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect + Invert + Solve,
     {
-        //Create identities and runtime
-        let identities = generate_fixed_identities(num_parties);
+        // Create identities and runtime
+        let roles = generate_fixed_roles(num_parties);
         // Preprocessing assumes Sync network
         let runtimes = (0..num_sessions)
             .map(|_| {
                 DistributedTestRuntime::<ResiduePoly<Z64, EXTENSION_DEGREE>, EXTENSION_DEGREE>::new(
-                    identities.clone(),
+                    roles.clone(),
                     threshold,
                     NetworkMode::Sync,
                     None,
@@ -303,21 +304,24 @@ pub(crate) mod tests {
         let mut handles = OsThreadGroup::new();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        for party_id in 0..num_parties {
+        for party in roles.clone() {
             let runtimes = runtimes.clone();
             let rt_handle = rt.handle().clone();
             handles.add(thread::spawn(move || {
                 let _guard = rt_handle.enter();
-                println!("Thread created for {party_id}");
+                println!("Thread created for party {party}");
 
                 //For each party, create num_sessions sessions
-                let sessions = runtimes
-                    .iter()
-                    .zip_eq(0..num_sessions)
-                    .map(|(runtime, session_id)| {
-                        runtime.small_session_for_party(SessionId::from(session_id), party_id, None)
-                    })
-                    .collect_vec();
+                let sessions =
+                    rt_handle.block_on(join_all(runtimes.iter().zip_eq(0..num_sessions).map(
+                        |(runtime, session_id)| {
+                            runtime.small_session_for_party(
+                                SessionId::from(session_id),
+                                party,
+                                None,
+                            )
+                        },
+                    )));
 
                 let (
                     (triple_sender_channels, triple_receiver_channels),
@@ -377,6 +381,6 @@ pub(crate) mod tests {
         let mut channels = Vec::new();
         channels.extend(handles.join_all_with_results().unwrap());
 
-        (identities, channels)
+        (roles, channels)
     }
 }

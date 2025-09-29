@@ -86,10 +86,6 @@ data:
     echo "kmsGenKey.forceRecreate is enabled, deleting existing configmap"
     kubectl delete configmap "$CONFIGMAP_NAME"
     {{- end }}
-    if [ ! -z "$(cat /keygen/key_id)" ]; then
-      echo "Key ID found, skipping configmap creation"
-      exit 0
-    fi
     echo "creating kubernetes configmap: $CONFIGMAP_NAME"
     kubectl create configmap "$CONFIGMAP_NAME" \
       --from-literal=KMS_BUCKET_URL="$(cat /keygen/bucket_url)" \

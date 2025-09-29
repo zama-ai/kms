@@ -4,27 +4,35 @@ use rand::SeedableRng;
 use crate::{
     algebra::{base_ring::Z128, galois_rings::common::ResiduePoly, structure_traits::ErrorCorrect},
     execution::{
-        endpoints::keygen::{FhePubKeySet, OnlineDistributedKeyGen, PrivateKeySet},
+        endpoints::keygen::OnlineDistributedKeyGen,
         online::preprocessing::DKGPreprocessing,
         runtime::session::BaseSessionHandles,
-        tfhe_internals::{parameters::DKGParams, test_feature::gen_key_set},
+        tfhe_internals::{
+            compression_decompression_key::CompressionPrivateKeyShares,
+            parameters::DKGParams,
+            private_keysets::PrivateKeySet,
+            public_keysets::{CompressedFhePubKeySet, FhePubKeySet},
+            test_feature::gen_key_set,
+        },
     },
 };
 
-pub struct DroppingOnlineDistributedKeyGen128;
+pub struct DroppingOnlineDistributedKeyGen128<const EXTENSION_DEGREE: usize>;
 
-pub struct FailingOnlineDistributedKeyGen128;
+pub struct FailingOnlineDistributedKeyGen128<const EXTENSION_DEGREE: usize>;
 
 #[tonic::async_trait]
-impl OnlineDistributedKeyGen<Z128> for DroppingOnlineDistributedKeyGen128 {
+impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGREE>
+    for DroppingOnlineDistributedKeyGen128<EXTENSION_DEGREE>
+{
     async fn keygen<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
-        const EXTENSION_DEGREE: usize,
     >(
         _base_session: &mut S,
         _preprocessing: &mut P,
         params: DKGParams,
+        _existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
@@ -38,19 +46,56 @@ impl OnlineDistributedKeyGen<Z128> for DroppingOnlineDistributedKeyGen128 {
 
         Ok((fhe_key_set.public_keys, private_key_set))
     }
+
+    //TODO: Need to do dummy stuff as above
+    async fn compressed_keygen<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        _session: &mut S,
+        _preprocessing: &mut P,
+        _params: DKGParams,
+        _existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
+    ) -> anyhow::Result<(CompressedFhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        Err(anyhow::anyhow!(
+            "This keygen implementation is supposed to fail"
+        ))
+    }
 }
 
 #[tonic::async_trait]
-impl OnlineDistributedKeyGen<Z128> for FailingOnlineDistributedKeyGen128 {
+impl<const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z128, EXTENSION_DEGREE>
+    for FailingOnlineDistributedKeyGen128<EXTENSION_DEGREE>
+{
     async fn keygen<
         S: BaseSessionHandles,
         P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
-        const EXTENSION_DEGREE: usize,
     >(
         _base_session: &mut S,
         _preprocessing: &mut P,
         _params: DKGParams,
+        _existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
     ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+    where
+        ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
+    {
+        Err(anyhow::anyhow!(
+            "This keygen implementation is supposed to fail"
+        ))
+    }
+
+    async fn compressed_keygen<
+        S: BaseSessionHandles,
+        P: DKGPreprocessing<ResiduePoly<Z128, EXTENSION_DEGREE>> + Send + ?Sized,
+    >(
+        _session: &mut S,
+        _preprocessing: &mut P,
+        _params: DKGParams,
+        _existing_compression_sk: Option<&CompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,
+    ) -> anyhow::Result<(CompressedFhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
         ResiduePoly<Z128, EXTENSION_DEGREE>: ErrorCorrect,
     {

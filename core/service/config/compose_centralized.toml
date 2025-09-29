@@ -31,6 +31,10 @@ bucket = "kms"
 [private_vault.storage.file]
 path = "./keys"
 
+[backup_vault]
+[backup_vault.storage.file]
+path = "./backup_vault"
+
 [rate_limiter_conf]
 bucket_size = 50000
 pub_decrypt = 1

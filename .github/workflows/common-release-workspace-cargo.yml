@@ -1,4 +1,4 @@
-name: Cargo Workspaces Release
+name: common-release-workspace-cargo
 
 on:
   workflow_call:
@@ -14,7 +14,7 @@ permissions: {}
 
 jobs:
   cargo-workspaces-release:
-    name: "Cargo Workspaces Release"
+    name: common-release-workspace-cargo/cargo-workspaces-release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Project

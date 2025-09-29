@@ -105,7 +105,7 @@ pub(crate) fn fill_incomplete_output<Z: Ring, L: LargeSessionHandles>(
     result: &mut HashMap<Role, Vec<Z>>,
     len: usize,
 ) {
-    for role in session.role_assignments().keys() {
+    for role in session.roles() {
         if !result.contains_key(role) {
             result.insert(*role, vec![Z::ZERO; len]);
         //Using unwrap here because the first clause makes sure the key is present!
@@ -118,7 +118,7 @@ pub(crate) fn fill_incomplete_output<Z: Ring, L: LargeSessionHandles>(
 
 #[async_trait]
 impl ShareDispute for RealShareDispute {
-    #[instrument(name="ShareDispute (t,2t)",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size= ?secrets.len()))]
+    #[instrument(name="ShareDispute (t,2t)",skip(self,session,secrets),fields(sid = ?session.session_id(),my_role=?session.my_role(),batch_size= ?secrets.len()))]
     async fn execute_double<Z: RingWithExceptionalSequence + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
@@ -172,7 +172,7 @@ impl ShareDispute for RealShareDispute {
         send_and_receive_share_dispute_double(session, polypoints_map, secrets.len()).await
     }
 
-    #[instrument(name="ShareDispute (t)",skip(self,session,secrets),fields(sid = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?secrets.len()))]
+    #[instrument(name="ShareDispute (t)",skip(self,session,secrets),fields(sid = ?session.session_id(),my_role=?session.my_role(),batch_size=?secrets.len()))]
     async fn execute<Z: RingWithExceptionalSequence + Invert, L: LargeSessionHandles>(
         &self,
         session: &mut L,
@@ -219,8 +219,8 @@ pub(crate) async fn send_and_receive_share_dispute_double<Z: Ring, L: LargeSessi
 ) -> anyhow::Result<ShareDisputeOutputDouble<Z>> {
     send_to_honest_parties(&polypoints_map, session).await?;
 
-    let sender_list = session.role_assignments().keys().cloned().collect_vec();
-    let mut received_values = receive_from_parties_w_dispute(&sender_list, session).await?;
+    let senders = session.roles();
+    let mut received_values = receive_from_parties_w_dispute(senders, session).await?;
     //Insert shares for my own sharing
     received_values.insert(
         session.my_role(),
@@ -299,8 +299,7 @@ pub(crate) async fn send_and_receive_share_dispute_single<Z: Ring, L: LargeSessi
 ) -> anyhow::Result<ShareDisputeOutput<Z>> {
     send_to_honest_parties(&polypoints_map, session).await?;
 
-    let sender_list = session.role_assignments().keys().cloned().collect_vec();
-    let mut received_values = receive_from_parties_w_dispute(&sender_list, session).await?;
+    let mut received_values = receive_from_parties_w_dispute(session.roles(), session).await?;
 
     //Insert shares for my own sharing
     received_values.insert(
@@ -425,7 +424,7 @@ pub(crate) mod tests {
             },
             runtime::{
                 party::Role,
-                session::{BaseSessionHandles, LargeSession, ParameterHandles},
+                session::{BaseSessionHandles, LargeSession},
             },
             sharing::{shamir::ShamirSharings, share::Share},
         },
@@ -434,16 +433,17 @@ pub(crate) mod tests {
         },
     };
     use aes_prng::AesRng;
+    use futures_util::future::join;
     use itertools::Itertools;
     use rand::SeedableRng;
     use rstest::rstest;
-    use std::num::Wrapping;
+    use std::{collections::HashSet, num::Wrapping};
     use tracing_test::traced_test;
 
     /// Test share_dispute for different malicious strategies, doing both execute and execute_double
     /// Accepts a set of dispute pairs that will be inserted to the honest parties' sessions
     /// before executing the protocol
-    fn test_share_dispute_strategies<
+    async fn test_share_dispute_strategies<
         Z: ErrorCorrect + Invert,
         const EXTENSION_DEGREE: usize,
         S: ShareDispute + 'static,
@@ -463,7 +463,6 @@ pub(crate) mod tests {
                 .collect_vec();
 
             (
-                session.my_role(),
                 secrets.clone(),
                 real_share_dispute
                     .execute(&mut session, &secrets)
@@ -481,16 +480,16 @@ pub(crate) mod tests {
             let secrets = (0..num_secrets)
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
-            (
-                session.my_role(),
-                malicious_share_dispute
-                    .execute(&mut session, &secrets)
-                    .await,
-                malicious_share_dispute
-                    .execute_double(&mut session, &secrets)
-                    .await,
-            )
+            let _ = malicious_share_dispute
+                .execute(&mut session, &secrets)
+                .await;
+            let _ = malicious_share_dispute
+                .execute_double(&mut session, &secrets)
+                .await;
         };
+
+        let mut malicious_roles_with_dispute = HashSet::from_iter(malicious_due_to_dispute.clone());
+        malicious_roles_with_dispute.extend(params.malicious_roles.clone());
 
         //Execute the protocol with malicious parties and added disputes
         //ShareDispute assumes Sync network
@@ -498,17 +497,14 @@ pub(crate) mod tests {
             execute_protocol_large_w_disputes_and_malicious::<_, _, _, _, _, Z, EXTENSION_DEGREE>(
                 &params,
                 &params.dispute_pairs,
-                &[
-                    malicious_due_to_dispute.clone(),
-                    params.malicious_roles.to_vec(),
-                ]
-                .concat(),
+                &malicious_roles_with_dispute,
                 malicious_share_dispute,
                 NetworkMode::Sync,
                 None,
                 &mut task_honest,
                 &mut task_malicious,
-            );
+            )
+            .await;
 
         //Check that dispute (pi,pj) maps to 0 for pi and pj, malicious map to 0 for all
         //and otherwise share sent are share received between honest parties.
@@ -522,7 +518,7 @@ pub(crate) mod tests {
         let mut reconstruction_vectors_double_2t =
             vec![vec![Vec::<Share::<Z>>::default(); num_secrets]; params.num_parties];
 
-        for (role_pi, _, output_single_pi, output_double_pi) in result_honest.iter() {
+        for (role_pi, (_, output_single_pi, output_double_pi)) in result_honest.iter() {
             let rcv_res_pi_single = &output_single_pi.all_shares;
             let rcv_res_pi_double_t = &output_double_pi.output_t.all_shares;
             let rcv_res_pi_double_2t = &output_double_pi.output_2t.all_shares;
@@ -586,7 +582,7 @@ pub(crate) mod tests {
         }
 
         //Check correct reconstruction of all honest parties
-        for (role_pi, secrets_pi, _, _) in result_honest {
+        for (role_pi, (secrets_pi, _, _)) in result_honest {
             if !malicious_due_to_dispute.contains(&role_pi) {
                 for (idx_secret, expected_secret) in secrets_pi.iter().enumerate() {
                     //Reconstruct the secret shared by execute
@@ -625,17 +621,21 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_dispute(4, 1, &[(1,2),(0,3)]))]
     #[case(TestingParameters::init_dispute(4, 1, &[(1,2),(1,3)]))]
     #[case(TestingParameters::init_dispute(7, 2, &[(1,2),(1,3),(4,6),(0,5)]))]
-    fn test_share_dispute_honest_z128(#[case] params: TestingParameters) {
+    async fn test_share_dispute_honest_z128(#[case] params: TestingParameters) {
         let malicious_share_dispute = RealShareDispute::default();
-        test_share_dispute_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_share_dispute.clone(),
-        );
-        test_share_dispute_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            _,
-        >(params.clone(), malicious_share_dispute.clone());
+        join(
+            test_share_dispute_strategies::<
+                ResiduePolyF4Z64,
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                _,
+            >(params.clone(), malicious_share_dispute.clone()),
+            test_share_dispute_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                _,
+            >(params.clone(), malicious_share_dispute.clone()),
+        )
+        .await;
     }
 
     #[cfg(feature = "slow_tests")]
@@ -648,19 +648,23 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(4, 1, &[1], &[], &[(1,2),(0,3)], false, None))]
     #[case(TestingParameters::init(4, 1, &[2], &[], &[(0,2),(1,3)], false, None))]
     #[case(TestingParameters::init(7, 2, &[2,6], &[], &[(0,2),(1,3),(0,4),(1,5)], false, None))]
-    fn test_share_dispute_dropout(#[case] params: TestingParameters) {
+    async fn test_share_dispute_dropout(#[case] params: TestingParameters) {
         use crate::malicious_execution::large_execution::malicious_share_dispute::DroppingShareDispute;
 
         let dropping_share_dispute = DroppingShareDispute::default();
-        test_share_dispute_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            dropping_share_dispute.clone(),
-        );
-        test_share_dispute_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            _,
-        >(params.clone(), dropping_share_dispute.clone());
+        join(
+            test_share_dispute_strategies::<
+                ResiduePolyF4Z64,
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                _,
+            >(params.clone(), dropping_share_dispute.clone()),
+            test_share_dispute_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                _,
+            >(params.clone(), dropping_share_dispute.clone()),
+        )
+        .await;
     }
 
     #[cfg(feature = "slow_tests")]
@@ -672,20 +676,24 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(4, 1, &[1], &[], &[(1,2),(0,3)], false, None))]
     #[case(TestingParameters::init(4, 1, &[2], &[], &[(0,2),(1,3)], false, None))]
     #[case(TestingParameters::init(7, 2, &[2,6], &[], &[(0,2),(1,3),(0,4),(1,5)], false, None))]
-    fn test_malicious_share_dispute(#[case] params: TestingParameters) {
+    async fn test_malicious_share_dispute(#[case] params: TestingParameters) {
         use crate::malicious_execution::large_execution::malicious_share_dispute::WrongShareDisputeRecons;
 
         let malicious_share_dispute_recons = WrongShareDisputeRecons::default();
 
-        test_share_dispute_strategies::<ResiduePolyF4Z64, { ResiduePolyF4Z64::EXTENSION_DEGREE }, _>(
-            params.clone(),
-            malicious_share_dispute_recons.clone(),
-        );
-        test_share_dispute_strategies::<
-            ResiduePolyF4Z128,
-            { ResiduePolyF4Z128::EXTENSION_DEGREE },
-            _,
-        >(params.clone(), malicious_share_dispute_recons.clone());
+        join(
+            test_share_dispute_strategies::<
+                ResiduePolyF4Z64,
+                { ResiduePolyF4Z64::EXTENSION_DEGREE },
+                _,
+            >(params.clone(), malicious_share_dispute_recons.clone()),
+            test_share_dispute_strategies::<
+                ResiduePolyF4Z128,
+                { ResiduePolyF4Z128::EXTENSION_DEGREE },
+                _,
+            >(params.clone(), malicious_share_dispute_recons.clone()),
+        )
+        .await;
     }
 
     #[traced_test]

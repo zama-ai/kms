@@ -6,7 +6,10 @@ use strum_macros::EnumIs;
 use threshold_fhe::execution::endpoints::decryption::DecryptionMode;
 use threshold_fhe::execution::online::preprocessing::redis::RedisConf;
 use threshold_fhe::execution::runtime::party::{Identity, Role};
-use threshold_fhe::networking::{grpc::CoreToCoreNetworkConfig, tls::ReleasePCRValues};
+use threshold_fhe::networking::{
+    grpc::CoreToCoreNetworkConfig,
+    tls::{extract_subject_from_cert, ReleasePCRValues},
+};
 use validator::{Validate, ValidationError};
 use x509_parser::pem::{parse_x509_pem, Pem};
 
@@ -31,33 +34,35 @@ pub struct ThresholdPartyConf {
     pub min_dec_cache: usize,
     pub preproc_redis: Option<RedisConf>,
     pub num_sessions_preproc: Option<u16>,
+    // NOTE: eventually the peer list will be removed in favor of context
     #[validate(nested)]
-    pub peers: Vec<PeerConf>,
+    pub peers: Option<Vec<PeerConf>>,
     pub core_to_core_net: Option<CoreToCoreNetworkConfig>,
     pub decryption_mode: DecryptionMode,
 }
 
 fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), ValidationError> {
-    let num_parties = conf.peers.len();
-    // We assume for now that 3 * threshold + 1 == num_parties.
-    // Note: this might change in the future
-    if 3 * conf.threshold as usize + 1 != num_parties {
-        return Err(ValidationError::new("Incorrect threshold").with_message(format!("3*t+1 must be equal to number of parties. Got t={} but expected t={} for n={} parties", conf.threshold,                     (num_parties - 1) / 3,
+    if let Some(peers) = &conf.peers {
+        let num_parties = peers.len();
+        // We assume for now that 3 * threshold + 1 == num_parties.
+        // Note: this might change in the future
+        if 3 * conf.threshold as usize + 1 != num_parties {
+            return Err(ValidationError::new("Incorrect threshold").with_message(format!("3*t+1 must be equal to number of parties. Got t={} but expected t={} for n={} parties", conf.threshold,                     (num_parties - 1) / 3,
                     num_parties
         ).into() ));
-    }
-    if conf.my_id > num_parties {
-        return Err(ValidationError::new("Incorrect party ID").with_message(
-            format!(
-                "Party ID cannot be greater than the number of parties ({}), but was {}.",
-                num_parties, conf.my_id
-            )
-            .into(),
-        ));
-    }
-    for peer in &conf.peers {
-        if peer.party_id > num_parties {
-            return Err(
+        }
+        if conf.my_id > num_parties {
+            return Err(ValidationError::new("Incorrect party ID").with_message(
+                format!(
+                    "Party ID cannot be greater than the number of parties ({}), but was {}.",
+                    num_parties, conf.my_id
+                )
+                .into(),
+            ));
+        }
+        for peer in peers {
+            if peer.party_id > num_parties {
+                return Err(
                 ValidationError::new("Incorrect peer party ID").with_message(
                     format!(
                         "Peer party ID cannot be greater than the number of parties ({num_parties}).",
@@ -65,6 +70,7 @@ fn validate_threshold_party_conf(conf: &ThresholdPartyConf) -> Result<(), Valida
                     .into(),
                 ),
             );
+            }
         }
     }
     Ok(())
@@ -115,16 +121,23 @@ impl TlsCert {
         let x509_cert = cert_pem.parse_x509()?;
         // sanity check: peerlist needs to have an entry for the
         // current party
-        let my_hostname = &peers
+        let peer = &peers
             .iter()
             .find(|peer| peer.party_id == my_id)
-            .expect("Peer list does not have an entry for my id")
-            .address;
-        let subject = threshold_fhe::networking::tls::extract_subject_from_cert(&x509_cert)
-            .map_err(|e| anyhow::anyhow!(e))?;
-        if subject != *my_hostname {
-            anyhow::bail!("Certificate subject {subject} does not match hostname {my_hostname}");
-        }
+            .ok_or_else(|| {
+                anyhow::anyhow!("Peer list {peers:?} does not have an entry for my id {my_id}")
+            })?;
+        let mpc_identity = peer
+            .mpc_identity
+            .as_ref()
+            .unwrap_or(&peer.address)
+            .to_string();
+
+        let subject = extract_subject_from_cert(&x509_cert).map_err(|e| anyhow::anyhow!(e))?;
+        anyhow::ensure!(
+            subject == mpc_identity,
+            "Certificate subject {subject} does not match mpc_identity {mpc_identity}"
+        );
         Ok(cert_pem)
     }
 }
@@ -164,8 +177,33 @@ pub struct PeerConf {
     pub party_id: usize,
     #[validate(length(min = 1))]
     pub address: String,
+    pub mpc_identity: Option<String>,
     #[validate(range(min = 1, max = 65535))]
     pub port: u16,
+    /// Optional gRPC port for peer health checks and service discovery.
+    ///
+    /// This field specifies the gRPC endpoint port for each peer node, enabling
+    /// deterministic discovery of all peers from a single config file. This is
+    /// distinct from the local service's `listen_port` which only applies to the
+    /// current node.
+    ///
+    /// **Port Usage Strategy:**
+    /// - **gRPC ports (e.g., 50X00)**: Safe, read-only interfaces for health checks
+    ///   and service discovery. These are considered public-facing endpoints.
+    /// - **P2P ports (e.g., 5000X)**: Security-critical endpoints used exclusively
+    ///   for MPC operations. Exposing these for discovery would add unnecessary
+    ///   complexity and potential security risks.
+    ///
+    /// **Fallback Behavior:**
+    /// If not specified, the system applies a port convention based on peer
+    /// configuration to maintain backward compatibility.
+    ///
+    /// **Security Considerations:**
+    /// P2P ports are treated as security-critical and may be monitored for
+    /// unusual traffic patterns or unauthorized access attempts in the future.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[validate(range(min = 1, max = 65535))]
+    pub service_port: Option<u16>,
     pub tls_cert: Option<TlsCert>,
 }
 
@@ -173,7 +211,7 @@ impl PeerConf {
     pub fn into_role_identity(&self) -> (Role, Identity) {
         (
             Role::indexed_from_one(self.party_id),
-            Identity(self.address.clone(), self.port),
+            Identity::new(self.address.clone(), self.port, self.mpc_identity.clone()),
         )
     }
 }

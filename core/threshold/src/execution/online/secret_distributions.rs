@@ -78,7 +78,7 @@ impl SecretDistributions for RealSecretDistributions {
             //(could do j in [0,bound], but we keep it closer to NIST doc notation)
             for j in 1..=bound + 1 {
                 let next_bit = b.pop().expect("validated sufficient bits");
-                ei += next_bit * Z::from_u128(1 << (j - 1));
+                ei += next_bit * (1 << (j - 1));
             }
             res.push(ei);
         }
@@ -137,8 +137,8 @@ mod tests {
 
     use super::{RealSecretDistributions, SecretDistributions, TUniformBound};
 
-    #[test]
-    fn test_newhope() {
+    #[tokio::test]
+    async fn test_newhope() {
         let parties = 5;
         let threshold = 1;
         let bound = 10; //NewHope(B) gives range [-10,10] with mean 0 and std deviation sqrt(5)
@@ -168,7 +168,8 @@ mod tests {
             Some(delay_vec),
             &mut task,
             None,
-        );
+        )
+        .await;
 
         //Ensure all values fall within bound
         let ref_res = results.first().unwrap();
@@ -185,8 +186,8 @@ mod tests {
     }
 
     // TODO these two test could be merged into a generic test and then just calles with Z64 and Z128 respectively.
-    #[test]
-    fn test_uniform_z128() {
+    #[tokio::test]
+    async fn test_uniform_z128() {
         let parties = 5;
         let threshold = 1;
         let bound = TUniformBound(2_usize);
@@ -233,7 +234,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         //Check all parties agree and fall within expected bounds
         let ref_res = results[0].1.clone();
@@ -254,8 +256,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_uniform_z64() {
+    #[tokio::test]
+    async fn test_uniform_z64() {
         let parties = 5;
         let threshold = 1;
         let bound = TUniformBound(2_usize);
@@ -302,7 +304,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         //Check all parties agree and fall within expected bounds
         let ref_res = results[0].1.clone();

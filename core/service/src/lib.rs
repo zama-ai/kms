@@ -2,7 +2,7 @@ use alloy_dyn_abi::Eip712Domain;
 use alloy_primitives::B256;
 use anyhow::anyhow;
 use kms_grpc::{
-    kms::v1::UserDecryptionResponsePayload, rpc_types::UserDecryptResponseVerification,
+    kms::v1::UserDecryptionResponsePayload, solidity_types::UserDecryptResponseVerification,
 };
 use std::{fmt, panic::Location};
 
@@ -41,8 +41,7 @@ pub mod vault;
 
 #[cfg(feature = "non-wasm")]
 pub use kms_grpc::utils::tonic_result::{
-    box_tonic_err, tonic_handle_potential_err, tonic_some_or_err, tonic_some_or_err_ref,
-    tonic_some_ref_or_err, BoxedStatus, TonicResult,
+    box_tonic_err, ok_or_tonic_abort, some_or_tonic_abort, BoxedStatus, TonicResult,
 };
 
 /// Truncate s to a maximum of 128 chars.
@@ -92,10 +91,20 @@ pub fn compute_user_decrypt_message_hash(
     let external_handles: Vec<_> = payload
         .signcrypted_ciphertexts
         .iter()
-        .map(|e| {
-            alloy_primitives::FixedBytes::<32>::left_padding_from(e.external_handle.as_slice())
+        .enumerate()
+        .map(|(idx, c)| {
+            if c.external_handle.len() > 32 {
+                anyhow::bail!(
+                    "external_handle at index {idx} too long: {} bytes (max 32)",
+                    c.external_handle.len()
+                );
+            } else {
+                Ok(alloy_primitives::FixedBytes::<32>::left_padding_from(
+                    c.external_handle.as_slice(),
+                ))
+            }
         })
-        .collect();
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let user_decrypted_share_buf = bc2wrap::serialize(payload)?;
 
@@ -115,6 +124,17 @@ pub fn compute_user_decrypt_message_hash(
         message_hash
     );
     Ok(message_hash)
+}
+
+/// Create a dummy domain for testing
+#[cfg(any(test, all(feature = "non-wasm", feature = "testing")))]
+pub(crate) fn dummy_domain() -> alloy_sol_types::Eip712Domain {
+    alloy_sol_types::eip712_domain!(
+        name: "Authorization token",
+        version: "1",
+        chain_id: 8006,
+        verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+    )
 }
 
 // re-export DecryptionMode

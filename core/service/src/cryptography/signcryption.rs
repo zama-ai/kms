@@ -207,8 +207,18 @@ fn parse_msg(
     decrypted_plaintext: Vec<u8>,
     server_verf_key: &PublicSigKey,
 ) -> anyhow::Result<(Vec<u8>, Signature)> {
-    // The plaintext contains msg || sig || H(server_verification_key) || H(server_enc_key)
-    let msg_len = decrypted_plaintext.len() - DIGEST_BYTES - SIG_SIZE;
+    // The plaintext contains msg || sig || H(server_verification_key)
+    let msg_len = decrypted_plaintext
+        .len()
+        .checked_sub(DIGEST_BYTES)
+        .and_then(|len| len.checked_sub(SIG_SIZE))
+        .ok_or_else(||
+            anyhow_tracked(
+                format!("Message is too short ({} bytes) to contain sig || H(server_verification_key) ({} bytes) ",
+                decrypted_plaintext.len(),
+                DIGEST_BYTES + SIG_SIZE)
+                )
+            )?;
     let msg = &decrypted_plaintext[..msg_len];
     let sig_bytes = &decrypted_plaintext[msg_len..(msg_len + SIG_SIZE)];
     let server_ver_key_digest =

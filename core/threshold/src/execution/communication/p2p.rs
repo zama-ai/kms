@@ -12,7 +12,7 @@ use crate::{
     algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{
-        party::{Identity, Role},
+        party::Role,
         session::{BaseSessionHandles, LargeSessionHandles},
     },
     networking::value::NetworkValue,
@@ -22,7 +22,7 @@ use crate::{
 /// Returns true if everything is fine.
 /// By not making sense, we mean that the party is either the same as the currently executing party or that the
 /// currently executing party is in conflict with the sender/receiver, or the sender/receiver is corrupt
-fn check_roles<L: LargeSessionHandles>(
+fn check_roles<'a, L: LargeSessionHandles + 'a>(
     communicating_with: &Role,
     session: &L,
 ) -> anyhow::Result<bool> {
@@ -55,7 +55,10 @@ fn check_roles<L: LargeSessionHandles>(
     Ok(true)
 }
 
-fn check_talking_to_myself<B: BaseSessionHandles>(r: &Role, session: &B) -> anyhow::Result<bool> {
+fn check_talking_to_myself<'a, B: BaseSessionHandles + 'a>(
+    r: &Role,
+    session: &B,
+) -> anyhow::Result<bool> {
     Ok(r != &session.my_role())
 }
 
@@ -63,11 +66,11 @@ fn check_talking_to_myself<B: BaseSessionHandles>(r: &Role, session: &B) -> anyh
 /// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
 /// Automatically increases the round counter when called
 /// Note: This also sends to corrupt parties
-pub async fn send_to_parties<Z: Ring, B: BaseSessionHandles>(
+pub async fn send_to_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
     session: &B,
 ) -> anyhow::Result<()> {
-    session.network().increase_round_counter()?;
+    session.network().increase_round_counter().await;
     // pass the always-true fn as check-fn, since we're checking for equal sender and receiver inside internal_send_to_parties
     internal_send_to_parties(values_to_send, session, &|_a: &Role, _b: &B| Ok(true)).await?;
     Ok(())
@@ -77,21 +80,21 @@ pub async fn send_to_parties<Z: Ring, B: BaseSessionHandles>(
 /// I.e. not the sending party or in dispute or corrupt.
 /// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
 /// Automatically increases the round counter when called
-pub async fn send_to_honest_parties<Z: Ring, L: LargeSessionHandles>(
+pub async fn send_to_honest_parties<'a, Z: Ring, L: LargeSessionHandles + 'a>(
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
-    session: &L,
+    session: &'a L,
 ) -> anyhow::Result<()> {
-    session.network().increase_round_counter()?;
+    session.network().increase_round_counter().await;
     internal_send_to_parties(values_to_send, session, &check_roles).await?;
     Ok(())
 }
 
 /// Add a job of sending specific values to specific parties.
 /// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
-async fn internal_send_to_parties<Z: Ring, B: BaseSessionHandles>(
+async fn internal_send_to_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
-    session: &B,
-    check_fn: &(dyn Fn(&Role, &B) -> anyhow::Result<bool> + Sync),
+    session: &'a B,
+    check_fn: &'a (dyn Fn(&Role, &'a B) -> anyhow::Result<bool> + Sync + Send + 'a),
 ) -> anyhow::Result<()> {
     let my_role = session.my_role();
     for (cur_receiver, cur_value) in values_to_send.iter() {
@@ -100,11 +103,8 @@ async fn internal_send_to_parties<Z: Ring, B: BaseSessionHandles>(
             // Ensure the party we want to send to passes the check we specified
             if check_fn(cur_receiver, session)? {
                 let networking = Arc::clone(session.network());
-                let receiver_identity = session.identity_from(cur_receiver)?;
-                let value_to_send = cur_value.clone();
-                networking
-                    .send(value_to_send.to_network(), &receiver_identity)
-                    .await?;
+                let value_to_send = Arc::new(cur_value.to_network());
+                networking.send(value_to_send, cur_receiver).await?;
             } else {
                 tracing::warn!(
                     "I am {:?} trying to send to receiver {:?}, who doesn't pass check",
@@ -118,33 +118,16 @@ async fn internal_send_to_parties<Z: Ring, B: BaseSessionHandles>(
     Ok(())
 }
 
-/// Send specific values to specific parties.
-/// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
-pub async fn send_distinct_to_parties<Z: Ring, B: BaseSessionHandles>(
-    session: &B,
-    sender: &Role,
-    values_to_send: HashMap<&Role, NetworkValue<Z>>,
-) -> anyhow::Result<()> {
-    for (other_role, other_identity) in session.role_assignments().iter() {
-        let networking = Arc::clone(session.network());
-        let other_id = other_identity.clone();
-        let msg = values_to_send[other_role].clone();
-        if sender != other_role {
-            networking.send(msg.to_network(), &other_id).await?;
-        }
-    }
-    Ok(())
-}
-
 /// Receive specific values to specific parties.
 /// The list of parties to receive from is given in `senders`.
 /// Returns [`NetworkValue::Bot`] in case of failure to receive but without adding parties to the corruption or dispute sets.
-pub async fn receive_from_parties<Z: Ring, S: BaseSessionHandles>(
-    senders: &Vec<Role>,
+pub async fn receive_from_parties<'a, Z: Ring, S: BaseSessionHandles + 'a>(
+    senders: &HashSet<Role>,
     session: &S,
 ) -> anyhow::Result<HashMap<Role, NetworkValue<Z>>> {
     let mut receive_job = JoinSet::new();
-    internal_receive_from_parties(&mut receive_job, senders, session, &check_talking_to_myself)?;
+    internal_receive_from_parties(&mut receive_job, senders, session, &check_talking_to_myself)
+        .await?;
     let mut res = HashMap::with_capacity(senders.len());
     while let Some(received_data) = receive_job.join_next().await {
         let (sender_role, sender_data) = received_data?;
@@ -157,12 +140,12 @@ pub async fn receive_from_parties<Z: Ring, S: BaseSessionHandles>(
 /// The list of parties to receive from is given in `senders`.
 /// Returns [`NetworkValue::Bot`] in case of failure to receive but without adding parties to the corruption or dispute sets.
 /// Do not expect anything from disputed or corrupted parties
-pub async fn receive_from_parties_w_dispute<Z: Ring, L: LargeSessionHandles>(
-    senders: &Vec<Role>,
+pub async fn receive_from_parties_w_dispute<'a, Z: Ring, L: LargeSessionHandles + 'a>(
+    senders: &HashSet<Role>,
     session: &L,
 ) -> anyhow::Result<HashMap<Role, NetworkValue<Z>>> {
     let mut receive_job = JoinSet::new();
-    internal_receive_from_parties(&mut receive_job, senders, session, &check_roles)?;
+    internal_receive_from_parties(&mut receive_job, senders, session, &check_roles).await?;
     let mut res = HashMap::with_capacity(senders.len());
     while let Some(received_data) = receive_job.join_next().await {
         let (sender_role, sender_data) = received_data?;
@@ -174,29 +157,29 @@ pub async fn receive_from_parties_w_dispute<Z: Ring, L: LargeSessionHandles>(
 /// Add a job of receiving values from specific parties.
 /// Each of the senders are contained in [senders].
 /// If we don't receive anything, the value [NetworkValue::Bot] is returned
-fn internal_receive_from_parties<Z: Ring, B: BaseSessionHandles>(
+async fn internal_receive_from_parties<'a, Z: Ring, B: BaseSessionHandles + 'a>(
     jobs: &mut JoinSet<(Role, NetworkValue<Z>)>,
-    senders: &Vec<Role>,
-    session: &B,
-    check_fn: &dyn Fn(&Role, &B) -> anyhow::Result<bool>,
+    senders: &HashSet<Role>,
+    session: &'a B,
+    check_fn: &'a (dyn Fn(&Role, &'a B) -> anyhow::Result<bool> + Sync + Send + 'a),
 ) -> anyhow::Result<()> {
+    let deserialization_runtime = session.get_deserialization_runtime();
     for cur_sender in senders {
         // Ensure we want to receive from that sender (e.g. not from ourself or a malicious party)
         if check_fn(cur_sender, session)? {
             let networking = Arc::clone(session.network());
-            let sender_identity = session.identity_from(cur_sender)?;
             let role_to_receive_from = *cur_sender;
-            let deadline = session.network().get_timeout_current_round()?;
+            let deadline = session.network().get_timeout_current_round().await;
 
             jobs.spawn(async move {
-                let received = timeout_at(deadline, networking.receive(&sender_identity))
+                let received = timeout_at(deadline, networking.receive(&role_to_receive_from))
                     .await
                     .unwrap_or_else(|e| {
                         Err(anyhow_error_and_log(format!(
                             "Timed out with deadline {deadline:?} from {role_to_receive_from:?} : {e:?}"
                         )))
                     });
-                match NetworkValue::<Z>::from_network(received) {
+                match NetworkValue::<Z>::from_network(received,deserialization_runtime).await {
                     Ok(val) => (role_to_receive_from, val),
                     // We got an unexpected type of value from the network.
                     _ => (role_to_receive_from, NetworkValue::Bot),
@@ -223,15 +206,15 @@ pub async fn send_to_all<T, Z: Ring, B: BaseSessionHandles>(
 where
     T: AsRef<NetworkValue<Z>>,
 {
-    let serialized_message = msg.as_ref().to_network();
+    let serialized_message = Arc::new(msg.as_ref().to_network());
 
-    session.network().increase_round_counter()?;
-    for (other_role, other_identity) in session.role_assignments().iter() {
+    session.network().increase_round_counter().await;
+    for other_role in session.roles() {
         let networking = Arc::clone(session.network());
-        let serialized_message = serialized_message.clone();
-        let other_id = other_identity.clone();
-        if sender != other_role {
-            networking.send(serialized_message, &other_id).await?;
+        if *sender != *other_role {
+            networking
+                .send(Arc::clone(&serialized_message), other_role)
+                .await?;
         }
     }
     Ok(())
@@ -245,47 +228,38 @@ where
 /// from the inside enum.
 ///
 /// **NOTE: We do not try to receive any value from the non_answering_parties set.**
-pub fn generic_receive_from_all_senders<V, Z: Ring, B: BaseSessionHandles>(
+pub async fn generic_receive_from_all_senders<V, Z: Ring, B: BaseSessionHandles>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &B,
     receiver: &Role,
-    sender_list: &[Role],
+    senders: &HashSet<Role>,
     non_answering_parties: Option<&HashSet<Role>>,
-    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Identity) -> anyhow::Result<V>,
-) -> anyhow::Result<()>
-where
+    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Role) -> anyhow::Result<V>,
+) where
     V: std::marker::Send + 'static,
 {
+    let deserialization_runtime = session.get_deserialization_runtime();
     let binding = HashSet::new();
     let non_answering_parties = non_answering_parties.unwrap_or(&binding);
-    for sender in sender_list {
-        let sender = *sender;
-        if !non_answering_parties.contains(&sender) && receiver != &sender {
-            //If role and IDs can't be tied, propagate error
-            let sender_id = session
-                .role_assignments()
-                .get(&sender)
-                .ok_or_else(|| {
-                    anyhow_error_and_log(format!(
-                        "Can't find sender's id {sender} in session {}",
-                        session.session_id()
-                    ))
-                })?
-                .clone();
-
+    for sender in senders {
+        if !non_answering_parties.contains(sender) && *receiver != *sender {
+            let sender = *sender;
             let networking = Arc::clone(session.network());
-            let identity = session.own_identity();
             let my_role = session.my_role();
-            let timeout = session.network().get_timeout_current_round()?;
+            let timeout = session.network().get_timeout_current_round().await;
             let task = async move {
-                let stripped_message = timeout_at(timeout, networking.receive(&sender_id)).await;
+                let stripped_message = timeout_at(timeout, networking.receive(&sender)).await;
                 match stripped_message {
                     Ok(stripped_message) => {
-                        let stripped_message =
-                            match NetworkValue::<Z>::from_network(stripped_message) {
-                                Ok(x) => match_network_value_fn(x, &identity),
-                                Err(e) => Err(e),
-                            };
+                        let stripped_message = match NetworkValue::<Z>::from_network(
+                            stripped_message,
+                            deserialization_runtime,
+                        )
+                        .await
+                        {
+                            Ok(x) => match_network_value_fn(x, &my_role),
+                            Err(e) => Err(e),
+                        };
                         Ok((sender, stripped_message))
                     }
                     Err(e) => {
@@ -298,27 +272,25 @@ where
             jobs.spawn(task);
         }
     }
-    Ok(())
 }
 
 /// Wrapper around [generic_receive_from_all_senders] where the sender list is all the parties.
-pub fn generic_receive_from_all<V, Z: Ring, B: BaseSessionHandles>(
+pub async fn generic_receive_from_all<V, Z: Ring, B: BaseSessionHandles>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &B,
     receiver: &Role,
     non_answering_parties: Option<&HashSet<Role>>,
-    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Identity) -> anyhow::Result<V>,
-) -> anyhow::Result<()>
-where
+    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Role) -> anyhow::Result<V>,
+) where
     V: std::marker::Send + 'static,
 {
-    let sender_list: Vec<Role> = session.role_assignments().keys().cloned().collect();
     generic_receive_from_all_senders(
         jobs,
         session,
         receiver,
-        &sender_list,
+        session.roles(),
         non_answering_parties,
         match_network_value_fn,
     )
+    .await
 }

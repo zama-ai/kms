@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use strum::IntoEnumIterator;
 
 use super::RandomPreprocessing;
 use crate::execution::online::preprocessing::BitDecPreprocessing;
@@ -77,7 +78,7 @@ impl<const EXTENSION_DEGREE: usize> RedisPreprocessorFactory<EXTENSION_DEGREE> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, strum_macros::EnumIter)]
 pub enum CorrelatedRandomnessType {
     Triple,
     Randomness,
@@ -348,6 +349,53 @@ pub struct RedisPreprocessing<R: Ring> {
     client: Arc<Client>,
     key_prefix: String,
     _phantom: PhantomData<R>,
+}
+
+impl<R: Ring> Drop for RedisPreprocessing<R> {
+    // Custom drop implementation to make sure there's no dangling
+    // correlated randomness stored in Redis if there are no more references
+    // to it in rust.
+    // NOTE: Ideally we'd Zeroize it but afaict Redis doesn't propose such functionality
+    fn drop(&mut self) {
+        let client = self.client.clone();
+        let keys = CorrelatedRandomnessType::iter()
+            .map(|randoness_type| compute_key(self.key_prefix.clone(), randoness_type))
+            .collect::<Vec<_>>();
+
+        // Defer cleanup to a tokio blocking thread
+        // to avoid blocking the potential current tokio async worker
+        // Note: This thus assumes we are inside a tokio runtime
+        tokio::task::spawn_blocking(move || {
+            // Cleanup logic here
+            let mut con = match client.get_connection() {
+                Ok(con) => {
+                    tracing::info!("Connection to redis for cleanup");
+                    con
+                }
+                Err(_) => {
+                    tracing::warn!("Failed to connect to redis to cleanup");
+                    return;
+                }
+            };
+
+            for key in keys {
+                // Log the size to know whether we actually deleted something
+                match con.llen::<&str, usize>(&key) {
+                    Ok(len) => {
+                        tracing::info!("About to delete {len} elements for key {key}")
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to get length of key {key} from Redis: {}", e);
+                    }
+                }
+
+                // In any case remove the key from Redis
+                let _: RedisResult<()> = con.del(&key).inspect_err(|e| {
+                    tracing::warn!("Failed to delete key {key} from Redis: {}", e);
+                });
+            }
+        });
+    }
 }
 
 impl<R: Ring> RedisPreprocessing<R> {

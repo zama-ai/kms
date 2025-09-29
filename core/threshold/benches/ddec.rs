@@ -12,7 +12,7 @@ use threshold_fhe::{
     execution::{
         constants::REAL_KEY_PATH,
         endpoints::decryption::{threshold_decrypt64, DecryptionMode, RadixOrBoolCiphertext},
-        runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+        runtime::test_runtime::{generate_fixed_roles, DistributedTestRuntime},
         tfhe_internals::{
             test_feature::{keygen_all_party_shares_from_keyset, KeySet},
             utils::expanded_encrypt,
@@ -72,12 +72,12 @@ fn ddec_nsmall(c: &mut Criterion) {
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
-        let identities = generate_fixed_identities(config.n);
+        let roles = generate_fixed_roles(config.n);
         //Using Sync because threshold_decrypt64 encompasses both online and offline
         let mut runtime = DistributedTestRuntime::<
             ResiduePolyF8Z128,
             { ResiduePolyF8Z128::EXTENSION_DEGREE },
-        >::new(identities, config.t as u8, NetworkMode::Sync, None);
+        >::new(roles, config.t as u8, NetworkMode::Sync, None);
         let ctc = Arc::new(raw_ct);
 
         let server_key = Arc::new(keyset.public_keys.server_key.clone());
@@ -89,10 +89,10 @@ fn ddec_nsmall(c: &mut Criterion) {
             BenchmarkId::from_parameter(config),
             &(config, ctc, runtime),
             |b, (_config, cti, runtime)| {
-                b.iter(|| {
-                    let _ =
-                        threshold_decrypt64(runtime, cti.as_ref(), DecryptionMode::NoiseFloodSmall);
-                });
+                b.to_async(tokio::runtime::Runtime::new().unwrap())
+                    .iter(|| {
+                        threshold_decrypt64(runtime, cti.as_ref(), DecryptionMode::NoiseFloodSmall)
+                    });
             },
         );
     }
@@ -127,24 +127,21 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
-        let identities = generate_fixed_identities(config.n);
+        let roles = generate_fixed_roles(config.n);
         let ctc = Arc::new(raw_ct);
         let key_shares = Arc::new(key_shares);
         //Using Sync because threshold_decrypt64 encompasses both online and offline
         let mut runtime = DistributedTestRuntime::<
             ResiduePolyF8Z64,
             { ResiduePolyF8Z64::EXTENSION_DEGREE },
-        >::new(
-            identities.clone(), config.t as u8, NetworkMode::Sync, None
-        );
+        >::new(roles.clone(), config.t as u8, NetworkMode::Sync, None);
         runtime.setup_sks(key_shares.clone().to_vec());
         group.bench_with_input(
             BenchmarkId::from_parameter(config),
             &(config, ctc, runtime),
             |b, (_config, ct, runtime)| {
-                b.iter(|| {
-                    let _ = threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::BitDecSmall);
-                })
+                b.to_async(tokio::runtime::Runtime::new().unwrap())
+                    .iter(|| threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::BitDecSmall))
             },
         );
     }
@@ -179,12 +176,12 @@ fn ddec_nlarge(c: &mut Criterion) {
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
-        let identities = generate_fixed_identities(config.n);
+        let roles = generate_fixed_roles(config.n);
         //Using Sync because threshold_decrypt64 encompasses both online and offline
         let mut runtime = DistributedTestRuntime::<
             ResiduePolyF8Z128,
             { ResiduePolyF8Z128::EXTENSION_DEGREE },
-        >::new(identities, config.t as u8, NetworkMode::Sync, None);
+        >::new(roles, config.t as u8, NetworkMode::Sync, None);
 
         let ctc = Arc::new(raw_ct);
 
@@ -198,10 +195,10 @@ fn ddec_nlarge(c: &mut Criterion) {
             BenchmarkId::from_parameter(config),
             &(config, ctc, runtime),
             |b, (_config, ct, runtime)| {
-                b.iter(|| {
-                    let _ =
-                        threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::NoiseFloodLarge);
-                });
+                b.to_async(tokio::runtime::Runtime::new().unwrap())
+                    .iter(|| {
+                        threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::NoiseFloodLarge)
+                    });
             },
         );
     }
@@ -237,20 +234,19 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
         let (raw_ct, _id, _tag) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
-        let identities = generate_fixed_identities(config.n);
+        let roles = generate_fixed_roles(config.n);
         let ctc = Arc::new(raw_ct);
         let key_shares = Arc::new(key_shares);
         let mut runtime =
         //Using Sync because threshold_decrypt64 encompasses both online and offline
-            DistributedTestRuntime::<ResiduePolyF8Z64,{ResiduePolyF8Z64::EXTENSION_DEGREE}>::new(identities.clone(), config.t as u8, NetworkMode::Sync, None);
+            DistributedTestRuntime::<ResiduePolyF8Z64,{ResiduePolyF8Z64::EXTENSION_DEGREE}>::new(roles.clone(), config.t as u8, NetworkMode::Sync, None);
         runtime.setup_sks(key_shares.clone().to_vec());
         group.bench_with_input(
             BenchmarkId::from_parameter(config),
             &(config, ctc, runtime),
             |b, (_config, ct, runtime)| {
-                b.iter(|| {
-                    let _ = threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::BitDecLarge);
-                })
+                b.to_async(tokio::runtime::Runtime::new().unwrap())
+                    .iter(|| threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::BitDecLarge))
             },
         );
     }

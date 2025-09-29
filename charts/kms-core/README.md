@@ -4,9 +4,17 @@ A helm chart to distribute and deploy the [KMS](https://github.com/zama-ai/kms/)
 It allows to run centralized (1 party) or threshold (multiple parties) networks.
 The chart allows running either a single party or all parties in one release.
 
+## Installing the Chart
 
-    helm registry login ghcr.io/zama-ai/kms/helm-charts
-    helm install kms-core oci://ghcr.io/zama-ai/kms/helm-charts/kms-service
+To pull and install the OCI Helm chart from ghcr.io:
+
+    helm registry login ghcr.io/zama-ai/kms/charts
+    helm install kms oci://ghcr.io/zama-ai/kms/charts/kms-core
+
+To pull and install the OCI Helm chart from hub.zama.ai:
+
+    helm registry login hub.zama.ai
+    helm install kms oci://hub.zama.ai/zama-protocol/zama-ai/kms/charts/kms-core
 
 ## Local testing
 

@@ -1,23 +1,42 @@
-#[cfg(any(test, feature = "testing"))]
-pub mod test_tools;
+cfg_if::cfg_if! {
+    if #[cfg(any(test, feature = "testing"))] {
+        pub mod test_tools;
 
-use crate::client::ClientDataType;
+        use crate::dummy_domain;
+        use crate::engine::base::{DSEP_PUBDATA_CRS, DSEP_PUBDATA_KEY};
+        use crate::engine::base::INSECURE_PREPROCESSING_ID;
+        use crate::engine::base::{compute_info_crs, CrsGenMetadata};
+        use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
+        use crate::engine::threshold::service::{ThresholdFheKeys};
+        use crate::vault::storage::crypto_material::{
+            calculate_max_num_bits, check_data_exists, get_core_signing_key,
+        };
+        use crate::vault::storage::{store_pk_at_request_id, Storage};
+        use futures_util::future;
+        use kms_grpc::rpc_types::WrappedPublicKey;
+        use tfhe::Seed;
+        use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
+        use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
+        use threshold_fhe::execution::tfhe_internals::test_feature::gen_key_set;
+        use threshold_fhe::execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
+        use threshold_fhe::execution::zk::ceremony::public_parameters_by_trusted_setup;
+        use threshold_fhe::session_id::SessionId;
+        use std::sync::Arc;
+
+    }
+}
+
+use crate::client::client_non_wasm::ClientDataType;
 use crate::cryptography::internal_crypto_types::gen_sig_keys;
-use crate::engine::base::{compute_handle, compute_info, DSEP_PUBDATA_CRS};
-use crate::engine::centralized::central_kms::{gen_centralized_crs, generate_fhe_keys};
-use crate::engine::threshold::service::{compute_all_info, ThresholdFheKeys};
-use crate::vault::storage::crypto_material::{
-    calculate_max_num_bits, check_data_exists, get_core_signing_key, get_rng, log_data_exists,
-    log_storage_success,
-};
+use crate::engine::base::compute_handle;
+use crate::vault::storage::crypto_material::{get_rng, log_data_exists, log_storage_success};
 use crate::vault::storage::{
-    file::FileStorage, read_all_data_versioned, store_pk_at_request_id, store_text_at_request_id,
-    store_versioned_at_request_id, Storage, StorageForBytes, StorageReader, StorageType,
+    file::FileStorage, read_all_data_versioned, store_text_at_request_id,
+    store_versioned_at_request_id, StorageForBytes, StorageReader, StorageType,
 };
-use futures_util::future;
 use itertools::Itertools;
 use k256::pkcs8::EncodePrivateKey;
-use kms_grpc::rpc_types::{PrivDataType, PubDataType, WrappedPublicKey};
+use kms_grpc::rpc_types::{PrivDataType, PubDataType};
 use kms_grpc::RequestId;
 use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, KeyUsagePurpose,
@@ -25,14 +44,6 @@ use rcgen::{
 };
 use std::collections::HashMap;
 use std::path::Path;
-use tfhe::Seed;
-use threshold_fhe::execution::keyset_config::StandardKeySetConfig;
-use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
-use threshold_fhe::execution::tfhe_internals::test_feature::keygen_all_party_shares_from_keyset;
-use threshold_fhe::execution::{
-    tfhe_internals::test_feature::gen_key_set, zk::ceremony::public_parameters_by_trusted_setup,
-};
-use threshold_fhe::session_id::SessionId;
 use tokio_rustls::rustls::pki_types::PrivatePkcs8KeyDer;
 
 /// Compact public key for FHE operations
@@ -260,11 +271,12 @@ where
 /// - If storage validation fails
 /// - If CRS generation fails
 /// - If storage operations fail
+#[cfg(any(test, feature = "testing"))]
 pub async fn ensure_central_crs_exists<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
     dkg_params: DKGParams,
-    crs_handle: &RequestId,
+    crs_id: &RequestId,
     deterministic: bool,
 ) -> bool
 where
@@ -275,19 +287,14 @@ where
     match check_data_exists(
         pub_storage,
         priv_storage,
-        crs_handle,
+        crs_id,
         &PubDataType::CRS.to_string(),
         &PrivDataType::CrsInfo.to_string(),
     )
     .await
     {
         Ok(true) => {
-            log_data_exists(
-                priv_storage.info(),
-                Some(pub_storage.info()),
-                crs_handle,
-                "CRS",
-            );
+            log_data_exists(priv_storage.info(), Some(pub_storage.info()), crs_id, "CRS");
             return false;
         }
         Ok(false) => {} // Continue with generation
@@ -314,20 +321,26 @@ where
     let max_num_bits_u32 = Some(max_num_bits as u32);
 
     // Use proper error handling instead of unwrap
-    let sid = SessionId::from(0); // we're in the centralized case, so no need sid
-    let (pp, crs_info) =
-        match gen_centralized_crs(&sk, &dkg_params, max_num_bits_u32, None, sid, &mut rng) {
-            Ok(result) => result,
-            Err(e) => {
-                tracing::error!("Failed to generate centralized CRS: {}", e);
-                return false; // Cannot proceed without CRS
-            }
-        };
+    let domain = dummy_domain();
+    let (pp, crs_info) = match gen_centralized_crs(
+        &sk,
+        &dkg_params,
+        max_num_bits_u32,
+        &domain,
+        crs_id,
+        &mut rng,
+    ) {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("Failed to generate centralized CRS: {}", e);
+            return false; // Cannot proceed without CRS
+        }
+    };
 
     // Store private CRS info with proper error handling
     if let Err(e) = store_versioned_at_request_id(
         priv_storage,
-        crs_handle,
+        crs_id,
         &crs_info,
         &PrivDataType::CrsInfo.to_string(),
     )
@@ -336,17 +349,16 @@ where
         tracing::error!("Failed to store private CRS info: {}", e);
         return false; // Storage operation failed
     }
-    log_storage_success(crs_handle, priv_storage.info(), "CRS data", false, false);
+    log_storage_success(crs_id, priv_storage.info(), "CRS data", false, false);
 
     // Store public CRS with proper error handling
     if let Err(e) =
-        store_versioned_at_request_id(pub_storage, crs_handle, &pp, &PubDataType::CRS.to_string())
-            .await
+        store_versioned_at_request_id(pub_storage, crs_id, &pp, &PubDataType::CRS.to_string()).await
     {
         tracing::error!("Failed to store public CRS: {}", e);
         return false; // Storage operation failed
     }
-    log_storage_success(crs_handle, pub_storage.info(), "CRS data", true, false);
+    log_storage_success(crs_id, pub_storage.info(), "CRS data", true, false);
 
     true
 }
@@ -368,6 +380,7 @@ where
 /// - If storage validation fails
 /// - If key generation fails
 /// - If storage operations fail
+#[cfg(any(test, feature = "testing"))]
 pub async fn ensure_central_keys_exist<PubS, PrivS>(
     pub_storage: &mut PubS,
     priv_storage: &mut PrivS,
@@ -387,7 +400,7 @@ where
         priv_storage,
         key_id,
         &PubDataType::PublicKey.to_string(),
-        &PrivDataType::FheKeyInfo.to_string(),
+        &PrivDataType::FhePrivateKey.to_string(),
     )
     .await
     {
@@ -422,13 +435,16 @@ where
     };
 
     // Generate two sets of FHE keys with proper error handling
+    let domain = dummy_domain();
     let (fhe_pub_keys_1, key_info_1) = match generate_fhe_keys(
         &sk,
         dkg_params,
         StandardKeySetConfig::default(),
         None,
+        key_id,
+        &INSECURE_PREPROCESSING_ID,
         seed,
-        None,
+        &domain,
     ) {
         Ok(result) => result,
         Err(e) => {
@@ -442,8 +458,10 @@ where
         dkg_params,
         StandardKeySetConfig::default(),
         None,
+        other_key_id,
+        &INSECURE_PREPROCESSING_ID,
         seed,
-        None,
+        &domain,
     ) {
         Ok(result) => result,
         Err(e) => {
@@ -462,7 +480,7 @@ where
             priv_storage,
             req_id,
             key_info,
-            &PrivDataType::FheKeyInfo.to_string(),
+            &PrivDataType::FhePrivateKey.to_string(),
         )
         .await
         {
@@ -780,6 +798,7 @@ where
 /// # Panics
 /// - If storage access fails
 /// - If threshold parameters are invalid
+#[cfg(any(test, feature = "testing"))]
 pub async fn ensure_threshold_keys_exist<PubS, PrivS>(
     pub_storages: &mut [PubS],
     priv_storages: &mut [PrivS],
@@ -810,42 +829,36 @@ where
     // Compute threshold < amount_parties/3
     let threshold = max_threshold(amount_parties);
 
-    // For simplicity just test if the last party has the keys
-    let last_pub = pub_storages
-        .last()
-        .ok_or("No public storage available")
-        .unwrap_or_else(|e| {
-            panic!("Failed to access public storage: {e}");
-        });
-    let last_priv = priv_storages
-        .last()
-        .ok_or("No private storage available")
-        .unwrap_or_else(|e| {
-            panic!("Failed to access private storage: {e}");
-        });
-
-    match check_data_exists(
-        last_pub,
-        last_priv,
-        key_id,
-        &PubDataType::PublicKey.to_string(),
-        &PrivDataType::FheKeyInfo.to_string(),
-    )
-    .await
-    {
-        Ok(true) => {
-            let priv_info = last_priv.info();
-            let pub_info = last_pub.info();
-            log_data_exists(priv_info, Some(pub_info), key_id, "Threshold FHE keys");
-            return false;
-        }
-        Ok(false) => {} // Continue with generation
-        Err(e) => {
-            tracing::warn!("Error checking if threshold FHE keys exist: {}", e);
-            // Continue with generation, assuming data doesn't exist
+    let mut all_data_exists = true;
+    for (pub_storage, priv_storage) in pub_storages.iter().zip_eq(priv_storages.iter()) {
+        match check_data_exists(
+            pub_storage,
+            priv_storage,
+            key_id,
+            &PubDataType::PublicKey.to_string(),
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+        {
+            Ok(true) => {
+                continue; // Data exists for this party, check next
+            }
+            Ok(false) => {
+                all_data_exists = false;
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("Error checking if threshold FHE keys exist: {}", e);
+                // Continue with generation, assuming data doesn't exist
+                all_data_exists = false;
+                break;
+            }
         }
     }
-
+    if all_data_exists {
+        tracing::info!("Threshold FHE keys exists, skipping generation");
+        return false;
+    }
     let mut rng = get_rng(deterministic, Some(amount_parties as u64));
 
     // Collect signing keys from all private storages with proper error handling
@@ -884,11 +897,20 @@ where
         keyset.public_keys.server_key.clone().into_raw_parts();
 
     // Store keys for each party
+    let domain = dummy_domain();
     for i in 1..=amount_parties {
         // Get signing key for this party
+
         let sk = &signing_keys[i - 1];
         // Compute info with proper error handling
-        let info = match compute_all_info(sk, &keyset.public_keys, None) {
+        let info = match crate::engine::base::compute_info_standard_keygen(
+            sk,
+            &DSEP_PUBDATA_KEY,
+            &INSECURE_PREPROCESSING_ID,
+            key_id,
+            &keyset.public_keys,
+            &domain,
+        ) {
             Ok(result) => result,
             Err(e) => {
                 tracing::error!("Failed to compute key info for party {}: {}", i, e);
@@ -896,11 +918,11 @@ where
             }
         };
         let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: key_shares[i - 1].to_owned(),
-            integer_server_key: integer_server_key.clone(),
-            sns_key: sns_key.clone(),
-            decompression_key: decompression_key.clone(),
-            pk_meta_data: info,
+            private_keys: Arc::new(key_shares[i - 1].to_owned()),
+            integer_server_key: Arc::new(integer_server_key.clone()),
+            sns_key: sns_key.clone().map(Arc::new),
+            decompression_key: decompression_key.clone().map(Arc::new),
+            meta_data: info,
         };
 
         // Store public key
@@ -983,11 +1005,12 @@ where
 /// - If signing key collection fails
 /// - If parameter generation fails
 /// - If CRS distribution fails
+#[cfg(any(test, feature = "testing"))]
 pub async fn ensure_threshold_crs_exists<PubS, PrivS>(
     pub_storages: &mut [PubS],
     priv_storages: &mut [PrivS],
     dkg_params: DKGParams,
-    crs_handle: &RequestId,
+    crs_id: &RequestId,
     deterministic: bool,
 ) -> bool
 where
@@ -1000,38 +1023,37 @@ where
 
     let amount_parties = pub_storages.len();
 
-    // Check if the last party has the CRS. If so, we can stop, otherwise we need to generate it.
+    // Check if the all parties have the CRS. If so, we can stop, otherwise we need to generate it.
     // PANICS: If storage access fails or if no storage is available
-    match check_data_exists(
-        pub_storages.last().expect("No public storage available"),
-        priv_storages.last().expect("No private storage available"),
-        crs_handle,
-        &PubDataType::CRS.to_string(),
-        &PrivDataType::CrsInfo.to_string(),
-    )
-    .await
-    {
-        Ok(true) => {
-            log_data_exists(
-                priv_storages
-                    .last()
-                    .expect("No private storage available")
-                    .info(),
-                Some(
-                    pub_storages
-                        .last()
-                        .expect("No public storage available")
-                        .info(),
-                ),
-                crs_handle,
-                "Threshold CRS",
-            );
-            return false;
+    let mut all_data_exists = true;
+    for (pub_storage, priv_storage) in pub_storages.iter().zip_eq(priv_storages.iter()) {
+        match check_data_exists(
+            pub_storage,
+            priv_storage,
+            crs_id,
+            &PubDataType::CRS.to_string(),
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await
+        {
+            Ok(true) => {
+                continue; // Data exists for this party, check next
+            }
+            Ok(false) => {
+                all_data_exists = false;
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("Error checking if threshold FHE keys exist: {}", e);
+                // Continue with generation, assuming data doesn't exist
+                all_data_exists = false;
+                break;
+            }
         }
-        Ok(false) => {} // Continue with generation
-        Err(e) => {
-            panic!("Failed to check if threshold CRS exists: {e}");
-        }
+    }
+    if all_data_exists {
+        tracing::info!("Threshold CRS exist, skipping generation");
+        return false;
     }
 
     // Collect signing keys from all private storages
@@ -1081,21 +1103,24 @@ where
 
     // Store the CRS for each party
     // PANICS: if the private and public storage and signing keys are not of equal length
+    let domain = dummy_domain();
     for (cur_pub, (cur_priv, cur_sk)) in pub_storages
         .iter_mut()
         .zip_eq(priv_storages.iter_mut().zip_eq(signing_keys.iter()))
     {
         // Compute signed metadata for CRS verification
         // PANICS: If signature generation fails - would compromise security model
-        let crs_info = compute_info(cur_sk, &DSEP_PUBDATA_CRS, &pp, None).unwrap_or_else(|e| {
-            panic!("Failed to compute CRS info for party: {e}");
-        });
+
+        let crs_info = compute_info_crs(cur_sk, &DSEP_PUBDATA_CRS, crs_id, &pp, &domain)
+            .unwrap_or_else(|e| {
+                panic!("Failed to compute CRS info for party: {e}");
+            });
 
         // Store private CRS info with signature - essential for verification chain
         // PANICS: If storage fails - system would be in inconsistent state
-        store_versioned_at_request_id::<PrivS, kms_grpc::rpc_types::SignedPubDataHandleInternal>(
+        store_versioned_at_request_id::<PrivS, CrsGenMetadata>(
             cur_priv,
-            crs_handle,
+            crs_id,
             &crs_info,
             &PrivDataType::CrsInfo.to_string(),
         )
@@ -1104,13 +1129,13 @@ where
             panic!("Failed to store private CRS info for party: {e}");
         });
 
-        log_storage_success(crs_handle, cur_priv.info(), "CRS data", false, true);
+        log_storage_success(crs_id, cur_priv.info(), "CRS data", false, true);
 
         // Store public CRS parameters - must be available for all cryptographic operations
         // PANICS: If storage fails - system would be unable to perform cryptographic operations
         store_versioned_at_request_id::<PubS, tfhe::zk::CompactPkeCrs>(
             cur_pub,
-            crs_handle,
+            crs_id,
             &pp,
             &PubDataType::CRS.to_string(),
         )
@@ -1118,7 +1143,7 @@ where
         .unwrap_or_else(|e| {
             panic!("Failed to store public CRS for party: {e}");
         });
-        log_storage_success(crs_handle, cur_pub.info(), "CRS data", true, true);
+        log_storage_success(crs_id, cur_pub.info(), "CRS data", true, true);
     }
     true
 }
@@ -1134,4 +1159,38 @@ where
 /// The maximum secure threshold value
 pub fn max_threshold(amount_parties: usize) -> usize {
     usize::div_ceil(amount_parties, 3) - 1
+}
+
+#[cfg(test)]
+mod tests {
+    use aes_prng::AesRng;
+    use kms_grpc::RequestId;
+    use rand::SeedableRng;
+    use threshold_fhe::execution::zk::ceremony::max_num_bits_from_crs;
+
+    use crate::{
+        consts::DEFAULT_PARAM, cryptography::internal_crypto_types::gen_sig_keys, dummy_domain,
+        engine::centralized::central_kms::gen_centralized_crs,
+    };
+
+    #[test]
+    fn test_max_num_bits() {
+        let mut rng = AesRng::seed_from_u64(123);
+        let req_id = RequestId::new_random(&mut rng);
+        let (_pk, sk) = gen_sig_keys(&mut rng);
+        let params = &DEFAULT_PARAM;
+        let eip712_domain = dummy_domain();
+        for max_num_bits in [64, 128, 256, 1024, 2048] {
+            let (crs, _) = gen_centralized_crs(
+                &sk,
+                params,
+                Some(max_num_bits),
+                &eip712_domain,
+                &req_id,
+                &mut rng,
+            )
+            .unwrap();
+            assert_eq!(max_num_bits as usize, max_num_bits_from_crs(&crs));
+        }
+    }
 }

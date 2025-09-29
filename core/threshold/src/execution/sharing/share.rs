@@ -65,6 +65,17 @@ impl<Z: Ring> Add<&Share<Z>> for &Share<Z> {
     }
 }
 
+impl<Z: Ring> Add<&Share<Z>> for Share<Z> {
+    type Output = Share<Z>;
+    fn add(self, rhs: &Share<Z>) -> Self::Output {
+        debug_assert_eq!(self.owner, rhs.owner);
+        Share::<Z> {
+            value: self.value + rhs.value,
+            owner: self.owner,
+        }
+    }
+}
+
 impl<Z: Ring> Add<Z> for Share<Z> {
     type Output = Share<Z>;
     fn add(self, rhs: Z) -> Self::Output {
@@ -132,6 +143,16 @@ impl<Z: Ring> Sub<Z> for Share<Z> {
     }
 }
 
+impl<Z: Ring> Sub<Z> for &Share<Z> {
+    type Output = Share<Z>;
+    fn sub(self, rhs: Z) -> Self::Output {
+        Share::<Z> {
+            value: self.value - rhs,
+            owner: self.owner,
+        }
+    }
+}
+
 impl<Z: Ring> SubAssign for Share<Z> {
     fn sub_assign(&mut self, rhs: Self) {
         debug_assert_eq!(self.owner, rhs.owner);
@@ -168,6 +189,17 @@ impl<Z: Ring> MulAssign<Z> for Share<Z> {
         self.value *= rhs;
     }
 }
+
+impl<Z: Ring> Mul<u128> for Share<Z> {
+    type Output = Share<Z>;
+    fn mul(self, rhs: u128) -> Self::Output {
+        Self {
+            value: self.value.mul_by_u128(rhs),
+            owner: self.owner,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::num::Wrapping;

@@ -1,4 +1,4 @@
-name: "[Release KMS] - Release"
+name: release
 
 on:
   workflow_dispatch:
@@ -10,11 +10,11 @@ on:
         default: "main"
 
 permissions:
-  contents: read
+  contents: read # Required to checkout repository code
 
 jobs:
   release:
-    name: "Create Release"
+    name: release/release
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.sem-release.outputs.new_release_version }}
@@ -32,13 +32,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
   cargo-versions:
+    name: release/cargo-versions
     uses: ./.github/workflows/common-release-workspace-cargo.yml
     needs:
       - release
     permissions:
-      contents: write
-      id-token: write
-      packages: write
+      contents: write # Required to create releases and tags
+      id-token: write # Required for OIDC authentication
+      packages: write # Required to publish packages
     with:
       version: ${{ needs.release.outputs.version }}
     secrets:

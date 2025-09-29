@@ -1,16 +1,23 @@
-use itertools::{EitherOrBoth, Itertools};
+use itertools::Itertools;
+use rayon::prelude::*;
 use tfhe::{
-    core_crypto::prelude::ByteRandomGenerator,
+    core_crypto::prelude::{
+        LweBootstrapKey, ParallelByteRandomGenerator, SeededLweBootstrapKey, UnsignedInteger,
+    },
     shortint::parameters::{DecompositionBaseLog, DecompositionLevelCount},
 };
+use tracing::instrument;
 
 use crate::{
     algebra::{
         galois_rings::common::ResiduePoly,
         structure_traits::{BaseRing, ErrorCorrect},
     },
-    error::error_handler::anyhow_error_and_log,
-    execution::{online::preprocessing::TriplePreprocessing, runtime::session::BaseSessionHandles},
+    execution::{
+        online::preprocessing::{DKGPreprocessing, TriplePreprocessing},
+        runtime::session::BaseSessionHandles,
+        tfhe_internals::parameters::BKParams,
+    },
 };
 
 use super::{
@@ -32,7 +39,7 @@ pub async fn generate_lwe_bootstrap_key<Z, Gen, S, P, const EXTENSION_DEGREE: us
 ) -> anyhow::Result<()>
 where
     Z: BaseRing,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     S: BaseSessionHandles,
     P: TriplePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
@@ -54,26 +61,20 @@ where
     )
     .await?;
 
-    for ggsw_encoded_generator in output
+    output
         .ggsw_list
-        .iter_mut()
-        .zip_longest(encoded_input_key_elements.into_iter())
-        .zip_longest(gen_iter)
-    {
-        if let EitherOrBoth::Both(EitherOrBoth::Both(ggsw, encoded), mut generator) =
-            ggsw_encoded_generator
-        {
+        .par_iter_mut()
+        .zip_eq(encoded_input_key_elements.into_par_iter())
+        .zip_eq(gen_iter)
+        .for_each(|((ggsw, input_key_element), mut generator)| {
             encrypt_constant_ggsw_ciphertext(
                 output_glwe_secret_key,
                 ggsw,
-                encoded,
+                input_key_element,
                 &mut generator,
                 encryption_type,
             );
-        } else {
-            return Err(anyhow_error_and_log("zip error"));
-        }
-    }
+        });
     Ok(())
 }
 
@@ -90,7 +91,7 @@ pub async fn allocate_and_generate_lwe_bootstrap_key<Z, Gen, S, P, const EXTENSI
 ) -> anyhow::Result<LweBootstrapKeyShare<Z, EXTENSION_DEGREE>>
 where
     Z: BaseRing,
-    Gen: ByteRandomGenerator,
+    Gen: ParallelByteRandomGenerator,
     S: BaseSessionHandles,
     P: TriplePreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
     ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
@@ -117,12 +118,142 @@ where
     Ok(bsk)
 }
 
+///Helper function to generate bootstrap key share
+async fn generate_bootstrap_key_share<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ParallelByteRandomGenerator,
+    const EXTENSION_DEGREE: usize,
+>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: &BKParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+) -> anyhow::Result<
+    crate::execution::tfhe_internals::lwe_bootstrap_key::LweBootstrapKeyShare<Z, EXTENSION_DEGREE>,
+>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let my_role = session.my_role();
+    //First sample the noise
+    let vec_tuniform_noise = preprocessing
+        .next_noise_vec(params.num_needed_noise, params.noise_bound)?
+        .iter()
+        .map(|share| share.value())
+        .collect_vec();
+
+    mpc_encryption_rng.fill_noise(vec_tuniform_noise);
+
+    tracing::info!("(Party {my_role}) Generating BK for {:?} ...Start", params);
+
+    let bk_share = allocate_and_generate_lwe_bootstrap_key(
+        lwe_secret_key_share,
+        glwe_secret_key_share,
+        params.decomposition_base_log,
+        params.decomposition_level_count,
+        mpc_encryption_rng,
+        params.enc_type,
+        session,
+        preprocessing,
+    )
+    .await?;
+
+    tracing::info!("(Party {my_role}) Generating BK {:?} ...Done", params);
+    Ok(bk_share)
+}
+
+/// Generates a Bootstrapping Key given a Glwe key in Glwe format
+/// , a Lwe key and the params for the BK generation
+#[instrument(name="Gen BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+pub(crate) async fn generate_bootstrap_key<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ParallelByteRandomGenerator,
+    Scalar: UnsignedInteger,
+    const EXTENSION_DEGREE: usize,
+>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: BKParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+) -> anyhow::Result<LweBootstrapKey<Vec<Scalar>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let my_role = session.my_role();
+    let bk_share = generate_bootstrap_key_share(
+        glwe_secret_key_share,
+        lwe_secret_key_share,
+        &params,
+        mpc_encryption_rng,
+        session,
+        preprocessing,
+    )
+    .await?;
+
+    tracing::info!("(Party {my_role}) Opening BK {:?} ...Start", params);
+    //Open the bk and cast it to TFHE-rs type
+    let bk = bk_share.open_to_tfhers_type::<Scalar, _>(session).await?;
+    tracing::info!("(Party {my_role}) Opening BK {:?} ...Done", params);
+    Ok(bk)
+}
+
+/// Generates a compressed Bootstrapping Key given a Glwe key in Glwe format
+/// , a Lwe key and the params for the BK generation
+#[instrument(name="Gen compressed BK", skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing, seed), fields(sid = ?session.session_id(), my_role = ?session.my_role()))]
+pub(crate) async fn generate_compressed_bootstrap_key<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z, EXTENSION_DEGREE>> + ?Sized,
+    S: BaseSessionHandles,
+    Gen: ParallelByteRandomGenerator,
+    Scalar: UnsignedInteger,
+    const EXTENSION_DEGREE: usize,
+>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    lwe_secret_key_share: &LweSecretKeyShare<Z, EXTENSION_DEGREE>,
+    params: BKParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen, EXTENSION_DEGREE>,
+    session: &mut S,
+    preprocessing: &mut P,
+    seed: u128,
+) -> anyhow::Result<SeededLweBootstrapKey<Vec<Scalar>>>
+where
+    ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
+{
+    let my_role = session.my_role();
+    let bk_share = generate_bootstrap_key_share(
+        glwe_secret_key_share,
+        lwe_secret_key_share,
+        &params,
+        mpc_encryption_rng,
+        session,
+        preprocessing,
+    )
+    .await?;
+
+    tracing::info!("(Party {my_role}) Opening BK {:?} ...Start", params);
+    //Open the bk and cast it to TFHE-rs type
+    let bk = bk_share
+        .open_to_tfhers_seeded_type::<Scalar, _>(seed, session)
+        .await?;
+    tracing::info!("(Party {my_role}) Opening BK {:?} ...Done", params);
+    Ok(bk)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{collections::HashMap, ops::Deref};
 
     use itertools::Itertools;
     use tfhe::{
+        boolean::prelude::LweDimension,
         core_crypto::{
             algorithms::{
                 allocate_and_generate_new_lwe_bootstrap_key, decrypt_constant_ggsw_ciphertext,
@@ -144,7 +275,10 @@ mod tests {
             CoreCiphertextModulus, DecompositionBaseLog, DecompositionLevelCount, PolynomialSize,
         },
     };
-    use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::Seeder};
+    use tfhe_csprng::{
+        generators::SoftwareRandomGenerator,
+        seeders::{Seeder, XofSeed},
+    };
 
     use crate::{
         algebra::{
@@ -152,7 +286,6 @@ mod tests {
         },
         execution::{
             online::{
-                gen_bits::{BitGenEven, SecureBitGenEven},
                 preprocessing::dummy::DummyPreprocessing,
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
@@ -160,6 +293,7 @@ mod tests {
             runtime::session::{LargeSession, ParameterHandles},
             tfhe_internals::{
                 glwe_key::GlweSecretKeyShare,
+                lwe_bootstrap_key::par_decompress_into_lwe_bootstrap_key_generated_from_xof,
                 lwe_key::LweSecretKeyShare,
                 parameters::{EncryptionType, TUniformBound},
                 randomness::{
@@ -174,9 +308,9 @@ mod tests {
 
     use super::allocate_and_generate_lwe_bootstrap_key;
 
-    #[test]
+    #[tokio::test]
     #[ignore] //Ignore for now, might be able to run on CI with bigger timeout though
-    fn test_lwe_bootstrap_key() {
+    async fn test_lwe_bootstrap_key() {
         //Testing with small parameters, as NIST params take too long
         let lwe_dimension = 32_usize;
         let polynomial_size = 128_usize;
@@ -184,36 +318,29 @@ mod tests {
         let t_uniform_bound_glwe = 5_usize;
         let bk_base_log = 18_usize;
         let bk_level_count = 3_usize;
-        let seed = 0;
+        let seed = 42;
 
         let num_key_bits_lwe = lwe_dimension;
         let num_key_bits_glwe = glwe_dimension * polynomial_size;
 
         let mut task = |mut session: LargeSession| async move {
-            let mut large_preproc = DummyPreprocessing::new(seed as u64, &session);
+            let xof_seed = XofSeed::new_u128(seed, *b"TEST_GEN");
+            let mut dummy_preproc = DummyPreprocessing::new(seed as u64, &session);
 
             //Generate the Lwe key
-            let lwe_secret_key_share = LweSecretKeyShare::<Z128, 4> {
-                data: SecureBitGenEven::gen_bits_even(
-                    num_key_bits_lwe,
-                    &mut large_preproc,
-                    &mut session,
-                )
-                .await
-                .unwrap(),
-            };
+            let lwe_secret_key_share = LweSecretKeyShare::<Z128, 4>::new_from_preprocessing(
+                LweDimension(lwe_dimension),
+                &mut dummy_preproc,
+            )
+            .unwrap();
 
             //Generate the Glwe key
-            let glwe_secret_key_share = GlweSecretKeyShare::<Z128, 4> {
-                data: SecureBitGenEven::gen_bits_even(
-                    num_key_bits_glwe,
-                    &mut large_preproc,
-                    &mut session,
-                )
-                .await
-                .unwrap(),
-                polynomial_size: PolynomialSize(polynomial_size),
-            };
+            let glwe_secret_key_share = GlweSecretKeyShare::<Z128, 4>::new_from_preprocessing(
+                num_key_bits_glwe,
+                PolynomialSize(polynomial_size),
+                &mut dummy_preproc,
+            )
+            .unwrap();
 
             //Prepare enough noise for the bk
             let t_uniform_amount =
@@ -221,7 +348,7 @@ mod tests {
             let vec_tuniform_noise = RealSecretDistributions::t_uniform(
                 t_uniform_amount,
                 TUniformBound(t_uniform_bound_glwe),
-                &mut large_preproc,
+                &mut dummy_preproc,
             )
             .unwrap()
             .iter()
@@ -229,7 +356,9 @@ mod tests {
             .collect_vec();
 
             let mut mpc_encryption_rng = MPCEncryptionRandomGenerator {
-                mask: MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(seed),
+                mask: MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(
+                    xof_seed.clone(),
+                ),
                 noise: MPCNoiseRandomGenerator {
                     vec: vec_tuniform_noise,
                 },
@@ -244,15 +373,28 @@ mod tests {
                 &mut mpc_encryption_rng,
                 EncryptionType::Bits128,
                 &mut session,
-                &mut large_preproc,
+                &mut dummy_preproc,
             )
             .await
             .unwrap();
 
             let bk = bk_share
+                .clone()
                 .open_to_tfhers_type::<u128, _>(&session)
                 .await
                 .unwrap();
+            let bk_compressed = bk_share
+                .open_to_tfhers_seeded_type(seed, &session)
+                .await
+                .unwrap();
+
+            assert_eq!(
+                bk,
+                par_decompress_into_lwe_bootstrap_key_generated_from_xof::<
+                    _,
+                    SoftwareRandomGenerator,
+                >(bk_compressed.clone(), xof_seed.domain_separator())
+            );
 
             (
                 session.my_role(),
@@ -280,7 +422,8 @@ mod tests {
             NetworkMode::Async,
             Some(delay_vec),
             &mut task,
-        );
+        )
+        .await;
 
         let mut lwe_key_shares = HashMap::new();
         let mut glwe_key_shares = HashMap::new();

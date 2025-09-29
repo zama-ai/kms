@@ -10,6 +10,7 @@ use observability::telemetry::make_span;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
 use tonic::transport::{server::TcpIncoming, Server};
 use tonic_health::pb::health_server::{Health, HealthServer};
 use tower_http::classify::{GrpcCode, GrpcFailureClass};
@@ -17,9 +18,10 @@ use tower_http::trace::TraceLayer;
 use tracing::Span;
 
 /// Trait for shutting down a server gracefully.
+/// Starts shutdown in the background and returns a JoinHandle on the process.
 #[tonic::async_trait]
 pub trait Shutdown {
-    async fn shutdown(&self) -> anyhow::Result<()>;
+    fn shutdown(&self) -> anyhow::Result<JoinHandle<()>>;
 }
 
 pub async fn prepare_shutdown_signals<F: std::future::Future<Output = ()> + Send + 'static>(
@@ -142,15 +144,21 @@ pub async fn run_server<
             socket_addr
         );
 
-        let res = kms_service.shutdown().await;
-        if res.is_err() {
-            tracing::error!(
-                "Failed to shutdown core/service at {}: {}",
-                socket_addr,
-                res.err().unwrap()
-            );
-        } else {
-            tracing::info!("Successfully shutdown core/service at {}", socket_addr);
+        match kms_service.shutdown() {
+            Ok(res) => {
+                match res.await {
+                    Ok(_) => {
+                        tracing::info!("Successfully shutdown core/service at {}", socket_addr)
+                    }
+                    Err(e) => {
+                        tracing::error!("Error while waiting for shutdown to complete: {}", e)
+                    }
+                }
+                tracing::info!("Successfully shutdown core/service at {}", socket_addr);
+            }
+            Err(e) => {
+                tracing::error!("Failed to shutdown core/service at {}: {}", socket_addr, e);
+            }
         }
     });
 

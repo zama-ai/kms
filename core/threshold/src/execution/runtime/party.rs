@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     ops::{Index, IndexMut},
-    str::FromStr,
 };
 use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
@@ -19,6 +18,7 @@ pub enum RoleVersioned {
     Copy,
     Clone,
     Debug,
+    Default,
     PartialEq,
     Eq,
     PartialOrd,
@@ -139,38 +139,61 @@ impl<T> IndexMut<&mut Role> for Vec<T> {
     }
 }
 
+/// The identity of a MPC party.
+///
+/// When TLS is used, this must be the subject CN in the x509 certificate.
+#[derive(Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MpcIdentity(pub(crate) String);
+
+impl std::fmt::Display for MpcIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// Runtime identity of party.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Serialize, Deserialize, Default)]
-#[display("{}:{}", _0, _1)]
-pub struct Identity(pub String, pub u16);
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub struct Identity {
+    hostname: String,
+    port: u16,
+    mpc_identity: Option<MpcIdentity>,
+}
+
+impl std::fmt::Display for Identity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.hostname, self.port)
+    }
+}
 
 impl Identity {
     /// Create a new Identity with the given hostname and port.
-    pub fn new(hostname: String, port: u16) -> Self {
-        Identity(hostname, port)
+    pub fn new(hostname: String, port: u16, mpc_identity: Option<String>) -> Self {
+        Identity {
+            hostname,
+            port,
+            mpc_identity: mpc_identity.map(MpcIdentity),
+        }
     }
 
     /// Get the hostname part of the identity.
     pub fn hostname(&self) -> &str {
-        &self.0
+        &self.hostname
     }
 
     /// Get the port part of the identity.
     pub fn port(&self) -> u16 {
-        self.1
+        self.port
     }
 
-    /// Convert the identity to a tuple of (hostname, port).
-    pub fn to_tuple(&self) -> (&str, u16) {
-        (&self.0, self.1)
-    }
-
-    /// Convert the identity to an owned tuple of (hostname, port).
-    pub fn into_tuple(self) -> (String, u16) {
-        (self.0, self.1)
+    /// Get the MPC identity part of the identity, defaults to hostname if not set
+    pub fn mpc_identity(&self) -> MpcIdentity {
+        self.mpc_identity
+            .clone()
+            .unwrap_or(MpcIdentity(format!("{}:{}", &self.hostname, self.port)))
     }
 }
 
+/*
 impl From<(String, u16)> for Identity {
     fn from((hostname, port): (String, u16)) -> Self {
         Identity(hostname, port)
@@ -202,5 +225,57 @@ impl FromStr for Identity {
         Ok(Identity(hostname, port))
     }
 }
+*/
 
-pub type RoleAssignment = HashMap<Role, Identity>;
+#[derive(Debug, Clone, Default)]
+pub struct RoleAssignment {
+    // NOTE: the String is the MPC identity
+    pub inner: HashMap<Role, Identity>,
+}
+
+impl From<HashMap<Role, Identity>> for RoleAssignment {
+    fn from(map: HashMap<Role, Identity>) -> Self {
+        let inner = map.into_iter().collect();
+        RoleAssignment { inner }
+    }
+}
+
+impl RoleAssignment {
+    pub fn empty() -> Self {
+        RoleAssignment {
+            inner: HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, role: &Role) -> Option<&Identity> {
+        self.inner.get(role)
+    }
+
+    pub fn contains_key(&self, role: &Role) -> bool {
+        self.inner.contains_key(role)
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &Role> {
+        self.inner.keys()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&Role, &Identity)> {
+        self.inner.iter()
+    }
+
+    pub fn remove(&mut self, role: &Role) -> Option<Identity> {
+        self.inner.remove(role)
+    }
+
+    pub fn insert(&mut self, role: Role, identity: Identity) -> Option<Identity> {
+        self.inner.insert(role, identity)
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}

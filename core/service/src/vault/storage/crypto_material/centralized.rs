@@ -7,17 +7,14 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, RwLock};
 
 use kms_grpc::{
-    rpc_types::{
-        PrivDataType, PubDataType, SignedPubDataHandleInternal, WrappedPublicKey,
-        WrappedPublicKeyOwned,
-    },
+    rpc_types::{KMSType, PrivDataType, PubDataType, WrappedPublicKey, WrappedPublicKeyOwned},
     RequestId,
 };
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
-use threshold_fhe::execution::endpoints::keygen::FhePubKeySet;
+use threshold_fhe::execution::tfhe_internals::public_keysets::FhePubKeySet;
 
 use crate::{
-    engine::base::KmsFheKeyHandles,
+    engine::base::{CrsGenMetadata, KeyGenMetadata, KmsFheKeyHandles},
     util::meta_store::MetaStore,
     vault::{
         storage::{store_pk_at_request_id, store_versioned_at_request_id, Storage},
@@ -68,8 +65,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         req_id: &RequestId,
         pp: CompactPkeCrs,
-        crs_info: SignedPubDataHandleInternal,
-        meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
+        crs_info: CrsGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<CrsGenMetadata>>>,
     ) {
         self.inner
             .write_crs_with_meta_store(req_id, pp, crs_info, meta_store)
@@ -80,8 +77,8 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         &self,
         req_id: &RequestId,
         decompression_key: DecompressionKey,
-        info: HashMap<PubDataType, SignedPubDataHandleInternal>,
-        meta_store: Arc<RwLock<MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>>>,
+        info: KeyGenMetadata,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
         self.inner
             .write_decompression_key_with_meta_store(req_id, decompression_key, info, meta_store)
@@ -99,7 +96,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
         key_id: &RequestId,
         key_info: KmsFheKeyHandles,
         fhe_key_set: FhePubKeySet,
-        meta_store: Arc<RwLock<MetaStore<HashMap<PubDataType, SignedPubDataHandleInternal>>>>,
+        meta_store: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     ) {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
@@ -123,7 +120,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                 &mut (*priv_storage),
                 key_id,
                 &key_info,
-                &PrivDataType::FheKeyInfo.to_string(),
+                &PrivDataType::FhePrivateKey.to_string(),
             )
             .await;
             if let Err(e) = &store_result_1 {
@@ -141,7 +138,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
                         &mut (*x),
                         key_id,
                         &key_info,
-                        &PrivDataType::FheKeyInfo.to_string(),
+                        &PrivDataType::FhePrivateKey.to_string(),
                     )
                     .await;
                     if let Err(e) = &result {
@@ -232,7 +229,7 @@ impl<PubS: Storage + Send + Sync + 'static, PrivS: Storage + Send + Sync + 'stat
             // it might be because the data did not get created
             // In any case, we can't do much.
             self.inner
-                .purge_key_material(key_id, guarded_meta_store)
+                .purge_key_material(key_id, KMSType::Centralized, guarded_meta_store)
                 .await;
         }
     }

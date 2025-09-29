@@ -1,4 +1,4 @@
-FROM cgr.dev/chainguard/glibc-dynamic:latest-dev AS prod
+FROM cgr.dev/zama.ai/glibc-dynamic:15.2.0-dev AS prod
 
 ARG RUST_IMAGE_VERSION=stable
 # Install essential tools and dependencies
@@ -21,8 +21,7 @@ RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     build-base \
     openssl-dev \
     protoc \
-    protobuf \
-    openssh
+    protobuf
 
 # Install Rust using rustup
 ENV PATH="/root/.cargo/bin:${PATH}"
@@ -33,10 +32,7 @@ ENV CARGO_HOME=/root/.cargo
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain=$RUST_IMAGE_VERSION && \
     . $CARGO_HOME/env
 
-RUN cargo install sccache --version ^0.7
-
 # Set environment variables for building
-ENV RUSTC_WRAPPER=sccache SCCACHE_DIR=/sccache
 ENV CC=gcc
 ENV CXX=g++
 ENV RUSTFLAGS="-C target-feature=-crt-static"

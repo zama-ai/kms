@@ -10,13 +10,17 @@ use crate::{
     },
     networking::value::BroadcastValue,
     session_id::SessionId,
+    thread_handles::spawn_compute_bound,
 };
 use async_trait::async_trait;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::ops::{Add, Mul, Neg};
+use std::{
+    collections::HashSet,
+    ops::{Add, Mul, Neg},
+};
 use tfhe::{
     core_crypto::{commons::math::random::RandomGenerator, prelude::LweCiphertextCount},
     prelude::CastInto,
@@ -28,7 +32,6 @@ use tfhe::{
 use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 use tfhe_zk_pok::curve_api::{bls12_446 as curve, CurveGroupOps};
 use tracing::instrument;
-use zeroize::Zeroize;
 
 use super::constants::{
     ZK_DEFAULT_MAX_NUM_BITS, ZK_DSEP_AGG, ZK_DSEP_CHI, ZK_DSEP_CRS_UPDA, ZK_DSEP_GAMMA,
@@ -131,6 +134,14 @@ fn inf_norm_bound_to_euclidean_squared(B_inf: u64, dim: usize) -> u128 {
     checked_sqr(B_inf as u128)
         .and_then(|norm_squared| norm_squared.checked_mul(dim as u128))
         .unwrap_or_else(|| panic!("Invalid parameters for zk_pok, B_inf: {B_inf}, d+k: {dim}"))
+}
+
+// Extract the maximum number of bits that can be encrypted from a CRS
+pub fn max_num_bits_from_crs(crs: &CompactPkeCrs) -> usize {
+    // NOTE: plaintext modulus t is carry_modulus * message_modulus * 2 due to padding
+    let t = crs.plaintext_modulus();
+    let max_num_messages = crs.max_num_messages().0;
+    (t.ilog2() - 1) as usize * max_num_messages
 }
 
 pub fn max_num_messages(
@@ -483,21 +494,14 @@ impl InternalPublicParameter {
     }
 }
 
-#[derive(Zeroize)]
-struct ZeroizeForPartialProof {
-    tau: curve::Zp,
-    r: curve::Zp,
-    tau_powers: Vec<curve::Zp>,
-}
-
 /// Compute a new proof round.
 ///
 /// Note that this function is deterministic, i.e. the parameters `tau` and `r` (r_{pok, j}) must be generated freshly at random outside this function.
 pub(crate) fn make_partial_proof_deterministic(
     current_pp: &InternalPublicParameter,
-    tau: curve::Zp,
+    tau: &curve::ZeroizeZp,
     round: u64,
-    r: curve::Zp,
+    r: &curve::ZeroizeZp,
     sid: SessionId,
 ) -> PartialProof {
     let b1 = current_pp.witness_dim();
@@ -508,9 +512,9 @@ pub(crate) fn make_partial_proof_deterministic(
     // we need \tau^1, ..., \tau^{2*b1} for the new CRS
     // but we do not use \tau^{b1 + 1}
     let tau_powers = (0..2 * b1)
-        .scan(curve::Zp::ONE, |acc, _| {
+        .scan(curve::ZeroizeZp::ONE, |acc, _| {
             *acc = acc.mul(tau);
-            Some(*acc)
+            Some(acc.clone())
         })
         .collect_vec();
 
@@ -539,9 +543,7 @@ pub(crate) fn make_partial_proof_deterministic(
                     if i == b1 {
                         curve::G1::ZERO
                     } else {
-                        // TODO(#2483) Dereferencing t could create a copy that is not zeroized
-                        // this will be resolved when tfhe-rs implements the ZeroizeOnDrop trait for Zp
-                        g.mul_scalar(*t)
+                        g.mul_scalar_zeroize(t)
                     }
                 })
                 .collect(),
@@ -550,11 +552,7 @@ pub(crate) fn make_partial_proof_deterministic(
                 .g2s
                 .par_iter()
                 .zip_eq(&tau_powers[..tau_powers.len() / 2])
-                .map(|(g, t)| {
-                    // TODO(#2483) Dereferencing t could create a copy that is not zeroized
-                    // this will be resolved when tfhe-rs implements the ZeroizeOnDrop trait for Zp
-                    g.mul_scalar(*t)
-                })
+                .map(|(g, t)| g.mul_scalar_zeroize(t))
                 .collect(),
         ),
     };
@@ -562,7 +560,7 @@ pub(crate) fn make_partial_proof_deterministic(
     // This is Step 2 of CRS-Gen.Update from the NIST spec
     // where the contributor j runs NIZK to prove the knowledge of the discrete logarithm \tau.
     let g1_jm1 = current_pp.g1g2list.g1s[0]; // g_{1,j-1}
-    let r_pok = g1_jm1.mul_scalar(r); // R_{pok, j}
+    let r_pok = g1_jm1.mul_scalar_zeroize(r); // R_{pok, j}
     let g1_j = new_pp.g1g2list.g1s[0]; // g_{1, j}
     let mut h_pok = vec![curve::Zp::ZERO; 1];
     // This is Hash from the NIST spec
@@ -578,11 +576,7 @@ pub(crate) fn make_partial_proof_deterministic(
         ],
     );
     let h_pok = h_pok[0];
-    let s_pok = h_pok * (tau) + r;
-
-    // This will not be needed once tfhe-rs implements the ZeroizeOnDrop trait for Zp (#2483)
-    let mut for_zeroize = ZeroizeForPartialProof { tau, r, tau_powers };
-    for_zeroize.zeroize();
+    let s_pok = h_pok * tau + r;
 
     PartialProof {
         h_pok,
@@ -605,14 +599,18 @@ pub fn public_parameters_by_trusted_setup<R: Rng + CryptoRng>(
 ) -> anyhow::Result<FinalizedInternalPublicParameter> {
     let pparam = InternalPublicParameter::new_from_tfhe_param(params, max_num_bits)?;
 
-    let mut tau = curve::Zp::rand(rng);
-    let mut r = curve::Zp::rand(rng);
+    let mut tau = curve::ZeroizeZp::ZERO;
+    // ensure tau is random and non-zero
+    while tau == curve::ZeroizeZp::ZERO {
+        tau.rand_in_place(rng);
+    }
+    let mut r = curve::ZeroizeZp::ZERO;
+    // ensure r is random and non-zero
+    while r == curve::ZeroizeZp::ZERO {
+        r.rand_in_place(rng);
+    }
 
-    // Note [tau] and [r] are copied into [make_partial_proof_deterministic] since Zp is a Copy,
-    // we need to make sure they're zeroized after use inside.
-    let pproof = make_partial_proof_deterministic(&pparam, tau, 1, r, sid);
-    tau.zeroize();
-    r.zeroize();
+    let pproof = make_partial_proof_deterministic(&pparam, &tau, 1, &r, sid);
 
     Ok(FinalizedInternalPublicParameter {
         inner: pproof.new_pp,
@@ -841,7 +839,7 @@ pub struct RealCeremony<BCast: Broadcast + Default> {
 
 #[async_trait]
 impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
-    #[instrument(name = "CRS-Ceremony", skip_all, fields(sid=?session.session_id(),own_identity=?session.own_identity()))]
+    #[instrument(name = "CRS-Ceremony", skip_all, fields(sid=?session.session_id(),my_role=?session.my_role()))]
     async fn execute<Z: Ring, S: BaseSessionHandles>(
         &self,
         session: &mut S,
@@ -851,7 +849,7 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
         // the parties need to execute the protocol in a deterministic order
         // so we sort the roles to fix this order
         // even if the adversary can pick the order, it does not affect the security
-        let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
+        let mut all_roles_sorted = session.roles().iter().cloned().collect_vec();
         all_roles_sorted.sort();
         let my_role = session.my_role();
 
@@ -866,34 +864,29 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
             // we use u64 since the round number is defined by the number of participants
             // i.e., Role, and internally Role stores u64
             let round = round as u64 + 1; // round starts at 1, round 0 is the trivial CRS, i.e., pp_0
-            if role == &my_role {
+            if *role == my_role {
                 let mut xof = RandomGenerator::<SoftwareRandomGenerator>::new(XofSeed::new_u128(
                     session.rng().gen::<u128>(),
                     ZK_DSEP_CRS_UPDA,
                 ));
+
+                // tau and r will be zeroized automatically on drop. However they should not be
+                // moved into other variables or passed by value as this might leave non-zeroized
+                // copies.
+                let mut tau = curve::ZeroizeZp::ZERO;
+                tau.rand_in_place(&mut xof);
+                let mut r = curve::ZeroizeZp::ZERO;
+                r.rand_in_place(&mut xof);
+
                 // We use the rayon's threadpool for handling CPU-intensive tasks
                 // like creating the CRS. This is recommended over tokio::task::spawn_blocking
                 // since the tokio threadpool has a very high default upper limit.
                 // More info: https://ryhl.io/blog/async-what-is-blocking/
-                let mut tau = curve::Zp::rand(&mut xof);
-                let mut r = curve::Zp::rand(&mut xof);
-                let (send, recv) = tokio::sync::oneshot::channel();
-                rayon::spawn_fifo(move || {
-                    // [tau] and [r] are copied into [make_partial_proof_deterministic] since Zp is a Copy
-                    // we need to make sure they're zeroized after use inside.
-                    let partial_proof = make_partial_proof_deterministic(&pp, tau, round, r, sid);
-                    tau.zeroize();
-                    r.zeroize();
-                    let _ = send.send(partial_proof);
-                });
+                let proof = spawn_compute_bound(move || {
+                    make_partial_proof_deterministic(&pp, &tau, round, &r, sid)
+                })
+                .await?;
 
-                // WARNING: [tau] and [r] are of Type [Zp] which is a [Copy].
-                // this means if they're used again outside of [rayon::spawn],
-                // then the secret data is copied implicitly.
-                // Do not use [tau] and [r] again outside of the rayon
-                // thread since that would implicitly copy secret data.
-
-                let proof = recv.await?;
                 let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
 
                 // nobody else should be broadcasting so we do not process results
@@ -901,7 +894,7 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                 // we're running a robust protocol
                 let _ = self
                     .broadcast
-                    .broadcast_w_corrupt_set_update(session, vec![my_role], Some(vi))
+                    .broadcast_w_corrupt_set_update(session, HashSet::from([my_role]), Some(vi))
                     .await?;
 
                 // update our pp
@@ -915,24 +908,23 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                 // do the following if it is not my turn to contribute
                 match self
                     .broadcast
-                    .broadcast_w_corrupt_set_update::<Z, _>(session, vec![*role], None)
+                    .broadcast_w_corrupt_set_update::<Z, _>(session, HashSet::from([*role]), None)
                     .await
                 {
                     Ok(res) => {
                         // reliable broadcast finished, we need to check the proof
                         // check that it is from the correct sender
                         for (sender, msg) in res {
-                            if &sender == role {
+                            if sender == *role {
                                 if let BroadcastValue::PartialProof(proof) = msg {
                                     // We move pp and then let the blocking thread return it to pp_tmp
                                     // this will avoid cloning the whole pp which is just two vectors.
                                     // The rayon threadpool is used again (see comment above).
-                                    let (send, recv) = tokio::sync::oneshot::channel();
-                                    rayon::spawn_fifo(move || {
+                                    let (ver, pp_tmp) = spawn_compute_bound(move || {
                                         let res = verify_proof(&pp, &proof, round, sid);
-                                        let _ = send.send((res, pp));
-                                    });
-                                    let (ver, pp_tmp) = recv.await?;
+                                        (res, pp)
+                                    })
+                                    .await?;
                                     pp = pp_tmp;
 
                                     // Step 5 of CRS-Gen.Update from the NIST spec
@@ -948,7 +940,8 @@ impl<BCast: Broadcast + Default> Ceremony for RealCeremony<BCast> {
                                     }
                                 } else {
                                     tracing::error!(
-                                        "unexpected message type in crs ceremony from {sender}"
+                                        "unexpected message type {} in crs ceremony from {sender}",
+                                        msg.type_name()
                                     );
                                 }
                             } else {
@@ -980,7 +973,7 @@ mod tests {
         execution::{
             runtime::{
                 session::{LargeSession, ParameterHandles},
-                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+                test_runtime::{generate_fixed_roles, DistributedTestRuntime},
             },
             tfhe_internals::parameters::BC_PARAMS_NO_SNS,
         },
@@ -999,11 +992,13 @@ mod tests {
     use tokio::task::JoinSet;
 
     #[test]
+    #[serial_test::serial]
     fn test_honest_crs_ceremony_secure() {
         test_honest_crs_ceremony(SecureCeremony::default)
     }
 
     #[test]
+    #[serial_test::serial]
     fn test_honest_crs_ceremony_insecure() {
         test_honest_crs_ceremony(InsecureCeremony::default)
     }
@@ -1016,12 +1011,12 @@ mod tests {
         let threshold = 1usize;
         let num_parties = 4usize;
         let witness_dim = 10usize;
-        let identities = generate_fixed_identities(num_parties);
+        let roles = generate_fixed_roles(num_parties);
         //CRS generation is round robin, so Sync by nature
         let runtime: DistributedTestRuntime<
             ResiduePolyF4Z64,
             { ResiduePolyF4Z64::EXTENSION_DEGREE },
-        > = DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
+        > = DistributedTestRuntime::new(roles, threshold as u8, NetworkMode::Sync, None);
 
         let session_id = SessionId::from(2);
 
@@ -1029,8 +1024,8 @@ mod tests {
         let _guard = rt.enter();
 
         let mut set = JoinSet::new();
-        for (index_id, _identity) in runtime.identities.clone().into_iter().enumerate() {
-            let mut session = runtime.large_session_for_party(session_id, index_id);
+        for role in &runtime.roles {
+            let mut session = runtime.large_session_for_party(session_id, *role);
             let ceremony = ceremony_f();
             set.spawn(async move {
                 let out = ceremony
@@ -1124,7 +1119,7 @@ mod tests {
             witness_dim: usize,
             max_num_bits: Option<u32>,
         ) -> anyhow::Result<FinalizedInternalPublicParameter> {
-            let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
+            let mut all_roles_sorted = session.roles().iter().cloned().collect_vec();
             all_roles_sorted.sort();
             let my_role = session.my_role();
 
@@ -1134,23 +1129,29 @@ mod tests {
             for (round, role) in all_roles_sorted.iter().enumerate() {
                 let round = round as u64;
                 if role == &my_role {
-                    let tau = curve::Zp::rand(&mut session.rng());
-                    let r = curve::Zp::rand(&mut session.rng());
+                    let mut tau = curve::ZeroizeZp::ZERO;
+                    tau.rand_in_place(&mut session.rng());
+                    let mut r = curve::ZeroizeZp::ZERO;
+                    r.rand_in_place(&mut session.rng());
                     // make a bad proof
                     let mut proof: PartialProof =
-                        make_partial_proof_deterministic(&pp, tau, round + 1, r, sid);
+                        make_partial_proof_deterministic(&pp, &tau, round + 1, &r, sid);
                     proof.h_pok += curve::Zp::ONE;
                     let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
 
                     let _ = self
                         .broadcast
-                        .broadcast_w_corrupt_set_update(session, vec![my_role], Some(vi))
+                        .broadcast_w_corrupt_set_update(session, HashSet::from([my_role]), Some(vi))
                         .await?;
                     pp = proof.new_pp;
                 } else {
                     let hm = self
                         .broadcast
-                        .broadcast_w_corrupt_set_update::<Z, _>(session, vec![*role], None)
+                        .broadcast_w_corrupt_set_update::<Z, _>(
+                            session,
+                            HashSet::from([*role]),
+                            None,
+                        )
                         .await
                         .unwrap();
                     let msg = hm.get(role).unwrap();
@@ -1167,7 +1168,7 @@ mod tests {
         }
     }
 
-    fn test_ceremony_strategies_large<
+    async fn test_ceremony_strategies_large<
         C: Ceremony + 'static,
         Z: Ring,
         const EXTENSION_DEGREE: usize,
@@ -1179,7 +1180,6 @@ mod tests {
         let mut task_honest = |mut session: LargeSession| async move {
             let real_ceremony = SecureCeremony::default();
             (
-                session.my_role(),
                 real_ceremony
                     .execute::<Z, _>(&mut session, witness_dim, Some(1))
                     .await
@@ -1189,10 +1189,9 @@ mod tests {
         };
 
         let mut task_malicious = |mut session: LargeSession, malicious_party: C| async move {
-            let _ = malicious_party
+            malicious_party
                 .execute::<Z, _>(&mut session, witness_dim, Some(1))
-                .await;
-            session.my_role()
+                .await
         };
 
         //CRS generation is round robin, so Sync by nature
@@ -1206,10 +1205,11 @@ mod tests {
                 None,
                 &mut task_honest,
                 &mut task_malicious,
-            );
+            )
+            .await;
 
         // the honest results should be a valid crs and not the initial one
-        let honest_pp = results_honest.iter().map(|(_, pp, _)| pp).collect_vec();
+        let honest_pp = results_honest.values().map(|(pp, _)| pp).collect_vec();
         let pp = honest_pp[0];
         // make sure we're not using the initial pp
         assert_ne!(pp.inner.g1g2list.g1s[0], pp.inner.g1g2list.g1s[1]);
@@ -1220,9 +1220,11 @@ mod tests {
     }
 
     #[rstest]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
-    fn test_dropping_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
+    #[serial_test::serial]
+    async fn test_dropping_ceremony(#[case] params: TestingParameters, #[case] witness_dim: usize) {
         use crate::malicious_execution::zk::ceremony::DroppingCeremony;
 
         let malicious_party = DroppingCeremony;
@@ -1230,13 +1232,15 @@ mod tests {
             params.clone(),
             witness_dim,
             malicious_party.clone(),
-        );
+        ).await;
     }
 
     #[rstest]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
-    fn test_bad_proof_ceremony<BCast: Broadcast + Default + 'static>(
+    #[serial_test::serial]
+    async fn test_bad_proof_ceremony<BCast: Broadcast + Default + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
@@ -1248,13 +1252,15 @@ mod tests {
             params.clone(),
             witness_dim,
             malicious_party.clone(),
-        );
+        ).await;
     }
 
     #[rstest]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 4)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 4)]
-    fn test_rushing_ceremony<BCast: Broadcast + Default + 'static>(
+    #[serial_test::serial]
+    async fn test_rushing_ceremony<BCast: Broadcast + Default + 'static>(
         #[case] params: TestingParameters,
         #[case] witness_dim: usize,
         #[values(SyncReliableBroadcast::default())] broadcast_strategy: BCast,
@@ -1268,48 +1274,50 @@ mod tests {
             params.clone(),
             witness_dim,
             malicious_party.clone(),
-        );
+        ).await;
     }
 
     #[test]
     fn test_pairing() {
         // sanity check for the pairing operation
         let mut rng = AesRng::seed_from_u64(42);
-        let tau = curve::Zp::rand(&mut rng);
-        let r = curve::Zp::rand(&mut rng);
+        let mut tau = curve::ZeroizeZp::ZERO;
+        tau.rand_in_place(&mut rng);
+        let mut r = curve::ZeroizeZp::ZERO;
+        r.rand_in_place(&mut rng);
         let tau_powers = (0..2 * 2)
-            .scan(curve::Zp::ONE, |acc, _| {
-                *acc = acc.mul(tau);
-                Some(*acc)
+            .scan(curve::ZeroizeZp::ONE, |acc, _| {
+                *acc = acc.mul(&tau);
+                Some(acc.clone())
             })
             .collect_vec();
 
         let e = curve::Gt::pairing;
         assert_eq!(
             e(
-                curve::G1::GENERATOR.mul_scalar(tau_powers[3]),
+                curve::G1::GENERATOR.mul_scalar_zeroize(&tau_powers[3]),
                 curve::G2::GENERATOR
             ),
             e(
-                curve::G1::GENERATOR.mul_scalar(tau_powers[1]),
-                curve::G2::GENERATOR.mul_scalar(tau_powers[1])
+                curve::G1::GENERATOR.mul_scalar_zeroize(&tau_powers[1]),
+                curve::G2::GENERATOR.mul_scalar_zeroize(&tau_powers[1])
             )
         );
 
         let sid = SessionId::from(1);
         let pp = InternalPublicParameter::new(2, Some(1));
-        let proof = make_partial_proof_deterministic(&pp, tau, 0, r, sid);
+        let proof = make_partial_proof_deterministic(&pp, &tau, 0, &r, sid);
         assert_eq!(
             proof.new_pp.g1g2list.g1s[3],
-            curve::G1::GENERATOR.mul_scalar(tau_powers[3])
+            curve::G1::GENERATOR.mul_scalar_zeroize(&tau_powers[3])
         );
         assert_eq!(
             proof.new_pp.g1g2list.g1s[1],
-            curve::G1::GENERATOR.mul_scalar(tau_powers[1])
+            curve::G1::GENERATOR.mul_scalar_zeroize(&tau_powers[1])
         );
         assert_eq!(
             proof.new_pp.g1g2list.g2s[1],
-            curve::G2::GENERATOR.mul_scalar(tau_powers[1])
+            curve::G2::GENERATOR.mul_scalar_zeroize(&tau_powers[1])
         );
     }
 
@@ -1318,8 +1326,10 @@ mod tests {
         let n = 4usize;
         let mut rng = AesRng::seed_from_u64(42);
         let pp1 = InternalPublicParameter::new(n, Some(1));
-        let tau1 = curve::Zp::rand(&mut rng);
-        let r = curve::Zp::rand(&mut rng);
+        let mut tau1 = curve::ZeroizeZp::ZERO;
+        tau1.rand_in_place(&mut rng);
+        let mut r = curve::ZeroizeZp::ZERO;
+        r.rand_in_place(&mut rng);
         let sid = SessionId::from(1);
 
         assert_eq!(pp1.g1g2list.g1s.len(), n * 2);
@@ -1327,17 +1337,18 @@ mod tests {
 
         {
             // first round
-            let proof1 = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let proof1 = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             assert!(verify_proof(&pp1, &proof1, 1, sid).is_ok());
 
             // second round
             let pp2 = proof1.new_pp;
-            let tau2 = curve::Zp::rand(&mut rng);
-            let proof2 = make_partial_proof_deterministic(&pp2, tau2, 2, r, sid);
+            let mut tau2 = curve::ZeroizeZp::ZERO;
+            tau2.rand_in_place(&mut rng);
+            let proof2 = make_partial_proof_deterministic(&pp2, &tau2, 2, &r, sid);
             assert!(verify_proof(&pp2, &proof2, 2, sid).is_ok());
         }
         {
-            let proof1 = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let proof1 = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             let bad_sid = SessionId::from(2); // originally it was 1
 
             // dlog check failed because input to Hash has the wrong session ID
@@ -1347,7 +1358,7 @@ mod tests {
                 .contains("dlog check failed"));
         }
         {
-            let proof1 = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let proof1 = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
 
             // dlog check failed because input to Hash has the wrong round number
             assert!(verify_proof(&pp1, &proof1, 11, sid)
@@ -1356,14 +1367,14 @@ mod tests {
                 .contains("dlog check failed"));
         }
         {
-            let proof = make_partial_proof_deterministic(&pp1, tau1, 0, r, sid);
+            let proof = make_partial_proof_deterministic(&pp1, &tau1, 0, &r, sid);
             assert!(verify_proof(&pp1, &proof, 0, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("bad round number"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.h_pok += curve::Zp::ONE;
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
@@ -1371,7 +1382,7 @@ mod tests {
                 .contains("dlog check failed"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.s_pok += curve::Zp::ONE;
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
@@ -1380,7 +1391,7 @@ mod tests {
         }
         {
             // note that tau=0
-            let proof = make_partial_proof_deterministic(&pp1, curve::Zp::ZERO, 1, r, sid);
+            let proof = make_partial_proof_deterministic(&pp1, &curve::ZeroizeZp::ZERO, 1, &r, sid);
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
@@ -1388,14 +1399,14 @@ mod tests {
         }
         {
             let pp1 = make_degenerative_pp(n);
-            let proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
                 .to_string()
                 .contains("non-degenerative check failed"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g1s.push(curve::G1::GENERATOR);
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
@@ -1403,7 +1414,7 @@ mod tests {
                 .contains("crs length check failed (g)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g2s.push(curve::G2::GENERATOR);
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
@@ -1411,7 +1422,7 @@ mod tests {
                 .contains("crs length check failed (g_hat)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g1s[n + 1] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
@@ -1419,7 +1430,7 @@ mod tests {
                 .contains("well-formedness check failed (1)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g1s[n - 1] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
@@ -1427,7 +1438,7 @@ mod tests {
                 .contains("well-formedness check failed (1)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g2s[1] += curve::G2::GENERATOR;
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
@@ -1435,7 +1446,7 @@ mod tests {
                 .contains("well-formedness check failed (1)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g1s[2] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
@@ -1443,7 +1454,7 @@ mod tests {
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g1s[2 * n - 1] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
@@ -1451,7 +1462,7 @@ mod tests {
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g2s[2] += curve::G2::GENERATOR;
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
@@ -1459,7 +1470,7 @@ mod tests {
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g2s[n - 1] += curve::G2::GENERATOR;
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()
@@ -1467,7 +1478,7 @@ mod tests {
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r, sid);
+            let mut proof = make_partial_proof_deterministic(&pp1, &tau1, 1, &r, sid);
             proof.new_pp.g1g2list.g1s[n] = curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof, 1, sid)
                 .unwrap_err()

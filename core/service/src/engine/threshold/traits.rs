@@ -62,6 +62,7 @@ pub trait KeyGenPreprocessor {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenPreprocResult>, Status>;
+    async fn get_all_preprocessing_ids(&self) -> Result<Vec<String>, Status>;
 }
 
 #[tonic::async_trait]
@@ -84,40 +85,4 @@ pub trait InsecureCrsGenerator {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status>;
-}
-
-#[tonic::async_trait]
-pub trait ContextManager {
-    async fn new_kms_context(
-        &self,
-        request: Request<NewKmsContextRequest>,
-    ) -> Result<Response<Empty>, Status>;
-
-    async fn destroy_kms_context(
-        &self,
-        request: Request<DestroyKmsContextRequest>,
-    ) -> Result<Response<Empty>, Status>;
-
-    async fn new_custodian_context(
-        &self,
-        request: Request<NewCustodianContextRequest>,
-    ) -> Result<Response<Empty>, Status>;
-
-    async fn destroy_custodian_context(
-        &self,
-        request: Request<DestroyCustodianContextRequest>,
-    ) -> Result<Response<Empty>, Status>;
-}
-
-#[tonic::async_trait]
-pub trait BackupOperator {
-    async fn get_operator_public_key(
-        &self,
-        request: Request<Empty>,
-    ) -> Result<Response<OperatorPublicKey>, Status>;
-
-    async fn custodian_backup_restore(
-        &self,
-        request: Request<Empty>,
-    ) -> Result<Response<Empty>, Status>;
 }

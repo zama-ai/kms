@@ -1,28 +1,18 @@
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Default)]
 pub enum ComputeKeyType {
+    #[default]
     Cpu,
-}
-
-impl Default for ComputeKeyType {
-    fn default() -> Self {
-        Self::Cpu
-    }
 }
 
 /// Compression configuration for a keyset.
 /// The default is to generate a new compression secret key.
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Default)]
 pub enum KeySetCompressionConfig {
     /// Generate a new compression secret key.
+    #[default]
     Generate,
     /// Use an existing compression secret key.
     UseExisting,
-}
-
-impl Default for KeySetCompressionConfig {
-    fn default() -> Self {
-        Self::Generate
-    }
 }
 
 /// Configure the contents of a keyset.

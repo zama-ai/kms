@@ -9,51 +9,61 @@ license.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
 aes.workspace = true
 aes-prng.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 attestation-doc-validation = { workspace = true, optional = true}
 backoff = { workspace = true, features = ["tokio"], optional = true }
-bincode.workspace = true
 bc2wrap.workspace = true
+bincode.workspace = true
 cfg-if.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
-observability = { workspace = true, optional = true }
-const_format = "=0.2.34"
-crypto-bigint = { version = "=0.6.1", features = [
-    "serde",
-    "rand_core",
-    "extra-sizes",
-], optional = true }
-dashmap = "=6.1.0"
-derive_more = { version = "=2.0.1", features = ["display"] }
+const_format.workspace = true
+crypto-bigint = { workspace = true, optional = true }
+dashmap.workspace = true
+derive_more.workspace = true
 futures.workspace = true
-g2p = "=1.2.2"
-hex = { version = "=0.4.3", features = ["serde"] }
-hyper-rustls = { version = "=0.27.7", default-features = false, features = ["http2", "ring"] , optional = true }
+futures-util.workspace = true
+g2p.workspace = true
+getrandom.workspace = true
+hex = { workspace = true, features = ["serde"] }
+hyper-rustls-ring = { workspace = true, optional = true }
 itertools.workspace = true
 lazy_static.workspace = true
-minijinja = { version = "=2.11.0", features = ["loader"], optional = true }
+minijinja = { workspace = true, optional = true }
 mockall.workspace = true
-ndarray = { version = "=0.16.1", features = ["serde"] }
-num-integer = "=0.1.46"
-num-traits = "=0.2.19"
-oid-registry = "=0.8.1"
+ndarray.workspace = true
+num-integer.workspace = true
+num-traits.workspace = true
+observability = { workspace = true, optional = true }
+oid-registry.workspace = true
 opentelemetry = { workspace = true, optional = true }
-paste = "=1.0.15"
-peak_alloc = { version = "=0.2.1", optional = true }
+paste.workspace = true
+peak_alloc = { workspace = true, optional = true }
 prost.workspace = true
 rand.workspace = true
 rayon.workspace = true
-redis = { version = "=0.29.5", optional = true }
 rcgen = { workspace = true, optional = true }
+redis = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
-sha2 = "=0.10.9"
-sha3 = "=0.10.8"
-statrs = "=0.18.0"
+sha2.workspace = true
+sha3.workspace = true
+statrs.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
+tfhe = { workspace = true, features = [
+    "boolean",
+    "shortint",
+    "integer",
+    "zk-pok",
+] }
+tfhe-csprng.workspace = true
+tfhe-versionable.workspace = true
+tfhe-zk-pok = { workspace = true, optional = true }
 tokio = { workspace = true, features = [
     "sync",
     "rt",
@@ -66,40 +76,29 @@ tonic-health = { workspace = true, optional = true }
 tonic-tls = { workspace = true, optional = true }
 tower = { workspace = true, features = ["retry", "timeout"], optional = true }
 tower-http = { workspace = true, features = ["trace"], optional = true }
-tfhe = { workspace = true, features = [
-    "boolean",
-    "shortint",
-    "integer",
-    "zk-pok",
-] }
-tfhe-csprng.workspace = true
 tracing = { workspace = true, features = ["log"] }
 x509-parser = { workspace = true, optional = true }
 zeroize.workspace = true
-tfhe-zk-pok = { workspace = true, optional = true }
-tfhe-versionable.workspace = true
-
-# we need getrandom to have the js feature so that it can target wasm
-# this is an indirect dependency
-getrandom = { version = "=0.2.15", features = ["js"] }
 
 [build-dependencies]
 tonic-build.workspace = true
 
 [dev-dependencies]
-criterion = "=0.5.1"
-ctor = "=0.4.2"
-proptest = "=1.6.0"
-pprof = { version = "=0.15.0", features = ["flamegraph", "criterion"] }
-rstest = "=0.25.0"
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
+async-std.workspace = true
+criterion.workspace = true
+ctor.workspace = true
+pprof.workspace = true
+proptest.workspace = true
+rstest.workspace = true
 serial_test.workspace = true
 tempfile.workspace = true
-tracing-test = "=0.2.5"
-webpki = { version = "=0.22.4", features = ["std"] }
-# we need the experimental feature to simplify some tests
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
-# "self-import" needed for integration test
 threshold-fhe = { workspace = true, features = ["testing"] }
+tracing-test.workspace = true
+webpki.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["getrandom", "opentelemetry", "prost"]
@@ -213,7 +212,7 @@ malicious_strategies = ["testing"]
 # or uses tokio
 non-wasm = [
     "dep:attestation-doc-validation",
-    "dep:hyper-rustls",
+    "dep:hyper-rustls-ring",
     "dep:tokio",
     "dep:tokio-rustls",
     "dep:tonic",

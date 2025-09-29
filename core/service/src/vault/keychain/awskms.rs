@@ -22,9 +22,7 @@ use aws_sdk_kms::{
 };
 use aws_smithy_runtime::client::http::hyper_014::HyperClientBuilder;
 use hyper_rustls::HttpsConnectorBuilder;
-use kms_grpc::RequestId;
-#[cfg(feature = "non-wasm")]
-use rand::rngs::OsRng;
+use rand::{CryptoRng, Rng};
 use rasn::{
     ber::de::{Decoder, DecoderOptions},
     de::Decode,
@@ -40,10 +38,8 @@ use rsa::{
     Oaep, RsaPrivateKey, RsaPublicKey,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::BTreeSet;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{named::Named, Unversionize, Versionize};
-use threshold_fhe::execution::runtime::party::Role;
 use url::Url;
 
 // recipient enclave RSA keypair size
@@ -122,7 +118,8 @@ impl RootKey for Asymm {}
 /// corresponding data keys) are stored on S3. The enclave keypair permits
 /// secure decryption of data keys by AWS KMS.
 #[derive(Debug, Clone)]
-pub struct AWSKMSKeychain<S: SecurityModule, K: RootKey> {
+pub struct AWSKMSKeychain<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> {
+    rng: R,
     awskms_client: AWSKMSClient,
     security_module: S,
     recipient_sk: RsaPrivateKey,
@@ -130,15 +127,17 @@ pub struct AWSKMSKeychain<S: SecurityModule, K: RootKey> {
     root_key: K,
 }
 
-impl<S: SecurityModule, K: RootKey> AWSKMSKeychain<S, K> {
+impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> {
     pub fn new(
+        mut rng: R,
         awskms_client: AWSKMSClient,
         security_module: S,
         root_key: K,
     ) -> anyhow::Result<Self> {
-        let recipient_sk = RsaPrivateKey::new(&mut OsRng, RECIPIENT_KEYPAIR_SIZE)?;
+        let recipient_sk = RsaPrivateKey::new(&mut rng, RECIPIENT_KEYPAIR_SIZE)?;
         let recipient_pk = RsaPublicKey::from(&recipient_sk);
         Ok(AWSKMSKeychain {
+            rng,
             awskms_client,
             security_module,
             recipient_sk,
@@ -191,23 +190,23 @@ impl<S: SecurityModule, K: RootKey> AWSKMSKeychain<S, K> {
             &envelope.auth_tag,
         )?;
         let mut buf = std::io::Cursor::new(&envelope.ciphertext);
-        safe_deserialize(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| anyhow::anyhow!(e))
+        safe_deserialize::<T>(&mut buf, SAFE_SER_SIZE_LIMIT).map_err(|e| {
+            anyhow::anyhow!(
+                "Could not deserialize backed up ciphertext: {}",
+                e.to_string()
+            )
+        })
     }
 }
 
-//#[tonic::async_trait]
-impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Symm> {
-    fn envelope_share_ids(&self) -> Option<BTreeSet<Role>> {
-        None::<BTreeSet<Role>>
-    }
-
+impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKeychain<S, Symm, R> {
     /// Request a data key from AWS KMS and encrypt an application key (such as the FHE private key) on
     /// it. Stores a copy of the data key encrypted on the root key (stored in AWS KMS) together with
     /// the encrypted application key.
     async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
-        _payload_id: &RequestId,
-        payload: &T,
+        data: &T,
+        _data_type: &str,
     ) -> anyhow::Result<EnvelopeStore> {
         // request enclave attestation before making an AWS KMS request, so the
         // attestation is fresh and not older than 5 minutes
@@ -241,10 +240,10 @@ impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Symm> {
             gen_data_key_response_ciphertext_blob.into_inner(),
             &self.recipient_sk,
         )?;
-
         // encrypt the app key under the data key
         let mut blob_bytes = Vec::new();
-        safe_serialize(payload, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
+        safe_serialize(data, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
+        // encrypt the app key under the data key
         let iv = self.security_module.get_random(APP_BLOB_NONCE_SIZE).await?;
         let auth_tag = encrypt_under_data_key(&mut blob_bytes, &data_key, &iv)?;
         Ok(EnvelopeStore::AppKeyBlob(AppKeyBlob {
@@ -263,10 +262,9 @@ impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Symm> {
 
     async fn decrypt<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
-        _payload_id: &RequestId,
         envelope: &mut EnvelopeLoad,
     ) -> anyhow::Result<T> {
-        AWSKMSKeychain::<S, Symm>::decrypt(
+        AWSKMSKeychain::<S, Symm, R>::decrypt(
             self,
             &mut envelope
                 .clone()
@@ -277,28 +275,22 @@ impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Symm> {
     }
 }
 
-//#[tonic::async_trait]
-impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Asymm> {
-    fn envelope_share_ids(&self) -> Option<BTreeSet<Role>> {
-        None::<BTreeSet<Role>>
-    }
-
+impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKeychain<S, Asymm, R> {
     async fn encrypt<T: Serialize + Versionize + Named + Send + Sync>(
         &mut self,
-        _payload_id: &RequestId,
-        payload: &T,
+        data: &T,
+        _data_type: &str,
     ) -> anyhow::Result<EnvelopeStore> {
         // generate a fresh data key
         let data_key = self.security_module.get_random(Aes256::key_size()).await?;
         let enc_data_key = self
             .root_key
             .pk
-            .encrypt(&mut OsRng, Oaep::new::<Sha256>(), data_key.as_ref())
+            .encrypt(&mut self.rng, Oaep::new::<Sha256>(), data_key.as_ref())
             .map_err(|e| anyhow_error_and_log(format!("Cannot encrypt data key: {e}")))?;
-
         // encrypt the app key under the data key
         let mut blob_bytes = Vec::new();
-        safe_serialize(payload, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
+        safe_serialize(data, &mut blob_bytes, SAFE_SER_SIZE_LIMIT)?;
         let iv = self.security_module.get_random(APP_BLOB_NONCE_SIZE).await?;
         let auth_tag = encrypt_under_data_key(&mut blob_bytes, &data_key, &iv)?;
         Ok(EnvelopeStore::AppKeyBlob(AppKeyBlob {
@@ -312,10 +304,9 @@ impl<S: SecurityModule + Sync + Send> Keychain for AWSKMSKeychain<S, Asymm> {
 
     async fn decrypt<T: DeserializeOwned + Unversionize + Named + Send>(
         &self,
-        _payload_id: &RequestId,
         envelope: &mut EnvelopeLoad,
     ) -> anyhow::Result<T> {
-        AWSKMSKeychain::<S, Asymm>::decrypt(
+        AWSKMSKeychain::<S, Asymm, R>::decrypt(
             self,
             &mut envelope
                 .clone()

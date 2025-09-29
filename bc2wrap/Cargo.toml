@@ -7,5 +7,8 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+# ⚠️ IMPORTANT: Add new dependencies to workspace root Cargo.toml, NOT here!
+# Use .workspace = true to reference workspace dependencies
+# Maintain alphabetical order
 bincode.workspace = true
 serde.workspace = true

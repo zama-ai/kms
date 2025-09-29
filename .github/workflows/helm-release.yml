@@ -1,4 +1,4 @@
-name: "Helm Chart Release"
+name: helm-release
 
 on:
   workflow_call:
@@ -8,16 +8,16 @@ env:
   HELM_VERSION: v3.16.4
 
 permissions:
-  contents: read
+  contents: read # Required to checkout repository code
 
 jobs:
   helm-release:
-    name: "Helm Chart Release"
+    name: helm-release/helm-release
     permissions:
-      actions: 'read'
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+      id-token: write # Required for OIDC authentication
+      packages: write # Required to publish Helm charts to GitHub packages
     runs-on: ubuntu-latest
     environment: main
     steps:
@@ -59,7 +59,7 @@ jobs:
       - name: Push Charts to GHCR
         if: ${{ always() }}
         env:
-          OCI_REGISTRY: "oci://ghcr.io/${{ github.repository }}/helm-charts"
+          OCI_REGISTRY: "oci://ghcr.io/${{ github.repository }}/charts"
         run: |
           for pkg in .cr-release-packages/*; do
             if [ -z "${pkg:-}" ]; then

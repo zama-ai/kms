@@ -5,6 +5,7 @@ use observability::telemetry::init_tracing;
 use peak_alloc::PeakAlloc;
 use threshold_fhe::conf::party::PartyConf;
 use threshold_fhe::grpc;
+use tokio_rustls::rustls::crypto::aws_lc_rs::default_provider;
 
 #[cfg(feature = "measure_memory")]
 #[global_allocator]
@@ -65,6 +66,7 @@ const EXTENSION_DEGREE: usize = 8;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    default_provider().install_default().unwrap();
     #[cfg(feature = "measure_memory")]
     threshold_fhe::allocator::MEM_ALLOCATOR.get_or_init(|| PEAK_ALLOC);
 

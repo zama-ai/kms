@@ -1,9 +1,13 @@
-name: Docker Build and Push nitro enclave
+name: common-nitro-enclave
 
 on:
   workflow_call:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
+      CGR_USERNAME:
+        required: true
+      CGR_PASSWORD:
         required: true
     inputs:
       ref:
@@ -57,9 +61,9 @@ permissions: {}
 jobs:
   determine-tag:
     permissions:
-      actions: read
-      contents: read
-    name: "Determine Docker Tag"
+      actions: read # Required to read workflow run information
+      contents: read # Required to checkout repository code
+    name: common-nitro-enclave/determine-tag
     runs-on: ubuntu-latest
     outputs:
       docker_tag: ${{ steps.set-tag.outputs.tag }}
@@ -74,22 +78,23 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
+          COMMIT_HASH: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           if [[ "${EVENT_NAME}" == "release" ]]; then
             echo "tag=${REF_NAME}" >> "$GITHUB_OUTPUT"
           elif [[ "${EVENT_NAME}" == "schedule" ]]; then
-            echo "tag=nightly-$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+            echo "tag=nightly-$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+            echo "tag=$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_OUTPUT"
           fi
 
   build-and-push-enclave:
     permissions:
-      actions: read
-      contents: write
-      attestations: write
-      packages: write
-      id-token: write
+      actions: read # Required to read workflow run information
+      contents: write # Required to publish packages
+      attestations: write # Required to write attestations
+      packages: write # Required to publish packages
+      id-token: write # Required for OIDC token generation
     needs: determine-tag
     outputs:
       image: ${{ steps.push.outputs.image }}
@@ -97,7 +102,7 @@ jobs:
       enclave_pcr0: ${{ steps.eif.outputs.eif_pcr0 }}
       enclave_pcr1: ${{ steps.eif.outputs.eif_pcr1 }}
       enclave_pcr2: ${{ steps.eif.outputs.eif_pcr2 }}
-    name: "Build and Push Enclave Docker Image"
+    name: common-nitro-enclave/build-and-push-enclave
     runs-on: 'ubuntu-latest'
     steps:
       - name: Checkout Project
@@ -133,12 +138,12 @@ jobs:
         if: github.event_name != 'release'
         env:
           EVENT_NAME: ${{ github.event_name }}
-          GITHUB_SHA: ${{ github.sha }}
+          COMMIT_HASH: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           if [[ "${EVENT_NAME}" == "schedule" ]]; then
-            echo "DOCKER_TAG_IMAGE=nightly-$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_ENV"
+            echo "DOCKER_TAG_IMAGE=nightly-$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_ENV"
           else
-            echo "DOCKER_TAG_IMAGE=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_ENV"
+            echo "DOCKER_TAG_IMAGE=$(git rev-parse --short "$COMMIT_HASH")" >> "$GITHUB_ENV"
           fi
 
       - name: Current Tag
@@ -164,17 +169,14 @@ jobs:
         uses: addnab/docker-run-action@4f65fabd2431ebc8d299f8e5a018d79a769ae185 #v3
         with:
           image: amazonlinux@sha256:5fe11d17e56571a26e20df3fa1493bdf9139fb9f2cb6d84fad13104c7b869217 # 2023.5.20240916.0
-          options: -v ${{ env.EIF_OUTPUT_DIR }}:/output -v ${{env.DOCKER_SOCK_PATH}}:/var/run/docker.sock
+          options: -v ${{ env.EIF_OUTPUT_DIR }}:/output -v ${{ env.DOCKER_SOCK_PATH}}:/var/run/docker.sock # zizmor: ignore[template-injection]
           run: |
             dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel docker -y
-
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u USERNAME --password-stdin
-
-            docker pull --platform=linux/amd64 ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }}
-
-            nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} --name ${{ inputs.image-name }} --output-file /output/enclave.eif
-
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u USERNAME --password-stdin # zizmor: ignore[template-injection]
+            docker pull --platform=linux/amd64 ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} # zizmor: ignore[template-injection]
+            nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/${{ inputs.image-name }}:${{ needs.determine-tag.outputs.docker_tag }} --name ${{ inputs.image-name }} --output-file /output/enclave.eif # zizmor: ignore[template-injection]
             nitro-cli describe-eif --eif-path /output/enclave.eif > /output/eif-info.txt
+
 
       - name: Export EIF measurements
         id: eif
@@ -236,11 +238,12 @@ jobs:
 
 
   provenance-prod:
+    name: common-nitro-enclave/provenance-prod
     permissions:
-      actions: 'read'
-      attestations: 'write'
-      packages: 'write'
-      id-token: write
+      actions: read # Required to read workflow run information
+      attestations: write # Required to write attestations
+      packages: write # Required to publish packages
+      id-token: write # Required for OIDC token generation
     needs: [build-and-push-enclave]
     if: github.event_name == 'release'
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0

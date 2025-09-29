@@ -174,7 +174,13 @@ impl StorageForBytes for FileStorage {
     ) -> anyhow::Result<()> {
         let path = self.item_path(data_id, data_type);
         self.setup_dirs(&path).await?;
-
+        if self.data_exists(data_id, data_type).await? {
+            tracing::warn!(
+                "The path {} already exists. Keeping the data without overwriting",
+                path.display()
+            );
+            return Ok(());
+        }
         write_bytes(path.as_path(), bytes).await.map_err(|e| {
             tracing::warn!("Could not write to path {}: {}", path.display(), e);
             e
@@ -204,7 +210,13 @@ impl Storage for FileStorage {
     ) -> anyhow::Result<()> {
         let path = self.item_path(data_id, data_type);
         self.setup_dirs(&path).await?;
-
+        if self.data_exists(data_id, data_type).await? {
+            tracing::warn!(
+                "The path {} already exists. Keeping the data without overwriting",
+                path.display()
+            );
+            return Ok(());
+        }
         safe_write_element_versioned(&path, data)
             .await
             .map_err(|e| {
@@ -227,7 +239,6 @@ pub mod tests {
     use kms_grpc::rpc_types::PubDataType;
     use strum::IntoEnumIterator;
     use threshold_fhe::execution::runtime::party::Role;
-
     #[ignore]
     #[tokio::test]
     async fn threshold_dev_storage() {
@@ -351,5 +362,20 @@ pub mod tests {
         test_storage_read_store_methods(&mut priv_storage).await;
         test_batch_helper_methods(&mut pub_storage).await;
         test_batch_helper_methods(&mut priv_storage).await;
+    }
+
+    /// Test that files don't get silently overwritten
+    #[tracing_test::traced_test]
+    #[tokio::test]
+    async fn test_overwrite_logic_files() {
+        // Setup temporary directory and storage
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut storage = FileStorage::new(Some(path), StorageType::PUB, None).unwrap();
+        test_store_bytes_does_not_overwrite_existing_bytes(&mut storage).await;
+        test_store_data_does_not_overwrite_existing_data(&mut storage).await;
+        assert!(logs_contain(
+            "already exists. Keeping the data without overwriting"
+        ));
     }
 }

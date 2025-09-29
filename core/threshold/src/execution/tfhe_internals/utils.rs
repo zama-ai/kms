@@ -257,15 +257,14 @@ where
 pub mod tests {
     use crate::algebra::base_ring::{Z128, Z64};
     use crate::algebra::galois_rings::common::ResiduePoly;
-    use crate::execution::tfhe_internals::compression_decompression_key::SnsCompressionPrivateKeyShares;
     use crate::execution::tfhe_internals::glwe_key::GlweSecretKeyShare;
     use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
+    use crate::execution::tfhe_internals::private_keysets::PrivateKeySet;
+    use crate::execution::tfhe_internals::sns_compression_key::SnsCompressionPrivateKeyShares;
     use crate::file_handling::tests::read_element;
     use crate::{
         algebra::structure_traits::ErrorCorrect,
-        execution::{
-            endpoints::keygen::PrivateKeySet, runtime::party::Role, sharing::share::Share,
-        },
+        execution::{runtime::party::Role, sharing::share::Share},
     };
     use itertools::Itertools;
     use std::collections::HashMap;
@@ -278,7 +277,9 @@ pub mod tests {
     fn reconstruct_bit_vec_from_glwe_share_enum<const EXTENSION_DEGREE: usize>(
         input: HashMap<
             Role,
-            crate::execution::endpoints::keygen::GlweSecretKeyShareEnum<EXTENSION_DEGREE>,
+            crate::execution::tfhe_internals::private_keysets::GlweSecretKeyShareEnum<
+                EXTENSION_DEGREE,
+            >,
         >,
         expected_num_bits: usize,
         threshold: usize,
@@ -294,14 +295,18 @@ pub mod tests {
         let some_key = input.keys().last().unwrap();
         let some_val = input.get(some_key).unwrap();
         match some_val {
-            crate::execution::endpoints::keygen::GlweSecretKeyShareEnum::Z64(_share) => {
+            crate::execution::tfhe_internals::private_keysets::GlweSecretKeyShareEnum::Z64(
+                _share,
+            ) => {
                 let input: HashMap<_, _> = input
                     .into_iter()
                     .map(|(k, v)| (k, v.unsafe_cast_to_z64().data))
                     .collect();
                 reconstruct_bit_vec::<Z64, EXTENSION_DEGREE>(input, expected_num_bits, threshold)
             }
-            crate::execution::endpoints::keygen::GlweSecretKeyShareEnum::Z128(_share) => {
+            crate::execution::tfhe_internals::private_keysets::GlweSecretKeyShareEnum::Z128(
+                _share,
+            ) => {
                 let input: HashMap<_, _> = input
                     .into_iter()
                     .map(|(k, v)| (k, v.unsafe_cast_to_z128().data))
@@ -356,7 +361,9 @@ pub mod tests {
     ) -> (
         HashMap<
             Role,
-            crate::execution::endpoints::keygen::GlweSecretKeyShareEnum<EXTENSION_DEGREE>,
+            crate::execution::tfhe_internals::private_keysets::GlweSecretKeyShareEnum<
+                EXTENSION_DEGREE,
+            >,
         >,
         HashMap<Role, Vec<Share<ResiduePoly<Z128, EXTENSION_DEGREE>>>>,
         HashMap<Role, SnsCompressionPrivateKeyShares<Z128, EXTENSION_DEGREE>>,

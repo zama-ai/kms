@@ -1,4 +1,4 @@
-{{- if .Values.kmsCore.enabled -}}
+{{- if or .Values.kmsCore.enabled .Values.kmsGenCertAndKeys.enabled -}}
 {{- $kmsCoreName := include "kmsCoreName" . }}
 {{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
 apiVersion: v1
@@ -8,16 +8,17 @@ metadata:
     app: kms-core
     app.kubernetes.io/name: {{ include "kmsCoreName" . }}
   annotations:
+    "helm.sh/hook": pre-install
     "helm.sh/hook-weight": "-2"
   name: {{ include "kmsCoreName" . }}-config
 data:
   aws.toml: |
     [aws]
     region = "${AWS_REGION}"
-    role_arn = "${AWS_ROLE_ARN}"
     {{ if .Values.minio.enabled }}
-    s3_endpoint = "http://minio:9000"
+    s3_endpoint = "{{ .Values.minio.endpoint }}"
     {{ else }}
+    role_arn = "${AWS_ROLE_ARN}"
       {{ if .Values.kmsCore.nitroEnclave.enabled }}
         {{ if .Values.kmsCore.nitroEnclave.ports.imds }}
     imds_endpoint = "http://localhost:{{ .Values.kmsCore.nitroEnclave.ports.imds }}"
@@ -33,31 +34,42 @@ data:
     {{ if .Values.kmsCore.publicVault.s3.enabled }}
     [public_vault.storage.s3]
     bucket = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__BUCKET}"
-      {{ if .Values.kmsCore.publicVault.s3.path }}
+      {{ if .Values.kmsCore.publicVault.s3.prefix }}
     prefix = "${KMS_CORE__PUBLIC_VAULT__STORAGE__S3__PREFIX}"
       {{ end }}
     {{ else }}
     [public_vault.storage.file]
-    path = "./keys"
+    path = "/keys"
     {{ end }}
-
 
     {{ if .Values.kmsCore.privateVault.s3.enabled }}
     [private_vault.storage.s3]
     bucket = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__BUCKET}"
-      {{ if .Values.kmsCore.publicVault.s3.path }}
+      {{ if .Values.kmsCore.publicVault.s3.prefix }}
     prefix = "${KMS_CORE__PRIVATE_VAULT__STORAGE__S3__PREFIX}"
       {{ end }}
 
     {{ else }}
     [private_vault.storage.file]
-    path = "./keys"
+    path = "/keys"
     {{ end }}
     {{ if .Values.kmsCore.nitroEnclave.enabled }}
     [private_vault.keychain.aws_kms]
     root_key_id = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID}"
     root_key_spec = "${KMS_CORE__PRIVATE_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC}"
     {{ end }}
+    {{- if .Values.kmsCore.backupVault.s3.enabled }}
+    [backup_vault.storage.s3]
+    bucket = "${KMS_CORE__BACKUP_VAULT__STORAGE__S3__BUCKET}"
+      {{- if .Values.kmsCore.backupVault.s3.prefix }}
+    prefix = "${KMS_CORE__BACKUP_VAULT__STORAGE__S3__PREFIX}"
+      {{- end }}
+    {{- end }}
+    {{- if .Values.kmsCore.backupVault.awskms.enabled }}
+    [backup_vault.keychain.aws_kms]
+    root_key_id = "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_ID}"
+    root_key_spec = "${KMS_CORE__BACKUP_VAULT__KEYCHAIN__AWS_KMS__ROOT_KEY_SPEC}"
+    {{- end }}
   kms-gen-keys.toml: |
     [keygen]
     enabled = true
@@ -184,16 +196,20 @@ data:
       {{- end }}
     {{- end }}
 
-    {{- if .Values.tracing.enabled }}
     [telemetry]
     tracing_service_name = {{ include "kmsCoreName" . | quote }}
+    {{- if .Values.tracing.enabled }}
       {{- if .Values.kmsCore.nitroEnclave.enabled }}
     tracing_endpoint = "http://localhost:{{ .Values.kmsCore.nitroEnclave.ports.tracing }}"
       {{- else }}
     tracing_endpoint = {{ .Values.tracing.endpoint | quote }}
       {{- end }}
+    {{- end }}
+
     tracing_otlp_timeout_ms = 10000
     metrics_bind_address = "0.0.0.0:{{ .Values.kmsCore.ports.metrics }}"
+    enable_sys_metrics = {{ .Values.kmsCore.thresholdMode.enableSysMetrics }}
+    refresh_interval_ms = {{ .Values.kmsCore.thresholdMode.refreshIntervalMs }}
 
     [telemetry.batch]
     max_queue_size = 8192
@@ -201,7 +217,6 @@ data:
     max_concurrent_exports = 4
     scheduled_delay_ms = 500
     export_timeout_ms = 5000
-    {{- end }}
 
     [rate_limiter_conf]
     bucket_size = {{ .Values.kmsCore.rateLimiter.bucketSize }}

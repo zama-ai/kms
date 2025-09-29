@@ -22,7 +22,7 @@
 
 ## References
 
-- [API](references/api/README.md)
+- [API](references/api/core_grpc.md)
 
 ## Explanations
 

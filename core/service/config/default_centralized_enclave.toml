@@ -38,3 +38,7 @@ bucket = "zama_kms_private_keys"
 [private_vault.keychain.aws_kms]
 root_key_id = "zama_kms_storage_root_key"
 root_key_spec = "symm"
+
+[backup_vault]
+[backup_vault.storage.file]
+path = "./backup_vault"

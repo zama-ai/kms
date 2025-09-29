@@ -26,7 +26,7 @@ use crate::{
             },
             triple::Triple,
         },
-        runtime::session::{LargeSession, ParameterHandles, SmallSession},
+        runtime::session::{DeSerializationRunTime, LargeSession, ParameterHandles, SmallSession},
         sharing::share::Share,
         small_execution::prf::PRSSConversions,
         tfhe_internals::parameters::{DKGParams, NoiseInfo},
@@ -34,11 +34,11 @@ use crate::{
 };
 use itertools::Itertools;
 use num_integer::div_ceil;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use tokio::{
     sync::{
         mpsc::{channel, Receiver, Sender},
-        Mutex,
+        Mutex, RwLock,
     },
     task::JoinSet,
 };
@@ -333,15 +333,20 @@ where
         #[cfg(feature = "choreographer")]
         tracing::Span::current().record("percentage_offline", self.percentage_offline);
 
-        let party_id = sessions[0].own_identity();
+        let party_id = sessions[0].my_role();
         for session in sessions.iter() {
-            assert_eq!(party_id, session.own_identity());
+            assert_eq!(party_id, session.my_role());
         }
 
         let (num_bits, num_triples, num_randomness) = self.num_correlated_randomness_required();
 
         //Ensures sessions are sorted by session id
         sessions.sort_by_key(|session| session.session_id());
+
+        // Set the deserialization runtime for each session
+        for session in sessions.iter_mut() {
+            session.set_deserialization_runtime(DeSerializationRunTime::Rayon);
+        }
 
         //Dedicate 1 in 20 sessions to raw triples, the rest to bits
         let num_basic_sessions = div_ceil(sessions.len(), 20);
@@ -439,9 +444,7 @@ where
         let dkg_preproc_return = Arc::into_inner(self.dkg_preproc).ok_or_else(|| {
             anyhow_error_and_log("Error getting hold of dkg preprocessing store inside the Arc")
         })?;
-        let dkg_preproc_return = dkg_preproc_return.into_inner().map_err(|_| {
-            anyhow_error_and_log("Error consuming dkg preprocessing inside the Lock")
-        })?;
+        let dkg_preproc_return = dkg_preproc_return.into_inner();
         Ok((res_sessions, dkg_preproc_return))
     }
 

@@ -18,6 +18,7 @@ pub mod online {
     pub mod malicious_gen_bits;
     pub mod preprocessing {
         pub mod orchestration {
+            #[cfg(feature = "extension_degree_4")]
             pub mod malicious_producer_traits;
             pub mod producer {
                 pub mod malicious_bit_producer;

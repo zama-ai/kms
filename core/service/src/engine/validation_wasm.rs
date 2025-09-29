@@ -11,7 +11,7 @@ use threshold_fhe::hashing::DomainSep;
 
 use crate::{
     anyhow_error_and_log,
-    client::{compute_link, ParsedUserDecryptionRequest},
+    client::user_decryption_wasm::{compute_link, ParsedUserDecryptionRequest},
     cryptography::{
         internal_crypto_types::{PublicEncKey, PublicSigKey, Signature, UnifiedPublicEncKey},
         signcryption::internal_verify_sig,
@@ -59,15 +59,18 @@ pub(crate) fn check_ext_user_decryption_signature(
     let sig =
         alloy_signer::Signature::from_bytes_and_parity(external_sig, external_sig[64] & 0x01 == 0);
 
-    // NOTE: we need to support legacy user_pk, so try to deserialize MlKem1024 first
+    // NOTE: we need to support legacy user_pk, so try to deserialize MlKem1024 encoded with bincode first
     let unified_pk =
         match bc2wrap::deserialize::<PublicEncKey<ml_kem::MlKem1024>>(request.enc_key()) {
             Ok(pk) => UnifiedPublicEncKey::MlKem1024(pk),
+            // in case the old deserialization fails, try the new format
             Err(_) => tfhe::safe_serialization::safe_deserialize::<UnifiedPublicEncKey>(
                 request.enc_key(),
                 crate::consts::SAFE_SER_SIZE_LIMIT,
             )
-            .map_err(|e| anyhow::anyhow!("Error deserializing UnifiedPublicEncKey: {e}"))?,
+            .map_err(|e| {
+                anyhow_error_and_log(format!("Error deserializing UnifiedPublicEncKey: {e}"))
+            })?,
         };
     let hash =
         crate::compute_user_decrypt_message_hash(payload, eip712_domain, &unified_pk, vec![])?;
@@ -129,7 +132,7 @@ fn validate_user_decrypt_meta_data_and_signature(
     let resp_verf_key: PublicSigKey = bc2wrap::deserialize(&other_resp.verification_key)?;
     let resp_addr = alloy_signer::utils::public_key_to_address(resp_verf_key.pk());
 
-    let expected_addr = if let Some(expected_addr) = server_addreses.get(&other_resp.party_id) {
+    let expected_addr = if let Some(expected_addr) = server_addreses.get(&(other_resp.party_id)) {
         if *expected_addr != resp_addr {
             anyhow::bail!(ERR_VALIDATE_USER_DECRYPTION_WRONG_ADDRESS)
         }
@@ -202,9 +205,10 @@ struct UserDecryptionResponseInvariants {
     signcrypted_ciphertext_metadata: Vec<TypedSigncryptedCiphertextInvariants>,
 }
 
-impl From<UserDecryptionResponsePayload> for UserDecryptionResponseInvariants {
-    fn from(value: UserDecryptionResponsePayload) -> Self {
-        Self {
+impl TryFrom<UserDecryptionResponsePayload> for UserDecryptionResponseInvariants {
+    type Error = anyhow::Error;
+    fn try_from(value: UserDecryptionResponsePayload) -> anyhow::Result<Self> {
+        Ok(Self {
             degree: value.degree,
             digest: value.digest,
             signcrypted_ciphertext_metadata: value
@@ -212,17 +216,17 @@ impl From<UserDecryptionResponsePayload> for UserDecryptionResponseInvariants {
                 .into_iter()
                 .map(|x| x.into())
                 .collect(),
-        }
+        })
     }
 }
 
 pub(crate) fn select_most_common<'a, P, T>(
     min_occurence: usize,
     agg_resp: impl Iterator<Item = Option<&'a P>>,
-) -> Option<usize>
+) -> anyhow::Result<Option<usize>>
 where
     P: Clone + 'a,
-    T: From<P> + std::cmp::Eq + std::hash::Hash,
+    T: TryFrom<P, Error = anyhow::Error> + std::cmp::Eq + std::hash::Hash,
 {
     // this hashmap is keyed on [T]
     // and its values contain a tuple (x, y), where x is the occurence and y is the original index
@@ -231,7 +235,7 @@ where
         match resp {
             Some(inner) => {
                 occurence_map
-                    .entry(inner.clone().into())
+                    .entry(inner.clone().try_into()?)
                     .or_insert_with(|| (0, i))
                     .0 += 1;
             }
@@ -247,7 +251,7 @@ where
         .sorted_by(|a, b| a.0.cmp(&b.0))
         .next_back();
 
-    match first {
+    Ok(match first {
         Some(inner) => {
             if inner.0 >= min_occurence {
                 Some(inner.1)
@@ -256,7 +260,7 @@ where
             }
         }
         None => None,
-    }
+    })
 }
 
 fn select_most_common_user_dec(
@@ -264,7 +268,13 @@ fn select_most_common_user_dec(
     agg_resp: &[UserDecryptionResponse],
 ) -> Option<UserDecryptionResponsePayload> {
     let iter = agg_resp.iter().map(|resp| resp.payload.as_ref());
-    let idx = select_most_common::<_, UserDecryptionResponseInvariants>(min_occurence, iter);
+    let idx = match select_most_common::<_, UserDecryptionResponseInvariants>(min_occurence, iter) {
+        Ok(x) => x,
+        Err(e) => {
+            tracing::error!("Error selecting most common user decryption response: {e}");
+            None
+        }
+    };
     idx.and_then(|i| agg_resp[i].payload.clone())
 }
 
@@ -441,11 +451,14 @@ mod tests {
     use rand::SeedableRng;
 
     use crate::{
-        client::{compute_link, CiphertextHandle, ParsedUserDecryptionRequest},
+        client::user_decryption_wasm::{
+            compute_link, CiphertextHandle, ParsedUserDecryptionRequest,
+        },
         cryptography::{
             internal_crypto_types::{gen_sig_keys, PublicSigKey, UnifiedPublicEncKey},
             signcryption::ephemeral_encryption_key_generation,
         },
+        dummy_domain,
         engine::{
             base::compute_external_user_decrypt_signature,
             validation_wasm::{
@@ -465,15 +478,6 @@ mod tests {
         ERR_VALIDATE_USER_DECRYPTION_FHETYPE_MISMATCH,
         ERR_VALIDATE_USER_DECRYPTION_MISSING_SIGNATURE,
     };
-
-    fn dummy_domain() -> alloy_sol_types::Eip712Domain {
-        alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        )
-    }
 
     #[test]
     fn test_check_ext_user_decryption_signature() {
@@ -496,7 +500,6 @@ mod tests {
             ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
 
-        let dummy_domain = dummy_domain();
         let ciphertext_handle = vec![5, 6, 7, 8];
 
         let mut enc_key_buf = Vec::new();
@@ -506,12 +509,14 @@ mod tests {
             crate::consts::SAFE_SER_SIZE_LIMIT,
         )
         .unwrap();
+
+        let domain = dummy_domain();
         let request = ParsedUserDecryptionRequest::new(
             None, // No signature is needed
             alloy_primitives::Address::from_public_key(client_vk.pk()),
             enc_key_buf,
             vec![CiphertextHandle::new(ciphertext_handle.clone())],
-            dummy_domain.verifying_contract.unwrap(),
+            domain.verifying_contract.unwrap(),
         );
 
         let payload = UserDecryptionResponsePayload {
@@ -529,7 +534,7 @@ mod tests {
         let external_sig = compute_external_user_decrypt_signature(
             &sk0,
             &payload,
-            &dummy_domain,
+            &domain,
             &eph_client_pk.to_unified(),
             vec![],
         )
@@ -541,7 +546,7 @@ mod tests {
                 &external_sig[0..64],
                 &payload,
                 &request,
-                &dummy_domain,
+                &domain,
                 &kms_addrs[&1],
             )
             .unwrap_err()
@@ -555,7 +560,7 @@ mod tests {
             let bad_external_sig = compute_external_user_decrypt_signature(
                 &sk_bad,
                 &payload,
-                &dummy_domain,
+                &domain,
                 &eph_client_pk.to_unified(),
                 vec![],
             )
@@ -564,7 +569,7 @@ mod tests {
                 &bad_external_sig,
                 &payload,
                 &request,
-                &dummy_domain,
+                &domain,
                 &kms_addrs[&1],
             )
             .is_err());
@@ -596,7 +601,7 @@ mod tests {
                 &external_sig,
                 &bad_payload,
                 &request,
-                &dummy_domain,
+                &domain,
                 &kms_addrs[&1],
             )
             .unwrap_err()
@@ -610,7 +615,7 @@ mod tests {
                 &external_sig,
                 &payload,
                 &request,
-                &dummy_domain,
+                &domain,
                 &kms_addrs[&1],
             )
             .unwrap();

@@ -1,4 +1,4 @@
-name: Common Update ArgoCD GitOps environment
+name: common-update-argocd
 
 on:
   workflow_call:
@@ -39,7 +39,7 @@ permissions: {}
 
 jobs:
   update-argocd-image-tag:
-    name: "Update ArgoCD Image Tag"
+    name: common-update-argocd/update-argocd-image-tag
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Project

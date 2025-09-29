@@ -52,10 +52,55 @@ When testing the `Test` parameters are _highly_ recommended to save time.
 
 ## Usage
 
+You can run the KMS Core Client either natively using Cargo or via Docker.
+
+### Native Installation
+
 1. Make sure the prerequisites above are met and that the configuration is set up correctly.
 2. Clone this repository and navigate to the project root directory.
 3. Build the project using `cargo build`.
 4. Run the tool with the desired command and with the appropriate configuration file. (See [below](#supported-operations) for details on commands.)
+
+### Docker Usage
+
+The KMS Core Client is also available as a Docker image that includes both the client and health check tools:
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/zama-ai/kms/core-client:latest
+
+# Run core client with configuration
+docker run -v ./core-client/config:/config \
+  ghcr.io/zama-ai/kms/core-client:latest \
+  kms-core-client -f /config/client_local_threshold.toml <command>
+
+# Example: Generate insecure keys
+docker run -v ./core-client/config:/config \
+  --network host \
+  ghcr.io/zama-ai/kms/core-client:latest \
+  kms-core-client -f /config/client_local_threshold.toml insecure-key-gen
+```
+
+The Docker image also includes the **kms-health-check** tool for monitoring KMS deployments:
+
+```bash
+# Check health of running KMS instance
+docker run --network host \
+  ghcr.io/zama-ai/kms/core-client:latest \
+  kms-health-check live --endpoint localhost:50100
+
+# Validate KMS server configuration
+docker run -v ./core/service/config:/config \
+  ghcr.io/zama-ai/kms/core-client:latest \
+  kms-health-check config --file /config/compose_1.toml
+
+# Get JSON output for monitoring systems
+docker run --network host \
+  ghcr.io/zama-ai/kms/core-client:latest \
+  kms-health-check --format json live --endpoint localhost:50100
+```
+
+See the [Health Monitoring](#health-monitoring) section below for more details on using the health check tool.
 
 
 Use the `-f` flag to specify the path to the [configuration file](#configuration-file).
@@ -282,3 +327,85 @@ Optional command line options for the public/user decryption command are:
     ```{bash}
     $ cargo run --bin kms-core-client -- -f core-client/config/client_local_threshold.toml -a -l public-decrypt --to-encrypt 0xC0FFEE --data-type euint32 -b 3 --key-id 948ddb338f9279d5b06a45911be7c93dd7f45c8d6bc66c36140470432bce7e06
     ```
+
+## Health Monitoring
+
+The `kms-health-check` tool (included in the Docker image) provides comprehensive health monitoring for KMS deployments:
+
+### Features
+- **Config Validation**: Validates KMS configuration files using actual server validation logic
+- **Connectivity Check**: Tests gRPC endpoint connectivity and latency
+- **Key Material Check**: Displays actual key IDs for FHE keys, CRS keys, and preprocessing material
+- **Peer Health**: Checks connectivity to all threshold peers with detailed key information
+- **JSON Output**: Machine-readable output for CI/CD and monitoring system integration
+
+### Basic Usage
+
+```bash
+# Check health of a running KMS instance
+kms-health-check live --endpoint localhost:50100
+
+# Validate a KMS configuration file
+kms-health-check config --file ./core/service/config/compose_1.toml
+
+# Full check (config validation + live instance check)
+kms-health-check full --config ./core/service/config/compose_1.toml --endpoint localhost:50100
+
+# JSON output for monitoring systems
+kms-health-check --format json live --endpoint localhost:50100
+
+# Verbose output for debugging
+kms-health-check live --endpoint localhost:50100 -vvv
+```
+
+### Docker Usage
+
+```bash
+# Check health from Docker
+docker run --network host \
+  ghcr.io/zama-ai/kms/core-client:latest \
+  kms-health-check live --endpoint localhost:50100
+
+# Validate configuration with volume mount
+docker run -v $(pwd)/core/service/config:/config \
+  ghcr.io/zama-ai/kms/core-client:latest \
+  kms-health-check config --file /config/compose_1.toml
+
+# Full check with config and live instance
+docker run -v $(pwd)/core/service/config:/config \
+  --network host \
+  ghcr.io/zama-ai/kms/core-client:latest \
+  kms-health-check full --config /config/compose_1.toml --endpoint localhost:50100
+```
+
+### Health Status Levels
+
+- **Optimal**: All nodes online and reachable
+- **Healthy**: Sufficient 2/3 majority but not all nodes online
+- **Degraded**: At least threshold + 1 nodes but below 2/3 majority
+- **Unhealthy**: Insufficient nodes for operations
+
+### Integration with CI/CD
+
+```bash
+# Use in CI/CD pipelines
+docker run -v $(pwd):/workspace \
+  ghcr.io/zama-ai/kms/core-client:latest \
+  kms-health-check config --file /workspace/config.toml || exit 1
+```
+
+### Kubernetes Health Probes
+
+```yaml
+readinessProbe:
+  exec:
+    command: ["/app/kms-core-client/bin/kms-health-check", "live", "--endpoint", "localhost:50100"]
+  periodSeconds: 30
+  timeoutSeconds: 10
+```
+
+### Exit Codes
+
+- `0`: Success (Optimal or Healthy status)
+- `1`: Warning (Degraded or Unhealthy status)
+- `2`: Error (Tool execution failure)
