@@ -178,28 +178,37 @@ jobs:
       - name: Setup kms-core with 13 parties
         run: |
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
-            helm install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
+            for i in {1..13}; do
+              helm install kms-service-threshold-"${i}"-"${NAMESPACE}"-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
+              --namespace "${NAMESPACE}" \
+              --version "${KMS_CHART_VERSION:-"1.3.0"}" \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-ci.yaml \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-"${i}"-kms-ci.yaml \
+              --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
+              --set kmsCore.image.tag="${IMAGE_TAG}"
+            done
+
+            kubectl wait --for=condition=ready pod -l app=kms-core -n "${NAMESPACE}" --timeout=120s
+
+            helm install kms-core-init oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
             --version "${KMS_CHART_VERSION:-"1.3.0"}" \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-1-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-2-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-3-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-4-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-5-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-6-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-7-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-8-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-9-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-10-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-11-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-12-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-13-kms-ci.yaml \
             --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
             --set kmsCore.image.tag="${IMAGE_TAG}"
+
+            kubectl wait --for=condition=complete job -l app=kms-threshold-init-job -n "${NAMESPACE}" --timeout=120s
+
+            helm install kms-core-gen-keys oci://ghcr.io/zama-ai/kms/charts/kms-core \
+            --namespace "${NAMESPACE}" \
+            --version "${KMS_CHART_VERSION:-"1.3.0"}" \
+            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
+            --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
+            --set kmsCore.image.tag="${IMAGE_TAG}"
+
+            kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys -n "${NAMESPACE}" --timeout=120s
           fi
+
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             helm install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
@@ -236,12 +245,6 @@ jobs:
             --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
             --set kmsCore.image.tag="${IMAGE_TAG}"
           fi
-
-      - name: Wait kms-core to be ready
-        run: |
-          kubectl wait --for=condition=complete job -l app=kms-threshold-init-job -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=ready pod -l app=kms-core -n "${NAMESPACE}" --timeout=120s
 
       - name: Run performance testing
         run: |
