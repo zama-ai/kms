@@ -176,6 +176,10 @@ jobs:
 
       - name: Setup kms-core with 13 parties
         run: |
+          ls -al ./ci
+          ls -al ./ci/kube-testing
+          ls -al ./ci/kube-testing/${DEPLOYMENT_TYPE}
+          echo "###################################################"
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
             helm install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
