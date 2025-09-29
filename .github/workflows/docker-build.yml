@@ -96,7 +96,7 @@ jobs:
   core-client:
     name: docker-build/core-client (bpr)
     needs:
-      # - start-amd64-runner
+      - start-amd64-runner
       - golden-image
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3d8b1adcb5504fef30223016d459e3e38b36f9d1
     permissions:
@@ -128,7 +128,7 @@ jobs:
   core-service:
     name: docker-build/core-service (bpr)
     needs:
-      # - start-amd64-runner
+      - start-amd64-runner
       - golden-image
     uses: zama-ai/ci-templates/.github/workflows/common-docker.yml@3d8b1adcb5504fef30223016d459e3e38b36f9d1
     permissions:
@@ -160,7 +160,7 @@ jobs:
   enclave:
     name: docker-build/core-service-enclave (bpr)
     needs:
-      # - start-amd64-runner
+      - start-amd64-runner
       - core-service
     uses: ./.github/workflows/common-nitro-enclave.yml
     permissions:
@@ -187,7 +187,7 @@ jobs:
   stop-runners:
     name: docker-build/stop-runners
     needs:
-      # - start-amd64-runner
+      - start-amd64-runner
       - golden-image
       - core-client
       - core-service
