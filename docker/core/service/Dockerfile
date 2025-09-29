@@ -28,6 +28,13 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
        /app/kms/target/${LTO_RELEASE}/kms-custodian \
     ./core/service/bin
 
+
+ARG YQ_VERSION=v4.47.2
+# Overridable arg to allow building for different architectures
+ARG TARGETARCH=amd64
+RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH} && \
+    chmod +x /usr/bin/yq
+
 ################################################################
 ## Third stage: Copy the binaries from preceding stages
 # This stage will be the final image
@@ -42,12 +49,6 @@ RUN apk update && apk add --no-cache \
     net-tools \
     libgcc \
     libstdc++
-
-ARG YQ_VERSION=v4.47.2
-# Overridable arg to allow building for different architectures
-ARG TARGETARCH=amd64
-RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH} && \
-    chmod +x /usr/bin/yq
 
 WORKDIR /app/kms/core/service
 
