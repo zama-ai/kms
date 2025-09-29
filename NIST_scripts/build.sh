@@ -2,7 +2,8 @@
 
 
 # A script, which can be executed with a single command in the
-# Baseline Platform, to automatically download the needed External Dependencies
+# Baseline Platform (Ubuntu Desktop 24.04.1 LTS),
+# to automatically download the needed External Dependencies
 # (if applicable), and perform the code compilation required to later execute/test the
 # proposed crypto-systems. Teams are encouraged to strive for a script that can obtain
 # the External Dependencies with a specific version, in order to favor reproducible

@@ -106,10 +106,13 @@ def parse_latency_basic_ops(data):
 
     if op == "encrypt":
         RESULT_MAP[parameters].encrypt_latency = latency
-    if op == "decrypt":
+    elif op == "decrypt":
         RESULT_MAP[parameters].decrypt_latency = latency
-    if op == "mul":
+    elif op == "mul":
         RESULT_MAP[parameters].mul_latency = latency
+    else:
+        print("Skipped op {} as it's not one we care about in NIST doc.".format(op))
+
 
 
 def parse_latency_file():

@@ -185,7 +185,7 @@ run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experime
 
 [tasks.tfhe-run-small-session-drop]
 env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="drop_all", EXPERIMENT_NAME="tfhe-small-session-drop"}
-run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-small"], fork = true }
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-small"], fork = true , cleanup_task = "shutdown"}
 
 [tasks.tfhe-run-small-session-malicious-bcast]
 env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="malicious_broadcast", EXPERIMENT_NAME="tfhe-small-session-malicious-bcast"}

@@ -73,7 +73,7 @@ impl ChoreoRuntime {
             .iter()
             .map(|(role, host)| {
                 let endpoint: &Uri = host;
-                tracing::debug!("connecting to endpoint: {:?}", endpoint);
+                println!("connecting to endpoint: {:?}", endpoint);
                 let channel = Channel::builder(endpoint.clone())
                     .timeout(*NETWORK_TIMEOUT_LONG)
                     .connect_lazy();

@@ -6,6 +6,7 @@
 #[path = "../utilities.rs"]
 mod utilities;
 
+use aes_prng::AesRng;
 #[cfg(not(feature = "measure_memory"))]
 use criterion::{measurement::WallTime, BenchmarkGroup, Criterion};
 use rand::prelude::*;
@@ -53,7 +54,7 @@ fn bench_transfer_latency<FheType, F>(
 {
     let bench_id = format!("{bench_name}::{fn_name}::{type_name}");
     c.bench_function(&bench_id, |b| {
-        let mut rng = thread_rng();
+        let mut rng = AesRng::from_entropy();
 
         let from_amount = FheType::encrypt(rng.gen::<u64>(), client_key);
         let to_amount = FheType::encrypt(rng.gen::<u64>(), client_key);
@@ -124,7 +125,7 @@ fn main() {
 
         rayon::broadcast(|_| set_server_key(sks.clone()));
         set_server_key(sks);
-        let mut rng = thread_rng();
+        let mut rng = AesRng::from_entropy();
 
         let from_amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
         let to_amount = FheUint64::encrypt(rng.gen::<u64>(), &cks);
