@@ -4,7 +4,7 @@ We take security seriously. If you discover a vulnerability, please follow the g
 
 ## Supported Versions
 
-Currently only v0.11.0 or newer is supported.
+Currently only v0.12.0 or newer is supported.
 
 ## Reporting a Vulnerability
 
