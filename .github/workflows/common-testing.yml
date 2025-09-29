@@ -158,7 +158,6 @@ jobs:
           username: ${{ secrets.CGR_USERNAME }}
           password: ${{ secrets.CGR_PASSWORD }}
 
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
         with:
@@ -175,7 +174,6 @@ jobs:
           platforms: linux/amd64,linux/arm64
           buildkitd-flags: --debug
 
-
       ############################################################################
       # Rust toolchain setup
       #
@@ -187,7 +185,7 @@ jobs:
           cache: false
 
       - name: Install cargo-llvm-cov & nextest
-        uses: taiki-e/install-action@1dd4d60a583436c5738af3d204f159f44d92f704  # v2.61.0
+        uses: taiki-e/install-action@1dd4d60a583436c5738af3d204f159f44d92f704 # v2.61.0
         with:
           tool: cargo-llvm-cov,nextest,grcov
 
@@ -214,6 +212,7 @@ jobs:
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           version: "26.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup usage of private repo
         env:
@@ -328,7 +327,7 @@ jobs:
 
       - name: Upload Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: junit-test-report-${{ env.TIMESTAMP }}
           path: /tmp/junit.xml
