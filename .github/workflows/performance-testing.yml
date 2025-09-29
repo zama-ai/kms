@@ -248,7 +248,7 @@ jobs:
 
       - name: Run performance testing
         run: |
-          kubectl apply -f ./ci/kube-testing/argo-workflow/rbac-runner-sa-kms-ci.yaml -n ${NAMESPACE}
+          kubectl apply -f ./ci/kube-testing/argo-workflow/rbac-runner-sa-kms-ci.yaml -n "${NAMESPACE}"
           sed -i "s/<version>/${IMAGE_TAG}/g" ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml
           argo submit -n argo ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml --log
 
@@ -272,4 +272,4 @@ jobs:
           done
           helm uninstall tkms-infra -n "${NAMESPACE}"
           helm uninstall sync-secrets -n "${NAMESPACE}"
-          kubectl delete -f ./ci/kube-testing/argo-workflow/rbac-runner-sa-kms-ci.yaml -n ${NAMESPACE}
+          kubectl delete -f ./ci/kube-testing/argo-workflow/rbac-runner-sa-kms-ci.yaml -n "${NAMESPACE}"
