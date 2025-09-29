@@ -198,7 +198,7 @@ jobs:
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-12-kms-ci.yaml \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-13-kms-ci.yaml \
             --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
-            --set kmsCore.image.tag="${IMAGE_TAG}" \
+            --set kmsCore.image.tag="${IMAGE_TAG}"
           fi
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             helm install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
