@@ -174,13 +174,6 @@ jobs:
             kubectl wait --for=condition=ready enclavenodegroups -l crossplane.io/claim-namespace="${NAMESPACE}" -n "${NAMESPACE}" --timeout=120s
           fi
 
-      - name: Login to zama.ai GitHub Container Registry
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-
       - name: Setup kms-core with 13 parties
         run: |
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
