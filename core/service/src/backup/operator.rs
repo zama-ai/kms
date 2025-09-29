@@ -46,7 +46,7 @@ use threshold_fhe::{
 };
 
 pub const DSEP_BACKUP_COMMITMENT: DomainSep = *b"BKUPCOMM";
-pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRREQ";
+pub(crate) const DSEP_BACKUP_RECOVERY: DomainSep = *b"BKUPRECO";
 const TIMESTAMP_VALIDATION_WINDOW_SECS: u64 = 24 * 3600; // 1 day
 
 #[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
