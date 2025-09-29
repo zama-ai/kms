@@ -98,15 +98,10 @@ RUN apk update && apk add --no-cache git && \
 
 
 ################################################################
-## Fourth stage: Build and install yq-go -- For development only with extra tools
+## Fourth stage: Build and install grpc_health_probe -- For development only with extra tools
 FROM --platform=$BUILDPLATFORM prod AS dev
-
-ARG YQ_VERSION=v4.47.2
-ARG TARGETARCH=amd64
 
 USER root
 COPY --from=go-builder /out/grpc_health_probe /bin/grpc_health_probe
-RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH} && \
-    chmod +x /usr/bin/yq
 
 CMD ["kms-server", "centralized"]
