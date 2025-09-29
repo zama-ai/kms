@@ -394,9 +394,15 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
 #[serial]
 async fn test_decrypt_after_recovery_threshold_negative() {
     decrypt_after_recovery_negative(5, 2).await;
-    logs_contain("Failed to parse custodian recovery output for");
-    logs_contain("Could not verify recovery validation material signature for custodian role 1");
-    logs_contain("Could not verify recovery validation material signature for custodian role 3");
+    assert!(logs_contain(
+        "Failed to parse custodian recovery output for"
+    ));
+    assert!(logs_contain(
+        "Could not verify recovery validation material signature for custodian role 1"
+    ));
+    assert!(logs_contain(
+        "Could not verify recovery validation material signature for custodian role 3"
+    ));
 }
 
 #[cfg(feature = "insecure")]

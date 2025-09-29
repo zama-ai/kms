@@ -850,7 +850,7 @@ mod tests {
         // 1 is not less than 2/2
         let result = Operator::new(Role::indexed_from_one(1), vec![], sig_key, 1, 2);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        logs_contain("t < n/2 is not satisfied");
+        assert!(logs_contain("t < n/2 is not satisfied"));
     }
 
     #[tracing_test::traced_test]
@@ -860,7 +860,7 @@ mod tests {
         let (_, sig_key) = gen_sig_keys(&mut rng);
         let result = Operator::new(Role::indexed_from_one(1), vec![], sig_key, 0, 2);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        logs_contain("t cannot be 0");
+        assert!(logs_contain("t cannot be 0"));
     }
 
     #[tracing_test::traced_test]
@@ -870,7 +870,7 @@ mod tests {
         let (_, sig_key) = gen_sig_keys(&mut rng);
         let result = Operator::new(Role::indexed_from_one(1), vec![], sig_key, 1, 0);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        logs_contain("n cannot be 0");
+        assert!(logs_contain("n cannot be 0"));
     }
 
     #[tracing_test::traced_test]
@@ -883,7 +883,7 @@ mod tests {
         let (_, sig_key) = gen_sig_keys(&mut rng);
         let result = Operator::new(Role::indexed_from_one(1), vec![msg], sig_key, 1, 3);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        logs_contain("Not enough custodian setup messages");
+        assert!(logs_contain("Not enough custodian setup messages"));
     }
 
     #[tracing_test::traced_test]
@@ -898,7 +898,7 @@ mod tests {
         let (_, sig_key) = gen_sig_keys(&mut rng);
         let result = Operator::new(Role::indexed_from_one(1), vec![msg], sig_key, 0, 1);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        logs_contain("Invalid header in custodian setup message");
+        assert!(logs_contain("Invalid header in custodian setup message"));
     }
 
     #[tracing_test::traced_test]
@@ -919,7 +919,7 @@ mod tests {
             3,
         );
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        logs_contain("Invalid timestamp in custodian setup message");
+        assert!(logs_contain("Invalid timestamp in custodian setup message"));
     }
 
     #[tracing_test::traced_test]
@@ -942,7 +942,9 @@ mod tests {
             3,
         );
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        logs_contain("Invalid custodian role in custodian setup message");
+        assert!(logs_contain(
+            "Invalid custodian role in custodian setup message"
+        ));
     }
 
     #[tracing_test::traced_test]
@@ -965,7 +967,9 @@ mod tests {
             1,
             3,
         );
-        logs_contain("Duplicate custodian role in custodian setup message");
+        assert!(logs_contain(
+            "Duplicate custodian role in custodian setup message"
+        ));
         // Things still pass since we have 2 custodians with unique roles
         assert!(result.is_ok());
     }
@@ -992,6 +996,6 @@ mod tests {
         );
         assert!(matches!(result, Err(BackupError::SetupError(_))));
         // Everyone shares the same role
-        logs_contain("Not enough valid custodian setup messages");
+        assert!(logs_contain("Not enough valid custodian setup messages"));
     }
 }

@@ -67,7 +67,9 @@ fn operator_setup() {
             custodian_count,
         );
         assert!(operator.is_ok());
-        logs_contain("Invalid header in custodian setup message from custodian 1");
+        assert!(logs_contain(
+            "Invalid header in custodian setup message from custodian 1"
+        ));
     }
 
     // use the wrong timestamp, setup should not fail
@@ -84,7 +86,9 @@ fn operator_setup() {
             custodian_count,
         );
         assert!(operator.is_ok());
-        logs_contain("Invalid timestamp in custodian setup message from custodian 2");
+        assert!(logs_contain(
+            "Invalid timestamp in custodian setup message from custodian 2"
+        ));
     }
 }
 
@@ -411,7 +415,7 @@ fn full_flow_malicious_custodian_init() {
         assert!(res.is_ok());
     }
     // Check that we indeed get a warning about the malicious custodian
-    logs_contain("Could not find custodian keys for role 2");
+    assert!(logs_contain("Could not find custodian keys for role 2"));
 }
 
 #[test]
