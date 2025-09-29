@@ -1,5 +1,6 @@
 {{- if .Values.kmsCoreClient.enabled -}}
-{{- $peersIDList := untilStep (include "kmsPeersStartID" . | int) (.Values.kmsPeers.count | add1 | int) 1  }}
+{{- $kmsCoreName := include "kmsCoreName" . }}
+{{- $peersIDList := untilStep (default 1 .Values.kmsPeers.id | int) (.Values.kmsPeers.count | add1 | int) 1  }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -22,13 +23,76 @@ data:
     fi
 
     cat <<EOF >>config.toml
-    s3_endpoint="${S3_ENDPOINT}"
-    object_folder=${OBJECT_FOLDER}
-    core_addresses=${CORE_ADDRESSES}
+    ########################################################################
+    # Config for a threshold deployment of n=4 cores with threshold t=1
+    # The type of the KMS ("centralized" or "threshold")
+    {{ if .Values.kmsCore.thresholdMode.enabled -}}
+    kms_type = "threshold"
+    {{- else }}
+    kms_type = "centralized"
+    {{- end }}
+
+    # The minimum number of matching responses required to have an honest majority
+    {{ if .Values.kmsCore.thresholdMode.enabled -}}
     num_majority=${NUM_MAJORITY}
+    {{- else }}
+    num_majority=1
+    {{- end }}
+
+    # The minimum number of responses required to reconstruct a value (e.g. in user decryption)
+    {{ if .Values.kmsCore.thresholdMode.enabled -}}
     num_reconstruct=${NUM_RECONSTRUCT}
+    {{- else }}
+    num_reconstruct=1
+    {{- end }}
+
+    # Decryption mode used in user decryption reconstruction.
+    # Options are NoiseFloodSmall and BitDecSmall.
+    # Must match the deployed core/service setting!
+    # Only relevant for threshold.
     decryption_mode=${DECRYPTION_MODE}
-    fhe_params=${FHE_PARAMETER:=Test}
+
+    # fhe_params = "Test" # Small, insecure parameters for testing
+    fhe_params=${FHE_PARAMETER:=Test} # Large, secure parameters
+
+    # List of connection info to each of the cores
+    {{ if .Values.kmsCore.thresholdMode.enabled -}}
+      {{- if .Values.kmsCore.thresholdMode.peersList }}
+      {{ range .Values.kmsCore.thresholdMode.peersList }}
+
+    [[cores]]
+    # The ID of the given KMS server (monotonically increasing positive integer starting at 1)
+    party_id = {{ int .id }}
+    # The address of the given KMS server, including the port
+    address = "{{ .host }}:{{ int .port }}"
+    # The S3 endpoint where the public material of the given server can be reached
+    s3_endpoint = "${S3_ENDPOINT}"
+    # The folder at the S3 endpoint where the data is stored
+    object_folder = "PUB-p{{ int .id }}"
+      {{ end }}
+      {{- else }}
+      {{ range $i := $peersIDList }}
+    [[cores]]
+    # The ID of the given KMS server (monotonically increasing positive integer starting at 1)
+    party_id = {{ int $i }}
+    # The address of the given KMS server, including the port
+    address = "http://{{- printf "%s-%d" $kmsCoreName $i }}:{{- $.Values.kmsCore.ports.client -}}"
+    # The S3 endpoint where the public material of the given server can be reached
+    s3_endpoint = "${S3_ENDPOINT}"
+    # The folder at the S3 endpoint where the data is stored
+    object_folder = "PUB-p{{ int $i }}"
+      {{ end }}
+      {{- end }}
+
+    {{- else }}
+
+    [[cores]]
+    party_id = 1
+    address = "http://{{- printf "%s-%d" $kmsCoreName 1 }}:{{- $.Values.kmsCore.ports.client -}}"
+    s3_endpoint = "${S3_ENDPOINT}"
+    object_folder = "PUB"
+
+    {{- end }}
     EOF
 
     # Keep the pod running
@@ -50,13 +114,76 @@ data:
     fi
 
     cat <<EOF >>config.toml
-    s3_endpoint="${S3_ENDPOINT}"
-    object_folder=${OBJECT_FOLDER}
-    core_addresses=${CORE_ADDRESSES}
+    ########################################################################
+    # Config for a threshold deployment of n=4 cores with threshold t=1
+    # The type of the KMS ("centralized" or "threshold")
+    {{ if .Values.kmsCore.thresholdMode.enabled -}}
+    kms_type = "threshold"
+    {{- else }}
+    kms_type = "centralized"
+    {{- end }}
+
+    # The minimum number of matching responses required to have an honest majority
+    {{ if .Values.kmsCore.thresholdMode.enabled -}}
     num_majority=${NUM_MAJORITY}
+    {{- else }}
+    num_majority=1
+    {{- end }}
+
+    # The minimum number of responses required to reconstruct a value (e.g. in user decryption)
+    {{ if .Values.kmsCore.thresholdMode.enabled -}}
     num_reconstruct=${NUM_RECONSTRUCT}
+    {{- else }}
+    num_reconstruct=1
+    {{- end }}
+
+    # Decryption mode used in user decryption reconstruction.
+    # Options are NoiseFloodSmall and BitDecSmall.
+    # Must match the deployed core/service setting!
+    # Only relevant for threshold.
     decryption_mode=${DECRYPTION_MODE}
-    fhe_params=${FHE_PARAMETER:=Test}
+
+    # fhe_params = "Test" # Small, insecure parameters for testing
+    fhe_params=${FHE_PARAMETER:=Test} # Large, secure parameters
+
+    # List of connection info to each of the cores
+    {{ if .Values.kmsCore.thresholdMode.enabled -}}
+      {{- if .Values.kmsCore.thresholdMode.peersList }}
+        {{ range .Values.kmsCore.thresholdMode.peersList }}
+
+    [[cores]]
+    # The ID of the given KMS server (monotonically increasing positive integer starting at 1)
+    party_id = {{ int .id }}
+    # The address of the given KMS server, including the port
+    address = "{{ .host }}:{{ int .port }}"
+    # The S3 endpoint where the public material of the given server can be reached
+    s3_endpoint = "${S3_ENDPOINT}"
+    # The folder at the S3 endpoint where the data is stored
+    object_folder = "PUB-p{{ int .id }}"
+        {{ end }}
+      {{- else }}
+        {{ range $i := $peersIDList }}
+    [[cores]]
+    # The ID of the given KMS server (monotonically increasing positive integer starting at 1)
+    party_id = {{ int $i }}
+    # The address of the given KMS server, including the port
+    address = "http://{{- printf "%s-%d" $kmsCoreName $i }}:{{- $.Values.kmsCore.ports.client -}}"
+    # The S3 endpoint where the public material of the given server can be reached
+    s3_endpoint = "${S3_ENDPOINT}"
+    # The folder at the S3 endpoint where the data is stored
+    object_folder = "PUB-p{{ int $i }}"
+        {{ end }}
+      {{- end }}
+
+    {{- else }}
+
+    [[cores]]
+    party_id = 1
+    address = "http://{{- printf "%s-%d" $kmsCoreName 1 }}:{{- $.Values.kmsCore.ports.client -}}"
+    s3_endpoint = "${S3_ENDPOINT}"
+    object_folder = "PUB"
+
+    {{- end }}
     EOF
 
     {{- range .Values.kmsCoreClientTesting.shell_command }}
