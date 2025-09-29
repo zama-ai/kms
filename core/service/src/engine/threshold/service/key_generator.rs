@@ -704,7 +704,7 @@ impl<
                         .into_iter()
                         .map(|x| x as u128)
                         .collect(),
-                    sns_params.polynomial_size,
+                    sns_params.polynomial_size(),
                 ),
                 sns_params,
             )),
@@ -859,7 +859,7 @@ impl<
                     }
                 };
 
-                let (client_key, _, _, _, _, _) = to_hl_client_key(
+                let (client_key, _, _, _, _, _, _) = to_hl_client_key(
                     &params,
                     dummy_lwe_secret_key,
                     bit_glwe_secret_key,
@@ -1198,6 +1198,7 @@ impl<
                 ),
             ),
             server_key_parts.6,
+            server_key_parts.7,
         );
 
         // just read the public key since we need it in the return type, but no need to update it
@@ -1369,6 +1370,7 @@ impl<
                 raw_decompression_key,
                 raw_noise_squashing_key,
                 _raw_noise_squashing_compression_key,
+                _raw_rerandomization_key,
                 _raw_tag,
             ) = pub_key_set.server_key.clone().into_raw_parts();
             (
