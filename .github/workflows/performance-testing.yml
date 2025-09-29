@@ -179,7 +179,7 @@ jobs:
         run: |
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
             for i in {1..13}; do
-              helm install kms-service-threshold-"${i}"-"${NAMESPACE}"-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
+              helm install kms-service-threshold-"${i}"-"${NAMESPACE}" oci://ghcr.io/zama-ai/kms/charts/kms-core \
               --namespace "${NAMESPACE}" \
               --version "${KMS_CHART_VERSION:-"1.3.0"}" \
               --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-ci.yaml \
@@ -253,12 +253,14 @@ jobs:
           argo submit -n argo ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml --log
 
       - name: Get logs from kms-core
+        if: always()
         run: |
           for i in {1..13}; do
             kubectl logs kms-service-threshold-"${i}"-"${NAMESPACE}"-core -c kms-core -n "${NAMESPACE}" > kms-core-"${i}"-logs.txt
           done
 
       - name: Upload kms-core logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: kms-core-logs
@@ -269,7 +271,10 @@ jobs:
         run: |
           for i in {1..13}; do
             helm uninstall kms-service-threshold-"${i}"-"${NAMESPACE}"-core -n "${NAMESPACE}"
+            kubectl delete cm -l app=kms-core -n "${NAMESPACE}"
           done
+          kubectl delete cm -l app=kms-core-client -n "${NAMESPACE}"
+          kubectl delete sts -l app=kms-core-client -n "${NAMESPACE}"
           helm uninstall tkms-infra -n "${NAMESPACE}"
           helm uninstall sync-secrets -n "${NAMESPACE}"
           kubectl delete -f ./ci/kube-testing/argo-workflow/rbac-runner-sa-kms-ci.yaml -n "${NAMESPACE}"
