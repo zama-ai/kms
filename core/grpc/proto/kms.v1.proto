@@ -659,53 +659,41 @@ enum NodeType {
   NODE_TYPE_THRESHOLD = 2;
 }
 
+// Health information for a peer node
+message PeerHealth {
+  // Peer party ID (for threshold mode)
+  uint32 peer_id = 1;
+  // Peer endpoint address
+  string endpoint = 2;
+  // Whether the peer is reachable
+  bool reachable = 3;
+  // Connection latency in milliseconds
+  uint32 latency_ms = 4;
+  // Error message if peer is unreachable
+  string error = 5;
+}
+
+message PeersFromContext {
+  RequestId context_id = 1;
+  uint32 my_party_id = 2;
+  uint32 threshold_required = 3; // Minimum nodes needed
+  uint32 nodes_reachable = 4; // Currently reachable nodes
+  HealthStatus status = 5; // Overall health status
+  repeated PeerHealth peers = 6;
+}
+
 // Response containing comprehensive health status
 message HealthStatusResponse {
-  // Overall health status
-  HealthStatus status = 1;
-
-  // Health information for a peer node
-  message PeerHealth {
-    // Peer party ID (for threshold mode)
-    uint32 peer_id = 1;
-
-    // Peer endpoint address
-    string endpoint = 2;
-
-    // Whether the peer is reachable
-    bool reachable = 3;
-
-    // Connection latency in milliseconds
-    uint32 latency_ms = 4;
-
-    // Storage info from peer
-    string storage_info = 5;
-
-    // Error message if peer is unreachable
-    string error = 6;
-
-    // Key IDs for FHE keys on peer (when available)
-    repeated string fhe_key_ids = 7;
-
-    // Key IDs for CRS keys on peer (when available)
-    repeated string crs_ids = 8;
-
-    // Key IDs for preprocessing keys on peer (when available)
-    repeated string preprocessing_key_ids = 9;
-  }
-
-  // Health status of all peers
-  repeated PeerHealth peers = 2;
+  // Health status of all peers for every contexts
+  repeated PeersFromContext peers_from_all_contexts = 1;
 
   // Self key material IDs and storage info
-  repeated string my_fhe_key_ids = 3;
-  repeated string my_crs_ids = 4;
-  repeated string my_preprocessing_key_ids = 5;
-  string my_storage_info = 6;
+  repeated string my_fhe_key_ids = 2;
+  repeated string my_crs_ids = 3;
+  repeated string my_preprocessing_key_ids = 4;
+  string my_storage_info = 5;
 
   // Runtime configuration info
-  NodeType node_type = 7;
-  uint32 my_party_id = 8; // Only for threshold mode
-  uint32 threshold_required = 9; // Minimum nodes needed
-  uint32 nodes_reachable = 10; // Currently reachable nodes
+  NodeType node_type = 6;
+
 }

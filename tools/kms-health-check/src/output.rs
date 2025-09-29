@@ -27,27 +27,12 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
         )?,
         HealthStatus::Degraded => writeln!(
             output,
-            "\n[WARN] Overall Status: Degraded - Reduced fault tolerance"
+            "\n[WARN] Overall Status: Degraded - Reduced fault tolerance or missing key material"
         )?,
         HealthStatus::Unhealthy => writeln!(
             output,
             "\n[ERROR] Overall Status: Unhealthy - Critical issues"
         )?,
-    }
-
-    // Node info
-    if let Some(node_info) = &result.node_info {
-        writeln!(output, "\n[NODE INFO]:")?;
-        writeln!(output, "  Type: {}", node_info.node_type)?;
-        if node_info.node_type == "threshold" {
-            writeln!(output, "  Party ID: {}", node_info.my_party_id)?;
-            writeln!(
-                output,
-                "  Threshold: {} required",
-                node_info.threshold_required
-            )?;
-            writeln!(output, "  Nodes Reachable: {}", node_info.nodes_reachable)?;
-        }
     }
 
     // Config validation
@@ -66,7 +51,7 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
 
     // Connectivity
     if let Some(conn) = &result.connectivity {
-        writeln!(output, "\n[CONNECTIVITY]:")?;
+        writeln!(output, "\n[CORE SERVICE CONNECTIVITY]:")?;
         if conn.reachable {
             writeln!(output, "  [OK] Reachable (latency: {}ms)", conn.latency_ms)?;
         } else {
@@ -88,7 +73,7 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
                     writeln!(output, "       - {}", key_id)?;
                 }
             }
-            writeln!(output, "  [OK] CRS Keys: {}", keys.crs_ids.len())?;
+            writeln!(output, "  [OK] CRS: {}", keys.crs_ids.len())?;
             if !keys.crs_ids.is_empty() {
                 for key_id in &keys.crs_ids {
                     writeln!(output, "       - {}", key_id)?;
@@ -137,55 +122,61 @@ fn print_text(result: &HealthCheckResult) -> Result<()> {
         }
     }
 
-    // Peer status for threshold
-    if let Some(peers) = &result.peer_status {
-        writeln!(output, "\n[PEER STATUS]:")?;
-        let reachable = peers.iter().filter(|p| p.reachable).count();
-        writeln!(output, "  {} of {} peers reachable", reachable, peers.len())?;
-
-        for peer in peers {
-            if peer.reachable {
+    // Peer status for threshold for each of the contexts
+    if let Some(contexts) = &result.context_info {
+        for context in contexts {
+            writeln!(
+                output,
+                "\n[CONTEXT {}]:",
+                context
+                    .context_id
+                    .clone()
+                    .map(|c| c.request_id)
+                    .unwrap_or_else(|| "UNKNOWN".to_string())
+            )?;
+            let self_info = &context.self_node_info;
+            writeln!(output, "\n  [NODE INFO]:")?;
+            writeln!(output, "    Type: {}", self_info.node_type)?;
+            if self_info.node_type == "threshold" {
+                writeln!(output, "    Party ID: {}", self_info.my_party_id)?;
                 writeln!(
                     output,
-                    "  [OK] Party {} @ {} ({}ms)",
-                    peer.peer_id, peer.endpoint, peer.latency_ms
+                    "    Threshold: {} required",
+                    self_info.threshold_required
                 )?;
-
-                // Display key material in consistent format with host
-                writeln!(output, "       FHE Keys: {}", peer.fhe_key_ids.len())?;
-                for key_id in &peer.fhe_key_ids {
-                    writeln!(output, "         - {}", key_id)?;
-                }
-
-                writeln!(output, "       CRS Keys: {}", peer.crs_ids.len())?;
-                for key_id in &peer.crs_ids {
-                    writeln!(output, "         - {}", key_id)?;
-                }
-
-                writeln!(
-                    output,
-                    "       Preprocessing: {}",
-                    peer.preprocessing_key_ids.len()
-                )?;
-                for key_id in &peer.preprocessing_key_ids {
-                    writeln!(output, "         - {}", key_id)?;
-                }
-
-                if !peer.storage_info.is_empty() {
-                    writeln!(output, "       Storage: {}", peer.storage_info)?;
-                }
-            } else {
-                writeln!(
-                    output,
-                    "  [FAIL] Party {} @ {}",
-                    peer.peer_id, peer.endpoint
-                )?;
-                writeln!(
-                    output,
-                    "         Error: {}",
-                    peer.error.as_ref().unwrap_or(&"Unreachable".to_string())
-                )?;
+                writeln!(output, "    Nodes Reachable: {}", self_info.nodes_reachable)?;
             }
+
+            writeln!(output, "\n  [PEER STATUS]:")?;
+            let reachable = context.peers_status.iter().filter(|p| p.reachable).count();
+            writeln!(
+                output,
+                "    {} of {} peers reachable",
+                reachable,
+                context.peers_status.len()
+            )?;
+
+            for peer in &context.peers_status {
+                if peer.reachable {
+                    writeln!(
+                        output,
+                        "    [OK] Party {} @ {} ({}ms)",
+                        peer.peer_id, peer.endpoint, peer.latency_ms
+                    )?;
+                } else {
+                    writeln!(
+                        output,
+                        "    [FAIL] Party {} @ {}",
+                        peer.peer_id, peer.endpoint
+                    )?;
+                    writeln!(
+                        output,
+                        "           Error: {}",
+                        peer.error.as_ref().unwrap_or(&"Unreachable".to_string())
+                    )?;
+                }
+            }
+            writeln!(output, "\n  {}", context.recommendation)?;
         }
     }
 

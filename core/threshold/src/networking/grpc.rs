@@ -1,12 +1,7 @@
 //! gRPC-based networking.
 
-mod gen {
-    #![allow(clippy::derive_partial_eq_without_eq)]
-    tonic::include_proto!("ddec_networking");
-}
-
-use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
-use self::gen::{SendValueRequest, SendValueResponse};
+use super::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
+use super::gen::{HealthCheckRequest, HealthCheckResponse, SendValueRequest, SendValueResponse};
 use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
 use super::tls::extract_subject_from_cert;
 use super::NetworkMode;
@@ -18,11 +13,13 @@ use crate::networking::constants::{
     NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
     SESSION_CLEANUP_INTERVAL_SECS, SESSION_STATUS_UPDATE_INTERVAL_SECS,
 };
+use crate::networking::health_check::HealthCheckSession;
 use crate::networking::Networking;
 use crate::session_id::SessionId;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, Weak};
 
 use tokio::sync::{
@@ -319,6 +316,48 @@ impl GrpcNetworkingManager {
         })
     }
 
+    pub async fn make_healthcheck_session(
+        &self,
+        context_id: SessionId,
+        role_assignment: &RoleAssignment,
+        my_role: Role,
+    ) -> anyhow::Result<HealthCheckSession> {
+        let mut others = role_assignment.clone();
+
+        // Removing self from the role_assignment map
+        // as we only want to connect to others.
+        // Store my own identity in the session
+        let owner = match others.remove(&my_role) {
+            Some(owner) => owner,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "My role {:?} not found in role assignment {:?}",
+                    my_role,
+                    role_assignment
+                ));
+            }
+        };
+
+        let mut connection_channels = HashMap::new();
+        for (role, identity) in others.inner.into_iter() {
+            let channel = self
+                .sending_service
+                .connect_to_party(identity.clone())
+                .await?;
+            connection_channels.insert((role, identity), channel);
+        }
+
+        Ok(HealthCheckSession::new(
+            owner,
+            my_role,
+            context_id,
+            // We use the same timeout in HealthCheck than
+            // in Sync MPC protocols
+            self.conf.get_network_timeout(),
+            connection_channels,
+        ))
+    }
+
     /// Create a new session from the network manager.
     ///
     /// All the communication are performed using sessions.
@@ -335,6 +374,9 @@ impl GrpcNetworkingManager {
         let party_count = role_assignment.len();
         let mut others = role_assignment.clone();
 
+        // Removing self from the role_assignment map
+        // as we only want to connect to others.
+        // Store my own identity in the session
         let owner = match others.remove(&my_role) {
             Some(owner) => owner,
             None => {
@@ -809,17 +851,17 @@ fn parse_identity_context_from_cert(
 // Verify that the sender in the tag matches the identity extracted from the TLS certificate
 fn sender_verification(
     #[cfg(feature = "testing")] force_tls: bool,
-    tag: &Tag,
+    tag_sender: &MpcIdentity,
     valid_tls_sender: Option<String>,
 ) -> Result<(), Box<tonic::Status>> {
     if let Some(sender) = valid_tls_sender {
         // tag.sender is an the MPC identity, this should match the CN in the certificate
-        if sender != tag.sender.0 {
+        if sender != tag_sender.0 {
             return Err(Box::new(tonic::Status::new(
                 tonic::Code::Unauthenticated,
                 format!(
                     "wrong sender: expected {sender} to be in in tag {}",
-                    tag.sender
+                    tag_sender
                 ),
             )));
         }
@@ -858,12 +900,48 @@ fn sender_verification(
             )));
         }
     }
-    tracing::debug!("passed sender verification, tag is {:?}", tag);
     Ok(())
 }
 
 #[async_trait]
 impl Gnetworking for NetworkingImpl {
+    async fn health_check(
+        &self,
+        request: tonic::Request<HealthCheckRequest>,
+    ) -> std::result::Result<tonic::Response<HealthCheckResponse>, tonic::Status> {
+        // Perform the exact same check as we do for a "real" MPC message
+        let valid_tls_sender_and_context = match self.tls_extension {
+            TlsExtensionGetter::TlsConnectInfo => request
+                .extensions()
+                .get::<tonic::transport::server::TlsConnectInfo<TcpConnectInfo>>()
+                .and_then(|i| i.peer_certs().map(parse_identity_context_from_cert)),
+            TlsExtensionGetter::SslConnectInfo => request
+                .extensions()
+                .get::<tonic_tls::rustls::SslConnectInfo<TcpConnectInfo>>()
+                .and_then(|i| i.peer_certs().map(parse_identity_context_from_cert)),
+        }
+        .transpose()
+        .map_err(|boxed| *boxed)?;
+        let request = request.into_inner();
+        let health_tag = bc2wrap::deserialize_safe::<HealthTag>(&request.tag).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("failed to parse value: {} as a HealthTag", e),
+            )
+        })?;
+
+        sender_verification(
+            #[cfg(feature = "testing")]
+            self.force_tls,
+            &health_tag.sender,
+            valid_tls_sender_and_context.map(|(sender, _)| sender),
+        )
+        .map_err(|e| *e)?;
+
+        tracing::info!("Received a HealthPing from {}", health_tag.sender);
+        Ok(tonic::Response::new(HealthCheckResponse::default()))
+    }
+
     async fn send_value(
         &self,
         request: tonic::Request<SendValueRequest>,
@@ -889,7 +967,7 @@ impl Gnetworking for NetworkingImpl {
         .map_err(|boxed| *boxed)?;
 
         let request = request.into_inner();
-        let tag = bc2wrap::deserialize::<Tag>(&request.tag).map_err(|e| {
+        let tag = bc2wrap::deserialize_safe::<Tag>(&request.tag).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 format!("failed to parse value: {}", e),
@@ -903,6 +981,21 @@ impl Gnetworking for NetworkingImpl {
             None => tag.context_id,
         };
 
+        sender_verification(
+            #[cfg(feature = "testing")]
+            self.force_tls,
+            &tag.sender,
+            valid_tls_sender_and_context.map(|(sender, _)| sender),
+        )
+        .map_err(|e| *e)?;
+
+        tracing::debug!(
+            "Starting session lookup for session_id={:?}, sender={:?}, round={}",
+            tag.session_id,
+            tag.sender,
+            tag.round_counter
+        );
+
         #[cfg(feature = "choreographer")]
         {
             match NETWORK_RECEIVED_MEASUREMENT.entry(tag.session_id) {
@@ -915,21 +1008,6 @@ impl Gnetworking for NetworkingImpl {
                 }
             };
         }
-
-        sender_verification(
-            #[cfg(feature = "testing")]
-            self.force_tls,
-            &tag,
-            valid_tls_sender_and_context.map(|(sender, _)| sender),
-        )
-        .map_err(|e| *e)?;
-
-        tracing::debug!(
-            "Starting session lookup for session_id={:?}, sender={:?}, round={}",
-            tag.session_id,
-            tag.sender,
-            tag.round_counter
-        );
 
         // First try with only read lock to avoid blocking
         let tx = if let Some(session_status) = self.session_store.get(&tag.session_id) {
@@ -1036,4 +1114,10 @@ pub struct Tag {
     pub(crate) sender: MpcIdentity,
     pub(crate) context_id: SessionId,
     pub(crate) round_counter: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HealthTag {
+    pub(crate) sender: MpcIdentity,
+    pub(crate) context_id: SessionId,
 }

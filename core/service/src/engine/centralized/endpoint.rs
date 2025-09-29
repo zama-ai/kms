@@ -7,7 +7,7 @@ use crate::engine::utils::query_key_material_availability;
 use crate::vault::storage::Storage;
 use kms_grpc::kms::v1::{
     self, CustodianRecoveryRequest, Empty, HealthStatusResponse, InitRequest, KeyGenPreprocRequest,
-    KeyGenPreprocResult, KeyMaterialAvailabilityResponse, OperatorPublicKey,
+    KeyGenPreprocResult, KeyMaterialAvailabilityResponse, NodeType, OperatorPublicKey,
 };
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpoint;
 use kms_grpc::rpc_types::KMSType;
@@ -409,16 +409,12 @@ impl<
 
         // Centralized mode has no peers, always optimal if reachable
         let response = HealthStatusResponse {
-            status: 1,         // HEALTH_STATUS_OPTIMAL
-            peers: Vec::new(), // No peers in centralized mode
+            peers_from_all_contexts: Vec::new(),
             my_fhe_key_ids: own_material.fhe_key_ids,
             my_crs_ids: own_material.crs_ids,
             my_preprocessing_key_ids: Vec::new(), // Centralized doesn't use preprocessing
             my_storage_info: own_material.storage_info,
-            node_type: 1,          // NODE_TYPE_CENTRALIZED
-            my_party_id: 1,        // Not applicable for centralized
-            threshold_required: 0, // Not applicable for centralized
-            nodes_reachable: 1,    // Only self
+            node_type: NodeType::Centralized.into(), // NODE_TYPE_CENTRALIZED
         };
 
         Ok(Response::new(response))
