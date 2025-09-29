@@ -20,17 +20,13 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,target=/app/${APP_CACHE_DIR}/target,sharing=locked \
     cargo build  --locked --profile=${LTO_RELEASE} -p kms --bin kms-server --bin kms-gen-tls-certs --bin kms-init -F insecure && \
-    cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-gen-keys -F testing -F insecure && \
+    cargo build --locked --profile=${LTO_RELEASE} -p kms --bin kms-gen-keys --bin kms-custodian -F testing -F insecure && \
     cp /app/kms/target/${LTO_RELEASE}/kms-server \
        /app/kms/target/${LTO_RELEASE}/kms-gen-tls-certs \
        /app/kms/target/${LTO_RELEASE}/kms-init \
        /app/kms/target/${LTO_RELEASE}/kms-gen-keys \
+       /app/kms/target/${LTO_RELEASE}/kms-custodian \
     ./core/service/bin
-
-ARG YQ_VERSION=v4.47.2
-# Overridable arg to allow building for different architectures
-ARG TARGETARCH=amd64
-RUN wget -qO/usr/bin/yq https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_${TARGETARCH}
 
 ################################################################
 ## Third stage: Copy the binaries from preceding stages
