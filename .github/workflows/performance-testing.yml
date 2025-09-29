@@ -190,7 +190,7 @@ jobs:
 
             kubectl wait --for=condition=ready pod -l app=kms-core -n "${NAMESPACE}" --timeout=600s
 
-            helm install kms-core-init oci://ghcr.io/zama-ai/kms/charts/kms-core \
+            helm upgrade --install kms-core-init oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
             --version "${KMS_CHART_VERSION:-"1.3.0"}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml \
@@ -199,7 +199,7 @@ jobs:
 
             kubectl wait --for=condition=complete job -l app=kms-threshold-init-job -n "${NAMESPACE}" --timeout=600s
 
-            helm install kms-core-gen-keys oci://ghcr.io/zama-ai/kms/charts/kms-core \
+            helm upgrade --install kms-core-gen-keys oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
             --version "${KMS_CHART_VERSION:-"1.3.0"}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
@@ -270,7 +270,7 @@ jobs:
         if: always()
         run: |
           for i in {1..13}; do
-            helm uninstall kms-service-threshold-"${i}"-"${NAMESPACE}"-core -n "${NAMESPACE}"
+            helm uninstall kms-service-threshold-"${i}"-"${NAMESPACE}" -n "${NAMESPACE}"
             kubectl delete cm -l app=kms-core -n "${NAMESPACE}"
           done
           kubectl delete cm -l app=kms-core-client -n "${NAMESPACE}"
