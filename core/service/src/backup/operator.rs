@@ -842,7 +842,6 @@ mod tests {
         }
     }
 
-    #[tracing_test::traced_test]
     #[test]
     fn operator_new_fails_with_bad_n_t() {
         let mut rng = AesRng::seed_from_u64(1);
@@ -850,30 +849,31 @@ mod tests {
         // 1 is not less than 2/2
         let result = Operator::new(Role::indexed_from_one(1), vec![], sig_key, 1, 2);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        assert!(logs_contain("t < n/2 is not satisfied"));
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("t < n/2 is not satisfied"));
     }
 
-    #[tracing_test::traced_test]
     #[test]
     fn operator_new_fails_with_zero_t() {
         let mut rng = AesRng::seed_from_u64(2);
         let (_, sig_key) = gen_sig_keys(&mut rng);
         let result = Operator::new(Role::indexed_from_one(1), vec![], sig_key, 0, 2);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        assert!(logs_contain("t cannot be 0"));
+        assert!(result.err().unwrap().to_string().contains("t cannot be 0"));
     }
 
-    #[tracing_test::traced_test]
     #[test]
     fn operator_new_fails_with_zero_n() {
         let mut rng = AesRng::seed_from_u64(3);
         let (_, sig_key) = gen_sig_keys(&mut rng);
         let result = Operator::new(Role::indexed_from_one(1), vec![], sig_key, 1, 0);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        assert!(logs_contain("n cannot be 0"));
+        assert!(result.err().unwrap().to_string().contains("n cannot be 0"));
     }
 
-    #[tracing_test::traced_test]
     #[test]
     fn operator_new_fails_with_insufficient_messages() {
         let mut rng = AesRng::seed_from_u64(4);
@@ -883,7 +883,11 @@ mod tests {
         let (_, sig_key) = gen_sig_keys(&mut rng);
         let result = Operator::new(Role::indexed_from_one(1), vec![msg], sig_key, 1, 3);
         assert!(matches!(result, Err(BackupError::SetupError(_))));
-        assert!(logs_contain("Not enough custodian setup messages"));
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("Not enough custodian setup messages"));
     }
 
     #[tracing_test::traced_test]
@@ -892,12 +896,23 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(5);
         let (enc_key, _) = keygen(&mut rng).unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
-        let mut msg =
+        let mut msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
-        msg.header = "wrong header".to_string();
+        let msg2 =
+            valid_custodian_msg(Role::indexed_from_one(2), enc_key.clone(), verf_key.clone());
+        let msg3 =
+            valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
+        msg1.header = "wrong header".to_string();
         let (_, sig_key) = gen_sig_keys(&mut rng);
-        let result = Operator::new(Role::indexed_from_one(1), vec![msg], sig_key, 0, 1);
-        assert!(matches!(result, Err(BackupError::SetupError(_))));
+        let result = Operator::new(
+            Role::indexed_from_one(1),
+            vec![msg1, msg2, msg3],
+            sig_key,
+            1,
+            3,
+        );
+        // The result is ok since we only fail in one message
+        assert!(result.is_ok());
         assert!(logs_contain("Invalid header in custodian setup message"));
     }
 
@@ -907,18 +922,23 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(6);
         let (enc_key, _) = keygen(&mut rng).unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
-        let mut msg =
+        let mut msg1 =
             valid_custodian_msg(Role::indexed_from_one(1), enc_key.clone(), verf_key.clone());
-        msg.timestamp = 0; // way out of range
+        msg1.timestamp = 0; // way out of range
+        let msg2 =
+            valid_custodian_msg(Role::indexed_from_one(2), enc_key.clone(), verf_key.clone());
+        let msg3 =
+            valid_custodian_msg(Role::indexed_from_one(3), enc_key.clone(), verf_key.clone());
         let (_, sig_key) = gen_sig_keys(&mut rng);
         let result = Operator::new(
             Role::indexed_from_one(1),
-            vec![msg.clone(), msg.clone(), msg.clone()],
+            vec![msg1.clone(), msg2.clone(), msg3.clone()],
             sig_key,
             1,
             3,
         );
-        assert!(matches!(result, Err(BackupError::SetupError(_))));
+        // The result is ok since we only fail in one message
+        assert!(result.is_ok());
         assert!(logs_contain("Invalid timestamp in custodian setup message"));
     }
 
@@ -928,20 +948,35 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(7);
         let (enc_key, _) = keygen(&mut rng).unwrap();
         let (verf_key, _) = gen_sig_keys(&mut rng);
-        let msg = valid_custodian_msg(
+        let msg1 = valid_custodian_msg(
             Role::indexed_from_one(10),
+            enc_key.clone(),
+            verf_key.clone(),
+        );
+        let msg2 = valid_custodian_msg(
+            Role::indexed_from_one(11),
+            enc_key.clone(),
+            verf_key.clone(),
+        );
+        let msg3 = valid_custodian_msg(
+            Role::indexed_from_one(12),
             enc_key.clone(),
             verf_key.clone(),
         );
         let (_, sig_key) = gen_sig_keys(&mut rng);
         let result = Operator::new(
             Role::indexed_from_one(1),
-            vec![msg.clone(), msg.clone(), msg.clone()],
+            vec![msg1.clone(), msg2.clone(), msg3.clone()],
             sig_key,
             1,
             3,
         );
         assert!(matches!(result, Err(BackupError::SetupError(_))));
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("Not enough valid custodian setup messages"));
         assert!(logs_contain(
             "Invalid custodian role in custodian setup message"
         ));
@@ -995,7 +1030,14 @@ mod tests {
             3,
         );
         assert!(matches!(result, Err(BackupError::SetupError(_))));
+        assert!(logs_contain(
+            "Duplicate custodian role in custodian setup message"
+        ));
         // Everyone shares the same role
-        assert!(logs_contain("Not enough valid custodian setup messages"));
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("Not enough valid custodian setup messages"));
     }
 }
