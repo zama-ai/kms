@@ -593,6 +593,7 @@ mod tests {
                 decompression_key,
                 sns_key,
                 _sns_compression_key,
+                _rerand_key,
                 _tag,
             ) = keyset.public_keys.server_key.into_raw_parts();
 

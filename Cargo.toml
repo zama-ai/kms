@@ -70,8 +70,8 @@ aes-gcm-siv = "=0.11.1"  # AES-GCM-SIV authenticated encryption - LOW RISK: Rust
 aes-prng = "=0.2.1"  # AES-based PRNG for deterministic randomness - LOW RISK: Maintained by @mortendahl (ZAMA) and Dragos
 alloy-dyn-abi = "=1.3.1"  # Ethereum ABI encoding - LOW RISK: Alloy/Paradigm team, reputable, growing ecosystem
 alloy-primitives = "=1.3.1"  # Ethereum primitives - LOW RISK: Alloy/Paradigm team
-alloy-signer = "=1.0.30"  # Ethereum signing abstraction - LOW RISK: Alloy/Paradigm team
-alloy-signer-local = "=1.0.30"  # Local Ethereum signer - LOW RISK: Alloy/Paradigm team
+alloy-signer = "=1.0.36"  # Ethereum signing abstraction - LOW RISK: Alloy/Paradigm team
+alloy-signer-local = "=1.0.36"  # Local Ethereum signer - LOW RISK: Alloy/Paradigm team
 alloy-sol-types = "=1.3.1"  # Solidity types & EIP-712 - LOW RISK: Alloy/Paradigm team
 anyhow = "=1.0.98"  # Error handling - MEDIUM RISK: Reputable individual maintainer (dtolnay), 410M downloadss
 assert_cmd = "=2.0.17"  # Assert command for testing - LOW RISK: assert-rs team, 1M+ downloads
@@ -152,7 +152,7 @@ reqwest = { version = "=0.12.22", default-features = false, features = ["json", 
 rsa = { version = "=0.9.8", features = ["sha2", "serde"] }  # RSA public key cryptography - LOW RISK: RustCrypto org
 rstest = "=0.25.0"  # Test framework - HIGH RISK: Individual maintainer (la10736), test-only dependency
 schemars = "=0.8.22"  # JSON Schema generation - HIGH RISK: Individual maintainer (GREsau), despite popularity, 81M+ downloads
-serde = { version = "1.0.223", features = ["derive", "rc"] }  # Serialization framework - MEDIUM RISK: Reputable individual maintainer (dtolnay), 641M downloads
+serde = { version = "1.0.226", features = ["derive", "rc"] }  # Serialization framework - MEDIUM RISK: Reputable individual maintainer (dtolnay), 641M downloads
 serde-wasm-bindgen = { version = "=0.6.5" }  # Serde integration for wasm-bindgen - HIGH RISK: Individual maintainer (RReverser), despite 37M+ downloads
 serde_json = "=1.0.145"  # JSON serialization - MEDIUM RISK: Reputable individual maintainer (dtolnay), 563M downloads
 serial_test = "=3.2.0"  # Serial test execution - HIGH RISK: Individual maintainer (palfrey), test-only dependency
@@ -166,10 +166,10 @@ syn = { version = "2.0", features = ["full"] }  # Syn macro parsing - MEDIUM RIS
 sysinfo = "0.36.1"  # System information gathering - MEDIUM RISK: Reputable individual maintainer (GuillaumeGomez), 71M+ downloads
 tempfile = "=3.20.0"  # Temporary file handling - MEDIUM RISK: Individual maintainers (Stebalien, KodrAus), 345M+ downloads, test-only dependency
 test-context = "=0.4.1"  # Test context utilities - MEDIUM RISK: Individual maintainers (markhildreth, JasperV), test-only dependency
-tfhe = "=1.3.3"  # Fully Homomorphic Encryption library - LOW RISK: Zama
-tfhe-csprng = "=0.6.0"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
-tfhe-versionable = "=0.6.1"  # TFHE versioning support - LOW RISK: Zama
-tfhe-zk-pok = "=0.7.2"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
+tfhe = "=1.4.0-alpha.2"  # Fully Homomorphic Encryption library - LOW RISK: Zama
+tfhe-csprng = "=0.7.0"  # Cryptographically secure PRNG for TFHE - LOW RISK: Zama
+tfhe-versionable = "=0.6.2"  # TFHE versioning support - LOW RISK: Zama
+tfhe-zk-pok = "=0.7.3"  # Zero-knowledge proofs for TFHE - LOW RISK: Zama
 thiserror = "=2.0.12"  # Error derive macro - MEDIUM RISK: Reputable individual maintainer (dtolnay), 545M downloads
 tokio = { version = "=1.46.1", features = ["full"] }  # Async runtime - LOW RISK: tokio team, industry standard
 tokio-rustls = { version = "=0.26.2", default-features = false, features = ["aws_lc_rs"] }  # Async TLS - LOW RISK: rustls team, memory-safe TLS implementation

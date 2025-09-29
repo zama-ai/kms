@@ -69,7 +69,7 @@ fn ddec_nsmall(c: &mut Criterion) {
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
                 .unwrap();
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
-        let (raw_ct, _id, _tag) = ct.into_raw_parts();
+        let (raw_ct, _id, _tag, _rerand_metadata) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
         let roles = generate_fixed_roles(config.n);
@@ -124,7 +124,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
             keygen_all_party_shares_from_keyset(&keyset, params, &mut rng, config.n, config.t)
                 .unwrap();
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
-        let (raw_ct, _id, _tag) = ct.into_raw_parts();
+        let (raw_ct, _id, _tag, _rerand_metadata) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
         let roles = generate_fixed_roles(config.n);
@@ -173,7 +173,7 @@ fn ddec_nlarge(c: &mut Criterion) {
                 .unwrap();
 
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
-        let (raw_ct, _id, _tag) = ct.into_raw_parts();
+        let (raw_ct, _id, _tag, _rerand_metadata) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
         let roles = generate_fixed_roles(config.n);
@@ -231,7 +231,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
                 .unwrap();
 
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8).unwrap();
-        let (raw_ct, _id, _tag) = ct.into_raw_parts();
+        let (raw_ct, _id, _tag, _rerand_metadata) = ct.into_raw_parts();
         let raw_ct = RadixOrBoolCiphertext::Radix(raw_ct);
 
         let roles = generate_fixed_roles(config.n);
