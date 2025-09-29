@@ -669,11 +669,14 @@ impl Operator {
                     "share is not long enough: actual={actual_length} < minimum={minimum_expected_length}"
                 )));
             }
-            let (enc_pk, sig_pk) = self.custodian_keys.get(&role_j).ok_or_else(|| {
-                BackupError::OperatorError(format!(
-                    "Could not find custodian keys for role {role_j}"
-                ))
-            })?;
+            let (enc_pk, sig_pk) = match self.custodian_keys.get(&role_j) {
+                Some((enc_pk, sig_pk)) => (enc_pk, sig_pk),
+                None => {
+                    // Note that we do not error out since we might now have gotten all the expected correct custodian setup messages
+                    tracing::warn!("Could not find custodian keys for role {role_j}");
+                    continue;
+                }
+            };
             let backup_material = BackupMaterial {
                 backup_id,
                 custodian_pk: sig_pk.clone(),
@@ -716,6 +719,13 @@ impl Operator {
             commitments.insert(role_j, msg_digest);
         }
 
+        if ct_shares.len() < self.threshold + 1 {
+            return Err(BackupError::OperatorError(format!(
+                "Not enough valid custodian shares were created: expected at least {} but got {}",
+                self.threshold + 1,
+                ct_shares.len()
+            )));
+        }
         // 6. The commitments are stored by `P_i` and can be used to verify the shares later.
         Ok((ct_shares, commitments))
     }

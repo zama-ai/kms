@@ -400,7 +400,7 @@ fn full_flow_malicious_custodian_init() {
         let (_verification_key, signing_key) = gen_sig_keys(&mut rng);
         let operator = Operator::new(
             operator_role,
-            setup_msgs.to_vec(),
+            setup_msgs_malicious.to_vec(),
             signing_key.clone(),
             custodian_threshold,
             custodian_count,
@@ -415,6 +415,9 @@ fn full_flow_malicious_custodian_init() {
         assert!(res.is_ok());
     }
     // Check that we indeed get a warning about the malicious custodian
+    assert!(logs_contain(
+        "An incorrect amount of custodian messages were received"
+    ));
     assert!(logs_contain("Could not find custodian keys for role 2"));
 }
 
