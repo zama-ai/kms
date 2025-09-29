@@ -188,7 +188,7 @@ jobs:
               --set kmsCore.image.tag="${IMAGE_TAG}"
             done
 
-            kubectl wait --for=condition=ready pod -l app=kms-core -n "${NAMESPACE}" --timeout=120s
+            kubectl wait --for=condition=ready pod -l app=kms-core -n "${NAMESPACE}" --timeout=600s
 
             helm install kms-core-init oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
@@ -197,7 +197,7 @@ jobs:
             --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
             --set kmsCore.image.tag="${IMAGE_TAG}"
 
-            kubectl wait --for=condition=complete job -l app=kms-threshold-init-job -n "${NAMESPACE}" --timeout=120s
+            kubectl wait --for=condition=complete job -l app=kms-threshold-init-job -n "${NAMESPACE}" --timeout=600s
 
             helm install kms-core-gen-keys oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
@@ -206,7 +206,7 @@ jobs:
             --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
             --set kmsCore.image.tag="${IMAGE_TAG}"
 
-            kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys -n "${NAMESPACE}" --timeout=120s
+            kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys -n "${NAMESPACE}" --timeout=600s
           fi
 
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
@@ -248,12 +248,28 @@ jobs:
 
       - name: Run performance testing
         run: |
+          kubectl apply -f ./ci/kube-testing/argo-workflow/rbac-runner-sa-kms-ci.yaml -n ${NAMESPACE}
           sed -i "s/<version>/${IMAGE_TAG}/g" ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml
           argo submit -n argo ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml --log
+
+      - name: Get logs from kms-core
+        run: |
+          for i in {1..13}; do
+            kubectl logs kms-service-threshold-"${i}"-"${NAMESPACE}"-core -c kms-core -n "${NAMESPACE}" > kms-core-"${i}"-logs.txt
+          done
+
+      - name: Upload kms-core logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: kms-core-logs
+          path: kms-core-*.txt
 
       - name: Cleanup
         if: always()
         run: |
-          helm uninstall kms-core -n "${NAMESPACE}"
+          for i in {1..13}; do
+            helm uninstall kms-service-threshold-"${i}"-"${NAMESPACE}"-core -n "${NAMESPACE}"
+          done
           helm uninstall tkms-infra -n "${NAMESPACE}"
           helm uninstall sync-secrets -n "${NAMESPACE}"
+          kubectl delete -f ./ci/kube-testing/argo-workflow/rbac-runner-sa-kms-ci.yaml -n ${NAMESPACE}
