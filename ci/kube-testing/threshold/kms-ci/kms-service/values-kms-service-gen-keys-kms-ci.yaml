@@ -1,5 +1,8 @@
 kmsCore:
   enabled: false
+  envFrom:
+    configmap:
+      name: kms-ci-1
   thresholdMode:
     enabled: true
     tls:
