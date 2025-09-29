@@ -1,11 +1,11 @@
 use alloy_sol_types::Eip712Domain;
 use anyhow::Result;
-use kms_grpc::kms::v1::{Empty, KeyGenRequest, KeyGenResult};
+use itertools::Itertools;
+use kms_grpc::kms::v1::{Empty, KeyDigest, KeyGenRequest, KeyGenResult};
 use kms_grpc::rpc_types::optional_protobuf_to_alloy_domain;
 use kms_grpc::RequestId;
 use observability::metrics::METRICS;
 use observability::metrics_names::{ERR_KEYGEN_FAILED, ERR_KEY_EXISTS, OP_KEYGEN};
-use std::collections::HashMap;
 use std::sync::Arc;
 use threshold_fhe::execution::keyset_config::KeySetConfig;
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
@@ -61,9 +61,6 @@ pub async fn key_gen_impl<
         None => None,
     };
 
-    // If parameter is not configured, the default one will be used
-    let params = retrieve_parameters(inner.params)?;
-
     let internal_keyset_config =
         InternalKeySetConfig::new(inner.keyset_config, inner.keyset_added_info).map_err(|e| {
             tonic::Status::new(
@@ -78,7 +75,7 @@ pub async fn key_gen_impl<
     // also check that the request ID is not used yet
     // If all is ok write the request ID to the meta store
     // All validation must be done before inserting the request ID
-    {
+    let params = {
         // Note that the keygen meta store should be checked first
         // because we do not want to delete the preprocessing ID
         // if the keygen request cannot proceed.
@@ -98,16 +95,29 @@ pub async fn key_gen_impl<
             #[cfg(not(feature = "insecure"))]
             true
         };
-        if check_meta_store {
-            let mut preproc_meta_store = service.prepreocessing_ids.write().await;
+        let params = if check_meta_store {
+            let mut preproc_meta_store = service.preprocessing_meta_store.write().await;
             if !preproc_meta_store.exists(&preproc_id) {
                 return Err(tonic::Status::new(
                     tonic::Code::NotFound,
                     format!("Preprocessing ID {preproc_id} not found"),
                 ));
             }
-            preproc_meta_store.delete(&preproc_id);
-        }
+            let preproc = preproc_meta_store.delete(&preproc_id);
+            let preproc_bucket = handle_res_mapping(preproc, &preproc_id, "Preprocessing").await?;
+            if preproc_bucket.preprocessing_id != preproc_id {
+                return Err(tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!(
+                        "Preprocessing ID mismatch: expected {}, got {}",
+                        preproc_id, preproc_bucket.preprocessing_id
+                    ),
+                ));
+            }
+            preproc_bucket.dkg_param
+        } else {
+            retrieve_parameters(inner.params)?
+        };
 
         // Insert [HandlerStatus::Started] into the meta store.
         // Note that this will fail if the request ID is already in the meta store
@@ -115,7 +125,8 @@ pub async fn key_gen_impl<
             guarded_meta_store.insert(&req_id),
             "Could not insert key generation into meta store".to_string(),
         )?;
-    }
+        params
+    };
 
     let meta_store = Arc::clone(&service.key_meta_map);
     let crypto_storage = service.crypto_storage.clone();
@@ -181,14 +192,20 @@ pub async fn get_key_gen_result_impl<
                     request_id, res.key_id
                 )));
             }
+            let key_digests = res
+                .key_digest_map
+                .into_iter()
+                .sorted_by_key(|x| x.0)
+                .map(|(key, digest)| KeyDigest {
+                    key_type: key.to_string(),
+                    digest,
+                })
+                .collect::<Vec<_>>();
+
             Ok(Response::new(KeyGenResult {
                 request_id: Some(request_id.into()),
                 preprocessing_id: Some(res.preprocessing_id.into()),
-                key_digests: res
-                    .key_digest_map
-                    .into_iter()
-                    .map(|(k, v)| (k.to_string(), v))
-                    .collect(),
+                key_digests,
                 external_signature: res.external_signature,
             }))
         }
@@ -206,7 +223,7 @@ pub async fn get_key_gen_result_impl<
                 // we do not attempt to convert the legacy key digest map
                 // because it does not match the format to the current one
                 // since no domain separation is used
-                key_digests: HashMap::new(),
+                key_digests: Vec::new(),
                 external_signature: vec![],
             }))
         }
@@ -493,7 +510,8 @@ pub(crate) mod tests {
                 keyset_added_info: None,
                 request_id: Some(request_id.into()),
                 context_id: None,
-                preproc_id: Some(preproc_id.into()),
+                //If we set a preproc_id here, params will be ignored and thus this request wont fail
+                preproc_id: None,
                 domain: Some(domain.clone()),
                 epoch_id: None,
             };

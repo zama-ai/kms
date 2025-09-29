@@ -154,37 +154,43 @@ impl Client {
         let public_key_digest =
             safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &public_key)?;
 
-        let expected_server_key_digest = key_gen_result
-            .key_digests
-            .get(&PubDataType::ServerKey.to_string())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Server key digest not found in key generation result for key ID {}",
-                    key_id
-                )
-            })?;
-        let expected_public_key_digest = key_gen_result
-            .key_digests
-            .get(&PubDataType::PublicKey.to_string())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Public key digest not found in key generation result for key ID {}",
-                    key_id
-                )
-            })?;
+        let expected_server_key_digest = key_gen_result.key_digests.first().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Server key digest not found in key generation result for key ID {}",
+                key_id
+            )
+        })?;
+        assert_eq!(
+            expected_server_key_digest.key_type,
+            PubDataType::ServerKey.to_string(),
+            "Expected a ServerKey key type for the first key digest, got {}",
+            expected_server_key_digest.key_type
+        );
+        let expected_public_key_digest = key_gen_result.key_digests.get(1).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Public key digest not found in key generation result for key ID {}",
+                key_id
+            )
+        })?;
+        assert_eq!(
+            expected_public_key_digest.key_type,
+            PubDataType::PublicKey.to_string(),
+            "Expected a PublicKey key type for the second key digest, got {}",
+            expected_public_key_digest.key_type
+        );
 
-        if server_key_digest != *expected_server_key_digest {
+        if server_key_digest != *expected_server_key_digest.digest {
             return Err(anyhow::anyhow!(
                 "Computed server key digest {} of retrieved server key does not match expected key handle {}",
                 hex::encode(&server_key_digest),
-                hex::encode(expected_server_key_digest),
+                hex::encode(&expected_server_key_digest.digest),
             ));
         }
-        if public_key_digest != *expected_public_key_digest {
+        if public_key_digest != *expected_public_key_digest.digest {
             return Err(anyhow::anyhow!(
                 "Computed public key digest {} of retrieved public key does not match expected key handle {}",
                 hex::encode(&public_key_digest),
-                hex::encode(expected_public_key_digest),
+                hex::encode(&expected_public_key_digest.digest),
             ));
         }
 
@@ -287,9 +293,11 @@ impl Client {
         key_type: PubDataType,
         storage: &R,
     ) -> anyhow::Result<Option<S>> {
-        let key_digest = key_gen_result
-            .key_digests
-            .get(&key_type.to_string())
+        let mut key_digests = key_gen_result.key_digests.clone();
+
+        let key_digest = key_digests
+            .extract_if(.., |kd| kd.key_type == key_type.to_string())
+            .next()
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "Key type {} not found in key generation result",
@@ -306,11 +314,11 @@ impl Client {
         let key: S = self.get_key(&request_id, key_type, storage).await?;
         let actual_digest = safe_serialize_hash_element_versioned(&DSEP_PUBDATA_KEY, &key)?;
 
-        if actual_digest != *key_digest {
+        if actual_digest != *key_digest.digest {
             tracing::warn!(
                 "Computed key handle {} of retrieved key does not match expected key handle {}",
                 hex::encode(&actual_digest),
-                hex::encode(key_digest),
+                hex::encode(&key_digest.digest),
             );
             return Ok(None);
         }

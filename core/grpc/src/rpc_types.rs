@@ -178,7 +178,19 @@ pub fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712D
     Ok(domain_msg)
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    VersionsDispatch,
+)]
 pub enum PubDataTypeVersioned {
     V0(PubDataType),
 }
@@ -189,12 +201,28 @@ pub enum PubDataTypeVersioned {
 /// key generation. In practice this means the CRS and different types of public keys.
 /// Data of this type is supposed to be readable by anyone on the internet
 /// and stored on a medium that _may_ be suseptible to malicious modifications.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Versionize)]
+///
+/// __NOTE__: ORDERING OF THE VARIANT IS IMPORTANT, DO NOT CHANGE WITHOUT CONSIDERING BACKWARDS COMPATIBILITY
+/// In particular, the ServerKey must be before the PublicKey for proper signature checking on the GW.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    PartialOrd,
+    Ord,
+    EnumIter,
+    Versionize,
+)]
 #[versionize(PubDataTypeVersioned)]
 pub enum PubDataType {
+    ServerKey,
     PublicKey,
     PublicKeyMetadata,
-    ServerKey,
     CRS,
     VerfKey,     // Type for the servers public verification keys
     VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification

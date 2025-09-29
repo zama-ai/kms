@@ -482,6 +482,14 @@ pub(crate) struct CentralizedTestingKeys {
     pub(crate) server_keys: Vec<PublicSigKey>,
 }
 
+#[cfg(feature = "non-wasm")]
+#[derive(Debug, Clone)]
+pub struct CentralizedPreprocBucket {
+    pub(crate) preprocessing_id: RequestId,
+    pub(crate) external_signature: Vec<u8>,
+    pub(crate) dkg_param: DKGParams,
+}
+
 /// Centralized KMS where keys are stored in a local file
 /// Observe that the order of write access MUST be as follows to avoid dead locks:
 /// PublicStorage -> PrivateStorage -> FheKeys/XXX_meta_map
@@ -496,8 +504,10 @@ pub struct CentralizedKms<
     pub(crate) crypto_storage: CentralizedCryptoMaterialStorage<PubS, PrivS>,
     // NOT USED - only here to ensure we can keep track of calls similar to the threshold KMS
     pub(crate) init_ids: Arc<RwLock<MetaStore<()>>>,
-    // NOT USED - only here to ensure we can sign responses in the same manner as the threshold KMS
-    pub(crate) prepreocessing_ids: Arc<RwLock<MetaStore<Vec<u8>>>>,
+    // Ensures we can sign responses in the same manner as the threshold KMS
+    // and keeps track of the parameters sent during a PreprocRequest
+    // to use them in the corresponding KeyGenRequest
+    pub(crate) preprocessing_meta_store: Arc<RwLock<MetaStore<CentralizedPreprocBucket>>>,
     // Map storing ongoing key generation requests.
     pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenMetadata>>>,
     // Map storing ongoing public decryption requests.
@@ -1036,7 +1046,9 @@ impl<
                 base_kms,
                 crypto_storage,
                 init_ids: Arc::new(RwLock::new(MetaStore::new_from_map(HashMap::new()))),
-                prepreocessing_ids: Arc::new(RwLock::new(MetaStore::new_from_map(HashMap::new()))),
+                preprocessing_meta_store: Arc::new(RwLock::new(MetaStore::new_from_map(
+                    HashMap::new(),
+                ))),
                 key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(public_key_info))),
                 pub_dec_meta_store: Arc::new(RwLock::new(MetaStore::new(
                     DEC_CAPACITY,

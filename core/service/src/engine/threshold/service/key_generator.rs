@@ -1,10 +1,11 @@
 // === Standard Library ===
 use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
 
+use itertools::Itertools;
 // === External Crates ===
 use kms_grpc::{
     identifiers::ContextId,
-    kms::v1::{self, Empty, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
+    kms::v1::{self, Empty, KeyDigest, KeyGenRequest, KeyGenResult, KeySetAddedInfo},
     rpc_types::{optional_protobuf_to_alloy_domain, PubDataType},
     RequestId,
 };
@@ -506,14 +507,23 @@ impl<
                         request_id
                     )));
                 }
+
+                // Note: This relies on the ordering of the PubDataType enum
+                // which must be kept stable (in particular, ServerKey must be before PublicKey)
+                let key_digests = res
+                    .key_digest_map
+                    .into_iter()
+                    .sorted_by_key(|x| x.0)
+                    .map(|(key, digest)| KeyDigest {
+                        key_type: key.to_string(),
+                        digest,
+                    })
+                    .collect::<Vec<_>>();
+
                 Ok(Response::new(KeyGenResult {
                     request_id: Some(request_id.into()),
                     preprocessing_id: Some(res.preprocessing_id.into()),
-                    key_digests: res
-                        .key_digest_map
-                        .into_iter()
-                        .map(|(data_type, info)| (data_type.to_string(), info))
-                        .collect::<HashMap<_, _>>(),
+                    key_digests,
                     external_signature: res.external_signature,
                 }))
             }
@@ -531,7 +541,7 @@ impl<
                     // we do not attempt to convert the legacy key digest map
                     // because it does not match the format to the current one
                     // since no domain separation is used
-                    key_digests: HashMap::new(),
+                    key_digests: Vec::new(),
                     external_signature: vec![],
                 }))
             }
