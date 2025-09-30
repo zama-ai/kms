@@ -189,7 +189,7 @@ impl Identity {
     pub fn mpc_identity(&self) -> MpcIdentity {
         self.mpc_identity
             .clone()
-            .unwrap_or(MpcIdentity(self.hostname.clone()))
+            .unwrap_or(MpcIdentity(format!("{}:{}", &self.hostname, self.port)))
     }
 }
 

@@ -137,6 +137,7 @@ tests-utils = { path = "./tests-utils" }
 threshold-fhe = { workspace = true, default-features = false, features = [
     "testing", "malicious_strategies",
 ] }
+tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 tracing-test.workspace = true
 
 [features]

@@ -4265,6 +4265,7 @@ dependencies = [
  "tower 0.5.2",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "tracing-test",
  "trait-variant",
  "url",
