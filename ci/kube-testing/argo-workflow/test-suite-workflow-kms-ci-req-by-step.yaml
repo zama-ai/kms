@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: kms-ci-test-suite-<version>-
+  generateName: kms-ci-test-suite-7dfc7ec-
   namespace: kms-ci
   labels:
     app: kms-ci-test-suite
@@ -175,17 +175,80 @@ spec:
           test: "{{inputs.parameters.test-name}}"
           app: kms-ci-test-suite
       script:
-        image: ghcr.io/zama-ai/kms/core-client:<version>
+        image: ghcr.io/zama-ai/kms/core-client:v0.12.0
         command: ["/bin/bash", "-c"]
         source: |
           cat <<EOF >>config.toml
-          s3_endpoint="${S3_ENDPOINT}"
-          object_folder=${OBJECT_FOLDER}
-          core_addresses=${CORE_ADDRESSES}
-          num_majority=${NUM_MAJORITY}
-          num_reconstruct=${NUM_RECONSTRUCT}
-          decryption_mode="${DECRYPTION_MODE}"
-          fhe_params="${FHE_PARAMETER:=Test}"
+            kms_type = "threshold"
+            num_majority=${NUM_MAJORITY}
+            num_reconstruct=${NUM_RECONSTRUCT}
+            decryption_mode="${DECRYPTION_MODE}"
+            fhe_params="${FHE_PARAMETER:=Test}"
+            [[cores]]
+            party_id=1
+            address="kms-service-threshold-1-kms-ci-core-1:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p1"
+            [[cores]]
+            party_id=2
+            address="kms-service-threshold-2-kms-ci-core-2:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p2"
+            [[cores]]
+            party_id=3
+            address="kms-service-threshold-3-kms-ci-core-3:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p3"
+            [[cores]]
+            party_id=4
+            address="kms-service-threshold-4-kms-ci-core-4:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p4"
+            [[cores]]
+            party_id=5
+            address="kms-service-threshold-5-kms-ci-core-5:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p5"
+            [[cores]]
+            party_id=6
+            address="kms-service-threshold-6-kms-ci-core-6:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p6"
+            [[cores]]
+            party_id=7
+            address="kms-service-threshold-7-kms-ci-core-7:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p7"
+            [[cores]]
+            party_id=8
+            address="kms-service-threshold-8-kms-ci-core-8:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p8"
+            [[cores]]
+            party_id=9
+            address="kms-service-threshold-9-kms-ci-core-9:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p9"
+            [[cores]]
+            party_id=10
+            address="kms-service-threshold-10-kms-ci-core-10:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p10"
+            [[cores]]
+            party_id=11
+            address="kms-service-threshold-11-kms-ci-core-11:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p11"
+            [[cores]]
+            party_id=12
+            address="kms-service-threshold-12-kms-ci-core-12:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p12"
+            [[cores]]
+            party_id=13
+            address="kms-service-threshold-13-kms-ci-core-13:50100"
+            s3_endpoint="${S3_ENDPOINT}"
+            object_folder="PUB-p13"
           EOF
 
           echo "=========================================="
@@ -274,10 +337,6 @@ spec:
               configMapKeyRef:
                 name: kms-keys
                 key: KMS_KEY_ID
-          - name: OBJECT_FOLDER
-            value: '["PUB-p1","PUB-p2","PUB-p3","PUB-p4","PUB-p5","PUB-p6","PUB-p7","PUB-p8","PUB-p9","PUB-p10","PUB-p11","PUB-p12","PUB-p13"]'
-          - name: CORE_ADDRESSES
-            value: '["http://kms-service-threshold-1-kms-ci-core-1:50100","http://kms-service-threshold-2-kms-ci-core-2:50100","http://kms-service-threshold-3-kms-ci-core-3:50100","http://kms-service-threshold-4-kms-ci-core-4:50100","http://kms-service-threshold-5-kms-ci-core-5:50100","http://kms-service-threshold-6-kms-ci-core-6:50100","http://kms-service-threshold-7-kms-ci-core-7:50100","http://kms-service-threshold-8-kms-ci-core-8:50100","http://kms-service-threshold-9-kms-ci-core-9:50100","http://kms-service-threshold-10-kms-ci-core-10:50100","http://kms-service-threshold-11-kms-ci-core-11:50100","http://kms-service-threshold-12-kms-ci-core-12:50100","http://kms-service-threshold-13-kms-ci-core-13:50100"]'
           - name: NUM_MAJORITY
             value: '5'
           - name: NUM_RECONSTRUCT
@@ -484,7 +543,7 @@ spec:
                   },
                   {
                     "title": ":package: Versions",
-                    "value": "• kms-core: <version>\n",
+                    "value": "• kms-core: 7dfc7ec\n",
                     "short": false
                   }
                 ],
