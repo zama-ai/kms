@@ -268,14 +268,19 @@ async fn decrypt_after_recovery(amount_custodians: usize, threshold: u32) {
     .await;
 }
 
-#[cfg(feature = "insecure")]
-#[tokio::test(flavor = "multi_thread")]
+#[tokio::test]
+#[tracing_test::traced_test]
 #[serial]
 async fn test_decrypt_after_recovery_centralized_negative() {
     decrypt_after_recovery_negative(5, 2).await;
+    assert!(logs_contain(
+        "Could not verify recovery validation material signature for custodian role 1"
+    ));
+    assert!(logs_contain(
+        "Could not verify recovery validation material signature for custodian role 3"
+    ));
 }
 
-#[cfg(feature = "insecure")]
 async fn decrypt_after_recovery_negative(amount_custodians: usize, threshold: u32) {
     let dkg_param: WrappedDKGParams = FheParameter::Test.into();
     let req_new_cus: RequestId =
