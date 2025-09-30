@@ -181,7 +181,7 @@ jobs:
             for i in {1..13}; do
               helm upgrade --install kms-service-threshold-"${i}"-"${NAMESPACE}" oci://ghcr.io/zama-ai/kms/charts/kms-core \
               --namespace "${NAMESPACE}" \
-              --version "${KMS_CHART_VERSION:-"1.4.0"}" \
+              --version "${KMS_CHART_VERSION:-"1.4.1"}" \
               --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-ci.yaml \
               --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-"${i}"-kms-ci.yaml \
               --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
@@ -195,7 +195,7 @@ jobs:
 
             helm upgrade --install kms-core-init oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
-            --version "${KMS_CHART_VERSION:-"1.4.0"}" \
+            --version "${KMS_CHART_VERSION:-"1.4.1"}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml \
             --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
             --set kmsCore.image.tag="${IMAGE_TAG}"
@@ -207,7 +207,7 @@ jobs:
 
             helm upgrade --install kms-core-gen-keys oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
-            --version "${KMS_CHART_VERSION:-"1.4.0"}" \
+            --version "${KMS_CHART_VERSION:-"1.4.1"}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
             --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
             --set kmsCore.image.tag="${IMAGE_TAG}"
@@ -218,7 +218,7 @@ jobs:
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             helm upgrade --install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
             --namespace "${NAMESPACE}" \
-            --version "${KMS_CHART_VERSION:-"1.4.0"}" \
+            --version "${KMS_CHART_VERSION:-"1.4.1"}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-ci.yaml \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml \
@@ -240,16 +240,6 @@ jobs:
             --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
             --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
             --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}"
-          fi
-          if [[ "${DEPLOYMENT_TYPE}" == "centralized" ]]; then
-            helm upgrade --install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
-            --namespace "${NAMESPACE}" \
-            --version "${KMS_CHART_VERSION:-"1.4.0"}" \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml \
-            --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
-            --set kmsCore.image.tag="${IMAGE_TAG}"
           fi
 
       - name: Run performance testing
