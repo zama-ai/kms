@@ -12,8 +12,12 @@ use crate::{
         structure_traits::{BaseRing, ErrorCorrect},
     },
     execution::{
-        online::preprocessing::BitPreprocessing, runtime::session::BaseSessionHandles,
-        sharing::share::Share, tfhe_internals::utils::compute_hamming_weight_secret_vector,
+        online::preprocessing::BitPreprocessing,
+        runtime::session::BaseSessionHandles,
+        sharing::share::Share,
+        tfhe_internals::{
+            parameters::compute_min_max_hw, utils::compute_hamming_weight_secret_vector_by_chunks,
+        },
     },
 };
 
@@ -47,28 +51,55 @@ where
         total_size: usize,
         polynomial_size: PolynomialSize,
         preprocessing: &mut P,
-        max_deviation_from_mean: Option<usize>,
+        pmax: Option<f64>,
         session: &mut S,
     ) -> anyhow::Result<Self> {
-        let data = if let Some(max_dev) = max_deviation_from_mean {
-            let mean = (total_size / 2) as u128;
-            let max_dev = max_dev as u128;
-            let max_hw = Z::from_u128(mean + max_dev);
-            let min_hw = Z::from_u128(mean - max_dev);
+        let data = if let Some(pmax) = pmax {
+            // We need to consider GLWE keys as GlweDim keys of size polynomial_size
+            let (min_hw, max_hw) = compute_min_max_hw(pmax, polynomial_size.0 as u64);
+            let max_hw = Z::from_u128(max_hw as u128);
+            let min_hw = Z::from_u128(min_hw as u128);
 
-            let mut data;
+            let mut total_size = total_size;
+            let mut data = Vec::with_capacity(total_size);
             loop {
-                data = preprocessing.next_bit_vec(total_size)?;
-                let hw = compute_hamming_weight_secret_vector(&data, session)
-                    .await?
-                    .to_scalar()?;
-                if hw <= max_hw && hw >= min_hw {
-                    tracing::info!("Hamming weight within bounds: {hw}");
+                let local_data = preprocessing.next_bit_vec(total_size)?;
+
+                // Safety check, should never happen as next_bit_vec should already error out if
+                // that's the case
+                if local_data.len() < total_size {
+                    anyhow::bail!("Not enough data in preprocessing to sample a GLWE key");
+                }
+
+                let hws: Vec<Z> = compute_hamming_weight_secret_vector_by_chunks(
+                    &local_data,
+                    session,
+                    polynomial_size.0,
+                )
+                .await?
+                .into_iter()
+                .map(|x| x.to_scalar())
+                .try_collect()?;
+
+                for (index, hw) in hws.into_iter().enumerate() {
+                    if hw <= max_hw && hw >= min_hw {
+                        tracing::info!("Hamming weight within bounds: {hw}, keeping this key.");
+                        total_size -= polynomial_size.0;
+                        data.extend_from_slice(
+                            // Direct indexing here is safe we just checked the size
+                            &local_data[index * polynomial_size.0..(index + 1) * polynomial_size.0],
+                        );
+                    } else {
+                        tracing::info!(
+                            "Hamming weight out of bounds: {hw}. Expected min : {min_hw}, max : {max_hw}"
+                        );
+                    }
+                }
+
+                if total_size == 0 {
+                    tracing::info!("Sampled all necessary keys with correct hw");
                     break;
                 }
-                tracing::info!(
-                    "Hamming weight out of bounds: {hw}. Expected mean : {mean}, max_dev : {max_dev}"
-                );
             }
             data
         } else {

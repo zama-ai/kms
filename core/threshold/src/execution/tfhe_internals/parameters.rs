@@ -106,7 +106,7 @@ pub struct DistributedCompressionParameters {
     pub ksk_num_noise: usize,
     pub ksk_noisebound: NoiseBounds,
     pub bk_params: BKParams,
-    pub max_deviation_from_mean: Option<usize>,
+    pub pmax: Option<f64>,
 }
 
 #[derive(Debug)]
@@ -114,7 +114,7 @@ pub struct DistributedSnsCompressionParameters {
     pub raw_compression_parameters: NoiseSquashingCompressionParameters,
     pub ksk_num_noise: usize,
     pub ksk_noisebound: NoiseBounds,
-    pub max_deviation_from_mean: Option<usize>,
+    pub pmax: Option<f64>,
 }
 
 pub trait AugmentedCiphertextParameters {
@@ -222,17 +222,8 @@ impl DKGParams {
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub struct SecretKeyDeviations {
     pub log2_failure_proba: i64,
-    pub lwe_deviation: usize,
-    pub lwe_hat_deviation: usize,
-    pub glwe_deviation: usize,
-    pub compression_deviation: usize,
-}
-
-#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
-pub struct SnsSecretKeyDeviations {
-    pub log2_failure_proba: i64,
-    pub sns_deviation: usize,
-    pub sns_compression_deviation: usize,
+    /// The HW of all keys must be in [floor((pmax-1/2) * len) ,(pmax)*len]
+    pub pmax: f64,
 }
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
@@ -261,7 +252,6 @@ pub struct DKGParamsSnS {
     pub regular_params: DKGParamsRegular,
     pub sns_params: NoiseSquashingParameters,
     pub sns_compression_params: Option<NoiseSquashingCompressionParameters>,
-    pub sns_secret_key_deviations: Option<SnsSecretKeyDeviations>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -355,11 +345,7 @@ pub trait DKGParamsBasics: Sync {
     fn all_compression_ksk_noise(&self, keyset_config: KeySetConfig) -> NoiseInfo;
     // This is the difference between the output bitsize and the input bitsize of the pksk
     fn pksk_rshift(&self) -> i8;
-
-    fn get_lwe_deviation(&self) -> Option<usize>;
-    fn get_lwe_hat_deviation(&self) -> Option<usize>;
-    fn get_glwe_deviation(&self) -> Option<usize>;
-    fn get_compression_deviation(&self) -> Option<usize>;
+    fn get_sk_deviations(&self) -> Option<SecretKeyDeviations>;
 }
 
 fn combine_noise_info(target_bound: NoiseBounds, list: &[NoiseInfo]) -> NoiseInfo {
@@ -967,7 +953,7 @@ impl DKGParamsBasics for DKGParamsRegular {
                 ksk_num_noise,
                 ksk_noisebound,
                 bk_params,
-                max_deviation_from_mean: self.get_compression_deviation(),
+                pmax: self.get_sk_deviations().map(|d| d.pmax),
             })
         } else {
             None
@@ -1001,8 +987,7 @@ impl DKGParamsBasics for DKGParamsRegular {
     fn lwe_sk_num_bits_to_sample(&self) -> usize {
         let key_size = self.lwe_dimension().0;
         if let Some(deviations) = self.secret_key_deviations {
-            let deviation = deviations.lwe_deviation;
-            let prob_within_range = compute_prob_hw_within_range(deviation as u64, key_size as u64);
+            let prob_within_range = compute_prob_hw_within_range(deviations.pmax, key_size as u64);
             let max_num_tries =
                 compute_min_trials(prob_within_range, deviations.log2_failure_proba).unwrap();
             max_num_tries * key_size
@@ -1015,9 +1000,8 @@ impl DKGParamsBasics for DKGParamsRegular {
         if self.has_dedicated_compact_pk_params() {
             let key_size = self.lwe_hat_dimension().0;
             if let Some(deviations) = self.secret_key_deviations {
-                let deviation = deviations.lwe_hat_deviation;
                 let prob_within_range =
-                    compute_prob_hw_within_range(deviation as u64, key_size as u64);
+                    compute_prob_hw_within_range(deviations.pmax, key_size as u64);
                 let max_num_tries =
                     compute_min_trials(prob_within_range, deviations.log2_failure_proba).unwrap();
                 max_num_tries * key_size
@@ -1029,46 +1013,53 @@ impl DKGParamsBasics for DKGParamsRegular {
         }
     }
 
+    // GLWE keys should be seen as GLWE dimension keys, each of size polynomial_size
     fn glwe_sk_num_bits_to_sample(&self) -> usize {
         let key_size = self.glwe_sk_num_bits();
         if let Some(deviations) = self.secret_key_deviations {
-            let deviation = deviations.glwe_deviation;
-            let prob_within_range = compute_prob_hw_within_range(deviation as u64, key_size as u64);
-            let max_num_tries =
-                compute_min_trials(prob_within_range, deviations.log2_failure_proba).unwrap();
-            max_num_tries * key_size
+            let individual_key_size = self.polynomial_size().0;
+            let log_glwe_dim = (self.glwe_dimension().0.ilog2() + 1) as i64;
+            let prob_within_range =
+                compute_prob_hw_within_range(deviations.pmax, individual_key_size as u64);
+            let max_num_tries_per_key = compute_min_trials(
+                prob_within_range,
+                deviations.log2_failure_proba - log_glwe_dim,
+            )
+            .unwrap();
+            max_num_tries_per_key * key_size
         } else {
             key_size
         }
     }
 
+    // GLWE keys should be seen as GLWE dimension keys, each of size polynomial_size
     fn compression_sk_num_bits_to_sample(&self) -> usize {
         let key_size = self.compression_sk_num_bits();
         if let Some(deviations) = self.secret_key_deviations {
-            let deviation = deviations.compression_deviation;
-            let prob_within_range = compute_prob_hw_within_range(deviation as u64, key_size as u64);
-            let max_num_tries =
-                compute_min_trials(prob_within_range, deviations.log2_failure_proba).unwrap();
+            let (indiviual_key_size, log_glwe_dim) =
+                if let Some(comp_params) = self.compression_decompression_parameters {
+                    (
+                        comp_params.packing_ks_polynomial_size.0,
+                        (comp_params.packing_ks_glwe_dimension.0.ilog2() + 1) as i64,
+                    )
+                } else {
+                    (0, 0)
+                };
+            let prob_within_range =
+                compute_prob_hw_within_range(deviations.pmax, indiviual_key_size as u64);
+            let max_num_tries = compute_min_trials(
+                prob_within_range,
+                deviations.log2_failure_proba - log_glwe_dim,
+            )
+            .unwrap();
             max_num_tries * key_size
         } else {
             key_size
         }
     }
 
-    fn get_lwe_deviation(&self) -> Option<usize> {
-        self.secret_key_deviations.map(|d| d.lwe_deviation)
-    }
-
-    fn get_lwe_hat_deviation(&self) -> Option<usize> {
-        self.secret_key_deviations.map(|d| d.lwe_hat_deviation)
-    }
-
-    fn get_glwe_deviation(&self) -> Option<usize> {
-        self.secret_key_deviations.map(|d| d.glwe_deviation)
-    }
-
-    fn get_compression_deviation(&self) -> Option<usize> {
-        self.secret_key_deviations.map(|d| d.compression_deviation)
+    fn get_sk_deviations(&self) -> Option<SecretKeyDeviations> {
+        self.secret_key_deviations
     }
 }
 
@@ -1305,7 +1296,7 @@ impl DKGParamsBasics for DKGParamsSnS {
                 raw_compression_parameters: comp_params,
                 ksk_num_noise,
                 ksk_noisebound,
-                max_deviation_from_mean: self.get_compression_deviation_sns(),
+                pmax: self.get_sk_deviations().map(|d| d.pmax),
             })
         } else {
             None
@@ -1395,20 +1386,8 @@ impl DKGParamsBasics for DKGParamsSnS {
         self.regular_params.compression_sk_num_bits_to_sample()
     }
 
-    fn get_lwe_deviation(&self) -> Option<usize> {
-        self.regular_params.get_lwe_deviation()
-    }
-
-    fn get_lwe_hat_deviation(&self) -> Option<usize> {
-        self.regular_params.get_lwe_hat_deviation()
-    }
-
-    fn get_glwe_deviation(&self) -> Option<usize> {
-        self.regular_params.get_glwe_deviation()
-    }
-
-    fn get_compression_deviation(&self) -> Option<usize> {
-        self.regular_params.get_compression_deviation()
+    fn get_sk_deviations(&self) -> Option<SecretKeyDeviations> {
+        self.regular_params.get_sk_deviations()
     }
 }
 
@@ -1434,13 +1413,19 @@ impl DKGParamsSnS {
         self.polynomial_size_sns().0 * self.glwe_dimension_sns().0
     }
 
+    // GLWE keys should be seen as GLWE dimension keys, each of size polynomial_size
     pub fn glwe_sk_num_bits_sns_to_sample(&self) -> usize {
         let key_size = self.glwe_sk_num_bits_sns();
-        if let Some(deviations) = self.sns_secret_key_deviations {
-            let deviation = deviations.sns_deviation;
-            let prob_within_range = compute_prob_hw_within_range(deviation as u64, key_size as u64);
-            let max_num_tries =
-                compute_min_trials(prob_within_range, deviations.log2_failure_proba).unwrap();
+        if let Some(deviations) = self.get_sk_deviations() {
+            let indiviual_key_size = self.polynomial_size_sns().0;
+            let log_glwe_dim = (self.glwe_dimension_sns().0.ilog2() + 1) as i64;
+            let prob_within_range =
+                compute_prob_hw_within_range(deviations.pmax, indiviual_key_size as u64);
+            let max_num_tries = compute_min_trials(
+                prob_within_range,
+                deviations.log2_failure_proba - log_glwe_dim,
+            )
+            .unwrap();
             max_num_tries * key_size
         } else {
             key_size
@@ -1492,11 +1477,23 @@ impl DKGParamsSnS {
             return 0;
         }
         let key_size = self.sns_compression_sk_num_bits();
-        if let Some(deviations) = self.sns_secret_key_deviations {
-            let deviation = deviations.sns_compression_deviation;
-            let prob_within_range = compute_prob_hw_within_range(deviation as u64, key_size as u64);
-            let max_num_tries =
-                compute_min_trials(prob_within_range, deviations.log2_failure_proba).unwrap();
+        if let Some(deviations) = self.get_sk_deviations() {
+            let (indiviual_key_size, log_glwe_dim) =
+                if let Some(sns_comp_params) = self.sns_compression_params {
+                    (
+                        sns_comp_params.packing_ks_polynomial_size.0,
+                        (sns_comp_params.packing_ks_glwe_dimension.0.ilog2() + 1) as i64,
+                    )
+                } else {
+                    (0, 0)
+                };
+            let prob_within_range =
+                compute_prob_hw_within_range(deviations.pmax, indiviual_key_size as u64);
+            let max_num_tries = compute_min_trials(
+                prob_within_range,
+                deviations.log2_failure_proba - log_glwe_dim,
+            )
+            .unwrap();
             max_num_tries * key_size
         } else {
             key_size
@@ -1573,25 +1570,15 @@ impl DKGParamsSnS {
             }
         }
     }
-
-    pub fn get_glwe_deviation_sns(&self) -> Option<usize> {
-        self.sns_secret_key_deviations.map(|d| d.sns_deviation)
-    }
-
-    pub fn get_compression_deviation_sns(&self) -> Option<usize> {
-        self.sns_secret_key_deviations
-            .map(|d| d.sns_compression_deviation)
-    }
 }
 
 /// Computes the probability that the Hamming weight of a binary string is within
-/// [mean - deviation; mean + deviation]
-fn compute_prob_hw_within_range(deviation_from_mean: u64, key_size: u64) -> f64 {
-    let distribution = Binomial::new(0.5, key_size).unwrap();
-    let mean = key_size / 2;
-    let upper_bound = mean + deviation_from_mean;
-    let lower_bound = mean - deviation_from_mean;
-    distribution.cdf(upper_bound) - distribution.cdf(lower_bound - 1)
+/// [(pmax - 1/2)*size; pmax*size]
+fn compute_prob_hw_within_range(pmax: f64, size: u64) -> f64 {
+    assert!(pmax > 0.5 && pmax < 1.0);
+    let distribution = Binomial::new(0.5, size).unwrap();
+    let (min_hw, max_hw) = compute_min_max_hw(pmax, size);
+    distribution.cdf(max_hw) - distribution.cdf(min_hw)
 }
 
 /// Computes the minimum number of trials k needed to achieve at least one success
@@ -1612,6 +1599,13 @@ fn compute_min_trials(p: f64, log2_p_failure: i64) -> Result<usize, String> {
     let k = k_float.ceil() as usize;
 
     Ok(k)
+}
+
+pub(crate) fn compute_min_max_hw(pmax: f64, size: u64) -> (u64, u64) {
+    assert!(pmax > 0.5 && pmax < 1.0);
+    let max_hw = (pmax * size as f64).floor() as u64;
+    let min_hw = ((pmax - 0.5) * size as f64).floor() as u64;
+    (min_hw, max_hw)
 }
 
 #[cfg_attr(test, derive(strum_macros::EnumIter))]
@@ -1677,7 +1671,6 @@ pub const BC_PARAMS_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: BC_PARAMS,
     sns_params: V1_3_NOISE_SQUASHING_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
     sns_compression_params: Some(tfhe::shortint::parameters::v1_3::V1_3_NOISE_SQUASHING_COMP_PARAM_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128),
-    sns_secret_key_deviations: None
 });
 
 /// Blokchain Parameters (with pfail `2^-64`), using parameters generated by Nigel's script
@@ -1743,7 +1736,6 @@ pub const BC_PARAMS_NIGEL_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
         carry_modulus: CarryModulus(4),
     },
     sns_compression_params: None,
-    sns_secret_key_deviations: None,
 });
 
 /// __INSECURE__ Used for testing only
@@ -1840,7 +1832,6 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
     }),
-    sns_secret_key_deviations: None,
 });
 
 // Old set of parameters from before we had dedicated pk parameters and PKSK
@@ -1884,7 +1875,6 @@ pub const OLD_PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParams
         carry_modulus: CarryModulus(4),
     },
     sns_compression_params: None,
-    sns_secret_key_deviations: None,
 });
 
 pub const NIST_PARAMS_P8_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
@@ -1906,7 +1896,6 @@ pub const NIST_PARAMS_P8_SNS_LWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     sns_params:
         super::raw_parameters::NIST_PARAMS_NOISE_SQUASHING_MESSAGE_1_CARRY_1_PBS_KS_TUNIFORM_2M128,
     sns_compression_params: None,
-    sns_secret_key_deviations: None,
 });
 
 pub const NIST_PARAMS_P32_INTERNAL_LWE: DKGParamsRegular = DKGParamsRegular {
@@ -1929,7 +1918,6 @@ pub const NIST_PARAMS_P32_SNS_LWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     sns_params:
         super::raw_parameters::NIST_PARAMS_NOISE_SQUASHING_MESSAGE_2_CARRY_2_PBS_KS_TUNIFORM_2M128,
     sns_compression_params: None,
-    sns_secret_key_deviations: None,
 });
 
 pub const NIST_PARAMS_P8_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
@@ -1953,7 +1941,6 @@ pub const NIST_PARAMS_P8_SNS_FGLWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS 
     sns_params:
         super::raw_parameters::NIST_PARAMS_NOISE_SQUASHING_MESSAGE_1_CARRY_1_KS_PBS_TUNIFORM_2M128,
     sns_compression_params: None,
-    sns_secret_key_deviations: None,
 });
 
 pub const NIST_PARAMS_P32_INTERNAL_FGLWE: DKGParamsRegular = DKGParamsRegular {
@@ -1977,7 +1964,6 @@ pub const NIST_PARAMS_P32_SNS_FGLWE: DKGParams = DKGParams::WithSnS(DKGParamsSnS
     sns_params:
         super::raw_parameters::NIST_PARAMS_NOISE_SQUASHING_MESSAGE_2_CARRY_2_KS_PBS_TUNIFORM_2M128,
     sns_compression_params: None,
-    sns_secret_key_deviations: None,
 });
 
 #[cfg(test)]

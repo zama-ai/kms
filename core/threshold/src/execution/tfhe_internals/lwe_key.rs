@@ -30,7 +30,7 @@ use crate::{
         runtime::session::BaseSessionHandles,
         sharing::share::Share,
         tfhe_internals::{
-            parameters::{DKGParams, NoiseInfo},
+            parameters::{compute_min_max_hw, DKGParams, NoiseInfo},
             utils::compute_hamming_weight_secret_vector,
         },
     },
@@ -209,14 +209,13 @@ where
     >(
         dimension: LweDimension,
         preprocessing: &mut P,
-        max_deviation_from_mean: Option<usize>,
+        pmax: Option<f64>,
         session: &mut S,
     ) -> anyhow::Result<Self> {
-        let data = if let Some(max_dev) = max_deviation_from_mean {
-            let mean = (dimension.0 / 2) as u128;
-            let max_dev = max_dev as u128;
-            let max_hw = Z::from_u128(mean + max_dev);
-            let min_hw = Z::from_u128(mean - max_dev);
+        let data = if let Some(pmax) = pmax {
+            let (min_hw, max_hw) = compute_min_max_hw(pmax, dimension.0 as u64);
+            let max_hw = Z::from_u128(max_hw as u128);
+            let min_hw = Z::from_u128(min_hw as u128);
 
             let mut data;
             loop {
@@ -229,7 +228,7 @@ where
                     break;
                 }
                 tracing::info!(
-                    "Hamming weight out of bounds: {hw}. Expected mean : {mean}, max_dev : {max_dev}"
+                    "Hamming weight out of bounds: {hw}. Expected min : {min_hw}, max : {max_hw}"
                 );
             }
             data
@@ -317,7 +316,7 @@ where
     let lwe_secret_key_share = LweSecretKeyShare::new_from_preprocessing(
         params.lwe_hat_dimension(),
         preprocessing,
-        params.get_lwe_deviation(),
+        params.get_sk_deviations().map(|d| d.pmax),
         session,
     )
     .await?;

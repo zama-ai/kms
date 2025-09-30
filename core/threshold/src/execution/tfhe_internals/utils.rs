@@ -10,7 +10,7 @@ use tfhe::{
     HlExpandable,
 };
 
-use crate::execution::online::triple::open;
+use crate::execution::online::triple::{open, open_list};
 use crate::execution::runtime::session::BaseSessionHandles;
 use crate::execution::sharing::shamir::RevealOp;
 use crate::{
@@ -269,6 +269,24 @@ pub async fn compute_hamming_weight_secret_vector<
         .fold(Z::ZERO, |acc, share| acc + share.value());
     let secret_hw = Share::new(session.my_role(), secret_hw);
     open(secret_hw, session).await
+}
+
+/// Computes the Hamming weight of a vector of secret shared values.
+/// Assuming the input vector is indeed shares of bits !
+pub async fn compute_hamming_weight_secret_vector_by_chunks<
+    Z: Ring + ErrorCorrect,
+    Ses: BaseSessionHandles,
+>(
+    secret_vector: &[Share<Z>],
+    session: &mut Ses,
+    chunk_size: usize,
+) -> anyhow::Result<Vec<Z>> {
+    let secret_hws = secret_vector
+        .chunks(chunk_size)
+        .map(|chunk| chunk.iter().fold(Z::ZERO, |acc, share| acc + share.value()))
+        .map(|cunk_hw| Share::new(session.my_role(), cunk_hw))
+        .collect::<Vec<_>>();
+    open_list(&secret_hws, session).await
 }
 
 #[cfg(test)]

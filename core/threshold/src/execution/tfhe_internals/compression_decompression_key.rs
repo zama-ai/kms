@@ -40,7 +40,7 @@ where
     >(
         params: CompressionParameters,
         preprocessing: &mut P,
-        max_deviation_from_mean: Option<usize>,
+        pmax: Option<f64>,
         session: &mut S,
     ) -> anyhow::Result<Self> {
         let total_size = params.packing_ks_glwe_dimension.0 * params.packing_ks_polynomial_size.0;
@@ -49,7 +49,7 @@ where
                 total_size,
                 params.packing_ks_polynomial_size,
                 preprocessing,
-                max_deviation_from_mean,
+                pmax,
                 session,
             )
             .await?,
