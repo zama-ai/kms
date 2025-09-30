@@ -320,7 +320,7 @@ jobs:
       - name: Copy Test Results
         if: (!cancelled() || !failure() && github.event_name == 'pull_request')
         run: |
-          if "${GITHUB_WORKSPACE}"/target/nextest/ci -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
+          if find "${GITHUB_WORKSPACE}"/target/nextest/ci -mindepth 1 -type f -print -quit 2>/dev/null | grep -q .; then
             echo "Files found in ${GITHUB_WORKSPACE}/target/nextest/ci"
             ls -R "${GITHUB_WORKSPACE}"/target/nextest/ci
             echo "TIMESTAMP=$(date +"%Y%m%d%H%M%S")" >> "$GITHUB_ENV"
