@@ -210,7 +210,10 @@ jobs:
             --version "${KMS_CHART_VERSION:-"1.4.1"}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
             --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
-            --set kmsCore.image.tag="${IMAGE_TAG}"
+            --set kmsCore.image.tag="${IMAGE_TAG}" \
+            --wait \
+            --wait-for-jobs \
+            --timeout=1200s
 
             kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys -n "${NAMESPACE}" --timeout=600s
           fi
@@ -269,10 +272,13 @@ jobs:
             helm uninstall kms-service-threshold-"${i}"-"${NAMESPACE}" -n "${NAMESPACE}"
             kubectl delete cm -l app=kms-core -n "${NAMESPACE}"
           done
-          kubectl delete cm -l app=kms-core-client -n "${NAMESPACE}"
-          kubectl delete sts -l app=kms-core-client -n "${NAMESPACE}"
           helm uninstall kms-core-gen-keys -n "${NAMESPACE}"
           helm uninstall kms-core-init -n "${NAMESPACE}"
           helm uninstall tkms-infra -n "${NAMESPACE}"
           helm uninstall sync-secrets -n "${NAMESPACE}"
+          kubectl delete cm -l app=kms-core-client -n "${NAMESPACE}"
+          kubectl delete cm kms-keys -n "${NAMESPACE}"
+          kubectl delete sts -l app=kms-core-client -n "${NAMESPACE}"
+          kubectl delete job -l app=kms-core-client-gen-keys -n "${NAMESPACE}"
+          kubectl delete job -l app=kms-threshold-init-job -n "${NAMESPACE}"
           kubectl delete -f ./ci/kube-testing/argo-workflow/rbac-runner-sa-kms-ci.yaml -n "${NAMESPACE}"
