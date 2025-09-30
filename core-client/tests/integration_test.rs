@@ -8,6 +8,7 @@ use kms_lib::backup::KMS_CUSTODIAN;
 use kms_lib::backup::SEED_PHRASE_DESC;
 use kms_lib::consts::SIGNING_KEY_ID;
 use serial_test::serial;
+use std::fs::create_dir_all;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Output;
@@ -402,34 +403,66 @@ async fn new_custodian_context<T: DockerComposeContext>(
 }
 
 async fn generate_custodian_keys_to_file(
-    root_path: &Path,
+    local_temp_dir: &Path,
     amount_custodians: usize,
+    threshold: bool,
 ) -> (Vec<String>, Vec<PathBuf>) {
     let mut seeds = Vec::new();
     let mut setup_msgs_paths = Vec::new();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let docker_temp_dir = temp_dir.path();
     for cus_idx in 1..=amount_custodians {
-        let path = root_path
+        let cur_docker_path = docker_temp_dir
             .join("CUSTODIAN")
             .join("setup-msg")
             .join(format!("setup-{}", cus_idx));
         // NOTE the KMS Custodian is a separate binary needed for the full integration test flow.
         // Ensure that it is compiled and up to date before running the test
-        let output = Command::cargo_bin(KMS_CUSTODIAN)
-            .unwrap()
-            .arg("generate")
-            .arg("--randomness")
-            .arg("123456")
-            .arg("--custodian-role")
-            .arg(cus_idx.to_string())
-            .arg("--custodian-name")
-            .arg(format!("skynet-{cus_idx}"))
-            .arg("--path")
-            .arg(path.to_str().unwrap())
+        let args = [
+            "generate",
+            "--randomness",
+            "123456",
+            "--custodian-role",
+            &cus_idx.to_string(),
+            "--custodian-name",
+            &format!("skynet-{cus_idx}"),
+            "--path",
+            cur_docker_path.to_str().unwrap(),
+        ];
+        // Use the first server to just play custodian in the tests
+        let container_name = if threshold {
+            "zama-core-threshold-custodian-dev-kms-core-1-1".to_string()
+        } else {
+            "zama-core-centralized-custodian-dev-kms-core-1".to_string()
+        };
+        let cmd_output = Command::new("docker")
+            .arg("exec")
+            .arg(&container_name)
+            .arg("/app/kms/core/service/bin/kms-custodian")
+            .args(args)
             .output()
             .unwrap();
-        let seed_phrase = extract_seed_phrase(output);
+        let seed_phrase = extract_seed_phrase(cmd_output);
         seeds.push(seed_phrase);
-        setup_msgs_paths.push(path);
+        // Copy the files from docker to the local file system
+        let cur_local_path = local_temp_dir
+            .join("CUSTODIAN")
+            .join("setup-msg")
+            .join(format!("setup-{}", cus_idx));
+        // Use the parent since the path is to the specific file for this custodian
+        assert!(create_dir_all(cur_local_path.parent().unwrap()).is_ok());
+        let cp_output = Command::new("docker")
+            .arg("cp")
+            .arg(format!(
+                "{}:{}",
+                &container_name,
+                cur_docker_path.to_str().unwrap()
+            ))
+            .arg(cur_local_path.to_str().unwrap())
+            .output()
+            .unwrap();
+        assert!(cp_output.status.success());
+        setup_msgs_paths.push(cur_local_path);
     }
     (seeds, setup_msgs_paths)
 }
@@ -615,21 +648,25 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
     let amount_custodians = 5;
     let custodian_threshold = 2;
     let temp_dir = tempfile::tempdir().unwrap();
-    let keys_folder = temp_dir.path();
+    let local_temp_dir = temp_dir.path();
     let (seeds, setup_msg_paths) =
-        generate_custodian_keys_to_file(keys_folder, amount_custodians).await;
+        generate_custodian_keys_to_file(local_temp_dir, amount_custodians, false).await;
     let cus_backup_id =
-        new_custodian_context(ctx, keys_folder, custodian_threshold, setup_msg_paths).await;
-    let operator_recovery_resp_path = keys_folder
+        new_custodian_context(ctx, local_temp_dir, custodian_threshold, setup_msg_paths).await;
+    let operator_recovery_resp_path = local_temp_dir
         .join("CUSTODIAN")
         .join("recovery")
         .join(&cus_backup_id)
         .join("central");
-    let init_backup_id =
-        custodian_backup_init(ctx, keys_folder, vec![operator_recovery_resp_path.clone()]).await;
+    let init_backup_id = custodian_backup_init(
+        ctx,
+        local_temp_dir,
+        vec![operator_recovery_resp_path.clone()],
+    )
+    .await;
     assert_eq!(cus_backup_id, init_backup_id);
     let recovery_output_paths = custodian_reencrypt(
-        keys_folder,
+        local_temp_dir,
         1,
         amount_custodians,
         init_backup_id.try_into().unwrap(),
@@ -639,13 +676,13 @@ async fn test_centralized_custodian_backup(ctx: &DockerComposeCentralizedCustodi
     .await;
     let recovery_backup_id = custodian_backup_recovery(
         ctx,
-        keys_folder,
+        local_temp_dir,
         recovery_output_paths,
         RequestId::from_str(&cus_backup_id).unwrap(),
     )
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
-    let _ = restore_from_backup(ctx, keys_folder).await;
+    let _ = restore_from_backup(ctx, local_temp_dir).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate the restore.
     // However we are testing this in the service/client tests. Hence this tests is mainly to ensure that the outer
     // end points, and content returned from the KMS to the custodians, work as expected.
@@ -958,16 +995,16 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianCo
     let custodian_threshold = 2;
     let amount_operators = 4; // TODO should not be hardcoded but not sure how I can get it easily
     let temp_dir = tempfile::tempdir().unwrap();
-    let keys_folder = temp_dir.path();
+    let local_temp_path = temp_dir.path();
     let (seeds, setup_msg_paths) =
-        generate_custodian_keys_to_file(keys_folder, amount_custodians).await;
+        generate_custodian_keys_to_file(local_temp_path, amount_custodians, true).await;
     let cus_backup_id =
-        new_custodian_context(ctx, keys_folder, custodian_threshold, setup_msg_paths).await;
+        new_custodian_context(ctx, local_temp_path, custodian_threshold, setup_msg_paths).await;
     // Paths to where the results of the backup init will be stored
     let mut operator_recovery_resp_paths = Vec::new();
     for cur_op_idx in 1..=amount_operators {
         operator_recovery_resp_paths.push(
-            keys_folder
+            local_temp_path
                 .join("CUSTODIAN")
                 .join("recovery")
                 .join(&cus_backup_id)
@@ -975,10 +1012,10 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianCo
         );
     }
     let init_backup_id =
-        custodian_backup_init(ctx, keys_folder, operator_recovery_resp_paths.clone()).await;
+        custodian_backup_init(ctx, local_temp_path, operator_recovery_resp_paths.clone()).await;
     assert_eq!(cus_backup_id, init_backup_id);
     let recovery_output_paths = custodian_reencrypt(
-        keys_folder,
+        local_temp_path,
         amount_operators,
         amount_custodians,
         init_backup_id.try_into().unwrap(),
@@ -988,13 +1025,13 @@ async fn test_threshold_custodian_backup(ctx: &DockerComposeThresholdCustodianCo
     .await;
     let recovery_backup_id = custodian_backup_recovery(
         ctx,
-        keys_folder,
+        local_temp_path,
         recovery_output_paths,
         RequestId::from_str(&cus_backup_id).unwrap(),
     )
     .await;
     assert_eq!(cus_backup_id, recovery_backup_id);
-    let _ = restore_from_backup(ctx, keys_folder).await;
+    let _ = restore_from_backup(ctx, local_temp_path).await;
     // Observe that we cannot modify the state of the servers, so we cannot really validate recovery.
     // However we are testing this in the service/client. Hence this tests is mainly to ensure that the outer
     // end points and content returned from the KMS to the custodians work as expected.
