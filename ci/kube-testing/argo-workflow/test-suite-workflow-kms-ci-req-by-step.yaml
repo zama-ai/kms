@@ -52,7 +52,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req1"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --precompute-sns --compression --num-requests 1"
+                  value: "public-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --num-requests 1"
           ##########################################################################
           # User decrypt tests
           ##########################################################################
@@ -66,7 +66,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req1"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --precompute-sns --compression --num-requests 1"
+                  value: "user-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --num-requests 1"
 
           ##########################################################################
           # Public decrypt tests
@@ -81,7 +81,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req10"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --precompute-sns --compression --num-requests 10"
+                  value: "public-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --num-requests 10"
 
           ##########################################################################
           # User decrypt tests
@@ -96,7 +96,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req10"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --precompute-sns --compression --num-requests 10"
+                  value: "user-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --num-requests 10"
 
           ##########################################################################
           # Public decrypt tests
@@ -111,7 +111,7 @@ spec:
                 - name: test-name
                   value: "public-decrypt-euint64-req100"
                 - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --precompute-sns --compression --num-requests 100"
+                  value: "public-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --num-requests 100"
 
           ##########################################################################
           # User decrypt tests
@@ -126,7 +126,7 @@ spec:
                 - name: test-name
                   value: "user-decrypt-euint64-req100"
                 - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --precompute-sns --compression --num-requests 100"
+                  value: "user-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --num-requests 100"
 
 
           # Summary report generation
