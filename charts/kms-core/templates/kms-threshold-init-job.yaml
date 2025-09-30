@@ -43,7 +43,6 @@ spec:
                   fi;
                   echo "failed to connect to kms-core {{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.client }}, retrying"
                   sleep 1
-                done
               done
               echo "Kms-core {{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.client }} has been reached"
           env:
