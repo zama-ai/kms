@@ -154,13 +154,13 @@ where
     storage.refresh_centralized_fhe_keys(keyset2_id).await?;
 
     // we need the private glwe key from keyset 2
-    let (client_key_2, _, _, _, _, _) = storage
+    let (client_key_2, _, _, _, _, _, _) = storage
         .read_cloned_centralized_fhe_keys_from_cache(keyset2_id)
         .await?
         .client_key
         .into_raw_parts();
     // we need the private compression key from keyset 1
-    let (_, _, compression_private_key_1, _, _, _) = storage
+    let (_, _, compression_private_key_1, _, _, _, _) = storage
         .read_cloned_centralized_fhe_keys_from_cache(keyset1_id)
         .await?
         .client_key
@@ -216,6 +216,7 @@ where
         compression_private_key,
         sns_private_key,
         _sns_compression_private_key,
+        rerandomization_key,
         client_tag,
     ) = client_key.into_raw_parts();
 
@@ -253,6 +254,7 @@ where
         compression_private_key,
         sns_private_key,
         Some(int_sns_compression_private_key),
+        rerandomization_key,
         client_tag,
     );
 
@@ -276,6 +278,7 @@ where
         old_parts.4,
         Some(int_sns_compression_key),
         old_parts.6,
+        old_parts.7,
     );
 
     let pks = FhePubKeySet {
@@ -342,9 +345,9 @@ pub fn generate_fhe_keys(
                         // we generate the client key as usual,
                         // but we replace the compression private key using an existing compression private key
                         let client_key = generate_client_fhe_key(params, seed);
-                        let (client_key, dedicated_compact_private_key, _, _, _, tag) = client_key.into_raw_parts();
-                        let (_, _, existing_compression_private_key, noise_squashing_key, noise_squashing_compression_key, _) = key_handle.client_key.into_raw_parts();
-                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, noise_squashing_key,noise_squashing_compression_key, tag)
+                        let (client_key, dedicated_compact_private_key, _, _, _, _, tag) = client_key.into_raw_parts();
+                        let (_, _, existing_compression_private_key, noise_squashing_key, noise_squashing_compression_key, rerand_key_params, _) = key_handle.client_key.into_raw_parts();
+                        ClientKey::from_raw_parts(client_key, dedicated_compact_private_key, existing_compression_private_key, noise_squashing_key,noise_squashing_compression_key,rerand_key_params, tag)
                     },
                     None => anyhow::bail!("existing key handle is required when using existing compression key for keygen")
                 }
@@ -362,6 +365,7 @@ pub fn generate_fhe_keys(
             server_key.4,
             server_key.5,
             server_key.6,
+            server_key.7,
         );
         let public_key = FhePublicKey::new(&client_key);
         let pks = FhePubKeySet {
@@ -395,6 +399,7 @@ pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientK
     let compression_params = params
         .get_params_basics_handle()
         .get_compression_decompression_params();
+    let rerand_params = params.get_params_basics_handle().get_rerand_params();
     let sns_params = match params {
         DKGParams::WithoutSnS(_) => None,
         DKGParams::WithSnS(dkg_sns) => Some((dkg_sns.sns_params, dkg_sns.sns_compression_params)),
@@ -419,6 +424,11 @@ pub fn generate_client_fhe_key(params: DKGParams, seed: Option<Seed>) -> ClientK
         } else {
             config
         }
+    } else {
+        config
+    };
+    let config = if let Some(rerand_params) = rerand_params {
+        config.enable_ciphertext_re_randomization(rerand_params)
     } else {
         config
     };

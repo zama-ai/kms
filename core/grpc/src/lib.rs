@@ -31,3 +31,24 @@ pub mod utils;
 
 // Re-export identifier types for easier access
 pub use identifiers::{IdentifierError, KeyId, RequestId};
+
+#[cfg(feature = "non-wasm")]
+use anyhow::anyhow;
+#[cfg(feature = "non-wasm")]
+use std::{fmt, panic::Location};
+
+// NOTE: the below is copied from core/threshold
+// since the calling tracing from another crate
+// does not generate correct logs in tracing_test::traced_test
+#[cfg(feature = "non-wasm")]
+#[track_caller]
+pub(crate) fn anyhow_error_and_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
+    tracing::error!("Error in {}: {}", Location::caller(), msg);
+    anyhow_tracked(msg)
+}
+
+#[cfg(feature = "non-wasm")]
+#[track_caller]
+pub(crate) fn anyhow_tracked<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
+    anyhow!("Error in {}: {}", Location::caller(), msg)
+}

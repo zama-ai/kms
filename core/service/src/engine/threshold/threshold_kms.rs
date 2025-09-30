@@ -1,3 +1,4 @@
+use crate::engine::threshold::service::session::SessionPreparerGetter;
 use crate::engine::Shutdown;
 use crate::retry_loop;
 use kms_grpc::kms_service::v1::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -30,7 +31,7 @@ pub struct ThresholdKms<
     pub(crate) insecure_crs_generator: ICG,
     pub(crate) context_manager: CM,
     pub(crate) backup_operator: BO,
-    pub(crate) config: Arc<crate::conf::threshold::ThresholdPartyConf>,
+    pub(crate) session_preparer: SessionPreparerGetter,
     tracker: Arc<TaskTracker>,
     health_reporter: HealthReporter,
     mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
@@ -62,7 +63,7 @@ impl<
         insecure_crs_generator: ICG,
         context_manager: CM,
         backup_operator: BO,
-        config: Arc<crate::conf::threshold::ThresholdPartyConf>,
+        session_preparer: SessionPreparerGetter,
         tracker: Arc<TaskTracker>,
         health_reporter: HealthReporter,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
@@ -78,7 +79,7 @@ impl<
             insecure_crs_generator,
             context_manager,
             backup_operator,
-            config,
+            session_preparer,
             tracker,
             health_reporter,
             mpc_abort_handle,
@@ -173,7 +174,7 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
         crs_generator: CG,
         context_manager: CM,
         backup_operator: BO,
-        config: Arc<crate::conf::threshold::ThresholdPartyConf>,
+        session_preparer: SessionPreparerGetter,
         tracker: Arc<TaskTracker>,
         health_reporter: HealthReporter,
         mpc_abort_handle: JoinHandle<Result<(), anyhow::Error>>,
@@ -187,7 +188,7 @@ impl<IN: Sync, UD: Sync, PD: Sync, KG: Sync, PP: Sync, CG: Sync, CM: Sync, BO: S
             crs_generator,
             context_manager,
             backup_operator,
-            config,
+            session_preparer,
             tracker,
             health_reporter,
             mpc_abort_handle,
