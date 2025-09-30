@@ -485,7 +485,10 @@ async fn filter_custodian_data(
         )
         .is_err()
         {
-            tracing::warn!("Could not verify recovery validation material signature");
+            tracing::warn!(
+                "Could not verify recovery validation material signature for custodian role {}",
+                cur_recovery_output.custodian_role
+            );
             continue;
         }
         match <InternalCustodianRecoveryOutput as TryFrom<_>>::try_from(
