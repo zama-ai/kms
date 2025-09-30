@@ -176,8 +176,8 @@ pub fn compute_cipher(
 /// i.e., it should only be available when we use cfg(test) or cfg(feature = "testing").
 /// It is a convenient wrapper around the native types
 /// and lets us convert to it to the grpc plaintext type.
-// TODO not sure how to deal with that clippy warning
-#[allow(clippy::large_enum_variant)]
+/// It should match what is supported by the FHEVM. A full list can be found here:
+/// https://github.com/zama-ai/fhevm/blob/main/host-contracts/contracts/FHEVMExecutor.sol#L627-L634
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TestingPlaintext {
     Bool(bool),
