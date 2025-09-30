@@ -1005,7 +1005,14 @@ impl<
         let crs_info: HashMap<RequestId, CrsGenMetadata> =
             read_all_data_versioned(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
         let validation_material: HashMap<RequestId, RecoveryValidationMaterial> =
-            read_all_data_versioned(&public_storage, &PubDataType::Commitments.to_string()).await?;
+            read_all_data_versioned(&public_storage, &PubDataType::RecoveryMaterial.to_string())
+                .await?;
+        let verf_key = PublicSigKey::from_sk(&sk);
+        for (cur_req_id, rec_material) in validation_material.iter() {
+            if !rec_material.validate(&verf_key) {
+                anyhow::bail!("Invalid recovery validation material for key id {cur_req_id}");
+            }
+        }
         let custodian_context = validation_material
             .into_iter()
             .map(|(r, com)| (r, com.custodian_context().to_owned()))
