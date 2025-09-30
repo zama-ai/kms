@@ -10,7 +10,6 @@ use aes_prng::AesRng;
 #[cfg(not(feature = "measure_memory"))]
 use criterion::{measurement::WallTime, BenchmarkGroup, Criterion};
 use rand::prelude::*;
-use rand::thread_rng;
 use std::ops::{Add, Mul};
 use tfhe::prelude::*;
 use tfhe::{set_server_key, ClientKey, FheBool, FheUint64, ServerKey};
