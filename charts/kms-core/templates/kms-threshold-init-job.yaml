@@ -31,21 +31,21 @@ spec:
               echo "starting init process for kms-core to be ready to be initialized"
               while true
                   do
-                  grpc_health_probe -addr="http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.client }}"
+                  grpc_health_probe -addr="http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.peer }}"
                   healthStatus=$?
                   if [ ${healthStatus} -eq 0 ]; then
-                    echo "kms-core http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.client }} is already initialized"
+                    echo "kms-core http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.peer }} is already initialized"
                     break
                   fi
                   if [ ${healthStatus} -eq {{ .Values.kmsPeers.count }} ]; then
-                    echo "kms-core http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.client }} is reachable but not yet initialized"
+                    echo "kms-core http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.peer }} is reachable but not yet initialized"
                     break
                   fi;
-                  echo "failed to connect to kms-core http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.client }}, retrying"
+                  echo "failed to connect to kms-core http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.peer }}, retrying"
                   sleep 1
                 done
               done
-              echo "Kms-core http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.client }} has been reached"
+              echo "Kms-core http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.peer }} has been reached"
           env:
             {{- if .Values.kmsCore.thresholdMode.enabled }}
             {{- if .Values.kmsPeers.id }}
@@ -66,8 +66,8 @@ spec:
           args:
             - |
               KMS_INIT_TIMEOUT_SECONDS={{ .Values.kmsInit.timeoutSeconds}}
-              echo "Peer http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.client }} to initialize"
-              timeout ${KMS_INIT_TIMEOUT_SECONDS} bin/kms-init --addresses http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.client }}
+              echo "Peer http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.peer }} to initialize"
+              timeout ${KMS_INIT_TIMEOUT_SECONDS} bin/kms-init --addresses http://{{ $kmsCoreName }}-${KMS_CORE__THRESHOLD__MY_ID}:{{- $.Values.kmsCore.ports.peer }}
               exit 0
           env:
             {{- if .Values.kmsCore.thresholdMode.enabled }}
