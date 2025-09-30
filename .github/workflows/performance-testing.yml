@@ -184,7 +184,7 @@ jobs:
               --version "${KMS_CHART_VERSION:-"1.4.1"}" \
               --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-ci.yaml \
               --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-"${i}"-kms-ci.yaml \
-              --set kmsCoreClient.image.tag="v0.12.0" \
+              --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
               --set kmsCore.image.tag="${IMAGE_TAG}"
             done
 
@@ -197,7 +197,7 @@ jobs:
             --namespace "${NAMESPACE}" \
             --version "${KMS_CHART_VERSION:-"1.4.1"}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml \
-            --set kmsCoreClient.image.tag="v0.12.0" \
+            --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
             --set kmsCore.image.tag="${IMAGE_TAG}"
 
             kubectl wait --for=condition=complete job -l app=kms-threshold-init-job -n "${NAMESPACE}" --timeout=600s
@@ -209,7 +209,7 @@ jobs:
             --namespace "${NAMESPACE}" \
             --version "${KMS_CHART_VERSION:-"1.4.1"}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
-            --set kmsCoreClient.image.tag="v0.12.0" \
+            --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
             --set kmsCore.image.tag="${IMAGE_TAG}" \
             --wait \
             --wait-for-jobs \
