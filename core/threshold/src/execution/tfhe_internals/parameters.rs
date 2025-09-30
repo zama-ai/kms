@@ -250,6 +250,12 @@ impl DKGParams {
         } else {
             config
         };
+        let config =
+            if let Some(rerand_params) = self.get_params_basics_handle().get_rerand_params() {
+                config.enable_ciphertext_re_randomization(rerand_params)
+            } else {
+                config
+            };
         config.build()
     }
 }
