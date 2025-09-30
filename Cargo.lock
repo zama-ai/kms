@@ -1238,9 +1238,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.14.0"
+version = "1.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94b8ff6c09cd57b16da53641caa860168b88c172a5ee163b0288d3d6eea12786"
+checksum = "879b6c89592deb404ba4dc0ae6b58ffd1795c78991cbb5b8bc441c48a070440d"
 dependencies = [
  "aws-lc-sys",
  "untrusted 0.7.1",
@@ -1249,15 +1249,16 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.31.0"
+version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e44d16778acaf6a9ec9899b92cebd65580b83f685446bf2e1f5d3d732f99dcd"
+checksum = "1ba2e2516bdf37af57fc6ff047855f54abad0066e5c4fdaaeb76dabb2e05bcf5"
 dependencies = [
  "bindgen",
  "cc",
  "cmake",
  "dunce",
  "fs_extra",
+ "libloading",
 ]
 
 [[package]]
@@ -6456,7 +6457,7 @@ dependencies = [
 [[package]]
 name = "rustls"
 version = "0.23.31"
-source = "git+https://github.com/mkmks/rustls.git?branch=k256#2e446f859fc4488d12f3bdd3c23578320649d02d"
+source = "git+https://github.com/mkmks/rustls.git?branch=k256#55d28db7c0fe82d04fde58e7d003cdf61375f292"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -6511,7 +6512,7 @@ dependencies = [
 [[package]]
 name = "rustls-webpki"
 version = "0.103.4"
-source = "git+https://github.com/mkmks/webpki.git?branch=k256#9ae056039fc1929cc7a3fc3036b71e50d82f2fe6"
+source = "git+https://github.com/mkmks/webpki.git?branch=k256#a379a63cabdead8e824b67adf9a42d06040d0429"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -7779,7 +7780,7 @@ dependencies = [
 [[package]]
 name = "tokio-rustls"
 version = "0.26.2"
-source = "git+https://github.com/mkmks/tokio-rustls.git?branch=k256#fc6d96eee433d492dbaa8503cb67239fda89b190"
+source = "git+https://github.com/mkmks/tokio-rustls.git?branch=k256#862ac0b09ce8d47893f04b0e31fc1d5270c7445f"
 dependencies = [
  "rustls 0.23.31",
  "tokio",

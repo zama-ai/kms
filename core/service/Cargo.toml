@@ -82,7 +82,7 @@ rasn-cms.workspace = true
 rayon.workspace = true
 rcgen = { workspace = true, optional = true }
 rsa.workspace = true
-rustls-webpki.workspace = true
+rustls-webpki = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde-wasm-bindgen.workspace = true
 signature.workspace = true
@@ -155,6 +155,7 @@ non-wasm = [
     "dep:aws-smithy-types",
     "dep:hyper-rustls",
     "dep:observability",
+    "dep:rustls-webpki",
     "dep:rcgen",
     "dep:tokio",
     "dep:tokio-rustls",
