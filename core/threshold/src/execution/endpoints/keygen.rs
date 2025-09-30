@@ -2227,7 +2227,7 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
-                (compressed_pk.decompress(), sk)
+                (compressed_pk.decompress().unwrap(), sk)
             } else {
                 super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
                     &mut session,
@@ -2304,7 +2304,7 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
-                    (compressed_pk.decompress(), sk)
+                    (compressed_pk.decompress().unwrap(), sk)
                 } else {
                     super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
                         &mut session,

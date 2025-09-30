@@ -428,16 +428,16 @@ impl CompressedFhePubKeySet {
     // NOTE: This is meant to be replaced by CompressedXofKeySet::decompress once introduced in TFHE-RS
     // https://github.com/zama-ai/tfhe-rs/pull/2409
     #[allow(dead_code)]
-    pub fn decompress(self) -> FhePubKeySet {
+    pub fn decompress(self) -> anyhow::Result<FhePubKeySet> {
         let xof_seed = XofSeed::new_u128(self.seed, DSEP_KG);
         let xof_key_set =
             CompressedXofKeySet::from_raw_parts(xof_seed, self.public_key, self.server_key)
-                .decompress();
+                .decompress()?;
 
         let (public_key, server_key) = xof_key_set.into_raw_parts();
-        FhePubKeySet {
+        Ok(FhePubKeySet {
             public_key,
             server_key,
-        }
+        })
     }
 }
