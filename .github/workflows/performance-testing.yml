@@ -30,29 +30,29 @@ on:
 permissions: {}
 
 jobs:
-  # docker-build:
-  #   name: docker-build
-  #   permissions:
-  #     actions: read # Required to read workflow run information
-  #     contents: write # Required to checkout repository code
-  #     id-token: write # Required for OIDC authentication
-  #     pull-requests: read # Required to read pull request information
-  #     packages: write # Required to publish Docker images
-  #     attestations: write # Required to create build attestations
-  #   uses: ./.github/workflows/docker-build.yml
-  #   secrets:
-  #     BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-  #     AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-  #     AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-  #     SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-  #     SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-  #     JOB_SECRET: ${{ secrets.JOB_SECRET }}
-  #     CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-  #     CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+  docker-build:
+    name: docker-build
+    permissions:
+      actions: read # Required to read workflow run information
+      contents: write # Required to checkout repository code
+      id-token: write # Required for OIDC authentication
+      pull-requests: read # Required to read pull request information
+      packages: write # Required to publish Docker images
+      attestations: write # Required to create build attestations
+    uses: ./.github/workflows/docker-build.yml
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   performance-testing:
     name: performance-testing
-    # needs: docker-build
+    needs: docker-build
     runs-on: ubuntu-latest
     env:
       NAMESPACE: "kms-ci"
@@ -61,12 +61,10 @@ jobs:
       KMS_CHART_VERSION: ${{ inputs.kmsChartVersion }}
       TKMS_INFRA_CHART_VERSION: ${{ inputs.tkmsInfraChartVersion }}
       SYNC_SECRETS_CHART_VERSION: "0.2.1"
-      IMAGE_TAG: "7dfc7ec"
-
-      # IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
-      # PCR0: ${{ needs.docker-build.outputs.enclave_pcr0 }}
-      # PCR1: ${{ needs.docker-build.outputs.enclave_pcr1 }}
-      # PCR2: ${{ needs.docker-build.outputs.enclave_pcr2 }}
+      IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
+      PCR0: ${{ needs.docker-build.outputs.enclave_pcr0 }}
+      PCR1: ${{ needs.docker-build.outputs.enclave_pcr1 }}
+      PCR2: ${{ needs.docker-build.outputs.enclave_pcr2 }}
     steps:
       ################################################################
       # SET UP REQUIRED TOOLS
@@ -249,7 +247,7 @@ jobs:
 
       - name: Run performance testing
         run: |
-          # sed -i "s/<version>/${IMAGE_TAG}/g" ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml
+          sed -i "s/<version>/${IMAGE_TAG}/g" ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml
           argo submit -n argo ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml
           argo logs @latest -f -n "${NAMESPACE}"
 
@@ -257,7 +255,7 @@ jobs:
         if: always()
         run: |
           for i in {1..13}; do
-            kubectl logs kms-service-threshold-"${i}"-"${NAMESPACE}"-core -c kms-core -n "${NAMESPACE}" > kms-core-"${i}"-logs.txt
+            kubectl logs kms-service-threshold-"${i}"-"${NAMESPACE}"-core-"${i}" -c kms-core -n "${NAMESPACE}" > kms-core-"${i}"-logs.txt
           done
 
       - name: Upload kms-core logs

@@ -538,7 +538,7 @@ spec:
                   },
                   {
                     "title": ":gear: Resources",
-                    "value": "vCPU: 48 | Memory: 96Gi",
+                    "value": "vCPU: 48 | Memory: 96Gi | Out of the CI",
                     "short": true
                   },
                   {
