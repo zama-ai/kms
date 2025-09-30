@@ -171,7 +171,7 @@ command = "sh"
 args = ["test_scripts/bgv_test_script_fake_dkg.sh", "temp/${EXPERIMENT_NAME}.toml"]
 
 [tasks.tfhe-bench-run]
-env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-bench-run"}
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", MOBY_STRATEGY="secure", EXPERIMENT_NAME="tfhe-bench-run"}
 run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy"], fork = true}
 
 [tasks.bgv-bench-run]
