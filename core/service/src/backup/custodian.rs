@@ -13,10 +13,8 @@ use kms_grpc::rpc_types::InternalCustodianRecoveryOutput;
 use kms_grpc::RequestId;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tfhe::safe_serialization::safe_serialize;
 use tfhe::{named::Named, safe_serialization::safe_deserialize, Versionize};
 use tfhe_versionable::VersionsDispatch;
@@ -131,7 +129,7 @@ pub struct InternalCustodianContext {
     pub threshold: u32,
     pub context_id: RequestId,
     pub previous_context_id: Option<RequestId>,
-    pub custodian_nodes: HashMap<Role, InternalCustodianSetupMessage>,
+    pub custodian_nodes: BTreeMap<Role, InternalCustodianSetupMessage>,
     pub backup_enc_key: BackupPublicKey,
 }
 
@@ -144,14 +142,38 @@ impl InternalCustodianContext {
         custodian_context: CustodianContext,
         backup_enc_key: BackupPublicKey,
     ) -> anyhow::Result<Self> {
-        let mut node_map = HashMap::new();
+        if custodian_context.threshold == 0
+            || 2 * custodian_context.threshold as usize >= custodian_context.custodian_nodes.len()
+        {
+            return Err(anyhow::anyhow!(
+                "Invalid threshold in custodian context: threshold is {}, but there are {} custodian nodes",
+                custodian_context.threshold,
+                custodian_context.custodian_nodes.len()
+            ));
+        }
+        let mut node_map = BTreeMap::new();
         for setup_message in custodian_context.custodian_nodes.iter() {
             let internal_msg: InternalCustodianSetupMessage =
                 setup_message.to_owned().try_into()?;
-            node_map.insert(
+            if setup_message.custodian_role == 0 {
+                return Err(anyhow::anyhow!(
+                    "Custodian role cannot be zero in custodian context"
+                ));
+            }
+            if setup_message.custodian_role > custodian_context.custodian_nodes.len() as u64 {
+                return Err(anyhow::anyhow!(
+                        "Custodian role {} is greater than the number of custodians in custodian context", setup_message.custodian_role
+                    ));
+            }
+            let old_msg = node_map.insert(
                 Role::indexed_from_one(setup_message.custodian_role as usize),
                 internal_msg,
             );
+            if old_msg.is_some() {
+                return Err(anyhow::anyhow!(
+                    "Duplicate custodian role found in custodian context"
+                ));
+            }
         }
         let context_id: RequestId = parse_optional_proto_request_id(
             &custodian_context.context_id,
@@ -315,5 +337,105 @@ impl<S: BackupSigner, D: BackupDecryptor> Custodian<S, D> {
 
     pub fn role(&self) -> Role {
         self.role
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cryptography::backup_pke::keygen;
+    use aes_prng::AesRng;
+    use rand::SeedableRng;
+
+    #[test]
+    fn internal_custodian_context_zero_role_should_fail() {
+        let mut rng = AesRng::seed_from_u64(40);
+        let (backup_pk, _) = keygen(&mut rng).unwrap();
+        let setup_msg = CustodianSetupMessage {
+            custodian_role: 0, // Invalid role
+            name: "Custodian-1".to_string(),
+            payload: vec![],
+        };
+        let context = CustodianContext {
+            custodian_nodes: vec![setup_msg],
+            context_id: None,
+            previous_context_id: None,
+            threshold: 1,
+        };
+        let result = InternalCustodianContext::new(context, backup_pk.clone());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn invalid_threshold_should_fail() {
+        let mut rng = AesRng::seed_from_u64(40);
+        let (backup_pk, _) = keygen(&mut rng).unwrap();
+        let setup_msg1 = CustodianSetupMessage {
+            custodian_role: 1,
+            name: "Custodian-1".to_string(),
+            payload: vec![],
+        };
+        let setup_msg2 = CustodianSetupMessage {
+            custodian_role: 2,
+            name: "Custodian-2".to_string(),
+            payload: vec![],
+        };
+        let context = CustodianContext {
+            custodian_nodes: vec![setup_msg1, setup_msg2],
+            context_id: None,
+            previous_context_id: None,
+            threshold: 1, // Invalid threshold, since 1 is not less than 2/2
+        };
+        let result = InternalCustodianContext::new(context, backup_pk.clone());
+        assert!(result.is_err());
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("Invalid threshold in custodian context"));
+    }
+
+    #[test]
+    fn internal_custodian_context_duplicate_role_should_fail() {
+        let mut rng = AesRng::seed_from_u64(40);
+        let (backup_pk, _) = keygen(&mut rng).unwrap();
+        let payload = vec![];
+        let setup_msg1 = CustodianSetupMessage {
+            custodian_role: 1,
+            name: "Custodian-1".to_string(),
+            payload: payload.clone(),
+        };
+        let setup_msg2 = CustodianSetupMessage {
+            custodian_role: 1, // Duplicate role
+            name: "Custodian-2".to_string(),
+            payload,
+        };
+        let context = CustodianContext {
+            custodian_nodes: vec![setup_msg1, setup_msg2],
+            context_id: None,
+            previous_context_id: None,
+            threshold: 2,
+        };
+        let result = InternalCustodianContext::new(context, backup_pk.clone());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn internal_custodian_context_role_greater_than_nodes_should_fail() {
+        let mut rng = AesRng::seed_from_u64(40);
+        let (backup_pk, _) = keygen(&mut rng).unwrap();
+        let setup_msg = CustodianSetupMessage {
+            custodian_role: 5, // Greater than number of nodes
+            name: "Custodian-1".to_string(),
+            payload: vec![],
+        };
+        let context = CustodianContext {
+            custodian_nodes: vec![setup_msg],
+            context_id: None,
+            previous_context_id: None,
+            threshold: 1,
+        };
+        let result = InternalCustodianContext::new(context, backup_pk.clone());
+        assert!(result.is_err());
     }
 }

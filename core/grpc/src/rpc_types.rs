@@ -232,7 +232,7 @@ pub enum PubDataType {
     DecompressionKey,
     CACert, // Certificate that signs TLS certificates used by MPC nodes // TODO will change in connection with #2491, also see #2723
     RecoveryRequest, // Recovery request for backup vault TODO(#2748) ensure that data gets validated at read, since we cannot fully trust the public storage
-    Commitments, // Commitments for the backup vault TODO(#2748) rename since it also contains custodian context. it could also be combined with the recovery request. We should consider this to be stored in the backup vault instead
+    RecoveryMaterial, // Recovery material for the backup vault
 }
 
 impl fmt::Display for PubDataType {
@@ -247,7 +247,7 @@ impl fmt::Display for PubDataType {
             PubDataType::DecompressionKey => write!(f, "DecompressionKey"),
             PubDataType::CACert => write!(f, "CACert"),
             PubDataType::RecoveryRequest => write!(f, "RecoveryRequest"),
-            PubDataType::Commitments => write!(f, "Commitments"),
+            PubDataType::RecoveryMaterial => write!(f, "RecoveryMaterial"),
         }
     }
 }
