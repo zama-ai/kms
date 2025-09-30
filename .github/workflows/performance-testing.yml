@@ -249,7 +249,7 @@ jobs:
         run: |
           sed -i "s/<version>/${IMAGE_TAG}/g" ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml
           argo submit -n argo ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml
-          kubectl wait --for=condition=complete pod -l app=kms-ci-test-suite -n "${NAMESPACE}" --timeout=2400s
+          argo logs @latest -f -n "${NAMESPACE}"
 
       - name: Get logs from kms-core
         if: always()
