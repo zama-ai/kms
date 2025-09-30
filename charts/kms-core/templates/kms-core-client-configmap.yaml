@@ -58,20 +58,20 @@ data:
     # List of connection info to each of the cores
     {{ if .Values.kmsCore.thresholdMode.enabled -}}
       {{- if .Values.kmsCore.thresholdMode.peersList }}
-      {{ range .Values.kmsCore.thresholdMode.peersList }}
+        {{ range .Values.kmsCore.thresholdMode.peersList }}
 
     [[cores]]
     # The ID of the given KMS server (monotonically increasing positive integer starting at 1)
     party_id = {{ int .id }}
     # The address of the given KMS server, including the port
-    address = "{{ .host }}:{{ int .port }}"
+    address = "{{ .host }}:{{- $.Values.kmsCore.ports.client -}}"
     # The S3 endpoint where the public material of the given server can be reached
     s3_endpoint = "${S3_ENDPOINT}"
     # The folder at the S3 endpoint where the data is stored
     object_folder = "PUB-p{{ int .id }}"
-      {{ end }}
+        {{ end }}
       {{- else }}
-      {{ range $i := $peersIDList }}
+        {{ range $i := $peersIDList }}
     [[cores]]
     # The ID of the given KMS server (monotonically increasing positive integer starting at 1)
     party_id = {{ int $i }}
