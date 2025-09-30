@@ -239,15 +239,6 @@ impl RawPubKeySet {
     }
 }
 
-// NOTE: This is meant to be replaced by XofKeySet once introduced in TFHE-RS
-// https://github.com/zama-ai/tfhe-rs/pull/2409
-#[derive(Clone, Serialize, Deserialize)]
-pub struct CompressedFhePubKeySet {
-    pub public_key: tfhe::CompressedCompactPublicKey,
-    pub server_key: tfhe::CompressedServerKey,
-    pub seed: u128,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum CompressedReRandomizationRawKeySwitchingKey {
     UseCPKEncryptionKSK,
@@ -411,33 +402,11 @@ impl RawCompressedPubKeySet {
         )
     }
 
-    pub fn to_compressed_pubkeyset(&self, params: DKGParams) -> CompressedFhePubKeySet {
-        let seed = self.seed;
+    pub fn to_compressed_pubkeyset(&self, params: DKGParams) -> CompressedXofKeySet {
+        let seed = XofSeed::new_u128(self.seed, DSEP_KG);
         let public_key = self.compute_tfhe_hl_api_compressed_compact_public_key(params);
         let server_key = self.compute_tfhe_hl_api_compressed_server_key(params);
 
-        CompressedFhePubKeySet {
-            public_key,
-            server_key,
-            seed,
-        }
-    }
-}
-
-impl CompressedFhePubKeySet {
-    // NOTE: This is meant to be replaced by CompressedXofKeySet::decompress once introduced in TFHE-RS
-    // https://github.com/zama-ai/tfhe-rs/pull/2409
-    #[allow(dead_code)]
-    pub fn decompress(self) -> anyhow::Result<FhePubKeySet> {
-        let xof_seed = XofSeed::new_u128(self.seed, DSEP_KG);
-        let xof_key_set =
-            CompressedXofKeySet::from_raw_parts(xof_seed, self.public_key, self.server_key)
-                .decompress()?;
-
-        let (public_key, server_key) = xof_key_set.into_raw_parts();
-        Ok(FhePubKeySet {
-            public_key,
-            server_key,
-        })
+        CompressedXofKeySet::from_raw_parts(seed, public_key, server_key)
     }
 }

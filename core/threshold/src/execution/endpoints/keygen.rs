@@ -37,8 +37,8 @@ use crate::{
             parameters::{DKGParams, MSNRKConfiguration},
             private_keysets::{GenericPrivateKeySet, PrivateKeySet},
             public_keysets::{
-                CompressedFhePubKeySet, CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet,
-                RawCompressedPubKeySet, RawPubKeySet, ReRandomizationRawKeySwitchingKey,
+                CompressedReRandomizationRawKeySwitchingKey, FhePubKeySet, RawCompressedPubKeySet,
+                RawPubKeySet, ReRandomizationRawKeySwitchingKey,
             },
             randomness::MPCEncryptionRandomGenerator,
             sns_compression_key::SnsCompressionPrivateKeyShares,
@@ -60,6 +60,7 @@ use tfhe::{
         server_key::{CompressedModulusSwitchConfiguration, ModulusSwitchConfiguration},
         ClassicPBSParameters,
     },
+    xof_key_set::CompressedXofKeySet,
 };
 use tfhe_csprng::{generators::SoftwareRandomGenerator, seeders::XofSeed};
 use tracing::instrument;
@@ -194,7 +195,7 @@ pub trait OnlineDistributedKeyGen<Z, const EXTENSION_DEGREE: usize>: Send + Sync
         preprocessing: &mut P,
         params: DKGParams,
         existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
-    ) -> anyhow::Result<(CompressedFhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+    ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
         Z: BaseRing,
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
@@ -264,7 +265,7 @@ impl<Z: BaseRing, const EXTENSION_DEGREE: usize> OnlineDistributedKeyGen<Z, EXTE
         preprocessing: &mut P,
         params: DKGParams,
         existing_compression_sk: Option<&CompressionPrivateKeyShares<Z, EXTENSION_DEGREE>>,
-    ) -> anyhow::Result<(CompressedFhePubKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
+    ) -> anyhow::Result<(CompressedXofKeySet, PrivateKeySet<EXTENSION_DEGREE>)>
     where
         ResiduePoly<Z, EXTENSION_DEGREE>: ErrorCorrect,
         GenericPrivateKeySet<Z, EXTENSION_DEGREE>: Finalizable<EXTENSION_DEGREE>,
@@ -2227,7 +2228,14 @@ pub mod tests {
                     )
                     .await
                     .unwrap();
-                (compressed_pk.decompress().unwrap(), sk)
+                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
+                (
+                    FhePubKeySet {
+                        public_key,
+                        server_key,
+                    },
+                    sk,
+                )
             } else {
                 super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
                     &mut session,
@@ -2295,26 +2303,34 @@ pub mod tests {
             let my_role = session.my_role();
             let mut dkg_preproc = DummyPreprocessing::new(DUMMY_PREPROC_SEED, &session);
 
-            let (pk, sk) =
-                if run_compressed {
-                    let (compressed_pk, sk) = super::SecureOnlineDistributedKeyGen128::<
-                        EXTENSION_DEGREE,
-                    >::compressed_keygen(
-                        &mut session, &mut dkg_preproc, params, None
-                    )
-                    .await
-                    .unwrap();
-                    (compressed_pk.decompress().unwrap(), sk)
-                } else {
-                    super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
+            let (pk, sk) = if run_compressed {
+                let (compressed_pk, sk) =
+                    super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::compressed_keygen(
                         &mut session,
                         &mut dkg_preproc,
                         params,
                         None,
                     )
                     .await
-                    .unwrap()
-                };
+                    .unwrap();
+                let (public_key, server_key) = compressed_pk.decompress().unwrap().into_raw_parts();
+                (
+                    FhePubKeySet {
+                        public_key,
+                        server_key,
+                    },
+                    sk,
+                )
+            } else {
+                super::SecureOnlineDistributedKeyGen128::<EXTENSION_DEGREE>::keygen(
+                    &mut session,
+                    &mut dkg_preproc,
+                    params,
+                    None,
+                )
+                .await
+                .unwrap()
+            };
 
             (my_role, pk, sk)
         };
