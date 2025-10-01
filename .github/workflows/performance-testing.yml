@@ -62,23 +62,26 @@ jobs:
   docker-build:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.dockerBuild == true) || github.event_name == 'pull_request'
     name: docker-build
-    permissions:
-      actions: read # Required to read workflow run information
-      contents: write # Required to checkout repository code
-      id-token: write # Required for OIDC authentication
-      pull-requests: read # Required to read pull request information
-      packages: write # Required to publish Docker images
-      attestations: write # Required to create build attestations
-    uses: ./.github/workflows/docker-build.yml
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-      AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
-      AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
-      CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
-      CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: exit 0
+    # permissions:
+    #   actions: read # Required to read workflow run information
+    #   contents: write # Required to checkout repository code
+    #   id-token: write # Required for OIDC authentication
+    #   pull-requests: read # Required to read pull request information
+    #   packages: write # Required to publish Docker images
+    #   attestations: write # Required to create build attestations
+    # uses: ./.github/workflows/docker-build.yml
+    # secrets:
+    #   BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+    #   AWS_ACCESS_KEY_S3_USER: ${{ secrets.AWS_ACCESS_KEY_S3_USER }}
+    #   AWS_SECRET_KEY_S3_USER: ${{ secrets.AWS_SECRET_KEY_S3_USER }}
+    #   SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+    #   SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+    #   JOB_SECRET: ${{ secrets.JOB_SECRET }}
+    #   CGR_USERNAME: ${{ secrets.CGR_USERNAME }}
+    #   CGR_PASSWORD: ${{ secrets.CGR_PASSWORD }}
 
   ############################################################################
   # Performance Testing Job
@@ -112,50 +115,70 @@ jobs:
 
       - name: Check if docker build succeeded
         if: ${{ needs.docker-build.result == 'success' }}
+        env:
+          DEPLOYMENT_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'thresholdWithEnclave' }}
+          # KMS_CORE_IMAGE_TAG: ${{ inputs.kmsCoreImageTag }}
+          KMS_CORE_IMAGE_TAG: 16be27d
+          # KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.kmsCoreClientImageTag }}
+          KMS_CORE_CLIENT_IMAGE_TAG: 16be27d
         run: |
           ###################################################################
           # DOCKER BUILD SUCCEEDED - Set up environment for new images
           # This handles both scheduled and manual runs with dockerBuild=true
           ###################################################################
           # Set deployment type, defaulting to thresholdWithEnclave if not specified
-          echo "DEPLOYMENT_TYPE=${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'thresholdWithEnclave' }}" >> "$GITHUB_ENV"
           # Use the newly built image tags
-          echo "KMS_CORE_IMAGE_TAG=${{ needs.docker-build.outputs.image_tag }}" >> "$GITHUB_ENV"
-          echo "KMS_CORE_CLIENT_IMAGE_TAG=${{ needs.docker-build.outputs.image_tag }}" >> "$GITHUB_ENV"
+          {
+            echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
+            echo "KMS_CORE_IMAGE_TAG=${KMS_CORE_IMAGE_TAG}"
+            echo "KMS_CORE_CLIENT_IMAGE_TAG=${KMS_CORE_CLIENT_IMAGE_TAG}"
+          } >> "$GITHUB_ENV"
 
           # For enclave deployments, extract PCR measurements
           if [[ ${DEPLOYMENT_TYPE} == "thresholdWithEnclave" ]]; then
             echo "Extracting PCR measurements for enclave attestation..."
-            docker pull ghcr.io/zama-ai/kms/core-service-enclave:${{ needs.docker-build.outputs.image_tag }}
-            PCR0=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:${{ needs.docker-build.outputs.image_tag }} | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
-            PCR1=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:${{ needs.docker-build.outputs.image_tag }} | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
-            PCR2=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:${{ needs.docker-build.outputs.image_tag }} | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
-            echo "PCR0=${PCR0}" >> "$GITHUB_ENV"
-            echo "PCR1=${PCR1}" >> "$GITHUB_ENV"
-            echo "PCR2=${PCR2}" >> "$GITHUB_ENV"
+            docker pull ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
+            PCR0=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
+            PCR1=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
+            PCR2=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
+            {
+              echo "PCR0=${PCR0}"
+              echo "PCR1=${PCR1}"
+              echo "PCR2=${PCR2}"
+            } >> "$GITHUB_ENV"
           fi
 
       - name: Handle pre-built images
         if: ${{ needs.docker-build.result == 'skipped' && github.event_name == 'workflow_dispatch' && inputs.dockerBuild == false && inputs.kmsCoreImageTag != '' && inputs.kmsCoreClientImageTag != '' }}
+        env:
+          DEPLOYMENT_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'thresholdWithEnclave' }}
+          # KMS_CORE_IMAGE_TAG: ${{ inputs.kmsCoreImageTag }}
+          KMS_CORE_IMAGE_TAG: 16be27d
+          # KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.kmsCoreClientImageTag }}
+          KMS_CORE_CLIENT_IMAGE_TAG: 16be27d
         run: |
           ###################################################################
           # USING PRE-BUILT IMAGES
           # This handles manual runs with dockerBuild=false, using provided tags
           ###################################################################
           echo "Using pre-built images with tags:"
-          echo "DEPLOYMENT_TYPE=${{ inputs.deploymentType }}" >> "$GITHUB_ENV"
-          echo "KMS_CORE_IMAGE_TAG=${{ inputs.kmsCoreImageTag }}" >> "$GITHUB_ENV"
-          echo "KMS_CORE_CLIENT_IMAGE_TAG=${{ inputs.kmsCoreClientImageTag }}" >> "$GITHUB_ENV"
+          {
+            echo "DEPLOYMENT_TYPE=${DEPLOYMENT_TYPE}"
+            echo "KMS_CORE_IMAGE_TAG=${KMS_CORE_IMAGE_TAG}"
+            echo "KMS_CORE_CLIENT_IMAGE_TAG=${KMS_CORE_CLIENT_IMAGE_TAG}"
+          } >> "$GITHUB_ENV"
 
           if [[ ${DEPLOYMENT_TYPE} == "thresholdWithEnclave" ]]; then
             echo "Extracting PCR measurements for provided enclave image..."
-            docker pull ghcr.io/zama-ai/kms/core-service-enclave:${{ inputs.kmsCoreImageTag }}
-            PCR0=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:${{ inputs.kmsCoreImageTag }} | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
-            PCR1=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:${{ inputs.kmsCoreImageTag }} | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
-            PCR2=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:${{ inputs.kmsCoreImageTag }} | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
-            echo "PCR0=${PCR0}" >> "$GITHUB_ENV"
-            echo "PCR1=${PCR1}" >> "$GITHUB_ENV"
-            echo "PCR2=${PCR2}" >> "$GITHUB_ENV"
+            docker pull ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}"
+            PCR0=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
+            PCR1=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
+            PCR2=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:"${KMS_CORE_IMAGE_TAG}" | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
+            {
+              echo "PCR0=${PCR0}"
+              echo "PCR1=${PCR1}"
+              echo "PCR2=${PCR2}"
+            } >> "$GITHUB_ENV"
           fi
 
       # ======================================================================
@@ -262,7 +285,7 @@ jobs:
               oci://ghcr.io/zama-zws/crossplane/tkms-infra \
               --namespace "${NAMESPACE}" \
               --version "${TKMS_INFRA_CHART_VERSION}" \
-              --values ./ci/kube-testing/threshold/kms-ci/tkms-infra/values-kms-ci.yaml
+              --values ./ci/kube-testing/threshold/kms-ci/tkms-infra/values-"${PATH_SUFFIX}".yaml
 
           elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             echo "Deploying threshold infrastructure with enclave support..."
@@ -270,7 +293,7 @@ jobs:
               oci://ghcr.io/zama-zws/crossplane/tkms-infra \
               --namespace "${NAMESPACE}" \
               --version "${TKMS_INFRA_CHART_VERSION}" \
-              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/tkms-infra/values-kms-ci.yaml \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/tkms-infra/values-"${PATH_SUFFIX}".yaml \
               --set kmsParties.awsKms.recipientAttestationImageSHA384="${PCR0}"
           fi
 
@@ -302,10 +325,10 @@ jobs:
           ###################################################################
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             echo "Using enclave-enabled configuration..."
-            echo "PATH_SUFFIX=kms-enclave-ci" >> $GITHUB_ENV
+            echo "PATH_SUFFIX=kms-enclave-ci" >> "$GITHUB_ENV"
           else
             echo "Using standard threshold configuration..."
-            echo "PATH_SUFFIX=kms-ci" >> $GITHUB_ENV
+            echo "PATH_SUFFIX=kms-ci" >> "$GITHUB_ENV"
           fi
 
           ###################################################################
