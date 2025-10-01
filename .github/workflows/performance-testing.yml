@@ -321,12 +321,12 @@ jobs:
               -n "${NAMESPACE}" --timeout=120s
           done
 
-          # if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-          #   echo "Waiting for enclave node groups to be ready..."
-          #   kubectl wait --for=condition=ready enclavenodegroups \
-          #     -l crossplane.io/claim-namespace="${NAMESPACE}" \
-          #     -n "${NAMESPACE}" --timeout=120s
-          # fi
+          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            echo "Waiting for enclave node groups to be ready..."
+            kubectl wait --for=condition=ready xenclavenodegroup \
+              -l crossplane.io/claim-namespace="${NAMESPACE}" \
+              -n "${NAMESPACE}" --timeout=120s
+          fi
 
       # ======================================================================
       # KMS CORE DEPLOYMENT
@@ -340,7 +340,7 @@ jobs:
             echo "Deploying KMS Core in threshold mode across 13 parties..."
             for i in {1..13}; do
               echo "Deploying KMS Core party ${i}/13..."
-              helm upgrade --install kms-service-threshold-"${i}"-"${NAMESPACE}" \
+              helm upgrade --install kms-service-threshold-"${i}"-"${PATH_SUFFIX}" \
                 oci://ghcr.io/zama-ai/kms/charts/kms-core \
                 --namespace "${NAMESPACE}" \
                 --version "${KMS_CHART_VERSION}" \
@@ -357,7 +357,7 @@ jobs:
             echo "Deploying KMS Core in threshold mode with enclave support across 13 parties..."
             for i in {1..13}; do
               echo "Deploying KMS Core party ${i}/13 with enclave attestation..."
-              helm upgrade --install kms-core-"${i}" \
+              helm upgrade --install  kms-service-threshold-"${i}"-"${PATH_SUFFIX}" \
                 oci://ghcr.io/zama-ai/kms/charts/kms-core \
                 --namespace "${NAMESPACE}" \
                 --version "${KMS_CHART_VERSION}" \
@@ -490,7 +490,7 @@ jobs:
           echo "Uninstalling KMS Core instances..."
           for i in {1..13}; do
             echo "Uninstalling KMS Core instance ${i}/13..."
-            helm uninstall "kms-service-threshold-${i}-${NAMESPACE}" -n "${NAMESPACE}" || true
+            helm uninstall "kms-service-threshold-${i}-${PATH_SUFFIX}" -n "${NAMESPACE}" || true
           done
 
           # Clean up ConfigMaps

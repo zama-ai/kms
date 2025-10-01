@@ -1,13 +1,17 @@
 kmsPeers:
   # Number of replicas managed by each statefulset
   count: 1
+kmsConnector:
+  enabled: false
 kmsCoreClient:
   enabled: false
+  envFrom:
+    configmap:
+      name: kms-enclave-ci-1
   image:
     tag: <version>
 
 kmsCore:
-  addressOverride:
   image:
     name: ghcr.io/zama-ai/kms/core-service-enclave
     tag: <version>
@@ -29,14 +33,16 @@ kmsCore:
     bucketSize: 50000
   thresholdMode:
     enabled: true
-    initializationScript:
-      enabled: true
     thresholdValue: 4 # 1 if 4 parties or 4 if 13 parties
     numSessionsPreproc: 72
     multiplier: 2.0
     maxInterval: 60
     initialIntervalMs: 100
     cleanupIntervalSecs: 2
+    rayonNumThreads: 40
+    tokioWorkerThreads: 24
+    initializationScript:
+      enabled: true
     peersList:
       - id: 1
         host: kms-service-threshold-1-kms-enclave-ci-core-1
@@ -78,7 +84,7 @@ kmsCore:
         host: kms-service-threshold-13-kms-enclave-ci-core-13
         port: 50001
     tls:
-      enabled: true
+      enabled: false
       trustedReleases:
         - pcr0: '9435d28857a31b883f9ed0ccd690d2ba5ffc9693937132bc9e83c32d00aa12adbff05f8e7ba7a769937b43ce74631a27'
           pcr1: '4b4d5b3661b3efc12920900c80e126e4ce783c522de6c02a2a5bf7af3a2b9327b86776f188e4be1c1c404a129dbda493'
