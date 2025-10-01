@@ -321,12 +321,12 @@ jobs:
               -n "${NAMESPACE}" --timeout=120s
           done
 
-          # if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-          #   echo "Waiting for enclave node groups to be ready..."
-          #   kubectl wait --for=condition=ready xenclavenodegroup \
-          #     -l crossplane.io/claim-namespace="${NAMESPACE}" \
-          #     -n "${NAMESPACE}" --timeout=120s
-          # fi
+          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            echo "Waiting for enclave node groups to be ready..."
+            kubectl wait --for=condition=ready enclavenodegroup \
+              kms-party-"${PATH_SUFFIX}"\
+              -n "${NAMESPACE}" --timeout=1200s
+          fi
 
       # ======================================================================
       # KMS CORE DEPLOYMENT
@@ -393,9 +393,9 @@ jobs:
           ###################################################################
           # Wait for KMS Core initialization to complete
           ###################################################################
-          echo "Waiting for KMS Core initialization to complete..."
-          kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
-            -n "${NAMESPACE}" --timeout=600s
+          # echo "Waiting for KMS Core initialization to complete..."
+          # kubectl wait --for=condition=complete job -l app=kms-threshold-init-job \
+          #   -n "${NAMESPACE}" --timeout=600s
 
           ###################################################################
           # Deploy KMS Core key generation job
