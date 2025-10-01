@@ -647,7 +647,8 @@ pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
         let _ = tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryRequest.to_string()))
             .await;
         let _ =
-            tokio::fs::remove_dir_all(&base_dir.join(PubDataType::Commitments.to_string())).await;
+            tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryMaterial.to_string()))
+                .await;
     } else {
         for cur_party in 1..=amount_parties {
             // Next purge recovery info
@@ -661,8 +662,10 @@ pub async fn purge_recovery_info(path: Option<&Path>, amount_parties: usize) {
             let _ =
                 tokio::fs::remove_dir_all(&base_dir.join(PubDataType::RecoveryRequest.to_string()))
                     .await;
-            let _ = tokio::fs::remove_dir_all(&base_dir.join(PubDataType::Commitments.to_string()))
-                .await;
+            let _ = tokio::fs::remove_dir_all(
+                &base_dir.join(PubDataType::RecoveryMaterial.to_string()),
+            )
+            .await;
         }
     }
 }
