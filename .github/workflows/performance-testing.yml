@@ -12,14 +12,12 @@ on:
         default: "threshold"
         type: choice
         options:
-          - "centralized"
-          - "centralizedWithEnclave"
           - "threshold"
           - "thresholdWithEnclave"
       kmsChartVersion:
         description: "KMS chart version"
         required: true
-        default: "1.3.0"
+        default: "1.4.1"
         type: string
       tkmsInfraChartVersion:
         description: "TKMS Infra chart version"
@@ -56,10 +54,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NAMESPACE: "kms-ci"
-      # DEPLOYMENT_TYPE: ${{ inputs.deploymentType }}
-      DEPLOYMENT_TYPE: "threshold"
-      KMS_CHART_VERSION: ${{ inputs.kmsChartVersion }}
-      TKMS_INFRA_CHART_VERSION: ${{ inputs.tkmsInfraChartVersion }}
+      DEPLOYMENT_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'thresholdWithEnclave' }}
+      KMS_CHART_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.kmsChartVersion || '1.4.1' }}
+      TKMS_INFRA_CHART_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tkmsInfraChartVersion || '0.3.0' }}
       SYNC_SECRETS_CHART_VERSION: "0.2.1"
       IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
       PCR0: ${{ needs.docker-build.outputs.enclave_pcr0 }}
@@ -139,15 +136,21 @@ jobs:
       #     --from-literal=url=${{ secrets.SLACK_WEBHOOK_URL }} \
       #     --namespace kms-ci
 
-      - name: Setup tkms-infra
+      - name: Setup tkms-infra for ${DEPLOYMENT_TYPE}
         run: |
+          ##########################################################################
+          # DEPLOYMENT OF TKMS INFRA
+          #
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
             helm upgrade --install tkms-infra oci://ghcr.io/zama-zws/crossplane/tkms-infra \
             --namespace "${NAMESPACE}" \
             --version "${TKMS_INFRA_CHART_VERSION:-"0.3.0"}" \
             --values ./ci/kube-testing/threshold/kms-ci/tkms-infra/values-kms-ci.yaml
-          fi
-          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+
+          ##########################################################################
+          # DEPLOYMENT OF TKMS INFRA WITH ENCLAVE
+          #
+          elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             helm upgrade --install tkms-infra oci://ghcr.io/zama-zws/crossplane/tkms-infra \
             --namespace "${NAMESPACE}" \
             --version "${TKMS_INFRA_CHART_VERSION:-"0.3.0"}" \
@@ -157,26 +160,21 @@ jobs:
 
       - name: Wait tkms-infra to be ready
         run: |
+          ##########################################################################
           # WAIT FOR DEPLOYMENT OF TKMS INFRA IS DONE
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-1 -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-2 -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-3 -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-4 -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-5 -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-6 -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-7 -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-8 -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-9 -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-10 -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-11 -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-12 -n "${NAMESPACE}" --timeout=120s
-          kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-13 -n "${NAMESPACE}" --timeout=120s
+          #
+          for i in {1..13}; do
+            kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-"${i}" -n "${NAMESPACE}" --timeout=120s
+          done
           if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             kubectl wait --for=condition=ready enclavenodegroups -l crossplane.io/claim-namespace="${NAMESPACE}" -n "${NAMESPACE}" --timeout=120s
           fi
 
-      - name: Setup kms-core with 13 parties
+      - name: Setup kms-core with 13 parties for ${DEPLOYMENT_TYPE}
         run: |
+          ##########################################################################
+          # DEPLOYMENT_TYPE = threshold
+          #
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
             for i in {1..13}; do
               helm upgrade --install kms-service-threshold-"${i}"-"${NAMESPACE}" oci://ghcr.io/zama-ai/kms/charts/kms-core \
@@ -188,64 +186,63 @@ jobs:
               --set kmsCore.image.tag="${IMAGE_TAG}"
             done
 
-            kubectl wait --for=condition=ready pod -l app=kms-core -n "${NAMESPACE}" --timeout=600s
-
-            helm list -n "${NAMESPACE}"
-            sleep 30
-
-            helm upgrade --install kms-core-init oci://ghcr.io/zama-ai/kms/charts/kms-core \
-            --namespace "${NAMESPACE}" \
-            --version "${KMS_CHART_VERSION:-"1.4.1"}" \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml \
-            --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
-            --set kmsCore.image.tag="${IMAGE_TAG}"
-
-            kubectl wait --for=condition=complete job -l app=kms-threshold-init-job -n "${NAMESPACE}" --timeout=600s
-
-            helm list -n "${NAMESPACE}"
-            sleep 30
-
-            helm upgrade --install kms-core-gen-keys oci://ghcr.io/zama-ai/kms/charts/kms-core \
-            --namespace "${NAMESPACE}" \
-            --version "${KMS_CHART_VERSION:-"1.4.1"}" \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
-            --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
-            --set kmsCore.image.tag="${IMAGE_TAG}" \
-            --wait \
-            --wait-for-jobs \
-            --timeout=1200s
-
-            kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys -n "${NAMESPACE}" --timeout=600s
+          ##########################################################################
+          # DEPLOYMENT_TYPE = thresholdWithEnclave
+          #
+          elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            for i in {1..13}; do
+              helm upgrade --install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
+              --namespace "${NAMESPACE}" \
+              --version "${KMS_CHART_VERSION:-"1.4.1"}" \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-ci.yaml \
+              --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-"${i}"-kms-ci.yaml \
+              --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
+              --set kmsCore.image.tag="${IMAGE_TAG}" \
+              --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
+              --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
+              --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}"
+            done
           fi
 
-          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            helm upgrade --install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
-            --namespace "${NAMESPACE}" \
-            --version "${KMS_CHART_VERSION:-"1.4.1"}" \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-1-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-2-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-3-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-4-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-5-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-6-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-7-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-8-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-9-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-10-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-11-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-12-kms-ci.yaml \
-            --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-13-kms-ci.yaml \
-            --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
-            --set kmsCore.image.tag="${IMAGE_TAG}" \
-            --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
-            --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
-            --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}"
-          fi
+          ##########################################################################
+          # WAIT FOR DEPLOYMENT OF KMS CORE IS DONE
+          #
+          kubectl wait --for=condition=ready pod -l app=kms-core -n "${NAMESPACE}" --timeout=600s
 
-      - name: Run performance testing
+          ##########################################################################
+          # DEPLOYMENT OF kms-core-init
+          #
+          helm upgrade --install kms-core-init oci://ghcr.io/zama-ai/kms/charts/kms-core \
+          --namespace "${NAMESPACE}" \
+          --version "${KMS_CHART_VERSION:-"1.4.1"}" \
+          --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-kms-ci.yaml \
+          --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
+          --set kmsCore.image.tag="${IMAGE_TAG}"
+
+          ##########################################################################
+          # WAIT FOR DEPLOYMENT OF kms-core-init
+          #
+          kubectl wait --for=condition=complete job -l app=kms-threshold-init-job -n "${NAMESPACE}" --timeout=600s
+
+          ##########################################################################
+          # DEPLOYMENT OF kms-core-gen-keys
+          #
+          helm upgrade --install kms-core-gen-keys oci://ghcr.io/zama-ai/kms/charts/kms-core \
+          --namespace "${NAMESPACE}" \
+          --version "${KMS_CHART_VERSION:-"1.4.1"}" \
+          --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-kms-ci.yaml \
+          --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
+          --set kmsCore.image.tag="${IMAGE_TAG}" \
+          --wait \
+          --wait-for-jobs \
+          --timeout=1200s
+
+          ##########################################################################
+          # WAIT FOR DEPLOYMENT OF kms-core-gen-keys
+          #
+          kubectl wait --for=condition=complete job -l app=kms-core-client-gen-keys -n "${NAMESPACE}" --timeout=600s
+
+      - name: Run performance testing for ${DEPLOYMENT_TYPE}
         run: |
           sed -i "s/<version>/${IMAGE_TAG}/g" ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml
           argo submit -n argo ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-req-by-step.yaml

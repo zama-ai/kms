@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: kms-ci-test-suite-7dfc7ec-
+  generateName: kms-ci-test-suite-<version>-
   namespace: kms-ci
   labels:
     app: kms-ci-test-suite
@@ -175,7 +175,7 @@ spec:
           test: "{{inputs.parameters.test-name}}"
           app: kms-ci-test-suite
       script:
-        image: ghcr.io/zama-ai/kms/core-client:v0.12.0
+        image: ghcr.io/zama-ai/kms/core-client:<version>
         command: ["/bin/bash", "-c"]
         source: |
           cat <<EOF >>config.toml
@@ -538,12 +538,12 @@ spec:
                   },
                   {
                     "title": ":gear: Resources",
-                    "value": "vCPU: 48 | Memory: 96Gi | Out of the CI",
+                    "value": "vCPU: 48 | Memory: 96Gi",
                     "short": true
                   },
                   {
                     "title": ":package: Versions",
-                    "value": "• kms-core: 7dfc7ec\n",
+                    "value": "• kms-core: <version>\n",
                     "short": false
                   }
                 ],
