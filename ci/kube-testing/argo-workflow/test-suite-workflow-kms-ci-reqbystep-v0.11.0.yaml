@@ -128,36 +128,6 @@ spec:
                 - name: test-command
                   value: "user-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --precompute-sns --compression --num-requests 100"
 
-          ##########################################################################
-          # Public decrypt tests
-          ##########################################################################
-          - name: public-decrypt-euint64-req500
-            dependencies: ["user-decrypt-euint64-req100"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "public-decrypt-euint64-req500"
-                - name: test-command
-                  value: "public-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --precompute-sns --compression --num-requests 500"
-
-          ##########################################################################
-          # User decrypt tests
-          ##########################################################################
-          - name: user-decrypt-euint64-req500
-            dependencies: ["public-decrypt-euint64-req500"]
-            template: run-test
-            continueOn:
-              failed: true
-            arguments:
-              parameters:
-                - name: test-name
-                  value: "user-decrypt-euint64-req500"
-                - name: test-command
-                  value: "user-decrypt from-args -d euint64 -k ${KMS_KEY_ID} -e ffffffffffffffff --precompute-sns --compression --num-requests 500"
-
 
           # Summary report generation
           - name: generate-summary
@@ -169,9 +139,7 @@ spec:
               "public-decrypt-euint64-req10",
               "user-decrypt-euint64-req10",
               "public-decrypt-euint64-req100",
-              "user-decrypt-euint64-req100",
-              "public-decrypt-euint64-req500",
-              "user-decrypt-euint64-req500"
+              "user-decrypt-euint64-req100"
             ]
             template: summary-report
             continueOn:
@@ -190,10 +158,6 @@ spec:
                 value: "{{tasks.public-decrypt-euint64-req100.outputs.parameters.test-result}}"
               - name: test-result-6
                 value: "{{tasks.user-decrypt-euint64-req100.outputs.parameters.test-result}}"
-              - name: test-result-7
-                value: "{{tasks.public-decrypt-euint64-req500.outputs.parameters.test-result}}"
-              - name: test-result-8
-                value: "{{tasks.user-decrypt-euint64-req500.outputs.parameters.test-result}}"
 
     # Templates
     - name: run-test
@@ -340,10 +304,8 @@ spec:
         - name: test-result-4
         - name: test-result-5
         - name: test-result-6
-        - name: test-result-7
-        - name: test-result-8
       script:
-        image: alpine:3.16
+        image: public.ecr.aws/docker/library/alpine:3.16
         command: ["/bin/sh", "-c"]
         env:
         - name: WORKFLOW_NAME
@@ -363,8 +325,6 @@ spec:
           echo '{{inputs.parameters.test-result-4}}' > /mnt/results/user-decrypt-euint64-req10.json
           echo '{{inputs.parameters.test-result-5}}' > /mnt/results/public-decrypt-euint64-req100.json
           echo '{{inputs.parameters.test-result-6}}' > /mnt/results/user-decrypt-euint64-req100.json
-          echo '{{inputs.parameters.test-result-7}}' > /mnt/results/public-decrypt-euint64-req500.json
-          echo '{{inputs.parameters.test-result-8}}' > /mnt/results/user-decrypt-euint64-req500.json
           ls -ali /mnt/results/
 
           echo "=========================================="

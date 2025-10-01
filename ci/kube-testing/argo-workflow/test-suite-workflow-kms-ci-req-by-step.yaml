@@ -364,7 +364,7 @@ spec:
         - name: test-result-5
         - name: test-result-6
       script:
-        image: alpine:3.16
+        image: public.ecr.aws/docker/library/alpine:3.16
         command: ["/bin/sh", "-c"]
         env:
         - name: WORKFLOW_NAME
