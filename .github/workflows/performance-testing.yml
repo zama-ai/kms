@@ -321,12 +321,12 @@ jobs:
               -n "${NAMESPACE}" --timeout=120s
           done
 
-          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            echo "Waiting for enclave node groups to be ready..."
-            kubectl wait --for=condition=ready enclavenodegroups \
-              -l crossplane.io/claim-namespace="${NAMESPACE}" \
-              -n "${NAMESPACE}" --timeout=120s
-          fi
+          # if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+          #   echo "Waiting for enclave node groups to be ready..."
+          #   kubectl wait --for=condition=ready enclavenodegroups \
+          #     -l crossplane.io/claim-namespace="${NAMESPACE}" \
+          #     -n "${NAMESPACE}" --timeout=120s
+          # fi
 
       # ======================================================================
       # KMS CORE DEPLOYMENT
