@@ -10,7 +10,7 @@ use aes::{
     cipher::{block_padding::Pkcs7, BlockDecryptMut, IvSizeUser, KeyIvInit, KeySizeUser},
     Aes256,
 };
-use anyhow::{bail, ensure};
+use anyhow::{anyhow, bail, ensure};
 use aws_config::SdkConfig;
 use aws_sdk_kms::{
     primitives::Blob,
@@ -38,6 +38,7 @@ use rsa::{
     Oaep, RsaPrivateKey, RsaPublicKey,
 };
 use serde::{de::DeserializeOwned, Serialize};
+use std::sync::Arc;
 use tfhe::safe_serialization::{safe_deserialize, safe_serialize};
 use tfhe::{named::Named, Unversionize, Versionize};
 use url::Url;
@@ -78,7 +79,16 @@ impl Asymm {
             .get_public_key()
             .key_id(root_key_id.clone())
             .send()
-            .await?;
+            .await
+            .map_err(|e| {
+                let e1 = e.to_string();
+                let e2 = e.into_source().unwrap_or("unknown AWS error".into());
+                let e3 = e2
+                    .source()
+                    .map(|e| format!(": {e}"))
+                    .unwrap_or("".to_string());
+                anyhow!("Could not get public key: {e1}: {e2}{e3}")
+            })?;
 
         let pk_spec = some_or_err(
             get_public_key_response.key_spec,
@@ -121,7 +131,7 @@ impl RootKey for Asymm {}
 pub struct AWSKMSKeychain<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> {
     rng: R,
     awskms_client: AWSKMSClient,
-    security_module: S,
+    security_module: Arc<S>,
     recipient_sk: RsaPrivateKey,
     recipient_pk: RsaPublicKey,
     root_key: K,
@@ -131,7 +141,7 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
     pub fn new(
         mut rng: R,
         awskms_client: AWSKMSClient,
-        security_module: S,
+        security_module: Arc<S>,
         root_key: K,
     ) -> anyhow::Result<Self> {
         let recipient_sk = RsaPrivateKey::new(&mut rng, RECIPIENT_KEYPAIR_SIZE)?;
@@ -157,7 +167,8 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
         let attestation = self
             .security_module
             .attest_pk_bytes(self.recipient_pk.to_public_key_der()?.to_vec())
-            .await?;
+            .await
+            .map_err(|e| anyhow!("Could not attest enclave public key: {e}"))?;
 
         // decrypt the data key under which the app key was encrypted
         let decrypt_data_key_response = self
@@ -172,7 +183,16 @@ impl<S: SecurityModule, K: RootKey, R: Rng + CryptoRng> AWSKMSKeychain<S, K, R> 
                     .build(),
             )
             .send()
-            .await?;
+            .await
+            .map_err(|e| {
+                let e1 = e.to_string();
+                let e2 = e.into_source().unwrap_or("unknown AWS error".into());
+                let e3 = e2
+                    .source()
+                    .map(|e| format!(": {e}"))
+                    .unwrap_or("".to_string());
+                anyhow!("Could not decrypt data key: {e1}: {e2}{e3}")
+            })?;
         let decrypt_data_key_response_ciphertext_bytes = some_or_err(
             decrypt_data_key_response.ciphertext_for_recipient,
             "No blob returned in decryption response from AWS".to_string(),
@@ -213,7 +233,8 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
         let attestation = self
             .security_module
             .attest_pk_bytes(self.recipient_pk.to_public_key_der()?.to_vec())
-            .await?;
+            .await
+            .map_err(|e| anyhow!("Could not attest enclave public key: {e}"))?;
 
         // request the data key from AWS KMS to encrypt the app key
         let gen_data_key_response = self
@@ -228,7 +249,16 @@ impl<S: SecurityModule + Sync + Send, R: Rng + CryptoRng> Keychain for AWSKMSKey
                     .build(),
             )
             .send()
-            .await?;
+            .await
+            .map_err(|e| {
+                let e1 = e.to_string();
+                let e2 = e.into_source().unwrap_or("unknown AWS error".into());
+                let e3 = e2
+                    .source()
+                    .map(|e| format!(": {e}"))
+                    .unwrap_or("".to_string());
+                anyhow!("Could not generate data key: {e1}: {e2}{e3}")
+            })?;
 
         // decrypt the data key with the Nitro enclave private key
         let gen_data_key_response_ciphertext_blob = some_or_err(

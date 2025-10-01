@@ -254,7 +254,7 @@ impl<
         self.init_prss(&request_id).await.map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
-                format!("PRSS initialization failed with error {e}"),
+                format!("PRSS initialization failed with error: {e}"),
             )
         })?;
         Ok(Response::new(Empty {}))

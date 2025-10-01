@@ -14,10 +14,11 @@ services:
   dev-s3-mock:
     image: quay.io/minio/minio
     ports:
+      - "9021:9021"
       - "9000:9000"
       - "9001:9001"
     entrypoint: >
-      minio server /data --console-address ":9001"
+      minio server /data --console-address ":9001" --ftp "address=:8021"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
@@ -26,6 +27,8 @@ services:
       interval: 1s
       timeout: 10s
       retries: 20
+    volumes:
+      - minio_data:/data
 
   # Minio client to create access keys
   dev-s3-mock-setup:
@@ -60,6 +63,7 @@ services:
         condition: service_healthy
 
 volumes:
+  minio_data:
   minio_secrets:
   validator_secrets:
 

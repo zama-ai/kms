@@ -33,6 +33,7 @@ getrandom.workspace = true
 hex = { workspace = true, features = ["serde"] }
 hyper-rustls-ring = { workspace = true, optional = true }
 itertools.workspace = true
+k256.workspace = true
 lazy_static.workspace = true
 minijinja = { workspace = true, optional = true }
 mockall.workspace = true
@@ -93,12 +94,12 @@ ctor.workspace = true
 pprof.workspace = true
 proptest.workspace = true
 rstest.workspace = true
+rustls-webpki.workspace = true
 serial_test.workspace = true
 tempfile.workspace = true
 tfhe-zk-pok = { workspace = true, features = ["experimental"] }
 threshold-fhe = { workspace = true, features = ["testing"] }
 tracing-test.workspace = true
-webpki.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["getrandom", "opentelemetry", "prost"]

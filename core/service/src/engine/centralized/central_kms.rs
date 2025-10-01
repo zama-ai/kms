@@ -982,7 +982,7 @@ impl<
         public_storage: PubS,
         private_storage: PrivS,
         backup_vault: Option<Vault>,
-        security_module: Option<SecurityModuleProxy>,
+        security_module: Option<Arc<SecurityModuleProxy>>,
         sk: PrivateSigKey,
         rate_limiter_conf: Option<RateLimiterConfig>,
     ) -> anyhow::Result<(RealCentralizedKms<PubS, PrivS>, HealthServer<impl Health>)> {

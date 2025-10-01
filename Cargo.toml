@@ -132,6 +132,7 @@ opentelemetry-semantic-conventions = "=0.29.0"  # Semantic conventions - LOW RIS
 opentelemetry-stdout = { version = "=0.29.0", features = ["trace"] }  # Stdout exporter for debugging - LOW RISK: CNCF project
 opentelemetry_sdk = { version = "=0.29.0", features = ["rt-tokio", "logs", "metrics"] }  # OpenTelemetry SDK - LOW RISK: CNCF project, core functionality
 ordermap = "=0.5.7"  # Ordered map implementation - LOW RISK: Wrapper over indexmap with stronger ordering guarantees
+p384 = "=0.13.1" # secp384r1 elliptic curvi - LOW RISK: RustCrypto org, 27M+ downloads
 paste = "=1.0"  # Token pasting macros -  MEDIUM RISK: Reputable individual maintainer (dtolnay), 251M+ downloads
 peak_alloc = { version = "=0.2.1" }  # Memory allocation tracker - HIGH RISK: Individual maintainer (Imberflur), low popularity, 251K downloads
 pprof = { version = "=0.15.0", features = ["flamegraph", "criterion"] }  # CPU profiler - LOW RISK: tikv team, useful for performance analysis
@@ -151,6 +152,7 @@ redis = { version = "=0.29.5" }  # Redis client - LOW RISK: redis-rs team
 reqwest = { version = "=0.12.22", default-features = false, features = ["json", "rustls-tls"] }  # HTTP client - MEDIUM RISK: Reputable individual maintainer (seanmonstar, member of tokio org), 275M+ downloads
 rsa = { version = "=0.9.8", features = ["sha2", "serde"] }  # RSA public key cryptography - LOW RISK: RustCrypto org
 rstest = "=0.25.0"  # Test framework - HIGH RISK: Individual maintainer (la10736), test-only dependency
+rustls-webpki = { version = "=0.103.4", features = ["aws-lc-rs"] }  # WebPKI X.509 validation - LOW RISK: rustls team
 schemars = "=0.8.22"  # JSON Schema generation - HIGH RISK: Individual maintainer (GREsau), despite popularity, 81M+ downloads
 serde = { version = "1.0.226", features = ["derive", "rc"] }  # Serialization framework - MEDIUM RISK: Reputable individual maintainer (dtolnay), 641M downloads
 serde-wasm-bindgen = { version = "=0.6.5" }  # Serde integration for wasm-bindgen - HIGH RISK: Individual maintainer (RReverser), despite 37M+ downloads
@@ -191,8 +193,7 @@ url = { version = "=2.5.4", features = ["serde"] }  # URL parsing and manipulati
 uuid = { version = "=1.16.0", features = ["v4", "fast-rng"] }  # UUID generation - LOW RISK: uuid-rs team
 validator = { version = "=0.20.0", features = ["derive"] }  # Struct validation - HIGH RISK: Individual maintainer (Keats), less active maintenance
 wasm-bindgen = { version = "=0.2.100", features = ["serde-serialize"] }  # WASM bindings - LOW RISK: rustwasm team
-webpki = { version = "=0.22.4", features = ["std"] }  # WebPKI X.509 validation - LOW RISK: rustls team
-x509-parser = { version = "=0.17.0", features = ["verify"] }  # X.509 certificate parsing - LOW RISK: rusticata team
+x509-parser = { version = "=0.18.0", features = ["verify-aws"] }  # X.509 certificate parsing - LOW RISK: rusticata team
 zeroize = { version = "=1.8.1", features = ["zeroize_derive"] }  # Secure memory wiping - LOW RISK: RustCrypto org, critical for key management
 
 [profile.wasm]
@@ -233,3 +234,7 @@ lto = "off"
 [patch.crates-io]
 # MEDIUM RISK: Using fork instead of upstream - verify changes, consider upstreaming
 rcgen = { git = 'https://github.com/mkmks/rcgen.git', branch = 'k256' }
+rustls = { git = 'https://github.com/mkmks/rustls.git', branch = 'k256' }
+rustls-pki-types = { git = 'https://github.com/mkmks/pki-types.git', branch = 'k256' }
+rustls-webpki = { git = 'https://github.com/mkmks/webpki.git', branch = 'k256' }
+tokio-rustls = { git = 'https://github.com/mkmks/tokio-rustls.git', branch = 'k256' }
