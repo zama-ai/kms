@@ -390,6 +390,7 @@ jobs:
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}"
 
+          sleep 60
           ###################################################################
           # Wait for KMS Core initialization to complete
           ###################################################################
