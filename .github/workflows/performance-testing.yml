@@ -348,7 +348,7 @@ jobs:
                 --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-"${i}"-"${PATH_SUFFIX}".yaml \
                 --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
                 --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" &
-              P"${i}"=$!
+              export P"${i}"=$!
             done
             wait "${P1}" "${P2}" "${P3}" "${P4}" "${P5}" "${P6}" "${P7}" "${P8}" "${P9}" "${P10}" "${P11}" "${P12}" "${P13}"
 
@@ -370,7 +370,7 @@ jobs:
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" &
-              P"${i}"=$!
+              export P"${i}"=$!
             done
             wait "${P1}" "${P2}" "${P3}" "${P4}" "${P5}" "${P6}" "${P7}" "${P8}" "${P9}" "${P10}" "${P11}" "${P12}" "${P13}"
           fi
