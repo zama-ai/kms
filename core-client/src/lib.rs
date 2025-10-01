@@ -1704,7 +1704,11 @@ pub async fn execute_cmd(
 
     let kms_addrs = Arc::new(fetch_kms_addresses(&cc_conf).await?);
 
-    let pub_key_types = vec![PubDataType::PublicKey, PubDataType::PublicKeyMetadata];
+    let key_types = vec![
+        PubDataType::PublicKey,
+        PubDataType::PublicKeyMetadata,
+        PubDataType::ServerKey,
+    ];
 
     let command_timer_start = tokio::time::Instant::now();
     // Execute the command
@@ -1730,7 +1734,7 @@ pub async fn execute_cmd(
                     tracing::info!("Fetching public keys. ({command:?})");
                     let party_ids = fetch_elements(
                         &cipher_parameters.key_id.as_str(),
-                        &pub_key_types,
+                        &key_types,
                         &cc_conf,
                         destination_prefix,
                         false,
@@ -1861,7 +1865,7 @@ pub async fn execute_cmd(
                     tracing::info!("Fetching public keys. ({command:?})");
                     let party_ids = fetch_elements(
                         &cipher_parameters.key_id.as_str(),
-                        &pub_key_types,
+                        &key_types,
                         &cc_conf,
                         destination_prefix,
                         false,
@@ -2016,7 +2020,7 @@ pub async fn execute_cmd(
             tracing::info!("Fetching public keys. ({command:?})");
             let party_ids = fetch_elements(
                 &cipher_parameters.key_id.as_str(),
-                &pub_key_types,
+                &key_types,
                 &cc_conf,
                 destination_prefix,
                 false,
