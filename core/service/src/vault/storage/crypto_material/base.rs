@@ -2,6 +2,7 @@
 //!
 //! This module provides the foundational storage implementation used by
 //! both centralized and threshold KMS variants.
+use super::{check_data_exists, log_storage_success, CryptoMaterialReader};
 use crate::{
     anyhow_error_and_warn_log,
     backup::operator::{RecoveryRequestPayload, RecoveryValidationMaterial},
@@ -32,8 +33,6 @@ use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use tfhe::{integer::compression_keys::DecompressionKey, zk::CompactPkeCrs};
 use tokio::sync::{Mutex, OwnedRwLockReadGuard, RwLock, RwLockWriteGuard};
-
-use super::{check_data_exists, log_storage_success, CryptoMaterialReader};
 
 /// A cached generic storage entity for the common data structures
 /// used by both the centralized and the threshold KMS.
@@ -612,14 +611,14 @@ where
     pub async fn write_backup_keys_with_meta_store(
         &self,
         recovery_request: &RecoveryRequestPayload,
-        commitments: &RecoveryValidationMaterial,
+        recovery_material: &RecoveryValidationMaterial,
         meta_store: Arc<RwLock<CustodianMetaStore>>,
     ) {
         // use guarded_meta_store as the synchronization point
         // all other locks are taken as needed so that we don't lock up
         // other function calls too much
         let mut guarded_meta_store = meta_store.write().await;
-        let req_id = commitments.custodian_context().context_id;
+        let req_id = recovery_material.custodian_context().context_id;
         let pub_res = {
             // Lock the storage needed in correct order to avoid deadlocks.
             let mut public_storage_guard = self.public_storage.lock().await;
@@ -650,8 +649,8 @@ where
                 let commit_store_result = store_versioned_at_request_id(
                     &mut (*public_storage_guard),
                     &req_id,
-                    commitments,
-                    &PubDataType::Commitments.to_string(),
+                    recovery_material,
+                    &PubDataType::RecoveryMaterial.to_string(),
                 )
                 .await;
                 if let Err(e) = &recovery_store_result {
@@ -664,7 +663,7 @@ where
                     log_storage_success(
                         req_id,
                         public_storage_guard.info(),
-                        &PubDataType::Commitments.to_string(),
+                        &PubDataType::RecoveryMaterial.to_string(),
                         true,
                         true,
                     );
@@ -688,8 +687,8 @@ where
             };
             // If everything is ok, we update the meta store with a success
             if pub_res {
-                if let Err(e) =
-                    guarded_meta_store.update(&req_id, Ok(commitments.custodian_context().clone()))
+                if let Err(e) = guarded_meta_store
+                    .update(&req_id, Ok(recovery_material.custodian_context().clone()))
                 {
                     tracing::error!("Failed to update meta store for request {req_id}: {e}");
                     self.purge_backup_material(&req_id, guarded_meta_store)
@@ -714,7 +713,7 @@ where
                         Some(keychain) => {
                             if let KeychainProxy::SecretSharing(sharing_chain) = keychain {
                                 // Store the public key in the secret sharing keychain
-                                sharing_chain.set_backup_enc_key(req_id, commitments.custodian_context().backup_enc_key.clone());
+                                sharing_chain.set_backup_enc_key(req_id, recovery_material.custodian_context().backup_enc_key.clone());
                             }
                         },
                         None => {
@@ -762,7 +761,7 @@ where
             let commit_res = delete_at_request_id(
                 &mut (*pub_storage),
                 req_id,
-                &PubDataType::Commitments.to_string(),
+                &PubDataType::RecoveryMaterial.to_string(),
             )
             .await;
             if let Err(e) = &commit_res {

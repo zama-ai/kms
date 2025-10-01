@@ -305,6 +305,13 @@ impl PublicSigKey {
         }
     }
 
+    pub fn from_sk(sk: &PrivateSigKey) -> Self {
+        let pk = SigningKey::verifying_key(&sk.sk.0).to_owned();
+        PublicSigKey {
+            pk: WrappedVerifyingKey(pk),
+        }
+    }
+
     pub fn pk(&self) -> &k256::ecdsa::VerifyingKey {
         &self.pk.0
     }
