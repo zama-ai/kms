@@ -42,6 +42,7 @@ permissions: {}
 
 jobs:
   # docker-build:
+  #   if: inputs.dockerBuild == true
   #   name: docker-build
   #   permissions:
   #     actions: read # Required to read workflow run information
@@ -269,8 +270,8 @@ jobs:
         run: |
           # sed -i "s/<version>/${IMAGE_TAG}/g" ./ci/kube-testing/argo-workflow/test-suite-workflow-"${PATH_SUFFIX}"-req-by-step.yaml
           # argo submit -n argo ./ci/kube-testing/argo-workflow/test-suite-workflow-"${PATH_SUFFIX}"-req-by-step.yaml
-          sed -i "s/<version>/${IMAGE_TAG}/g" ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-dev-reqbystep-v0.11.0.yaml
-          argo submit -n argo ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-dev-reqbystep-v0.11.0.yaml
+          sed -i "s/<version>/${IMAGE_TAG}/g" ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-reqbystep-v0.11.0.yaml
+          argo submit -n argo ./ci/kube-testing/argo-workflow/test-suite-workflow-kms-ci-reqbystep-v0.11.0.yaml
           argo logs @latest -f -n "${NAMESPACE}"
 
       - name: Get logs from kms-core
