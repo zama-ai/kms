@@ -1091,29 +1091,21 @@ async fn fetch_elements(
     tracing::info!("Fetching public key, server key and sns key with id {element_id}");
     let mut successfull_core_ids = Vec::new();
     for object_name in element_types {
-        if download_all {
-            // fetch from all cores in the config
-            for cur_core in &sim_conf.cores {
-                if fetch_global_pub_object_and_write_to_file(
-                    destination_prefix,
-                    cur_core.s3_endpoint.as_str(),
-                    element_id,
-                    &object_name.to_string(),
-                    &cur_core.object_folder,
-                )
-                .await
-                .is_err()
-                {
-                    tracing::warn!("Could not fetch object {object_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
-                } else {
-                    successfull_core_ids.push(cur_core.party_id);
-                }
-            }
-        } else {
-            // only fetch from the first core
-            let cur_core = &sim_conf.cores.first().ok_or_else(|| {
-                anyhow::anyhow!("No cores found in configuration to fetch elements from")
-            })?;
+        let cores_to_fetch =
+            if download_all {
+                // fetch from all cores in the config
+                tracing::warn!(
+                    "Downloading from all cores in the configuration. This may take some time."
+                );
+                &sim_conf.cores
+            } else {
+                // fetch from just the first core in the config
+                std::slice::from_ref(sim_conf.cores.first().ok_or_else(|| {
+                    anyhow!("No cores found in configuration to fetch elements from")
+                })?)
+            };
+
+        for cur_core in cores_to_fetch {
             if fetch_global_pub_object_and_write_to_file(
                 destination_prefix,
                 cur_core.s3_endpoint.as_str(),
