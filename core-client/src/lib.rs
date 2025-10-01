@@ -40,7 +40,7 @@ use kms_lib::DecryptionMode;
 use observability::conf::Settings;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Once};
@@ -1089,7 +1089,7 @@ async fn fetch_elements(
     download_all: bool,
 ) -> anyhow::Result<Vec<usize>> {
     tracing::info!("Fetching {:?} with id {element_id}", element_types);
-    let mut successfull_core_ids = Vec::new();
+    let mut core_ids = HashSet::new();
     let cores_to_fetch = if download_all {
         // fetch from all cores in the config
         tracing::warn!("Downloading from all cores in the configuration. This may take some time.");
@@ -1104,7 +1104,13 @@ async fn fetch_elements(
         )
     };
 
+    // set of core ids, to track which cores we successfully contacted
+    for cur_core in cores_to_fetch {
+        core_ids.insert(cur_core.party_id);
+    }
+
     for object_name in element_types {
+        let mut inner_successfull_core_ids = HashSet::new();
         for cur_core in cores_to_fetch {
             if fetch_global_pub_object_and_write_to_file(
                 destination_prefix,
@@ -1118,16 +1124,21 @@ async fn fetch_elements(
             {
                 tracing::warn!("Could not fetch object {object_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
             } else {
-                successfull_core_ids.push(cur_core.party_id);
+                inner_successfull_core_ids.insert(cur_core.party_id);
             }
         }
+        // update successful core ids with the intersection of the previous successful core ids, such that in the end we are sure to have at least one core that has all requested elements
+        core_ids = core_ids
+            .intersection(&inner_successfull_core_ids)
+            .cloned()
+            .collect();
     }
-    if successfull_core_ids.is_empty() {
+    if core_ids.is_empty() {
         Err(anyhow::anyhow!(
-                "Could not fetch {element_types:?} with id {element_id} from any core. At least one core is required to proceed."
+                "Could not fetch all of [{element_types:?}] with id {element_id} from any core. At least one core is required to proceed."
             ))
     } else {
-        Ok(successfull_core_ids)
+        Ok(core_ids.into_iter().collect())
     }
 }
 
