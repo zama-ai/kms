@@ -1,10 +1,10 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: kms-dev-test-suite-<version>-
-  namespace: kms-dev
+  generateName: kms-ci-test-suite-<version>-
+  namespace: kms-ci
   labels:
-    app: kms-dev-test-suite
+    app: kms-ci-test-suite
 spec:
   serviceAccountName: workflow-runner
   activeDeadlineSeconds: 7200  # 2 hours total timeout
@@ -33,11 +33,11 @@ spec:
 
 
   # Main entry point
-  entrypoint: kms-dev-test-suite
+  entrypoint: kms-ci-test-suite
 
   templates:
     # Main DAG workflow
-    - name: kms-dev-test-suite
+    - name: kms-ci-test-suite
       dag:
         tasks:
           ##########################################################################
@@ -209,7 +209,7 @@ spec:
       metadata:
         labels:
           test: "{{inputs.parameters.test-name}}"
-          app: kms-dev-test-suite
+          app: kms-ci-test-suite
       script:
         image: ghcr.io/zama-ai/kms/core-client:<version>
         command: ["/bin/bash", "-c"]
@@ -303,7 +303,7 @@ spec:
           - name: S3_ENDPOINT
             valueFrom:
               configMapKeyRef:
-                name: kms-dev-1
+                name: kms-ci-1
                 key: CORE_CLIENT__S3_ENDPOINT
           - name: KMS_KEY_ID
             valueFrom:
@@ -313,7 +313,7 @@ spec:
           - name: OBJECT_FOLDER
             value: '["PUB-p1","PUB-p2","PUB-p3","PUB-p4","PUB-p5","PUB-p6","PUB-p7","PUB-p8","PUB-p9","PUB-p10","PUB-p11","PUB-p12","PUB-p13"]'
           - name: CORE_ADDRESSES
-            value: '["http://kms-service-threshold-1-kms-dev-core-1:50100","http://kms-service-threshold-2-kms-dev-core-2:50100","http://kms-service-threshold-3-kms-dev-core-3:50100","http://kms-service-threshold-4-kms-dev-core-4:50100","http://kms-service-threshold-5-kms-dev-core-5:50100","http://kms-service-threshold-6-kms-dev-core-6:50100","http://kms-service-threshold-7-kms-dev-core-7:50100","http://kms-service-threshold-8-kms-dev-core-8:50100","http://kms-service-threshold-9-kms-dev-core-9:50100","http://kms-service-threshold-10-kms-dev-core-10:50100","http://kms-service-threshold-11-kms-dev-core-11:50100","http://kms-service-threshold-12-kms-dev-core-12:50100","http://kms-service-threshold-13-kms-dev-core-13:50100"]'
+            value: '["http://kms-service-threshold-1-kms-ci-core-1:50100","http://kms-service-threshold-2-kms-ci-core-2:50100","http://kms-service-threshold-3-kms-ci-core-3:50100","http://kms-service-threshold-4-kms-ci-core-4:50100","http://kms-service-threshold-5-kms-ci-core-5:50100","http://kms-service-threshold-6-kms-ci-core-6:50100","http://kms-service-threshold-7-kms-ci-core-7:50100","http://kms-service-threshold-8-kms-ci-core-8:50100","http://kms-service-threshold-9-kms-ci-core-9:50100","http://kms-service-threshold-10-kms-ci-core-10:50100","http://kms-service-threshold-11-kms-ci-core-11:50100","http://kms-service-threshold-12-kms-ci-core-12:50100","http://kms-service-threshold-13-kms-ci-core-13:50100"]'
           - name: NUM_MAJORITY
             value: '5'
           - name: NUM_RECONSTRUCT

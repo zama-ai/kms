@@ -24,6 +24,19 @@ on:
         required: true
         default: "0.3.0"
         type: string
+      dockerBuild:
+        description: "Docker build"
+        required: true
+        type: boolean
+        default: true
+      kmsCoreImageTag:
+        description: "KMS Core image tag (if dockerBuild is false)"
+        required: false
+        type: string
+      kmsCoreClientImageTag:
+        description: "KMS Core client image tag (if dockerBuild is false)"
+        required: false
+        type: string
 
 permissions: {}
 
