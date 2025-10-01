@@ -55,7 +55,7 @@ jobs:
     env:
       NAMESPACE: "kms-ci"
       DEPLOYMENT_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'threshold' }}
-      KMS_CHART_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.kmsChartVersion || '1.4.1' }}
+      KMS_CHART_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.kmsChartVersion || '1.3.1' }}
       TKMS_INFRA_CHART_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.tkmsInfraChartVersion || '0.3.0' }}
       SYNC_SECRETS_CHART_VERSION: "0.2.1"
       # IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
@@ -145,7 +145,7 @@ jobs:
           if [[ "${DEPLOYMENT_TYPE}" == "threshold" ]]; then
             helm upgrade --install tkms-infra oci://ghcr.io/zama-zws/crossplane/tkms-infra \
             --namespace "${NAMESPACE}" \
-            --version "${TKMS_INFRA_CHART_VERSION:-"0.3.0"}" \
+            --version "${TKMS_INFRA_CHART_VERSION}" \
             --values ./ci/kube-testing/threshold/kms-ci/tkms-infra/values-kms-ci.yaml
 
           ##########################################################################
@@ -154,7 +154,7 @@ jobs:
           elif [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             helm upgrade --install tkms-infra oci://ghcr.io/zama-zws/crossplane/tkms-infra \
             --namespace "${NAMESPACE}" \
-            --version "${TKMS_INFRA_CHART_VERSION:-"0.3.0"}" \
+            --version "${TKMS_INFRA_CHART_VERSION}" \
             --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/tkms-infra/values-kms-ci.yaml \
             --set kmsParties.awsKms.recipientAttestationImageSHA384="${PCR0}"
           fi
@@ -189,7 +189,7 @@ jobs:
             for i in {1..13}; do
               helm upgrade --install kms-service-threshold-"${i}"-"${NAMESPACE}" oci://ghcr.io/zama-ai/kms/charts/kms-core \
               --namespace "${NAMESPACE}" \
-              --version "${KMS_CHART_VERSION:-"1.3.1"}" \
+              --version "${KMS_CHART_VERSION}" \
               --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-"${PATH_SUFFIX}".yaml \
               --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-"${i}"-"${PATH_SUFFIX}".yaml \
               --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
@@ -203,7 +203,7 @@ jobs:
             for i in {1..13}; do
               helm upgrade --install kms-core oci://ghcr.io/zama-ai/kms/charts/kms-core \
               --namespace "${NAMESPACE}" \
-              --version "${KMS_CHART_VERSION:-"1.4.1"}" \
+              --version "${KMS_CHART_VERSION}" \
               --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-"${PATH_SUFFIX}".yaml \
               --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-threshold-"${i}"-"${PATH_SUFFIX}".yaml \
               --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
@@ -224,7 +224,7 @@ jobs:
           #
           helm upgrade --install kms-core-init oci://ghcr.io/zama-ai/kms/charts/kms-core \
           --namespace "${NAMESPACE}" \
-          --version "${KMS_CHART_VERSION:-"1.3.1"}" \
+          --version "${KMS_CHART_VERSION}" \
           --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-init-"${PATH_SUFFIX}".yaml \
           --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
           --set kmsCore.image.tag="${IMAGE_TAG}"
@@ -239,7 +239,7 @@ jobs:
           #
           helm upgrade --install kms-core-gen-keys oci://ghcr.io/zama-ai/kms/charts/kms-core \
           --namespace "${NAMESPACE}" \
-          --version "${KMS_CHART_VERSION:-"1.3.1"}" \
+          --version "${KMS_CHART_VERSION}" \
           --values ./ci/kube-testing/"${DEPLOYMENT_TYPE}"/kms-ci/kms-service/values-kms-service-gen-keys-"${PATH_SUFFIX}".yaml \
           --set kmsCoreClient.image.tag="${IMAGE_TAG}" \
           --set kmsCore.image.tag="${IMAGE_TAG}" \
