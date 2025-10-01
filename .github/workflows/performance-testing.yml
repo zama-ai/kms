@@ -317,7 +317,7 @@ jobs:
           ###################################################################
           echo "Waiting for KMS parties to be ready..."
           for i in {1..13}; do
-            kubectl wait --for=condition=ready Kmsparties kms-party-kms-ci-"${i}" \
+            kubectl wait --for=condition=ready Kmsparties kms-party-"${PATH_SUFFIX}"-"${i}" \
               -n "${NAMESPACE}" --timeout=120s
           done
 
