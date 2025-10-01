@@ -188,6 +188,19 @@ jobs:
             } >> "$GITHUB_ENV"
           fi
 
+      - name: Set up path suffix based on deployment type
+        run: |
+          ###################################################################
+          # Set up path suffix based on deployment type
+          ###################################################################
+          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
+            echo "Using enclave-enabled configuration..."
+            echo "PATH_SUFFIX=kms-enclave-ci" >> "$GITHUB_ENV"
+          else
+            echo "Using standard threshold configuration..."
+            echo "PATH_SUFFIX=kms-ci" >> "$GITHUB_ENV"
+          fi
+
       # ======================================================================
       # TOOLING SETUP
       # ======================================================================
@@ -320,17 +333,6 @@ jobs:
       # ======================================================================
       - name: Setup kms-core with 13 parties
         run: |
-          ###################################################################
-          # Set up path suffix based on deployment type
-          ###################################################################
-          if [[ "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
-            echo "Using enclave-enabled configuration..."
-            echo "PATH_SUFFIX=kms-enclave-ci" >> "$GITHUB_ENV"
-          else
-            echo "Using standard threshold configuration..."
-            echo "PATH_SUFFIX=kms-ci" >> "$GITHUB_ENV"
-          fi
-
           ###################################################################
           # Deploy KMS Core in threshold mode (standard)
           ###################################################################
