@@ -113,6 +113,13 @@ jobs:
           ###################################################################
           exit 1
 
+      - name: Login to zws GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ZWS_BOT_TOKEN }}
+
       - name: Check if docker build succeeded
         if: ${{ needs.docker-build.result == 'success' }}
         env:
@@ -252,13 +259,6 @@ jobs:
       # ======================================================================
       # REGISTRY & SECRETS CONFIGURATION
       # ======================================================================
-      - name: Login to zws GitHub Container Registry
-        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.ZWS_BOT_TOKEN }}
-
       - name: Setup registry credentials secrets
         run: |
           ###################################################################
