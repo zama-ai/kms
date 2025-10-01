@@ -634,10 +634,10 @@ pub struct CmdConfig {
     #[clap(long, default_value = "30")]
     #[validate(range(min = 1))]
     pub max_iter: usize,
-    /// Set this if we expect a response from every KMS core
+    /// Set this if you expect a response from every KMS core
     #[clap(long, short = 'a', default_value_t = false)]
     pub expect_all_responses: bool,
-    /// Set this if you want to download all generated keys/CRS from the KMS cores
+    /// Set this if you want to download the generated keys/CRSes from all KMS cores
     #[clap(long, short = 'd', default_value_t = false)]
     pub download_all: bool,
 }
@@ -1090,21 +1090,21 @@ async fn fetch_elements(
 ) -> anyhow::Result<Vec<usize>> {
     tracing::info!("Fetching {:?} with id {element_id}", element_types);
     let mut successfull_core_ids = Vec::new();
-    for object_name in element_types {
-        let cores_to_fetch =
-            if download_all {
-                // fetch from all cores in the config
-                tracing::warn!(
-                    "Downloading from all cores in the configuration. This may take some time."
-                );
-                &sim_conf.cores
-            } else {
-                // fetch from just the first core in the config
-                std::slice::from_ref(sim_conf.cores.first().ok_or_else(|| {
-                    anyhow!("No cores found in configuration to fetch elements from")
-                })?)
-            };
+    let cores_to_fetch = if download_all {
+        // fetch from all cores in the config
+        tracing::warn!("Downloading from all cores in the configuration. This may take some time.");
+        &sim_conf.cores
+    } else {
+        // fetch from just the first core in the config
+        std::slice::from_ref(
+            sim_conf
+                .cores
+                .first()
+                .ok_or_else(|| anyhow!("No cores found in configuration to fetch elements from"))?,
+        )
+    };
 
+    for object_name in element_types {
         for cur_core in cores_to_fetch {
             if fetch_global_pub_object_and_write_to_file(
                 destination_prefix,
@@ -1124,7 +1124,7 @@ async fn fetch_elements(
     }
     if successfull_core_ids.is_empty() {
         Err(anyhow::anyhow!(
-                "Could not fetch key with id {element_id} from any core. At least one core is required to proceed."
+                "Could not fetch {element_types:?} with id {element_id} from any core. At least one core is required to proceed."
             ))
     } else {
         Ok(successfull_core_ids)
@@ -1693,9 +1693,9 @@ pub async fn execute_cmd(
 
     let kms_addrs = Arc::new(fetch_kms_addresses(&cc_conf).await?);
 
-    let command_timer_start = tokio::time::Instant::now();
-
     let pub_key_types = vec![PubDataType::PublicKey, PubDataType::PublicKeyMetadata];
+
+    let command_timer_start = tokio::time::Instant::now();
     // Execute the command
     let res = match command {
         CCCommand::PublicDecrypt(cipher_args) => {
@@ -1716,7 +1716,7 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    tracing::info!("Fetching computation keys. ({command:?})");
+                    tracing::info!("Fetching public keys. ({command:?})");
                     let party_ids = fetch_elements(
                         &cipher_parameters.key_id.as_str(),
                         &pub_key_types,
@@ -1847,7 +1847,7 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    tracing::info!("Fetching computation keys. ({command:?})");
+                    tracing::info!("Fetching public keys. ({command:?})");
                     let party_ids = fetch_elements(
                         &cipher_parameters.key_id.as_str(),
                         &pub_key_types,
@@ -2002,7 +2002,7 @@ pub async fn execute_cmd(
             vec![(None, String::new())]
         }
         CCCommand::Encrypt(cipher_parameters) => {
-            tracing::info!("Fetching computation keys. ({command:?})");
+            tracing::info!("Fetching public keys. ({command:?})");
             let party_ids = fetch_elements(
                 &cipher_parameters.key_id.as_str(),
                 &pub_key_types,
@@ -2250,7 +2250,7 @@ pub async fn execute_cmd(
 
 // Prints the timings for the command execution, showing latency and throughput based on the measured durations.
 fn print_timings(cmd: &str, durations: &mut [tokio::time::Duration], start: tokio::time::Instant) {
-    // compute total time that is elapsed since we send the first request
+    // compute total time that is elapsed since we sent the first request
     let total_elapsed = start.elapsed();
 
     // compute latency values
@@ -2823,8 +2823,7 @@ async fn fetch_and_check_keygen(
         responses.len()
     );
 
-    // Download the generated keys. We do this just once, to save time, assuming that all generated keys are indentical.
-    // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
+    // Download the generated keys.
     let key_types = vec![
         PubDataType::PublicKey,
         PubDataType::PublicKeyMetadata,
@@ -2841,7 +2840,7 @@ async fn fetch_and_check_keygen(
 
     // Even if we did not download all keys, we still check that they are identical
     // by checking all signatures against the first downloaded keyset.
-    // If the signatures match, then all keys must be identical.
+    // If all signatures match, then all keys must be identical.
     let public_key = load_pk_from_storage(
         Some(destination_prefix),
         &request_id,
@@ -2903,8 +2902,7 @@ async fn fetch_and_check_crsgen(
         responses.len()
     );
 
-    // Download the generated CRS. We do this just once, to save time, assuming that all generated keys are indentical.
-    // If we want to test for malicious behavior in the threshold case, we need to download all keys and compare them.
+    // Download the generated CRS.
     let party_ids = fetch_elements(
         &request_id.to_string(),
         &[PubDataType::CRS],
@@ -2916,7 +2914,7 @@ async fn fetch_and_check_crsgen(
 
     // Even if we did not download all CRSes, we still check that they are identical
     // by checking all signatures against the first downloaded CRS.
-    // If the signatures match, then all keys must be identical.
+    // If all signatures match, then all CRSes must be identical.
     let crs: CompactPkeCrs = load_material_from_storage(
         Some(destination_prefix),
         &request_id,
