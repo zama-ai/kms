@@ -1076,8 +1076,8 @@ fn check_external_decryption_signature(
 /// Fetch all remote objects and store them locally for the core client
 /// Return the server IDs of all servers that were successfully contacted
 /// or an error if no server could be contacted
-/// elemend_id: the id of the element to fetch (key id or crs id)
-/// element_types: the types of elements to fetch (e.g. public key, server key
+/// element_id: the id of the element to fetch (key id or crs id)
+/// element_types: the types of elements to fetch (e.g. public key, server key, CRS)
 /// sim_conf: the core client configuration
 /// destination_prefix: the local folder to store the fetched elements
 /// download_all: whether to download from all cores or just the first one
@@ -1088,7 +1088,7 @@ async fn fetch_elements(
     destination_prefix: &Path,
     download_all: bool,
 ) -> anyhow::Result<Vec<usize>> {
-    tracing::info!("Fetching public key, server key and sns key with id {element_id}");
+    tracing::info!("Fetching {:?} with id {element_id}", element_types);
     let mut successfull_core_ids = Vec::new();
     for object_name in element_types {
         let cores_to_fetch =
