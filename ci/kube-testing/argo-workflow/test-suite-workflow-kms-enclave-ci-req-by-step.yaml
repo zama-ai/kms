@@ -514,7 +514,7 @@ spec:
             "attachments": [
               {
                 "color": "$COLOR",
-                "title": "$TITLE_EMOJI KMS WITHOUT ENCLAVE (Core-Client) Test Suite Results",
+                "title": "$TITLE_EMOJI KMS WITH ENCLAVE (Core-Client) Test Suite Results",
                 "fields": [
                   {
                     "title": "Environment",
