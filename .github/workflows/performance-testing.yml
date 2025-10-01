@@ -103,7 +103,7 @@ jobs:
       # DOCKER BUILD STATUS HANDLING
       # ======================================================================
       - name: Check if docker build failed
-        if: ${{ needs.docker-build.result }} == 'failure'
+        if: ${{ needs.docker-build.result == 'failure' }}
         run: |
           ###################################################################
           # DOCKER BUILD FAILED - Exit with error
@@ -111,17 +111,17 @@ jobs:
           exit 1
 
       - name: Check if docker build succeeded
-        if: ${{ needs.docker-build.result }} == 'success'
+        if: ${{ needs.docker-build.result == 'success' }}
         run: |
           ###################################################################
           # DOCKER BUILD SUCCEEDED - Set up environment for new images
           # This handles both scheduled and manual runs with dockerBuild=true
           ###################################################################
           # Set deployment type, defaulting to thresholdWithEnclave if not specified
-          echo "DEPLOYMENT_TYPE=${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'thresholdWithEnclave' }}" >> $GITHUB_ENV
+          echo "DEPLOYMENT_TYPE=${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'thresholdWithEnclave' }}" >> "$GITHUB_ENV"
           # Use the newly built image tags
-          echo "KMS_CORE_IMAGE_TAG=${{ needs.docker-build.outputs.image_tag }}" >> $GITHUB_ENV
-          echo "KMS_CORE_CLIENT_IMAGE_TAG=${{ needs.docker-build.outputs.image_tag }}" >> $GITHUB_ENV
+          echo "KMS_CORE_IMAGE_TAG=${{ needs.docker-build.outputs.image_tag }}" >> "$GITHUB_ENV"
+          echo "KMS_CORE_CLIENT_IMAGE_TAG=${{ needs.docker-build.outputs.image_tag }}" >> "$GITHUB_ENV"
 
           # For enclave deployments, extract PCR measurements
           if [[ ${DEPLOYMENT_TYPE} == "thresholdWithEnclave" ]]; then
@@ -130,27 +130,22 @@ jobs:
             PCR0=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:${{ needs.docker-build.outputs.image_tag }} | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
             PCR1=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:${{ needs.docker-build.outputs.image_tag }} | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
             PCR2=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:${{ needs.docker-build.outputs.image_tag }} | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
-            echo "PCR0=${PCR0}" >> $GITHUB_ENV
-            echo "PCR1=${PCR1}" >> $GITHUB_ENV
-            echo "PCR2=${PCR2}" >> $GITHUB_ENV
+            echo "PCR0=${PCR0}" >> "$GITHUB_ENV"
+            echo "PCR1=${PCR1}" >> "$GITHUB_ENV"
+            echo "PCR2=${PCR2}" >> "$GITHUB_ENV"
           fi
 
       - name: Handle pre-built images
-        if: >
-          ${{ needs.docker-build.result }} == 'skipped' \
-          && ${{ github.event_name == 'workflow_dispatch' }} \
-          && ${{ inputs.dockerBuild == false }} \
-          && ${{ inputs.kmsCoreImageTag != '' }} \
-          && ${{ inputs.kmsCoreClientImageTag != '' }}
+        if: ${{ needs.docker-build.result == 'skipped' && github.event_name == 'workflow_dispatch' && inputs.dockerBuild == false && inputs.kmsCoreImageTag != '' && inputs.kmsCoreClientImageTag != '' }}
         run: |
           ###################################################################
           # USING PRE-BUILT IMAGES
           # This handles manual runs with dockerBuild=false, using provided tags
           ###################################################################
           echo "Using pre-built images with tags:"
-          echo "DEPLOYMENT_TYPE=${{ inputs.deploymentType }}" >> $GITHUB_ENV
-          echo "KMS_CORE_IMAGE_TAG=${{ inputs.kmsCoreImageTag }}" >> $GITHUB_ENV
-          echo "KMS_CORE_CLIENT_IMAGE_TAG=${{ inputs.kmsCoreClientImageTag }}" >> $GITHUB_ENV
+          echo "DEPLOYMENT_TYPE=${{ inputs.deploymentType }}" >> "$GITHUB_ENV"
+          echo "KMS_CORE_IMAGE_TAG=${{ inputs.kmsCoreImageTag }}" >> "$GITHUB_ENV"
+          echo "KMS_CORE_CLIENT_IMAGE_TAG=${{ inputs.kmsCoreClientImageTag }}" >> "$GITHUB_ENV"
 
           if [[ ${DEPLOYMENT_TYPE} == "thresholdWithEnclave" ]]; then
             echo "Extracting PCR measurements for provided enclave image..."
@@ -158,9 +153,9 @@ jobs:
             PCR0=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:${{ inputs.kmsCoreImageTag }} | jq -r '.[0].Config.Labels["zama.kms.eif_pcr0"]')
             PCR1=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:${{ inputs.kmsCoreImageTag }} | jq -r '.[0].Config.Labels["zama.kms.eif_pcr1"]')
             PCR2=$(docker inspect ghcr.io/zama-ai/kms/core-service-enclave:${{ inputs.kmsCoreImageTag }} | jq -r '.[0].Config.Labels["zama.kms.eif_pcr2"]')
-            echo "PCR0=${PCR0}" >> $GITHUB_ENV
-            echo "PCR1=${PCR1}" >> $GITHUB_ENV
-            echo "PCR2=${PCR2}" >> $GITHUB_ENV
+            echo "PCR0=${PCR0}" >> "$GITHUB_ENV"
+            echo "PCR1=${PCR1}" >> "$GITHUB_ENV"
+            echo "PCR2=${PCR2}" >> "$GITHUB_ENV"
           fi
 
       # ======================================================================
