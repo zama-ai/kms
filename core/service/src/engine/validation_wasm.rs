@@ -454,9 +454,8 @@ mod tests {
         client::user_decryption_wasm::{
             compute_link, CiphertextHandle, ParsedUserDecryptionRequest,
         },
-        cryptography::{
-            internal_crypto_types::{gen_sig_keys, PublicSigKey, UnifiedPublicEncKey},
-            signcryption::ephemeral_encryption_key_generation,
+        cryptography::internal_crypto_types::{
+            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PublicSigKey,
         },
         dummy_domain,
         engine::{
@@ -496,15 +495,15 @@ mod tests {
             .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let (eph_client_pk, _eph_client_sk) =
-            ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
 
         let ciphertext_handle = vec![5, 6, 7, 8];
 
         let mut enc_key_buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(
-            &UnifiedPublicEncKey::MlKem512(eph_client_pk.clone()),
+            &eph_client_pk,
             &mut enc_key_buf,
             crate::consts::SAFE_SER_SIZE_LIMIT,
         )
@@ -535,7 +534,7 @@ mod tests {
             &sk0,
             &payload,
             &domain,
-            &eph_client_pk.to_unified(),
+            &eph_client_pk,
             vec![],
         )
         .unwrap();
@@ -561,7 +560,7 @@ mod tests {
                 &sk_bad,
                 &payload,
                 &domain,
-                &eph_client_pk.to_unified(),
+                &eph_client_pk,
                 vec![],
             )
             .unwrap();
@@ -639,12 +638,12 @@ mod tests {
             .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let (eph_client_pk, _eph_client_sk) =
-            ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
 
         let mut enc_key_buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(
-            &UnifiedPublicEncKey::MlKem512(eph_client_pk.clone()),
+            &eph_client_pk,
             &mut enc_key_buf,
             crate::consts::SAFE_SER_SIZE_LIMIT,
         )
@@ -679,7 +678,7 @@ mod tests {
             &sk0,
             &pivot_resp,
             &dummy_domain,
-            &eph_client_pk.to_unified(),
+            &eph_client_pk,
             vec![],
         )
         .unwrap();
@@ -872,8 +871,9 @@ mod tests {
             .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let (eph_client_pk, _eph_client_sk) =
-            ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
+
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
 
         let dummy_domain = dummy_domain();
@@ -881,7 +881,7 @@ mod tests {
 
         let mut enc_key_buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(
-            &UnifiedPublicEncKey::MlKem512(eph_client_pk.clone()),
+            &eph_client_pk,
             &mut enc_key_buf,
             crate::consts::SAFE_SER_SIZE_LIMIT,
         )
@@ -911,7 +911,7 @@ mod tests {
                 &sk1,
                 &payload0,
                 &dummy_domain,
-                &eph_client_pk.to_unified(),
+                &eph_client_pk,
                 vec![],
             )
             .unwrap();
@@ -940,7 +940,7 @@ mod tests {
                 &sk2,
                 &payload,
                 &dummy_domain,
-                &eph_client_pk.to_unified(),
+                &eph_client_pk,
                 vec![],
             )
             .unwrap();
@@ -969,7 +969,7 @@ mod tests {
                 &sk3,
                 &payload,
                 &dummy_domain,
-                &eph_client_pk.to_unified(),
+                &eph_client_pk,
                 vec![],
             )
             .unwrap();
@@ -998,7 +998,7 @@ mod tests {
                 &sk4,
                 &payload,
                 &dummy_domain,
-                &eph_client_pk.to_unified(),
+                &eph_client_pk,
                 vec![],
             )
             .unwrap();
@@ -1142,7 +1142,7 @@ mod tests {
                     &sk3,
                     &payload,
                     &dummy_domain,
-                    &eph_client_pk.to_unified(),
+                    &eph_client_pk,
                     vec![],
                 )
                 .unwrap();
@@ -1244,8 +1244,8 @@ mod tests {
             .map(|(i, pk)| (*i, alloy_primitives::Address::from_public_key(pk.pk())))
             .collect::<HashMap<u32, alloy_primitives::Address>>();
 
-        let (eph_client_pk, _eph_client_sk) =
-            ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (_eph_client_sk, eph_client_pk) = encryption.keygen().unwrap();
         let (client_vk, _client_sk) = gen_sig_keys(&mut rng);
 
         let dummy_domain = dummy_domain();
@@ -1253,7 +1253,7 @@ mod tests {
 
         let mut enc_key_buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(
-            &UnifiedPublicEncKey::MlKem512(eph_client_pk.clone()),
+            &eph_client_pk,
             &mut enc_key_buf,
             crate::consts::SAFE_SER_SIZE_LIMIT,
         )
@@ -1285,7 +1285,7 @@ mod tests {
                 &sk1,
                 &payload0,
                 &dummy_domain,
-                &eph_client_pk.to_unified(),
+                &eph_client_pk,
                 vec![],
             )
             .unwrap();
@@ -1314,7 +1314,7 @@ mod tests {
                 &sk2,
                 &payload,
                 &dummy_domain,
-                &eph_client_pk.to_unified(),
+                &eph_client_pk,
                 vec![],
             )
             .unwrap();

@@ -793,15 +793,15 @@ mod tests_public_decryption {
 mod test_user_decryption {
     use aes_prng::AesRng;
     use kms_grpc::rpc_types::alloy_to_protobuf_domain;
-    use ml_kem::{kem::Kem, MlKem512Params};
     use rand::SeedableRng;
 
     use crate::{
         consts::SAFE_SER_SIZE_LIMIT,
         cryptography::{
             hybrid_ml_kem,
-            internal_crypto_types::{Cipher, PrivateEncKey, UnifiedPublicEncKey},
-            signcryption::ephemeral_encryption_key_generation,
+            internal_crypto_types::{
+                Cipher, Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
+            },
         },
         dummy_domain,
         engine::{
@@ -813,16 +813,13 @@ mod test_user_decryption {
 
     use super::*;
 
-    fn make_test_pk(rng: &mut AesRng) -> (Vec<u8>, PrivateEncKey<Kem<MlKem512Params>>) {
-        let (enc_pk, enc_sk) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(rng);
+    fn make_test_pk(rng: &mut AesRng) -> (Vec<u8>, UnifiedPrivateEncKey) {
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, rng);
+        let (enc_sk, enc_pk) = encryption.keygen().unwrap();
         let mut enc_key_buf = Vec::new();
         // The key is freshly generated, so we can safely unwrap the serialization
-        tfhe::safe_serialization::safe_serialize(
-            &UnifiedPublicEncKey::MlKem512(enc_pk.clone()),
-            &mut enc_key_buf,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .expect("Failed to serialize ephemeral encryption key");
+        tfhe::safe_serialization::safe_serialize(&enc_pk, &mut enc_key_buf, SAFE_SER_SIZE_LIMIT)
+            .expect("Failed to serialize ephemeral encryption key");
 
         (enc_key_buf, enc_sk)
     }
@@ -867,7 +864,11 @@ mod test_user_decryption {
                 .signcrypted_ciphertext,
         )
         .unwrap();
-        let res = hybrid_ml_kem::dec::<ml_kem::MlKem512>(signcrypted_msg.0, &enc_sk.0).unwrap();
+        let res = hybrid_ml_kem::dec::<ml_kem::MlKem512>(
+            signcrypted_msg.0,
+            &enc_sk.unwrap_ml_kem_512().0,
+        )
+        .unwrap();
         assert_eq!(TestingPlaintext::from((res, tfhe::FheTypes::Bool)), msg);
     }
 

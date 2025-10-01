@@ -1,17 +1,21 @@
 use crate::consts::{DEFAULT_PARAM, SAFE_SER_SIZE_LIMIT, SIG_SIZE, TEST_PARAM};
+use crate::cryptography::error::CryptographyError;
 use crate::cryptography::hybrid_ml_kem::{self};
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use kms_grpc::kms::v1::FheParameter;
 use ml_kem::{EncodedSizeUser, KemCore};
 use nom::AsBytes;
+use rand::{CryptoRng, RngCore};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::sync::Arc;
+use strum::Display;
 use tfhe::named::Named;
 use tfhe_versionable::{Versionize, VersionsDispatch};
 use threshold_fhe::execution::tfhe_internals::parameters::DKGParams;
 use wasm_bindgen::prelude::wasm_bindgen;
 
+#[macro_export]
 macro_rules! impl_generic_versionize {
     ($t:ty) => {
         impl tfhe_versionable::Versionize for $t {
@@ -273,6 +277,67 @@ impl<C: KemCore> Visitor<'_> for PrivateEncKeyVisitor<C> {
     }
 }
 
+// TODO separate into signature and encryption files
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, Display)]
+pub enum EncryptionSchemeType {
+    #[default]
+    MlKem512,
+    MlKem1024,
+}
+
+pub trait EncryptionScheme: Send + Sync {
+    fn scheme_type(&self) -> EncryptionSchemeType;
+    fn keygen(&mut self) -> Result<(UnifiedPrivateEncKey, UnifiedPublicEncKey), CryptographyError>;
+}
+
+pub trait CryptoRand: CryptoRng + RngCore + Send + Sync {}
+impl<T: CryptoRng + RngCore + Send + Sync> CryptoRand for T {}
+
+pub struct Encryption<'a> {
+    scheme_type: EncryptionSchemeType,
+    rng: &'a mut dyn CryptoRand, //Box<dyn CryptoRand + Send + Sync>,
+}
+
+impl<'a> Encryption<'a> {
+    pub fn new(
+        scheme_type: EncryptionSchemeType,
+        rng: &'a mut dyn CryptoRand, // impl CryptoRand + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            scheme_type,
+            rng, //Box::new(rng),
+        }
+    }
+}
+
+impl<'a> EncryptionScheme for Encryption<'a> {
+    fn scheme_type(&self) -> EncryptionSchemeType {
+        self.scheme_type
+    }
+
+    fn keygen(&mut self) -> Result<(UnifiedPrivateEncKey, UnifiedPublicEncKey), CryptographyError> {
+        let (sk, pk) = match self.scheme_type {
+            EncryptionSchemeType::MlKem512 => {
+                let (decapsulation_key, encapsulation_key) =
+                    hybrid_ml_kem::keygen::<ml_kem::MlKem512, _>(&mut self.rng);
+                (
+                    UnifiedPrivateEncKey::MlKem512(PrivateEncKey(decapsulation_key)),
+                    UnifiedPublicEncKey::MlKem512(PublicEncKey(encapsulation_key)),
+                )
+            }
+            EncryptionSchemeType::MlKem1024 => {
+                let (decapsulation_key, encapsulation_key) =
+                    hybrid_ml_kem::keygen::<ml_kem::MlKem1024, _>(&mut self.rng);
+                (
+                    UnifiedPrivateEncKey::MlKem1024(PrivateEncKey(decapsulation_key)),
+                    UnifiedPublicEncKey::MlKem1024(PublicEncKey(encapsulation_key)),
+                )
+            }
+        };
+        Ok((sk, pk))
+    }
+}
+
 pub fn gen_sig_keys<R: rand::CryptoRng + rand::Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
     use k256::ecdsa::SigningKey;
 
@@ -477,6 +542,7 @@ pub enum UnifiedSigncryptionPubKey<'a> {
     MlKem1024(&'a SigncryptionPubKey<ml_kem::MlKem1024>),
 }
 
+// TODO adjust
 /// Structure for private keys for signcryption
 #[derive(Clone, Debug)]
 pub struct SigncryptionKeyPair<C: KemCore> {
@@ -586,18 +652,19 @@ impl std::ops::Deref for WrappedDKGParams {
 
 #[cfg(test)]
 mod tests {
-    use rand::rngs::OsRng;
-
     use crate::cryptography::{
         hybrid_ml_kem,
-        internal_crypto_types::{PrivateEncKey, PublicEncKey},
-        signcryption::ephemeral_encryption_key_generation,
+        internal_crypto_types::{
+            Encryption, EncryptionScheme, EncryptionSchemeType, PrivateEncKey, PublicEncKey,
+        },
     };
+    use rand::rngs::OsRng;
 
     #[test]
     fn test_pke_serialize_size() {
         let mut rng = OsRng;
-        let (pk, sk) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (sk, pk) = encryption.keygen().unwrap();
         let pk_buf = bc2wrap::serialize(&pk).unwrap();
         let sk_buf = bc2wrap::serialize(&sk).unwrap();
         // there is extra 8 bytes in the serialization to encode the length

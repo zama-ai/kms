@@ -7,7 +7,7 @@ use tfhe::{named::Named, Versionize};
 use tfhe_versionable::VersionsDispatch;
 
 use crate::{
-    cryptography::internal_crypto_types::{PublicEncKey, PublicSigKey},
+    cryptography::internal_crypto_types::{PublicSigKey, UnifiedPublicEncKey},
     engine::validation::{
         parse_optional_proto_request_id, parse_proto_request_id, RequestIdParsingErr,
     },
@@ -79,7 +79,7 @@ pub struct NodeInfo {
     pub name: String,
     pub party_id: u32,
     pub verification_key: PublicSigKey,
-    pub backup_encryption_public_key: PublicEncKey<ml_kem::MlKem512>,
+    pub backup_encryption_public_key: UnifiedPublicEncKey,
 
     pub external_url: String,
 
@@ -356,12 +356,13 @@ impl TryFrom<ContextInfo> for kms_grpc::kms::v1::KmsContext {
 
 #[cfg(test)]
 mod tests {
+    use aes_prng::AesRng;
     use kms_grpc::rpc_types::PrivDataType;
-    use rand::rngs::OsRng;
+    use rand::SeedableRng;
 
     use crate::{
-        cryptography::{
-            internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
+        cryptography::internal_crypto_types::{
+            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
         },
         vault::storage::{ram::RamStorage, store_versioned_at_request_id},
     };
@@ -484,7 +485,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_context_info_duplicate_party_ids() {
-        let (backup_encryption_public_key, _) = ephemeral_encryption_key_generation(&mut OsRng);
+        let mut rng = AesRng::seed_from_u64(42);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (_, backup_encryption_public_key) = encryption.keygen().unwrap();
         let (verification_key, sk) = gen_sig_keys(&mut rand::rngs::OsRng);
 
         let context = ContextInfo {

@@ -670,12 +670,14 @@ mod tests {
 
     use crate::{
         consts::{SAFE_SER_SIZE_LIMIT, TEST_PARAM},
-        cryptography::{
-            internal_crypto_types::gen_sig_keys, signcryption::ephemeral_encryption_key_generation,
+        cryptography::internal_crypto_types::{
+            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
         },
         dummy_domain,
-        engine::base::{compute_info_standard_keygen, DSEP_PUBDATA_KEY},
-        engine::threshold::service::session::SessionPreparerManager,
+        engine::{
+            base::{compute_info_standard_keygen, DSEP_PUBDATA_KEY},
+            threshold::service::session::SessionPreparerManager,
+        },
         vault::storage::ram,
     };
 
@@ -723,15 +725,12 @@ mod tests {
     }
 
     fn make_dummy_enc_pk(rng: &mut AesRng) -> Vec<u8> {
-        let (enc_pk, _enc_sk) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, rng);
+        let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
         let mut enc_key_buf = Vec::new();
         // The key is freshly generated, so we can safely unwrap the serialization
-        tfhe::safe_serialization::safe_serialize(
-            &UnifiedPublicEncKey::MlKem512(enc_pk.clone()),
-            &mut enc_key_buf,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .expect("Failed to serialize ephemeral encryption key");
+        tfhe::safe_serialization::safe_serialize(&enc_pk, &mut enc_key_buf, SAFE_SER_SIZE_LIMIT)
+            .expect("Failed to serialize ephemeral encryption key");
         enc_key_buf
     }
 

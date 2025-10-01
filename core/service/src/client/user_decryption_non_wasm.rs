@@ -1,8 +1,10 @@
 use crate::client::client_wasm::Client;
 use crate::consts::SAFE_SER_SIZE_LIMIT;
+use crate::cryptography::internal_crypto_types::Encryption;
+use crate::cryptography::internal_crypto_types::EncryptionScheme;
+use crate::cryptography::internal_crypto_types::EncryptionSchemeType;
 use crate::cryptography::internal_crypto_types::UnifiedPrivateEncKey;
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
-use crate::cryptography::signcryption::ephemeral_encryption_key_generation;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
 use kms_grpc::kms::v1::{TypedCiphertext, UserDecryptionRequest};
@@ -42,17 +44,13 @@ impl Client {
         let domain_msg = alloy_to_protobuf_domain(domain)?;
 
         // NOTE: we only support MlKem512 in the latest version
-        let (enc_pk, enc_sk) =
-            ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut self.rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut self.rng);
+        let (enc_sk, enc_pk) = encryption.keygen()?;
 
         let mut enc_key_buf = Vec::new();
         // The key is freshly generated, so we can safely unwrap the serialization
-        tfhe::safe_serialization::safe_serialize(
-            &UnifiedPublicEncKey::MlKem512(enc_pk.clone()),
-            &mut enc_key_buf,
-            SAFE_SER_SIZE_LIMIT,
-        )
-        .expect("Failed to serialize ephemeral encryption key");
+        tfhe::safe_serialization::safe_serialize(&enc_pk, &mut enc_key_buf, SAFE_SER_SIZE_LIMIT)
+            .expect("Failed to serialize ephemeral encryption key");
 
         Ok((
             UserDecryptionRequest {
@@ -66,8 +64,8 @@ impl Client {
                 context_id: None,
                 epoch_id: None,
             },
-            UnifiedPublicEncKey::MlKem512(enc_pk),
-            UnifiedPrivateEncKey::MlKem512(enc_sk),
+            enc_pk,
+            enc_sk,
         ))
     }
 
@@ -98,8 +96,8 @@ impl Client {
 
         let domain_msg = alloy_to_protobuf_domain(domain)?;
 
-        let (enc_pk, enc_sk) =
-            ephemeral_encryption_key_generation::<ml_kem::MlKem1024>(&mut self.rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem1024, &mut self.rng);
+        let (enc_sk, enc_pk) = encryption.keygen()?;
 
         Ok((
             UserDecryptionRequest {
@@ -116,8 +114,8 @@ impl Client {
                 context_id: None,
                 epoch_id: None,
             },
-            UnifiedPublicEncKey::MlKem1024(enc_pk),
-            UnifiedPrivateEncKey::MlKem1024(enc_sk),
+            enc_pk,
+            enc_sk,
         ))
     }
 }

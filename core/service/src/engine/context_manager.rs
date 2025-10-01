@@ -353,9 +353,8 @@ mod tests {
             operator::InternalRecoveryRequest,
             seed_phrase::{custodian_from_seed_phrase, seed_phrase_from_rng},
         },
-        cryptography::{
-            internal_crypto_types::{gen_sig_keys, PublicSigKey},
-            signcryption::ephemeral_encryption_key_generation,
+        cryptography::internal_crypto_types::{
+            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType, PublicSigKey,
         },
         engine::context::{NodeInfo, SoftwareVersion},
         util::meta_store::MetaStore,
@@ -411,7 +410,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_kms_context() {
-        let (backup_encryption_public_key, _) = ephemeral_encryption_key_generation(&mut OsRng);
+        let mut rng = &mut AesRng::seed_from_u64(42);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (_enc_sk, backup_encryption_public_key) = encryption.keygen().unwrap();
         let (verification_key, sig_key, crypto_storage) = setup_crypto_storage().await;
         let base_kms = BaseKmsStruct::new(KMSType::Threshold, sig_key).unwrap();
         let context_id = ContextId::from_bytes([4u8; 32]);
@@ -420,7 +421,7 @@ mod tests {
                 name: "Node1".to_string(),
                 party_id: 1,
                 verification_key: verification_key.clone(),
-                backup_encryption_public_key: backup_encryption_public_key.clone(),
+                backup_encryption_public_key,
                 external_url: "localhost:12345".to_string(),
                 tls_cert: vec![],
                 public_storage_url: "http://storage".to_string(),

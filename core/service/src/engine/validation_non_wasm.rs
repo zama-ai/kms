@@ -573,9 +573,8 @@ mod tests {
     use rand::SeedableRng;
 
     use crate::{
-        cryptography::{
-            internal_crypto_types::{gen_sig_keys, UnifiedPublicEncKey},
-            signcryption::ephemeral_encryption_key_generation,
+        cryptography::internal_crypto_types::{
+            gen_sig_keys, Encryption, EncryptionScheme, EncryptionSchemeType,
         },
         engine::{
             base::derive_request_id,
@@ -717,12 +716,12 @@ mod tests {
         let key_id = derive_request_id("key_id").unwrap();
         let client_address = alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
         let mut rng = AesRng::from_random_seed();
-        let (enc_pk, _enc_sk) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
-        let unified_enc_pk = UnifiedPublicEncKey::MlKem512(enc_pk.clone());
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
 
         let mut enc_pk_buf = Vec::new();
         tfhe::safe_serialization::safe_serialize(
-            &unified_enc_pk,
+            &enc_pk,
             &mut enc_pk_buf,
             crate::consts::SAFE_SER_SIZE_LIMIT,
         )
@@ -837,8 +836,8 @@ mod tests {
 
         // bad public key
         {
-            // note that we're serializing the mlkem512 public key, which is not supported
-            let bad_enc_pk_buf = bc2wrap::serialize(&enc_pk).unwrap();
+            // note that we're serializing the inner mlkem512 public key, which is not supported
+            let bad_enc_pk_buf = bc2wrap::serialize(&enc_pk.unwrap_ml_kem_512()).unwrap();
             let req = UserDecryptionRequest {
                 request_id: Some(request_id.into()),
                 typed_ciphertexts: ciphertexts.clone(),
@@ -899,7 +898,8 @@ mod tests {
         let (client_pk, _client_sk) = gen_sig_keys(&mut rng);
         let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
         let ciphertext = vec![1, 2, 3];
-        let (enc_pk, _) = ephemeral_encryption_key_generation::<ml_kem::MlKem512>(&mut rng);
+        let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, &mut rng);
+        let (_enc_sk, enc_pk) = encryption.keygen().unwrap();
         let key_id = derive_request_id("key_id").unwrap();
 
         let typed_ciphertext = TypedCiphertext {
@@ -920,7 +920,7 @@ mod tests {
             request_id: Some(v1::RequestId {
                 request_id: "dummy request ID".to_owned(),
             }),
-            enc_key: bc2wrap::serialize(&enc_pk).unwrap(),
+            enc_key: bc2wrap::serialize(&enc_pk.unwrap_ml_kem_512()).unwrap(),
             client_address: client_address.to_checksum(None),
             key_id: Some(key_id.into()),
             typed_ciphertexts: vec![typed_ciphertext],
