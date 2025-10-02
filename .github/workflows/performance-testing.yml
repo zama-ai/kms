@@ -367,7 +367,10 @@ jobs:
                 --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
-                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" & # <=====================CHANGE HERE
+                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" \
+                --wait \
+                --wait-for-jobs \
+                --timeout=1200s & # <=====================CHANGE HERE
             done
           fi
 
