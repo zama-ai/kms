@@ -378,7 +378,7 @@ jobs:
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" \
                 --wait \
                 --wait-for-jobs \
-                --timeout=1200s & # <=====================CHANGE HERE
+                --timeout=1200s &
             done
 
           ###################################################################
@@ -413,11 +413,11 @@ jobs:
               --timeout=1200s
           fi
 
-          sleep 90
           ###################################################################
           # Wait for KMS Core deployment to be ready
           ###################################################################
           echo "Waiting for KMS Core pods to be ready..."
+          sleep 120
           if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
             kubectl wait --for=condition=ready pod kms-service-centralized-"${PATH_SUFFIX}"-core \
               -n "${NAMESPACE}" --timeout=600s
@@ -426,6 +426,7 @@ jobs:
               kubectl wait --for=condition=ready pod kms-service-threshold-"${i}"-"${PATH_SUFFIX}"-core-"${i}" \
                 -n "${NAMESPACE}" --timeout=600s
             done
+          fi
 
           ###################################################################
           # Deploy KMS Core initialization job
