@@ -988,7 +988,9 @@ fn config_path_from_context(ctx: &impl DockerComposeContext) -> String {
 #[test_context(DockerComposeThresholdContextTest)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_sequential_preproc_keygen(ctx: &DockerComposeThresholdContextTest) {
+async fn nightly_tests_threshold_sequential_preproc_keygen(
+    ctx: &DockerComposeThresholdContextTest,
+) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
@@ -1016,7 +1018,7 @@ async fn test_threshold_concurrent_preproc_keygen(ctx: &DockerComposeThresholdCo
 #[test_context(DockerComposeThresholdContextDefault)]
 #[tokio::test]
 #[serial(docker)]
-async fn test_threshold_sequential_crs(ctx: &DockerComposeThresholdContextDefault) {
+async fn nightly_tests_threshold_sequential_crs(ctx: &DockerComposeThresholdContextDefault) {
     init_testing();
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
