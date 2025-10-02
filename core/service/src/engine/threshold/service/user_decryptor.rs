@@ -56,7 +56,7 @@ use crate::{
     consts::DEFAULT_MPC_CONTEXT,
     cryptography::{
         internal_crypto_types::{PrivateSigKey, UnifiedPublicEncKey},
-        signcryption::{signcrypt, SigncryptionPayload},
+        signcryption::SigncryptionPayload,
     },
     engine::{
         base::{

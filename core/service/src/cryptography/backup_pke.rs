@@ -115,7 +115,7 @@ impl InnerBackupPrivateKey {
             std::io::Cursor::new(ciphertext),
             SAFE_SER_SIZE_LIMIT,
         )
-        .map_err(CryptographyError::SafeDeserializationError)?;
+        .map_err(CryptographyError::DeserializationError)?;
         hybrid_ml_kem::dec::<MlKemType>(buf, &self.decapsulation_key)
     }
 }
@@ -293,9 +293,6 @@ mod tests {
         let mut ct = pk.encrypt(&mut rng, &msg).unwrap();
         ct[0] ^= 1;
         let err = sk.decrypt(&ct).unwrap_err();
-        assert!(matches!(
-            err,
-            CryptographyError::SafeDeserializationError(..)
-        ));
+        assert!(matches!(err, CryptographyError::DeserializationError(..)));
     }
 }

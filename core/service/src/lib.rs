@@ -24,9 +24,11 @@ pub mod cryptography {
     pub mod attestation;
     pub mod backup_pke;
     pub mod decompression;
+    pub mod encryption;
     pub mod error;
     pub mod hybrid_ml_kem;
     pub mod internal_crypto_types;
+    pub mod signatures;
     pub mod signcryption;
 }
 #[cfg(feature = "non-wasm")]

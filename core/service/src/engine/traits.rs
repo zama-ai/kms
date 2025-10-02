@@ -23,6 +23,7 @@ use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::cryptography::internal_crypto_types::PublicSigKey;
 use crate::cryptography::internal_crypto_types::Signature;
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
+use crate::cryptography::internal_crypto_types::UnifiedPublicVerfKey;
 
 use super::base::KmsFheKeyHandles;
 
@@ -62,7 +63,7 @@ pub trait Kms: BaseKms {
         ct_format: CiphertextFormat,
         digest_link: &[u8],
         enc_key: &UnifiedPublicEncKey,
-        client_address: &alloy_primitives::Address,
+        client_address: &UnifiedPublicVerfKey, // todo designcryption key
     ) -> anyhow::Result<Vec<u8>>;
 }
 

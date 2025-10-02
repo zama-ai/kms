@@ -1,7 +1,8 @@
 use crate::client::client_wasm::Client;
 use crate::cryptography::internal_crypto_types::{
-    PublicSigKey, SigncryptionKeyPair, SigncryptionPrivKey, SigncryptionPubKey,
-    UnifiedPrivateEncKey, UnifiedSigncryptionKeyPair, UnifiedSigncryptionKeyPairOwned,
+    PublicSigKey, UnifiedDesigncryptionKey, UnifiedPrivateDecKey, UnifiedPrivateSignKey,
+    UnifiedPublicVerfKey, UnifiedSigncryption, UnifiedSigncryptionKeyPair,
+    UnifiedSigncryptionKeyPairOwned,
 };
 use crate::cryptography::internal_crypto_types::{Signature, UnifiedPublicEncKey};
 use crate::cryptography::signcryption::{
@@ -53,46 +54,30 @@ impl Client {
         eip712_domain: &Eip712Domain,
         agg_resp: &[UserDecryptionResponse],
         enc_pk: &UnifiedPublicEncKey,
-        enc_sk: &UnifiedPrivateEncKey,
+        enc_sk: &UnifiedPrivateDecKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        let owned_client_keys = match (enc_pk, enc_sk) {
-            (UnifiedPublicEncKey::MlKem512(pk), UnifiedPrivateEncKey::MlKem512(sk)) => {
-                let v = SigncryptionKeyPair::<ml_kem::MlKem512> {
-                    sk: SigncryptionPrivKey {
-                        signing_key: self.client_sk.clone(),
-                        decryption_key: sk.clone(),
-                    },
-                    pk: SigncryptionPubKey {
-                        client_address: self.client_address,
-                        enc_key: pk.clone(),
-                    },
-                };
-                UnifiedSigncryptionKeyPairOwned::MlKem512(v)
-            }
-            (UnifiedPublicEncKey::MlKem1024(pk), UnifiedPrivateEncKey::MlKem1024(sk)) => {
-                let v = SigncryptionKeyPair::<ml_kem::MlKem1024> {
-                    sk: SigncryptionPrivKey {
-                        signing_key: self.client_sk.clone(),
-                        decryption_key: sk.clone(),
-                    },
-                    pk: SigncryptionPubKey {
-                        client_address: self.client_address,
-                        enc_key: pk.clone(),
-                    },
-                };
-                UnifiedSigncryptionKeyPairOwned::MlKem1024(v)
-            }
-            _ => {
+        let sig_sk = match &self.client_sk {
+            Some(sk) => sk,
+            None => {
                 return Err(anyhow_error_and_log(
-                    "Public and private keys do not have the same variant".to_string(),
+                    "missing client signing key".to_string(),
                 ));
             }
+        };
+        let owned_client_keys = UnifiedSigncryptionKeyPairOwned {
+            signcrypt_key: UnifiedSigncryption {
+                signing_key: UnifiedPrivateSignKey::Ecdsa256k1(sig_sk.clone()),
+                encryption_key: enc_pk.clone(),
+            },
+            designcrypt_key: UnifiedDesigncryptionKey {
+                sender_verf_key: UnifiedPublicVerfKey::Ecdsa256k1(PublicSigKey::from_sk(sig_sk)),
+                decryption_key: enc_sk.clone(),
+            },
         };
         let client_keys = owned_client_keys.reference();
 
         // The condition below decides whether we'll parse the response
-        // in the centralized mode or threshold mode.
-        //
+        // in the centralized mode or threshold mode.        //
         // It's important to check both the length of the server identities
         // and the number of responses at the start to avoid "falling back"
         // to the centralized mode by mistake since the checks that happen
@@ -127,40 +112,25 @@ impl Client {
         &self,
         agg_resp: &[UserDecryptionResponse],
         enc_pk: &UnifiedPublicEncKey,
-        enc_sk: &UnifiedPrivateEncKey,
+        enc_sk: &UnifiedPrivateDecKey,
     ) -> anyhow::Result<Vec<TypedPlaintext>> {
-        let owned_client_keys = match (enc_pk, enc_sk) {
-            (UnifiedPublicEncKey::MlKem512(pk), UnifiedPrivateEncKey::MlKem512(sk)) => {
-                let v = SigncryptionKeyPair::<ml_kem::MlKem512> {
-                    sk: SigncryptionPrivKey {
-                        signing_key: self.client_sk.clone(),
-                        decryption_key: sk.clone(),
-                    },
-                    pk: SigncryptionPubKey {
-                        client_address: self.client_address,
-                        enc_key: pk.clone(),
-                    },
-                };
-                UnifiedSigncryptionKeyPairOwned::MlKem512(v)
-            }
-            (UnifiedPublicEncKey::MlKem1024(pk), UnifiedPrivateEncKey::MlKem1024(sk)) => {
-                let v = SigncryptionKeyPair::<ml_kem::MlKem1024> {
-                    sk: SigncryptionPrivKey {
-                        signing_key: self.client_sk.clone(),
-                        decryption_key: sk.clone(),
-                    },
-                    pk: SigncryptionPubKey {
-                        client_address: self.client_address,
-                        enc_key: pk.clone(),
-                    },
-                };
-                UnifiedSigncryptionKeyPairOwned::MlKem1024(v)
-            }
-            _ => {
+        let sig_sk = match &self.client_sk {
+            Some(sk) => sk,
+            None => {
                 return Err(anyhow_error_and_log(
-                    "Public and private keys do not have the same variant".to_string(),
+                    "missing client signing key".to_string(),
                 ));
             }
+        };
+        let owned_client_keys = UnifiedSigncryptionKeyPairOwned {
+            signcrypt_key: UnifiedSigncryption {
+                signing_key: UnifiedPrivateSignKey::Ecdsa256k1(sig_sk.clone()),
+                decryption_key: enc_sk.clone(),
+            },
+            designcrypt_key: UnifiedDesigncryptionKey {
+                sender_verf_key: UnifiedPublicVerfKey::Ecdsa256k1(PublicSigKey::from_sk(sig_sk)),
+                encryption_key: enc_pk.clone(),
+            },
         };
         let client_keys = owned_client_keys.reference();
 
@@ -775,7 +745,7 @@ pub struct TestingUserDecryptionTranscript {
     // request
     pub(crate) request: Option<UserDecryptionRequest>,
     // We keep the unified keys here because for legacy tests we need to produce legacy transcripts
-    pub(crate) eph_sk: crate::cryptography::internal_crypto_types::UnifiedPrivateEncKey,
+    pub(crate) eph_sk: crate::cryptography::internal_crypto_types::UnifiedPrivateDecKey,
     pub(crate) eph_pk: crate::cryptography::internal_crypto_types::UnifiedPublicEncKey,
     // response
     pub(crate) agg_resp: Vec<kms_grpc::kms::v1::UserDecryptionResponse>,

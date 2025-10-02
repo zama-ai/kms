@@ -9,8 +9,10 @@ pub enum CryptographyError {
     AesGcmError(#[from] aes_gcm::Error),
     #[error("ml-kem error")]
     MlKemError,
-    #[error("safe deserialization error: {0}")]
-    SafeDeserializationError(String),
+    #[error("serialization error: {0}")]
+    SerializationError(String),
+    #[error("deserialization error: {0}")]
+    DeserializationError(String),
     #[error(transparent)]
     RsaError(#[from] rsa::Error),
     #[error(transparent)]
@@ -19,4 +21,8 @@ pub enum CryptographyError {
     BincodeEncodeError(#[from] bincode::error::EncodeError),
     #[error("bincode error: {0}")]
     BincodeError(String),
+    #[error("Signing error: {0}")]
+    SigningError(String),
+    #[error("Verification error: {0}")]
+    VerificationError(String),
 }

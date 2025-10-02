@@ -6,10 +6,10 @@ use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::attestation::SecurityModuleProxy;
 use crate::cryptography::decompression;
-#[cfg(feature = "non-wasm")]
-use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicSigKey};
-use crate::cryptography::signcryption::{signcrypt, SigncryptionPayload};
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::internal_crypto_types::{UnifiedPublicEncKey, UnifiedPublicVerfKey};
+use crate::cryptography::signcryption::SigncryptionPayload;
 #[cfg(feature = "non-wasm")]
 use crate::engine::backup_operator::RealBackupOperator;
 use crate::engine::base::CrsGenMetadata;
@@ -606,6 +606,8 @@ pub async fn async_user_decrypt<
 
     let mut all_signcrypted_cts = vec![];
     for typed_ciphertext in typed_ciphertexts {
+        use crate::cryptography::internal_crypto_types::Eip712VerfKey;
+
         let mut inner_timer = metrics::METRICS
             .time_operation(OP_USER_DECRYPT_INNER)
             .tags(metric_tags.clone())
@@ -616,6 +618,8 @@ pub async fn async_user_decrypt<
         inner_timer.tag(TAG_TFHE_TYPE, fhe_type_string);
         let ct_format = typed_ciphertext.ciphertext_format();
         let external_handle = typed_ciphertext.external_handle.clone();
+        let client_verf_key =
+            UnifiedPublicVerfKey::Eip712(Eip712VerfKey::new(client_address.clone()));
         let signcrypted_ciphertext = RealCentralizedKms::<PubS, PrivS>::user_decrypt(
             keys,
             sig_key,
@@ -625,7 +629,7 @@ pub async fn async_user_decrypt<
             ct_format,
             req_digest,
             client_enc_key,
-            client_address,
+            &client_verf_key,
         )?;
         all_signcrypted_cts.push(TypedSigncryptedCiphertext {
             fhe_type: fhe_type as i32,
@@ -944,7 +948,7 @@ impl<
         ct_format: CiphertextFormat,
         link: &[u8],
         client_enc_key: &UnifiedPublicEncKey,
-        client_address: &alloy_primitives::Address,
+        client_address: &UnifiedPublicVerfKey,
     ) -> anyhow::Result<Vec<u8>> {
         let plaintext = Self::public_decrypt(keys, ct, fhe_type, ct_format)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
@@ -1670,17 +1674,14 @@ pub(crate) mod tests {
         let link = vec![42_u8, 42, 42];
         let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
         let client_key_pair = {
-            let mut keys = ephemeral_signcryption_key_generation::<ml_kem::MlKem512>(
-                &mut rng,
-                &client_sig_key,
-            );
+            let mut keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
             if sim_type == SimulationType::BadEphemeralKey {
                 let bad_keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
-                keys.sk = bad_keys.sk;
+                keys.signcrypt_key = bad_keys.signcrypt_key;
             }
             keys
         };
-        let unified_client_keys = UnifiedPublicEncKey::MlKem512(client_key_pair.pk.enc_key.clone());
+        let unified_client_keys = client_key_pair.designcrypt_key.encryption_key.clone();
         let mut rng = kms.base_kms.new_rng().await;
         let raw_cipher = RealCentralizedKms::<FileStorage, FileStorage>::user_decrypt(
             &kms.crypto_storage
@@ -1694,7 +1695,7 @@ pub(crate) mod tests {
             ct_format,
             &link,
             &unified_client_keys,
-            &client_key_pair.pk.client_address,
+            &client_key_pair.designcrypt_key.sender_verf_key,
         );
         // if bad FHE key is used, then it *might* panic
         let raw_cipher = if sim_type == SimulationType::BadFheKey {
@@ -1712,7 +1713,7 @@ pub(crate) mod tests {
             &DSEP_USER_DECRYPTION,
             &raw_cipher,
             &link,
-            &client_key_pair.to_unified(),
+            &client_key_pair.reference(),
             &keys.centralized_kms_keys.sig_pk,
         );
         if sim_type == SimulationType::BadEphemeralKey {

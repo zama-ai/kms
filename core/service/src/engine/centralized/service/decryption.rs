@@ -800,7 +800,7 @@ mod test_user_decryption {
         cryptography::{
             hybrid_ml_kem,
             internal_crypto_types::{
-                Cipher, Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateEncKey,
+                Cipher, Encryption, EncryptionScheme, EncryptionSchemeType, UnifiedPrivateDecKey,
             },
         },
         dummy_domain,
@@ -813,7 +813,7 @@ mod test_user_decryption {
 
     use super::*;
 
-    fn make_test_pk(rng: &mut AesRng) -> (Vec<u8>, UnifiedPrivateEncKey) {
+    fn make_test_pk(rng: &mut AesRng) -> (Vec<u8>, UnifiedPrivateDecKey) {
         let mut encryption = Encryption::new(EncryptionSchemeType::MlKem512, rng);
         let (enc_sk, enc_pk) = encryption.keygen().unwrap();
         let mut enc_key_buf = Vec::new();

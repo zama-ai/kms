@@ -12,7 +12,7 @@ use crate::consts::TEST_PARAM;
 use crate::consts::TEST_THRESHOLD_KEY_ID_10P;
 use crate::consts::TEST_THRESHOLD_KEY_ID_4P;
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
-use crate::cryptography::internal_crypto_types::{UnifiedPrivateEncKey, UnifiedPublicEncKey};
+use crate::cryptography::internal_crypto_types::{UnifiedPrivateDecKey, UnifiedPublicEncKey};
 use crate::dummy_domain;
 use crate::engine::base::derive_request_id;
 use crate::engine::validation::DSEP_USER_DECRYPTION;
@@ -648,7 +648,7 @@ async fn process_batch_threshold_user_decryption(
     reqs: Vec<(
         UserDecryptionRequest,
         UnifiedPublicEncKey,
-        UnifiedPrivateEncKey,
+        UnifiedPrivateDecKey,
     )>,
     response_map: HashMap<RequestId, Vec<UserDecryptionResponse>>,
     server_private_keys: HashMap<u32, PrivateSigKey>,

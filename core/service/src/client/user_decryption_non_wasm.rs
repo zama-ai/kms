@@ -3,7 +3,7 @@ use crate::consts::SAFE_SER_SIZE_LIMIT;
 use crate::cryptography::internal_crypto_types::Encryption;
 use crate::cryptography::internal_crypto_types::EncryptionScheme;
 use crate::cryptography::internal_crypto_types::EncryptionSchemeType;
-use crate::cryptography::internal_crypto_types::UnifiedPrivateEncKey;
+use crate::cryptography::internal_crypto_types::UnifiedPrivateDecKey;
 use crate::cryptography::internal_crypto_types::UnifiedPublicEncKey;
 use crate::{anyhow_error_and_log, some_or_err};
 use alloy_sol_types::Eip712Domain;
@@ -29,7 +29,7 @@ impl Client {
     ) -> anyhow::Result<(
         UserDecryptionRequest,
         UnifiedPublicEncKey,
-        UnifiedPrivateEncKey,
+        UnifiedPrivateDecKey,
     )> {
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
@@ -82,7 +82,7 @@ impl Client {
     ) -> anyhow::Result<(
         UserDecryptionRequest,
         UnifiedPublicEncKey,
-        UnifiedPrivateEncKey,
+        UnifiedPrivateDecKey,
     )> {
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
@@ -115,7 +115,7 @@ impl Client {
                 epoch_id: None,
             },
             enc_pk,
-            enc_sk,
+            UnifiedPrivateDecKey::MlKem1024(enc_sk),
         ))
     }
 }
