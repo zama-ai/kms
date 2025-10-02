@@ -60,7 +60,7 @@ jobs:
   # Builds and publishes the Docker images required for testing
   ############################################################################
   docker-build:
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.dockerBuild == true) || github.event_name == 'pull_request'
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.dockerBuild == true) || github.event_name == 'pull_request' # <=====================CHANGE HERE
     name: docker-build
     runs-on: ubuntu-latest
     steps:
@@ -124,9 +124,9 @@ jobs:
         if: ${{ needs.docker-build.result == 'success' }}
         env:
           DEPLOYMENT_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'thresholdWithEnclave' }}
-          # KMS_CORE_IMAGE_TAG: ${{ inputs.kmsCoreImageTag }}
+          # KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
           KMS_CORE_IMAGE_TAG: 16be27d
-          # KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.kmsCoreClientImageTag }}
+          # KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
           KMS_CORE_CLIENT_IMAGE_TAG: 16be27d
         run: |
           ###################################################################
@@ -158,10 +158,10 @@ jobs:
       - name: Handle pre-built images
         if: ${{ needs.docker-build.result == 'skipped' && github.event_name == 'workflow_dispatch' && inputs.dockerBuild == false && inputs.kmsCoreImageTag != '' && inputs.kmsCoreClientImageTag != '' }}
         env:
-          DEPLOYMENT_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'thresholdWithEnclave' }}
-          # KMS_CORE_IMAGE_TAG: ${{ inputs.kmsCoreImageTag }}
+          DEPLOYMENT_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'thresholdWithEnclave' }} # <=====================CHANGE HERE
+          # KMS_CORE_IMAGE_TAG: ${{ inputs.kmsCoreImageTag }}  # <=====================CHANGE HERE
           KMS_CORE_IMAGE_TAG: 16be27d
-          # KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.kmsCoreClientImageTag }}
+          # KMS_CORE_CLIENT_IMAGE_TAG: ${{ inputs.kmsCoreClientImageTag }}  # <=====================CHANGE HERE
           KMS_CORE_CLIENT_IMAGE_TAG: 16be27d
         run: |
           ###################################################################
@@ -367,7 +367,7 @@ jobs:
                 --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr0="${PCR0}" \
                 --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr1="${PCR1}" \
-                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}"
+                --set kmsCore.thresholdMode.tls.trustedReleases[0].pcr2="${PCR2}" & # <=====================CHANGE HERE
             done
           fi
 
@@ -375,8 +375,10 @@ jobs:
           # Wait for KMS Core deployment to be ready
           ###################################################################
           echo "Waiting for KMS Core pods to be ready..."
-          kubectl wait --for=condition=ready pod -l app=kms-core \
-            -n "${NAMESPACE}" --timeout=600s
+          for i in {1..13}; do
+            kubectl wait --for=condition=ready pod kms-service-threshold-"${i}"-"${PATH_SUFFIX}"-core-"${i}" \
+              -n "${NAMESPACE}" --timeout=600s
+          done
 
           ###################################################################
           # Deploy KMS Core initialization job
@@ -390,7 +392,7 @@ jobs:
             --set kmsCoreClient.image.tag="${KMS_CORE_CLIENT_IMAGE_TAG}" \
             --set kmsCore.image.tag="${KMS_CORE_IMAGE_TAG}"
 
-          sleep 60
+          sleep 240
           ###################################################################
           # Wait for KMS Core initialization to complete
           ###################################################################
@@ -454,7 +456,7 @@ jobs:
           echo "Collecting logs from KMS Core pods..."
           for i in {1..13}; do
             echo "Collecting logs from KMS Core pod ${i}/13..."
-            POD_NAME="kms-service-threshold-${i}-${NAMESPACE}-core-${i}"
+            POD_NAME="kms-service-threshold-${i}-${PATH_SUFFIX}-core-${i}"
             LOG_FILE="kms-core-${i}-logs.txt"
 
             # Get pod logs and save to file
