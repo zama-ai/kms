@@ -379,8 +379,8 @@ jobs:
                 --wait \
                 --wait-for-jobs \
                 --timeout=1200s &
-              wait
             done
+            wait
 
           ###################################################################
           # Deploy KMS Core in centralized mode
