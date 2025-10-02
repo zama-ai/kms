@@ -1,0 +1,11 @@
+kmsPeers:
+  id: 5
+
+kmsCore:
+  serviceAccountName: kms-enclave-ci-5
+  envFrom:
+    configmap:
+      name: kms-enclave-ci-5
+
+kmsGenCertAndKeys:
+  enabled: true
