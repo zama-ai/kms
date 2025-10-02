@@ -1736,7 +1736,7 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    tracing::info!("Fetching public keys. ({command:?})");
+                    tracing::info!("Fetching keys {key_types:?}. ({command:?})");
                     let party_ids = fetch_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
@@ -1867,7 +1867,7 @@ pub async fn execute_cmd(
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
                     //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    tracing::info!("Fetching public keys. ({command:?})");
+                    tracing::info!("Fetching keys {key_types:?}. ({command:?})");
                     let party_ids = fetch_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
@@ -2022,7 +2022,7 @@ pub async fn execute_cmd(
             vec![(None, String::new())]
         }
         CCCommand::Encrypt(cipher_parameters) => {
-            tracing::info!("Fetching public keys. ({command:?})");
+            tracing::info!("Fetching keys {key_types:?}. ({command:?})");
             let party_ids = fetch_elements(
                 &cipher_parameters.key_id.as_str(),
                 &key_types,
