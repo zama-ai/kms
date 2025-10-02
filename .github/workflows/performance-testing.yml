@@ -509,7 +509,7 @@ jobs:
 
           # Clean up Jobs
           echo "Cleaning up Jobs..."
-          kubectl delete job -l app=kms-core-client-gen-keys -n "${NAMESPACE}" || true
+          kubectl delete job -l app=kms-core -n "${NAMESPACE}" || true
           kubectl delete job -l app=kms-threshold-init-job -n "${NAMESPACE}" || true
 
           # Uninstall Helm releases
