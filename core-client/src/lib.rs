@@ -780,10 +780,14 @@ fn join_vars(args: &[&str]) -> String {
 
 // TODO: handle auth
 // TODO: add option to either use local key or remote key
-pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyhow::Result<Bytes> {
-    let object_key = object_id.to_string();
+pub async fn fetch_element(
+    endpoint: &str,
+    folder: &str,
+    element_id: &str,
+) -> anyhow::Result<Bytes> {
+    let element_key = element_id.to_string();
     // Construct the URL
-    let url = join_vars(&[endpoint, folder, object_key.as_str()]);
+    let url = join_vars(&[endpoint, folder, element_key.as_str()]);
 
     // If URL we fetch it
     if url.starts_with("http") {
@@ -793,7 +797,7 @@ pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyh
 
         if response.status().is_success() {
             let bytes = response.bytes().await?;
-            tracing::info!("Successfully downloaded {} bytes for object {object_id} from endpoint {endpoint}/{folder}", bytes.len());
+            tracing::info!("Successfully downloaded {} bytes for element {element_id} from endpoint {endpoint}/{folder}", bytes.len());
             // Here you can process the bytes as needed
             Ok(bytes)
         } else {
@@ -802,12 +806,12 @@ pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyh
             tracing::error!("Error: {}", response_status);
             tracing::error!("Response: {}", response_content);
             Err(anyhow::anyhow!(format!(
-                "Couldn't fetch object {object_id} from endpoint {endpoint}/{folder}\nStatus: {}\nResponse: {}",
+                "Couldn't fetch element {element_id} from endpoint {endpoint}/{folder}\nStatus: {}\nResponse: {}",
                 response_status, response_content
             ),))
         }
     } else {
-        let key_path = Path::new(endpoint).join(folder).join(object_id);
+        let key_path = Path::new(endpoint).join(folder).join(element_id);
         let byte_res = tokio::fs::read(&key_path).await.map_err(|e| {
             anyhow!(
                 "Failed to read byte file at {:?} with error: {e}",
@@ -864,22 +868,22 @@ pub fn setup_logging() {
 
 /// This fetches material which is global
 /// i.e. everything related to CRS and FHE public materials
-async fn fetch_global_pub_object_and_write_to_file(
+async fn fetch_global_pub_element_and_write_to_file(
     destination_prefix: &Path,
     s3_endpoint: &str,
-    object_id: &str,
-    object_name: &str,
-    object_folder: &str,
+    element_id: &str,
+    element_name: &str,
+    element_folder: &str,
 ) -> anyhow::Result<()> {
     // Fetch pub-key from storage and dump it for later use
-    let folder = destination_prefix.join(object_folder).join(object_name);
-    let content = fetch_object(
+    let folder = destination_prefix.join(element_folder).join(element_name);
+    let content = fetch_element(
         s3_endpoint,
-        &format!("{object_folder}/{object_name}"),
-        object_id,
+        &format!("{element_folder}/{element_name}"),
+        element_id,
     )
     .await?;
-    write_bytes_to_file(&folder, object_id, content.as_ref()).await
+    write_bytes_to_file(&folder, element_id, content.as_ref()).await
 }
 
 /// This fetches the kms ethereum address from local storage
@@ -890,7 +894,7 @@ async fn fetch_kms_addresses(
     let mut addr_bytes = Vec::with_capacity(sim_conf.cores.len());
 
     for cur_core in &sim_conf.cores {
-        let content = fetch_object(
+        let content = fetch_element(
             &cur_core.s3_endpoint.clone(),
             &format!(
                 "{}/{}",
@@ -1073,7 +1077,7 @@ fn check_external_decryption_signature(
     Ok(())
 }
 
-/// Fetch all remote objects and store them locally for the core client
+/// Fetch all remote elements and store them locally for the core client
 /// Return the server IDs of all servers that were successfully contacted
 /// or an error if no server could be contacted
 /// element_id: the id of the element to fetch (key id or crs id)
@@ -1094,12 +1098,12 @@ async fn fetch_elements(
     // set of core ids, to track which cores we successfully contacted
     let mut successful_core_ids: HashSet<usize> = HashSet::new();
 
-    // go over list of cores to retrieve the public objects from
+    // go over list of cores to retrieve the public elements from
     'cores: for cur_core in &sim_conf.cores {
         let mut all_elements = true;
-        // try to fetch all objects from this core
-        'objects: for element_name in element_types {
-            if fetch_global_pub_object_and_write_to_file(
+        // try to fetch all elements from this core
+        'elements: for element_name in element_types {
+            if fetch_global_pub_element_and_write_to_file(
                 destination_prefix,
                 cur_core.s3_endpoint.as_str(),
                 element_id,
@@ -1109,12 +1113,12 @@ async fn fetch_elements(
             .await
             .is_err()
             {
-                tracing::warn!("Could not fetch object {element_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
+                tracing::warn!("Could not fetch element {element_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
                 all_elements = false;
-                break 'objects;
+                break 'elements;
             }
         }
-        // if we were able to retrieve all objects, add the core id to the set of successful nodes
+        // if we were able to retrieve all elements, add the core id to the set of successful nodes
         if all_elements {
             successful_core_ids.insert(cur_core.party_id);
             // if we only want to download from one core, break here
