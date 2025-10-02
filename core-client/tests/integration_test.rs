@@ -705,7 +705,8 @@ async fn test_centralized_crsgen_secure(ctx: &mut DockerComposeCentralizedContex
     let temp_dir = tempfile::tempdir().unwrap();
     let keys_folder = temp_dir.path();
     let crs_id = crs_gen(ctx, keys_folder, false).await;
-    assert_eq!(crs_id.len(), ID_LENGTH);
+    // hex string with double the length of ID_LENGTH
+    assert_eq!(crs_id.len(), ID_LENGTH * 2);
 }
 
 // Test restore without custodians
