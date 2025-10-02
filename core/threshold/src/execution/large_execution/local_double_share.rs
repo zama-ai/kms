@@ -217,7 +217,6 @@ pub(crate) async fn verify_sharing<
 
     //TODO: Could be done in parallel (to minimize round complexity)
     for g in 0..m {
-        tracing::warn!("I AM {my_role} DOING LOOP OF LSL {g} out of {m}");
         let map_challenges =
             Z::derive_challenges_from_coinflip(x, g.try_into()?, l, session.roles());
 
