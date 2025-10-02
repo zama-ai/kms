@@ -319,7 +319,7 @@ jobs:
           ###################################################################
           echo "Waiting for KMS parties to be ready..."
           if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            kubectl wait --for=condition=ready Kmsparties kms-party-"${PATH_SUFFIX}" \
+            kubectl wait --for=condition=ready Kmsparties kms-party-"${PATH_SUFFIX}-1" \
               -n "${NAMESPACE}" --timeout=120s
 
           elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
