@@ -779,7 +779,7 @@ fn join_vars(args: &[&str]) -> String {
 }
 
 // TODO: handle auth
-// TODO: add option to either use local  key or remote key
+// TODO: add option to either use local key or remote key
 pub async fn fetch_object(endpoint: &str, folder: &str, object_id: &str) -> anyhow::Result<Bytes> {
     let object_key = object_id.to_string();
     // Construct the URL
@@ -1091,59 +1091,45 @@ async fn fetch_elements(
 ) -> anyhow::Result<Vec<usize>> {
     tracing::info!("Fetching {:?} with id {element_id}", element_types);
 
-    let cores_to_fetch = if download_all {
-        // fetch from all cores in the config
-        tracing::info!("Downloading from all cores in the configuration. This may take some time.");
-        &sim_conf.cores
-    } else {
-        // fetch from just the first core in the config
-        std::slice::from_ref(
-            sim_conf
-                .cores
-                .first()
-                .ok_or_else(|| anyhow!("No cores found in configuration to fetch elements from"))?,
-        )
-    };
-
     // set of core ids, to track which cores we successfully contacted
-    let mut core_ids: Option<HashSet<usize>> = None;
+    let mut successful_core_ids: HashSet<usize> = HashSet::new();
 
-    for object_name in element_types {
-        let mut inner_successful_core_ids = HashSet::new();
-        for cur_core in cores_to_fetch {
+    // go over list of cores to retrieve the public objects from
+    'cores: for cur_core in &sim_conf.cores {
+        let mut all_elements = true;
+        // try to fetch all objects from this core
+        'objects: for element_name in element_types {
             if fetch_global_pub_object_and_write_to_file(
                 destination_prefix,
                 cur_core.s3_endpoint.as_str(),
                 element_id,
-                &object_name.to_string(),
+                &element_name.to_string(),
                 &cur_core.object_folder,
             )
             .await
             .is_err()
             {
-                tracing::warn!("Could not fetch object {object_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
-            } else {
-                inner_successful_core_ids.insert(cur_core.party_id);
+                tracing::warn!("Could not fetch object {element_name} with id {element_id} from core at endpoint {}. At least one core is required to proceed.", cur_core.s3_endpoint);
+                all_elements = false;
+                break 'objects;
             }
         }
-        // update successful core ids with the intersection of the previous successful core ids, such that in the end we are sure to have at least one core that has all requested elements
-        // Initialize or refine the intersection
-        core_ids = Some(match core_ids {
-            None => inner_successful_core_ids,
-            Some(mut acc) => {
-                acc.retain(|id| inner_successful_core_ids.contains(id));
-                acc
+        // if we were able to retrieve all objects, add the core id to the set of successful nodes
+        if all_elements {
+            successful_core_ids.insert(cur_core.party_id);
+            // if we only want to download from one core, break here
+            if !download_all {
+                break 'cores;
             }
-        });
+        }
     }
 
-    let final_ids = core_ids.unwrap_or_default();
-    if final_ids.is_empty() {
+    if successful_core_ids.is_empty() {
         Err(anyhow::anyhow!(
                 "Could not fetch all of [{element_types:?}] with id {element_id} from any core. At least one core is required to proceed."
             ))
     } else {
-        Ok(final_ids.into_iter().collect())
+        Ok(successful_core_ids.into_iter().collect())
     }
 }
 
