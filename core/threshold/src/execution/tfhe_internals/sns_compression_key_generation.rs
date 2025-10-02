@@ -49,7 +49,7 @@ where
         SnsCompressionPrivateKeyShares::new_from_preprocessing(
             params.raw_compression_parameters,
             preprocessing,
-            params.max_deviation_from_mean,
+            params.pmax,
             session,
         )
         .await

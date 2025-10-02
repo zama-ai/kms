@@ -391,7 +391,7 @@ where
                 let private_compression_key = CompressionPrivateKeyShares::new_from_preprocessing(
                     comp_params.raw_compression_parameters,
                     preprocessing,
-                    comp_params.max_deviation_from_mean,
+                    comp_params.pmax,
                     session,
                 )
                 .await?;

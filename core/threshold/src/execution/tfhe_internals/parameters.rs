@@ -346,6 +346,10 @@ pub trait DKGParamsBasics: Sync {
     // This is the difference between the output bitsize and the input bitsize of the pksk
     fn pksk_rshift(&self) -> i8;
     fn get_sk_deviations(&self) -> Option<SecretKeyDeviations>;
+
+    fn get_pmax(&self) -> Option<f64> {
+        self.get_sk_deviations().map(|dev| dev.pmax)
+    }
 }
 
 fn combine_noise_info(target_bound: NoiseBounds, list: &[NoiseInfo]) -> NoiseInfo {
@@ -1573,7 +1577,7 @@ impl DKGParamsSnS {
 }
 
 /// Computes the probability that the Hamming weight of a binary string is within
-/// [(pmax - 1/2)*size; pmax*size]
+/// [(1-pmax)*size; pmax*size]
 fn compute_prob_hw_within_range(pmax: f64, size: u64) -> f64 {
     assert!(pmax > 0.5 && pmax < 1.0);
     let distribution = Binomial::new(0.5, size).unwrap();
@@ -1604,7 +1608,7 @@ fn compute_min_trials(p: f64, log2_p_failure: i64) -> Result<usize, String> {
 pub(crate) fn compute_min_max_hw(pmax: f64, size: u64) -> (u64, u64) {
     assert!(pmax > 0.5 && pmax < 1.0);
     let max_hw = (pmax * size as f64).floor() as u64;
-    let min_hw = ((pmax - 0.5) * size as f64).floor() as u64;
+    let min_hw = ((1.0 - pmax) * size as f64).floor() as u64;
     (min_hw, max_hw)
 }
 
@@ -2083,15 +2087,20 @@ mod tests {
 
     #[test]
     fn test_compute_prob_hw_within_range() {
-        let deviation_from_mean = 5;
+        // For len 100, the std dev is 5, setting pmax=0.6 means we accept
+        // hw within 2std dev, so we should get around 95% probability (assuming normal approximation)
+        let pmax = 0.6;
         let key_size = 100;
-        let result = compute_prob_hw_within_range(deviation_from_mean, key_size);
-        assert!(result > 0.72 && result < 0.73);
+        let result = compute_prob_hw_within_range(pmax, key_size);
+        // Bound is kinda loose, but it's more of a sanity check
+        assert!(result > 0.95 && result < 0.96);
     }
 
     #[test]
     fn test_compute_min_trials() {
-        // Test case from your example: p = 0.25, p_failure = 2^-20
+        // If each trial has only a 0.25 chance of success, we expect to need 49 trials
+        // to have a 1 - 2^-20 chance of at least one success.
+        // (as (0.75)**49 < 2**-20 but (0.75)**48 > 2**-20)
         let p = 0.25;
         let log2_p_failure = -20;
         let result = compute_min_trials(p, log2_p_failure).unwrap();

@@ -34,7 +34,7 @@ use crate::{
                 generate_compressed_mod_switch_noise_reduction_key,
                 generate_mod_switch_noise_reduction_key,
             },
-            parameters::{DKGParams, MSNRKConfiguration},
+            parameters::{DKGParams, DKGParamsBasics, MSNRKConfiguration},
             private_keysets::{GenericPrivateKeySet, PrivateKeySet},
             public_keysets::{
                 CompressedFhePubKeySet, FhePubKeySet, RawCompressedPubKeySet, RawPubKeySet,
@@ -351,7 +351,7 @@ where
         LweSecretKeyShare::new_from_preprocessing(
             params_basics_handle.lwe_dimension(),
             preprocessing,
-            params_basics_handle.get_lwe_deviation(),
+            params_basics_handle.get_pmax(),
             session,
         )
         .await?
@@ -367,7 +367,7 @@ where
         params_basics_handle.glwe_sk_num_bits(),
         params_basics_handle.polynomial_size(),
         preprocessing,
-        params_basics_handle.get_glwe_deviation(),
+        params_basics_handle.get_pmax(),
         session,
     )
     .await?;
@@ -425,7 +425,7 @@ where
                 sns_params.glwe_sk_num_bits_sns(),
                 sns_params.polynomial_size_sns(),
                 preprocessing,
-                sns_params.get_glwe_deviation_sns(),
+                sns_params.get_pmax(),
                 session,
             )
             .await?;
@@ -648,7 +648,7 @@ where
         LweSecretKeyShare::new_from_preprocessing(
             params_basics_handle.lwe_dimension(),
             preprocessing,
-            params_basics_handle.get_lwe_deviation(),
+            params_basics_handle.get_pmax(),
             session,
         )
         .await?
@@ -664,7 +664,7 @@ where
         params_basics_handle.glwe_sk_num_bits(),
         params_basics_handle.polynomial_size(),
         preprocessing,
-        params_basics_handle.get_glwe_deviation(),
+        params_basics_handle.get_pmax(),
         session,
     )
     .await?;
@@ -726,7 +726,7 @@ where
                 sns_params.glwe_sk_num_bits_sns(),
                 sns_params.polynomial_size_sns(),
                 preprocessing,
-                sns_params.get_glwe_deviation_sns(),
+                sns_params.get_pmax(),
                 session,
             )
             .await?;
@@ -2101,7 +2101,7 @@ pub mod tests {
                             .unwrap()
                             .raw_compression_parameters,
                         &mut dummy_preproc,
-                        params_basics_handles.get_compression_deviation(),
+                        params_basics_handles.get_pmax(),
                         &mut session,
                     )
                     .await
