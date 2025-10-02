@@ -125,7 +125,7 @@ jobs:
       - name: Check if docker build succeeded
         if: ${{ needs.docker-build.result == 'success' }}
         env:
-          DEPLOYMENT_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'centralizedWithEnclave' }}
+          DEPLOYMENT_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.deploymentType || 'thresholdWithEnclave' }}
           # KMS_CORE_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
           KMS_CORE_IMAGE_TAG: 16be27d
           # KMS_CORE_CLIENT_IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
@@ -418,7 +418,7 @@ jobs:
           echo "Waiting for KMS Core pods to be ready..."
           sleep 120
           if [[ "${DEPLOYMENT_TYPE}" == "centralized" || "${DEPLOYMENT_TYPE}" == "centralizedWithEnclave" ]]; then
-            kubectl wait --for=condition=ready pod kms-service-centralized-"${PATH_SUFFIX}"-core \
+            kubectl wait --for=condition=ready pod kms-service-centralized-"${PATH_SUFFIX}"-core-1 \
               -n "${NAMESPACE}" --timeout=600s
           elif [[ "${DEPLOYMENT_TYPE}" == "threshold" || "${DEPLOYMENT_TYPE}" == "thresholdWithEnclave" ]]; then
             for i in {1..13}; do
@@ -546,10 +546,16 @@ jobs:
 
           # Uninstall KMS Core instances
           echo "Uninstalling KMS Core instances..."
-          for i in {1..13}; do
-            echo "Uninstalling KMS Core instance ${i}/13..."
-            helm uninstall "kms-service-threshold-${i}-${PATH_SUFFIX}" -n "${NAMESPACE}" || true
-          done
+          if [[ ${DEPLOYMENT_TYPE} == "threshold" || ${DEPLOYMENT_TYPE} == "thresholdWithEnclave" ]]; then
+            for i in {1..13}; do
+              echo "Uninstalling KMS Core instance ${i}/13..."
+              helm uninstall "kms-service-threshold-${i}-${PATH_SUFFIX}" -n "${NAMESPACE}" || true
+            done
+          fi
+          if [[ ${DEPLOYMENT_TYPE} == "centralized" || ${DEPLOYMENT_TYPE} == "centralizedWithEnclave" ]]; then
+            echo "Uninstalling KMS Core instance..."
+            helm uninstall "kms-service-centralized-${PATH_SUFFIX}" -n "${NAMESPACE}" || true
+          fi
 
           # Clean up ConfigMaps
           echo "Cleaning up ConfigMaps..."
