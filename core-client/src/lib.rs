@@ -1709,8 +1709,11 @@ pub async fn execute_cmd(
 
     let kms_addrs = Arc::new(fetch_kms_addresses(&cc_conf).await?);
 
-    // Key types we always need to fetch (we only add the ServerKey if needed)
-    let mut key_types = vec![PubDataType::PublicKey, PubDataType::PublicKeyMetadata];
+    let key_types = vec![
+        PubDataType::PublicKey,
+        PubDataType::PublicKeyMetadata,
+        PubDataType::ServerKey,
+    ];
 
     let command_timer_start = tokio::time::Instant::now();
     // Execute the command
@@ -1732,12 +1735,8 @@ pub async fn execute_cmd(
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
-                    // Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    if !cipher_parameters.no_precompute_sns {
-                        // Only fetch server key if we operate on big ciphertexts (when SnS precomputation is used)
-                        key_types.push(PubDataType::ServerKey);
-                    }
-                    tracing::info!("Fetching keys {key_types:?}. ({command:?})");
+                    //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
+                    tracing::info!("Fetching public keys. ({command:?})");
                     let party_ids = fetch_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
@@ -1867,13 +1866,8 @@ pub async fn execute_cmd(
                     fetch_ctxt_from_file(cipher_file.input_path.clone()).await?
                 }
                 CipherArguments::FromArgs(cipher_parameters) => {
-                    // Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-                    if !cipher_parameters.no_precompute_sns {
-                        // Only fetch server key if we operate on big ciphertexts (when SnS precomputation is used)
-                        key_types.push(PubDataType::ServerKey);
-                    }
-                    tracing::info!("Fetching keys {key_types:?}. ({command:?})");
-                    tracing::info!("Fetching keys. ({command:?})");
+                    //Only need to fetch tfhe keys if we are not sourcing the ctxt from file
+                    tracing::info!("Fetching public keys. ({command:?})");
                     let party_ids = fetch_elements(
                         &cipher_parameters.key_id.as_str(),
                         &key_types,
@@ -2028,12 +2022,7 @@ pub async fn execute_cmd(
             vec![(None, String::new())]
         }
         CCCommand::Encrypt(cipher_parameters) => {
-            // Only need to fetch tfhe keys if we are not sourcing the ctxt from file
-            if !cipher_parameters.no_precompute_sns {
-                // Only fetch server key if we operate on big ciphertexts (when SnS precomputation is used)
-                key_types.push(PubDataType::ServerKey);
-            }
-            tracing::info!("Fetching keys {key_types:?}. ({command:?})");
+            tracing::info!("Fetching public keys. ({command:?})");
             let party_ids = fetch_elements(
                 &cipher_parameters.key_id.as_str(),
                 &key_types,

@@ -380,19 +380,13 @@ pub async fn compute_cipher_from_stored_key(
 ) -> (Vec<u8>, CiphertextFormat, FheTypes) {
     let pk = load_pk_from_storage(pub_path, key_id, party_id).await;
     //Setting the server key as we may need id to expand the ciphertext during compute_cipher
-
-    let sk = if enc_config.precompute_sns {
-        let server_key: ServerKey =
-            load_material_from_storage(pub_path, key_id, PubDataType::ServerKey, party_id).await;
-        Some(server_key)
-    } else {
-        None
-    };
+    let server_key: ServerKey =
+        load_material_from_storage(pub_path, key_id, PubDataType::ServerKey, party_id).await;
 
     // compute_cipher can take a long time since it may do SnS
     let (send, recv) = tokio::sync::oneshot::channel();
     rayon::spawn_fifo(move || {
-        let _ = send.send(compute_cipher(msg, &pk, sk.as_ref(), enc_config));
+        let _ = send.send(compute_cipher(msg, &pk, Some(&server_key), enc_config));
     });
     recv.await.unwrap()
 }
